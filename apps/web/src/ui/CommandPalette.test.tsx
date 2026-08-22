@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { CommandPalette, type PaletteCommand } from './CommandPalette.js'
+import {
+  CommandPalette,
+  MAX_VISIBLE_PALETTE_COMMANDS,
+  type PaletteCommand,
+} from './CommandPalette.js'
 
 afterEach(cleanup)
 
@@ -98,6 +102,54 @@ describe('CommandPalette', () => {
       'New thread in Project B',
       'New thread in Project A',
     ])
+  })
+
+  it('bounds a large initial result list and still finds commands beyond it', () => {
+    const commands: PaletteCommand[] = Array.from({ length: 10_000 }, (_, index) => ({
+      id: `chat-${index}`,
+      title: `Chat ${index}`,
+      group: 'Chats',
+      run: vi.fn(),
+    }))
+    render(<CommandPalette commands={commands} scope="all" onClose={vi.fn()} />)
+
+    expect(screen.getAllByRole('option')).toHaveLength(MAX_VISIBLE_PALETTE_COMMANDS)
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.change(input, { target: { value: 'Chat 9999' } })
+
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(screen.getByText('Chat 9999')).toBeTruthy()
+  })
+
+  it('materializes only bounded deferred chat matches', () => {
+    const deferredSearch = vi.fn((terms: readonly string[], limit: number) =>
+      Array.from({ length: Math.min(limit, terms.length > 0 ? 1 : 10_000) }, (_, index) => ({
+        id: `deferred-${index}`,
+        title: terms.length > 0 ? 'Deferred needle' : `Deferred ${index}`,
+        group: 'Chats' as const,
+        run: vi.fn(),
+      })),
+    )
+    render(
+      <CommandPalette
+        commands={[]}
+        scope="all"
+        deferredSearch={deferredSearch}
+        onClose={vi.fn()}
+      />,
+    )
+
+    expect(screen.getAllByRole('option')).toHaveLength(MAX_VISIBLE_PALETTE_COMMANDS)
+    expect(deferredSearch).toHaveBeenLastCalledWith([], MAX_VISIBLE_PALETTE_COMMANDS)
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search commands' }), {
+      target: { value: 'deferred needle' },
+    })
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(deferredSearch).toHaveBeenLastCalledWith(
+      ['deferred', 'needle'],
+      MAX_VISIBLE_PALETTE_COMMANDS,
+    )
   })
 
   it('traps focus and restores it after closing', () => {

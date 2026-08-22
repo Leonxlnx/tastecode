@@ -4,7 +4,12 @@ import { render, cleanup } from '@testing-library/react'
 import type { DomainEvent, Item } from '@harness/contracts'
 import { Thread, workLabel } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
-import { activeTurnIsSearching, emptyThread, reduce } from '../thread-store.js'
+import {
+  activeTurnActivityIndices,
+  activeTurnIsSearching,
+  emptyThread,
+  reduce,
+} from '../thread-store.js'
 
 /**
  * Performance budgets, enforced rather than aspired to.
@@ -194,6 +199,33 @@ describe('thread at scale', () => {
       'Future capability',
     )
     expect(workLabel([item('unknown', '[unknown]')], 'turn-1', false)).toBe('Agent activity')
+  })
+
+  it('uses the active activity index for a long completed tool tail', () => {
+    const items: Item[] = [
+      ...Array.from({ length: 10_000 }, (_, index) => ({
+        id: `tool-${index}`,
+        turnId: 'turn-1',
+        type: 'tool_call' as const,
+        status: 'completed' as const,
+        text: 'read file',
+        createdAt: index,
+      })),
+      {
+        id: 'answer',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: 'Answering',
+        createdAt: 10_000,
+      },
+    ]
+    const indices = activeTurnActivityIndices(items, 'turn-1')
+
+    expect(indices).toEqual([])
+    expect(workLabel(items, 'turn-1', false, undefined, 0, indices)).toBe('Working')
+    expect(activeTurnIsSearching(items, 'turn-1', undefined, 0, indices)).toBe(false)
   })
 
   it('costs about the same at a thousand items as at a hundred', () => {

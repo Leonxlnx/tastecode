@@ -1,7 +1,8 @@
-import { detectAgents, findAgentSpec } from '@harness/adapter-acp'
-import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
-import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
-import { GROK_CAPABILITIES } from '@harness/adapter-grok'
+import { detectAgents, findAgentSpec } from '@harness/adapter-acp/agents'
+import { codexLoginStatus } from '@harness/adapter-codex/auth'
+import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
+import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
+import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc'
 
@@ -87,12 +88,15 @@ const PROBES: Probe[] = [
 export type SystemProbe = {
   isInstalled(command: string): Promise<boolean>
   version(command: string): Promise<string | undefined>
+  auth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']>
   acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
 }
 
 const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
+  auth: (provider) =>
+    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
   acpAgents: detectAgents,
 }
 
@@ -184,13 +188,13 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     }
   }
 
-  const version = await system.version(entry.command)
+  const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
   const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
   return {
     id: entry.id,
     displayName: entry.displayName,
     installed: true,
-    auth: 'unknown',
+    auth,
     setup: entry.setup,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),

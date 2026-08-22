@@ -10,37 +10,16 @@ import {
 import type { McpServer, ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { Box, Server } from 'lucide-react'
 import type { Transport } from '../transport.js'
+import '../styles/composer-resource-picker.css'
+import {
+  COMPOSER_RESOURCE_LIST_ID,
+  type ComposerResource,
+  type ComposerResourcePickerHandle,
+  type ComposerResourceTrigger,
+} from './composer-resource.js'
 
 type SkillsInventory = ResultOf<'skills.list'>
 type McpInventory = ResultOf<'mcp.list'>
-
-export type ComposerResourceKind = 'skill' | 'mcp'
-
-export type ComposerResource = {
-  key: string
-  kind: ComposerResourceKind
-  id: string
-  name: string
-  description: string
-  scope: string
-  token: string
-  available: boolean
-  unavailableReason?: string | undefined
-}
-
-export type ComposerResourceTrigger = {
-  marker: '/' | '$' | '@'
-  query: string
-  start: number
-  end: number
-}
-
-export type ComposerResourcePickerHandle = {
-  move: (direction: 1 | -1) => boolean
-  selectActive: () => boolean
-}
-
-export const COMPOSER_RESOURCE_LIST_ID = 'composer-resource-list'
 
 export const ComposerResourcePicker = forwardRef<
   ComposerResourcePickerHandle,

@@ -13,6 +13,8 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
+import '../styles/settings.css'
+import '../styles/checkout-discard.css'
 import type {
   Account,
   BackgroundModelSettings as BackgroundModelSettingsState,
@@ -28,10 +30,13 @@ import type {
 import { z } from 'zod'
 import {
   ArrowLeft,
+  Bug,
   CircleAlert,
   CircleUserRound,
   Blocks,
   Database,
+  Eye,
+  EyeOff,
   Info,
   Boxes,
   Keyboard,
@@ -93,7 +98,7 @@ import {
 } from '../terminal-placement.js'
 import { AppSelect } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
-import { groupModelsBySource } from './ModelSelector.js'
+import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
@@ -122,6 +127,7 @@ export type SettingsSection =
   | 'appearance'
   | 'keybinds'
   | 'data'
+  | 'debug'
   | 'about'
 
 const THEME_OPTIONS = [
@@ -187,7 +193,7 @@ function noopKeybindingChange(_action: KeybindingId, _shortcut: Shortcut | null)
  * Settings stays intentionally small: the sidebar reorganizes the decisions
  * the app already exposes without inventing preferences for their own sake.
  */
-function SettingsComponent(props: {
+export interface SettingsProps {
   provider: ProviderId
   providerName: string
   transport: Transport
@@ -226,11 +232,15 @@ function SettingsComponent(props: {
   showMacOSHaptics?: boolean | undefined
   onAccountChange: (provider: ProviderId, account: Account) => void
   authRefreshRevision?: number | undefined
+  debugEnabled?: boolean | undefined
   initialSection?: SettingsSection | undefined
+  onShowOnboarding?: (() => void) | undefined
   onReset: () => void
   onClose: () => void
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
-}) {
+}
+
+function SettingsComponent(props: SettingsProps) {
   const [section, setSection] = useState<SettingsSection>(props.initialSection ?? 'providers')
 
   useEffect(() => {
@@ -349,6 +359,14 @@ function SettingsComponent(props: {
             label="Data & privacy"
             onClick={() => setSection('data')}
           />
+          {props.debugEnabled ? (
+            <SettingsNavItem
+              active={section === 'debug'}
+              icon={<Bug size={15} aria-hidden />}
+              label="Debug"
+              onClick={() => setSection('debug')}
+            />
+          ) : null}
           <SettingsNavItem
             active={section === 'about'}
             icon={<Info size={15} aria-hidden />}
@@ -385,10 +403,28 @@ function SettingsComponent(props: {
             />
           ) : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
+          {section === 'debug' && props.debugEnabled ? (
+            <DebugSettings onShowOnboarding={props.onShowOnboarding ?? noop} />
+          ) : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
       </main>
     </div>
+  )
+}
+
+function DebugSettings(props: { onShowOnboarding: () => void }) {
+  return (
+    <SettingsPanel title="Debug">
+      <SettingsRow
+        title="Onboarding"
+        note="Preview the first-run flow without changing projects or saved preferences."
+      >
+        <button className="settings__action" type="button" onClick={props.onShowOnboarding}>
+          Show onboarding
+        </button>
+      </SettingsRow>
+    </SettingsPanel>
   )
 }
 
@@ -1951,20 +1987,39 @@ function AccountIdentity(props: { provider: ProviderId; account: Account }) {
   )
 }
 
-/** T3-style privacy: the fixed-width address stays redacted until explicitly clicked. */
+/** Preview on hover or focus, then let a click keep the address visible. */
 function AccountEmail(props: { email: string }) {
-  const [revealed, setRevealed] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const [previewed, setPreviewed] = useState(false)
+  const revealed = pinned || previewed
+
+  const togglePinned = () => {
+    setPreviewed(false)
+    setPinned((current) => !current)
+  }
+
   return (
     <button
       className="settings__email"
       type="button"
       data-revealed={revealed}
-      aria-label={revealed ? 'Hide account email' : 'Reveal account email'}
-      aria-pressed={revealed}
-      title={revealed ? 'Click to hide email' : 'Click to reveal email'}
-      onClick={() => setRevealed((current) => !current)}
+      data-pinned={pinned}
+      aria-label={pinned ? 'Hide account email' : 'Show account email'}
+      aria-pressed={pinned}
+      title={pinned ? 'Click to hide email' : 'Hover to preview or click to keep visible'}
+      onPointerEnter={() => setPreviewed(true)}
+      onPointerLeave={() => setPreviewed(false)}
+      onFocus={() => setPreviewed(true)}
+      onBlur={() => setPreviewed(false)}
+      onClick={togglePinned}
     >
-      <span className="settings__email-value">{props.email}</span>
+      <span className="settings__email-icon" aria-hidden>
+        <Eye className="settings__email-eye settings__email-eye--show" size={15} />
+        <EyeOff className="settings__email-eye settings__email-eye--hide" size={15} />
+      </span>
+      <span className="settings__email-clip">
+        <span className="settings__email-value">{props.email}</span>
+      </span>
     </button>
   )
 }

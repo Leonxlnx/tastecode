@@ -23,6 +23,117 @@ type MenuPosition = {
   originY: 'top' | 'bottom'
 }
 
+type MenuOpenRequest = {
+  modality: 'keyboard' | 'pointer'
+  focus: 'first' | 'last'
+  returnFocus: HTMLElement | null
+  contextPoint?: { x: number; y: number } | undefined
+}
+
+type MenuProps = {
+  trigger: (open: boolean) => ReactNode
+  children: (close: () => void) => ReactNode
+  align?: 'left' | 'right'
+  drop?: 'up' | 'down'
+  gap?: number
+  disabled?: boolean
+  label?: string
+  triggerClassName?: string
+  panelRole?: 'menu' | 'dialog'
+  panelLabel?: string
+  panelClassName?: string
+  onOpen?: (() => void) | undefined
+  shortcutAria?: string | undefined
+  contextMenuTargetRef?: RefObject<HTMLElement | null>
+}
+
+type ContextMenuRegistration = {
+  modality: 'keyboard' | 'pointer'
+  show: (request: MenuOpenRequest) => void
+}
+
+const contextMenuRegistrations = new Map<HTMLElement, ContextMenuRegistration>()
+let contextMenuEvents: AbortController | undefined
+
+function registeredContextMenuTarget(
+  event: Event,
+): { target: HTMLElement; registration: ContextMenuRegistration } | undefined {
+  let element =
+    event.target instanceof Element
+      ? event.target
+      : event.target instanceof Node
+        ? event.target.parentElement
+        : null
+  while (element) {
+    if (element instanceof HTMLElement) {
+      const registration = contextMenuRegistrations.get(element)
+      if (registration) return { target: element, registration }
+    }
+    element = element.parentElement
+  }
+  return undefined
+}
+
+function ensureContextMenuEvents(): void {
+  if (contextMenuEvents) return
+  contextMenuEvents = new AbortController()
+  const signal = contextMenuEvents.signal
+  document.addEventListener(
+    'contextmenu',
+    (event) => {
+      const match = registeredContextMenuTarget(event)
+      if (!match) return
+      event.preventDefault()
+      const bounds = match.target.getBoundingClientRect()
+      match.registration.show({
+        modality: match.registration.modality,
+        focus: 'first',
+        returnFocus: match.target,
+        contextPoint:
+          match.registration.modality === 'keyboard'
+            ? { x: bounds.left, y: bounds.bottom }
+            : { x: event.clientX, y: event.clientY },
+      })
+      match.registration.modality = 'pointer'
+    },
+    { signal },
+  )
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      const match = registeredContextMenuTarget(event)
+      if (match) match.registration.modality = 'pointer'
+    },
+    { signal },
+  )
+  document.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key !== 'ContextMenu' && (event.key !== 'F10' || !event.shiftKey)) return
+      const match = registeredContextMenuTarget(event)
+      if (match) match.registration.modality = 'keyboard'
+    },
+    { signal },
+  )
+}
+
+function registerContextMenuTarget(
+  target: HTMLElement,
+  show: ContextMenuRegistration['show'],
+): () => void {
+  const registration: ContextMenuRegistration = { modality: 'pointer', show }
+  contextMenuRegistrations.set(target, registration)
+  ensureContextMenuEvents()
+  return () => {
+    if (contextMenuRegistrations.get(target) === registration) {
+      contextMenuRegistrations.delete(target)
+    }
+    if (contextMenuRegistrations.size !== 0) return
+    contextMenuEvents?.abort()
+    contextMenuEvents = undefined
+  }
+}
+
 const MENU_GAP = 6
 const VIEWPORT_GUTTER = 8
 const MENU_ITEM_SELECTOR = '[role="menuitem"], [role="menuitemradio"]'
@@ -59,92 +170,127 @@ function focusableElements(panel: HTMLElement): HTMLElement[] {
  * and animates identically. Menus that behave differently from each other are
  * the fastest way to make an app feel assembled rather than designed.
  */
-export function Menu(props: {
-  trigger: (open: boolean) => ReactNode
-  children: (close: () => void) => ReactNode
-  align?: 'left' | 'right'
-  drop?: 'up' | 'down'
-  gap?: number
-  disabled?: boolean
-  label?: string
-  triggerClassName?: string
-  panelRole?: 'menu' | 'dialog'
-  panelLabel?: string
-  panelClassName?: string
-  shortcutAria?: string | undefined
-  contextMenuTargetRef?: RefObject<HTMLElement | null>
-}) {
-  const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<MenuPosition>()
-  const [contextPoint, setContextPoint] = useState<{ x: number; y: number }>()
-  const [inputModality, setInputModality] = useState<'keyboard' | 'pointer'>('keyboard')
+export function Menu(props: MenuProps) {
+  const [runtime, setRuntime] = useState<{
+    open: boolean
+    request?: MenuOpenRequest | undefined
+  }>({ open: false })
   const wrap = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
-  const panel = useRef<HTMLDivElement>(null)
-  const initialFocus = useRef<'first' | 'last'>('first')
-  const restoreTarget = useRef<HTMLElement | undefined>(undefined)
-  const typeahead = useRef('')
-  const typeaheadTimer = useRef<number | undefined>(undefined)
-  const triggerId = useId()
-  const panelId = useId()
-  const panelRole = props.panelRole ?? 'menu'
+  const id = useId()
+  const triggerId = `${id}-trigger`
+  const panelId = `${id}-panel`
 
   const showMenu = useCallback(
-    (
-      modality: 'keyboard' | 'pointer',
-      focus: 'first' | 'last',
-      returnFocus: HTMLElement | null,
-    ) => {
-      setPosition(undefined)
-      setInputModality(modality)
-      initialFocus.current = focus
-      restoreTarget.current = returnFocus ?? undefined
-      setOpen(true)
+    (request: MenuOpenRequest) => {
+      props.onOpen?.()
+      setRuntime({ open: true, request })
     },
-    [],
+    [props.onOpen],
   )
 
   const closeMenu = useCallback(() => {
-    if (typeaheadTimer.current !== undefined) window.clearTimeout(typeaheadTimer.current)
-    typeahead.current = ''
-    setOpen(false)
+    setRuntime((current) => (current.open ? { ...current, open: false } : current))
   }, [])
 
   useEffect(() => {
     const target = props.contextMenuTargetRef?.current
     if (!target) return
-    let contextModality: 'keyboard' | 'pointer' = 'pointer'
-    const contextEvents = new AbortController()
-
-    const onContextMenu = (event: MouseEvent) => {
-      event.preventDefault()
-      const bounds = target.getBoundingClientRect()
-      setContextPoint(
-        contextModality === 'keyboard'
-          ? { x: bounds.left, y: bounds.bottom }
-          : { x: event.clientX, y: event.clientY },
-      )
-      showMenu(contextModality, 'first', target)
-      contextModality = 'pointer'
-    }
-    const onPointerDown = () => (contextModality = 'pointer')
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
-        contextModality = 'keyboard'
-      }
-    }
-    target.addEventListener('contextmenu', onContextMenu, { signal: contextEvents.signal })
-    target.addEventListener('pointerdown', onPointerDown, { signal: contextEvents.signal })
-    target.addEventListener('keydown', onKeyDown, { signal: contextEvents.signal })
-    return () => contextEvents.abort()
+    return registerContextMenuTarget(target, showMenu)
   }, [props.contextMenuTargetRef, showMenu])
 
+  return (
+    <div className="menuwrap" ref={wrap}>
+      <button
+        type="button"
+        ref={trigger}
+        id={triggerId}
+        className={`menutrigger${props.triggerClassName ? ` ${props.triggerClassName}` : ''}`}
+        onKeyDown={(event) => {
+          if (!runtime.open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+            event.preventDefault()
+            showMenu({
+              modality: 'keyboard',
+              focus: event.key === 'ArrowUp' ? 'last' : 'first',
+              returnFocus: trigger.current,
+            })
+          }
+        }}
+        onClick={(event) => {
+          if (runtime.open) closeMenu()
+          else {
+            showMenu({
+              modality: event.detail > 0 ? 'pointer' : 'keyboard',
+              focus: 'first',
+              returnFocus: trigger.current,
+            })
+          }
+        }}
+        disabled={props.disabled}
+        aria-expanded={runtime.open}
+        aria-haspopup={props.panelRole ?? 'menu'}
+        aria-controls={runtime.open ? panelId : undefined}
+        aria-keyshortcuts={props.shortcutAria}
+        {...(props.label ? { 'aria-label': props.label } : {})}
+      >
+        {props.trigger(runtime.open)}
+      </button>
+
+      {runtime.request ? (
+        <MenuController
+          {...props}
+          open={runtime.open}
+          request={runtime.request}
+          wrap={wrap}
+          triggerRef={trigger}
+          triggerId={triggerId}
+          panelId={panelId}
+          closeMenu={closeMenu}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+/** Closed menus only mount the trigger above. The controller is paid for once,
+ * on first use, then stays warm so later opens keep the same instant path. */
+function MenuController(
+  props: MenuProps & {
+    open: boolean
+    request: MenuOpenRequest
+    wrap: RefObject<HTMLDivElement | null>
+    triggerRef: RefObject<HTMLButtonElement | null>
+    triggerId: string
+    panelId: string
+    closeMenu: () => void
+  },
+) {
+  const [position, setPosition] = useState<MenuPosition>()
+  const panel = useRef<HTMLDivElement>(null)
+  const initialFocus = useRef<'first' | 'last'>(props.request.focus)
+  const restoreTarget = useRef<HTMLElement | undefined>(props.request.returnFocus ?? undefined)
+  const typeahead = useRef('')
+  const typeaheadTimer = useRef<number | undefined>(undefined)
+  const panelRole = props.panelRole ?? 'menu'
+
+  const closeMenu = useCallback(() => {
+    if (typeaheadTimer.current !== undefined) window.clearTimeout(typeaheadTimer.current)
+    typeahead.current = ''
+    props.closeMenu()
+  }, [props.closeMenu])
+
+  useLayoutEffect(() => {
+    setPosition(undefined)
+    initialFocus.current = props.request.focus
+    restoreTarget.current = props.request.returnFocus ?? undefined
+  }, [props.request])
+
   useEffect(() => {
-    if (!open) return
+    if (!props.open) return
     const onPointer = (event: MouseEvent) => {
       const target = event.target
       if (!(target instanceof Node)) return
-      if (!wrap.current?.contains(target) && !panel.current?.contains(target)) closeMenu()
+      if (!props.wrap.current?.contains(target) && !panel.current?.contains(target)) closeMenu()
     }
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -158,10 +304,10 @@ export function Menu(props: {
       document.removeEventListener('mousedown', onPointer)
       document.removeEventListener('keydown', onKey)
     }
-  }, [closeMenu, open])
+  }, [closeMenu, props.open, props.wrap])
 
   useLayoutEffect(() => {
-    if (!open) {
+    if (!props.open) {
       const target = restoreTarget.current
       if (!target) return
       const active = document.activeElement
@@ -177,15 +323,15 @@ export function Menu(props: {
     } else {
       ;(focusableElements(currentPanel)[0] ?? currentPanel).focus()
     }
-  }, [open, panelRole, position])
+  }, [panelRole, position, props.open])
 
   useLayoutEffect(() => {
-    if (!open) return
+    if (!props.open) return
 
     const updatePosition = () => {
-      const triggerBounds = trigger.current?.getBoundingClientRect()
+      const triggerBounds = props.triggerRef.current?.getBoundingClientRect()
       const menuBounds = panel.current?.getBoundingClientRect()
-      if ((!triggerBounds && !contextPoint) || !menuBounds) return
+      if ((!triggerBounds && !props.request.contextPoint) || !menuBounds) return
 
       // Panels that want to sit flush with their trigger (the account popup)
       // read this; everyone else keeps their intrinsic width.
@@ -194,9 +340,9 @@ export function Menu(props: {
       }
 
       const preferredDrop = props.drop ?? 'up'
-      const gap = contextPoint ? 0 : (props.gap ?? MENU_GAP)
-      const anchorTop = contextPoint?.y ?? triggerBounds?.top ?? 0
-      const anchorBottom = contextPoint?.y ?? triggerBounds?.bottom ?? 0
+      const gap = props.request.contextPoint ? 0 : (props.gap ?? MENU_GAP)
+      const anchorTop = props.request.contextPoint?.y ?? triggerBounds?.top ?? 0
+      const anchorBottom = props.request.contextPoint?.y ?? triggerBounds?.bottom ?? 0
       const spaceAbove = anchorTop - gap - VIEWPORT_GUTTER
       const spaceBelow = window.innerHeight - anchorBottom - gap - VIEWPORT_GUTTER
       let drop = preferredDrop
@@ -207,8 +353,8 @@ export function Menu(props: {
         drop = 'down'
       }
 
-      const preferredLeft = contextPoint
-        ? contextPoint.x
+      const preferredLeft = props.request.contextPoint
+        ? props.request.contextPoint.x
         : props.align === 'right'
           ? (triggerBounds?.right ?? 0) - menuBounds.width
           : (triggerBounds?.left ?? 0)
@@ -217,8 +363,8 @@ export function Menu(props: {
         window.innerWidth - menuBounds.width - VIEWPORT_GUTTER,
       )
       const left = Math.min(Math.max(preferredLeft, VIEWPORT_GUTTER), maxLeft)
-      const anchorX = contextPoint
-        ? contextPoint.x
+      const anchorX = props.request.contextPoint
+        ? props.request.contextPoint.x
         : props.align === 'right'
           ? (triggerBounds?.right ?? 0)
           : (triggerBounds?.left ?? 0)
@@ -266,7 +412,7 @@ export function Menu(props: {
       document.removeEventListener('scroll', onScroll, true)
       resizeObserver?.disconnect()
     }
-  }, [contextPoint, open, props.align, props.drop, props.gap])
+  }, [props.align, props.drop, props.gap, props.open, props.request, props.triggerRef])
 
   const onPanelKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
@@ -346,84 +492,49 @@ export function Menu(props: {
     if (match) focusMenuItem(currentPanel, items.indexOf(match))
   }
 
-  return (
-    <div className="menuwrap" ref={wrap}>
-      <button
-        type="button"
-        ref={trigger}
-        id={triggerId}
-        className={`menutrigger${props.triggerClassName ? ` ${props.triggerClassName}` : ''}`}
-        onKeyDown={(event) => {
-          if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
-            event.preventDefault()
-            setContextPoint(undefined)
-            showMenu('keyboard', event.key === 'ArrowUp' ? 'last' : 'first', trigger.current)
+  return props.open
+    ? createPortal(
+        <div
+          ref={panel}
+          id={props.panelId}
+          className={`menu menu--${position?.drop ?? props.drop ?? 'up'}${position ? ' is-positioned' : ''}${props.panelClassName ? ` ${props.panelClassName}` : ''}`}
+          role={panelRole}
+          {...(props.panelLabel ? { 'aria-label': props.panelLabel } : {})}
+          {...(!props.panelLabel ? { 'aria-labelledby': props.triggerId } : {})}
+          aria-modal={panelRole === 'dialog' ? true : undefined}
+          data-input-modality={props.request.modality}
+          tabIndex={-1}
+          onKeyDown={onPanelKeyDown}
+          onFocus={(event) => {
+            if (panelRole !== 'menu') return
+            const item =
+              event.target instanceof Element
+                ? event.target.closest<HTMLElement>(MENU_ITEM_SELECTOR)
+                : null
+            if (!item || !event.currentTarget.contains(item)) return
+            menuItems(event.currentTarget).forEach((candidate) => {
+              candidate.tabIndex = candidate === item ? 0 : -1
+            })
+          }}
+          style={
+            position
+              ? {
+                  left: position.left,
+                  transformOrigin: `${position.originX} ${position.originY}`,
+                  ...(position.drop === 'up' ? { bottom: position.bottom } : { top: position.top }),
+                }
+              : panelRole === 'dialog'
+                ? { left: 0, top: 0, opacity: 0, pointerEvents: 'none' }
+                : { left: 0, top: 0, visibility: 'hidden' }
           }
-        }}
-        onClick={(event) => {
-          setContextPoint(undefined)
-          if (open) closeMenu()
-          else {
-            showMenu(event.detail > 0 ? 'pointer' : 'keyboard', 'first', trigger.current)
-          }
-        }}
-        disabled={props.disabled}
-        aria-expanded={open}
-        aria-haspopup={panelRole}
-        aria-controls={open ? panelId : undefined}
-        aria-keyshortcuts={props.shortcutAria}
-        {...(props.label ? { 'aria-label': props.label } : {})}
-      >
-        {props.trigger(open)}
-      </button>
-
-      {open
-        ? createPortal(
-            <div
-              ref={panel}
-              id={panelId}
-              className={`menu menu--${position?.drop ?? props.drop ?? 'up'}${position ? ' is-positioned' : ''}${props.panelClassName ? ` ${props.panelClassName}` : ''}`}
-              role={panelRole}
-              {...(props.panelLabel ? { 'aria-label': props.panelLabel } : {})}
-              {...(!props.panelLabel ? { 'aria-labelledby': triggerId } : {})}
-              aria-modal={panelRole === 'dialog' ? true : undefined}
-              data-input-modality={inputModality}
-              tabIndex={-1}
-              onKeyDown={onPanelKeyDown}
-              onFocus={(event) => {
-                if (panelRole !== 'menu') return
-                const item =
-                  event.target instanceof Element
-                    ? event.target.closest<HTMLElement>(MENU_ITEM_SELECTOR)
-                    : null
-                if (!item || !event.currentTarget.contains(item)) return
-                menuItems(event.currentTarget).forEach((candidate) => {
-                  candidate.tabIndex = candidate === item ? 0 : -1
-                })
-              }}
-              style={
-                position
-                  ? {
-                      left: position.left,
-                      transformOrigin: `${position.originX} ${position.originY}`,
-                      ...(position.drop === 'up'
-                        ? { bottom: position.bottom }
-                        : { top: position.top }),
-                    }
-                  : panelRole === 'dialog'
-                    ? { left: 0, top: 0, opacity: 0, pointerEvents: 'none' }
-                    : { left: 0, top: 0, visibility: 'hidden' }
-              }
-            >
-              {props.children(closeMenu)}
-            </div>,
-            // Scrollable app regions clip positioned descendants, so the panel
-            // has to live at the viewport level and follow its trigger.
-            document.body,
-          )
-        : null}
-    </div>
-  )
+        >
+          {props.children(closeMenu)}
+        </div>,
+        // Scrollable app regions clip positioned descendants, so the panel
+        // has to live at the viewport level and follow its trigger.
+        document.body,
+      )
+    : null
 }
 
 export function MenuItem(props: {

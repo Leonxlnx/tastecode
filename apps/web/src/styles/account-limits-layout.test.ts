@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const css = readFileSync(new URL('./account-limits.css', import.meta.url), 'utf8')
 
 describe('account limits layout', () => {
   it('visibly separates adjacent provider sources', () => {

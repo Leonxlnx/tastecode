@@ -16,6 +16,7 @@ const replayStateEvents = new Set<DomainEvent['type']>([
  */
 export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryEntry[] {
   if (entries.length === 0) return []
+  if (!needsHistoryCompaction(entries)) return entries.slice()
 
   const finalItems = new Map(projectHistoryItems(entries).map((item) => [item.id, item]))
   const firstItemEvent = new Map<string, { index: number; type: DomainEvent['type'] }>()
@@ -63,6 +64,35 @@ export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryE
     compacted.push(item ? { ...entry, event: finalItemEvent(item) } : entry)
   }
   return compacted
+}
+
+function needsHistoryCompaction(entries: readonly HistoryEntry[]): boolean {
+  const itemIds = new Set<string>()
+  let hasUsage = false
+  let hasDiff = false
+  let hasPlan = false
+
+  for (const { event } of entries) {
+    if (event.type === 'turn.started') {
+      hasDiff = false
+      hasPlan = false
+    } else if (event.type === 'usage.updated') {
+      if (hasUsage) return true
+      hasUsage = true
+    } else if (event.type === 'diff.updated') {
+      if (hasDiff) return true
+      hasDiff = true
+    } else if (event.type === 'plan.updated') {
+      if (hasPlan) return true
+      hasPlan = true
+    }
+
+    const itemId = historyItemId(event)
+    if (itemId === undefined) continue
+    if (itemIds.has(itemId)) return true
+    itemIds.add(itemId)
+  }
+  return false
 }
 
 function historyItemId(event: DomainEvent): string | undefined {

@@ -72,6 +72,36 @@ describe('attachment preview bridge', () => {
     expect(previewViewedImage).toHaveBeenNthCalledWith(1, preview.path)
     expect(previewViewedImage).toHaveBeenNthCalledWith(2, preview.name)
   })
+
+  it('bounds old attachment metadata while keeping recent previews hot', async () => {
+    const bridgeModule = await import('./bridge.js')
+    const picked = Array.from(
+      { length: bridgeModule.MAX_CACHED_ATTACHMENT_PREVIEWS + 1 },
+      (_, index) => ({
+        path: `/work/reference-${index}.png`,
+        name: `reference-${index}.png`,
+        mediaType: 'image' as const,
+        previewUrl: `tastecode-attachment://preview/reference-${index}`,
+      }),
+    )
+    const pickFiles = vi.fn().mockResolvedValue(picked)
+    const previewViewedImage = vi.fn(async (reference: string) =>
+      picked.find((attachment) => attachment.path === reference),
+    )
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      pickFiles,
+      previewViewedImage,
+    }
+    vi.resetModules()
+    const bridge = await import('./bridge.js')
+
+    await bridge.pickFiles()
+    await expect(bridge.previewViewedImage(picked[0]!.path)).resolves.toEqual(picked[0])
+    await expect(bridge.previewViewedImage(picked.at(-1)!.path)).resolves.toEqual(picked.at(-1))
+    expect(previewViewedImage).toHaveBeenCalledOnce()
+    expect(previewViewedImage).toHaveBeenCalledWith(picked[0]!.path)
+  })
 })
 
 describe('clipboard bridge', () => {

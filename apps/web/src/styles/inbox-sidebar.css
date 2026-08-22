@@ -1,0 +1,680 @@
+/* ---------- inbox sidebar ---------- */
+
+.inbox-toolbar {
+  display: grid;
+  gap: 5px;
+  padding: 10px 10px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inbox-toolbar__primary {
+  display: grid;
+  gap: 3px;
+}
+
+.inbox-toolbar__projects {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.inbox-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  box-shadow: none;
+  color: var(--text-3);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.inbox-search:hover {
+  border-color: color-mix(in srgb, var(--text-3) 35%, var(--chrome-border));
+}
+
+.inbox-search:focus-within {
+  border-color: var(--text-3);
+}
+
+.inbox-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  outline: none;
+}
+
+.inbox-search input::placeholder {
+  color: var(--text-3);
+}
+
+.inbox-search > button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.inbox-search > button:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.inbox-toolbar__new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px;
+  background: var(--composer-action-bg);
+  border: 1px solid var(--composer-action-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--composer-action-shadow);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-md);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.inbox-toolbar__new svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.inbox-toolbar__add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 29px;
+  padding: 0 8px;
+  background: none;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-xl);
+  box-shadow: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.inbox-toolbar__new:is(:hover, :focus-visible) {
+  background: var(--composer-action-bg-hover);
+  border-color: var(--composer-action-border-hover);
+  box-shadow: var(--composer-action-shadow-hover);
+}
+
+.inbox-toolbar__new:active {
+  box-shadow: var(--composer-action-shadow-active);
+  transform: scale(0.985);
+}
+
+.inbox-toolbar__add:is(:hover, :focus-visible) {
+  border-color: color-mix(in srgb, var(--text-3) 40%, var(--chrome-border));
+  color: var(--text);
+}
+
+.inbox-toolbar__pulls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.inbox-toolbar__pulls:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.inbox-toolbar__pulls.is-active {
+  background: var(--chrome-raised);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-shadow);
+  color: var(--text);
+}
+
+.inbox-toolbar__pulls:active {
+  box-shadow: var(--chrome-inset-shadow);
+  transform: translateY(1px);
+}
+
+.inbox-toolbar__pulls svg {
+  color: var(--text-3);
+  flex: none;
+}
+
+.inbox-toolbar__pulls.is-active svg {
+  color: var(--success);
+}
+
+.inbox__body {
+  padding-top: 8px;
+}
+
+.inbox {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inbox__scope {
+  display: block;
+  min-width: 0;
+}
+
+.inbox__scope .app-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.inbox__scope .app-select__trigger {
+  height: 29px;
+  padding: 0 6px 0 8px;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-xl);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-sm);
+  box-shadow: none;
+}
+
+.inbox__scope .app-select__trigger:hover {
+  border-color: color-mix(in srgb, var(--text-3) 40%, var(--chrome-border));
+  color: var(--text);
+}
+
+.inbox__scope .app-select__trigger:focus-visible {
+  border-color: var(--text-3);
+  outline: none;
+}
+
+.inbox__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 3px 8px 5px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.inbox__list,
+.inbox-shelf__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inbox__list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.inbox__empty {
+  margin: 0 0 8px;
+  padding: 7px 8px 10px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.inbox__empty--search {
+  margin-top: 8px;
+  text-align: center;
+}
+
+.inbox__selection-count {
+  margin: 0 0 2px;
+  padding: 4px 8px;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+}
+
+.inbox-card {
+  --inbox-card-bg: transparent;
+  position: relative;
+  min-height: 76px;
+  background: var(--inbox-card-bg);
+  border: 1px solid transparent;
+  border-radius: var(--r-card);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.inbox-card:hover,
+.inbox-card:focus-within {
+  --inbox-card-bg: var(--chrome-raised);
+  box-shadow: var(--chrome-shadow);
+}
+
+.inbox-card.is-selected {
+  --inbox-card-bg: var(--chrome-raised);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-shadow);
+}
+
+.inbox-card.is-multi-selected {
+  --inbox-card-bg:
+    linear-gradient(
+      color-mix(in oklab, var(--attention) 7%, transparent),
+      color-mix(in oklab, var(--attention) 7%, transparent)
+    ),
+    var(--chrome-raised);
+  border-color: color-mix(in oklab, var(--attention) 35%, var(--chrome-border));
+}
+
+.source-identity {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.source-identity__mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.source-identity--compact {
+  gap: 3px;
+}
+
+.source-identity--compact .source-identity__mark {
+  width: 13px;
+  height: 13px;
+}
+
+.source-identity__label,
+.source-identity__qualifier {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-identity__qualifier {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-3);
+}
+
+.inbox-card__main {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 9px 9px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.inbox-card__topline,
+.inbox-card__meta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.inbox-card__topline {
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.inbox-card__project {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-card__state {
+  flex: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.inbox-card__title {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  font-size: var(--t-sm);
+  font-weight: 530;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-card__meta {
+  gap: 5px;
+  max-width: calc(100% - 2px);
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+.inbox-card__meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inbox-card__branch {
+  max-width: 52%;
+}
+
+.inbox-card__woke {
+  margin-left: auto;
+  flex: none;
+  color: var(--attention);
+}
+
+.inbox-status {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 520;
+  white-space: nowrap;
+}
+
+.inbox-status.is-working {
+  color: var(--running);
+}
+
+.inbox-status.is-attention,
+.inbox-status.is-woke {
+  color: var(--attention);
+  background: color-mix(in oklab, var(--attention) 10%, transparent);
+}
+
+.inbox-status.is-failed {
+  color: var(--error);
+  background: color-mix(in oklab, var(--error) 10%, transparent);
+}
+
+.inbox-status.is-done {
+  color: var(--success);
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+
+.inbox-card__quick {
+  position: absolute;
+  z-index: 1;
+  top: 5px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-height: 25px;
+  padding-left: 8px;
+  background: var(--inbox-card-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.inbox-card:hover .inbox-card__quick,
+.inbox-card:focus-within .inbox-card__quick {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.inbox-card:hover .inbox-card__state,
+.inbox-card:focus-within .inbox-card__state {
+  opacity: 0;
+}
+
+.inbox-card__quick > button,
+.inbox-card__quick .menutrigger,
+.inbox-shelf__action,
+.inbox-shelf__row > .menuwrap .menutrigger {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.inbox-card__quick > button:hover,
+.inbox-card__quick .menutrigger:hover,
+.inbox-shelf__action:hover,
+.inbox-shelf__row > .menuwrap .menutrigger:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.inbox-card__menu {
+  width: 23px;
+  height: 23px;
+}
+
+.inbox-menu__selection {
+  padding: 4px 7px 3px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.inbox-shelf {
+  margin-top: 5px;
+  border-top: 1px solid var(--line);
+  padding-top: 3px;
+}
+
+.inbox-shelf__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  text-align: left;
+}
+
+.inbox-shelf__toggle:hover {
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.inbox-shelf__toggle svg {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    rotate var(--dur-fast) var(--ease-out);
+}
+
+.inbox-shelf__toggle[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+
+.inbox-shelf__toggle span:last-child {
+  margin-left: auto;
+}
+
+.inbox-shelf__row {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+}
+
+.inbox-shelf__row:hover,
+.inbox-shelf__row.is-selected {
+  background: var(--surface);
+}
+
+.inbox-shelf__row.is-multi-selected {
+  background: color-mix(in oklab, var(--attention) 7%, var(--surface));
+  border-color: color-mix(in oklab, var(--attention) 30%, transparent);
+}
+
+.inbox-shelf__main {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  text-align: left;
+}
+
+.inbox-shelf__main span,
+.inbox-shelf__main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-shelf__main span {
+  flex: 1;
+}
+
+.inbox-shelf__main small {
+  flex: none;
+  max-width: 45%;
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
+.inbox-shelf__row > .menuwrap {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.inbox-shelf__row:hover > .menuwrap,
+.inbox-shelf__row:focus-within > .menuwrap {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.inbox-shelf__row > .rename {
+  flex: 1;
+  margin: 2px 4px;
+}
+
+.inbox__more {
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inbox-shelf__toggle svg {
+    transition: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .inbox-card__quick,
+  .inbox-shelf__row > .menuwrap {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .inbox-card__quick {
+    top: auto;
+    bottom: 4px;
+  }
+
+  .inbox-card__meta {
+    padding-right: 72px;
+  }
+
+  .inbox-card:hover .inbox-card__state,
+  .inbox-card:focus-within .inbox-card__state {
+    opacity: 1;
+  }
+}

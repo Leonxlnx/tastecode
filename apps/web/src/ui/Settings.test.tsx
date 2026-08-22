@@ -22,13 +22,15 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
+    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'debug' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
     showMacOSHaptics?: boolean
     onKeybindingChange?: (action: KeybindingId, shortcut: Shortcut | null) => void
     onKeybindingsReset?: () => void
+    debugEnabled?: boolean
+    onShowOnboarding?: () => void
   } = {},
 ) {
   const transport = options.transport ?? new TestTransport()
@@ -70,7 +72,9 @@ function renderSettings(
       onKeybindingsReset={options.onKeybindingsReset ?? (() => {})}
       showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
+      debugEnabled={options.debugEnabled}
       initialSection={options.initialSection ?? 'appearance'}
+      onShowOnboarding={options.onShowOnboarding}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
     />,
@@ -130,6 +134,20 @@ describe('settings viewport layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
+  })
+
+  it('keeps Debug hidden until unlocked and can show onboarding from it', () => {
+    const locked = renderSettings()
+    expect(screen.queryByRole('button', { name: 'Debug' })).toBeNull()
+    locked.unmount()
+
+    const onShowOnboarding = vi.fn()
+    renderSettings({ initialSection: 'debug', debugEnabled: true, onShowOnboarding })
+
+    expect(screen.getByRole('button', { name: 'Debug' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Debug' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show onboarding' }))
+    expect(onShowOnboarding).toHaveBeenCalledOnce()
   })
 
   it('lets the terminal shortcut target the right sidebar', () => {
@@ -1031,12 +1049,27 @@ describe('provider settings', () => {
     const email = within(codexRow).getByText('private@example.com')
     expect(email.className).toBe('settings__email-value')
     const emailButton = email.closest<HTMLButtonElement>('.settings__email')
-    expect(emailButton?.getAttribute('title')).toBe('Click to reveal email')
+    expect(emailButton?.getAttribute('title')).toBe('Hover to preview or click to keep visible')
     expect(emailButton?.getAttribute('data-revealed')).toBe('false')
+    expect(emailButton?.getAttribute('data-pinned')).toBe('false')
     if (!emailButton) throw new Error('redacted email button missing')
+
+    fireEvent.pointerEnter(emailButton)
+    expect(emailButton.getAttribute('data-revealed')).toBe('true')
+    expect(emailButton.querySelector('.settings__email-eye--hide')).toBeTruthy()
+    fireEvent.pointerLeave(emailButton)
+    expect(emailButton.getAttribute('data-revealed')).toBe('false')
+
+    fireEvent.pointerEnter(emailButton)
     fireEvent.click(emailButton)
     expect(emailButton.getAttribute('data-revealed')).toBe('true')
+    expect(emailButton.getAttribute('data-pinned')).toBe('true')
     expect(emailButton.getAttribute('title')).toBe('Click to hide email')
+    fireEvent.pointerLeave(emailButton)
+    expect(emailButton.getAttribute('data-revealed')).toBe('true')
+    fireEvent.click(emailButton)
+    expect(emailButton.getAttribute('data-revealed')).toBe('false')
+    expect(emailButton.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
     // Beta scope: agent rows and the API-connection form stay out entirely,

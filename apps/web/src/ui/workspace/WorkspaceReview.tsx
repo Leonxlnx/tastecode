@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CodeView, type CodeViewHandle, type CodeViewReactOptions } from '@pierre/diffs/react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { DiffFile, SessionDiff } from '@harness/contracts'
 import {
   Check,
@@ -16,6 +17,12 @@ import {
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import {
+  buildReviewTree,
+  flattenReviewTree,
+  type ReviewTreeNode,
+  type ReviewTreeRow,
+} from './review-file-tree.js'
 import {
   workspaceDiffCollection,
   workspaceDiffItemId,
@@ -394,14 +401,11 @@ function ReviewFallbackFiles({ fallbacks }: { fallbacks: WorkspaceDiffFallback[]
   )
 }
 
-type TreeNode = {
-  name: string
-  path: string
-  children: TreeNode[]
-  file?: DiffFile
-}
+const REVIEW_TREE_VIRTUAL_FILE_THRESHOLD = 200
+const REVIEW_TREE_ROW_HEIGHT = 29
+const EMPTY_REVIEW_TREE_ROWS: ReviewTreeRow[] = []
 
-function ReviewTree({
+export function ReviewTree({
   files,
   onSelect,
 }: {
@@ -409,6 +413,10 @@ function ReviewTree({
   onSelect: (file: DiffFile) => void
 }) {
   const tree = useMemo(() => buildReviewTree(files), [files])
+  if (files.length > REVIEW_TREE_VIRTUAL_FILE_THRESHOLD) {
+    return <VirtualReviewTree tree={tree} onSelect={onSelect} />
+  }
+
   return (
     <div className="workspace-review__tree-list">
       {tree.map((node) => (
@@ -418,12 +426,116 @@ function ReviewTree({
   )
 }
 
+function VirtualReviewTree({
+  tree,
+  onSelect,
+}: {
+  tree: ReviewTreeNode[]
+  onSelect: (file: DiffFile) => void
+}) {
+  const [closedPaths, setClosedPaths] = useState<ReadonlySet<string>>(() => new Set())
+  const rows = useMemo(
+    () => (tree.length > 0 ? flattenReviewTree(tree, closedPaths) : EMPTY_REVIEW_TREE_ROWS),
+    [closedPaths, tree],
+  )
+  const scroller = useRef<HTMLDivElement>(null)
+  const getItemKey = useCallback(
+    (index: number) => rows[index]?.node.path ?? `missing-review-row-${index}`,
+    [rows],
+  )
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scroller.current,
+    estimateSize: () => REVIEW_TREE_ROW_HEIGHT,
+    getItemKey,
+    overscan: 12,
+  })
+  const toggleFolder = useCallback((path: string) => {
+    setClosedPaths((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  return (
+    <div ref={scroller} className="workspace-review__tree-list is-virtual">
+      <div className="workspace-review__tree-canvas" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const row = rows[virtualRow.index]
+          if (!row) return null
+          return (
+            <VirtualReviewTreeRow
+              key={virtualRow.key}
+              row={row}
+              open={!closedPaths.has(row.node.path)}
+              start={virtualRow.start}
+              onSelect={onSelect}
+              onToggle={toggleFolder}
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function VirtualReviewTreeRow({
+  row,
+  open,
+  start,
+  onSelect,
+  onToggle,
+}: {
+  row: ReviewTreeRow
+  open: boolean
+  start: number
+  onSelect: (file: DiffFile) => void
+  onToggle: (path: string) => void
+}) {
+  const { node, depth } = row
+  if (node.file) {
+    return (
+      <button
+        type="button"
+        className="workspace-review__tree-file workspace-review__tree-row"
+        style={{ paddingLeft: 10 + depth * 18, transform: `translateY(${start}px)` }}
+        title={node.path}
+        onClick={() => onSelect(node.file!)}
+      >
+        <FileTypeIcon path={node.path} />
+        <span>{node.name}</span>
+        <i data-status={node.file.status}>{statusLetter(node.file.status)}</i>
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="workspace-review__tree-folder workspace-review__tree-row"
+      style={{ transform: `translateY(${start}px)` }}
+    >
+      <button
+        type="button"
+        style={{ paddingLeft: 8 + depth * 18 }}
+        aria-expanded={open}
+        onClick={() => onToggle(node.path)}
+      >
+        {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+        <Folder size={14} aria-hidden />
+        <span>{node.name}</span>
+      </button>
+    </div>
+  )
+}
+
 function ReviewTreeNode({
   node,
   depth,
   onSelect,
 }: {
-  node: TreeNode
+  node: ReviewTreeNode
   depth: number
   onSelect: (file: DiffFile) => void
 }) {
@@ -463,32 +575,6 @@ function ReviewTreeNode({
         : null}
     </div>
   )
-}
-
-function buildReviewTree(files: DiffFile[]): TreeNode[] {
-  const root: TreeNode = { name: '', path: '', children: [] }
-  for (const file of files) {
-    const parts = file.path.replaceAll('\\', '/').split('/').filter(Boolean)
-    let parent = root
-    parts.forEach((part, index) => {
-      const currentPath = parts.slice(0, index + 1).join('/')
-      let node = parent.children.find((child) => child.name === part)
-      if (!node) {
-        node = { name: part, path: currentPath, children: [] }
-        parent.children.push(node)
-      }
-      if (index === parts.length - 1) node.file = file
-      parent = node
-    })
-  }
-  const sort = (nodes: TreeNode[]): TreeNode[] =>
-    nodes
-      .sort((left, right) => {
-        if (Boolean(left.file) !== Boolean(right.file)) return left.file ? 1 : -1
-        return left.name.localeCompare(right.name, undefined, { numeric: true })
-      })
-      .map((node) => ({ ...node, children: sort(node.children) }))
-  return sort(root.children)
 }
 
 function diffStats(diff: SessionDiff | undefined): { added: number; removed: number } {

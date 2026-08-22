@@ -46,19 +46,23 @@ export function activeTurnAnchor(
     role?: string | undefined
   }>,
   activeTurnId: string | undefined,
+  liveStart = 0,
 ): { id: string; index: number } | undefined {
   if (!activeTurnId) return undefined
 
-  const durableIndex = items.findIndex((item) => item.turnId === activeTurnId)
-  if (durableIndex >= 0) {
-    const item = items[durableIndex]
-    return item ? { id: item.id, index: durableIndex } : undefined
+  // The active turn is always in the live tail. A confirmed optimistic prompt
+  // can sit one row before the durable turn boundary, so include that row.
+  // This keeps a structural stream event independent of completed history.
+  const startIndex = Math.max(0, Math.min(items.length, liveStart) - 1)
+  for (let index = startIndex; index < items.length; index += 1) {
+    const item = items[index]
+    if (item?.turnId === activeTurnId) return { id: item.id, index }
   }
 
   // A local send starts rendering before the provider assigns its durable
   // turn id. Track the optimistic user item by its stable submission id so
   // that local -> durable reconciliation is not mistaken for another turn.
-  for (let index = items.length - 1; index >= 0; index -= 1) {
+  for (let index = items.length - 1; index >= startIndex; index -= 1) {
     const item = items[index]
     if (item?.turnId === '' && item.type === 'message' && item.role === 'user') {
       return { id: item.id, index }

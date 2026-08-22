@@ -8,9 +8,9 @@
  *
  * Two defences. The occlusion tracker that causes most of it is switched off
  * in main.ts (CalculateNativeWinOcclusion). And because the state was observed
- * even then, this watchdog asks the page what it believes at a slow interval
- * and heals a visible-but-hidden mismatch with a hide/show cycle, which
- * re-attaches the compositor.
+ * even then, this watchdog reads the main frame's native visibility state at
+ * a slow interval and heals a visible-but-hidden mismatch with a hide/show
+ * cycle, which re-attaches the compositor without waking renderer JavaScript.
  */
 
 type WatchedWindow = {
@@ -20,8 +20,12 @@ type WatchedWindow = {
   isFocused(): boolean
   hide(): void
   show(): void
-  webContents: { executeJavaScript(code: string): Promise<unknown> }
+  on?(event: WatchdogWindowEvent, listener: () => void): unknown
+  removeListener?(event: WatchdogWindowEvent, listener: () => void): unknown
+  webContents: { mainFrame: { readonly visibilityState: string } }
 }
+
+type WatchdogWindowEvent = 'focus' | 'blur' | 'show' | 'hide' | 'restore' | 'minimize' | 'closed'
 
 export const WATCHDOG_INTERVAL_MS = 15_000
 
@@ -46,40 +50,78 @@ export function startVisibilityWatchdog(
   window: WatchedWindow,
   onLog: (line: string) => void,
   intervalMs = WATCHDOG_INTERVAL_MS,
+  platform: NodeJS.Platform = process.platform,
 ): () => void {
+  if (platform !== 'win32') return () => {}
+
   let stopped = false
-  let checking = false
-  const timer = setInterval(() => {
-    if (stopped || checking) return
-    checking = true
-    void (async () => {
-      try {
-        if (window.isDestroyed()) return
-        const pageVisibility = z
-          .string()
-          .parse(await window.webContents.executeJavaScript('document.visibilityState'))
-        if (stopped || window.isDestroyed()) return
-        const nudge = needsCompositorNudge({
-          destroyed: false,
-          visible: window.isVisible(),
-          minimized: window.isMinimized(),
-          focused: window.isFocused(),
-          pageVisibility,
-        })
-        if (!nudge) return
-        onLog('window visible but page hidden; re-attaching the compositor')
-        window.hide()
-        window.show()
-      } catch {
-        // A destroyed or unresponsive renderer is handled by Electron's lifecycle.
-      } finally {
-        checking = false
-      }
-    })()
-  }, intervalMs)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const lifecycleEvents: WatchdogWindowEvent[] = [
+    'focus',
+    'blur',
+    'show',
+    'hide',
+    'restore',
+    'minimize',
+    'closed',
+  ]
+  const observesWindowState =
+    typeof window.on === 'function' && typeof window.removeListener === 'function'
+  const eligible = () =>
+    !window.isDestroyed() && window.isVisible() && !window.isMinimized() && window.isFocused()
+
+  const schedule = () => {
+    clearTimeout(timer)
+    timer = undefined
+    if (stopped) return
+    // BrowserWindow emits every eligibility change. Leave no timer behind
+    // while the app is in the background; older test doubles without events
+    // keep a cheap native-state poll, but still never wake their renderer.
+    if (!eligible() && observesWindowState) return
+    timer = setTimeout(check, intervalMs)
+  }
+
+  const check = () => {
+    if (stopped) return
+    timer = undefined
+    if (!eligible()) {
+      schedule()
+      return
+    }
+    try {
+      const pageVisibility = window.webContents.mainFrame.visibilityState
+      if (typeof pageVisibility !== 'string') throw new TypeError('Invalid page visibility')
+      if (stopped || !eligible()) return
+      const nudge = needsCompositorNudge({
+        destroyed: false,
+        visible: true,
+        minimized: false,
+        focused: true,
+        pageVisibility,
+      })
+      if (!nudge) return
+      onLog('window visible but page hidden; re-attaching the compositor')
+      window.hide()
+      window.show()
+    } catch {
+      // A destroyed frame is handled by Electron's lifecycle.
+    } finally {
+      schedule()
+    }
+  }
+
+  const onWindowStateChange = () => schedule()
+  if (observesWindowState) {
+    for (const event of lifecycleEvents) window.on!(event, onWindowStateChange)
+  }
+  schedule()
+
   return () => {
     stopped = true
-    clearInterval(timer)
+    clearTimeout(timer)
+    timer = undefined
+    if (observesWindowState) {
+      for (const event of lifecycleEvents) window.removeListener!(event, onWindowStateChange)
+    }
   }
 }
-import { z } from 'zod'

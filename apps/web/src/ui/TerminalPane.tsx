@@ -14,6 +14,7 @@ import {
 } from '../haptics.js'
 import type { Transport, ConnectionState } from '../transport.js'
 import { errorMessage } from '../boundary.js'
+import '../styles/terminal-pane.css'
 
 const MIN_HEIGHT = 160
 

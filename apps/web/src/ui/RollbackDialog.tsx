@@ -1,5 +1,6 @@
 import { History, X } from 'lucide-react'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/rollback.css'
 
 export type Checkpoint = {
   id: number

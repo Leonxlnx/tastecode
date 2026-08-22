@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const css = [
+  readFileSync(new URL('./markdown.css', import.meta.url), 'utf8'),
+  readFileSync(new URL('./thread.css', import.meta.url), 'utf8'),
+].join('\n')
 
 describe('thread reply spacing', () => {
   it('keeps assistant prose compact without shrinking prompts or code', () => {

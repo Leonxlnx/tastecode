@@ -134,6 +134,16 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('always uses the installed Claude CLI instead of the SDK bundled executable', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    await adapter.startThread('/repo')
+
+    expect(fake.inputs[0]!.options.pathToClaudeCodeExecutable).toBe('claude')
+    expect(fake.inputs[0]!.options.spawnClaudeCodeProcess).toBeTypeOf('function')
+    adapter.dispose()
+  })
+
   it('resumes through a fresh SDK query when effort changes between turns', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })

@@ -11,7 +11,6 @@ import {
 } from 'react'
 import type { CSSProperties, TransitionEvent as ReactTransitionEvent } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import { ProviderIdSchema } from '@harness/contracts'
 import type {
   Account,
   ApprovalDecision,
@@ -25,18 +24,20 @@ import type {
   ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
-import { z } from 'zod'
 import {
   isDesktop,
   isMacOS,
+  isStartupBenchmark,
   onNativeMenuAction,
   pickFolder,
+  reportStartupMilestone,
   setDesktopTheme,
   syncNativeMenuShortcuts,
 } from './bridge.js'
 import {
   createDefaultKeybindings,
-  KEYBINDING_DEFINITIONS,
+  KEYBINDING_IDS,
+  matchesDebugSettingsShortcut,
   matchesShortcut,
   readKeybindings,
   shortcutLabel,
@@ -45,44 +46,57 @@ import {
   type Shortcut,
 } from './shortcuts.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
-import { warmHighlighter } from './ui/highlighter.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import {
-  activeTurnIsSearching,
   appendUserMessage,
   beginOptimisticTurn,
   createOptimisticMessageId,
   emptyThread,
   reduce,
-  reduceDeltas,
   reduceEventLog,
   removeOptimisticMessage,
-  type ItemDeltaEvent,
+  threadItemById,
   type ThreadState,
 } from './thread-store.js'
-import { CommandPalette, type CommandScope, type PaletteCommand } from './ui/CommandPalette.js'
-import { CheckoutDiscardDialog } from './ui/CheckoutDiscardDialog.js'
+import { ThreadFrameStore } from './thread-frame-store.js'
+import {
+  appendBackgroundThreadDelta,
+  appendThreadDelta,
+  drainPendingThreadDeltas,
+  shouldDrainBackgroundDeltas,
+  shouldRetainThreadTranscript,
+  type PendingThreadDeltaBatch,
+} from './thread-delta-buffer.js'
+import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
+import { ActiveThread } from './ui/ActiveThread.js'
+import { preloadThread } from './ui/LazyThread.js'
 import { Composer, type SendAvailability, type WorkspaceInfo } from './ui/Composer.js'
+import { LazySettings } from './ui/LazySettings.js'
 import {
   getFastModeOffValue,
   getFastServiceTier,
   getNextServiceTierForModel,
-} from './ui/ModelSelector.js'
-import { RollbackDialog, type Checkpoint } from './ui/RollbackDialog.js'
+} from './model-service-tier.js'
+import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
-import { Settings, type SettingsSection } from './ui/Settings.js'
+import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { NoticePresence } from './ui/NoticePresence.js'
-import { Thread } from './ui/Thread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
-import { WelcomeDialog } from './ui/WelcomeDialog.js'
 import { serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
-import { canCaptureVoice, type VoiceRecording } from './voice-recorder.js'
+import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { UsageLimitsController } from './usage-limits-state.js'
+import {
+  hasWorkspaceStartForPath,
+  indexQueueItemIdsForChecks,
+  indexWorkspaceSessions,
+  ThreadOwnedMap,
+  workspaceProjectActivity,
+} from './workspace-idle.js'
 import {
   agentMark,
   choicesFor,
@@ -97,8 +111,34 @@ import {
   sourceKey,
   type ModelChoice,
 } from './model-catalog.js'
-import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
+import {
+  isModelCatalogSourceFresh,
+  parseModelCatalogCache,
+  serializeModelCatalogCache,
+} from './model-catalog-cache.js'
 import { parseSideChatCommand } from './side-chat-command.js'
+import {
+  findSession,
+  markSessionRead,
+  promoteSession,
+  reconcileProjectList,
+  removeSession,
+  updateSession,
+} from './project-store.js'
+import { createSessionOrderSerializer } from './session-order-serializer.js'
+import { createPaletteChatSearch, createPaletteChatSearchCache } from './palette-chat-search.js'
+import {
+  applyProjectOrder,
+  parseStoredProjectOrder,
+  parseStoredSessionOrder,
+} from './sidebar-order.js'
+import {
+  compactInactiveRunningThreadState,
+  completePendingQueueRead,
+  pruneInactiveQueueMetadata,
+  pruneInactiveThreadStates,
+  touchThreadState,
+} from './thread-state-cache.js'
 import {
   clearInstall,
   installState,
@@ -158,7 +198,6 @@ const PUBLIC_BETA_PROVIDER_IDS = new Set<ProviderId>(['codex', 'claude-code', 'g
 /** Engines a custom model can be attached to — ACP agents and API
  *  connections carry their own roster concepts and stay out of this list. */
 const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api' && id !== 'pi')
-const DIRECT_PROVIDER_ID_SET = new Set<ProviderId>(DIRECT_PROVIDER_IDS)
 /** Which named agent or custom harness source was chosen. */
 const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
@@ -171,8 +210,6 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
-/** Stable identity: a fresh [] every render re-renders every thread row. */
-const EMPTY_CHECKPOINTS: Checkpoint[] = []
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const EFFORT_KEY = 'harness.effort'
@@ -202,15 +239,20 @@ const WorkspacePanel = lazy(() =>
     default: module.WorkspacePanel,
   })),
 )
-
-async function preloadDockSurfaces(): Promise<void> {
-  await Promise.allSettled([
-    loadTerminalPane().then((module) => module.preloadTerminalRuntime()),
-    loadWorkspacePanel(),
-  ])
-}
-
-const LegacyProjectsSchema = z.array(z.object({ path: z.string(), name: z.string().optional() }))
+const CommandPalette = lazy(() =>
+  import('./ui/CommandPalette.js').then((module) => ({ default: module.CommandPalette })),
+)
+const CheckoutDiscardDialog = lazy(() =>
+  import('./ui/CheckoutDiscardDialog.js').then((module) => ({
+    default: module.CheckoutDiscardDialog,
+  })),
+)
+const RollbackDialog = lazy(() =>
+  import('./ui/RollbackDialog.js').then((module) => ({ default: module.RollbackDialog })),
+)
+const WelcomeDialog = lazy(() =>
+  import('./ui/WelcomeDialog.js').then((module) => ({ default: module.WelcomeDialog })),
+)
 
 /**
  * Projects and sessions used to live here. The server owns them now, so this
@@ -221,10 +263,16 @@ function takeLegacyProjects(): Array<{ path: string; name?: string }> {
   try {
     const raw = readSetting(PROJECTS_KEY)
     if (!raw) return []
-    return LegacyProjectsSchema.parse(JSON.parse(raw)).map(({ path, name }) => ({
-      path,
-      ...(name ? { name } : {}),
-    }))
+    const value: unknown = JSON.parse(raw)
+    if (!Array.isArray(value)) return []
+    const projects: Array<{ path: string; name?: string }> = []
+    for (const entry of value) {
+      if (!isRecord(entry) || typeof entry['path'] !== 'string') return []
+      const name = entry['name']
+      if (name !== undefined && typeof name !== 'string') return []
+      projects.push({ path: entry['path'], ...(name ? { name } : {}) })
+    }
+    return projects
   } catch {
     return []
   }
@@ -236,16 +284,6 @@ type CustomModel = {
   displayName: string
 }
 
-const CustomModelSchema: z.ZodType<CustomModel> = z.object({
-  provider: ProviderIdSchema.refine((provider) => DIRECT_PROVIDER_ID_SET.has(provider)),
-  modelId: z.string().trim().min(1),
-  displayName: z
-    .string()
-    .catch('')
-    .transform((name) => name.trim()),
-})
-const CustomModelsInputSchema = z.array(z.unknown())
-
 type RecoverableDraft = { text: string; attachments: string[] }
 type PendingSubmission = RecoverableDraft & {
   id: string
@@ -256,8 +294,6 @@ type PendingSubmission = RecoverableDraft & {
   optimisticTurn?: NonNullable<ThreadState['activeTurn']>
   precedingTurnId?: string
 }
-type PendingThreadDeltaBatch = { events: ItemDeltaEvent[]; sequence?: number }
-
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
 type AccountCheck = { provider: ProviderId; state: CatalogAvailability; account?: Account }
 
@@ -267,10 +303,15 @@ type WorkspaceIdleProbe = {
   idlePath: string | undefined
   blockedPath: string | undefined
   pendingStarts: Map<string, { path: string; tokens: number[] }>
-  submissionStarts: Map<string, { threadId: string; token: number }>
-  queuedStarts: Map<string, { threadId: string; token: number }>
+  submissionStarts: ThreadOwnedMap<{ threadId: string; token: number }>
+  queuedStarts: ThreadOwnedMap<{ threadId: string; token: number }>
   claimedStarts: Set<string>
-  queueActions: Map<string, { threadId: string; count: number; pending: number; steers: number }>
+  queueActions: ThreadOwnedMap<{
+    threadId: string
+    count: number
+    pending: number
+    steers: number
+  }>
   unknownQueues: Set<string>
   nextStart: number
   revision: number
@@ -335,15 +376,30 @@ function readCustomModels(): CustomModel[] {
   try {
     const raw = readSetting(CUSTOM_MODELS_KEY)
     if (!raw) return []
-    const entries = CustomModelsInputSchema.parse(JSON.parse(raw))
+    const entries: unknown = JSON.parse(raw)
+    if (!Array.isArray(entries)) return []
     const models: CustomModel[] = []
     for (const entry of entries) {
-      const model = CustomModelSchema.safeParse(entry)
-      if (model.success) models.push(model.data)
+      const model = parseCustomModel(entry)
+      if (model) models.push(model)
     }
     return models
   } catch {
     return []
+  }
+}
+
+function parseCustomModel(value: unknown): CustomModel | undefined {
+  if (!isRecord(value)) return undefined
+  const provider = DIRECT_PROVIDER_IDS.find((candidate) => candidate === value['provider'])
+  const rawModelId = value['modelId']
+  if (!provider || typeof rawModelId !== 'string') return undefined
+  const modelId = rawModelId.trim()
+  if (!modelId) return undefined
+  return {
+    provider,
+    modelId,
+    displayName: typeof value['displayName'] === 'string' ? value['displayName'].trim() : '',
   }
 }
 
@@ -434,6 +490,7 @@ export function App() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => readSetting(ONBOARDING_KEY) === 'done',
   )
+  const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
 
@@ -442,19 +499,26 @@ export function App() {
     writeSetting(ONBOARDING_KEY, 'done')
     setOnboardingDismissed(true)
   }, [projects, projectsStatus, onboardingDismissed])
+  useEffect(() => {
+    if (isStartupBenchmark && projectsStatus === 'ready') {
+      reportStartupMilestone('projects-ready')
+    }
+  }, [projectsStatus])
   const [offline, setOffline] = useState(false)
   const [activeId, setActiveId] = useState<string | undefined>()
   const [activePath, setActivePath] = useState<string | undefined>()
   const [thread, setThread] = useState<ThreadState>(emptyThread)
+  const activeThreadFrames = useRef<ThreadFrameStore | null>(null)
+  activeThreadFrames.current ??= new ThreadFrameStore(emptyThread)
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
-  /** A fresh array every streamed frame would defeat any memo below it. */
-  const reviewList = useMemo(() => Object.values(thread.reviews), [thread.reviews])
   // Every live session keeps reducing events while it is off screen. A ref is
   // intentional: streamed deltas for a background session should not rerender
   // the active thread, while selecting it still gets the latest state at once.
   const threadStates = useRef(new Map<string, ThreadState>())
   /** Highest durable event already reduced into each complete thread cache. */
   const durableSequences = useRef(new Map<string, number>())
+  /** Background caches whose durable prefix was released and must reload before display. */
+  const partialThreadStates = useRef(new Set<string>())
   const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
   const rejectedDrafts = useRef(new Map<string, RecoverableDraft>())
   const rejectedDraftOwner = useRef<string | undefined>(undefined)
@@ -470,6 +534,7 @@ export function App() {
   const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
   const localQueueRevisions = useRef(new Map<string, number>())
   const serverQueueRevisions = useRef(new Map<string, number>())
+  const pendingQueueReads = useRef(new Map<string, number>())
   const pendingSession = useRef<
     | {
         id: string
@@ -485,13 +550,16 @@ export function App() {
   const [customModels] = useState<CustomModel[]>(readCustomModels)
   const customModelsRef = useRef(customModels)
   customModelsRef.current = customModels
+  const [initialModelCatalogCache] = useState(() =>
+    parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY)),
+  )
   const [{ models: catalogModels, loaded: modelsLoaded, unvalidatedModelKeys }, setModelCatalog] =
     useState<{
       models: ModelChoice[]
       loaded: boolean
       unvalidatedModelKeys: Set<string>
     }>(() => {
-      const cached = parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))
+      const cached = initialModelCatalogCache?.models
       const restored = cached === undefined ? readStoredModelChoice(customModels) : undefined
       return {
         models: cached ?? (restored ? [restored] : []),
@@ -505,23 +573,30 @@ export function App() {
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
+  const acpAgentsRef = useRef(acpAgents)
+  acpAgentsRef.current = acpAgents
   const [customHarnessIds, setCustomHarnessIds] = useState<Set<string>>(() => new Set())
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
+  const modelConnectionsRef = useRef(modelConnections)
+  modelConnectionsRef.current = modelConnections
   const [catalogRequest, setCatalogRequest] = useState(0)
+  const [catalogScope, setCatalogScope] = useState<'selected' | 'all'>('selected')
   const [catalogAvailability, setCatalogAvailability] = useState<CatalogAvailability>('loading')
-  const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
-    try {
-      return new Set(z.array(z.string()).parse(JSON.parse(readSetting(HIDDEN_MODELS_KEY) ?? '[]')))
-    } catch {
-      return new Set()
+  useEffect(() => {
+    if (isStartupBenchmark && catalogAvailability === 'ready') {
+      reportStartupMilestone('catalog-ready')
     }
+  }, [catalogAvailability])
+  const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
+    return new Set(parseStoredStringArray(readSetting(HIDDEN_MODELS_KEY)))
   })
   const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
   // Read via ref inside the catalog effect so toggling visibility does not
   // refetch every provider's model list.
   const hiddenModelsRef = useRef(hiddenModels)
   hiddenModelsRef.current = hiddenModels
-  const [autoReviewSupported, setAutoReviewSupported] = useState(false)
+  const autoReviewSupported =
+    providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true
   const [modelId, setModelId] = useState<string | undefined>(
     () => readSetting(MODEL_KEY) ?? undefined,
   )
@@ -552,6 +627,8 @@ export function App() {
   const [branches, setBranches] = useState<string[]>([])
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
+  const [usageRequested, setUsageRequested] = useState(false)
+  const openUsageOverview = useCallback(() => setUsageRequested(true), [])
   const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
   const updateProfileIdentity = useCallback((updates: Partial<ProfileIdentityPreferences>) => {
     setProfileIdentity((current) => {
@@ -560,10 +637,15 @@ export function App() {
       return next
     })
   }, [])
+  const changeProfileDisplayName = useCallback(
+    (displayName: string) => updateProfileIdentity({ displayName }),
+    [updateProfileIdentity],
+  )
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [debugSettingsEnabled, setDebugSettingsEnabled] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('providers')
@@ -627,7 +709,6 @@ export function App() {
   )
   const terminalOpen = bottomTerminalPhase === 'opening' || bottomTerminalPhase === 'open'
   const bottomTerminalMounted = bottomTerminalPhase !== 'closed'
-  const [bottomTerminalPrepared, setBottomTerminalPrepared] = useState(false)
   const stageBody = useRef<HTMLDivElement>(null)
   const bottomTerminalComposerOrigin = useRef<{ left: number; top: number } | undefined>(undefined)
   const bottomTerminalComposerAnimation = useRef<Animation | null>(null)
@@ -638,6 +719,7 @@ export function App() {
   )
   const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
+  const [workspacePanelMounted, setWorkspacePanelMounted] = useState(false)
   const [workspacePanelExpanded, setWorkspacePanelExpanded] = useState(false)
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(readWorkspacePanelWidth)
   const [workspaceTerminalToggleRequest, setWorkspaceTerminalToggleRequest] = useState(0)
@@ -775,26 +857,6 @@ export function App() {
       ),
     [selectedModelChoice, provider, acpAgent, providerStatuses, modelConnections],
   )
-
-  // Syntax grammars load in the background from the first frame, so the first
-  // code block an agent produces is already coloured.
-  useEffect(warmHighlighter, [])
-
-  useEffect(() => {
-    let active = true
-    const prepare = () => {
-      void preloadDockSurfaces().then(() => {
-        if (active) setBottomTerminalPrepared(true)
-      })
-    }
-    const idle = globalThis.requestIdleCallback?.(prepare, { timeout: 1_000 })
-    const timeout = idle === undefined ? globalThis.setTimeout(prepare, 200) : undefined
-    return () => {
-      active = false
-      if (idle !== undefined) globalThis.cancelIdleCallback(idle)
-      if (timeout !== undefined) globalThis.clearTimeout(timeout)
-    }
-  }, [])
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -981,10 +1043,10 @@ export function App() {
     idlePath: undefined,
     blockedPath: undefined,
     pendingStarts: new Map(),
-    submissionStarts: new Map(),
-    queuedStarts: new Map(),
+    submissionStarts: new ThreadOwnedMap(),
+    queuedStarts: new ThreadOwnedMap(),
     claimedStarts: new Set(),
-    queueActions: new Map(),
+    queueActions: new ThreadOwnedMap(),
     unknownQueues: new Set(),
     nextStart: 0,
     revision: 0,
@@ -992,27 +1054,94 @@ export function App() {
     refreshedRevision: -1,
     refreshedPath: undefined,
   })
+  const isThreadStateProtected = useCallback((threadId: string) => {
+    const probe = workspaceIdleProbe.current
+    const pending = pendingSession.current
+    return (
+      pendingSubmissions.current.has(threadId) ||
+      pendingThreadDeltas.current.has(threadId) ||
+      historyOwners.current.has(threadId) ||
+      pendingInterruptThreadIds.current.has(threadId) ||
+      probe.pendingStarts.has(threadId) ||
+      pending?.id === threadId ||
+      pending?.threadId === threadId ||
+      (queueStates.current.get(threadId)?.items.length ?? 0) > 0 ||
+      probe.submissionStarts.countForThread(threadId) > 0 ||
+      probe.queuedStarts.countForThread(threadId) > 0 ||
+      probe.queueActions.countForThread(threadId) > 0
+    )
+  }, [])
+  const pruneThreadStateCacheTimer = useRef<number | undefined>(undefined)
+  useEffect(
+    () => () => {
+      if (pruneThreadStateCacheTimer.current !== undefined) {
+        window.clearTimeout(pruneThreadStateCacheTimer.current)
+      }
+    },
+    [],
+  )
+  const pruneThreadStateCacheNow = useCallback(
+    (activeThreadId = activeIdRef.current) => {
+      if (pruneThreadStateCacheTimer.current !== undefined) {
+        window.clearTimeout(pruneThreadStateCacheTimer.current)
+        pruneThreadStateCacheTimer.current = undefined
+      }
+      const evicted = pruneInactiveThreadStates(threadStates.current, durableSequences.current, {
+        activeId: activeThreadId,
+        isProtected: isThreadStateProtected,
+        isPartial: (threadId) => partialThreadStates.current.has(threadId),
+        onCompact: (threadId) => partialThreadStates.current.add(threadId),
+      })
+      for (const threadId of evicted) partialThreadStates.current.delete(threadId)
+      pruneInactiveQueueMetadata(
+        queueStates.current,
+        localQueueRevisions.current,
+        serverQueueRevisions.current,
+        pendingQueueReads.current,
+        { activeId: activeThreadId, isProtected: isThreadStateProtected },
+      )
+    },
+    [isThreadStateProtected],
+  )
+  const schedulePruneThreadStateCache = useCallback(() => {
+    if (pruneThreadStateCacheTimer.current !== undefined) return
+    pruneThreadStateCacheTimer.current = window.setTimeout(() => {
+      pruneThreadStateCacheTimer.current = undefined
+      pruneThreadStateCacheNow()
+    }, 0)
+  }, [pruneThreadStateCacheNow])
+  const beginQueueRead = useCallback((threadId: string) => {
+    pendingQueueReads.current.set(threadId, (pendingQueueReads.current.get(threadId) ?? 0) + 1)
+  }, [])
+  const finishQueueRead = useCallback(
+    (threadId: string) => {
+      if (completePendingQueueRead(pendingQueueReads.current, threadId)) {
+        pruneThreadStateCacheNow()
+      }
+    },
+    [pruneThreadStateCacheNow],
+  )
   useEffect(() => {
     workspaceIdleProbe.current.revision += 1
   }, [activePath])
   // prettier-ignore
   const invalidateWorkspaceIdleProbe = useCallback((projectPath: string | undefined) => { if (!projectPath || projectPath !== activePathRef.current) return; workspaceIdleProbe.current.revision += 1; workspaceIdleProbe.current.idlePath = undefined; if (workspaceIdleProbe.current.blockedPath === projectPath) workspaceIdleProbe.current.blockedPath = undefined }, [])
   // prettier-ignore
-  const releaseWorkspaceStart = useCallback((threadId: string, token?: number) => { const probe = workspaceIdleProbe.current, pending = probe.pendingStarts.get(threadId); if (!pending) return; const index = token === undefined ? 0 : pending.tokens.indexOf(token); if (index < 0) return; pending.tokens.splice(index, 1); if (pending.tokens.length > 0) return; probe.pendingStarts.delete(threadId); if (probe.blockedPath !== pending.path || [...probe.pendingStarts.values()].some((entry) => entry.path === pending.path)) return; probe.blockedPath = undefined; return pending.path }, [])
+  const releaseWorkspaceStart = useCallback((threadId: string, token?: number) => { const probe = workspaceIdleProbe.current, pending = probe.pendingStarts.get(threadId); if (!pending) return; const index = token === undefined ? 0 : pending.tokens.indexOf(token); if (index < 0) return; pending.tokens.splice(index, 1); if (pending.tokens.length > 0) return; probe.pendingStarts.delete(threadId); if (probe.blockedPath !== pending.path || hasWorkspaceStartForPath(probe.pendingStarts.values(), pending.path)) return; probe.blockedPath = undefined; return pending.path }, [])
   // prettier-ignore
   const holdWorkspaceStart = useCallback((threadId: string, path: string) => { const probe = workspaceIdleProbe.current, current = probe.pendingStarts.get(threadId), token = ++probe.nextStart; probe.idlePath = probe.refreshedPath = undefined; probe.pendingStarts.set(threadId, { path, tokens: [...(current?.tokens ?? []), token] }); return token }, [])
   // prettier-ignore
-  const refreshWorkspaceAfterCompletion = useCallback((projectPath: string | undefined) => { if (!projectPath || projectPath !== activePathRef.current) return; const probe = workspaceIdleProbe.current; if (probe.refreshedPath === projectPath && probe.refreshedRevision === probe.revision) return; probe.pendingPath = projectPath; if (probe.inFlight) return; const drain = async () => { const transportRevision = probe.transportRevision; let retryPath: string | undefined, retryAvailable = true; while (probe.pendingPath && transportRevision === probe.transportRevision) { const path = probe.pendingPath; if (path !== retryPath) { retryPath = path; retryAvailable = true }; const revision = probe.revision; probe.pendingPath = undefined; let retry = false; try { const { projects } = await transport.request('projects.list', {}); if (revision !== probe.revision || transportRevision !== probe.transportRevision) continue; if (activePathRef.current !== path) continue; const project = projects.find((candidate) => candidate.path === path); if (!project) retry = probe.idlePath !== path; else { const pending = [...probe.pendingStarts.values()].some((entry) => entry.path === path), unknown = project.sessions.some((session) => probe.unknownQueues.has(session.id)), actions = [...probe.queueActions.values()].filter((action) => project.sessions.some((session) => session.id === action.threadId)), queued = project.sessions.some((session) => session.status === 'queued' || (queueStates.current.get(session.id)?.items.length ?? 0) > 0) || actions.length > 0; if (unknown || actions.some((action) => action.pending === 0)) resync.current(); const blocked = project.sessions.some((session) => session.running) || pending || queued || unknown; if (blocked) probe.blockedPath = path; else if (probe.blockedPath === path) probe.blockedPath = undefined; probe.idlePath = blocked ? undefined : path } } catch { retry = transportRevision === probe.transportRevision && revision === probe.revision && probe.idlePath !== path }; if (!retry || !retryAvailable || probe.pendingPath) continue; retryAvailable = false; probe.pendingPath = path }; const path = probe.idlePath, blocked = [...probe.pendingStarts.values()].some((pending) => pending.path === path); if (path === activePathRef.current && blocked) probe.blockedPath = path; probe.idlePath = undefined; if (path === activePathRef.current && !blocked) { probe.refreshedPath = path; probe.refreshedRevision = probe.revision; setWorkspaceRefreshRevision((revision) => revision + 1) } }; const inFlight = drain(); probe.inFlight = inFlight; void inFlight.finally(() => { if (probe.inFlight === inFlight) probe.inFlight = undefined }) }, [transport])
+  const refreshWorkspaceAfterCompletion = useCallback((projectPath: string | undefined) => { if (!projectPath || projectPath !== activePathRef.current) return; const probe = workspaceIdleProbe.current; if (probe.refreshedPath === projectPath && probe.refreshedRevision === probe.revision) return; probe.pendingPath = projectPath; if (probe.inFlight) return; const drain = async () => { const transportRevision = probe.transportRevision; let retryPath: string | undefined, retryAvailable = true; while (probe.pendingPath && transportRevision === probe.transportRevision) { const path = probe.pendingPath; if (path !== retryPath) { retryPath = path; retryAvailable = true }; const revision = probe.revision; probe.pendingPath = undefined; let retry = false; try { const { projects } = await transport.request('projects.list', {}); if (revision !== probe.revision || transportRevision !== probe.transportRevision) continue; if (activePathRef.current !== path) continue; const project = projects.find((candidate) => candidate.path === path); if (!project) retry = probe.idlePath !== path; else { const pending = hasWorkspaceStartForPath(probe.pendingStarts.values(), path), activity = workspaceProjectActivity(project.sessions, queueStates.current, probe.unknownQueues, probe.queueActions.values()); if (activity.needsResync) resync.current(); const blocked = activity.running || pending || activity.queued || activity.unknown; if (blocked) probe.blockedPath = path; else if (probe.blockedPath === path) probe.blockedPath = undefined; probe.idlePath = blocked ? undefined : path } } catch { retry = transportRevision === probe.transportRevision && revision === probe.revision && probe.idlePath !== path }; if (!retry || !retryAvailable || probe.pendingPath) continue; retryAvailable = false; probe.pendingPath = path }; const path = probe.idlePath, blocked = hasWorkspaceStartForPath(probe.pendingStarts.values(), path); if (path === activePathRef.current && blocked) probe.blockedPath = path; probe.idlePath = undefined; if (path === activePathRef.current && !blocked) { probe.refreshedPath = path; probe.refreshedRevision = probe.revision; setWorkspaceRefreshRevision((revision) => revision + 1) } }; const inFlight = drain(); probe.inFlight = inFlight; void inFlight.finally(() => { if (probe.inFlight === inFlight) probe.inFlight = undefined }) }, [transport])
   // prettier-ignore
-  const releaseQueuedStart = useCallback((queuedTurnId: string) => { const probe = workspaceIdleProbe.current, owner = probe.queuedStarts.get(queuedTurnId); if (!owner) return; probe.queuedStarts.delete(queuedTurnId); probe.claimedStarts.delete(queuedTurnId); for (const [id, start] of probe.submissionStarts) if (start.threadId === owner.threadId && start.token === owner.token) probe.submissionStarts.delete(id); const path = releaseWorkspaceStart(owner.threadId, owner.token); if (path) refreshWorkspaceAfterCompletion(path) }, [releaseWorkspaceStart, refreshWorkspaceAfterCompletion])
+  const releaseQueuedStart = useCallback((queuedTurnId: string) => { const probe = workspaceIdleProbe.current, owner = probe.queuedStarts.get(queuedTurnId); if (!owner) return; probe.queuedStarts.delete(queuedTurnId); probe.claimedStarts.delete(queuedTurnId); for (const [id, start] of probe.submissionStarts.entriesForThread(owner.threadId)) if (start.token === owner.token) probe.submissionStarts.delete(id); const path = releaseWorkspaceStart(owner.threadId, owner.token); if (path) refreshWorkspaceAfterCompletion(path) }, [releaseWorkspaceStart, refreshWorkspaceAfterCompletion])
   // prettier-ignore
   const holdQueueAction = useCallback((id: string, threadId: string, kind: 'delete' | 'steer') => { const probe = workspaceIdleProbe.current, action = probe.queueActions.get(id) ?? { threadId, count: 0, pending: 0, steers: 0 }; action.count += 1; action.pending += 1; if (kind === 'steer') action.steers += 1; probe.queueActions.set(id, action) }, [])
   // prettier-ignore
   const settleQueueAction = useCallback((id: string, kind: 'delete' | 'steer', indeterminate = false) => { const action = workspaceIdleProbe.current.queueActions.get(id); if (!action) return; action.pending -= 1; if (!indeterminate) { action.count -= 1; if (kind === 'steer') action.steers -= 1 }; if (action.count === 0) workspaceIdleProbe.current.queueActions.delete(id) }, [])
   // prettier-ignore
-  const releaseDirectStart = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, queued = new Set([...probe.queuedStarts.values()].filter((owner) => owner.threadId === threadId).map((owner) => owner.token)), token = probe.pendingStarts.get(threadId)?.tokens.find((candidate) => !queued.has(candidate)); if (token === undefined) return; for (const [id, start] of probe.submissionStarts) if (start.threadId === threadId && start.token === token) probe.submissionStarts.delete(id); releaseWorkspaceStart(threadId, token) }, [releaseWorkspaceStart])
+  const releaseDirectStart = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, queued = new Set([...probe.queuedStarts.entriesForThread(threadId)].map(([, owner]) => owner.token)), token = probe.pendingStarts.get(threadId)?.tokens.find((candidate) => !queued.has(candidate)); if (token === undefined) return; for (const [id, start] of probe.submissionStarts.entriesForThread(threadId)) if (start.token === token) probe.submissionStarts.delete(id); releaseWorkspaceStart(threadId, token) }, [releaseWorkspaceStart])
   // prettier-ignore
-  const clearWorkspaceThread = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); queueStates.current.delete(threadId); pendingSubmissions.current.delete(threadId); threadStates.current.delete(threadId); durableSequences.current.delete(threadId); pendingThreadDeltas.current.delete(threadId); historyOwners.current.delete(threadId); historyBuffers.current.delete(threadId); localQueueRevisions.current.delete(threadId); serverQueueRevisions.current.delete(threadId); for (const [id, owner] of probe.submissionStarts) if (owner.threadId === threadId) probe.submissionStarts.delete(id); for (const [id, owner] of probe.queuedStarts) if (owner.threadId === threadId) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id, action] of probe.queueActions) if (action.threadId === threadId) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
+  const clearWorkspaceThread = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); queueStates.current.delete(threadId); pendingSubmissions.current.delete(threadId); threadStates.current.delete(threadId); durableSequences.current.delete(threadId); partialThreadStates.current.delete(threadId); pendingThreadDeltas.current.delete(threadId); historyOwners.current.delete(threadId); historyBuffers.current.delete(threadId); localQueueRevisions.current.delete(threadId); serverQueueRevisions.current.delete(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); activeThreadFrames.current?.publish(emptyThread); setThread(emptyThread) }; return path }, [])
   /** Refetch after an outage. Held in a ref because the transport effect is
    *  set up before the fetchers it needs are declared. */
   const resync = useRef<(retry?: boolean) => void>(() => {})
@@ -1035,7 +1164,7 @@ export function App() {
       let next = threadStates.current.get(threadId) ?? emptyThread
       const rejected: PendingSubmission[] = []
       for (const submission of pending.values()) {
-        const durable = next.items.some((item) => item.id === submission.id && item.turnId !== '')
+        const durable = (threadItemById(next, submission.id)?.turnId ?? '') !== ''
         if (durable || queuedIds.has(submission.id)) {
           pending.delete(submission.id)
           if (queuedIds.has(submission.id) && submission.kind !== 'queue') {
@@ -1057,7 +1186,10 @@ export function App() {
       }
       if (pending.size === 0) pendingSubmissions.current.delete(threadId)
       threadStates.current.set(threadId, next)
-      if (threadId === activeIdRef.current) setThread(next)
+      if (threadId === activeIdRef.current) {
+        activeThreadFrames.current?.publish(next)
+        setThread(next)
+      }
       for (const submission of rejected) restoreRejectedDraft(threadId, submission)
     },
     [restoreRejectedDraft],
@@ -1079,25 +1211,19 @@ export function App() {
     // immediate.
     let liveFlush: number | undefined
     const applyPendingDeltas = (threadId: string) => {
-      const pending = pendingThreadDeltas.current.get(threadId)
-      const current = threadStates.current.get(threadId) ?? emptyThread
-      if (!pending || pending.events.length === 0) return current
-      pendingThreadDeltas.current.delete(threadId)
-      const next = reduceDeltas(current, pending.events)
-      threadStates.current.set(threadId, next)
-      if (pending.sequence !== undefined && durableSequences.current.has(threadId)) {
-        durableSequences.current.set(
-          threadId,
-          Math.max(durableSequences.current.get(threadId) ?? 0, pending.sequence),
-        )
-      }
-      return next
+      return drainPendingThreadDeltas(
+        threadStates.current,
+        pendingThreadDeltas.current,
+        durableSequences.current,
+        threadId,
+      )
     }
     const flushLive = () => {
       liveFlush = undefined
-      for (const threadId of pendingThreadDeltas.current.keys()) applyPendingDeltas(threadId)
       const id = activeIdRef.current
-      if (id) setThread(threadStates.current.get(id) ?? emptyThread)
+      if (id && pendingThreadDeltas.current.has(id)) {
+        activeThreadFrames.current?.publish(applyPendingDeltas(id))
+      }
     }
     const offEvents = transport.on('thread.event', ({ threadId, event, seq }) => {
       const durableSequence = durableSequences.current.get(threadId)
@@ -1118,21 +1244,44 @@ export function App() {
       // While a history load is in flight, the fetched state will replace the
       // cache — record the event so it can be replayed on top. Non-deltas
       // apply immediately below; deltas join the same frame batch as rendering.
-      for (const buffer of historyBuffers.current.get(threadId) ?? []) {
-        buffer.push({ seq, event })
+      const buffers = historyBuffers.current.get(threadId)
+      if (buffers) {
+        for (const buffer of buffers) buffer.push({ seq, event })
+      }
+      const partialBackground = !shouldRetainThreadTranscript(
+        threadId,
+        activeIdRef.current,
+        partialThreadStates.current,
+      )
+      if (
+        partialBackground &&
+        (event.type === 'item.delta' ||
+          ((event.type === 'item.started' || event.type === 'item.completed') &&
+            event.item.role !== 'user') ||
+          event.type === 'plan.updated' ||
+          event.type === 'usage.updated' ||
+          event.type === 'diff.updated' ||
+          event.type === 'approval.review.started' ||
+          event.type === 'approval.review.completed')
+      ) {
+        return
       }
       if (event.type === 'item.delta') {
-        if (pendingDeltas) {
-          pendingDeltas.events.push(event)
-          if (seq !== undefined && durableSequence !== undefined) {
-            pendingDeltas.sequence = Math.max(pendingSequence ?? durableSequence, seq)
-          }
-        } else {
-          const nextDeltas: PendingThreadDeltaBatch = { events: [event] }
-          if (seq !== undefined && durableSequence !== undefined) nextDeltas.sequence = seq
-          pendingThreadDeltas.current.set(threadId, nextDeltas)
+        const active = threadId === activeIdRef.current
+        const sequence =
+          seq !== undefined && durableSequence !== undefined
+            ? Math.max(pendingSequence ?? durableSequence, seq)
+            : undefined
+        const nextDeltas = active
+          ? appendThreadDelta(pendingDeltas, event, sequence)
+          : appendBackgroundThreadDelta(pendingDeltas, event, sequence)
+        if (!pendingDeltas) pendingThreadDeltas.current.set(threadId, nextDeltas)
+        if (active) {
+          liveFlush ??= requestAnimationFrame(flushLive)
+        } else if (shouldDrainBackgroundDeltas(nextDeltas)) {
+          applyPendingDeltas(threadId)
+          schedulePruneThreadStateCache()
         }
-        liveFlush ??= requestAnimationFrame(flushLive)
         return
       }
 
@@ -1141,18 +1290,49 @@ export function App() {
       if (seq !== undefined && durableSequence !== undefined) {
         durableSequences.current.set(threadId, Math.max(durableSequence, seq))
       }
+      if (event.type === 'turn.started') {
+        if (
+          compactInactiveRunningThreadState(
+            threadStates.current,
+            durableSequences.current,
+            threadId,
+            {
+              activeId: activeIdRef.current,
+              protected: isThreadStateProtected(threadId),
+            },
+          )
+        ) {
+          partialThreadStates.current.add(threadId)
+        }
+        schedulePruneThreadStateCache()
+      }
       if (
         (event.type === 'item.started' || event.type === 'item.completed') &&
         event.item.role === 'user'
       ) {
         deletePendingSubmission(pendingSubmissions.current, threadId, event.item.id)
+        if (
+          compactInactiveRunningThreadState(
+            threadStates.current,
+            durableSequences.current,
+            threadId,
+            {
+              activeId: activeIdRef.current,
+              protected: isThreadStateProtected(threadId),
+            },
+          )
+        ) {
+          partialThreadStates.current.add(threadId)
+        }
+        schedulePruneThreadStateCache()
       }
 
       if (threadId === activeIdRef.current) {
-        if (liveFlush !== undefined && pendingThreadDeltas.current.size === 0) {
+        if (liveFlush !== undefined && !pendingThreadDeltas.current.has(threadId)) {
           cancelAnimationFrame(liveFlush)
           liveFlush = undefined
         }
+        activeThreadFrames.current?.publish(next)
         setThread(next)
       }
       if (threadId === activeIdRef.current && endsDesignBriefing(event)) setDesignMode(false)
@@ -1166,8 +1346,16 @@ export function App() {
         if (event.type === 'turn.started') {
           const probe = workspaceIdleProbe.current
           probe.unknownQueues.delete(threadId)
-          // prettier-ignore
-          const queued = [...probe.queuedStarts].find(([id, owner]) => owner.threadId === threadId && (probe.claimedStarts.has(id) || !queueStates.current.get(threadId)?.items.some((item) => item.id === id)))?.[0]
+          let queued: string | undefined
+          for (const [id] of probe.queuedStarts.entriesForThread(threadId)) {
+            if (
+              probe.claimedStarts.has(id) ||
+              !queueStates.current.get(threadId)?.items.some((item) => item.id === id)
+            ) {
+              queued = id
+              break
+            }
+          }
           if (queued) releaseQueuedStart(queued)
           else releaseDirectStart(threadId)
           invalidateWorkspaceIdleProbe(projectPath)
@@ -1205,20 +1393,54 @@ export function App() {
           refreshUsage(providerRef.current)
         }
       }
+      if (event.type === 'turn.completed' || event.type === 'thread.error') {
+        schedulePruneThreadStateCache()
+      }
     })
     const offQueue = transport.on('thread.queue', ({ threadId, items, canSteer }) => {
-      // prettier-ignore
-      const previous = new Set(queueStates.current.get(threadId)?.items.map((item) => item.id)), current = new Set(items.map((item) => item.id)), probe = workspaceIdleProbe.current
-      if ([...previous].some((id) => !current.has(id))) probe.unknownQueues.add(threadId)
+      const previousItems = queueStates.current.get(threadId)?.items ?? []
+      const probe = workspaceIdleProbe.current
+      const trackedChecks =
+        probe.queuedStarts.countForThread(threadId) + probe.queueActions.countForThread(threadId)
+      const currentIds = indexQueueItemIdsForChecks(items, previousItems.length + trackedChecks)
+      const previousIds =
+        trackedChecks === 0 ? undefined : indexQueueItemIdsForChecks(previousItems, trackedChecks)
+      let removed = false
+      for (const item of previousItems) {
+        if (currentIds ? currentIds.has(item.id) : items.some((current) => current.id === item.id))
+          continue
+        removed = true
+        break
+      }
+      if (removed) probe.unknownQueues.add(threadId)
       else probe.unknownQueues.delete(threadId)
-      // prettier-ignore
-      { for (const [id, owner] of probe.queuedStarts) if (owner.threadId === threadId) { if (current.has(id)) probe.claimedStarts.delete(id); else if (previous.has(id) && !probe.queueActions.has(id)) probe.claimedStarts.add(id) }; for (const [id, action] of probe.queueActions) if (action.threadId === threadId && action.pending === 0 && current.has(id) && !previous.has(id)) probe.queueActions.delete(id) }
+      for (const [id] of probe.queuedStarts.entriesForThread(threadId)) {
+        const currentHasId = currentIds ? currentIds.has(id) : items.some((item) => item.id === id)
+        if (currentHasId) probe.claimedStarts.delete(id)
+        else if (
+          (previousIds ? previousIds.has(id) : previousItems.some((item) => item.id === id)) &&
+          !probe.queueActions.has(id)
+        )
+          probe.claimedStarts.add(id)
+      }
+      for (const [id, action] of probe.queueActions.entriesForThread(threadId)) {
+        const currentHasId = currentIds ? currentIds.has(id) : items.some((item) => item.id === id)
+        const previousHasId = previousIds
+          ? previousIds.has(id)
+          : previousItems.some((item) => item.id === id)
+        if (action.pending === 0 && currentHasId && !previousHasId) {
+          probe.queueActions.delete(id)
+        }
+      }
       serverQueueRevisions.current.set(
         threadId,
         (serverQueueRevisions.current.get(threadId) ?? 0) + 1,
       )
       queueStates.current.set(threadId, { items, canSteer })
       settleQueuedSubmissions(threadId, items)
+      if (items.length === 0) {
+        schedulePruneThreadStateCache()
+      }
       const projectPath = findSession(projectsRef.current, threadId)?.project.path
       if (items.length === 0 && probe.blockedPath === projectPath)
         refreshWorkspaceAfterCompletion(projectPath)
@@ -1303,6 +1525,7 @@ export function App() {
     refreshWorkspaceAfterCompletion,
     refreshUsage,
     usageController,
+    schedulePruneThreadStateCache,
   ])
 
   useEffect(() => {
@@ -1325,49 +1548,83 @@ export function App() {
   // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
+    const mayReuseInitialCatalog = catalogRequest === 0 && catalogScope === 'selected'
+    const initialSourceFresh = (source: string) =>
+      mayReuseInitialCatalog && isModelCatalogSourceFresh(initialModelCatalogCache, source)
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
+      const activeSession = activeIdRef.current
+        ? findSession(projectsRef.current, activeIdRef.current)?.session
+        : undefined
+      const selectedHarnesses = new Set(
+        [acpAgent, activeSession?.agent].filter((id): id is string => id !== undefined),
+      )
       const auxiliaryCatalog = Promise.all([
-        transport.request('connections.list', {}).catch(() => ({ connections: [] })),
-        transport.request('acp.agents', {}).catch(() => ({ agents: [] })),
-        transport.request('harnesses.list', {}).catch(() => ({ harnesses: [] })),
+        catalogScope === 'all'
+          ? transport.request('connections.list', {}).catch(() => ({ connections: [] }))
+          : Promise.resolve({ connections: modelConnectionsRef.current }),
+        catalogScope === 'all'
+          ? transport.request('acp.agents', {}).catch(() => ({ agents: [] }))
+          : Promise.resolve({ agents: acpAgentsRef.current }),
       ])
+      const selectedHarnessesResult =
+        catalogScope === 'all' || selectedHarnesses.size > 0
+          ? transport.request('harnesses.list', {}).catch(() => ({ harnesses: [] }))
+          : undefined
       const providersResult = await transport.request('providers.list', {})
       const providers = providersResult?.providers ?? []
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
-      const storedProvider = ProviderIdSchema.safeParse(readSetting(SETUP_KEY))
-      if (
-        !activeIdRef.current &&
-        (!storedProvider.success || !PUBLIC_BETA_PROVIDER_IDS.has(storedProvider.data))
-      ) {
-        const fallback = providers.find(
+      const storedProviderId = readSetting(SETUP_KEY)
+      const storedProvider = PROVIDER_IDS.find((id) => id === storedProviderId)
+      const storedProviderReady =
+        storedProvider !== undefined &&
+        providers.some(
           (status) =>
+            status.id === storedProvider &&
             PUBLIC_BETA_PROVIDER_IDS.has(status.id) &&
             status.installed &&
             status.capabilities &&
             !status.problem &&
             status.auth !== 'unauthenticated',
         )
-        if (fallback) {
-          setProvider(fallback.id)
-        }
-      }
+      const fallbackProvider =
+        !activeIdRef.current && !readSetting(AGENT_KEY) && !storedProviderReady
+          ? providers.find(
+              (status) =>
+                PUBLIC_BETA_PROVIDER_IDS.has(status.id) &&
+                status.installed &&
+                status.capabilities &&
+                !status.problem &&
+                status.auth !== 'unauthenticated',
+            )
+          : undefined
       const unknownKeys = new Set<string>()
+      const selectedProviders = new Set<ProviderId>([
+        fallbackProvider?.id ?? provider,
+        ...(activeSession ? [activeSession.provider] : []),
+      ])
       const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
           .map(async (entry) => {
-            const preserveCatalog = () => {
-              const source = sourceKey({ provider: entry.id })
+            const source = sourceKey({ provider: entry.id })
+            const preserveCatalog = (validated = false) => {
               const preserved = catalogModelsRef.current.filter(
                 (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
               )
               for (const choice of preserved) {
                 if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
               }
-              return { provider: entry.id, discovered: false, models: preserved }
+              return { provider: entry.id, discovered: false, validated, models: preserved }
+            }
+            if (catalogScope !== 'all' && !selectedProviders.has(entry.id)) {
+              return preserveCatalog(initialSourceFresh(source))
+            }
+            if (initialSourceFresh(source)) {
+              const cached = preserveCatalog(true)
+              if (cached.models.length > 0) return cached
             }
             try {
               const result = await transport.request('models.list', { provider: entry.id })
@@ -1381,44 +1638,72 @@ export function App() {
                 false,
               )
               return models.length > 0
-                ? { provider: entry.id, discovered: true, models }
+                ? { provider: entry.id, discovered: true, validated: true, models }
                 : preserveCatalog()
             } catch {
               return preserveCatalog()
             }
           }),
       )
-      const [connectionsResult, agentsResult, harnessesResult] = await auxiliaryCatalog
+      const [[connectionsResult, agentsResult], direct] = await Promise.all([
+        auxiliaryCatalog,
+        directPromise,
+      ])
+      const selectedDirectReady = direct.some(
+        (entry) => selectedProviders.has(entry.provider) && entry.models.length > 0,
+      )
+      const harnessesResult = await (selectedHarnessesResult ??
+        (selectedDirectReady
+          ? Promise.resolve({ harnesses: [] })
+          : transport.request('harnesses.list', {}).catch(() => ({ harnesses: [] }))))
       const connections = connectionsResult?.connections ?? []
       const harnesses = harnessesResult?.harnesses ?? []
       setCustomHarnessIds(new Set(harnesses.map((harness) => harness.id)))
       const customSourcesPromise = Promise.all(
         harnesses.map(async (harness) => {
+          const source = sourceKey({ provider: harness.provider, agentId: harness.id })
           const input = {
             provider: harness.provider,
             sourceName: harness.displayName,
             mark: providerMark(harness.provider),
             agent: { id: harness.id, name: harness.displayName },
           }
+          const preserveCatalog = () => {
+            const preserved = catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            )
+            for (const choice of preserved) {
+              if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
+            }
+            return preserved
+          }
+          if (
+            catalogScope !== 'all' &&
+            !selectedHarnesses.has(harness.id) &&
+            (selectedDirectReady || selectedHarnesses.size > 0 || harnesses.length !== 1)
+          ) {
+            return { source, discovered: false, models: preserveCatalog() }
+          }
+          if (initialSourceFresh(source)) {
+            const cached = preserveCatalog()
+            if (cached.length > 0) return { source, discovered: false, models: cached }
+          }
           try {
             const result = await transport.request('models.list', {
               provider: harness.provider,
               agent: harness.id,
             })
-            return choicesFor(input, result.models, true)
+            return { source, discovered: true, models: choicesFor(input, result.models, true) }
           } catch {
-            const source = sourceKey({ provider: harness.provider, agentId: harness.id })
-            const preserved = catalogModelsRef.current.filter(
-              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-            )
-            if (preserved.length > 0) return preserved
+            const preserved = preserveCatalog()
+            if (preserved.length > 0) return { source, discovered: false, models: preserved }
             const fallback = choicesFor(input, [], true)
             for (const choice of fallback) unknownKeys.add(choice.key)
-            return fallback
+            return { source, discovered: false, models: fallback }
           }
         }),
       )
-      const [direct, customSources] = await Promise.all([directPromise, customSourcesPromise])
+      const customSources = await customSourcesPromise
       // Public beta scope: the picker holds only the three direct plans the
       // server lists. Explicit custom harnesses remain eligible because the
       // user configured those sources directly; parked built-ins stay hidden.
@@ -1430,16 +1715,26 @@ export function App() {
       const publicCatalog = directCatalog.filter((choice) =>
         PUBLIC_BETA_PROVIDER_IDS.has(choice.provider),
       )
-      const catalog = [...publicCatalog, ...customSources.flat()]
+      const catalog = [...publicCatalog, ...customSources.flatMap((entry) => entry.models)]
       const publicCatalogReady =
-        publicDiscoveries.length > 0 && publicDiscoveries.every((entry) => entry.discovered)
+        publicDiscoveries.length > 0 && publicDiscoveries.every((entry) => entry.validated)
       setAcpAgents(agentsResult?.agents ?? [])
       setModelConnections(connections)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       // A synthetic cache-miss entry has no tier metadata. Do not persist it
       // as an authoritative snapshot after a transient discovery failure.
-      if (unknownKeys.size === 0 && direct.every((entry) => entry.discovered)) {
-        writeSetting(MODEL_CATALOG_KEY, serializeModelCatalogCache(catalog))
+      const validatedSources = [
+        ...direct
+          .filter((entry) => entry.discovered)
+          .map((entry) => sourceKey({ provider: entry.provider })),
+        ...customSources.filter((entry) => entry.discovered).map((entry) => entry.source),
+      ]
+      const cacheableCatalog = catalog.filter((choice) => !unknownKeys.has(choice.key))
+      if (validatedSources.length > 0 && cacheableCatalog.length > 0) {
+        writeSetting(
+          MODEL_CATALOG_KEY,
+          serializeModelCatalogCache(cacheableCatalog, { validatedSources }),
+        )
       }
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
@@ -1498,6 +1793,7 @@ export function App() {
         selectionPool.find((choice) => choice.key === rememberedFallbackKey) ??
         fallback
       if (!selected) {
+        if (fallbackProvider) setProvider(fallbackProvider.id)
         setModelId(undefined)
         setEffort(undefined)
         setServiceTier(undefined)
@@ -1563,7 +1859,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, catalogRequest])
+  }, [transport, catalogRequest, catalogScope, provider, acpAgent, initialModelCatalogCache])
 
   useEffect(() => {
     if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
@@ -1583,25 +1879,6 @@ export function App() {
       cancelled = true
     }
   }, [transport, provider, account?.signedIn, modelConnections, selectedModelChoice?.agent])
-
-  useEffect(() => {
-    let cancelled = false
-    setAutoReviewSupported(false)
-    void transport
-      .request('providers.list', {})
-      .then(({ providers }) => {
-        if (cancelled) return
-        setAutoReviewSupported(
-          providers.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
-        )
-      })
-      .catch(() => {
-        if (!cancelled) setAutoReviewSupported(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [transport, provider])
 
   // Turn start takes a git checkpoint, so refresh the shelf only after project idle.
   useEffect(() => {
@@ -1634,6 +1911,21 @@ export function App() {
         cancelled = true
       }
     }
+    const status = providerStatuses.find((entry) => entry.id === provider)
+    if (PUBLIC_BETA_PROVIDER_IDS.has(provider) && !status) {
+      setAccountCheck({ provider, state: 'loading' })
+      return () => {
+        cancelled = true
+      }
+    }
+    if (status && status.auth !== 'unknown') {
+      const nextAccount = { signedIn: status.auth === 'authenticated' }
+      setAccount(nextAccount)
+      setAccountCheck({ provider, state: 'ready', account: nextAccount })
+      return () => {
+        cancelled = true
+      }
+    }
     setAccountCheck({ provider, state: 'loading' })
     void transport
       .request('auth.status', {
@@ -1655,45 +1947,17 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, provider, acpAgent, selectedModelChoice?.agent])
+  }, [transport, provider, acpAgent, selectedModelChoice?.agent, providerStatuses])
 
   const refreshProjects = useCallback(async () => {
     const { projects: list } = await transport.request('projects.list', {})
-    const savedOrder = loadSessionOrder()
-    const nextProjects = applyProjectOrder(
-      list.map((project) => ({
-        path: project.path,
-        name: project.name,
-        pinned: project.pinned,
-        sessions: applySessionOrder(
-          project.path,
-          project.sessions.map((session) => {
-            const status = session.status ?? (session.running ? 'working' : 'idle')
-            return {
-              id: session.id,
-              title: session.title,
-              provider: session.provider,
-              ...(session.agent ? { agent: session.agent } : {}),
-              createdAt: session.createdAt,
-              statusSince: session.running ? Date.now() : session.createdAt,
-              status,
-              lifecycle: session.lifecycle ?? { state: 'active', keepActive: false },
-              unread: session.unread ?? false,
-              pinned: session.pinned ?? false,
-              ...(session.worktreeBranch
-                ? {
-                    worktreeBranch: session.worktreeBranch,
-                  }
-                : {}),
-            }
-          }),
-          savedOrder,
-        ),
-      })),
-      loadProjectOrder(),
+    const savedOrder = parseStoredSessionOrder(readSetting(SESSION_ORDER_KEY))
+    const orderedList = applyProjectOrder(
+      list,
+      parseStoredProjectOrder(readSetting(PROJECT_ORDER_KEY)),
     )
-    setProjects(nextProjects)
-    setActivePath((current) => current ?? nextProjects[0]?.path)
+    setProjects((current) => reconcileProjectList(current, orderedList, [], savedOrder))
+    setActivePath((current) => current ?? orderedList[0]?.path)
     return list
   }, [transport])
 
@@ -1744,9 +2008,11 @@ export function App() {
         // The buffered events above already include any deltas still waiting
         // for a frame, so do not apply that pending batch a second time.
         pendingThreadDeltas.current.delete(threadId)
+        if (afterSeq === undefined) partialThreadStates.current.delete(threadId)
         threadStates.current.set(threadId, withLive)
         if (activeIdRef.current === threadId) {
           setProjects((current) => updateSession(current, threadId, markSessionRead))
+          activeThreadFrames.current?.publish(withLive)
           setThread(withLive)
         }
         if (afterSeq === undefined) return live
@@ -1754,9 +2020,7 @@ export function App() {
         // Only a boundary returned by this read (or its live buffer) is fresh
         // authority; the cached prefix must not settle an indeterminate send.
         const suffix = reduceEventLog(reduceEventLog(emptyThread, events), buffer, lastSeq)
-        const crossedTurnBoundary = [...events, ...buffer].some(
-          ({ event }) => event.type === 'turn.started' || event.type === 'turn.completed',
-        )
+        const crossedTurnBoundary = hasTurnBoundary(events) || hasTurnBoundary(buffer)
         return {
           ...live,
           activeTurn: crossedTurnBoundary ? suffix.activeTurn : live.activeTurn,
@@ -1767,9 +2031,10 @@ export function App() {
         if (historyOwners.current.get(threadId) === buffer) {
           historyOwners.current.delete(threadId)
         }
+        schedulePruneThreadStateCache()
       }
     },
-    [transport],
+    [schedulePruneThreadStateCache, transport],
   )
 
   resync.current = (retry = true) => {
@@ -1797,6 +2062,7 @@ export function App() {
       const history = loadHistory(id, durableSequences.current.get(id)).catch(() => undefined)
       const localQueueRevision = localQueueRevisions.current.get(id) ?? 0
       const serverQueueRevision = serverQueueRevisions.current.get(id) ?? 0
+      beginQueueRead(id)
       return transport
         .request('thread.queue', { threadId: id })
         .then(async (state) => {
@@ -1811,8 +2077,13 @@ export function App() {
             workspaceIdleProbe.current.unknownQueues.add(id)
             return
           }
-          // prettier-ignore
-          for (const [queuedId, owner] of workspaceIdleProbe.current.queuedStarts) if (owner.threadId === id) { if (state.items.some((item) => item.id === queuedId)) workspaceIdleProbe.current.claimedStarts.delete(queuedId); else if (queueStates.current.get(id)?.items.some((item) => item.id === queuedId)) workspaceIdleProbe.current.claimedStarts.add(queuedId) }
+          for (const [queuedId] of workspaceIdleProbe.current.queuedStarts.entriesForThread(id)) {
+            if (state.items.some((item) => item.id === queuedId)) {
+              workspaceIdleProbe.current.claimedStarts.delete(queuedId)
+            } else if (queueStates.current.get(id)?.items.some((item) => item.id === queuedId)) {
+              workspaceIdleProbe.current.claimedStarts.add(queuedId)
+            }
+          }
           for (const item of state.items) {
             const start = workspaceIdleProbe.current.submissionStarts.get(item.id)
             if (start?.threadId === id) workspaceIdleProbe.current.queuedStarts.set(item.id, start)
@@ -1834,6 +2105,7 @@ export function App() {
           if (revision === resyncRevision.current) workspaceIdleProbe.current.unknownQueues.add(id)
           return undefined
         })
+        .finally(() => finishQueueRead(id))
     }
     void Promise.all([
       refreshProjects().catch(() => undefined),
@@ -1849,31 +2121,41 @@ export function App() {
         return
       }
       setProjectsStatus('ready')
+      const projectSessions = indexWorkspaceSessions(projects)
       if (projects)
-        for (const id of ownerPaths.keys())
-          if (
-            !projects.some((candidate) => candidate.sessions.some((session) => session.id === id))
-          )
-            clearWorkspaceThread(id)
+        for (const id of ownerPaths.keys()) if (!projectSessions.has(id)) clearWorkspaceThread(id)
       for (const state of states) {
-        const session = projects
-          ?.flatMap((candidate) => candidate.sessions)
-          .find((candidate) => candidate.id === state.id)
+        const session = projectSessions.get(state.id)?.session
         const captured = ownerPaths.get(state.id)
         const current = probe.pendingStarts.get(state.id)
-        // prettier-ignore
-        const durable = new Set(state.thread.items.filter((item) => item.turnId !== '').map((item) => item.id))
-        for (const [id, start] of probe.submissionStarts)
-          if (start.threadId === state.id && durable.has(id)) {
+        // History replay retains an item index. Query only the few pending IDs
+        // instead of allocating a full transcript-sized Set on every reconnect.
+        const isDurable = (itemId: string) =>
+          (threadItemById(state.thread, itemId)?.turnId ?? '') !== ''
+        for (const [id, start] of probe.submissionStarts.entriesForThread(state.id))
+          if (isDurable(id)) {
             probe.submissionStarts.delete(id)
             probe.queuedStarts.delete(id)
             probe.claimedStarts.delete(id)
             releaseWorkspaceStart(state.id, start.token)
           }
-        for (const [id, owner] of probe.queuedStarts)
-          if (owner.threadId === state.id && durable.has(id)) releaseQueuedStart(id)
-        // prettier-ignore
-        for (const [id, action] of probe.queueActions) if (action.threadId === state.id && action.pending === 0 && !state.queue.some((item) => item.id === id)) { if (action.steers > 0 && state.thread.running && !durable.has(id)) continue; probe.queueActions.delete(id); releaseQueuedStart(id) }
+        for (const [id] of probe.queuedStarts.entriesForThread(state.id)) {
+          if (isDurable(id)) releaseQueuedStart(id)
+        }
+        const queueItemIds = indexQueueItemIdsForChecks(
+          state.queue,
+          probe.queueActions.countForThread(state.id),
+        )
+        for (const [id, action] of probe.queueActions.entriesForThread(state.id)) {
+          if (
+            action.pending !== 0 ||
+            (queueItemIds ? queueItemIds.has(id) : state.queue.some((item) => item.id === id))
+          )
+            continue
+          if (action.steers > 0 && state.thread.running && !isDurable(id)) continue
+          probe.queueActions.delete(id)
+          releaseQueuedStart(id)
+        }
         if (
           !session ||
           session.running ||
@@ -1884,30 +2166,31 @@ export function App() {
           continue
         if (captured && current) {
           const tokens = new Set(captured.tokens)
-          // prettier-ignore
-          const protectedTokens = new Set([...probe.queuedStarts].filter(([id, owner]) => owner.threadId === state.id && (probe.claimedStarts.has(id) || probe.queueActions.has(id)) && !durable.has(id)).map(([, owner]) => owner.token)), remainingTokens = current.tokens.filter((token) => !tokens.has(token) || protectedTokens.has(token))
+          const protectedTokens = new Set(
+            [...probe.queuedStarts.entriesForThread(state.id)]
+              .filter(
+                ([id]) =>
+                  (probe.claimedStarts.has(id) || probe.queueActions.has(id)) && !isDurable(id),
+              )
+              .map(([, owner]) => owner.token),
+          )
+          const remainingTokens = current.tokens.filter(
+            (token) => !tokens.has(token) || protectedTokens.has(token),
+          )
           current.tokens = remainingTokens
-          for (const [id, start] of probe.submissionStarts)
-            if (
-              start.threadId === state.id &&
-              tokens.has(start.token) &&
-              !remainingTokens.includes(start.token)
-            )
+          for (const [id, start] of probe.submissionStarts.entriesForThread(state.id))
+            if (tokens.has(start.token) && !remainingTokens.includes(start.token))
               probe.submissionStarts.delete(id)
           if (current.tokens.length === 0) probe.pendingStarts.delete(state.id)
-          for (const [queuedId, owner] of probe.queuedStarts)
-            if (
-              owner.threadId === state.id &&
-              tokens.has(owner.token) &&
-              !protectedTokens.has(owner.token)
-            ) {
+          for (const [queuedId, owner] of probe.queuedStarts.entriesForThread(state.id))
+            if (tokens.has(owner.token) && !protectedTokens.has(owner.token)) {
               probe.queuedStarts.delete(queuedId)
               probe.claimedStarts.delete(queuedId)
             }
         }
       }
       // prettier-ignore
-      const activeIds = new Set([...threadIds].filter((id) => project?.sessions.some((session) => session.id === id) && (ownerPaths.get(id)?.path === path || findSession(projectsRef.current, id)?.project.path === path)))
+      const activeIds = new Set([...threadIds].filter((id) => projectSessions.get(id)?.path === path && (ownerPaths.get(id)?.path === path || findSession(projectsRef.current, id)?.project.path === path)))
       const activeStates = states.filter((state) => activeIds.has(state.id))
       const idle =
         path &&
@@ -1952,6 +2235,7 @@ export function App() {
     let cancelled = false
     const localRevision = localQueueRevisions.current.get(activeId) ?? 0
     const serverRevision = serverQueueRevisions.current.get(activeId) ?? 0
+    beginQueueRead(activeId)
     void transport
       .request('thread.queue', { threadId: activeId })
       .then((state) => {
@@ -1968,10 +2252,11 @@ export function App() {
         setCanSteerQueue(state.canSteer)
       })
       .catch(() => undefined)
+      .finally(() => finishQueueRead(activeId))
     return () => {
       cancelled = true
     }
-  }, [transport, activeId, settleQueuedSubmissions])
+  }, [transport, activeId, settleQueuedSubmissions, beginQueueRead, finishQueueRead])
 
   useEffect(() => {
     if (!activeId || thread.running) {
@@ -1993,6 +2278,7 @@ export function App() {
   )
 
   useLayoutEffect(() => {
+    if (!usageRequested) return
     usageController.select(
       usageProviders.map((sourceProvider) => ({
         provider: sourceProvider,
@@ -2003,7 +2289,7 @@ export function App() {
           : {}),
       })),
     )
-  }, [usageController, usageThreadId, provider, usageProviders])
+  }, [usageController, usageRequested, usageThreadId, provider, usageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there is given to the server and the key removed, so it happens once.
@@ -2235,6 +2521,7 @@ export function App() {
     setActivePath(path)
     activeIdRef.current = undefined
     setActiveId(undefined)
+    activeThreadFrames.current?.publish(emptyThread)
     setThread(emptyThread)
   }, [transport, refreshProjects])
 
@@ -2294,6 +2581,9 @@ export function App() {
         const provisional = threadStates.current.get(provisionalId) ?? emptyThread
         threadStates.current.delete(provisionalId)
         threadStates.current.set(threadId, provisional)
+        if (partialThreadStates.current.delete(provisionalId)) {
+          partialThreadStates.current.add(threadId)
+        }
         durableSequences.current.set(threadId, 0)
         const pendingStart = workspaceIdleProbe.current.pendingStarts.get(provisionalId)
         // prettier-ignore
@@ -2338,6 +2628,7 @@ export function App() {
         if (activeIdRef.current === provisionalId) {
           activeIdRef.current = threadId
           setActiveId(threadId)
+          activeThreadFrames.current?.publish(provisional)
           setThread(provisional)
         }
         void transport
@@ -2351,15 +2642,12 @@ export function App() {
         const path = releaseWorkspaceStart(provisionalId)
         if (path) refreshWorkspaceAfterCompletion(path)
         threadStates.current.delete(provisionalId)
-        setProjects((current) =>
-          current.map((project) => ({
-            ...project,
-            sessions: project.sessions.filter((session) => session.id !== provisionalId),
-          })),
-        )
+        partialThreadStates.current.delete(provisionalId)
+        setProjects((current) => removeSession(current, provisionalId))
         if (activeIdRef.current === provisionalId) {
           activeIdRef.current = undefined
           setActiveId(undefined)
+          activeThreadFrames.current?.publish(emptyThread)
           setThread(emptyThread)
         }
         setNotice(error instanceof Error ? error.message : String(error))
@@ -2400,6 +2688,7 @@ export function App() {
         ?.sessions.filter((session) => session.title === 'New session')
       for (const session of untouched ?? []) {
         threadStates.current.delete(session.id)
+        partialThreadStates.current.delete(session.id)
       }
       setProjects((current) =>
         current.map((project) =>
@@ -2428,15 +2717,34 @@ export function App() {
       setActivePath(projectPath)
       activeIdRef.current = undefined
       setActiveId(undefined)
+      activeThreadFrames.current?.publish(emptyThread)
       setThread(emptyThread)
       setComposerFocusRequest((request) => request + 1)
-      if (!PUBLIC_BETA_PROVIDER_IDS.has(provider)) setCatalogRequest((current) => current + 1)
+      if (!PUBLIC_BETA_PROVIDER_IDS.has(provider)) {
+        const fallbackProvider =
+          providerStatuses.find(
+            (status) =>
+              PUBLIC_BETA_PROVIDER_IDS.has(status.id) &&
+              status.installed &&
+              status.capabilities &&
+              !status.problem &&
+              status.auth !== 'unauthenticated',
+          )?.id ?? 'codex'
+        setProvider(fallbackProvider)
+        setAcpAgent(undefined)
+        setAcpAgentName(undefined)
+        writeSetting(SETUP_KEY, fallbackProvider)
+        removeSetting(AGENT_KEY)
+        removeSetting(AGENT_NAME_KEY)
+        setCatalogRequest((current) => current + 1)
+      }
     },
     [
       projects,
       transport,
       refreshProjects,
       provider,
+      providerStatuses,
       clearWorkspaceThread,
       refreshWorkspaceAfterCompletion,
     ],
@@ -2492,6 +2800,7 @@ export function App() {
           return
         }
         setNotice(undefined)
+        setWorkspacePanelMounted(true)
         setWorkspacePanelOpen(true)
         setSideChatPromptRequest((current) => ({
           parentThreadId: activeId,
@@ -2584,6 +2893,7 @@ export function App() {
         )
         activeIdRef.current = provisionalId
         setActiveId(provisionalId)
+        activeThreadFrames.current?.publish(provisional)
         setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
         const promise = createSession(activePath, provisionalId, titleFrom(text), text)
@@ -2597,7 +2907,10 @@ export function App() {
           if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
             const next: ThreadState = { ...current, running: false, activeTurn: undefined }
             threadStates.current.set(provisionalId, next)
-            if (activeIdRef.current === provisionalId) setThread(next)
+            if (activeIdRef.current === provisionalId) {
+              activeThreadFrames.current?.publish(next)
+              setThread(next)
+            }
           }
           releasePendingStart()
           restoreDraft()
@@ -2618,7 +2931,10 @@ export function App() {
           attachments,
         )
         threadStates.current.set(targetId, provisional)
-        if (activeIdRef.current === targetId) setThread(provisional)
+        if (activeIdRef.current === targetId) {
+          activeThreadFrames.current?.publish(provisional)
+          setThread(provisional)
+        }
         setThreadRevealRequest((request) => request + 1)
         threadId = await pending.promise
         if (!threadId) {
@@ -2648,6 +2964,7 @@ export function App() {
         optimisticTurnId = next.activeTurn?.id
         threadStates.current.set(threadId, next)
         if (threadId === activeIdRef.current) {
+          activeThreadFrames.current?.publish(next)
           setThread(next)
           setThreadRevealRequest((request) => request + 1)
         }
@@ -2660,7 +2977,10 @@ export function App() {
           attachments,
         )
         threadStates.current.set(threadId, next)
-        if (threadId === activeIdRef.current) setThread(next)
+        if (threadId === activeIdRef.current) {
+          activeThreadFrames.current?.publish(next)
+          setThread(next)
+        }
       }
       if (optimisticQueueId) {
         updateQueue(threadId, (items) => [
@@ -2789,7 +3109,10 @@ export function App() {
             if (!wasRunning) {
               const reconciled = pending ? removePendingSubmission(current, pending) : current
               threadStates.current.set(threadId, reconciled)
-              if (threadId === activeIdRef.current) setThread(reconciled)
+              if (threadId === activeIdRef.current) {
+                activeThreadFrames.current?.publish(reconciled)
+                setThread(reconciled)
+              }
             }
             deletePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
           }
@@ -2822,7 +3145,10 @@ export function App() {
               next = { ...next, running: false, activeTurn: undefined }
             }
             threadStates.current.set(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            if (threadId === activeIdRef.current) {
+              activeThreadFrames.current?.publish(next)
+              setThread(next)
+            }
           }
           restoreRejectedDraft(threadId, { text, attachments })
         } else if (steering) {
@@ -2830,7 +3156,10 @@ export function App() {
           if (current) {
             const next = removeOptimisticMessage(current, optimisticItemId)
             threadStates.current.set(threadId, next)
-            if (threadId === activeIdRef.current) setThread(next)
+            if (threadId === activeIdRef.current) {
+              activeThreadFrames.current?.publish(next)
+              setThread(next)
+            }
           }
         }
         setNotice(error instanceof Error ? error.message : String(error))
@@ -2900,6 +3229,7 @@ export function App() {
   // Stable identity on purpose: this lands in effect dependency lists inside
   // Settings, where a per-render identity would re-trigger them every render.
   const refreshCatalog = useCallback(() => setCatalogRequest((request) => request + 1), [])
+  const discoverAllModels = useCallback(() => setCatalogScope('all'), [])
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
@@ -2955,6 +3285,7 @@ export function App() {
       setActivePath(path)
       activeIdRef.current = undefined
       setActiveId(undefined)
+      activeThreadFrames.current?.publish(emptyThread)
       setThread(emptyThread)
       setUndoRestore(undefined)
       setRollbackOpen(false)
@@ -3039,8 +3370,18 @@ export function App() {
       setComposerFocusRequest((request) => request + 1)
       setThreadRevealRequest((request) => request + 1)
       setActivePath(found?.project.path)
-      const cached = threadStates.current.get(id)
+      let cached = touchThreadState(threadStates.current, id)
+      if (cached && pendingThreadDeltas.current.has(id)) {
+        cached = drainPendingThreadDeltas(
+          threadStates.current,
+          pendingThreadDeltas.current,
+          durableSequences.current,
+          id,
+        )
+      }
+      pruneThreadStateCacheNow(id)
       if (cached) {
+        activeThreadFrames.current?.publish(cached)
         setThread(cached)
         setProjects((current) => updateSession(current, id, markSessionRead))
         if (pendingSubmissions.current.has(id)) {
@@ -3048,6 +3389,7 @@ export function App() {
           return
         }
       } else {
+        activeThreadFrames.current?.publish(emptyThread)
         setThread(emptyThread)
       }
 
@@ -3060,7 +3402,15 @@ export function App() {
         setLoadingThreadId((current) => (current === id ? undefined : current))
       }
     },
-    [projects, visibleModels, selectedModelChoice, commitModelChoice, loadHistory, transport],
+    [
+      projects,
+      visibleModels,
+      selectedModelChoice,
+      commitModelChoice,
+      loadHistory,
+      transport,
+      pruneThreadStateCacheNow,
+    ],
   )
 
   const inspectCheckpoint = useCallback(
@@ -3191,17 +3541,14 @@ export function App() {
       const projectPath = clearWorkspaceThread(id)
       threadStates.current.delete(id)
       durableSequences.current.delete(id)
+      partialThreadStates.current.delete(id)
       pendingThreadDeltas.current.delete(id)
       pendingSubmissions.current.delete(id)
-      setProjects((current) =>
-        current.map((project) => ({
-          ...project,
-          sessions: project.sessions.filter((session) => session.id !== id),
-        })),
-      )
+      setProjects((current) => removeSession(current, id))
       if (activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
+        activeThreadFrames.current?.publish(emptyThread)
         setThread(emptyThread)
       }
       rejectedDrafts.current.delete(id)
@@ -3598,6 +3945,7 @@ export function App() {
     [selectSession],
   )
   const openSettings = useCallback((section: SettingsSection = 'providers') => {
+    setCatalogScope('all')
     setSettingsSection(section)
     setSettingsOpen(true)
   }, [])
@@ -3618,6 +3966,10 @@ export function App() {
     openSettings('providers')
   }, [refreshCatalog, openSettings])
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const showOnboarding = useCallback(() => {
+    setSettingsOpen(false)
+    setOnboardingPreview(true)
+  }, [])
   const resetSettings = useCallback(() => {
     localStorage.clear()
     location.reload()
@@ -3666,6 +4018,7 @@ export function App() {
   const toggleDefaultTerminal = useCallback(() => {
     if (terminalPlacement === 'workspace') {
       if (!activePath) return
+      setWorkspacePanelMounted(true)
       setWorkspaceTerminalToggleRequest((request) => request + 1)
       return
     }
@@ -3681,6 +4034,7 @@ export function App() {
     setBottomTerminalPhase((phase) => (phase === 'closing' ? 'closed' : phase))
   }, [])
   const openWorkspacePanel = useCallback(() => {
+    setWorkspacePanelMounted(true)
     setWorkspacePanelOpen(true)
   }, [])
   const closeWorkspacePanel = useCallback(() => {
@@ -3697,6 +4051,7 @@ export function App() {
         restorePanelExpanded: workspacePanelExpanded,
       })
       setSettingsOpen(false)
+      setWorkspacePanelMounted(true)
       setWorkspacePanelOpen(true)
       setWorkspacePanelExpanded(true)
     },
@@ -3719,10 +4074,12 @@ export function App() {
   )
   const toggleWorkspacePanel = useCallback(() => {
     if (workspacePanelOpen) setWorkspacePanelExpanded(false)
+    else setWorkspacePanelMounted(true)
     setWorkspacePanelOpen((open) => !open)
   }, [workspacePanelOpen])
   const toggleExpandedWorkspacePanel = useCallback(() => {
     if (!workspacePanelOpen) {
+      setWorkspacePanelMounted(true)
       setWorkspacePanelOpen(true)
       setWorkspacePanelExpanded(true)
       return
@@ -3830,6 +4187,19 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat) return
 
+      if (
+        !paletteScope &&
+        !rollbackOpen &&
+        !checkoutDelete &&
+        matchesDebugSettingsShortcut(event)
+      ) {
+        event.preventDefault()
+        setDebugSettingsEnabled(true)
+        setSettingsSection('debug')
+        setSettingsOpen(true)
+        return
+      }
+
       // Settings owns all keys while open. Its two app shortcuts can close
       // the sheet or jump directly to the keybind editor.
       if (settingsOpen) {
@@ -3844,13 +4214,11 @@ export function App() {
       }
       if (paletteScope || rollbackOpen || checkoutDelete) return
 
-      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
-        matchesShortcut(event, keybindings[candidate.id]),
-      )
-      if (!definition) return
+      const action = KEYBINDING_IDS.find((id) => matchesShortcut(event, keybindings[id]))
+      if (!action) return
 
       event.preventDefault()
-      keybindingActions[definition.id]()
+      keybindingActions[action]()
     }
 
     window.addEventListener('keydown', onKey)
@@ -3885,12 +4253,6 @@ export function App() {
       approval,
       autoReviewSupported,
     ],
-  )
-  const searching = activeTurnIsSearching(
-    thread.items,
-    thread.activeTurn?.id,
-    thread.liveItems,
-    thread.liveStart,
   )
   const commands = useMemo<PaletteCommand[]>(() => {
     if (!paletteScope) return EMPTY_PALETTE_COMMANDS
@@ -4066,16 +4428,6 @@ export function App() {
         newThreadProject: true,
         run: () => beginSession(project.path),
       })),
-      ...projects.flatMap((project) =>
-        project.sessions.map((session): PaletteCommand => ({
-          id: `chat-${session.id}`,
-          title: session.title,
-          detail: displayName(project),
-          group: 'Chats',
-          keywords: `${project.path} open session conversation`,
-          run: () => void selectSession(session.id),
-        })),
-      ),
     ]
   }, [
     paletteScope,
@@ -4103,6 +4455,24 @@ export function App() {
     toggleWorkspacePanel,
     workspacePanelOpen,
   ])
+  // Keep normalized chat text through immutable status updates while the
+  // palette is open, then release it as soon as the palette closes.
+  const paletteChatSearchCache = useMemo(
+    () => (paletteScope === 'all' ? createPaletteChatSearchCache() : undefined),
+    [paletteScope],
+  )
+  const searchPaletteChats = useMemo(
+    () =>
+      paletteScope === 'all' && paletteChatSearchCache
+        ? createPaletteChatSearch(
+            projects,
+            displayName,
+            (threadId) => void selectSession(threadId),
+            paletteChatSearchCache,
+          )
+        : undefined,
+    [paletteScope, paletteChatSearchCache, projects, selectSession],
+  )
 
   return (
     <div
@@ -4133,6 +4503,7 @@ export function App() {
           keybindings={keybindings}
           usageStates={usageState}
           onRetryUsage={refreshUsage}
+          onOpenUsage={openUsageOverview}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}
           collapsed={collapsed}
@@ -4144,6 +4515,7 @@ export function App() {
           onAddProject={addSidebarProject}
           onNewSession={startSidebarSession}
           onSelectSession={selectSidebarSession}
+          onPreloadThread={preloadThread}
           onRenameProject={renameSidebarProject}
           onRemoveProject={removeSidebarProject}
           onTogglePin={toggleSidebarProjectPin}
@@ -4189,34 +4561,30 @@ export function App() {
                   className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
                 >
                   {activeId ? (
-                    <Thread
-                      items={thread.items}
-                      loading={loadingThreadId === activeId}
-                      liveItems={thread.liveItems}
-                      itemVersion={thread.itemVersion}
-                      liveStart={thread.liveStart}
-                      projectPath={activePath}
-                      running={visibleRunning}
-                      searching={searching}
-                      activeTurn={thread.activeTurn}
-                      turnTiming={thread.turnTiming}
-                      plan={thread.plan}
-                      diff={thread.diff}
-                      diffTurnId={thread.diffTurnId}
-                      threadId={activeId}
-                      transport={transport}
-                      searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                      revealRequest={threadRevealRequest}
-                      approvals={thread.approvals}
-                      userInputs={thread.userInputs}
-                      reviews={reviewList}
-                      checkpoints={thread.running ? EMPTY_CHECKPOINTS : checkpoints}
-                      onDecide={decideApproval}
-                      onAnswerUserInput={answerUserInput}
-                      onEditMessage={editMessage}
-                      onRevertCheckpoint={revertCheckpoint}
-                      onUndoChanges={undoTurnChanges}
-                    />
+                    <Suspense
+                      fallback={
+                        <div className="empty thread__empty" role="status">
+                          Loading conversation…
+                        </div>
+                      }
+                    >
+                      <ActiveThread
+                        frameStore={activeThreadFrames.current}
+                        stopping={stopping}
+                        loading={loadingThreadId === activeId}
+                        projectPath={activePath}
+                        threadId={activeId}
+                        transport={transport}
+                        searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                        revealRequest={threadRevealRequest}
+                        checkpoints={checkpoints}
+                        onDecide={decideApproval}
+                        onAnswerUserInput={answerUserInput}
+                        onEditMessage={editMessage}
+                        onRevertCheckpoint={revertCheckpoint}
+                        onUndoChanges={undoTurnChanges}
+                      />
+                    </Suspense>
                   ) : (
                     <Empty
                       projects={projects}
@@ -4258,6 +4626,7 @@ export function App() {
                     onAttachmentsChange={updateRejectedAttachments}
                     queuedTurns={queuedTurns}
                     canSteerQueue={canSteerQueue}
+                    onModelSelectorOpen={discoverAllModels}
                     onModelChange={selectModel}
                     onEffortChange={setEffort}
                     onServiceTierChange={setServiceTier}
@@ -4279,17 +4648,13 @@ export function App() {
                     onSteerQueuedTurn={steerQueuedTurn}
                   />
 
-                  {activePath && (bottomTerminalMounted || bottomTerminalPrepared) ? (
+                  {activePath && bottomTerminalMounted ? (
                     <div
-                      className={`bottom-terminal${terminalOpen ? ' is-open' : ''}${bottomTerminalPhase === 'closing' ? ' is-closing' : ''}${bottomTerminalPhase === 'closed' ? ' is-parked' : ''}`}
+                      className={`bottom-terminal${terminalOpen ? ' is-open' : ''}${bottomTerminalPhase === 'closing' ? ' is-closing' : ''}`}
                       style={{ height: terminalHeight }}
                       data-testid="bottom-terminal"
-                      aria-hidden={bottomTerminalPhase === 'closed' ? true : undefined}
-                      inert={
-                        bottomTerminalPhase === 'closing' || bottomTerminalPhase === 'closed'
-                          ? true
-                          : undefined
-                      }
+                      aria-hidden={bottomTerminalPhase === 'closing' ? true : undefined}
+                      inert={bottomTerminalPhase === 'closing' ? true : undefined}
                       onTransitionEnd={finishBottomTerminalMotion}
                     >
                       <Suspense fallback={null}>
@@ -4324,117 +4689,141 @@ export function App() {
             )}
           </main>
 
-          <Suspense fallback={null}>
-            <WorkspacePanel
-              open={workspacePanelOpen}
-              expanded={workspacePanelExpanded}
-              width={workspacePanelWidth}
-              transport={transport}
-              threadId={activeId}
-              projectPath={activePath}
-              projectName={activeProject ? displayName(activeProject) : undefined}
-              branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
-              theme={theme}
-              sideChatParentStatus={sideChatParentStatus}
-              sideChatStartOptions={sideChatStartOptions}
-              sideChatPromptRequest={sideChatPromptRequest}
-              nativeSurfacesVisible={
-                !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
-              }
-              onOpen={openWorkspacePanel}
-              onClose={closeWorkspacePanel}
-              onExpandedChange={setWorkspacePanelExpanded}
-              onWidthChange={setWorkspacePanelWidth}
-              terminalToggleRequest={workspaceTerminalToggleRequest}
-              providerLogin={
-                providerLoginTerminal?.visible
-                  ? {
-                      id: providerLoginTerminal.id,
-                      title: `${providerLoginTerminal.displayName} login`,
-                      installKey: providerLoginTerminal.installKey,
-                    }
-                  : undefined
-              }
-              onProviderLoginClose={closeProviderLoginTerminal}
-            />
-          </Suspense>
+          {workspacePanelMounted ? (
+            <Suspense fallback={null}>
+              <WorkspacePanel
+                open={workspacePanelOpen}
+                expanded={workspacePanelExpanded}
+                width={workspacePanelWidth}
+                transport={transport}
+                threadId={activeId}
+                projectPath={activePath}
+                projectName={activeProject ? displayName(activeProject) : undefined}
+                branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                theme={theme}
+                sideChatParentStatus={sideChatParentStatus}
+                sideChatStartOptions={sideChatStartOptions}
+                sideChatPromptRequest={sideChatPromptRequest}
+                nativeSurfacesVisible={
+                  !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
+                }
+                onOpen={openWorkspacePanel}
+                onClose={closeWorkspacePanel}
+                onExpandedChange={setWorkspacePanelExpanded}
+                onWidthChange={setWorkspacePanelWidth}
+                terminalToggleRequest={workspaceTerminalToggleRequest}
+                providerLogin={
+                  providerLoginTerminal?.visible
+                    ? {
+                        id: providerLoginTerminal.id,
+                        title: `${providerLoginTerminal.displayName} login`,
+                        installKey: providerLoginTerminal.installKey,
+                      }
+                    : undefined
+                }
+                onProviderLoginClose={closeProviderLoginTerminal}
+              />
+            </Suspense>
+          ) : null}
         </div>
       </div>
 
       {settingsOpen ? (
-        <Settings
-          initialSection={settingsSection}
-          provider={provider}
-          providerName={providerName(provider, acpAgentName)}
-          transport={transport}
-          projectPath={activePath}
-          projectName={activeProject ? displayName(activeProject) : undefined}
-          account={account}
-          profileIdentity={profileIdentity}
-          onProfileIdentityChange={updateProfileIdentity}
-          providerStatuses={providerStatuses}
-          acpAgents={acpAgents}
-          modelConnections={modelConnections}
-          models={rosterModels}
-          hiddenModels={hiddenModels}
-          onModelVisibilityChange={changeModelVisibility}
-          onConnectionsChanged={refreshCatalog}
-          projectCount={projects.length}
-          sidebarSettings={sidebarSettings}
-          onSidebarSettingsChange={updateSidebarSettings}
-          themePreference={themePreference}
-          onThemePreferenceChange={setThemePreference}
-          fontPreference={fontPreference}
-          onFontPreferenceChange={setFontPreference}
-          accentPreference={accentPreference}
-          onAccentPreferenceChange={setAccentPreference}
-          backdropPreference={backdropPreference}
-          onBackdropPreferenceChange={setBackdropPreference}
-          sidebarGlass={sidebarGlass}
-          onSidebarGlassChange={setSidebarGlass}
-          showMacOSFontSmoothing={macOS}
-          macOSFontSmoothing={macOSFontSmoothing}
-          onMacOSFontSmoothingChange={setMacOSFontSmoothing}
-          macOS={macOS}
-          keybindings={keybindings}
-          onKeybindingChange={changeKeybinding}
-          onKeybindingsReset={resetKeybindings}
-          showMacOSHaptics={isDesktop && macOS}
-          onAccountChange={handleAccountChange}
-          authRefreshRevision={providerAuthRefreshRevision}
-          onProviderLoginTerminalOpen={openProviderLoginTerminal}
-          onReset={resetSettings}
-          onClose={closeSettings}
-        />
+        <Suspense fallback={null}>
+          <LazySettings
+            initialSection={settingsSection}
+            provider={provider}
+            providerName={providerName(provider, acpAgentName)}
+            transport={transport}
+            projectPath={activePath}
+            projectName={activeProject ? displayName(activeProject) : undefined}
+            account={account}
+            profileIdentity={profileIdentity}
+            onProfileIdentityChange={updateProfileIdentity}
+            providerStatuses={providerStatuses}
+            acpAgents={acpAgents}
+            modelConnections={modelConnections}
+            models={rosterModels}
+            hiddenModels={hiddenModels}
+            onModelVisibilityChange={changeModelVisibility}
+            onConnectionsChanged={refreshCatalog}
+            projectCount={projects.length}
+            sidebarSettings={sidebarSettings}
+            onSidebarSettingsChange={updateSidebarSettings}
+            themePreference={themePreference}
+            onThemePreferenceChange={setThemePreference}
+            fontPreference={fontPreference}
+            onFontPreferenceChange={setFontPreference}
+            accentPreference={accentPreference}
+            onAccentPreferenceChange={setAccentPreference}
+            backdropPreference={backdropPreference}
+            onBackdropPreferenceChange={setBackdropPreference}
+            sidebarGlass={sidebarGlass}
+            onSidebarGlassChange={setSidebarGlass}
+            showMacOSFontSmoothing={macOS}
+            macOSFontSmoothing={macOSFontSmoothing}
+            onMacOSFontSmoothingChange={setMacOSFontSmoothing}
+            macOS={macOS}
+            keybindings={keybindings}
+            onKeybindingChange={changeKeybinding}
+            onKeybindingsReset={resetKeybindings}
+            showMacOSHaptics={isDesktop && macOS}
+            onAccountChange={handleAccountChange}
+            authRefreshRevision={providerAuthRefreshRevision}
+            onProviderLoginTerminalOpen={openProviderLoginTerminal}
+            debugEnabled={debugSettingsEnabled}
+            onShowOnboarding={showOnboarding}
+            onReset={resetSettings}
+            onClose={closeSettings}
+          />
+        </Suspense>
       ) : null}
 
-      {isDesktop &&
-      projectsStatus === 'ready' &&
-      projects.length === 0 &&
-      !onboardingDismissed &&
-      !settingsOpen ? (
-        <WelcomeDialog
-          providerStatuses={providerStatuses}
-          onAddProject={() => void addProject()}
-          onOpenProviders={() => openSettings('providers')}
-          onDismiss={() => {
-            writeSetting(ONBOARDING_KEY, 'done')
-            setOnboardingDismissed(true)
-          }}
-        />
+      {!settingsOpen &&
+      (onboardingPreview ||
+        (isDesktop &&
+          projectsStatus === 'ready' &&
+          projects.length === 0 &&
+          !onboardingDismissed)) ? (
+        <Suspense fallback={null}>
+          <WelcomeDialog
+            providerStatuses={providerStatuses}
+            displayName={profileIdentity.displayName}
+            onDisplayNameChange={changeProfileDisplayName}
+            onAddProject={() => {
+              if (onboardingPreview) setOnboardingPreview(false)
+              void addProject()
+            }}
+            onOpenProviders={() => {
+              setOnboardingPreview(false)
+              openSettings('providers')
+            }}
+            onDismiss={() => {
+              if (onboardingPreview) {
+                setOnboardingPreview(false)
+                return
+              }
+              writeSetting(ONBOARDING_KEY, 'done')
+              setOnboardingDismissed(true)
+            }}
+          />
+        </Suspense>
       ) : null}
 
       {paletteScope ? (
-        <CommandPalette
-          commands={commands}
-          scope={paletteScope}
-          preferredCommandId={
-            paletteScope === 'new-thread' && preferredNewThreadProject
-              ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
-              : undefined
-          }
-          onClose={closePalette}
-        />
+        <Suspense fallback={null}>
+          <CommandPalette
+            commands={commands}
+            scope={paletteScope}
+            deferredSearch={searchPaletteChats}
+            preferredCommandId={
+              paletteScope === 'new-thread' && preferredNewThreadProject
+                ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
+                : undefined
+            }
+            onClose={closePalette}
+          />
+        </Suspense>
       ) : null}
 
       <SessionSearchHost
@@ -4445,28 +4834,32 @@ export function App() {
       />
 
       {rollbackOpen ? (
-        <RollbackDialog
-          checkpoints={checkpoints}
-          inspection={rollbackInspection}
-          loadingId={rollbackLoadingId}
-          restoring={rollbackRestoring}
-          onInspect={(checkpoint) => void inspectCheckpoint(checkpoint)}
-          onRestore={() => void restoreCheckpoint()}
-          onClose={() => {
-            setRollbackOpen(false)
-            setRollbackInspection(undefined)
-          }}
-        />
+        <Suspense fallback={null}>
+          <RollbackDialog
+            checkpoints={checkpoints}
+            inspection={rollbackInspection}
+            loadingId={rollbackLoadingId}
+            restoring={rollbackRestoring}
+            onInspect={(checkpoint) => void inspectCheckpoint(checkpoint)}
+            onRestore={() => void restoreCheckpoint()}
+            onClose={() => {
+              setRollbackOpen(false)
+              setRollbackInspection(undefined)
+            }}
+          />
+        </Suspense>
       ) : null}
 
       {checkoutDelete ? (
-        <CheckoutDiscardDialog
-          title={checkoutDelete.title}
-          branch={checkoutDelete.branch}
-          busy={checkoutDeleteBusy}
-          onDiscard={() => void discardAndArchive()}
-          onClose={() => setCheckoutDelete(undefined)}
-        />
+        <Suspense fallback={null}>
+          <CheckoutDiscardDialog
+            title={checkoutDelete.title}
+            branch={checkoutDelete.branch}
+            busy={checkoutDeleteBusy}
+            onDiscard={() => void discardAndArchive()}
+            onClose={() => setCheckoutDelete(undefined)}
+          />
+        </Suspense>
       ) : null}
 
       {/* A dropped connection used to be invisible: requests queued, pushes
@@ -4568,50 +4961,6 @@ function providerName(id: ProviderId, sourceName?: string): string {
   return providerDisplayName(id)
 }
 
-function findSession(projects: Project[], id: string | undefined) {
-  if (!id) return undefined
-  for (const project of projects) {
-    const session = project.sessions.find((s) => s.id === id)
-    if (session) return { project, session }
-  }
-  return undefined
-}
-
-function updateSession(
-  projects: Project[],
-  threadId: string,
-  update: (session: Project['sessions'][number]) => Project['sessions'][number],
-): Project[] {
-  return projects.map((project) => ({
-    ...project,
-    sessions: project.sessions.map((session) =>
-      session.id === threadId ? update(session) : session,
-    ),
-  }))
-}
-
-function markSessionRead(session: Project['sessions'][number]): Project['sessions'][number] {
-  return {
-    ...session,
-    unread: false,
-    status: session.status === 'ready' ? 'idle' : session.status,
-    lifecycle:
-      session.lifecycle.state === 'active' && session.lifecycle.wokeAt !== undefined
-        ? { state: 'active', keepActive: session.lifecycle.keepActive }
-        : session.lifecycle,
-  }
-}
-
-function promoteSession(projects: Project[], threadId: string): Project[] {
-  return projects.map((project) => {
-    const index = project.sessions.findIndex((session) => session.id === threadId)
-    if (index <= 0) return project
-    const sessions = [...project.sessions]
-    const [session] = sessions.splice(index, 1)
-    return session ? { ...project, sessions: [session, ...sessions] } : project
-  })
-}
-
 /**
  * A finished design run — built, failed, or rejected — releases the toggle,
  * so the next prompt in the thread is a normal turn instead of restarting
@@ -4627,6 +4976,13 @@ function endsDesignBriefing(event: DomainEvent): boolean {
     text.startsWith('Website built.') ||
     text.includes('DEBUG FINISHED · NO WEBSITE BUILT')
   )
+}
+
+function hasTurnBoundary(entries: Iterable<{ event: DomainEvent }>): boolean {
+  for (const { event } of entries) {
+    if (event.type === 'turn.started' || event.type === 'turn.completed') return true
+  }
+  return false
 }
 
 function affectsSessionStatus(event: DomainEvent): boolean {
@@ -4669,7 +5025,7 @@ function preservePendingSubmissions(
   if (!thread) return state
   let next = state
   for (const submission of thread.values()) {
-    const existing = next.items.find((item) => item.id === submission.id)
+    const existing = threadItemById(next, submission.id)
     if (existing) {
       if (existing.turnId !== '') thread.delete(submission.id)
       continue
@@ -4741,35 +5097,7 @@ function titleFrom(text: string): string {
  * message is sent rather than a round trip later.
  */
 function renameSession(projects: Project[], threadId: string, title: string): Project[] {
-  return projects.map((project) => ({
-    ...project,
-    sessions: project.sessions.map((session) =>
-      session.id === threadId ? { ...session, title } : session,
-    ),
-  }))
-}
-
-type SessionOrder = Record<string, string[]>
-const ProjectOrderSchema = z.array(z.string())
-const SessionOrderSchema = z.record(z.string(), z.array(z.string()))
-
-function loadProjectOrder(): string[] {
-  try {
-    return ProjectOrderSchema.parse(JSON.parse(readSetting(PROJECT_ORDER_KEY) ?? '[]'))
-  } catch {
-    return []
-  }
-}
-
-function applyProjectOrder(projects: Project[], order: string[]): Project[] {
-  const byPath = new Map(projects.map((project) => [project.path, project]))
-  const known = order.flatMap((path) => {
-    const project = byPath.get(path)
-    if (!project) return []
-    byPath.delete(path)
-    return [project]
-  })
-  return [...byPath.values(), ...known]
+  return updateSession(projects, threadId, (session) => ({ ...session, title }))
 }
 
 let lastSavedProjectOrder: string | undefined
@@ -4781,56 +5109,34 @@ function saveProjectOrder(projects: Project[]): void {
   writeSetting(PROJECT_ORDER_KEY, serialized)
 }
 
-function loadSessionOrder(): SessionOrder {
-  try {
-    return SessionOrderSchema.parse(JSON.parse(readSetting(SESSION_ORDER_KEY) ?? '{}'))
-  } catch {
-    return {}
-  }
-}
-
-function applySessionOrder(
-  projectPath: string,
-  sessions: Project['sessions'],
-  savedOrder: SessionOrder,
-): Project['sessions'] {
-  const order = savedOrder[projectPath] ?? []
-  const byId = new Map(sessions.map((session) => [session.id, session]))
-  const known = order.flatMap((id) => {
-    const session = byId.get(id)
-    if (!session) return []
-    byId.delete(id)
-    return [session]
-  })
-  return [...byId.values(), ...known]
-}
-
-let lastSavedSessionOrder: string | undefined
+const serializeSessionOrder = createSessionOrderSerializer()
 
 function saveSessionOrder(projects: Project[]): void {
-  const serialized = JSON.stringify(
-    Object.fromEntries(
-      projects.map((project) => [project.path, project.sessions.map((session) => session.id)]),
-    ),
-  )
-  // `projects` is replaced on every status event of every thread; skipping
-  // unchanged orders keeps this from writing to disk on each streamed frame.
-  if (serialized === lastSavedSessionOrder) return
-  lastSavedSessionOrder = serialized
+  const serialized = serializeSessionOrder(projects)
+  if (serialized === undefined) return
   writeSetting(SESSION_ORDER_KEY, serialized)
 }
 
-const SourceSelectionSchema = z.object({
-  modelKey: z.string(),
-  effort: z.string().optional(),
-  serviceTier: z.string().optional(),
-})
-const SourceSelectionsSchema = z.record(z.string(), SourceSelectionSchema)
-type SourceSelection = z.infer<typeof SourceSelectionSchema>
+type SourceSelection = { modelKey: string; effort?: string; serviceTier?: string }
 
-function readSourceSelections(): Record<string, SourceSelection> {
+function readSourceSelections() {
   try {
-    return SourceSelectionsSchema.parse(JSON.parse(readSetting(MODEL_BY_SOURCE_KEY) ?? '{}'))
+    const value: unknown = JSON.parse(readSetting(MODEL_BY_SOURCE_KEY) ?? '{}')
+    if (!isRecord(value)) return {}
+    const selections: Record<string, SourceSelection> = {}
+    for (const [source, candidate] of Object.entries(value)) {
+      if (!isRecord(candidate) || typeof candidate['modelKey'] !== 'string') return {}
+      const effort = candidate['effort']
+      const serviceTier = candidate['serviceTier']
+      if (effort !== undefined && typeof effort !== 'string') return {}
+      if (serviceTier !== undefined && typeof serviceTier !== 'string') return {}
+      selections[source] = {
+        modelKey: candidate['modelKey'],
+        ...(effort === undefined ? {} : { effort }),
+        ...(serviceTier === undefined ? {} : { serviceTier }),
+      }
+    }
+    return selections
   } catch {
     return {}
   }
@@ -4936,6 +5242,19 @@ function readSetting(key: string): string | null {
   } catch {
     return null
   }
+}
+
+function parseStoredStringArray(raw: string | null): string[] {
+  try {
+    const value: unknown = JSON.parse(raw ?? '[]')
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : []
+  } catch {
+    return []
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function removeSetting(key: string): void {

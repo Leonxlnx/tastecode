@@ -1,5 +1,6 @@
 import { GitBranch, X } from 'lucide-react'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/checkout-discard.css'
 
 export function CheckoutDiscardDialog(props: {
   title: string

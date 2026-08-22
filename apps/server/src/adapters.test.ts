@@ -327,7 +327,7 @@ describe('openCodeRuntime.listModels', () => {
     // different clients do not know about each other.
     const third = providerRuntime('opencode', () => {}).listModels()
 
-    expect(constructed).toHaveLength(1)
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
     release?.()
     await Promise.all([first, second, third])
     expect(constructed[0]?.disposed).toBe(true)
@@ -336,11 +336,12 @@ describe('openCodeRuntime.listModels', () => {
   it('runs again after the previous listing finished', async () => {
     const runtime = providerRuntime('opencode', () => {})
     const first = runtime.listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
     release?.()
     await first
 
     const second = runtime.listModels()
-    expect(constructed).toHaveLength(2)
+    await vi.waitFor(() => expect(constructed).toHaveLength(2))
     release?.()
     await second
     expect(constructed[1]?.disposed).toBe(true)

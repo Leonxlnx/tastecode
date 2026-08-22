@@ -1,0 +1,124 @@
+.account-menu__usage {
+  display: grid;
+  gap: 7px;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  padding: 7px 9px 9px;
+  border-bottom: 1px solid var(--menu-line);
+  margin-bottom: 4px;
+}
+
+.account-menu__usage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-md);
+  margin: 0;
+}
+
+.account-menu__usage-head:focus-visible {
+  border-radius: var(--r-sm);
+  outline: 2px solid var(--text-2);
+  outline-offset: 3px;
+}
+
+.account-menu__usage-head svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.account-menu__usage-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-3);
+}
+
+.account-menu__source {
+  display: grid;
+  gap: 7px;
+}
+
+.account-menu__source + .account-menu__source {
+  margin-top: 3px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.account-menu__source h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+.account-menu__usage-error {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 7px;
+  color: var(--error);
+}
+
+.account-menu__usage-error span,
+.account-menu__usage-error small {
+  display: block;
+}
+
+.account-menu__usage-error small {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.account-menu__usage-error button {
+  align-self: center;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-sm);
+  background: var(--chrome-raised);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 3px 7px;
+}
+
+.account-menu__limit {
+  display: grid;
+  gap: 4px;
+}
+
+.account-menu__limit-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-menu__limit-label {
+  color: var(--text);
+}
+
+.account-menu__limit-bar {
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.account-menu__limit-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--running);
+}
+
+.account-menu__limit-bar > span[data-low] {
+  background: var(--error);
+}
+
+.account-menu__limit-reset {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}

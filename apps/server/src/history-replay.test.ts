@@ -82,6 +82,31 @@ describe('history replay compaction', () => {
     expect(compactHistoryReplay(tail)).toEqual(tail)
   })
 
+  it('leaves an already-final replay exact', () => {
+    const history = entries([
+      {
+        type: 'turn.started',
+        turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 1 },
+      },
+      { type: 'item.completed', item: item('reply', 'Done', 'completed') },
+      { type: 'diff.updated', diff: 'final diff' },
+      { type: 'plan.updated', steps: [{ step: 'Done', status: 'completed' }] },
+      {
+        type: 'usage.updated',
+        usage: {
+          inputTokens: 1,
+          cachedInputTokens: 0,
+          outputTokens: 1,
+          reasoningTokens: 0,
+          totalTokens: 2,
+        },
+      },
+      { type: 'turn.completed', turnId: 'turn-1', status: 'completed', completedAt: 2 },
+    ])
+
+    expect(compactHistoryReplay(history)).toEqual(history)
+  })
+
   it('shrinks a realistic streamed replay by more than ninety percent', () => {
     const history = entries([
       {

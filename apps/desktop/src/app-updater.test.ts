@@ -74,4 +74,57 @@ describe('app update controller', () => {
     await vi.advanceTimersByTimeAsync(1)
     expect(updater.checkForUpdates).toHaveBeenCalledOnce()
   })
+
+  it('does not load the optional updater before the automatic check', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    const loadUpdater = vi.fn().mockResolvedValue(updater)
+    const controller = createAppUpdateController({
+      loadUpdater,
+      currentVersion: '0.1.0-beta.1',
+      enabled: true,
+    })
+
+    controller.start()
+    expect(controller.state()).toMatchObject({ status: 'idle' })
+    expect(loadUpdater).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(loadUpdater).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(loadUpdater).toHaveBeenCalledOnce()
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+  })
+
+  it('shares the lazy updater across concurrent checks', async () => {
+    const updater = fakeUpdater()
+    const loadUpdater = vi.fn().mockResolvedValue(updater)
+    const controller = createAppUpdateController({
+      loadUpdater,
+      currentVersion: '0.1.0-beta.1',
+      enabled: true,
+    })
+
+    const first = controller.check()
+    const second = controller.check()
+
+    expect(second).toBe(first)
+    await Promise.all([first, second])
+    expect(loadUpdater).toHaveBeenCalledOnce()
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+  })
+
+  it('reports a lazy updater load failure', async () => {
+    const loadUpdater = vi.fn().mockRejectedValue(new Error('Updater failed to load.'))
+    const controller = createAppUpdateController({
+      loadUpdater,
+      currentVersion: '0.1.0-beta.1',
+      enabled: true,
+    })
+
+    await expect(controller.check()).resolves.toEqual({
+      status: 'error',
+      currentVersion: '0.1.0-beta.1',
+      error: 'Updater failed to load.',
+    })
+  })
 })

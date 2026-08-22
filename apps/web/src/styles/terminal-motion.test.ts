@@ -2,12 +2,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const terminalCss = readFileSync(new URL('./terminal-pane.css', import.meta.url), 'utf8')
 
-function rule(selector: string): string {
+function rule(selector: string, css = appCss): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return (
-    appCss.match(new RegExp(`^${escaped} \\{(?<body>[\\s\\S]*?)\\n\\}`, 'm'))?.groups?.['body'] ??
-    ''
+    css.match(new RegExp(`^${escaped} \\{(?<body>[\\s\\S]*?)\\n\\}`, 'm'))?.groups?.['body'] ?? ''
   )
 }
 
@@ -19,7 +19,7 @@ describe('bottom terminal visual stability', () => {
   })
 
   it('keeps xterm from exposing its black viewport strip', () => {
-    const viewport = rule('.terminal-pane__viewport .xterm .xterm-viewport')
+    const viewport = rule('.terminal-pane__viewport .xterm .xterm-viewport', terminalCss)
 
     expect(viewport).toContain('overflow-x: hidden;')
     expect(viewport).toContain('background-color: transparent;')
@@ -46,10 +46,10 @@ describe('bottom terminal visual stability', () => {
   })
 
   it('avoids the stray focus rail and layout-property animation', () => {
-    expect(appCss).not.toContain('.terminal-pane__viewport:focus-within')
+    expect(terminalCss).not.toContain('.terminal-pane__viewport:focus-within')
     expect(rule('.stage__body')).not.toContain('transition:')
     expect(rule('.stage__body.has-terminal')).not.toContain('transition:')
-    expect(rule('.terminal-pane')).not.toContain('transition:')
+    expect(rule('.terminal-pane', terminalCss)).not.toContain('transition:')
   })
 
   it('removes positional motion when reduced motion is requested', () => {

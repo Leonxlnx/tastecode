@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent, Item } from '@harness/contracts'
 import {
+  activeTurnActivityIndices,
+  activeTurnIsSearching,
   appendUserMessage,
   beginOptimisticTurn,
   emptyThread,
@@ -8,7 +10,9 @@ import {
   reduceDeltas,
   reduceEventLog,
   threadItemAt,
+  threadItemById,
   threadItems,
+  type ThreadState,
 } from './thread-store.js'
 import { presentTurns } from './ui/turns.js'
 
@@ -135,6 +139,36 @@ describe('thread reducer', () => {
     ])
   })
 
+  it('materializes one live overlay before appending several early items', () => {
+    const base = item({ id: 'live', turnId: 't1', text: '' })
+    const streamed = item({ id: 'live', turnId: 't1', text: 'streamed' })
+    const items = [base]
+    const state: ThreadState = {
+      ...emptyThread,
+      items,
+      liveItems: new Map([
+        [0, { item: streamed, version: 1, textUpdate: { kind: 'append', text: 'streamed' } }],
+      ]),
+      itemVersion: 1,
+      running: true,
+      activeTurn: { id: 't1', startedAt: 1 },
+    }
+
+    const next = reduceDeltas(state, [
+      { type: 'item.delta', turnId: 't1', itemId: 'x', textDelta: 'one' },
+      { type: 'item.delta', turnId: 't1', itemId: 'y', textDelta: 'two' },
+    ])
+
+    expect(items).toEqual([base])
+    expect(next.liveItems.size).toBe(0)
+    expect(next.items.map(({ id, text }) => ({ id, text }))).toEqual([
+      { id: 'live', text: 'streamed' },
+      { id: 'x', text: 'one' },
+      { id: 'y', text: 'two' },
+    ])
+    expect(threadItemById(next, 'y')?.text).toBe('two')
+  })
+
   it('completes an item in place rather than appending a second copy', () => {
     const state = apply([
       { type: 'item.started', item: item({ text: '' }) },
@@ -152,6 +186,56 @@ describe('thread reducer', () => {
       { type: 'item.completed', item: item({ status: 'completed' }) },
     ])
     expect(state.items[0]?.text).toBe('streamed')
+  })
+
+  it('retains item locations across a long sequence of live starts and completions', () => {
+    let idReads = 0
+    const history = Array.from({ length: 10_000 }, (_, index) =>
+      itemWithTrackedId(`history-${index}`, 'completed', 'message', () => {
+        idReads += 1
+        if (idReads > 11_000) throw new Error('live item lookup budget exceeded')
+      }),
+    )
+    let state: ThreadState = { ...emptyThread, items: history }
+
+    for (let index = 0; index < 100; index += 1) {
+      const live = item({ id: `live-${index}`, text: '' })
+      state = reduce(state, { type: 'item.started', item: live })
+      state = reduce(state, {
+        type: 'item.completed',
+        item: { ...live, status: 'completed', text: `done-${index}` },
+      })
+    }
+
+    expect(state.items).toHaveLength(10_100)
+    expect(state.items.at(-1)?.text).toBe('done-99')
+    expect(idReads).toBeLessThanOrEqual(11_000)
+  })
+
+  it('keeps retained item locations correct across immutable branches', () => {
+    const base = apply([
+      { type: 'item.completed', item: item({ id: 'base', status: 'completed' }) },
+    ])
+    const first = reduce(base, { type: 'item.started', item: item({ id: 'first' }) })
+    const second = reduce(base, { type: 'item.started', item: item({ id: 'second' }) })
+
+    const completedFirst = reduce(first, {
+      type: 'item.completed',
+      item: item({ id: 'first', status: 'completed', text: 'first done' }),
+    })
+    const completedSecond = reduce(second, {
+      type: 'item.completed',
+      item: item({ id: 'second', status: 'completed', text: 'second done' }),
+    })
+
+    expect(completedFirst.items.map(({ id, text }) => [id, text])).toEqual([
+      ['base', undefined],
+      ['first', 'first done'],
+    ])
+    expect(completedSecond.items.map(({ id, text }) => [id, text])).toEqual([
+      ['base', undefined],
+      ['second', 'second done'],
+    ])
   })
 
   it('omits the retired Design approval warning from saved history', () => {
@@ -448,6 +532,64 @@ describe('thread reducer', () => {
     ])
   })
 
+  it('indexes only live activity in a tool-heavy active turn', () => {
+    const items: Item[] = [
+      ...Array.from({ length: 10_000 }, (_, index) =>
+        item({
+          id: `completed-${index}`,
+          type: 'tool_call',
+          status: 'completed',
+          text: 'read file',
+          createdAt: index,
+        }),
+      ),
+      item({ id: 'searching', type: 'tool_call', status: 'started', text: 'search files' }),
+      item({ id: 'answer', type: 'message', status: 'started', text: 'Writing the answer' }),
+    ]
+
+    const indices = activeTurnActivityIndices(items, 't1')
+
+    expect(indices).toEqual([10_000])
+    expect(activeTurnIsSearching(items, 't1', undefined, 0, indices)).toBe(true)
+  })
+
+  it('replays large turn timing histories without copying the growing table per event', () => {
+    const entries: Array<{ seq: number; event: DomainEvent }> = []
+    for (let index = 0; index < 10_000; index += 1) {
+      const turnId = `turn-${index}`
+      entries.push(
+        {
+          seq: entries.length + 1,
+          event: {
+            type: 'turn.started',
+            turn: {
+              id: turnId,
+              threadId: 'thread-1',
+              status: 'running',
+              createdAt: index * 2,
+            },
+          },
+        },
+        {
+          seq: entries.length + 2,
+          event: {
+            type: 'turn.completed',
+            turnId,
+            status: 'completed',
+            completedAt: index * 2 + 1,
+          },
+        },
+      )
+    }
+
+    const state = reduceEventLog(emptyThread, entries)
+
+    expect(Object.keys(state.turnTiming)).toHaveLength(10_000)
+    expect(state.turnTiming['turn-0']).toEqual({ startedAt: 0, completedAt: 1 })
+    expect(state.turnTiming['turn-9999']).toEqual({ startedAt: 19_998, completedAt: 19_999 })
+    expect(state.running).toBe(false)
+  })
+
   it.each([1_000, 10_000])('keeps completed replay item reads linear at %i items', (count) => {
     const readBudget = count * 12
     let idReads = 0
@@ -571,6 +713,34 @@ describe('thread reducer', () => {
     expect(state.items[0]?.text).toBe('local live')
   })
 
+  it('owns replay mutations while preserving identity for an empty or skipped log', () => {
+    const started = apply([
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 1 },
+      },
+    ])
+    const completed = {
+      seq: 2,
+      event: {
+        type: 'turn.completed',
+        turnId: 't1',
+        status: 'completed',
+        completedAt: 2,
+      },
+    } satisfies { seq: number; event: DomainEvent }
+
+    expect(reduceEventLog(started, [])).toBe(started)
+    expect(reduceEventLog(started, [completed], completed.seq)).toBe(started)
+
+    const replayed = reduceEventLog(started, [completed])
+    expect(replayed).not.toBe(started)
+    expect(started.running).toBe(true)
+    expect(started.turnTiming['t1']).toEqual({ startedAt: 1 })
+    expect(replayed.running).toBe(false)
+    expect(replayed.turnTiming['t1']).toEqual({ startedAt: 1, completedAt: 2 })
+  })
+
   it('tracks whether a turn is running', () => {
     const running = apply([
       {
@@ -617,6 +787,39 @@ describe('thread reducer', () => {
 })
 
 describe('overnight regression pins', () => {
+  it('retains the replay item index for bounded post-load lookups', () => {
+    let reads = 0
+    const events = Array.from({ length: 10_000 }, (_, index) => ({
+      seq: index + 1,
+      event: {
+        type: 'item.started' as const,
+        item: itemWithTrackedId(`history-${index}`, 'completed', 'message', () => {
+          reads += 1
+        }),
+      },
+    }))
+    const state = reduceEventLog(emptyThread, events)
+    const readsAfterReplay = reads
+
+    expect(threadItemById(state, 'history-9999')?.id).toBe('history-9999')
+    expect(reads - readsAfterReplay).toBeLessThanOrEqual(2)
+  })
+
+  it('reads the live overlay through the retained item index', () => {
+    const base = item({ id: 'live', text: 'base' })
+    const live = item({ id: 'live', text: 'streamed' })
+    const state: ThreadState = {
+      ...emptyThread,
+      items: [base],
+      liveItems: new Map([
+        [0, { item: live, version: 1, textUpdate: { kind: 'append', text: 'streamed' } }],
+      ]),
+    }
+
+    expect(threadItemById(state, 'live')).toBe(live)
+    expect(threadItemById(state, 'missing')).toBeUndefined()
+  })
+
   it.each(
     ([100, 1_000, 10_000] as const).flatMap((count) =>
       (['message', 'reasoning', 'command', 'tool_call', 'file_change'] as const).map((type) => ({
@@ -660,6 +863,47 @@ describe('overnight regression pins', () => {
       ])
     }
     expect(reads - activeReads).toBeLessThanOrEqual(3)
+  })
+
+  it('keeps a large live overlay immutable and iterable across many frames', () => {
+    const items = Array.from({ length: 100 }, (_, index) =>
+      item({ id: `live-${index}`, turnId: 'active', type: 'tool_call', text: '' }),
+    )
+    const liveItems = new Map(
+      items.map((liveItem, index) => [
+        index,
+        {
+          item: { ...liveItem, text: 'seed' },
+          version: 1,
+          textUpdate: { kind: 'append' as const, text: 'seed' },
+        },
+      ]),
+    )
+    const initial: ThreadState = {
+      ...emptyThread,
+      items,
+      liveItems,
+      itemVersion: 1,
+      running: true,
+      activeTurn: { id: 'active', startedAt: 0 },
+    }
+    let current = initial
+    for (let frame = 0; frame < 40; frame += 1) {
+      current = reduceDeltas(current, [
+        {
+          type: 'item.delta',
+          turnId: 'active',
+          itemId: 'live-99',
+          textDelta: 'x',
+        },
+      ])
+    }
+
+    expect(initial.liveItems.get(99)?.item.text).toBe('seed')
+    expect(current.liveItems.size).toBe(100)
+    expect(new Map(current.liveItems).size).toBe(100)
+    expect(threadItemAt(current.items, current.liveItems, 99)?.text).toBe(`seed${'x'.repeat(40)}`)
+    expect(threadItems(current)[99]?.text).toBe(`seed${'x'.repeat(40)}`)
   })
 
   it('materializes a completed turn once and never mutates its history objects', () => {

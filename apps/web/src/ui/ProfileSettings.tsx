@@ -3,10 +3,10 @@ import type { Account } from '@harness/contracts'
 import { ImagePlus, Trash2 } from 'lucide-react'
 import {
   PROFILE_IMAGE_ACCEPT,
-  profileInitials,
   readProfileImage,
   type ProfileIdentityPreferences,
 } from '../profile-preferences.js'
+import { useDefaultProfileAvatar } from '../use-default-profile-avatar.js'
 
 export function ProfileSettings(props: {
   account: Account | undefined
@@ -34,6 +34,10 @@ export function ProfileSettings(props: {
   useEffect(() => () => void (imageRequest.current += 1), [])
 
   const identity = profileIdentity(props.account, props.providerName, props.identity?.displayName)
+  const avatarSeed =
+    props.identity?.displayName.trim() || props.account?.email || props.providerName
+  const defaultAvatar = useDefaultProfileAvatar(avatarSeed)
+  const avatarFallback = avatarSeed.trim().charAt(0).toLocaleUpperCase() || 'T'
 
   return (
     <section className="profile-page" aria-labelledby="profile-title">
@@ -44,8 +48,10 @@ export function ProfileSettings(props: {
         <div className="profile-identity__avatar" aria-hidden>
           {props.identity?.avatarDataUrl ? (
             <img src={props.identity.avatarDataUrl} alt="" />
+          ) : defaultAvatar ? (
+            <img src={defaultAvatar} alt="" />
           ) : (
-            identity.initials
+            avatarFallback
           )}
         </div>
         <h2>{identity.name}</h2>
@@ -117,7 +123,6 @@ function profileIdentity(
   return {
     name,
     handle: localPart ? `@${localPart}` : providerName,
-    initials: profileInitials(name || providerName),
   }
 }
 

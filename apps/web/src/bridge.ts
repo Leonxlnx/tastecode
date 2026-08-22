@@ -1,5 +1,4 @@
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
-import { z } from 'zod'
 import type { KeybindingId, Keybindings, Shortcut } from './shortcuts.js'
 
 /**
@@ -9,15 +8,13 @@ import type { KeybindingId, Keybindings, Shortcut } from './shortcuts.js'
  * production, so every native call has to degrade rather than crash. Anything
  * that cannot work without the bridge is hidden, not shown broken.
  */
-export const PickedAttachmentSchema = z.object({
-  path: z.string(),
-  name: z.string(),
-  mediaType: z.enum(['image', 'video']).optional(),
-  previewUrl: z.string().optional(),
-  thumbnailUrl: z.string().optional(),
-})
-
-export type PickedAttachment = z.infer<typeof PickedAttachmentSchema>
+export type PickedAttachment = {
+  path: string
+  name: string
+  mediaType?: 'image' | 'video' | undefined
+  previewUrl?: string | undefined
+  thumbnailUrl?: string | undefined
+}
 
 export type Bridge = {
   pickFolder: () => Promise<string | undefined>
@@ -49,8 +46,12 @@ export type Bridge = {
   onMenuAction?: (listener: (action: NativeMenuAction) => void) => () => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
+  reportStartupMilestone?: (name: RendererStartupMilestone) => void
   isDesktop: true
 }
+
+export type RendererStartupMilestone =
+  'module-loaded' | 'react-commit' | 'first-frame' | 'projects-ready' | 'catalog-ready'
 
 declare global {
   interface Window {
@@ -97,11 +98,29 @@ export type AppUpdateState = {
 }
 
 const bridge = window.harness
+export const MAX_CACHED_ATTACHMENT_PREVIEWS = 128
 const attachmentPreviews = new Map<string, PickedAttachment>()
 
+function rememberAttachmentPreview(reference: string, attachment: PickedAttachment): void {
+  // Signed preview URLs are cheap to recreate through the desktop bridge. Keep
+  // the recent working set hot without retaining every attachment ever used.
+  attachmentPreviews.delete(reference)
+  attachmentPreviews.set(reference, attachment)
+  while (attachmentPreviews.size > MAX_CACHED_ATTACHMENT_PREVIEWS) {
+    const oldest = attachmentPreviews.keys().next().value
+    if (oldest === undefined) break
+    attachmentPreviews.delete(oldest)
+  }
+}
+
 export const isDesktop = bridge?.isDesktop === true
+export const isStartupBenchmark = bridge?.reportStartupMilestone !== undefined
 export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
+
+export function reportStartupMilestone(name: RendererStartupMilestone): void {
+  bridge?.reportStartupMilestone?.(name)
+}
 
 export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
@@ -120,13 +139,12 @@ export async function pickSkillFolder(): Promise<string | undefined> {
 export async function pickFiles(): Promise<PickedAttachment[]> {
   if (bridge) {
     const files = await bridge.pickFiles()
-    const picked = files.map((file) => {
-      const path = z.string().safeParse(file)
-      return path.success
-        ? { path: path.data, name: attachmentName(path.data) }
-        : PickedAttachmentSchema.parse(file)
-    })
-    for (const attachment of picked) attachmentPreviews.set(attachment.path, attachment)
+    const picked = files.map((file) =>
+      typeof file === 'string'
+        ? { path: file, name: attachmentName(file) }
+        : parsePickedAttachment(file),
+    )
+    for (const attachment of picked) rememberAttachmentPreview(attachment.path, attachment)
     return picked
   }
   const typed = window.prompt('Full path of a file to attach')?.trim()
@@ -135,6 +153,34 @@ export async function pickFiles(): Promise<PickedAttachment[]> {
 
 function attachmentName(filePath: string): string {
   return filePath.split(/[\\/]/).filter(Boolean).at(-1) ?? filePath
+}
+
+function parsePickedAttachment(value: unknown): PickedAttachment {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('The native file picker returned invalid data.')
+  }
+  const attachment = value as Record<string, unknown>
+  const path = attachment['path']
+  const name = attachment['name']
+  const mediaType = attachment['mediaType']
+  const previewUrl = attachment['previewUrl']
+  const thumbnailUrl = attachment['thumbnailUrl']
+  if (
+    typeof path !== 'string' ||
+    typeof name !== 'string' ||
+    (mediaType !== undefined && mediaType !== 'image' && mediaType !== 'video') ||
+    (previewUrl !== undefined && typeof previewUrl !== 'string') ||
+    (thumbnailUrl !== undefined && typeof thumbnailUrl !== 'string')
+  ) {
+    throw new Error('The native file picker returned invalid data.')
+  }
+  return {
+    path,
+    name,
+    ...(mediaType === undefined ? {} : { mediaType }),
+    ...(previewUrl === undefined ? {} : { previewUrl }),
+    ...(thumbnailUrl === undefined ? {} : { thumbnailUrl }),
+  }
 }
 
 export function revealPath(path: string): Promise<void> {
@@ -147,7 +193,10 @@ export function revealProjectFile(path: string, projectPath: string): Promise<vo
 
 export async function previewViewedImage(reference: string): Promise<PickedAttachment | undefined> {
   const cached = attachmentPreviews.get(reference)
-  if (cached) return cached
+  if (cached) {
+    rememberAttachmentPreview(reference, cached)
+    return cached
+  }
   try {
     const direct = await bridge?.previewViewedImage?.(reference)
     const preview =
@@ -155,7 +204,7 @@ export async function previewViewedImage(reference: string): Promise<PickedAttac
       (attachmentName(reference) === reference
         ? undefined
         : await bridge?.previewViewedImage?.(attachmentName(reference)))
-    if (preview) attachmentPreviews.set(reference, preview)
+    if (preview) rememberAttachmentPreview(reference, preview)
     return preview
   } catch {
     return undefined
@@ -169,11 +218,11 @@ export async function savePastedFile(file: File): Promise<PickedAttachment | und
     type: file.type,
     bytes: await file.arrayBuffer(),
   })
-  const path = z.string().safeParse(saved)
-  const attachment = path.success
-    ? { path: path.data, name: attachmentName(path.data) }
-    : PickedAttachmentSchema.parse(saved)
-  attachmentPreviews.set(attachment.path, attachment)
+  const attachment =
+    typeof saved === 'string'
+      ? { path: saved, name: attachmentName(saved) }
+      : parsePickedAttachment(saved)
+  rememberAttachmentPreview(attachment.path, attachment)
   return attachment
 }
 

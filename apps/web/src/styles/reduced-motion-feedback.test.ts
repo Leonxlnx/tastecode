@@ -4,6 +4,21 @@ import { describe, expect, it } from 'vitest'
 
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
+const commandPaletteCss = readFileSync(new URL('./command-palette.css', import.meta.url), 'utf8')
+const sessionSearchCss = readFileSync(new URL('./session-search.css', import.meta.url), 'utf8')
+const mediaViewerCss = readFileSync(new URL('./media-viewer.css', import.meta.url), 'utf8')
+const inboxCss = readFileSync(new URL('./inbox-sidebar.css', import.meta.url), 'utf8')
+const resourcePickerCss = readFileSync(
+  new URL('./composer-resource-picker.css', import.meta.url),
+  'utf8',
+)
+const modelSelectorCss = readFileSync(new URL('./model-selector.css', import.meta.url), 'utf8')
+const modelSelectorMenuCss = readFileSync(
+  new URL('./model-selector-menu.css', import.meta.url),
+  'utf8',
+)
+const threadCss = readFileSync(new URL('./thread.css', import.meta.url), 'utf8')
 const pullRequestCss = readFileSync(
   new URL('../ui/pull-requests/pull-requests.css', import.meta.url),
   'utf8',
@@ -20,16 +35,16 @@ describe('reduced-motion feedback', () => {
     expect(appCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.sheet__scrim,[\s\S]*?\.sheet__panel \{[\s\S]*?animation: fade-in var\(--dur-fast\) var\(--ease-out\) both !important;/s,
     )
-    expect(appCss).toMatch(
+    expect(settingsCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.profile-page,[\s\S]*?\.settings__panel \{[\s\S]*?animation: fade-in var\(--dur-fast\) var\(--ease-out\) both !important;/s,
     )
     expect(appCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.notice \{[\s\S]*?transform: none !important;[\s\S]*?transition: opacity var\(--dur-fast\) var\(--ease-out\) !important;/s,
     )
-    expect(appCss).toMatch(
+    expect(modelSelectorMenuCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.model-selector__fast \{[\s\S]*?color var\(--dur-press\) var\(--ease-out\),[\s\S]*?background-color var\(--dur-press\) var\(--ease-out\),[\s\S]*?border-color var\(--dur-press\) var\(--ease-out\),[\s\S]*?box-shadow var\(--dur-press\) var\(--ease-out\) !important;/s,
     )
-    expect(appCss).toMatch(
+    expect(modelSelectorMenuCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.model-selector__fast-icon svg \{[\s\S]*?transition: fill var\(--dur-press\) var\(--ease-out\) !important;/s,
     )
     expect(appCss).toMatch(
@@ -43,6 +58,27 @@ describe('reduced-motion feedback', () => {
   it('keeps transform, rotate, filter, clip-path, and layout properties out of reduced-motion transitions', () => {
     const reducedBlocks = [
       ...appCss.matchAll(/@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g),
+      ...settingsCss.matchAll(/@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g),
+      ...commandPaletteCss.matchAll(
+        /@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g,
+      ),
+      ...sessionSearchCss.matchAll(
+        /@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g,
+      ),
+      ...mediaViewerCss.matchAll(
+        /@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g,
+      ),
+      ...inboxCss.matchAll(/@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g),
+      ...resourcePickerCss.matchAll(
+        /@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g,
+      ),
+      ...modelSelectorCss.matchAll(
+        /@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g,
+      ),
+      ...modelSelectorMenuCss.matchAll(
+        /@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g,
+      ),
+      ...threadCss.matchAll(/@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g),
       ...pullRequestCss.matchAll(
         /@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g,
       ),

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Item } from '@harness/contracts'
-import { createThreadProjector, findTurns, neighbourTurn, presentTurns } from './turns.js'
+import { updateTurnTiming } from '../turn-timing-change.js'
+import {
+  activityGroupAt,
+  createThreadProjector,
+  findTurns,
+  neighbourTurn,
+  presentTurns,
+  type TurnActivityGroup,
+} from './turns.js'
 
 const item = (id: string, turnId: string): Item => ({
   id,
@@ -11,6 +19,20 @@ const item = (id: string, turnId: string): Item => ({
 })
 
 describe('turn boundaries', () => {
+  it('finds an activity range without scanning earlier groups', () => {
+    const groups: TurnActivityGroup[] = [
+      { items: [], firstIndex: 2, lastIndex: 4, elapsedMs: 0 },
+      { items: [], firstIndex: 8, lastIndex: 12, elapsedMs: 0 },
+      { items: [], firstIndex: 20, lastIndex: 20, elapsedMs: 0 },
+    ]
+
+    expect(activityGroupAt(groups, 3)).toBe(groups[0])
+    expect(activityGroupAt(groups, 10)).toBe(groups[1])
+    expect(activityGroupAt(groups, 20)).toBe(groups[2])
+    expect(activityGroupAt(groups, 7)).toBeUndefined()
+    expect(activityGroupAt(groups, 21)).toBeUndefined()
+  })
+
   it('groups consecutive items of the same turn', () => {
     const turns = findTurns([
       item('a', 't1'),
@@ -275,6 +297,17 @@ describe('turn boundaries', () => {
     expect(streamed).toBe(initial)
   })
 
+  it('reuses an immutable transcript projection across session switches', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Answer' },
+    ]
+    const initial = createThreadProjector()(items)
+    const reopened = createThreadProjector()(items)
+
+    expect(reopened).toBe(initial)
+  })
+
   it('rebuilds transcript layout when a streamed answer completes or history is replaced', () => {
     const project = createThreadProjector()
     const items: Item[] = [
@@ -293,5 +326,67 @@ describe('turn boundaries', () => {
     expect(completed).not.toBe(initial)
     expect(completed.presentations.get('t1')?.responseText).toBe('Hello.')
     expect(replaced).not.toBe(completed)
+  })
+
+  it('reprojects only the changed tail turn without changing its result', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      {
+        ...item('tool', 'active'),
+        type: 'tool_call',
+        status: 'started',
+        text: 'Reading files',
+      },
+    ]
+    const initial = project(items)
+    const appendedItems = [
+      ...items,
+      { ...item('answer', 'active'), role: 'assistant' as const, text: 'Done.' },
+    ]
+    const appended = project(appendedItems)
+    const completedItems = [
+      ...appendedItems.slice(0, -1),
+      { ...appendedItems.at(-1)!, status: 'completed' as const, text: 'Done.' },
+    ]
+    const completed = project(completedItems)
+
+    expect(appended).toEqual({
+      turns: findTurns(appendedItems),
+      presentations: presentTurns(appendedItems),
+    })
+    expect(completed).toEqual({
+      turns: findTurns(completedItems),
+      presentations: presentTurns(completedItems),
+    })
+    expect(appended.presentations.get('old')).toBe(initial.presentations.get('old'))
+    expect(completed.presentations.get('old')).toBe(initial.presentations.get('old'))
+  })
+
+  it('reprojects only the turn whose live timing changed', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      { ...item('answer', 'active'), role: 'assistant', text: 'New answer' },
+    ]
+    const initialTiming = { old: { startedAt: 0, completedAt: 10 }, active: { startedAt: 20 } }
+    const initial = project(items, initialTiming)
+    const completedTiming = updateTurnTiming(initialTiming, 'active', {
+      startedAt: 20,
+      completedAt: 50,
+    })
+    const completed = project(items, completedTiming)
+
+    expect(completed).toEqual({
+      turns: findTurns(items),
+      presentations: presentTurns(items, completedTiming),
+    })
+    expect(completed.turns).toBe(initial.turns)
+    expect(completed.presentations.get('old')).toBe(initial.presentations.get('old'))
+    expect(completed.presentations.get('active')?.elapsedMs).toBe(30)
   })
 })

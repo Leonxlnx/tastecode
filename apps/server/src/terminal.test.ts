@@ -8,6 +8,7 @@ import {
   terminalEnvironment,
   TerminalManager,
   TerminalOutputBuffer,
+  TerminalOutputScheduler,
 } from './terminal.js'
 
 describe('TerminalManager', () => {
@@ -64,6 +65,32 @@ describe('TerminalManager', () => {
       pty.emitData('last line')
       pty.emitExit(0)
       expect(events).toEqual(['output:prompt', 'output:last line', 'exit:0'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares one short output timer across many active terminals', async () => {
+    vi.useFakeTimers()
+    try {
+      const emitted: string[] = []
+      const scheduler = new TerminalOutputScheduler(4)
+      const buffers = Array.from(
+        { length: 1_000 },
+        (_, index) =>
+          new TerminalOutputBuffer(
+            (data) => emitted.push(`${index}:${data}`),
+            4,
+            64 * 1024,
+            scheduler,
+          ),
+      )
+
+      for (const buffer of buffers) buffer.push('x')
+      expect(vi.getTimerCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(4)
+      expect(emitted).toHaveLength(1_000)
+      expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()
     }

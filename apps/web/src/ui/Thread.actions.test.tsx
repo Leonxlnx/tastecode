@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
 import { StrictMode } from 'react'
-import { Thread, isRepeatedDesignRow, workLabel } from './Thread.js'
+import {
+  createRepeatedDesignRowLookup,
+  createRepeatedDesignRowProjector,
+  Thread,
+  isRepeatedDesignRow,
+  workLabel,
+} from './Thread.js'
 
 const { previewViewedImage, revealPath, writeClipboardText } = vi.hoisted(() => ({
   previewViewedImage: vi.fn(async (): Promise<unknown> => undefined),
@@ -179,6 +185,28 @@ describe('design activity rows', () => {
       ),
     ).toBe(false)
   })
+
+  it('reuses repeated-design results while a transcript only streams text', () => {
+    const first = marker('m1', 'design:build')
+    const second = marker('m2', 'design:build')
+    const lookup = createRepeatedDesignRowLookup([first, second])
+
+    expect(lookup(second, 1)).toBe(true)
+    expect(lookup(second, 1)).toBe(true)
+  })
+
+  it('retains prefix results and invalidates a replaced tail row', () => {
+    const first = marker('m1', 'design:build')
+    const repeated = marker('m2', 'design:build')
+    const project = createRepeatedDesignRowProjector()
+    const initial = [first, repeated]
+
+    expect(project(initial)(repeated, 1)).toBe(true)
+    expect(project([...initial, turnItem('answer', 2, {})])(repeated, 1)).toBe(true)
+
+    const changed = marker('m2', 'design:review')
+    expect(project([first, changed])(changed, 1)).toBe(false)
+  })
 })
 
 describe('provider activity labels', () => {
@@ -192,6 +220,19 @@ describe('provider activity labels', () => {
 
     expect(screen.getByText('Compacted context window')).toBeTruthy()
     expect(screen.queryByText('unknown')).toBeNull()
+  })
+
+  it('mounts standalone activity details only when opened', () => {
+    const { container } = renderCompleted([
+      turnItem('unknown', 1, {
+        type: 'unknown',
+        text: 'provider event detail',
+      }),
+    ])
+
+    expect(container.querySelector('.aux__out')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Agent activity' }))
+    expect(container.querySelector('.aux__out')?.textContent).toBe('provider event detail')
   })
 })
 
@@ -298,22 +339,26 @@ describe('completed activity disclosure', () => {
     expect(disclosure.getAttribute('aria-expanded')).toBe('false')
     expect(reveal?.getAttribute('data-open')).toBe('false')
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('.activity__body')).toBeNull()
 
     fireEvent.click(disclosure)
 
     expect(disclosure.getAttribute('aria-expanded')).toBe('true')
     expect(reveal?.getAttribute('data-open')).toBe('true')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
+    expect(container.querySelector('.activity__body')).toBeTruthy()
 
     fireEvent.click(disclosure)
 
     expect(disclosure.getAttribute('aria-expanded')).toBe('false')
     expect(reveal?.getAttribute('data-open')).toBe('closing')
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('.activity__body')).toBeTruthy()
 
     if (reveal) fireEvent.animationEnd(reveal)
 
     expect(reveal?.getAttribute('data-open')).toBe('false')
+    expect(container.querySelector('.activity__body')).toBeNull()
   })
 
   it('closes immediately when reduced motion is enabled', () => {
@@ -426,12 +471,12 @@ describe('completed activity disclosure', () => {
     ])
 
     expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
-    const firstCommand = screen.getByText('Ran git status --short')
-    expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByText('Ran git status --short')).toBeNull()
     const stack = screen.getByRole('button', { name: 'Read files, ran commands' })
 
     fireEvent.click(stack)
 
+    const firstCommand = screen.getByText('Ran git status --short')
     expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('false')
     expect(screen.getByText('Ran pnpm test')).toBeTruthy()
   })
@@ -867,8 +912,8 @@ describe('collapsed row disclosure', () => {
     expect(reveal?.getAttribute('data-open')).toBe('false')
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
     expect(reveal?.hasAttribute('inert')).toBe(true)
-    expect(container.querySelector('.activity__item-label')?.textContent).toBe('Ran pnpm test')
-    expect(container.querySelector('.activity__detail')?.textContent).toBe('1 failed, 12 passed')
+    expect(container.querySelector('.activity__item-label')).toBeNull()
+    expect(container.querySelector('.activity__detail')).toBeNull()
 
     fireEvent.click(disclosure)
 
@@ -876,6 +921,8 @@ describe('collapsed row disclosure', () => {
     expect(reveal?.getAttribute('data-open')).toBe('true')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(reveal?.hasAttribute('inert')).toBe(false)
+    expect(container.querySelector('.activity__item-label')?.textContent).toBe('Ran pnpm test')
+    expect(container.querySelector('.activity__detail')?.textContent).toBe('1 failed, 12 passed')
   })
 })
 

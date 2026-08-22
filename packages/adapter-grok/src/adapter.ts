@@ -7,6 +7,9 @@ import { pathToFileURL } from 'node:url'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, readNdjson } from '@harness/proc'
 import { z } from 'zod'
+import { GROK_CAPABILITIES } from './capabilities.js'
+
+export { GROK_CAPABILITIES } from './capabilities.js'
 
 /**
  * Tier 3 adapter: drives xAI's Grok Build CLI (`grok`) in headless
@@ -41,17 +44,6 @@ import { z } from 'zod'
  */
 
 const SUPPORTED = '0.1'
-
-export const GROK_CAPABILITIES: Capabilities = {
-  // Print mode is one-shot: no steer, no fork, and permission prompts cannot
-  // be answered mid-turn — the launch mode decides them instead.
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: false,
-  images: true,
-}
 
 const IMAGE_MIME_TYPES = new Map<string, string>([
   ['.gif', 'image/gif'],

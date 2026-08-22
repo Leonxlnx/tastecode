@@ -14,6 +14,8 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | npm package | Use | Reviewed license | Source |
 | --- | --- | --- | --- |
 | `@anthropic-ai/claude-agent-sdk` | Claude Code adapter runtime | LicenseRef-Anthropic-Commercial-Terms | [source](https://github.com/anthropics/claude-agent-sdk-typescript) |
+| `@dicebear/core` | Local default-avatar generation | MIT | [source](https://github.com/dicebear/dicebear) |
+| `@dicebear/styles` | DiceBear Glass default-avatar definition | CC0-1.0 | [source](https://github.com/dicebear/styles/blob/v10.4.0/LICENSE.md#glass) |
 | `@fontsource-variable/geist` | Geist variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/geist-mono` | Geist Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/jetbrains-mono` | JetBrains Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |

@@ -1,5 +1,7 @@
 import {
+  lazy,
   memo,
+  Suspense,
   type DragEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -34,6 +36,7 @@ import {
   X,
 } from 'lucide-react'
 import { isDesktop, revealPath } from '../bridge.js'
+import { findSession, takeProjectSessionChanges } from '../project-store.js'
 import {
   appHapticsSupported,
   performAppHaptic,
@@ -43,13 +46,21 @@ import {
   subscribeAppHaptics,
 } from '../haptics.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
-import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
+import { useDefaultProfileAvatar } from '../use-default-profile-avatar.js'
 import { Menu, MenuItem } from './Menu.js'
-import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
+import type { AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
-import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
+import type { InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
+
+const AccountLimits = lazy(() =>
+  import('./AccountLimits.js').then((module) => ({ default: module.AccountLimits })),
+)
+const InboxSidebar = lazy(() =>
+  import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
+)
 
 /**
  * The rail. Collapsible, searchable, and everything in it can be renamed.
@@ -84,6 +95,7 @@ export type Project = {
 type DropPosition = 'before' | 'after'
 
 const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
+const BRAILLE_SPINNER_TEXT = BRAILLE_SPINNER_FRAMES.join('\n')
 /** Narrowest width at which the New chat row and the chat rows stay
  *  roomy — the narrowest rail still looks deliberate, never squeezed. */
 const MIN_RAIL_WIDTH = 240
@@ -112,6 +124,17 @@ const REVEAL_COOLDOWN_MS = 1250
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
+const PROJECT_SESSION_PAGE_SIZE = 25
+const PROJECT_PAGE_SIZE = 50
+const PINNED_SESSION_PAGE_SIZE = 25
+
+function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false
+  }
+  return true
+}
 
 function SidebarComponent(props: {
   projects: Project[]
@@ -123,6 +146,7 @@ function SidebarComponent(props: {
   keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
+  onOpenUsage?: (() => void) | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined
   collapsed: boolean
@@ -132,6 +156,7 @@ function SidebarComponent(props: {
   onAddProject: () => void
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
   onSelectSession: (id: string) => void
+  onPreloadThread?: (() => void) | undefined
   onRenameProject: (path: string, name: string) => void
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
@@ -153,6 +178,9 @@ function SidebarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim()
+  const avatarSeed = profileDisplayName || props.account?.email || props.providerName
+  const defaultAvatar = useDefaultProfileAvatar(avatarSeed)
+  const avatarFallback = avatarSeed.trim().charAt(0).toLocaleUpperCase() || 'T'
   const slotRef = useRef<HTMLDivElement>(null)
   const railRef = useRef<HTMLElement>(null)
   const resizeHandleRef = useRef<HTMLButtonElement>(null)
@@ -332,23 +360,36 @@ function SidebarComponent(props: {
   const [bodyScrolled, setBodyScrolled] = useState(false)
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
 
-  const closeOnNarrowViewport = () => {
+  const closeOnNarrowViewport = useCallback(() => {
     if (globalThis.matchMedia?.('(max-width: 700px)').matches) props.onClose()
-  }
+  }, [props.onClose])
 
-  const selectSession = (id: string) => {
-    props.onSelectSession(id)
-    closeOnNarrowViewport()
-  }
+  const selectSession = useCallback(
+    (id: string) => {
+      props.onSelectSession(id)
+      closeOnNarrowViewport()
+    },
+    [closeOnNarrowViewport, props.onSelectSession],
+  )
 
-  const newSession = (projectPath?: string, chooseProject?: boolean) => {
-    props.onNewSession(projectPath, chooseProject)
-    closeOnNarrowViewport()
-  }
+  const newSession = useCallback(
+    (projectPath?: string, chooseProject?: boolean) => {
+      props.onNewSession(projectPath, chooseProject)
+      closeOnNarrowViewport()
+    },
+    [closeOnNarrowViewport, props.onNewSession],
+  )
 
   const openPullRequests = () => {
     props.onOpenPullRequests?.()
     closeOnNarrowViewport()
+  }
+
+  const preloadThreadOnSessionIntent = (target: EventTarget) => {
+    if (!(target instanceof Element)) return
+    if (target.closest('button.sess, button.inbox-card__main, button.inbox-shelf__main')) {
+      props.onPreloadThread?.()
+    }
   }
 
   useEffect(() => {
@@ -370,42 +411,157 @@ function SidebarComponent(props: {
     if (scope && !props.projects.some((project) => project.path === scope)) setScope('')
   }, [props.projects, scope])
 
-  // Memoised because the sidebar re-renders with every streamed frame: these
-  // three passes over every project and session ran 60 times a second while
-  // an answer arrived, for a list that had not changed.
-  const pinnedSessions = useMemo(() => {
-    const sessions = props.projects.flatMap((project) =>
-      project.sessions
-        .filter((session) => session.pinned)
-        .map((session) => ({ projectPath: project.path, session })),
-    )
-    return prioritizeSessions(sessions, ({ session }) => session)
-  }, [props.projects])
-  const orderedProjects = useMemo(
-    () =>
-      [
-        ...props.projects.filter((project) => project.pinned),
-        ...props.projects.filter((project) => !project.pinned),
-      ].map((project) => ({
-        ...project,
-        sessions: prioritizeSessions(
-          project.sessions.filter((session) => !session.pinned),
-          (session) => session,
-        ),
-      })),
-    [props.projects],
+  // Memoised because the sidebar re-renders with every streamed frame. One
+  // pass classifies both projects and chats; the old flatMap/filter/map chain
+  // walked a large history four times whenever project state changed.
+  const classicProjectorRef = useRef<ReturnType<typeof createClassicSidebarProjector> | undefined>(
+    undefined,
   )
+  classicProjectorRef.current ??= createClassicSidebarProjector()
+  const [projectLimit, setProjectLimit] = useState(PROJECT_PAGE_SIZE)
+  const [pinnedSessionLimit, setPinnedSessionLimit] = useState(PINNED_SESSION_PAGE_SIZE)
+  const {
+    pinnedSessions: visiblePinnedSessions,
+    pinnedSessionCount,
+    orderedProjects,
+  } = useMemo(
+    () =>
+      inbox
+        ? { pinnedSessions: [], pinnedSessionCount: 0, orderedProjects: [] }
+        : classicProjectorRef.current!.projectWindow(
+            props.projects,
+            pinnedSessionLimit,
+            props.activeSessionId,
+          ),
+    [inbox, pinnedSessionLimit, props.activeSessionId, props.projects],
+  )
+  const nextVisibleProjects = useMemo(() => {
+    const visible = orderedProjects.slice(0, projectLimit)
+    const activePath = props.activeProjectPath
+    if (!activePath || visible.some((project) => project.path === activePath)) return visible
+    const active = orderedProjects.find((project) => project.path === activePath)
+    if (active) visible.push(active)
+    return visible
+  }, [orderedProjects, projectLimit, props.activeProjectPath])
+  const visibleProjectsRef = useRef<Project[]>([])
+  const visibleProjects = sameItems(visibleProjectsRef.current, nextVisibleProjects)
+    ? visibleProjectsRef.current
+    : (visibleProjectsRef.current = nextVisibleProjects)
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
   const [projectDropTarget, setProjectDropTarget] = useState<{
     path: string
     position: DropPosition
   }>()
+  const draggedProjectPathRef = useRef<string | undefined>(undefined)
+  const draggedProjectPinnedRef = useRef<boolean | undefined>(undefined)
+  const projectDropTargetRef = useRef<{ path: string; position: DropPosition } | undefined>(
+    undefined,
+  )
+  const reorderProjectRef = useRef(props.onReorderProject)
+  reorderProjectRef.current = props.onReorderProject
 
-  const endProjectDrag = () => {
+  const endProjectDrag = useCallback(() => {
+    draggedProjectPathRef.current = undefined
+    draggedProjectPinnedRef.current = undefined
+    projectDropTargetRef.current = undefined
     setDraggedProjectPath(undefined)
     setProjectDropTarget(undefined)
-  }
+  }, [])
 
+  const startProjectDrag = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
+    if (event.target !== event.currentTarget || !reorderProjectRef.current) return
+    prepareAppHaptics()
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', project.path)
+    draggedProjectPathRef.current = project.path
+    draggedProjectPinnedRef.current = project.pinned
+    setDraggedProjectPath(project.path)
+  }, [])
+
+  const dragOverProject = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
+    const sourcePath = draggedProjectPathRef.current
+    if (!sourcePath || sourcePath === project.path) return
+    if (draggedProjectPinnedRef.current !== project.pinned) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const position: DropPosition =
+      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+    const current = projectDropTargetRef.current
+    if (current?.path === project.path && current.position === position) return
+    const next = { path: project.path, position }
+    projectDropTargetRef.current = next
+    setProjectDropTarget(next)
+    performAppHaptic('alignment')
+  }, [])
+
+  const dropProject = useCallback(
+    (event: DragEvent<HTMLElement>, project: Project) => {
+      event.preventDefault()
+      const sourcePath = draggedProjectPathRef.current
+      const target = projectDropTargetRef.current
+      if (sourcePath && target?.path === project.path) {
+        reorderProjectRef.current?.(sourcePath, project.path, target.position)
+      }
+      endProjectDrag()
+    },
+    [endProjectDrag],
+  )
+  // A status push for a chat outside the current project page changes the
+  // complete project tree but not one visible row. Retaining both the window
+  // and its elements lets React skip that 50-row reconciliation entirely.
+  const visibleProjectRows = useMemo(
+    () =>
+      visibleProjects.map((project) => (
+        <ProjectRow
+          key={project.path}
+          project={project}
+          activeSessionId={props.activeSessionId}
+          active={project.path === props.activeProjectPath}
+          reorderable={Boolean(props.onReorderProject)}
+          dragging={project.path === draggedProjectPath}
+          dropPosition={
+            projectDropTarget?.path === project.path ? projectDropTarget.position : undefined
+          }
+          onProjectDragStart={startProjectDrag}
+          onProjectDragOver={dragOverProject}
+          onProjectDrop={dropProject}
+          onProjectDragEnd={endProjectDrag}
+          onNewSession={newSession}
+          onSelectSession={selectSession}
+          onRenameProject={props.onRenameProject}
+          onRemoveProject={props.onRemoveProject}
+          onTogglePin={props.onTogglePin}
+          onRenameSession={props.onRenameSession}
+          onToggleSessionPin={props.onToggleSessionPin}
+          onDeleteSession={props.onDeleteSession}
+          onArchiveProject={props.onArchiveProject}
+          onReorderSession={props.onReorderSession}
+        />
+      )),
+    [
+      dragOverProject,
+      draggedProjectPath,
+      dropProject,
+      endProjectDrag,
+      newSession,
+      projectDropTarget,
+      props.activeProjectPath,
+      props.activeSessionId,
+      props.onArchiveProject,
+      props.onDeleteSession,
+      props.onRemoveProject,
+      props.onRenameProject,
+      props.onRenameSession,
+      props.onReorderProject,
+      props.onReorderSession,
+      props.onTogglePin,
+      props.onToggleSessionPin,
+      selectSession,
+      startProjectDrag,
+      visibleProjects,
+    ],
+  )
   return (
     <div
       ref={slotRef}
@@ -435,28 +591,36 @@ function SidebarComponent(props: {
         />
       ) : null}
 
-      <nav ref={railRef} className="rail" inert={props.collapsed ? true : undefined}>
+      <nav
+        ref={railRef}
+        className="rail"
+        inert={props.collapsed ? true : undefined}
+        onPointerOverCapture={(event) => preloadThreadOnSessionIntent(event.target)}
+        onFocusCapture={(event) => preloadThreadOnSessionIntent(event.target)}
+      >
         {inbox ? (
-          <InboxSidebar
-            projects={props.projects}
-            scope={scope}
-            activeProjectPath={props.activeProjectPath}
-            activeSessionId={props.activeSessionId}
-            actions={props.inbox!}
-            onScopeChange={setScope}
-            onAddProject={() => {
-              props.onAddProject()
-              closeOnNarrowViewport()
-            }}
-            onNewSession={newSession}
-            onSelectSession={selectSession}
-            onRenameSession={props.onRenameSession}
-            onToggleSessionPin={(id) => props.onToggleSessionPin?.(id)}
-            onArchiveSession={props.onDeleteSession}
-            onArchiveSessions={props.onArchiveProject}
-            pullRequestsActive={props.pullRequestsActive}
-            onOpenPullRequests={props.onOpenPullRequests ? openPullRequests : undefined}
-          />
+          <Suspense fallback={null}>
+            <InboxSidebar
+              projects={props.projects}
+              scope={scope}
+              activeProjectPath={props.activeProjectPath}
+              activeSessionId={props.activeSessionId}
+              actions={props.inbox!}
+              onScopeChange={setScope}
+              onAddProject={() => {
+                props.onAddProject()
+                closeOnNarrowViewport()
+              }}
+              onNewSession={newSession}
+              onSelectSession={selectSession}
+              onRenameSession={props.onRenameSession}
+              onToggleSessionPin={(id) => props.onToggleSessionPin?.(id)}
+              onArchiveSession={props.onDeleteSession}
+              onArchiveSessions={props.onArchiveProject}
+              pullRequestsActive={props.pullRequestsActive}
+              onOpenPullRequests={props.onOpenPullRequests ? openPullRequests : undefined}
+            />
+          </Suspense>
         ) : (
           <>
             <div className={`rail__actions${bodyScrolled ? ' is-scrolled' : ''}`}>
@@ -519,30 +683,40 @@ function SidebarComponent(props: {
               className="rail__body"
               onScroll={(event) => setBodyScrolled(event.currentTarget.scrollTop > 0)}
             >
-              {pinnedSessions.length > 0 ? (
+              {pinnedSessionCount > 0 ? (
                 <>
                   <p className="section">Pinned</p>
                   <ul className="proj__sessions pinned-sessions">
-                    {pinnedSessions.map(({ projectPath, session }) => (
-                      <SessionRow
+                    {visiblePinnedSessions.map(({ projectPath, session }) => (
+                      <PinnedSessionRow
                         key={session.id}
+                        projectPath={projectPath}
                         session={session}
                         active={session.id === props.activeSessionId}
-                        standalone
-                        onSelect={() => selectSession(session.id)}
-                        onRename={(title) => props.onRenameSession(session.id, title)}
-                        onDelete={() => props.onDeleteSession(session.id)}
-                        onTogglePin={() => props.onToggleSessionPin?.(session.id)}
-                        onOpenInExplorer={() => void revealPath(projectPath)}
-                        reorderable={false}
-                        dragging={false}
-                        dropPosition={undefined}
-                        onDragStart={() => undefined}
-                        onDragOver={() => undefined}
-                        onDrop={() => undefined}
-                        onDragEnd={() => undefined}
+                        onSelectSession={selectSession}
+                        onRenameSession={props.onRenameSession}
+                        onDeleteSession={props.onDeleteSession}
+                        onToggleSessionPin={props.onToggleSessionPin}
                       />
                     ))}
+                    {pinnedSessionCount > pinnedSessionLimit ? (
+                      <li className="proj__sessions-toggle-row">
+                        <button
+                          type="button"
+                          className="proj__sessions-toggle"
+                          onClick={() =>
+                            setPinnedSessionLimit((current) => current + PINNED_SESSION_PAGE_SIZE)
+                          }
+                        >
+                          Show{' '}
+                          {Math.min(
+                            PINNED_SESSION_PAGE_SIZE,
+                            pinnedSessionCount - pinnedSessionLimit,
+                          )}{' '}
+                          more
+                        </button>
+                      </li>
+                    ) : null}
                   </ul>
                 </>
               ) : null}
@@ -564,61 +738,19 @@ function SidebarComponent(props: {
               {orderedProjects.length === 0 ? (
                 <p className="rail__hint">Nothing here yet.</p>
               ) : (
-                orderedProjects.map((project) => (
-                  <ProjectRow
-                    {...props}
-                    key={project.path}
-                    project={project}
-                    active={project.path === props.activeProjectPath}
-                    reorderable={Boolean(props.onReorderProject)}
-                    dragging={project.path === draggedProjectPath}
-                    dropPosition={
-                      projectDropTarget?.path === project.path
-                        ? projectDropTarget.position
-                        : undefined
-                    }
-                    onProjectDragStart={(event) => {
-                      if (event.target !== event.currentTarget || !props.onReorderProject) return
-                      prepareAppHaptics()
-                      event.dataTransfer.effectAllowed = 'move'
-                      event.dataTransfer.setData('text/plain', project.path)
-                      setDraggedProjectPath(project.path)
-                    }}
-                    onProjectDragOver={(event) => {
-                      if (!draggedProjectPath || draggedProjectPath === project.path) return
-                      const source = orderedProjects.find(
-                        (candidate) => candidate.path === draggedProjectPath,
-                      )
-                      if (source?.pinned !== project.pinned) return
-                      event.preventDefault()
-                      event.dataTransfer.dropEffect = 'move'
-                      const bounds = event.currentTarget.getBoundingClientRect()
-                      const position: DropPosition =
-                        event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-                      if (
-                        projectDropTarget?.path === project.path &&
-                        projectDropTarget.position === position
-                      )
-                        return
-                      setProjectDropTarget({ path: project.path, position })
-                      performAppHaptic('alignment')
-                    }}
-                    onProjectDrop={(event) => {
-                      event.preventDefault()
-                      if (draggedProjectPath && projectDropTarget?.path === project.path) {
-                        props.onReorderProject?.(
-                          draggedProjectPath,
-                          project.path,
-                          projectDropTarget.position,
-                        )
-                      }
-                      endProjectDrag()
-                    }}
-                    onProjectDragEnd={endProjectDrag}
-                    onNewSession={(path) => newSession(path)}
-                    onSelectSession={selectSession}
-                  />
-                ))
+                <>
+                  {visibleProjectRows}
+                  {orderedProjects.length > projectLimit ? (
+                    <button
+                      type="button"
+                      className="proj__sessions-toggle"
+                      onClick={() => setProjectLimit((limit) => limit + PROJECT_PAGE_SIZE)}
+                    >
+                      Show {Math.min(PROJECT_PAGE_SIZE, orderedProjects.length - projectLimit)} more
+                      projects
+                    </button>
+                  ) : null}
+                </>
               )}
             </div>
           </>
@@ -629,6 +761,7 @@ function SidebarComponent(props: {
             drop="up"
             gap={14}
             label="Account"
+            onOpen={props.onOpenUsage}
             panelClassName="menu--settings"
             panelRole="dialog"
             panelLabel="Account and plan limits"
@@ -637,10 +770,10 @@ function SidebarComponent(props: {
                 <span className="account__avatar">
                   {props.profileIdentity?.avatarDataUrl ? (
                     <img src={props.profileIdentity.avatarDataUrl} alt="" />
+                  ) : defaultAvatar ? (
+                    <img src={defaultAvatar} alt="" />
                   ) : (
-                    profileInitials(
-                      profileDisplayName || props.account?.email || props.providerName,
-                    )
+                    avatarFallback
                   )}
                 </span>
                 <span className="account__name">{profileDisplayName || props.providerName}</span>
@@ -650,7 +783,12 @@ function SidebarComponent(props: {
             {(close) => (
               <>
                 {props.usageStates ? (
-                  <AccountLimits states={props.usageStates} onRetry={props.onRetryUsage ?? noop} />
+                  <Suspense fallback={null}>
+                    <AccountLimits
+                      states={props.usageStates}
+                      onRetry={props.onRetryUsage ?? noop}
+                    />
+                  </Suspense>
                 ) : null}
                 <button
                   type="button"
@@ -689,29 +827,28 @@ function SidebarComponent(props: {
            reveal and the next expand come back at. */
         foldable={!props.collapsed}
         onWidthChange={props.onWidthChange}
-        onResizingChange={(active) => {
-          resizing.current = active
-          if (active) cancelRevealHide()
-        }}
-        onCollapse={(releaseX) => {
-          foldedByDrag.current = true
-          startCooldown(releaseX)
-          props.onClose()
-        }}
+        resizing={resizing}
+        foldedByDrag={foldedByDrag}
+        onResizeStart={cancelRevealHide}
+        onCollapseCooldown={startCooldown}
+        onClose={props.onClose}
       />
     </div>
   )
 }
 
-function RailResizeHandle(props: {
+const RailResizeHandle = memo(function RailResizeHandle(props: {
   buttonRef: RefObject<HTMLButtonElement | null>
   hidden: boolean
   width: number
   /** False on a revealed rail: it is already collapsed, so the drag only sizes it. */
   foldable: boolean
   onWidthChange: (width: number) => void
-  onResizingChange: (active: boolean) => void
-  onCollapse: (releaseX: number) => void
+  resizing: { current: boolean }
+  foldedByDrag: { current: boolean }
+  onResizeStart: () => void
+  onCollapseCooldown: (releaseX: number) => void
+  onClose: () => void
 }) {
   const hapticsPreference = useSyncExternalStore(
     subscribeAppHaptics,
@@ -775,6 +912,17 @@ function RailResizeHandle(props: {
     }, RAIL_FOLD_MS)
   }
 
+  const notifyResizing = (active: boolean) => {
+    props.resizing.current = active
+    if (active) props.onResizeStart()
+  }
+
+  const collapse = (releaseX: number) => {
+    props.foldedByDrag.current = true
+    props.onCollapseCooldown(releaseX)
+    props.onClose()
+  }
+
   const cancelResize = (event: PointerEvent<HTMLButtonElement>) => {
     const current = drag.current
     if (!current) return
@@ -788,7 +936,7 @@ function RailResizeHandle(props: {
     // the rest of the window.
     preview(target, current.current)
     setResizing(target, false)
-    props.onResizingChange(false)
+    notifyResizing(false)
     props.onWidthChange(current.current)
   }
 
@@ -796,7 +944,7 @@ function RailResizeHandle(props: {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
     if (event.key === 'ArrowLeft' && props.width <= MIN_RAIL_WIDTH) {
-      props.onCollapse(Number.POSITIVE_INFINITY)
+      collapse(Number.POSITIVE_INFINITY)
       return
     }
     props.onWidthChange(clampRailWidth(props.width + (event.key === 'ArrowLeft' ? -8 : 8)))
@@ -823,7 +971,7 @@ function RailResizeHandle(props: {
         previewFold(event.currentTarget, false)
         event.currentTarget.setPointerCapture?.(event.pointerId)
         setResizing(event.currentTarget, true)
-        props.onResizingChange(true)
+        notifyResizing(true)
         drag.current = {
           startX: event.clientX,
           width: props.width,
@@ -883,7 +1031,7 @@ function RailResizeHandle(props: {
         const { current: width, folded } = drag.current
         drag.current = undefined
         target.releasePointerCapture?.(event.pointerId)
-        props.onResizingChange(false)
+        notifyResizing(false)
         if (folded) {
           // The rail stays at the folded width here. Restoring the stored one
           // is the Sidebar's job on the commit that adds the collapsed class,
@@ -892,7 +1040,7 @@ function RailResizeHandle(props: {
           // Suppression stays on and is cleared there too: this handle is
           // unmounted by then and could not do it itself.
           setResizing(target, true)
-          props.onCollapse(event.clientX)
+          collapse(event.clientX)
           return
         }
         setResizing(target, false)
@@ -902,22 +1050,22 @@ function RailResizeHandle(props: {
       onLostPointerCapture={cancelResize}
     />
   )
-}
+})
 
 function clampRailWidth(width: number): number {
   return Math.min(MAX_RAIL_WIDTH, Math.max(MIN_RAIL_WIDTH, Math.round(width)))
 }
 
-function ProjectRow(props: {
+function ProjectRowComponent(props: {
   project: Project
   activeSessionId: string | undefined
   active: boolean
   reorderable: boolean
   dragging: boolean
   dropPosition: DropPosition | undefined
-  onProjectDragStart: (event: DragEvent<HTMLElement>) => void
-  onProjectDragOver: (event: DragEvent<HTMLElement>) => void
-  onProjectDrop: (event: DragEvent<HTMLElement>) => void
+  onProjectDragStart: (event: DragEvent<HTMLElement>, project: Project) => void
+  onProjectDragOver: (event: DragEvent<HTMLElement>, project: Project) => void
+  onProjectDrop: (event: DragEvent<HTMLElement>, project: Project) => void
   onProjectDragEnd: () => void
   onNewSession: (path: string) => void
   onSelectSession: (id: string) => void
@@ -925,7 +1073,7 @@ function ProjectRow(props: {
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
-  onToggleSessionPin?: (id: string) => void
+  onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
@@ -937,10 +1085,12 @@ function ProjectRow(props: {
 }) {
   const count = props.project.sessions.length
   const [open, setOpen] = useState(props.active)
-  const [showAllSessions, setShowAllSessions] = useState(false)
+  const [drawerMounted, setDrawerMounted] = useState(props.active)
+  const [sessionLimit, setSessionLimit] = useState(COLLAPSED_PROJECT_SESSION_COUNT)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
   const [draggedSessionId, setDraggedSessionId] = useState<string>()
+  const draggedSessionIdRef = useRef<string | undefined>(undefined)
   const [dropTarget, setDropTarget] = useState<{
     id: string
     position: DropPosition
@@ -948,28 +1098,74 @@ function ProjectRow(props: {
   const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const previousCount = useRef(count)
+  const previousActive = useRef(props.active)
+  const drawerUnmount = useRef<number | undefined>(undefined)
   const expanded = open
-  const hasMoreSessions = count > COLLAPSED_PROJECT_SESSION_COUNT
-  const visibleSessions = showAllSessions
-    ? props.project.sessions
-    : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
+  const hasMoreSessions = count > sessionLimit
+  const visibleSessions = drawerMounted ? props.project.sessions.slice(0, sessionLimit) : []
+  if (
+    drawerMounted &&
+    props.activeSessionId &&
+    !visibleSessions.some((session) => session.id === props.activeSessionId)
+  ) {
+    const active = props.project.sessions.find((session) => session.id === props.activeSessionId)
+    if (active) visibleSessions.push(active)
+  }
   const reorderable = true
 
+  const setExpanded = useCallback((next: boolean) => {
+    if (drawerUnmount.current !== undefined) {
+      clearTimeout(drawerUnmount.current)
+      drawerUnmount.current = undefined
+    }
+    if (next) {
+      setDrawerMounted(true)
+      setOpen(true)
+      return
+    }
+    setOpen(false)
+    drawerUnmount.current = window.setTimeout(() => {
+      drawerUnmount.current = undefined
+      setDrawerMounted(false)
+    }, RAIL_FOLD_MS)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (drawerUnmount.current !== undefined) clearTimeout(drawerUnmount.current)
+    },
+    [],
+  )
+
   useEffect(() => {
-    if (previousCount.current === 0 && count > 0) setOpen(true)
+    if (previousCount.current === 0 && count > 0) setExpanded(true)
     previousCount.current = count
-  }, [count])
+  }, [count, setExpanded])
 
-  useEffect(() => setOpen(props.active), [props.active])
+  useEffect(() => {
+    if (props.active) setExpanded(true)
+    else if (previousActive.current) setExpanded(false)
+    previousActive.current = props.active
+  }, [props.active, setExpanded])
 
-  const endDrag = () => {
+  const endDrag = useCallback(() => {
+    draggedSessionIdRef.current = undefined
     setDraggedSessionId(undefined)
     setDropTarget(undefined)
     dropTargetRef.current = undefined
-  }
+  }, [])
 
-  const dragOverSession = (event: DragEvent<HTMLLIElement>, targetId: string) => {
-    if (!draggedSessionId || draggedSessionId === targetId) return
+  const startSessionDrag = useCallback((event: DragEvent<HTMLLIElement>, sessionId: string) => {
+    prepareAppHaptics()
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', sessionId)
+    draggedSessionIdRef.current = sessionId
+    setDraggedSessionId(sessionId)
+  }, [])
+
+  const dragOverSession = useCallback((event: DragEvent<HTMLLIElement>, targetId: string) => {
+    const sourceId = draggedSessionIdRef.current
+    if (!sourceId || sourceId === targetId) return
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -981,7 +1177,20 @@ function ProjectRow(props: {
     dropTargetRef.current = next
     setDropTarget(next)
     performAppHaptic('alignment')
-  }
+  }, [])
+
+  const dropSession = useCallback(
+    (event: DragEvent<HTMLLIElement>, targetId: string) => {
+      event.preventDefault()
+      const sourceId = draggedSessionIdRef.current
+      const target = dropTargetRef.current
+      if (sourceId && target?.id === targetId && sourceId !== targetId) {
+        props.onReorderSession(props.project.path, sourceId, targetId, target.position)
+      }
+      endDrag()
+    },
+    [endDrag, props.onReorderSession, props.project.path],
+  )
 
   return (
     <section
@@ -989,9 +1198,9 @@ function ProjectRow(props: {
       data-open={expanded}
       data-drop-position={props.dropPosition}
       draggable={props.reorderable}
-      onDragStart={props.onProjectDragStart}
-      onDragOver={props.onProjectDragOver}
-      onDrop={props.onProjectDrop}
+      onDragStart={(event) => props.onProjectDragStart(event, props.project)}
+      onDragOver={(event) => props.onProjectDragOver(event, props.project)}
+      onDrop={(event) => props.onProjectDrop(event, props.project)}
       onDragEnd={props.onProjectDragEnd}
     >
       <div className="proj__head">
@@ -1011,11 +1220,11 @@ function ProjectRow(props: {
               className="proj__toggle"
               onClick={() => {
                 if (count === 0) {
-                  setOpen(!expanded)
+                  setExpanded(!expanded)
                   return
                 }
-                if (expanded) setShowAllSessions(false)
-                setOpen(!expanded)
+                if (expanded) setSessionLimit(COLLAPSED_PROJECT_SESSION_COUNT)
+                setExpanded(!expanded)
               }}
               aria-expanded={expanded}
               title={props.project.path}
@@ -1129,64 +1338,61 @@ function ProjectRow(props: {
           row height, which spent half the duration moving nothing — the main
           reason the sidebar read as sluggish. */}
       <div className="proj__drawer" data-open={expanded} aria-hidden={!expanded}>
-        <ul className="proj__sessions">
-          {count === 0 ? <li className="rail__hint">No chats</li> : null}
-          {visibleSessions.map((session) => (
-            <SessionRow
-              key={session.id}
-              session={session}
-              active={session.id === props.activeSessionId}
-              onSelect={() => props.onSelectSession(session.id)}
-              onRename={(title) => props.onRenameSession(session.id, title)}
-              onDelete={() => props.onDeleteSession(session.id)}
-              onTogglePin={() => props.onToggleSessionPin?.(session.id)}
-              onOpenInExplorer={() => void revealPath(props.project.path)}
-              reorderable={reorderable}
-              dragging={session.id === draggedSessionId}
-              dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
-              onDragStart={(event) => {
-                prepareAppHaptics()
-                event.dataTransfer.effectAllowed = 'move'
-                event.dataTransfer.setData('text/plain', session.id)
-                setDraggedSessionId(session.id)
-              }}
-              onDragOver={(event) => dragOverSession(event, session.id)}
-              onDrop={(event) => {
-                event.preventDefault()
-                if (
-                  draggedSessionId &&
-                  dropTarget?.id === session.id &&
-                  draggedSessionId !== session.id
-                ) {
-                  props.onReorderSession(
-                    props.project.path,
-                    draggedSessionId,
-                    session.id,
-                    dropTarget.position,
-                  )
-                }
-                endDrag()
-              }}
-              onDragEnd={endDrag}
-            />
-          ))}
-          {hasMoreSessions ? (
-            <li className="proj__sessions-toggle-row">
-              <button
-                type="button"
-                className="proj__sessions-toggle"
-                aria-expanded={showAllSessions}
-                onClick={() => setShowAllSessions((current) => !current)}
-              >
-                {showAllSessions ? 'Show less' : 'Show more'}
-              </button>
-            </li>
-          ) : null}
-        </ul>
+        {drawerMounted ? (
+          <ul className="proj__sessions">
+            {count === 0 ? <li className="rail__hint">No chats</li> : null}
+            {visibleSessions.map((session) => (
+              <ProjectSessionRow
+                key={session.id}
+                projectPath={props.project.path}
+                session={session}
+                active={session.id === props.activeSessionId}
+                onSelectSession={props.onSelectSession}
+                onRenameSession={props.onRenameSession}
+                onDeleteSession={props.onDeleteSession}
+                onToggleSessionPin={props.onToggleSessionPin}
+                reorderable={reorderable}
+                dragging={session.id === draggedSessionId}
+                dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
+                onDragStart={startSessionDrag}
+                onDragOver={dragOverSession}
+                onDrop={dropSession}
+                onDragEnd={endDrag}
+              />
+            ))}
+            {hasMoreSessions || sessionLimit > COLLAPSED_PROJECT_SESSION_COUNT ? (
+              <li className="proj__sessions-toggle-row">
+                {hasMoreSessions ? (
+                  <button
+                    type="button"
+                    className="proj__sessions-toggle"
+                    aria-expanded={sessionLimit > COLLAPSED_PROJECT_SESSION_COUNT}
+                    onClick={() =>
+                      setSessionLimit((limit) => Math.min(count, limit + PROJECT_SESSION_PAGE_SIZE))
+                    }
+                  >
+                    Show more
+                  </button>
+                ) : null}
+                {sessionLimit > COLLAPSED_PROJECT_SESSION_COUNT ? (
+                  <button
+                    type="button"
+                    className="proj__sessions-toggle"
+                    onClick={() => setSessionLimit(COLLAPSED_PROJECT_SESSION_COUNT)}
+                  >
+                    Show less
+                  </button>
+                ) : null}
+              </li>
+            ) : null}
+          </ul>
+        ) : null}
       </div>
     </section>
   )
 }
+
+const ProjectRow = memo(ProjectRowComponent)
 
 function SessionRow(props: {
   session: Session
@@ -1334,6 +1540,74 @@ function SessionRow(props: {
   )
 }
 
+const PinnedSessionRow = memo(function PinnedSessionRow(props: {
+  projectPath: string
+  session: Session
+  active: boolean
+  onSelectSession: (id: string) => void
+  onRenameSession: (id: string, title: string) => void
+  onDeleteSession: (id: string) => void
+  onToggleSessionPin: ((id: string) => void) | undefined
+}) {
+  const { session } = props
+  return (
+    <SessionRow
+      session={session}
+      active={props.active}
+      standalone
+      onSelect={() => props.onSelectSession(session.id)}
+      onRename={(title) => props.onRenameSession(session.id, title)}
+      onDelete={() => props.onDeleteSession(session.id)}
+      onTogglePin={() => props.onToggleSessionPin?.(session.id)}
+      onOpenInExplorer={() => void revealPath(props.projectPath)}
+      reorderable={false}
+      dragging={false}
+      dropPosition={undefined}
+      onDragStart={noop}
+      onDragOver={noop}
+      onDrop={noop}
+      onDragEnd={noop}
+    />
+  )
+})
+
+const ProjectSessionRow = memo(function ProjectSessionRow(props: {
+  projectPath: string
+  session: Session
+  active: boolean
+  onSelectSession: (id: string) => void
+  onRenameSession: (id: string, title: string) => void
+  onDeleteSession: (id: string) => void
+  onToggleSessionPin: ((id: string) => void) | undefined
+  reorderable: boolean
+  dragging: boolean
+  dropPosition: DropPosition | undefined
+  onDragStart: (event: DragEvent<HTMLLIElement>, sessionId: string) => void
+  onDragOver: (event: DragEvent<HTMLLIElement>, sessionId: string) => void
+  onDrop: (event: DragEvent<HTMLLIElement>, sessionId: string) => void
+  onDragEnd: () => void
+}) {
+  const { session } = props
+  return (
+    <SessionRow
+      session={session}
+      active={props.active}
+      onSelect={() => props.onSelectSession(session.id)}
+      onRename={(title) => props.onRenameSession(session.id, title)}
+      onDelete={() => props.onDeleteSession(session.id)}
+      onTogglePin={() => props.onToggleSessionPin?.(session.id)}
+      onOpenInExplorer={() => void revealPath(props.projectPath)}
+      reorderable={props.reorderable}
+      dragging={props.dragging}
+      dropPosition={props.dropPosition}
+      onDragStart={(event) => props.onDragStart(event, session.id)}
+      onDragOver={(event) => props.onDragOver(event, session.id)}
+      onDrop={(event) => props.onDrop(event, session.id)}
+      onDragEnd={props.onDragEnd}
+    />
+  )
+})
+
 function SidebarConfirmDialog(props: {
   title: string
   body: string
@@ -1384,9 +1658,7 @@ function SessionStatus(props: { status: Session['status'] }) {
   if (props.status === 'starting' || props.status === 'working') {
     return (
       <span className="sess__spinner" aria-hidden>
-        {BRAILLE_SPINNER_FRAMES.map((frame) => (
-          <span key={frame}>{frame}</span>
-        ))}
+        <span className="sess__spinner-frames">{BRAILLE_SPINNER_TEXT}</span>
       </span>
     )
   }
@@ -1425,21 +1697,378 @@ function sessionLabel(session: Session): string {
   }
 }
 
-function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
-  const active: T[] = []
-  const unread: T[] = []
-  const rest: T[] = []
-  for (const value of sessions) {
-    const session = getSession(value)
-    if (['starting', 'working', 'queued', 'approval', 'input'].includes(session.status)) {
-      active.push(value)
-    } else if (session.unread) {
-      unread.push(value)
-    } else {
-      rest.push(value)
+type PinnedSession = { projectPath: string; session: Session }
+type ClassicSidebarProjects = {
+  pinnedSessions: PinnedSession[]
+  orderedProjects: Project[]
+}
+
+type ClassicSidebarWindow = ClassicSidebarProjects & {
+  pinnedSessionCount: number
+}
+
+type ClassicProjectProjection = {
+  ordered: Project
+  pinnedActive: PinnedSession[]
+  pinnedUnread: PinnedSession[]
+  pinnedRest: PinnedSession[]
+  buckets: ClassicBuckets | undefined
+}
+
+type ClassicBucket = 0 | 1 | 2 | 3 | 4 | 5
+type PinnedBucket = 0 | 1 | 2
+type ClassicBuckets = [number[], number[], number[], number[], number[], number[]]
+
+const PINNED_ACTIVE_BUCKET = 0
+const PINNED_UNREAD_BUCKET = 1
+const PINNED_REST_BUCKET = 2
+const ACTIVE_BUCKET = 3
+const UNREAD_BUCKET = 4
+const REST_BUCKET = 5
+const EMPTY_PINNED_SESSIONS: PinnedSession[] = []
+
+const classicProjectProjections = new WeakMap<Project, ClassicProjectProjection>()
+
+function projectClassicProjection(project: Project): ClassicProjectProjection {
+  const cached = classicProjectProjections.get(project)
+  if (cached) return cached
+
+  if (project.sessions.every((session) => classicBucket(session) === REST_BUCKET)) {
+    const projection = {
+      ordered: project,
+      pinnedActive: EMPTY_PINNED_SESSIONS,
+      pinnedUnread: EMPTY_PINNED_SESSIONS,
+      pinnedRest: EMPTY_PINNED_SESSIONS,
+      buckets: undefined,
+    }
+    classicProjectProjections.set(project, projection)
+    return projection
+  }
+
+  const active: Session[] = []
+  const unread: Session[] = []
+  const rest: Session[] = []
+  const pinnedActive: PinnedSession[] = []
+  const pinnedUnread: PinnedSession[] = []
+  const pinnedRest: PinnedSession[] = []
+  const buckets: ClassicBuckets = [[], [], [], [], [], []]
+  let requiresOrdering = false
+
+  for (let index = 0; index < project.sessions.length; index += 1) {
+    const session = project.sessions[index]!
+    buckets[classicBucket(session)].push(index)
+    if (session.pinned) {
+      requiresOrdering = true
+      appendPrioritized(
+        { projectPath: project.path, session },
+        session,
+        pinnedActive,
+        pinnedUnread,
+        pinnedRest,
+      )
+      continue
+    }
+    appendPrioritized(session, session, active, unread, rest)
+    requiresOrdering ||= active.length > 0 || unread.length > 0
+  }
+
+  const projection = {
+    ordered: requiresOrdering ? { ...project, sessions: [...active, ...unread, ...rest] } : project,
+    pinnedActive,
+    pinnedUnread,
+    pinnedRest,
+    buckets,
+  }
+  classicProjectProjections.set(project, projection)
+  return projection
+}
+
+function classicBucket(session: Session): ClassicBucket {
+  const active =
+    session.status === 'starting' ||
+    session.status === 'working' ||
+    session.status === 'queued' ||
+    session.status === 'approval' ||
+    session.status === 'input'
+  if (session.pinned) {
+    if (active) return PINNED_ACTIVE_BUCKET
+    return session.unread ? PINNED_UNREAD_BUCKET : PINNED_REST_BUCKET
+  }
+  if (active) return ACTIVE_BUCKET
+  return session.unread ? UNREAD_BUCKET : REST_BUCKET
+}
+
+function bucketPosition(bucket: readonly number[], sourceIndex: number): number {
+  let low = 0
+  let high = bucket.length
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    if (bucket[middle]! < sourceIndex) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+function isPinnedBucket(bucket: ClassicBucket): bucket is PinnedBucket {
+  return bucket <= PINNED_REST_BUCKET
+}
+
+function orderedSessionPosition(
+  buckets: ClassicBuckets,
+  bucket: ClassicBucket,
+  localPosition: number,
+): number {
+  let position = localPosition
+  for (let index = ACTIVE_BUCKET; index < bucket; index += 1) position += buckets[index]!.length
+  return position
+}
+
+function projectClassicProjectionFromChange(
+  previousProject: Project,
+  project: Project,
+  sessionIndex: number,
+): ClassicProjectProjection | undefined {
+  const previous = classicProjectProjections.get(previousProject)
+  const oldSession = previousProject.sessions[sessionIndex]
+  const session = project.sessions[sessionIndex]
+  if (
+    !previous ||
+    !oldSession ||
+    !session ||
+    oldSession.id !== session.id ||
+    previousProject.path !== project.path ||
+    previousProject.name !== project.name ||
+    previousProject.pinned !== project.pinned ||
+    previousProject.sessions.length !== project.sessions.length
+  ) {
+    return undefined
+  }
+
+  const oldBucket = classicBucket(oldSession)
+  const nextBucket = classicBucket(session)
+  if (!previous.buckets) {
+    if (oldBucket !== REST_BUCKET || nextBucket !== REST_BUCKET) return undefined
+    const projection = {
+      ordered: project,
+      pinnedActive: EMPTY_PINNED_SESSIONS,
+      pinnedUnread: EMPTY_PINNED_SESSIONS,
+      pinnedRest: EMPTY_PINNED_SESSIONS,
+      buckets: undefined,
+    }
+    classicProjectProjections.set(project, projection)
+    return projection
+  }
+  const oldLocal = bucketPosition(previous.buckets[oldBucket], sessionIndex)
+  if (previous.buckets[oldBucket][oldLocal] !== sessionIndex) return undefined
+
+  const buckets = previous.buckets.slice() as ClassicBuckets
+  let nextLocal = oldLocal
+  if (oldBucket !== nextBucket) {
+    buckets[oldBucket] = [...previous.buckets[oldBucket]]
+    buckets[oldBucket].splice(oldLocal, 1)
+    buckets[nextBucket] = [...previous.buckets[nextBucket]]
+    nextLocal = bucketPosition(buckets[nextBucket], sessionIndex)
+    buckets[nextBucket].splice(nextLocal, 0, sessionIndex)
+  }
+
+  const pinnedGroups: [PinnedSession[], PinnedSession[], PinnedSession[]] = [
+    previous.pinnedActive,
+    previous.pinnedUnread,
+    previous.pinnedRest,
+  ]
+  if (isPinnedBucket(oldBucket) || isPinnedBucket(nextBucket)) {
+    if (isPinnedBucket(oldBucket)) {
+      pinnedGroups[oldBucket] = [...pinnedGroups[oldBucket]]
+      pinnedGroups[oldBucket].splice(oldLocal, 1)
+    }
+    if (isPinnedBucket(nextBucket)) {
+      if (nextBucket !== oldBucket) pinnedGroups[nextBucket] = [...pinnedGroups[nextBucket]]
+      pinnedGroups[nextBucket].splice(nextLocal, 0, { projectPath: project.path, session })
     }
   }
-  return [...active, ...unread, ...rest]
+
+  const requiresOrdering =
+    buckets[PINNED_ACTIVE_BUCKET].length > 0 ||
+    buckets[PINNED_UNREAD_BUCKET].length > 0 ||
+    buckets[PINNED_REST_BUCKET].length > 0 ||
+    buckets[ACTIVE_BUCKET].length > 0 ||
+    buckets[UNREAD_BUCKET].length > 0
+  let ordered = project
+  if (requiresOrdering) {
+    let sessions = previous.ordered.sessions
+    if (oldBucket >= ACTIVE_BUCKET || nextBucket >= ACTIVE_BUCKET) {
+      sessions = [...sessions]
+      if (oldBucket >= ACTIVE_BUCKET) {
+        const oldPosition = orderedSessionPosition(previous.buckets, oldBucket, oldLocal)
+        sessions.splice(oldPosition, 1)
+      }
+      if (nextBucket >= ACTIVE_BUCKET) {
+        const nextPosition = orderedSessionPosition(buckets, nextBucket, nextLocal)
+        sessions.splice(nextPosition, 0, session)
+      }
+    }
+    ordered = sessions === previous.ordered.sessions ? previous.ordered : { ...project, sessions }
+  }
+
+  const projection = {
+    ordered,
+    pinnedActive: pinnedGroups[PINNED_ACTIVE_BUCKET],
+    pinnedUnread: pinnedGroups[PINNED_UNREAD_BUCKET],
+    pinnedRest: pinnedGroups[PINNED_REST_BUCKET],
+    buckets,
+  }
+  classicProjectProjections.set(project, projection)
+  return projection
+}
+
+export function createClassicSidebarProjector() {
+  let projectedProjects: Project[] | undefined
+  let fullProjects: Project[] | undefined
+  let fullResult: ClassicSidebarProjects | undefined
+  let windowProjects: Project[] | undefined
+  let windowLimit = 0
+  let windowActiveId: string | undefined
+  let windowResult: ClassicSidebarWindow | undefined
+
+  const prepare = (projects: Project[]) => {
+    if (projects === projectedProjects) return
+    if (projectedProjects) {
+      const changes = takeProjectSessionChanges(projectedProjects, projects)
+      if (changes?.length === 1) {
+        const { projectIndex, sessionIndex } = changes[0]!
+        const previousProject = projectedProjects[projectIndex]
+        const project = projects[projectIndex]
+        if (previousProject && project) {
+          projectClassicProjectionFromChange(previousProject, project, sessionIndex)
+        }
+      }
+    }
+    projectedProjects = projects
+  }
+
+  return {
+    project(projects: Project[]) {
+      if (projects === fullProjects && fullResult) return fullResult
+      prepare(projects)
+      fullProjects = projects
+      fullResult = arrangeClassicSidebarProjects(projects)
+      return fullResult
+    },
+    projectWindow(
+      projects: Project[],
+      pinnedLimit: number,
+      activeSessionId?: string,
+    ): ClassicSidebarWindow {
+      if (
+        projects === windowProjects &&
+        pinnedLimit === windowLimit &&
+        activeSessionId === windowActiveId &&
+        windowResult
+      ) {
+        return windowResult
+      }
+      prepare(projects)
+      windowProjects = projects
+      windowLimit = pinnedLimit
+      windowActiveId = activeSessionId
+      windowResult = arrangeClassicSidebarWindow(projects, pinnedLimit, activeSessionId)
+      return windowResult
+    },
+  }
+}
+
+export function arrangeClassicSidebarWindow(
+  projects: Project[],
+  pinnedLimit: number,
+  activeSessionId?: string,
+): ClassicSidebarWindow {
+  const pinnedProjects: Project[] = []
+  const regularProjects: Project[] = []
+  const projections: ClassicProjectProjection[] = []
+  let pinnedSessionCount = 0
+
+  for (const project of projects) {
+    const projection = projectClassicProjection(project)
+    projections.push(projection)
+    pinnedSessionCount +=
+      projection.pinnedActive.length + projection.pinnedUnread.length + projection.pinnedRest.length
+    if (project.pinned) pinnedProjects.push(projection.ordered)
+    else regularProjects.push(projection.ordered)
+  }
+
+  const pinnedSessions: PinnedSession[] = []
+  const appendVisible = (select: (projection: ClassicProjectProjection) => PinnedSession[]) => {
+    if (pinnedSessions.length >= pinnedLimit) return
+    for (const projection of projections) {
+      const group = select(projection)
+      const remaining = pinnedLimit - pinnedSessions.length
+      for (let index = 0; index < group.length && index < remaining; index += 1) {
+        pinnedSessions.push(group[index]!)
+      }
+      if (pinnedSessions.length >= pinnedLimit) return
+    }
+  }
+  appendVisible((projection) => projection.pinnedActive)
+  appendVisible((projection) => projection.pinnedUnread)
+  appendVisible((projection) => projection.pinnedRest)
+
+  const active = findSession(projects, activeSessionId)
+  if (
+    active?.session.pinned &&
+    !pinnedSessions.some(({ session }) => session.id === active.session.id)
+  ) {
+    pinnedSessions.push({ projectPath: active.project.path, session: active.session })
+  }
+
+  return {
+    pinnedSessions,
+    pinnedSessionCount,
+    orderedProjects: [...pinnedProjects, ...regularProjects],
+  }
+}
+
+export function arrangeClassicSidebarProjects(projects: Project[]): ClassicSidebarProjects {
+  const pinnedProjects: Project[] = []
+  const regularProjects: Project[] = []
+  const pinnedActive: PinnedSession[] = []
+  const pinnedUnread: PinnedSession[] = []
+  const pinnedRest: PinnedSession[] = []
+
+  for (const project of projects) {
+    const projection = projectClassicProjection(project)
+    pinnedActive.push(...projection.pinnedActive)
+    pinnedUnread.push(...projection.pinnedUnread)
+    pinnedRest.push(...projection.pinnedRest)
+    if (project.pinned) pinnedProjects.push(projection.ordered)
+    else regularProjects.push(projection.ordered)
+  }
+
+  return {
+    pinnedSessions: [...pinnedActive, ...pinnedUnread, ...pinnedRest],
+    orderedProjects: [...pinnedProjects, ...regularProjects],
+  }
+}
+
+function appendPrioritized<T>(
+  value: T,
+  session: Session,
+  active: T[],
+  unread: T[],
+  rest: T[],
+): void {
+  if (
+    session.status === 'starting' ||
+    session.status === 'working' ||
+    session.status === 'queued' ||
+    session.status === 'approval' ||
+    session.status === 'input'
+  ) {
+    active.push(value)
+  } else if (session.unread) {
+    unread.push(value)
+  } else {
+    rest.push(value)
+  }
 }
 
 /** Rename in place. Enter commits, Escape reverts, blur commits. */

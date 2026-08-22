@@ -1,17 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import type { ApprovalDecision, ApprovalMode, DomainEvent } from '@harness/contracts'
 import { ArrowUp, CircleAlert, Square } from 'lucide-react'
 import { parseSideChatCommand } from '../../side-chat-command.js'
 import {
+  appendBackgroundThreadDelta,
+  appendThreadDelta,
+  shouldDrainBackgroundDeltas,
+  type PendingThreadDeltaBatch,
+} from '../../thread-delta-buffer.js'
+import {
+  activeTurnActivityIndices,
+  activeTurnIsSearching,
   beginOptimisticTurn,
   emptyThread,
   reduce,
   reduceDeltas,
   reduceEventLog,
   removeOptimisticMessage,
-  type ItemDeltaEvent,
   type ThreadState,
 } from '../../thread-store.js'
+import { ThreadFrameStore } from '../../thread-frame-store.js'
 import type { Transport } from '../../transport.js'
 import { Thread } from '../Thread.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
@@ -35,6 +51,57 @@ export type SideChatStartOptions = {
 type SequencedEvent = { event: DomainEvent; seq?: number | undefined }
 let submissionSequence = 0
 
+const SideChatThread = memo(function SideChatThread(props: {
+  frameStore: ThreadFrameStore
+  threadId?: string | undefined
+  transport: Transport
+  onDecide: (id: string, decision: ApprovalDecision) => void
+  onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void
+}) {
+  const thread = useSyncExternalStore(
+    props.frameStore.subscribeStructure,
+    props.frameStore.getStructureSnapshot,
+    props.frameStore.getStructureSnapshot,
+  )
+  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
+  const activeActivityIndices = useMemo(
+    () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
+    [thread.items, thread.activeTurn?.id, thread.liveStart],
+  )
+  const searching = activeTurnIsSearching(
+    thread.items,
+    thread.activeTurn?.id,
+    thread.liveItems,
+    thread.liveStart,
+    activeActivityIndices,
+  )
+
+  return (
+    <Thread
+      frameStore={props.frameStore}
+      items={thread.items}
+      liveItems={thread.liveItems}
+      itemVersion={thread.itemVersion}
+      liveStart={thread.liveStart}
+      running={thread.running}
+      searching={searching}
+      activeActivityIndices={activeActivityIndices}
+      activeTurn={thread.activeTurn}
+      turnTiming={thread.turnTiming}
+      plan={thread.plan}
+      diff={thread.diff}
+      threadId={props.threadId}
+      transport={props.transport}
+      approvals={thread.approvals}
+      userInputs={thread.userInputs}
+      reviews={reviews}
+      keyboardActive={false}
+      onDecide={props.onDecide}
+      onAnswerUserInput={props.onAnswerUserInput}
+    />
+  )
+})
+
 export function WorkspaceSideChat(props: {
   active: boolean
   projectName?: string | undefined
@@ -52,6 +119,10 @@ export function WorkspaceSideChat(props: {
   const [error, setError] = useState<string>()
   const textarea = useRef<HTMLTextAreaElement>(null)
   const threadRef = useRef(thread)
+  const activeRef = useRef(props.active)
+  const flushDeltasRef = useRef<(() => void) | undefined>(undefined)
+  const frameStoreRef = useRef<ThreadFrameStore | null>(null)
+  frameStoreRef.current ??= new ThreadFrameStore(emptyThread)
   const sideThreadIdRef = useRef(sideThreadId)
   const sideParentRef = useRef<string | undefined>(undefined)
   const startPromiseRef = useRef<Promise<string> | undefined>(undefined)
@@ -60,13 +131,12 @@ export function WorkspaceSideChat(props: {
   const loadingHistoryRef = useRef(false)
   const historyBufferRef = useRef<SequencedEvent[]>([])
   const promptRequestRef = useRef(0)
-  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
-
-  threadRef.current = thread
+  activeRef.current = props.active
   sideThreadIdRef.current = sideThreadId
 
   const replaceThread = useCallback((next: ThreadState) => {
     threadRef.current = next
+    frameStoreRef.current?.publish(next)
     setThread(next)
   }, [])
 
@@ -102,15 +172,21 @@ export function WorkspaceSideChat(props: {
 
   useEffect(() => {
     let frame: number | undefined
-    let pendingDeltas: ItemDeltaEvent[] = []
+    let pendingDeltas: PendingThreadDeltaBatch | undefined
 
     const flushDeltas = () => {
       if (frame !== undefined) cancelAnimationFrame(frame)
       frame = undefined
-      if (pendingDeltas.length === 0) return
-      const next = reduceDeltas(threadRef.current, pendingDeltas)
-      pendingDeltas = []
-      replaceThread(next)
+      if (!pendingDeltas || pendingDeltas.events.length === 0) return
+      const deltas = pendingDeltas.events
+      pendingDeltas = undefined
+      const current = threadRef.current
+      const next = reduceDeltas(current, deltas)
+      threadRef.current = next
+      frameStoreRef.current?.publish(next)
+      // A normal delta changes only the live overlay. An early delta can add
+      // the first row, which must mount the conversation container once.
+      if (next.items !== current.items) setThread(next)
     }
     const apply = ({ event, seq }: SequencedEvent) => {
       if (seq !== undefined) {
@@ -118,13 +194,18 @@ export function WorkspaceSideChat(props: {
         lastSeqRef.current = seq
       }
       if (event.type === 'item.delta') {
-        pendingDeltas.push(event)
-        frame ??= requestAnimationFrame(flushDeltas)
+        const active = activeRef.current
+        pendingDeltas = active
+          ? appendThreadDelta(pendingDeltas, event)
+          : appendBackgroundThreadDelta(pendingDeltas, event)
+        if (active) frame ??= requestAnimationFrame(flushDeltas)
+        else if (shouldDrainBackgroundDeltas(pendingDeltas)) flushDeltas()
         return
       }
       flushDeltas()
       replaceThread(reduce(threadRef.current, event))
     }
+    flushDeltasRef.current = flushDeltas
 
     const offEvents = props.transport.on('sideChat.event', ({ threadId, event, seq }) => {
       if (threadId !== sideThreadIdRef.current) return
@@ -168,12 +249,17 @@ export function WorkspaceSideChat(props: {
 
     return () => {
       if (frame !== undefined) cancelAnimationFrame(frame)
-      pendingDeltas = []
+      pendingDeltas = undefined
+      if (flushDeltasRef.current === flushDeltas) flushDeltasRef.current = undefined
       offEvents()
       offState()
       offGap()
     }
   }, [props.transport, replaceThread])
+
+  useEffect(() => {
+    if (props.active) flushDeltasRef.current?.()
+  }, [props.active])
 
   const ensureSideThread = useCallback(async (): Promise<string> => {
     const existing = sideThreadIdRef.current
@@ -309,21 +395,27 @@ export function WorkspaceSideChat(props: {
       .finally(() => setStopping(false))
   }
 
-  const decide = (id: string, decision: ApprovalDecision) => {
-    const threadId = sideThreadIdRef.current
-    if (!threadId) return
-    void props.transport
-      .request('thread.respondToApproval', { threadId, approvalId: id, decision })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
-  }
+  const decide = useCallback(
+    (id: string, decision: ApprovalDecision) => {
+      const threadId = sideThreadIdRef.current
+      if (!threadId) return
+      void props.transport
+        .request('thread.respondToApproval', { threadId, approvalId: id, decision })
+        .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+    },
+    [props.transport],
+  )
 
-  const answer = (id: string, answers: Record<string, string[]>) => {
-    const threadId = sideThreadIdRef.current
-    if (!threadId) return
-    void props.transport
-      .request('thread.respondToUserInput', { threadId, requestId: id, answers })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
-  }
+  const answer = useCallback(
+    (id: string, answers: Record<string, string[]>) => {
+      const threadId = sideThreadIdRef.current
+      if (!threadId) return
+      void props.transport
+        .request('thread.respondToUserInput', { threadId, requestId: id, answers })
+        .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
+    },
+    [props.transport],
+  )
 
   if (!props.parentThreadId) {
     return (
@@ -347,19 +439,10 @@ export function WorkspaceSideChat(props: {
           </div>
         ) : null}
         {hasConversation && props.active ? (
-          <Thread
-            items={thread.items}
-            running={thread.running}
-            activeTurn={thread.activeTurn}
-            turnTiming={thread.turnTiming}
-            plan={thread.plan}
-            diff={thread.diff}
+          <SideChatThread
+            frameStore={frameStoreRef.current}
             threadId={sideThreadId}
             transport={props.transport}
-            approvals={thread.approvals}
-            userInputs={thread.userInputs}
-            reviews={reviews}
-            keyboardActive={false}
             onDecide={decide}
             onAnswerUserInput={answer}
           />

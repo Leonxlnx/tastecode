@@ -1,4 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { accessSync, constants, realpathSync } from 'node:fs'
+import path from 'node:path'
 import { killTree } from './kill.js'
 import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
 
@@ -56,11 +58,12 @@ export function spawnCli(
  * of which is an acceptable side effect of drawing a list.
  */
 export function isInstalled(command: string): Promise<boolean> {
-  const [lookup, args] =
-    process.platform === 'win32' ? ['where.exe', [command]] : ['/usr/bin/which', [command]]
+  if (process.platform !== 'win32') {
+    return Promise.resolve(resolveExecutable(command) !== undefined)
+  }
 
   return new Promise((resolve) => {
-    const child = spawn(lookup, args, { stdio: 'ignore', windowsHide: true })
+    const child = spawn('where.exe', [command], { stdio: 'ignore', windowsHide: true })
     child.on('error', () => resolve(false))
     child.on('exit', (code) => resolve(code === 0))
   })
@@ -74,7 +77,28 @@ export function isInstalled(command: string): Promise<boolean> {
  * trusting position. Reporting nothing beats reporting a deprecation warning as
  * if it were a version.
  */
-export function commandVersion(command: string, timeoutMs = 5000): Promise<string | undefined> {
+export async function commandVersion(
+  command: string,
+  timeoutMs = 5000,
+): Promise<string | undefined> {
+  if (process.platform !== 'win32') {
+    const executable = resolveExecutable(command)
+    if (executable) {
+      try {
+        const target = path.basename(realpathSync(executable))
+        const linkedVersion = /^v?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)$/.exec(target)?.[1]
+        if (linkedVersion) return linkedVersion
+      } catch {
+        // The command can disappear between PATH lookup and realpath. Let the
+        // normal process fallback report that race as an unavailable version.
+      }
+    }
+  }
+
+  return spawnCommandVersion(command, timeoutMs)
+}
+
+function spawnCommandVersion(command: string, timeoutMs: number): Promise<string | undefined> {
   return new Promise((resolve) => {
     const child = spawnCli(command, ['--version'])
     let output = ''
@@ -102,17 +126,38 @@ export function commandVersion(command: string, timeoutMs = 5000): Promise<strin
   })
 }
 
+function resolveExecutable(command: string): string | undefined {
+  const candidates = command.includes(path.sep)
+    ? [command]
+    : (process.env['PATH'] ?? '')
+        .split(path.delimiter)
+        .map((directory) => path.join(directory || '.', command))
+
+  for (const candidate of candidates) {
+    try {
+      accessSync(candidate, constants.X_OK)
+      return candidate
+    } catch {
+      // Continue in PATH order, matching normal command resolution.
+    }
+  }
+  return undefined
+}
+
 /** Run a short, non-interactive CLI command and capture its public output. */
 export function runCli(
   command: string,
   args: string[],
   timeoutMs = 5000,
-): Promise<{ code: number | null; stdout: string }> {
+): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
   return new Promise((resolve, reject) => {
     const child = spawnCli(command, args)
     let stdout = ''
+    let stderr = ''
     let settled = false
-    const finish = (result: { code: number | null; stdout: string } | Error) => {
+    const finish = (
+      result: { code: number | null; stdout: string; stderr?: string | undefined } | Error,
+    ) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -127,8 +172,12 @@ export function runCli(
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk
     })
+    child.stderr.setEncoding('utf8')
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk
+    })
     child.on('error', finish)
-    child.on('close', (code) => finish({ code, stdout }))
+    child.on('close', (code) => finish({ code, stdout, stderr }))
   })
 }
 

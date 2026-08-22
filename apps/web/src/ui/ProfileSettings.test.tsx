@@ -3,6 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProfileSettings } from './ProfileSettings.js'
 
+vi.mock('../use-default-profile-avatar.js', () => ({
+  useDefaultProfileAvatar: () => 'data:image/svg+xml;charset=utf-8,test-avatar',
+}))
+
 afterEach(cleanup)
 
 describe('profile settings', () => {
@@ -17,7 +21,9 @@ describe('profile settings', () => {
     expect(screen.getByRole('heading', { name: 'Profile' })).toBeTruthy()
     expect(screen.getByRole('textbox', { name: 'Display name' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Blue Emi' })).toBeTruthy()
-    expect(document.querySelector('.profile-identity__avatar')?.textContent).toBe('BE')
+    expect(document.querySelector('.profile-identity__avatar img')?.getAttribute('src')).toMatch(
+      /^data:image\/svg\+xml;charset=utf-8,/u,
+    )
     expect(screen.getByText('@blue.emi')).toBeTruthy()
     expect(screen.getByText('Pro')).toBeTruthy()
   })

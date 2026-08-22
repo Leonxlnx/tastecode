@@ -1,4 +1,15 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type {
   ApprovalDecision,
@@ -40,14 +51,15 @@ import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
 import { Diff } from './Diff.js'
 import { Markdown } from './Markdown.js'
-import { MediaViewer } from './MediaViewer.js'
 import { Plan } from './Plan.js'
-import { ThreadSearch } from './ThreadSearch.js'
 import {
+  activityGroupAt,
   createThreadProjector,
   isBlankReasoning,
   isStackedActivity,
   neighbourTurn,
+  type TurnActivityGroup,
+  type TurnPresentation,
   type TurnTiming,
 } from './turns.js'
 import {
@@ -60,9 +72,30 @@ import {
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
-import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
+import {
+  activeTurnActivityIndices,
+  activeTurnIsSearching,
+  threadItemAt,
+  type LiveItemUpdate,
+} from '../thread-store.js'
+import type { ThreadFrameStore } from '../thread-frame-store.js'
+import {
+  checkpointForItem,
+  createCheckpointIndex,
+  type CheckpointIndex,
+} from '../checkpoint-index.js'
+import { enteringThreadItems } from '../thread-entry.js'
+import '../styles/thread.css'
+
+const MediaViewer = lazy(() =>
+  import('./MediaViewer.js').then((module) => ({ default: module.MediaViewer })),
+)
+const ThreadSearch = lazy(() =>
+  import('./ThreadSearch.js').then((module) => ({ default: module.ThreadSearch })),
+)
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
+const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
 
 /**
  * The thread.
@@ -76,7 +109,8 @@ const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
  * file edits in one work batch share one line you can open. The default view
  * should read as a summary of what happened, not a transcript of every byte.
  */
-export function Thread(props: {
+export interface ThreadProps {
+  frameStore?: ThreadFrameStore | undefined
   items: Item[]
   loading?: boolean
   liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
@@ -85,6 +119,7 @@ export function Thread(props: {
   projectPath?: string | undefined
   running: boolean
   searching?: boolean
+  activeActivityIndices?: readonly number[] | undefined
   activeTurn: { id: string; startedAt: number } | undefined
   turnTiming?: TurnTiming | undefined
   plan: PlanStep[]
@@ -105,7 +140,9 @@ export function Thread(props: {
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
-}) {
+}
+
+export function Thread(props: ThreadProps) {
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
@@ -117,8 +154,8 @@ export function Thread(props: {
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
   const activeAnchor = useMemo(
-    () => activeTurnAnchor(props.items, props.activeTurn?.id),
-    [props.items, props.activeTurn?.id],
+    () => activeTurnAnchor(props.items, props.activeTurn?.id, props.liveStart),
+    [props.items, props.activeTurn?.id, props.liveStart],
   )
   const anchoredTurn = useRef({ threadId: props.threadId, itemId: activeAnchor?.id })
   /**
@@ -143,10 +180,6 @@ export function Thread(props: {
     el.scrollTop = target
   }, [])
   const liveItems = props.liveItems ?? EMPTY_LIVE_ITEMS
-  const itemAt = useCallback(
-    (index: number) => threadItemAt(props.items, liveItems, index),
-    [props.items, liveItems],
-  )
   const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
   const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
   const getItemKey = useVirtualItemKey(props.items, props.threadId)
@@ -278,12 +311,11 @@ export function Thread(props: {
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
   const { turns, presentations } = projectThread(props.items, props.turnTiming)
+  const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
+  const repeatedDesignRowAt = projectRepeatedDesignRows(props.items)
+  const checkpoints = props.checkpoints ?? EMPTY_CHECKPOINTS
+  const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
   const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
-  const rawWorkLabel = useMemo(
-    () => workLabel(props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart),
-    [props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart],
-  )
-
   useEffect(() => {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
@@ -345,13 +377,15 @@ export function Thread(props: {
     // latest" rendered below the viewport exactly when it was needed.
     <div className="thread-shell">
       {finding ? (
-        <ThreadSearch
-          items={props.items}
-          liveItems={liveItems}
-          threadId={props.threadId}
-          onJump={jumpTo}
-          onClose={() => setFinding(false)}
-        />
+        <Suspense fallback={null}>
+          <ThreadSearch
+            items={props.items}
+            liveItems={liveItems}
+            threadId={props.threadId}
+            onJump={jumpTo}
+            onClose={() => setFinding(false)}
+          />
+        </Suspense>
       ) : null}
       {props.items.length === 0 && !props.running ? (
         props.loading ? (
@@ -370,87 +404,35 @@ export function Thread(props: {
         <div className="thread__col">
           <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
             {rows.map((row) => {
-              const item = itemAt(row.index)
+              const item = threadItemAt(props.items, liveItems, row.index)
               if (!item) return null
-              const liveItemUpdate = liveItems.get(row.index)
               const presentation = presentations.get(item.turnId)
-              const live = props.running && props.activeTurn?.id === item.turnId
               const activityGroup =
                 presentation && presentation.design !== true
-                  ? presentation.activityGroups.find(
-                      ({ firstIndex, lastIndex }) =>
-                        row.index >= firstIndex && row.index <= lastIndex,
-                    )
+                  ? activityGroupAt(presentation.activityGroups, row.index)
                   : undefined
-              const compactedActivity = activityGroup !== undefined && isStackedActivity(item)
-              const activityLead = compactedActivity && activityGroup.firstIndex === row.index
-              const itemAfterActivity = activityGroup
-                ? itemAt(activityGroup.lastIndex + 1)
-                : undefined
-              const liveActivityGroup =
-                live &&
-                activityGroup !== undefined &&
-                (itemAfterActivity === undefined || itemAfterActivity.turnId !== item.turnId)
-              const responseLead =
-                !live &&
-                presentation?.complete === true &&
-                presentation.finalAnswerIndex === row.index
-              const suppressed =
-                isBlankReasoning(item) ||
-                (compactedActivity && !activityLead) ||
-                isRepeatedDesignRow(item, props.items, row.index) ||
-                // A design turn tells its story through the phase labels and
-                // TasteCode notes; the provider's raw commands, tool calls, and
-                // thinking would drown that story in noise.
-                (presentation?.design === true &&
-                  !compactedActivity &&
-                  ((isActivity(item) && !designPhaseLabel(toolText(item))) ||
-                    item.type === 'error'))
-              const nextVisibleItem = itemAt(
-                activityLead && activityGroup ? activityGroup.lastIndex + 1 : row.index + 1,
-              )
-              const compactToNext =
-                !suppressed &&
-                nextVisibleItem?.turnId === item.turnId &&
-                !(item.type === 'message' && item.role === 'user') &&
-                !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
-              const settling = settledTurnId === item.turnId
-              const railAnchor =
-                showWorkingRail && live && presentation?.firstResponseIndex === row.index
-              const activityItems = activityGroup
-                ? Array.from(
-                    { length: activityGroup.lastIndex - activityGroup.firstIndex + 1 },
-                    (_, offset) => itemAt(activityGroup.firstIndex + offset),
-                  ).filter((entry): entry is Item => entry !== undefined)
-                : undefined
               return (
-                <div
+                <ThreadFrameRow
                   key={row.key}
-                  className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
-                  data-index={row.index}
-                  ref={virtualizer.measureElement}
-                  style={{ transform: `translateY(${row.start}px)` }}
-                >
-                  <Row
-                    item={item}
-                    liveTextUpdate={liveItemUpdate?.textUpdate}
-                    liveUpdateVersion={liveItemUpdate?.version}
-                    projectPath={props.projectPath}
-                    hidden={suppressed}
-                    activity={activityLead ? activityItems : undefined}
-                    activityLive={liveActivityGroup}
-                    live={live}
-                    responseText={responseLead ? presentation.responseText : undefined}
-                    finalResponse={responseLead}
-                    settling={settling}
-                    onEditMessage={props.onEditMessage}
-                    checkpoint={checkpointFor(
-                      presentation?.prompt ?? item,
-                      props.checkpoints ?? [],
-                    )}
-                    onRevertCheckpoint={props.onRevertCheckpoint}
-                  />
-                </div>
+                  index={row.index}
+                  start={row.start}
+                  measureElement={virtualizer.measureElement}
+                  frameStore={props.frameStore}
+                  items={props.items}
+                  liveItems={liveItems}
+                  presentation={presentation}
+                  activityGroup={activityGroup}
+                  running={props.running}
+                  activeTurnId={props.activeTurn?.id}
+                  repeatedDesignRowAt={repeatedDesignRowAt}
+                  entering={enteringItemIds.has(item.id)}
+                  settlingTurnId={settledTurnId}
+                  showWorkingRail={showWorkingRail}
+                  projectPath={props.projectPath}
+                  onEditMessage={props.onEditMessage}
+                  checkpointIndex={checkpointIndex}
+                  onRevertCheckpoint={props.onRevertCheckpoint}
+                />
               )
             })}
             {showWorkingRail && props.activeTurn ? (
@@ -461,9 +443,15 @@ export function Thread(props: {
               // sits at the end of the runway, over the space the spacer
               // below holds.
               <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                <WorkingRail
+                <FrameWorkingRail
+                  frameStore={props.frameStore}
+                  items={props.items}
+                  liveItems={liveItems}
+                  turnId={props.activeTurn.id}
+                  searching={props.searching}
+                  liveStart={props.liveStart}
+                  activityIndices={props.activeActivityIndices}
                   startedAt={activePresentation?.workStartedAt ?? props.activeTurn.startedAt}
-                  label={rawWorkLabel}
                 />
               </div>
             ) : null}
@@ -539,6 +527,169 @@ export function Thread(props: {
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
 
+function useFrameLiveItems(
+  frameStore: ThreadFrameStore | undefined,
+  fallback: ReadonlyMap<number, LiveItemUpdate>,
+  indices: readonly number[],
+): ReadonlyMap<number, LiveItemUpdate> {
+  const subscribe = useCallback(
+    (listener: () => void) => frameStore?.subscribeItems(indices, listener) ?? (() => undefined),
+    [frameStore, indices],
+  )
+  const getVersion = useCallback(() => {
+    if (frameStore) return frameStore.getSnapshot().itemVersion
+    let version = 0
+    for (const index of indices) version = Math.max(version, fallback.get(index)?.version ?? 0)
+    return version
+  }, [fallback, frameStore, indices])
+  useSyncExternalStore(subscribe, getVersion, getVersion)
+  return frameStore?.getSnapshot().liveItems ?? fallback
+}
+
+function useFrameLiveItemRange(
+  frameStore: ThreadFrameStore | undefined,
+  fallback: ReadonlyMap<number, LiveItemUpdate>,
+  firstIndex: number,
+  lastIndex: number,
+): ReadonlyMap<number, LiveItemUpdate> {
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!frameStore) return () => undefined
+      return firstIndex === lastIndex
+        ? frameStore.subscribeItems([firstIndex], listener)
+        : frameStore.subscribeItemRange(firstIndex, lastIndex, listener)
+    },
+    [firstIndex, frameStore, lastIndex],
+  )
+  const getVersion = useCallback(() => {
+    if (frameStore) return frameStore.getSnapshot().itemVersion
+    let version = 0
+    for (let index = firstIndex; index <= lastIndex; index += 1) {
+      version = Math.max(version, fallback.get(index)?.version ?? 0)
+    }
+    return version
+  }, [fallback, firstIndex, frameStore, lastIndex])
+  useSyncExternalStore(subscribe, getVersion, getVersion)
+  return frameStore?.getSnapshot().liveItems ?? fallback
+}
+
+const ThreadFrameRow = memo(function ThreadFrameRow({
+  index,
+  start,
+  measureElement,
+  frameStore,
+  items,
+  liveItems: fallbackLiveItems,
+  presentation,
+  activityGroup,
+  running,
+  activeTurnId,
+  repeatedDesignRowAt,
+  entering,
+  settlingTurnId,
+  showWorkingRail,
+  projectPath,
+  onEditMessage,
+  checkpointIndex,
+  onRevertCheckpoint,
+}: {
+  index: number
+  start: number
+  measureElement: (node: Element | null) => void
+  frameStore?: ThreadFrameStore | undefined
+  items: Item[]
+  liveItems: ReadonlyMap<number, LiveItemUpdate>
+  presentation: TurnPresentation | undefined
+  activityGroup: TurnActivityGroup | undefined
+  running: boolean
+  activeTurnId: string | undefined
+  repeatedDesignRowAt: (item: Item, index: number) => boolean
+  entering: boolean
+  settlingTurnId: string | undefined
+  showWorkingRail: boolean
+  projectPath: string | undefined
+  onEditMessage: ((text: string) => void) | undefined
+  checkpointIndex: CheckpointIndex<Checkpoint>
+  onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
+}) {
+  const firstSubscribedIndex = activityGroup?.firstIndex ?? index
+  const lastSubscribedIndex = activityGroup?.lastIndex ?? index
+  const liveItems = useFrameLiveItemRange(
+    frameStore,
+    fallbackLiveItems,
+    firstSubscribedIndex,
+    lastSubscribedIndex,
+  )
+  const currentItems = frameStore?.getSnapshot().items ?? items
+  const item = threadItemAt(currentItems, liveItems, index)
+  if (!item) return null
+
+  const live = running && activeTurnId === item.turnId
+  const compactedActivity = activityGroup !== undefined && isStackedActivity(item)
+  const activityLead = compactedActivity && activityGroup.firstIndex === index
+  const itemAfterActivity = activityGroup
+    ? threadItemAt(currentItems, liveItems, activityGroup.lastIndex + 1)
+    : undefined
+  const liveActivityGroup =
+    live &&
+    activityGroup !== undefined &&
+    (itemAfterActivity === undefined || itemAfterActivity.turnId !== item.turnId)
+  const responseLead =
+    !live && presentation?.complete === true && presentation.finalAnswerIndex === index
+  const suppressed =
+    isBlankReasoning(item) ||
+    (compactedActivity && !activityLead) ||
+    repeatedDesignRowAt(item, index) ||
+    // A design turn tells its story through the phase labels and TasteCode
+    // notes; raw provider work would drown that story in noise.
+    (presentation?.design === true &&
+      !compactedActivity &&
+      ((isActivity(item) && !designPhaseLabel(toolText(item))) || item.type === 'error'))
+  const nextVisibleItem = threadItemAt(
+    currentItems,
+    liveItems,
+    activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
+  )
+  const compactToNext =
+    !suppressed &&
+    nextVisibleItem?.turnId === item.turnId &&
+    !(item.type === 'message' && item.role === 'user') &&
+    !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
+  const settling = settlingTurnId === item.turnId
+  const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
+  const activitySource =
+    activityLead && activityGroup
+      ? { group: activityGroup, items: currentItems, liveItems }
+      : undefined
+  const liveItemUpdate = liveItems.get(index)
+
+  return (
+    <div
+      className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${entering ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+      data-index={index}
+      ref={measureElement}
+      style={{ transform: `translateY(${start}px)` }}
+    >
+      <Row
+        item={item}
+        liveTextUpdate={liveItemUpdate?.textUpdate}
+        liveUpdateVersion={liveItemUpdate?.version}
+        projectPath={projectPath}
+        hidden={suppressed}
+        activity={activitySource}
+        activityLive={liveActivityGroup}
+        live={live}
+        responseText={responseLead ? presentation.responseText : undefined}
+        finalResponse={responseLead}
+        settling={settling}
+        onEditMessage={onEditMessage}
+        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex)}
+        onRevertCheckpoint={onRevertCheckpoint}
+      />
+    </div>
+  )
+})
+
 /**
  * Only animate items appended while this thread is open. Historical rows can
  * remount as virtualisation scrolls, and replaying their entrance then makes
@@ -561,32 +712,7 @@ function useEnteringItemIds(items: Item[], threadId?: string): ReadonlySet<strin
     }
     const previous = previousItems.current
     previousItems.current = items
-    let incoming: Item[] = []
-
-    if (items.length > previous.length) {
-      const appended = items.slice(previous.length)
-      // Loading an existing transcript is one state replacement, not a burst
-      // of new messages. A live event appends one item at a time.
-      if (!(previous.length === 0 && appended.length > 1)) incoming = appended
-    } else if (items.length === previous.length && items.length > 0) {
-      const previousTail = previous.at(-1)
-      const nextTail = items.at(-1)
-      const prefixStayedStable = items.length === 1 || previous.at(-2)?.id === items.at(-2)?.id
-      const reconciledLocalEcho =
-        previousTail?.id.startsWith('local:') === true &&
-        previousTail.role === 'user' &&
-        nextTail?.role === 'user' &&
-        previousTail.text === nextTail.text
-
-      if (
-        prefixStayedStable &&
-        nextTail &&
-        previousTail?.id !== nextTail.id &&
-        !reconciledLocalEcho
-      ) {
-        incoming = [nextTail]
-      }
-    }
+    const incoming = enteringThreadItems(previous, items)
 
     if (incoming.length === 0) return
 
@@ -681,7 +807,7 @@ const Row = memo(function Row({
   liveUpdateVersion: number | undefined
   projectPath: string | undefined
   hidden: boolean
-  activity: Item[] | undefined
+  activity: ActivityRenderSource | undefined
   activityLive: boolean
   live: boolean
   responseText: string | undefined
@@ -805,6 +931,46 @@ const Row = memo(function Row({
   return <AuxDisclosure item={item} live={live} />
 })
 
+function activityItemsForRender(
+  group: TurnActivityGroup,
+  items: readonly Item[],
+  liveItems: ReadonlyMap<number, LiveItemUpdate>,
+): Item[] {
+  let containsLiveUpdate = false
+  for (const index of liveItems.keys()) {
+    if (index >= group.firstIndex && index <= group.lastIndex) {
+      containsLiveUpdate = true
+      break
+    }
+  }
+  if (!containsLiveUpdate) return group.items
+
+  const activity: Item[] = []
+  for (let index = group.firstIndex; index <= group.lastIndex; index += 1) {
+    const item = threadItemAt(items, liveItems, index)
+    if (item && isStackedActivity(item)) activity.push(item)
+  }
+  return activity
+}
+
+type ActivityRenderSource = {
+  group: TurnActivityGroup
+  items: readonly Item[]
+  liveItems: ReadonlyMap<number, LiveItemUpdate>
+}
+
+function lastActivityItemForRender({
+  group,
+  items,
+  liveItems,
+}: ActivityRenderSource): Item | undefined {
+  for (let index = group.lastIndex; index >= group.firstIndex; index -= 1) {
+    const item = threadItemAt(items, liveItems, index)
+    if (item && isStackedActivity(item)) return item
+  }
+  return undefined
+}
+
 /**
  * A standalone operational row for activity that does not belong to a normal
  * tool stack, such as a design phase marker or an unknown provider item.
@@ -855,28 +1021,22 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
             if (event.target === event.currentTarget) disclosure.finishClosing()
           }}
         >
-          <div className="aux__reveal-clip">
-            {isImageView(item) && item.status === 'completed' ? (
-              <ViewedImagePreview
-                reference={detail}
-                active={disclosure.expanded}
-                fallbackClassName="aux__out"
-              />
-            ) : (
-              <pre className="aux__out">{detail}</pre>
-            )}
-          </div>
+          {disclosure.contentMounted ? (
+            <div className="aux__reveal-clip">
+              {isImageView(item) && item.status === 'completed' ? (
+                <ViewedImagePreview
+                  reference={detail}
+                  active={disclosure.expanded}
+                  fallbackClassName="aux__out"
+                />
+              ) : (
+                <pre className="aux__out">{detail}</pre>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
-  )
-}
-
-function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | undefined {
-  if (item.type !== 'message' || item.role !== 'user' || !item.text) return undefined
-  const label = item.text.trim().slice(0, 60) || 'Turn'
-  return checkpoints.findLast(
-    (checkpoint) => checkpoint.label === label && checkpoint.createdAt <= item.createdAt,
   )
 }
 
@@ -898,6 +1058,7 @@ function useDisclosure() {
 
   return {
     expanded,
+    contentMounted: phase !== 'closed',
     dataOpen: phase === 'open' ? 'true' : phase === 'closing' ? 'closing' : 'false',
     toggle,
     finishClosing,
@@ -909,15 +1070,20 @@ function ActivityStack({
   live,
   settling,
 }: {
-  activity: Item[]
+  activity: ActivityRenderSource
   live: boolean
   settling: boolean
 }) {
-  const visibleActivity = activity.filter(isStackedActivity)
-  const current = visibleActivity.at(-1)
-  const label = live && current ? liveActivityLabel(current) : activityStackLabel(visibleActivity)
-  const summaryItem = live ? current : visibleActivity[0]
   const disclosure = useDisclosure()
+  const current = live ? lastActivityItemForRender(activity) : activity.group.items.at(-1)
+  const label =
+    live && current ? liveActivityLabel(current) : activityStackLabel(activity.group.items)
+  const summaryItem = live ? current : activity.group.items[0]
+  const visibleActivity = disclosure.contentMounted
+    ? activityItemsForRender(activity.group, activity.items, activity.liveItems).filter(
+        isStackedActivity,
+      )
+    : undefined
 
   if (!summaryItem) return null
 
@@ -949,35 +1115,37 @@ function ActivityStack({
           if (event.target === event.currentTarget) disclosure.finishClosing()
         }}
       >
-        <div className="activity__reveal-clip">
-          <div className="activity__body">
-            {visibleActivity.map((item) => {
-              const detail = activityDetail(item)
-              return (
-                <div className="activity__item" key={item.id}>
-                  <div className="activity__file-change">
-                    {glyph(item)}
-                    <span className="activity__item-label">{activityItemLabel(item)}</span>
-                    {item.exitCode !== undefined && item.exitCode !== 0 ? (
-                      <span className="aux__code">exit {item.exitCode}</span>
+        {disclosure.contentMounted ? (
+          <div className="activity__reveal-clip">
+            <div className="activity__body">
+              {visibleActivity?.map((item) => {
+                const detail = activityDetail(item)
+                return (
+                  <div className="activity__item" key={item.id}>
+                    <div className="activity__file-change">
+                      {glyph(item)}
+                      <span className="activity__item-label">{activityItemLabel(item)}</span>
+                      {item.exitCode !== undefined && item.exitCode !== 0 ? (
+                        <span className="aux__code">exit {item.exitCode}</span>
+                      ) : null}
+                    </div>
+                    {detail ? (
+                      isImageView(item) && item.status === 'completed' ? (
+                        <ViewedImagePreview
+                          reference={detail}
+                          active={disclosure.expanded}
+                          fallbackClassName="activity__detail"
+                        />
+                      ) : (
+                        <pre className="activity__detail">{detail}</pre>
+                      )
                     ) : null}
                   </div>
-                  {detail ? (
-                    isImageView(item) && item.status === 'completed' ? (
-                      <ViewedImagePreview
-                        reference={detail}
-                        active={disclosure.expanded}
-                        fallbackClassName="activity__detail"
-                      />
-                    ) : (
-                      <pre className="activity__detail">{detail}</pre>
-                    )
-                  ) : null}
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </div>
   )
@@ -1095,13 +1263,15 @@ function ViewedImagePreview({
         </span>
       ) : null}
       {viewerOpen ? (
-        <MediaViewer
-          src={preview.previewUrl}
-          name={preview.name}
-          mediaType="image"
-          onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}
-          onClose={() => setViewerOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <MediaViewer
+            src={preview.previewUrl}
+            name={preview.name}
+            mediaType="image"
+            onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}
+            onClose={() => setViewerOpen(false)}
+          />
+        </Suspense>
       ) : null}
     </div>
   )
@@ -1301,6 +1471,47 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   )
 }
 
+const FrameWorkingRail = memo(function FrameWorkingRail({
+  frameStore,
+  items,
+  liveItems: fallbackLiveItems,
+  turnId,
+  searching,
+  liveStart,
+  activityIndices,
+  startedAt,
+}: {
+  frameStore?: ThreadFrameStore | undefined
+  items: Item[]
+  liveItems: ReadonlyMap<number, LiveItemUpdate>
+  turnId: string
+  searching: boolean | undefined
+  liveStart: number | undefined
+  activityIndices: readonly number[] | undefined
+  startedAt: number
+}) {
+  const trackedIndices = useMemo(
+    () => activityIndices ?? activeTurnActivityIndices(items, turnId, liveStart),
+    [activityIndices, items, liveStart, turnId],
+  )
+  const liveItems = useFrameLiveItems(frameStore, fallbackLiveItems, trackedIndices)
+  const snapshot = frameStore?.getSnapshot()
+  const currentItems = snapshot?.items ?? items
+  const currentLiveStart = snapshot?.liveStart ?? liveStart
+  const currentSearching = snapshot
+    ? activeTurnIsSearching(currentItems, turnId, liveItems, currentLiveStart, trackedIndices)
+    : searching
+  const label = workLabel(
+    currentItems,
+    turnId,
+    currentSearching,
+    liveItems,
+    currentLiveStart,
+    trackedIndices,
+  )
+  return <WorkingRail startedAt={startedAt} label={label} />
+})
+
 const WorkingRail = memo(function WorkingRail({
   startedAt,
   label,
@@ -1379,6 +1590,7 @@ export function workLabel(
   searching: boolean | undefined,
   liveItems: ReadonlyMap<number, LiveItemUpdate> = EMPTY_LIVE_ITEMS,
   liveStart = 0,
+  activityIndices?: readonly number[],
 ) {
   if (searching) return 'Searching'
   if (!turnId) return 'Working'
@@ -1387,6 +1599,20 @@ export function workLabel(
   // leaves them there is nothing further back worth scanning — without the
   // break this was a full-transcript scan per streamed frame.
   let latest: string | undefined
+  if (activityIndices) {
+    for (const index of activityIndices) {
+      const item = threadItemAt(items, liveItems, index)
+      if (!item || item.status !== 'started' || !isActivity(item)) continue
+      if (isBlankReasoning(item)) continue
+      if (item.type === 'tool_call') {
+        const phase = designPhaseLabel(toolText(item))
+        if (phase) return phase
+      }
+      latest ??= summariseLive(item)
+    }
+    return latest ?? 'Working'
+  }
+
   for (let index = items.length - 1; index >= liveStart; index--) {
     const item = threadItemAt(items, liveItems, index)
     if (!item) continue
@@ -1412,12 +1638,24 @@ function WorkingTimer({ startedAt }: { startedAt: number }) {
   const initial = workedFor(Math.max(0, Date.now() - startedAt))
 
   useEffect(() => {
+    let timer: number | undefined
     const update = () => {
       if (text.current) text.current.textContent = workedFor(Math.max(0, Date.now() - startedAt))
     }
-    update()
-    const timer = window.setInterval(update, 1000)
-    return () => window.clearInterval(timer)
+    const schedule = () => {
+      window.clearTimeout(timer)
+      timer = undefined
+      if (document.visibilityState === 'hidden') return
+      update()
+      const elapsed = Math.max(0, Date.now() - startedAt)
+      timer = window.setTimeout(schedule, Math.max(50, 1_000 - (elapsed % 1_000)))
+    }
+    schedule()
+    document.addEventListener('visibilitychange', schedule)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', schedule)
+    }
   }, [startedAt])
 
   return <span ref={text}>{initial}</span>
@@ -1682,4 +1920,65 @@ export function isRepeatedDesignRow(item: Item, items: readonly Item[], index: n
     adjacentTurn = prior.turnId
   }
   return false
+}
+
+export function createRepeatedDesignRowLookup(
+  items: readonly Item[],
+): (item: Item, index: number) => boolean {
+  return repeatedDesignRowLookup(items, new Map())
+}
+
+/** Retain the few computed phase rows when only the transcript tail changes. */
+export function createRepeatedDesignRowProjector(): (
+  items: readonly Item[],
+) => (item: Item, index: number) => boolean {
+  let previousItems: readonly Item[] | undefined
+  let results = new Map<number, boolean>()
+  let lookup = repeatedDesignRowLookup([], results)
+
+  return (items) => {
+    if (items === previousItems) return lookup
+    const retained = previousItems ? retainedItemPrefix(previousItems, items) : 0
+    if (retained === 0) results = new Map()
+    else for (const index of results.keys()) if (index >= retained) results.delete(index)
+    previousItems = items
+    lookup = repeatedDesignRowLookup(items, results)
+    return lookup
+  }
+}
+
+function repeatedDesignRowLookup(
+  items: readonly Item[],
+  results: Map<number, boolean>,
+): (item: Item, index: number) => boolean {
+  return (item, index) => {
+    if (item.type !== 'tool_call' || !designPhaseLabel(toolText(item))) return false
+    if (results.has(index)) return results.get(index)!
+    const repeated = isRepeatedDesignRow(item, items, index)
+    results.set(index, repeated)
+    return repeated
+  }
+}
+
+function retainedItemPrefix(previous: readonly Item[], next: readonly Item[]): number {
+  if (
+    next.length === previous.length + 1 &&
+    (previous.length === 0 || previous.at(-1) === next[previous.length - 1])
+  ) {
+    return previous.length
+  }
+  if (
+    previous.length === next.length + 1 &&
+    (next.length === 0 || next.at(-1) === previous[next.length - 1])
+  ) {
+    return next.length
+  }
+  if (
+    next.length === previous.length &&
+    next.length > 0 &&
+    (next.length === 1 || previous[next.length - 2] === next[next.length - 2])
+  ) {
+    return next.length - 1
+  }
+  return 0
 }

@@ -23,6 +23,7 @@ import type {
 } from '@harness/contracts'
 import { JsonRpcValueSchema, spawnCli } from '@harness/proc'
 import { z } from 'zod'
+import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
 import {
   claudeSdkSpawner,
@@ -32,6 +33,8 @@ import {
   type ClaudeQueryRuntime,
   type ClaudeSpawn,
 } from './sdk-runtime.js'
+
+export { CLAUDE_CAPABILITIES } from './capabilities.js'
 
 /**
  * Claude Code is hosted through Anthropic's Agent SDK. The SDK keeps one
@@ -72,17 +75,6 @@ const UserInputSchema = z.object({
 })
 
 type ToolInput = z.infer<typeof ToolInputSchema>
-
-export const CLAUDE_CAPABILITIES: Capabilities = {
-  steer: true,
-  fork: false,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: true,
-  userInput: true,
-  autoReview: true,
-  images: true,
-}
 
 /**
  * Claude Code's versioned catalog. The SDK model control intentionally returns

@@ -3,6 +3,7 @@ import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contrac
 import { CircleAlert, Gauge, RefreshCw } from 'lucide-react'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
+import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]

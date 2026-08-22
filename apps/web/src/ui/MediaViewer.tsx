@@ -13,6 +13,7 @@ import {
   VolumeX,
   X,
 } from 'lucide-react'
+import '../styles/media-viewer.css'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3

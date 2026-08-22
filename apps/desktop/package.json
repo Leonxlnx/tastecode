@@ -10,9 +10,11 @@
   "main": "./dist/main.js",
   "scripts": {
     "build": "tsc -b",
+    "benchmark:startup": "node scripts/benchmark-startup.js",
+    "benchmark:startup:compare": "node scripts/compare-startup.js",
     "typecheck": "tsc -b",
     "start": "tsc -b && node scripts/build-preload.js && node scripts/start.js",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run src --passWithNoTests",
     "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
     "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
@@ -35,6 +37,9 @@
     "appId": "dev.tastecode.desktop",
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
+    "electronLanguages": [
+      "en-US"
+    ],
     "npmRebuild": false,
     "asarUnpack": [
       "node_modules/**/*.node"
@@ -45,7 +50,8 @@
       "package.json",
       "!node_modules/@harness/*/src{,/**/*}",
       "!node_modules/@harness/*/tsconfig*.json",
-      "!node_modules/@harness/*/*.tsbuildinfo"
+      "!node_modules/@harness/*/*.tsbuildinfo",
+      "!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}"
     ],
     "extraResources": [
       {

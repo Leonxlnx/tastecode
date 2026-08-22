@@ -1,58 +1,11 @@
-import {
-  CODEX_MCP_CAPABILITIES,
-  CODEX_SKILL_CAPABILITIES,
-  CodexAdapter,
-} from '@harness/adapter-codex'
-import { acpAccount, acpSignOut } from '@harness/adapter-acp'
-import { grokAccount, grokLimitSource, signOutGrok } from '@harness/adapter-grok'
-import {
-  claudeAccount,
-  claudeLimitSource,
-  signOutClaude,
-  startClaudeLogin,
-} from '@harness/adapter-claude-code'
-import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
-import {
-  ExactBuildFilesError,
-  FINAL_BRIEFING_QUESTION,
-  designAssetPrompt,
-  designBrandPrompt,
-  designBriefingContinuation,
-  designBriefingPrompt,
-  designBuildCorrectionPrompt,
-  designBuildPrompt,
-  exactBuildFileBaseline,
-  designPagePrompt,
-  designPhaseCorrectionPrompt,
-  designPreviewPrompt,
-  designRepairPrompt,
-  designReviewPrompt,
-  enforceDomAuditFindings,
-  isDesignBriefAttachment,
-  parseAssetPhaseOutput,
-  parseBrandPhaseOutput,
-  parseBriefingOutput,
-  parseBuildPhaseOutput,
-  parsePagePhaseOutput,
-  parsePreviewPhaseOutput,
-  parsePreviewPlan,
-  parseRepairPhaseOutput,
-  parseReviewPhaseOutput,
-  readAssetManifest,
-  readBrandSystem,
-  readDesignBrief,
-  readPageBlueprint,
-  validateExactBuildFiles,
-  writeAssetManifest,
-  writeBrandSystem,
-  writeDesignBrief,
-  writePageBlueprint,
-  writeVisualReview,
-  type BriefingQuestion,
-  type PreviewPlan,
-  type ReviewScreenshot,
-  type VisualReview,
+import type { CodexAdapter } from '@harness/adapter-codex'
+import type {
+  BriefingQuestion,
+  PreviewPlan,
+  ReviewScreenshot,
+  VisualReview,
 } from '@harness/design-agent'
+import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
 import { JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
 import { z } from 'zod'
 import {
@@ -63,7 +16,7 @@ import {
   type ProviderRuntime,
   type StartOptions,
   type TurnOptions,
-} from './adapters.js'
+} from './runtime-loader.js'
 import { existsSync, realpathSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
@@ -121,9 +74,10 @@ import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
-import { startDesignPreview, type RunningPreview } from './design-preview-runner.js'
+import type { RunningPreview } from './design-preview-runner.js'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
-import { sideChatInstructions } from './side-chat.js'
+import { sideChatInstructionsFromReplay } from './side-chat.js'
+import { IDLE_THREAD_RUNTIME_MS, idleThreadRuntimeLimit } from './runtime-retention.js'
 import {
   cleanGeneratedCommitMessage,
   cleanGeneratedTitle,
@@ -134,6 +88,56 @@ import {
   type AvailableBackgroundModelSource,
 } from './background-model.js'
 import { VoiceService, type VoiceTranscriber } from './voice.js'
+import {
+  RecordedDeltaBuffer,
+  type ItemDeltaEvent,
+  type RecordedDelta,
+} from './recorded-delta-buffer.js'
+import {
+  affectsInboxProjection,
+  applyInboxProjectionEvent,
+  emptyInboxProjection,
+  isEmptyInboxProjection,
+  type InboxProjection,
+} from './inbox-projection.js'
+
+type RecordedEventHandler = (
+  threadId: string,
+  event: DomainEvent,
+  seq: number,
+  serializedEvent?: string,
+) => void
+
+function lazyImport<T>(load: () => Promise<T>): () => Promise<T> {
+  let pending: Promise<T> | undefined
+  return () => (pending ??= load())
+}
+
+type DesignAgentModule = typeof import('@harness/design-agent')
+let loadedDesignAgent: DesignAgentModule | undefined
+// The full design package owns every phase's prompt tables and validators. Loading it at
+// server startup costs idle memory even when the user never starts Design mode, so only the
+// tiny attachment marker stays on the shared turn path. A new or recovered design run loads
+// the complete module before any synchronous design event handler can execute.
+const loadDesignAgent = lazyImport(async () => {
+  const module = await import('@harness/design-agent')
+  loadedDesignAgent = module
+  return module
+})
+
+function designAgent(): DesignAgentModule {
+  if (!loadedDesignAgent) throw new Error('design agent was used before it loaded')
+  return loadedDesignAgent
+}
+
+export type LifecycleScheduleHint = 'later' | number | undefined
+
+const loadAcpAdapter = lazyImport(() => import('@harness/adapter-acp'))
+const loadClaudeAdapter = lazyImport(() => import('@harness/adapter-claude-code'))
+const loadCodexAdapter = lazyImport(() => import('@harness/adapter-codex'))
+const loadCursorAdapter = lazyImport(() => import('@harness/adapter-cursor'))
+const loadGrokAdapter = lazyImport(() => import('@harness/adapter-grok'))
+const loadDesignPreview = lazyImport(() => import('./design-preview-runner.js'))
 
 type UserSubmission = {
   id: string
@@ -146,11 +150,12 @@ type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?:
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type AdapterLimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
-type InboxProjection = {
-  seq: number
-  approvals: Set<string>
-  inputs: Set<string>
-  last: 'idle' | 'failed'
+type AttachedThreadRuntime = {
+  thread: Thread
+  session: AgentSession
+  projectPath: string
+  resumable: boolean
+  worktree?: Worktree
 }
 const userTurnKey = (threadId: string, turnId: string) => JSON.stringify([threadId, turnId])
 const composeInstructions = (instructions?: string): string =>
@@ -250,9 +255,10 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   let previewPlan: PreviewPlan | undefined
   let review: VisualReview | undefined
   try {
-    if (stored.previewPlan !== undefined) previewPlan = parsePreviewPlan(stored.previewPlan)
+    if (stored.previewPlan !== undefined)
+      previewPlan = designAgent().parsePreviewPlan(stored.previewPlan)
     if (stored.review !== undefined) {
-      review = parseReviewPhaseOutput(JSON.stringify(stored.review))
+      review = designAgent().parseReviewPhaseOutput(JSON.stringify(stored.review))
     }
   } catch {
     return undefined
@@ -309,13 +315,29 @@ function isRecoverablePreviewError(error: unknown): boolean {
   )
 }
 
-function unresolvedDesignInput(
-  history: Array<{ event: DomainEvent }>,
-): { id: string; turnId: string; questions: BriefingQuestion[] } | undefined {
-  const unresolved = new Map<string, { turnId: string; questions: BriefingQuestion[] }>()
-  for (const { event } of history) {
-    if (event.type === 'user_input.requested') {
-      unresolved.set(event.request.id, {
+type DesignRecoveryState = {
+  unresolved?: { id: string; turnId: string; questions: BriefingQuestion[] } | undefined
+  openTurnId?: string | undefined
+}
+
+function designRecoveryState(history: Array<{ event: DomainEvent }>): DesignRecoveryState {
+  const resolvedInputs = new Set<string>()
+  const completedTurns = new Set<string>()
+  let unresolved: { id: string; turnId: string; questions: BriefingQuestion[] } | undefined
+  let openTurnId: string | undefined
+
+  // The latest still-open lifecycle wins. Walking backward avoids building
+  // full maps for a long completed Design history.
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const event = history[index]!.event
+    if (event.type === 'user_input.resolved') resolvedInputs.add(event.id)
+    if (
+      unresolved === undefined &&
+      event.type === 'user_input.requested' &&
+      !resolvedInputs.has(event.request.id)
+    ) {
+      unresolved = {
+        id: event.request.id,
         turnId: event.request.turnId,
         questions: event.request.questions.map((question) => ({
           id: question.id,
@@ -324,21 +346,21 @@ function unresolvedDesignInput(
           allowOther: question.allowOther,
           options: question.options ?? [],
         })),
-      })
+      }
     }
-    if (event.type === 'user_input.resolved') unresolved.delete(event.id)
-  }
-  const last = [...unresolved].at(-1)
-  return last ? { id: last[0], ...last[1] } : undefined
-}
 
-function openTurn(history: Array<{ event: DomainEvent }>): string | undefined {
-  const open = new Set<string>()
-  for (const { event } of history) {
-    if (event.type === 'turn.started') open.add(event.turn.id)
-    if (event.type === 'turn.completed') open.delete(event.turnId)
+    if (event.type === 'turn.completed') completedTurns.add(event.turnId)
+    if (
+      openTurnId === undefined &&
+      event.type === 'turn.started' &&
+      !completedTurns.has(event.turn.id)
+    ) {
+      openTurnId = event.turn.id
+    }
+    if (unresolved && openTurnId) break
   }
-  return [...open].at(-1)
+
+  return { unresolved, openTurnId }
 }
 type DesignInput = {
   threadId: string
@@ -373,6 +395,7 @@ const UNSUPPORTED_SKILL_CAPABILITIES: SkillCapabilities = {
   configure: false,
   install: false,
 }
+const MAX_SIDEBAR_STATUS_CHANGES = 2_048
 
 /**
  * Owns every live agent session.
@@ -387,7 +410,16 @@ const UNSUPPORTED_SKILL_CAPABILITIES: SkillCapabilities = {
  * get back.
  */
 export class Orchestrator {
-  #threads = new Map<string, { thread: Thread; session: AgentSession; worktree?: Worktree }>()
+  #threads = new Map<string, AttachedThreadRuntime>()
+  #runtimeThreadIdsByProject = new Map<ProviderId, Map<string, Set<string>>>()
+  #runtimeRecency = new Map<string, number>()
+  #idleRuntimeTimer: ReturnType<typeof setTimeout> | undefined
+  #idleRuntimeTimerExpiresAt: number | undefined
+  #idleRuntimePruneScheduled = false
+  #idleRuntimeEligible = new Set<string>()
+  #runtimeOperationCounts = new Map<string, number>()
+  #mcpOAuthThreads = new Set<string>()
+  #releasedIdleRuntimeSessions = new WeakSet<AgentSession>()
   /** Approval mode selected for each attached or pending-resume thread; not persisted. */
   #threadApprovals = new Map<string, ApprovalMode>()
   #sideThreads = new Map<string, string>()
@@ -424,9 +456,10 @@ export class Orchestrator {
   #panicGeneration = 0
   #panicStopping = false
   #store: Store
+  #recordedDeltas: RecordedDeltaBuffer
   #worktreeRoot: string
-  #onEvent: (threadId: string, event: DomainEvent, seq: number) => void
-  #onSideEvent: (threadId: string, event: DomainEvent, seq: number) => void
+  #onEvent: RecordedEventHandler
+  #onSideEvent: RecordedEventHandler
   #onQueue: (threadId: string, state: QueueState) => void
   #onLog: (line: string) => void
   #onLogin: (
@@ -442,6 +475,7 @@ export class Orchestrator {
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
   #onUsageChanged: (provider: ProviderId) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
+  #onLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void
   #capturePreview:
     | ((
         url: string,
@@ -451,6 +485,10 @@ export class Orchestrator {
   #watchedSkillProjects = new Set<string>()
   #watchedMcpProjects = new Set<string>()
   #inboxProjections = new Map<string, InboxProjection>()
+  #inboxProjectionsLoaded = false
+  #staleInboxProjectionThreads = new Set<string>()
+  #sidebarStatusRevision = 0
+  #sidebarStatusChanges: Array<{ revision: number; threadId: string }> = []
   #mcpConfig: McpConfigStore
   #modelConnections: ModelConnectionStore
   #customHarnesses: CustomHarnessStore
@@ -469,12 +507,15 @@ export class Orchestrator {
    */
   #runtimeFor: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
   #runtimeForInjected: boolean
+  #maxIdleThreadRuntimes: number
+  #idleThreadRuntimeMs: number
+  #controlIdleMs: number
 
   constructor(
     store: Store,
     handlers: {
-      onEvent: (threadId: string, event: DomainEvent, seq: number) => void
-      onSideEvent?: (threadId: string, event: DomainEvent, seq: number) => void
+      onEvent: RecordedEventHandler
+      onSideEvent?: RecordedEventHandler
       onQueue?: (threadId: string, state: QueueState) => void
       onLog: (line: string) => void
       onLogin: (
@@ -490,6 +531,7 @@ export class Orchestrator {
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onUsageChanged?: (provider: ProviderId) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
+      onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
       capturePreview?: (
         url: string,
         viewports: Array<{ width: number; height: number }>,
@@ -502,11 +544,21 @@ export class Orchestrator {
       onTerminalOutput?: (terminalId: string, data: string) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+      /** Test override for the hardware-scaled warm idle runtime limit. */
+      maxIdleThreadRuntimes?: number
+      /** Test override for the shared idle runtime expiry window. */
+      idleThreadRuntimeMs?: number
+      /** Test override for releasing one-shot Codex control processes. */
+      controlIdleMs?: number
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
     },
   ) {
     this.#store = store
+    this.#recordedDeltas = new RecordedDeltaBuffer(
+      (threadId, event) => this.#commitRecordedDelta(threadId, event),
+      { commitBatch: (records) => this.#commitRecordedDeltas(records) },
+    )
     this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'tastecode-trees')
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
@@ -518,6 +570,7 @@ export class Orchestrator {
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#onUsageChanged = handlers.onUsageChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
+    this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
@@ -537,62 +590,124 @@ export class Orchestrator {
       ((provider, onLog) =>
         providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id)))
     this.#runtimeForInjected = handlers.runtimeFor !== undefined
+    this.#maxIdleThreadRuntimes =
+      handlers.maxIdleThreadRuntimes === undefined
+        ? idleThreadRuntimeLimit(os.totalmem())
+        : Math.max(1, Math.floor(handlers.maxIdleThreadRuntimes))
+    this.#idleThreadRuntimeMs = Math.max(
+      0,
+      Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
+    )
+    this.#controlIdleMs = Math.max(0, Math.floor(handlers.controlIdleMs ?? 5_000))
   }
 
   /**
-   * A single long-lived adapter for everything that is not a thread: models,
-   * account, sign-in. It has to outlive a request because the OAuth completion
-   * arrives as a notification minutes later, on the same connection that
-   * started the flow.
+   * One shared adapter for everything that is not a thread. Startup model and
+   * account reads release it after a short idle window; OAuth and watched
+   * settings pin it because their notifications arrive on the same connection.
    */
   #control: CodexAdapter | undefined
   #controlStarting: Promise<CodexAdapter> | undefined
+  #controlIdleTimer: ReturnType<typeof setTimeout> | undefined
+  #controlUsers = 0
+  #controlPinned = false
   #providerLogins = new Map<ProviderId, { loginId: string; cancel: () => void }>()
   #voiceRequests = new Map<string, AbortController>()
 
   async #controlAdapter(): Promise<CodexAdapter> {
+    this.#clearControlIdleTimer()
     if (this.#control) return this.#control
     if (this.#controlStarting) return this.#controlStarting
-    const adapter = new CodexAdapter()
-    adapter.on('log', (line) => this.#onLog(line))
-    adapter.on('login', (result) => {
-      if (result.success) this.#invalidateBackgroundSources()
-      this.#onLogin('codex', result)
-    })
-    adapter.onUsageChanged(() => {
-      if (this.#control === adapter) this.#onUsageChanged('codex')
-    })
-    adapter.on('skillsChanged', () => {
-      for (const projectPath of this.#watchedSkillProjects) {
-        this.#onSkillsChanged('codex', projectPath)
-      }
-    })
-    adapter.on('mcpChanged', () => {
-      for (const projectPath of this.#watchedMcpProjects) {
-        this.#onMcpChanged('codex', projectPath)
-      }
-    })
-    const starting = adapter
-      .start()
-      .then(() => {
+    const starting = (async () => {
+      const { CodexAdapter } = await loadCodexAdapter()
+      const adapter = new CodexAdapter()
+      adapter.on('log', (line) => this.#onLog(line))
+      adapter.on('login', (result) => {
+        if (result.loginId !== null) {
+          this.#controlPinned = false
+          this.#scheduleControlIdleDisposal()
+        }
+        if (result.success) this.#invalidateBackgroundSources()
+        this.#onLogin('codex', result)
+      })
+      adapter.onUsageChanged(() => {
+        if (this.#control === adapter) this.#onUsageChanged('codex')
+      })
+      adapter.on('skillsChanged', () => {
+        for (const projectPath of this.#watchedSkillProjects) {
+          this.#onSkillsChanged('codex', projectPath)
+        }
+      })
+      adapter.on('mcpChanged', () => {
+        for (const projectPath of this.#watchedMcpProjects) {
+          this.#onMcpChanged('codex', projectPath)
+        }
+      })
+      try {
+        await adapter.start()
         this.#control = adapter
         return adapter
-      })
-      .catch((error: unknown) => {
+      } catch (error) {
         adapter.dispose()
         throw error
-      })
-      .finally(() => {
-        if (this.#controlStarting === starting) this.#controlStarting = undefined
-      })
+      }
+    })()
     this.#controlStarting = starting
-    return starting
+    try {
+      return await starting
+    } finally {
+      if (this.#controlStarting === starting) this.#controlStarting = undefined
+    }
+  }
+
+  async #withTransientControl<T>(operation: (adapter: CodexAdapter) => Promise<T>): Promise<T> {
+    this.#controlUsers += 1
+    try {
+      return await operation(await this.#controlAdapter())
+    } finally {
+      this.#controlUsers = Math.max(0, this.#controlUsers - 1)
+      this.#scheduleControlIdleDisposal()
+    }
+  }
+
+  #clearControlIdleTimer(): void {
+    clearTimeout(this.#controlIdleTimer)
+    this.#controlIdleTimer = undefined
+  }
+
+  #scheduleControlIdleDisposal(): void {
+    this.#clearControlIdleTimer()
+    if (
+      !this.#control ||
+      this.#controlUsers > 0 ||
+      this.#controlPinned ||
+      this.#watchedSkillProjects.size > 0 ||
+      this.#watchedMcpProjects.size > 0
+    ) {
+      return
+    }
+    this.#controlIdleTimer = setTimeout(() => {
+      this.#controlIdleTimer = undefined
+      if (
+        this.#controlUsers > 0 ||
+        this.#controlPinned ||
+        this.#watchedSkillProjects.size > 0 ||
+        this.#watchedMcpProjects.size > 0
+      ) {
+        return
+      }
+      const control = this.#control
+      this.#control = undefined
+      control?.dispose()
+    }, this.#controlIdleMs)
   }
 
   async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    // Codex has a control adapter already running; everything else asks its
-    // own runtime, which is free to answer with nothing.
-    if (provider === 'codex' && !agent) return (await this.#controlAdapter()).listModels()
+    // Concurrent Codex reads share one control process, then release it once
+    // the startup catalog is warm. Everything else asks its own runtime.
+    if (provider === 'codex' && !agent) {
+      return this.#withTransientControl((adapter) => adapter.listModels())
+    }
     // The injected seam, not the module function — otherwise tests spawn the
     // real vendor CLIs just to draw a model list.
     return this.#runtimeFor(provider, this.#onLog).listModels(agent)
@@ -844,7 +959,6 @@ export class Orchestrator {
     if (provider === 'opencode' || provider === 'grok') {
       // No vendor inventory over this surface, but the TasteCode-managed
       // project servers are real: each adapter receives them when it starts.
-      this.#watchedMcpProjects.add(projectPath)
       return {
         capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES,
         servers: this.#mcpConfig.list(provider, projectPath).map((config): McpServer => {
@@ -871,14 +985,15 @@ export class Orchestrator {
       return { capabilities: UNSUPPORTED_MCP_CAPABILITIES, servers: [] }
     }
     this.#watchedMcpProjects.add(projectPath)
-    const active = [...this.#threads.values()].find(
-      ({ thread, session }) =>
-        thread.provider === provider &&
-        this.#store.thread(thread.id)?.projectPath === projectPath &&
-        session.listMcpServers,
+    const active = this.#findProjectRuntime(
+      provider,
+      projectPath,
+      ({ session }) => session.listMcpServers !== undefined,
     )
-    const inherited = active?.session.listMcpServers
-      ? await active.session.listMcpServers(active.thread.id)
+    const inherited = active?.[1].session.listMcpServers
+      ? await this.#withThreadRuntimeOperation(active[0], () =>
+          active[1].session.listMcpServers!(active[1].thread.id),
+        )
       : await (await this.#controlAdapter()).listMcpServers()
     const servers = new Map(inherited.map((server) => [server.id, server]))
     for (const config of this.#mcpConfig.list(provider, projectPath)) {
@@ -909,6 +1024,7 @@ export class Orchestrator {
             }),
       })
     }
+    const { CODEX_MCP_CAPABILITIES } = await loadCodexAdapter()
     return { capabilities: CODEX_MCP_CAPABILITIES, servers: [...servers.values()] }
   }
 
@@ -924,6 +1040,7 @@ export class Orchestrator {
       return { capabilities: UNSUPPORTED_SKILL_CAPABILITIES, skills: [], errors: [] }
     }
     this.#watchedSkillProjects.add(projectPath)
+    const { CODEX_SKILL_CAPABILITIES } = await loadCodexAdapter()
     return {
       capabilities: CODEX_SKILL_CAPABILITIES,
       ...(await (await this.#controlAdapter()).listSkills(projectPath)),
@@ -993,18 +1110,17 @@ export class Orchestrator {
     if (provider !== 'codex') {
       throw new Error(`provider "${provider}" applies MCP changes to new sessions`)
     }
-    const active = [...this.#threads.values()].find(
-      ({ thread }) =>
-        thread.provider === provider && this.#store.thread(thread.id)?.projectPath === projectPath,
-    )
-    if (!active?.session.reloadMcpServers) {
+    const active = this.#findProjectRuntime(provider, projectPath)
+    if (!active?.[1].session.reloadMcpServers) {
       throw new Error('start a Codex session for this project before reloading MCP servers')
     }
     const options = this.#mcpRuntimeOptions(provider, projectPath)
-    await active.session.reloadMcpServers(
-      active.thread.id,
-      options.mcpServers ?? [],
-      options.mcpCredentials ?? {},
+    await this.#withThreadRuntimeOperation(active[0], () =>
+      active[1].session.reloadMcpServers!(
+        active[1].thread.id,
+        options.mcpServers ?? [],
+        options.mcpCredentials ?? {},
+      ),
     )
   }
 
@@ -1014,20 +1130,40 @@ export class Orchestrator {
     serverId: string,
   ): Promise<{ loginId: string; authUrl: string }> {
     this.#requireMcpManagement(provider)
-    const active = [...this.#threads.values()].find(
-      ({ thread }) =>
-        thread.provider === provider && this.#store.thread(thread.id)?.projectPath === projectPath,
-    )
-    if (!active?.session.startMcpOAuth) {
+    const active = this.#findProjectRuntime(provider, projectPath)
+    if (!active?.[1].session.startMcpOAuth) {
       throw new Error('start a Codex session for this project before signing in to an MCP server')
     }
-    return active.session.startMcpOAuth(serverId, active.thread.id)
+    const [threadId, entry] = active
+    this.#mcpOAuthThreads.add(threadId)
+    this.#touchThreadRuntime(threadId)
+    try {
+      return await entry.session.startMcpOAuth!(serverId, entry.thread.id)
+    } catch (error) {
+      this.#mcpOAuthThreads.delete(threadId)
+      this.#pruneIdleThreadRuntimes()
+      throw error
+    }
   }
 
   cancelMcpOAuth(provider: ProviderId): never {
     throw new Error(
       `provider "${provider}" cannot cancel MCP OAuth; close the browser flow instead`,
     )
+  }
+
+  #findProjectRuntime(
+    provider: ProviderId,
+    projectPath: string,
+    accepts?: (entry: AttachedThreadRuntime) => boolean,
+  ): [string, AttachedThreadRuntime] | undefined {
+    const threadIds = this.#runtimeThreadIdsByProject.get(provider)?.get(projectPath)
+    if (!threadIds) return undefined
+    for (const threadId of threadIds) {
+      const entry = this.#threads.get(threadId)
+      if (entry && (!accepts || accepts(entry))) return [threadId, entry]
+    }
+    return undefined
   }
 
   #requireMcpManagement(provider: ProviderId): void {
@@ -1055,11 +1191,13 @@ export class Orchestrator {
   }
 
   async account(provider: ProviderId, agent?: string): Promise<Account> {
-    if (provider === 'codex') return (await this.#controlAdapter()).account()
-    if (provider === 'claude-code') return claudeAccount()
-    if (provider === 'cursor') return cursorAccount()
-    if (provider === 'grok') return grokAccount()
-    if (provider === 'acp' && agent) return acpAccount(agent)
+    if (provider === 'codex') {
+      return this.#withTransientControl((adapter) => adapter.account())
+    }
+    if (provider === 'claude-code') return (await loadClaudeAdapter()).claudeAccount()
+    if (provider === 'cursor') return (await loadCursorAdapter()).cursorAccount()
+    if (provider === 'grok') return (await loadGrokAdapter()).grokAccount()
+    if (provider === 'acp' && agent) return (await loadAcpAdapter()).acpAccount(agent)
     return { signedIn: false }
   }
 
@@ -1068,6 +1206,7 @@ export class Orchestrator {
       [
         'codex',
         async () => {
+          const { CodexAdapter } = await loadCodexAdapter()
           const adapter = new CodexAdapter()
           adapter.on('log', (line) => this.#onLog(line))
           try {
@@ -1078,8 +1217,8 @@ export class Orchestrator {
           }
         },
       ],
-      ['claude-code', claudeLimitSource],
-      ['grok', grokLimitSource],
+      ['claude-code', async () => (await loadClaudeAdapter()).claudeLimitSource()],
+      ['grok', async () => (await loadGrokAdapter()).grokLimitSource()],
     ])
     const source = await (readers.get(provider)?.() ?? Promise.resolve({ status: 'unavailable' }))
     return source.status === 'ready'
@@ -1088,12 +1227,21 @@ export class Orchestrator {
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
-    if (provider === 'codex') return (await this.#controlAdapter()).startLogin()
+    if (provider === 'codex') {
+      this.#controlPinned = true
+      try {
+        return await this.#withTransientControl((adapter) => adapter.startLogin())
+      } catch (error) {
+        this.#controlPinned = false
+        this.#scheduleControlIdleDisposal()
+        throw error
+      }
+    }
     const start =
       provider === 'claude-code'
-        ? startClaudeLogin
+        ? (await loadClaudeAdapter()).startClaudeLogin
         : provider === 'cursor'
-          ? startCursorLogin
+          ? (await loadCursorAdapter()).startCursorLogin
           : undefined
     if (!start) throw new Error(`provider "${provider}" cannot sign in yet`)
     this.#providerLogins.get(provider)?.cancel()
@@ -1110,7 +1258,12 @@ export class Orchestrator {
 
   async cancelLogin(provider: ProviderId, loginId: string): Promise<void> {
     if (provider === 'codex') {
-      await (await this.#controlAdapter()).cancelLogin(loginId)
+      try {
+        await this.#withTransientControl((adapter) => adapter.cancelLogin(loginId))
+      } finally {
+        this.#controlPinned = false
+        this.#scheduleControlIdleDisposal()
+      }
       return
     }
     const login = this.#providerLogins.get(provider)
@@ -1121,17 +1274,22 @@ export class Orchestrator {
 
   async useApiKey(provider: ProviderId, apiKey: string): Promise<Account> {
     if (provider !== 'codex') throw new Error(`provider "${provider}" cannot sign in yet`)
-    const account = await (await this.#controlAdapter()).useApiKey(apiKey)
+    const account = await this.#withTransientControl((adapter) => adapter.useApiKey(apiKey))
+    this.#controlPinned = false
+    this.#scheduleControlIdleDisposal()
     this.#invalidateBackgroundSources()
     return account
   }
 
   async signOut(provider: ProviderId, agent?: string): Promise<void> {
-    if (provider === 'codex') await (await this.#controlAdapter()).signOut()
-    else if (provider === 'claude-code') await signOutClaude()
-    else if (provider === 'cursor') await signOutCursor()
-    else if (provider === 'grok') await signOutGrok()
-    else if (provider === 'acp' && agent) await acpSignOut(agent)
+    if (provider === 'codex') {
+      await this.#withTransientControl((adapter) => adapter.signOut())
+      this.#controlPinned = false
+      this.#scheduleControlIdleDisposal()
+    } else if (provider === 'claude-code') await (await loadClaudeAdapter()).signOutClaude()
+    else if (provider === 'cursor') await (await loadCursorAdapter()).signOutCursor()
+    else if (provider === 'grok') await (await loadGrokAdapter()).signOutGrok()
+    else if (provider === 'acp' && agent) await (await loadAcpAdapter()).acpSignOut(agent)
     this.#invalidateBackgroundSources()
   }
 
@@ -1210,7 +1368,11 @@ export class Orchestrator {
           }
         : {}),
     })
-    this.#attachThread(thread, session, workspacePath, worktree)
+    const autoSettleDays = this.#store.sidebarSettings().autoSettleDays
+    this.#onLifecycleScheduleChanged(
+      autoSettleDays === null ? 'later' : thread.createdAt + autoSettleDays * 24 * 60 * 60 * 1_000,
+    )
+    this.#attachThread(thread, session, workspacePath, runtime.resume !== undefined, worktree)
     if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
     return thread
   }
@@ -1240,6 +1402,7 @@ export class Orchestrator {
       if (this.#startingSideThreads.get(parentThreadId) === pending) {
         this.#startingSideThreads.delete(parentThreadId)
       }
+      this.#pruneIdleThreadRuntimes()
     })
     this.#startingSideThreads.set(parentThreadId, pending)
     return pending
@@ -1253,6 +1416,7 @@ export class Orchestrator {
     const storedParent = this.#store.thread(parentThreadId)
     if (!storedParent) throw new Error(`no such thread: ${parentThreadId}`)
     if (storedParent.ephemeral) throw new Error('Side chat cannot be opened inside Side chat.')
+    const parentHistory = await this.history(parentThreadId)
 
     const parent = this.#get(parentThreadId).thread
     const provider = parent.provider
@@ -1268,7 +1432,7 @@ export class Orchestrator {
       approval,
       ...(storedParent.agent ? { agent: storedParent.agent } : {}),
       ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
-      instructions: composeInstructions(sideChatInstructions(this.#store.history(parentThreadId))),
+      instructions: composeInstructions(sideChatInstructionsFromReplay(parentHistory)),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
     }
 
@@ -1292,7 +1456,7 @@ export class Orchestrator {
       })
       this.#sideThreads.set(parentThreadId, thread.id)
       this.#sideParents.set(thread.id, parentThreadId)
-      this.#attachThread(thread, session, storedParent.projectPath)
+      this.#attachThread(thread, session, storedParent.projectPath, runtime.resume !== undefined)
       this.#threadApprovals.set(thread.id, approval)
       return thread
     } catch (error) {
@@ -1300,7 +1464,10 @@ export class Orchestrator {
       const sideThreadId = started?.thread.id
       if (sideThreadId) {
         this.#sideParents.delete(sideThreadId)
-        if (this.#store.thread(sideThreadId)?.ephemeral) this.#store.deleteThread(sideThreadId)
+        if (this.#store.thread(sideThreadId)?.ephemeral) {
+          this.#store.deleteThread(sideThreadId)
+          this.forgetDeletedThread(sideThreadId)
+        }
       }
       if (this.#sideThreads.get(parentThreadId) === sideThreadId) {
         this.#sideThreads.delete(parentThreadId)
@@ -1331,10 +1498,11 @@ export class Orchestrator {
     if (this.#restoringThreads.has(threadId)) {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
+    this.#touchThreadRuntime(threadId)
     if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
     const pendingStart = this.#beginTurnStart(threadId, submission)
-    this.#startingTurns.add(threadId)
+    this.#addSidebarStatus(this.#startingTurns, threadId)
     let releaseTurnStart: () => void = () => undefined
     const turnStartBarrier = {
       done: new Promise<void>((resolve) => {
@@ -1352,6 +1520,7 @@ export class Orchestrator {
       }
       const design = attachments.some(isDesignBriefAttachment)
       if (design) {
+        await loadDesignAgent()
         await this.#stopDesignPreview(threadId)
         // The flow keeps the user's own options; only brief-phase turns force
         // low effort (see #designTurnOptions). Storing the lowered options
@@ -1374,13 +1543,13 @@ export class Orchestrator {
         try {
           turnId = await this.#sendDesignTurn(
             threadId,
-            designBriefingPrompt(text),
+            designAgent().designBriefingPrompt(text),
             attachments.filter((path) => !isDesignBriefAttachment(path)),
             this.#designTurnOptions(flow),
             pendingStart,
           )
         } catch (error) {
-          this.#startingTurns.delete(threadId)
+          this.#deleteSidebarStatus(this.#startingTurns, threadId)
           if (this.#designFlows.has(threadId)) this.#failDesignFlow(threadId, error)
           else void this.#drainQueue(threadId)
           throw error
@@ -1399,14 +1568,16 @@ export class Orchestrator {
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       return turnId
     } catch (error) {
+      this.#markIdleRuntimeEligible(threadId)
       this.#forgetPendingTurnStart(threadId, pendingStart)
       throw error
     } finally {
-      this.#startingTurns.delete(threadId)
+      this.#deleteSidebarStatus(this.#startingTurns, threadId)
       if (this.#turnStartBarriers.get(threadId) === turnStartBarrier) {
         this.#turnStartBarriers.delete(threadId)
       }
       turnStartBarrier.release()
+      this.#pruneIdleThreadRuntimes()
     }
   }
 
@@ -1457,7 +1628,9 @@ export class Orchestrator {
     }
 
     const turnId = await this.sendTurn(threadId, text, attachments, options, submission)
-    if (this.#activeTurnIds.get(threadId) === turnId) this.#activeTurns.add(threadId)
+    if (this.#activeTurnIds.get(threadId) === turnId) {
+      this.#addSidebarStatus(this.#activeTurns, threadId)
+    }
     return { queued: false, turnId }
   }
 
@@ -1476,6 +1649,7 @@ export class Orchestrator {
     if (!this.#store.deleteQueuedTurn(threadId, queuedTurnId)) return
     queue.splice(index, 1)
     this.#notifyQueue(threadId)
+    this.#pruneIdleThreadRuntimes()
   }
 
   moveQueuedTurn(threadId: string, queuedTurnId: string, direction: 'up' | 'down'): void {
@@ -1564,6 +1738,51 @@ export class Orchestrator {
    */
   #record(threadId: string, event: DomainEvent): void {
     if (this.#discardedSideThreads.has(threadId)) return
+    if (event.type === 'item.delta') {
+      this.#recordedDeltas.push(threadId, event)
+      return
+    }
+    this.#recordedDeltas.flush(threadId)
+    this.#commitRecord(threadId, event)
+  }
+
+  /** Persist and publish one coalesced stream after the write commits. */
+  #commitRecordedDelta(threadId: string, event: ItemDeltaEvent): void {
+    if (this.#discardedSideThreads.has(threadId)) return
+    const { seq, serializedEvent } = this.#store.appendWithSerializedEvent(threadId, event)
+    if (this.#sideParents.has(threadId)) {
+      this.#onSideEvent(threadId, event, seq, serializedEvent)
+    } else {
+      this.#onEvent(threadId, event, seq, serializedEvent)
+    }
+  }
+
+  /** Persist and then publish one shared multi-thread delta window atomically. */
+  #commitRecordedDeltas(records: RecordedDelta[]): void {
+    const accepted =
+      this.#discardedSideThreads.size === 0
+        ? records
+        : records.filter(({ threadId }) => !this.#discardedSideThreads.has(threadId))
+    const only = accepted[0]
+    if (accepted.length === 1 && only) {
+      this.#commitRecordedDelta(only.threadId, only.event)
+      return
+    }
+    if (accepted.length === 0) return
+    const persisted = this.#store.appendBatchWithSerializedEvents(accepted)
+    for (let index = 0; index < accepted.length; index += 1) {
+      const { threadId, event } = accepted[index]!
+      const { seq, serializedEvent } = persisted[index]!
+      if (this.#sideParents.has(threadId)) {
+        this.#onSideEvent(threadId, event, seq, serializedEvent)
+      } else {
+        this.#onEvent(threadId, event, seq, serializedEvent)
+      }
+    }
+  }
+
+  #commitRecord(threadId: string, event: DomainEvent): void {
+    if (this.#discardedSideThreads.has(threadId)) return
     if (
       event.type === 'turn.completed' &&
       this.#activeTurnIds.has(threadId) &&
@@ -1576,7 +1795,7 @@ export class Orchestrator {
       const acceptedStarts = this.#acceptedTurnStarts.get(threadId)
       matchedStart = acceptedStarts?.get(event.turn.id)
       if (matchedStart) {
-        acceptedStarts?.delete(event.turn.id)
+        this.#deleteAcceptedTurnStart(threadId, event.turn.id)
       } else {
         matchedStart = this.#pendingTurnStarts.get(threadId)
         if (matchedStart) this.#pendingTurnStarts.delete(threadId)
@@ -1586,7 +1805,7 @@ export class Orchestrator {
       }
     }
     if (event.type === 'turn.completed') {
-      this.#acceptedTurnStarts.get(threadId)?.delete(event.turnId)
+      this.#deleteAcceptedTurnStart(threadId, event.turnId)
       event = { ...event, completedAt: Date.now() }
     }
     if (event.type === 'thread.error') {
@@ -1594,18 +1813,32 @@ export class Orchestrator {
       this.#acceptedTurnStarts.delete(threadId)
     }
     if (event.type === 'turn.started') {
-      this.#activeTurns.add(threadId)
+      this.#touchThreadRuntime(threadId)
+      this.#addSidebarStatus(this.#activeTurns, threadId)
       this.#activeTurnIds.set(threadId, event.turn.id)
     }
     if (event.type === 'turn.completed' || event.type === 'thread.error') {
-      this.#activeTurns.delete(threadId)
+      this.#markIdleRuntimeEligible(threadId)
+      this.#deleteSidebarStatus(this.#activeTurns, threadId)
       const activeTurnId =
         event.type === 'turn.completed' ? event.turnId : this.#activeTurnIds.get(threadId)
       this.#activeTurnIds.delete(threadId)
       if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
       this.#suppressedUserItems.delete(threadId)
     }
-    const seq = this.#store.append(threadId, event)
+    const { seq, serializedEvent } = this.#store.appendWithSerializedEvent(threadId, event)
+    const affectsInbox = affectsInboxProjection(event)
+    if (
+      affectsInbox &&
+      this.#inboxProjectionsLoaded &&
+      !this.#staleInboxProjectionThreads.has(threadId)
+    ) {
+      const inboxProjection = this.#inboxProjections.get(threadId) ?? emptyInboxProjection()
+      applyInboxProjectionEvent(inboxProjection, event)
+      if (isEmptyInboxProjection(inboxProjection)) this.#inboxProjections.delete(threadId)
+      else this.#inboxProjections.set(threadId, inboxProjection)
+    }
+    if (affectsInbox) this.#recordSidebarStatusChange(threadId)
     const sideChat = this.#sideParents.has(threadId)
     if (
       !sideChat &&
@@ -1618,8 +1851,8 @@ export class Orchestrator {
     if (!sideChat && (event.type === 'turn.completed' || event.type === 'thread.error')) {
       this.#wakeForActivity(threadId, true)
     }
-    if (sideChat) this.#onSideEvent(threadId, event, seq)
-    else this.#onEvent(threadId, event, seq)
+    if (sideChat) this.#onSideEvent(threadId, event, seq, serializedEvent)
+    else this.#onEvent(threadId, event, seq, serializedEvent)
     if (
       event.type === 'turn.started' &&
       matchedStart?.submission &&
@@ -1630,9 +1863,14 @@ export class Orchestrator {
     if (
       event.type === 'turn.completed' &&
       !this.#designFlows.has(threadId) &&
-      !this.#designInputByThread.has(threadId)
+      !this.#designInputByThread.has(threadId) &&
+      this.#hasQueuedTurns(threadId)
     ) {
       void this.#drainQueue(threadId)
+    }
+    if (event.type === 'turn.completed' || event.type === 'thread.error') {
+      if (this.#activeTurns.size > 0) this.#scheduleIdleRuntimePrune()
+      else this.#pruneIdleThreadRuntimes()
     }
   }
 
@@ -1659,8 +1897,12 @@ export class Orchestrator {
       },
     }
     if (submission.queueId) {
-      const seq = this.#store.appendAndCompleteQueuedTurn(threadId, submission.queueId, event)
-      this.#onEvent(threadId, event, seq)
+      const { seq, serializedEvent } = this.#store.appendAndCompleteQueuedTurn(
+        threadId,
+        submission.queueId,
+        event,
+      )
+      this.#onEvent(threadId, event, seq, serializedEvent)
     } else {
       this.#record(threadId, event)
     }
@@ -1672,8 +1914,20 @@ export class Orchestrator {
     afterSeq = 0,
   ): Promise<Array<{ seq: number; event: DomainEvent }>> {
     await this.#restoringThreads.get(threadId)
+    this.#touchThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
+    if (afterSeq === 0) {
+      const snapshot = this.#store.tailReplaySnapshot(threadId)
+      if (snapshot) return snapshot
+      const base = this.#store.replaySnapshotBase(threadId)
+      const tail = this.#store.history(threadId, base?.seq ?? 0)
+      const compacted = compactHistoryReplay(base ? [...base.entries, ...tail] : tail)
+      const seq = tail.at(-1)?.seq ?? base?.seq ?? 0
+      this.#store.saveReplaySnapshot(threadId, seq, compacted)
+      return compacted
+    }
     const history = this.#store.history(threadId, afterSeq)
-    return afterSeq === 0 ? compactHistoryReplay(history) : history
+    return history
   }
 
   async diff(threadId: string): Promise<SessionDiff> {
@@ -1704,6 +1958,7 @@ export class Orchestrator {
       this.#record(threadId, { type: 'diff.updated', turnId, diff: '' })
     } finally {
       this.#reviewingDiffs.delete(threadId)
+      this.#pruneIdleThreadRuntimes()
     }
   }
 
@@ -1759,44 +2014,90 @@ export class Orchestrator {
     )
   }
 
-  inboxStatus(threadId: string): ThreadInboxStatus {
+  /** Changes only when an in-memory value used by `projects.list` can change. */
+  sidebarStatusRevision(): number {
+    return this.#sidebarStatusRevision
+  }
+
+  /** Exact changed rows for an incremental projects.list projection, when still retained. */
+  sidebarStatusChangesSince(revision: number): readonly string[] | undefined {
+    if (revision === this.#sidebarStatusRevision) return []
+    if (revision < 0 || revision > this.#sidebarStatusRevision) return undefined
+    const first = this.#sidebarStatusChanges[0]
+    if (!first || revision < first.revision - 1) return undefined
+
+    const changed = new Set<string>()
+    for (let index = this.#sidebarStatusChanges.length - 1; index >= 0; index -= 1) {
+      const entry = this.#sidebarStatusChanges[index]!
+      if (entry.revision <= revision) break
+      changed.add(entry.threadId)
+    }
+    return [...changed]
+  }
+
+  inboxStatus(threadId: string, queued?: boolean, unread?: boolean): ThreadInboxStatus {
     if (this.#startingTurns.has(threadId) || this.#designStartingThreads.has(threadId)) {
       return 'starting'
     }
     if (this.#activeTurns.has(threadId)) return 'working'
-    if (this.#queueEntries(threadId).length > 0) return 'queued'
+    if (queued ?? this.#queueEntries(threadId).length > 0) return 'queued'
 
-    // Incremental projection over the durable log. The fold is append-only,
-    // so each call replays only events after the last consumed seq — the
-    // full-history replay per sidebar refresh was the first thing to hurt on
-    // long transcripts. History rewrites (restore/undo) drop the projection.
-    const projection: InboxProjection = this.#inboxProjections.get(threadId) ?? {
-      seq: 0,
-      approvals: new Set<string>(),
-      inputs: new Set<string>(),
-      last: 'idle',
+    // The first sidebar read folds only non-default status rows in one bulk
+    // query. After that, #commitRecord advances the sparse cache without
+    // another SQLite read. A history rewrite pays for only that thread once.
+    if (!this.#inboxProjectionsLoaded) {
+      this.#inboxProjections = this.#store.inboxProjections()
+      this.#inboxProjectionsLoaded = true
     }
-    for (const { seq, event } of this.#store.history(threadId, projection.seq)) {
-      projection.seq = seq
-      if (event.type === 'approval.requested') projection.approvals.add(event.request.id)
-      if (event.type === 'approval.resolved') projection.approvals.delete(event.id)
-      if (event.type === 'user_input.requested') projection.inputs.add(event.request.id)
-      if (event.type === 'user_input.resolved') projection.inputs.delete(event.id)
-      if (event.type === 'thread.error') projection.last = 'failed'
-      if (event.type === 'turn.completed') {
-        projection.last = event.status === 'failed' ? 'failed' : 'idle'
+    let projection = this.#inboxProjections.get(threadId)
+    if (this.#staleInboxProjectionThreads.delete(threadId)) {
+      projection = emptyInboxProjection()
+      for (const { event } of this.#store.history(threadId))
+        applyInboxProjectionEvent(projection, event)
+      if (isEmptyInboxProjection(projection)) {
+        this.#inboxProjections.delete(threadId)
+        projection = undefined
+      } else {
+        this.#inboxProjections.set(threadId, projection)
       }
     }
-    this.#inboxProjections.set(threadId, projection)
-    if (projection.approvals.size > 0) return 'approval'
-    if (projection.inputs.size > 0) return 'input'
+    if (!projection) return (unread ?? this.#store.thread(threadId)?.unread) ? 'ready' : 'idle'
+    if ((projection.approvals?.size ?? 0) > 0) return 'approval'
+    if ((projection.inputs?.size ?? 0) > 0) return 'input'
     if (projection.last === 'failed') return 'failed'
-    return this.#store.thread(threadId)?.unread ? 'ready' : projection.last
+    return (unread ?? this.#store.thread(threadId)?.unread) ? 'ready' : projection.last
   }
 
   /** Forget the inbox projection after anything that rewrites history. */
   #dropInboxProjection(threadId: string): void {
     this.#inboxProjections.delete(threadId)
+    this.#staleInboxProjectionThreads.add(threadId)
+    this.#recordSidebarStatusChange(threadId)
+  }
+
+  /** Remove sparse read-model state after the owning durable thread is deleted. */
+  forgetDeletedThread(threadId: string): void {
+    this.#inboxProjections.delete(threadId)
+    this.#staleInboxProjectionThreads.delete(threadId)
+  }
+
+  #addSidebarStatus(set: Set<string>, threadId: string): void {
+    if (set.has(threadId)) return
+    set.add(threadId)
+    this.#recordSidebarStatusChange(threadId)
+  }
+
+  #deleteSidebarStatus(set: Set<string>, threadId: string): void {
+    if (!set.delete(threadId)) return
+    this.#recordSidebarStatusChange(threadId)
+  }
+
+  #recordSidebarStatusChange(threadId: string): void {
+    this.#sidebarStatusRevision += 1
+    this.#sidebarStatusChanges.push({ revision: this.#sidebarStatusRevision, threadId })
+    if (this.#sidebarStatusChanges.length > MAX_SIDEBAR_STATUS_CHANGES * 2) {
+      this.#sidebarStatusChanges.splice(0, MAX_SIDEBAR_STATUS_CHANGES)
+    }
   }
 
   settleThread(threadId: string): ThreadLifecycle {
@@ -1848,8 +2149,10 @@ export class Orchestrator {
   #wakeForActivity(threadId: string, unread = false): void {
     const before = this.#store.thread(threadId)
     if (!before) return
-    const lifecycle = this.#store.touchThread(threadId, unread)
+    const at = Date.now()
+    const lifecycle = this.#store.touchThread(threadId, unread, at)
     if (before.lifecycle.state !== 'active') this.#notifyLifecycle(threadId, lifecycle)
+    else this.#onLifecycleScheduleChanged(at >= before.lastActiveAt ? 'later' : undefined)
   }
 
   #assertCanHide(threadId: string): void {
@@ -1882,6 +2185,7 @@ export class Orchestrator {
 
   #notifyLifecycle(threadId: string, lifecycle: ThreadLifecycle): ThreadLifecycle {
     this.#onLifecycle(threadId, lifecycle)
+    this.#onLifecycleScheduleChanged()
     return lifecycle
   }
 
@@ -1961,6 +2265,7 @@ export class Orchestrator {
       return await review()
     } finally {
       this.#reviewingDiffs.delete(threadId)
+      this.#pruneIdleThreadRuntimes()
     }
   }
 
@@ -1978,7 +2283,10 @@ export class Orchestrator {
     }
     const queue = this.#queueEntries(threadId)
     const next = queue[0]
-    if (!queue || !next) return
+    if (!next) {
+      this.#pruneIdleThreadRuntimes()
+      return
+    }
 
     const claimed = this.#store.claimQueuedTurn(threadId, next.id, 'normal')
     if (!claimed) return
@@ -2013,7 +2321,9 @@ export class Orchestrator {
       if (!next.clientSubmissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
       if (!this.#threads.has(threadId) || this.#store.thread(threadId)?.closedAt !== undefined)
         return
-      if (this.#activeTurnIds.get(threadId) === turnId) this.#activeTurns.add(threadId)
+      if (this.#activeTurnIds.get(threadId) === turnId) {
+        this.#addSidebarStatus(this.#activeTurns, threadId)
+      }
     } catch {
       if (!this.#threads.has(threadId)) return
       // After a panic the queue was emptied on purpose; putting the grabbed
@@ -2033,6 +2343,7 @@ export class Orchestrator {
       )
     } finally {
       this.#drainingQueues.delete(threadId)
+      this.#pruneIdleThreadRuntimes()
     }
   }
 
@@ -2062,6 +2373,11 @@ export class Orchestrator {
     })
     this.#queuedTurns.set(threadId, restored)
     return restored
+  }
+
+  #hasQueuedTurns(threadId: string): boolean {
+    const cached = this.#queuedTurns.get(threadId)
+    return cached ? cached.length > 0 : this.#store.queuedThreadIds().has(threadId)
   }
 
   /** Where the working tree stood before a turn. Silent when there is no repo. */
@@ -2128,6 +2444,7 @@ export class Orchestrator {
     } finally {
       this.#restoringThreads.delete(threadId)
       finishRestore()
+      this.#pruneIdleThreadRuntimes()
     }
   }
 
@@ -2161,6 +2478,7 @@ export class Orchestrator {
     } finally {
       this.#restoringThreads.delete(threadId)
       finishRestore()
+      this.#pruneIdleThreadRuntimes()
     }
   }
 
@@ -2189,8 +2507,11 @@ export class Orchestrator {
     this.#threadApprovals.set(threadId, approval)
     try {
       const attached = this.#threads.get(threadId)
-      if (attached) await attached.session.setApproval?.(approval)
-      else {
+      if (attached?.session.setApproval) {
+        await this.#withThreadRuntimeOperation(threadId, () =>
+          attached.session.setApproval!(approval),
+        )
+      } else {
         const joiningResume = this.#resumingThreads.has(threadId)
         await this.#ensureThread(threadId)
         if (joiningResume) await this.#get(threadId).session.setApproval?.(approval)
@@ -2213,8 +2534,8 @@ export class Orchestrator {
 
       const noMoreDetails =
         designInput.final &&
-        (answers[FINAL_BRIEFING_QUESTION.id] ?? []).includes(
-          FINAL_BRIEFING_QUESTION.options[0]!.label,
+        (answers[designAgent().FINAL_BRIEFING_QUESTION.id] ?? []).includes(
+          designAgent().FINAL_BRIEFING_QUESTION.options[0]!.label,
         )
       if (!noMoreDetails) {
         flow.explicitAnswers.push(
@@ -2246,7 +2567,7 @@ export class Orchestrator {
 
       void this.#sendDesignTurn(
         threadId,
-        designBriefingContinuation(designInput.questions, answers),
+        designAgent().designBriefingContinuation(designInput.questions, answers),
         [],
         this.#designTurnOptions(flow),
       ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
@@ -2350,6 +2671,7 @@ export class Orchestrator {
     const sideThreadId = this.#sideThreads.get(threadId)
     if (sideThreadId) this.closeSideThread(sideThreadId)
     const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
     // Always mark closed, live entry or not: closing is the user's statement
     // about the thread. Early-returning when no session was attached left a
     // thread mid-resume unmarked, so the resume guard never saw the close
@@ -2361,6 +2683,7 @@ export class Orchestrator {
     // The worktree deliberately survives: it may hold work the agent did not
     // commit, and closing a session is not a statement about that work.
     this.#store.closeThread(threadId)
+    this.#onLifecycleScheduleChanged()
     await runtimeDisposed
   }
 
@@ -2369,12 +2692,14 @@ export class Orchestrator {
     if (!stored) return
     if (!stored.ephemeral) throw new Error('thread is not a Side chat')
     this.#discardedSideThreads.add(threadId)
+    this.#recordedDeltas.discard(threadId)
     void this.#disposeThreadRuntime(threadId)
     if (stored.parentThreadId && this.#sideThreads.get(stored.parentThreadId) === threadId) {
       this.#sideThreads.delete(stored.parentThreadId)
     }
     this.#sideParents.delete(threadId)
     this.#store.deleteThread(threadId)
+    this.forgetDeletedThread(threadId)
   }
 
   #disposeThreadRuntime(threadId: string): Promise<void> {
@@ -2382,25 +2707,29 @@ export class Orchestrator {
       .closeThread(threadId)
       .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
     const previewStopped = this.#stopDesignPreview(threadId)
-    this.#inboxProjections.delete(threadId)
     const entry = this.#threads.get(threadId)
     if (entry) {
-      entry.session.dispose()
       this.#threads.delete(threadId)
+      this.#unindexThreadRuntime(threadId, entry)
+      this.#runtimeRecency.delete(threadId)
+      entry.session.dispose()
     }
+    this.#idleRuntimeEligible.delete(threadId)
+    this.#runtimeOperationCounts.delete(threadId)
+    this.#mcpOAuthThreads.delete(threadId)
     this.#threadApprovals.delete(threadId)
-    this.#activeTurns.delete(threadId)
+    this.#deleteSidebarStatus(this.#activeTurns, threadId)
     const activeTurnId = this.#activeTurnIds.get(threadId)
     this.#activeTurnIds.delete(threadId)
     if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
     this.#suppressedUserItems.delete(threadId)
     this.#inFlightSubmissionIds.delete(threadId)
-    this.#startingTurns.delete(threadId)
+    this.#deleteSidebarStatus(this.#startingTurns, threadId)
     this.#turnStartBarriers.get(threadId)?.release()
     this.#turnStartBarriers.delete(threadId)
     this.#pendingTurnStarts.delete(threadId)
     this.#acceptedTurnStarts.delete(threadId)
-    this.#designStartingThreads.delete(threadId)
+    this.#deleteSidebarStatus(this.#designStartingThreads, threadId)
     this.#designStartWaiters.delete(threadId)
     this.#reviewingDiffs.delete(threadId)
     this.#queuedTurns.delete(threadId)
@@ -2475,7 +2804,14 @@ export class Orchestrator {
     for (const controller of this.#voiceRequests.values()) controller.abort()
     this.#voiceRequests.clear()
     for (const [, entry] of this.#threads) entry.session.dispose()
+    this.#recordedDeltas.flushAll()
     this.#threads.clear()
+    this.#runtimeThreadIdsByProject.clear()
+    this.#runtimeRecency.clear()
+    this.#clearIdleRuntimeTimer()
+    this.#idleRuntimeEligible.clear()
+    this.#runtimeOperationCounts.clear()
+    this.#mcpOAuthThreads.clear()
     this.#sideThreads.clear()
     this.#sideParents.clear()
     this.#startingSideThreads.clear()
@@ -2504,9 +2840,15 @@ export class Orchestrator {
     this.#designInputs.clear()
     this.#designInputByThread.clear()
     this.#resumingThreads.clear()
+    this.#inboxProjections.clear()
+    this.#inboxProjectionsLoaded = false
+    this.#staleInboxProjectionThreads.clear()
     this.#backgroundSourcesCache = undefined
     this.#backgroundSourcesStarting = undefined
     this.#backgroundSourcesRevision += 1
+    this.#clearControlIdleTimer()
+    this.#controlUsers = 0
+    this.#controlPinned = false
     void this.#controlStarting?.then(
       (adapter) => adapter.dispose(),
       () => undefined,
@@ -2530,9 +2872,10 @@ export class Orchestrator {
     const existing = this.#resumingThreads.get(threadId)
     if (existing) return existing
 
-    const pending = this.#resumeThread(threadId).finally(() =>
-      this.#resumingThreads.delete(threadId),
-    )
+    const pending = this.#resumeThread(threadId).finally(() => {
+      this.#resumingThreads.delete(threadId)
+      this.#pruneIdleThreadRuntimes()
+    })
     this.#resumingThreads.set(threadId, pending)
     return pending
   }
@@ -2540,6 +2883,11 @@ export class Orchestrator {
   async #resumeThread(threadId: string): Promise<void> {
     const stored = this.#store.thread(threadId)
     if (!stored || stored.closedAt !== undefined) throw new Error(`no such thread: ${threadId}`)
+
+    // Recover Design mode before the provider can emit resumed events. Loading after attach would
+    // add an async gap where output could arrive without the persisted design flow being present.
+    const storedDesignFlow = this.#store.designRun(threadId)
+    if (storedDesignFlow !== undefined) await loadDesignAgent()
 
     const runtime = this.#runtimeFor(stored.provider, this.#onLog)
     if (!runtime.resume) {
@@ -2567,28 +2915,37 @@ export class Orchestrator {
       result.session.dispose()
       throw new Error(`thread ${threadId} was closed while resuming`)
     }
-    this.#attachThread(result.thread, result.session, stored.projectPath)
-    this.#restoreDesignFlow(threadId, workspacePath)
+    this.#attachThread(
+      result.thread,
+      result.session,
+      stored.projectPath,
+      runtime.resume !== undefined,
+    )
+    this.#markIdleRuntimeEligible(threadId)
+    if (storedDesignFlow !== undefined) {
+      this.#restoreDesignFlow(threadId, workspacePath, storedDesignFlow)
+    }
   }
 
-  #restoreDesignFlow(threadId: string, workspacePath: string): void {
-    const flow = parseStoredDesignFlow(this.#store.designRun(threadId), workspacePath)
+  #restoreDesignFlow(threadId: string, workspacePath: string, storedDesignFlow: unknown): void {
+    const flow = parseStoredDesignFlow(storedDesignFlow, workspacePath)
     if (!flow) return
     this.#designFlows.set(threadId, flow)
 
-    const unresolved = unresolvedDesignInput(this.#store.history(threadId))
+    const { unresolved, openTurnId } = designRecoveryState(this.#store.history(threadId))
     if (unresolved) {
       this.#designInputs.set(unresolved.id, {
         threadId,
         turnId: unresolved.turnId,
         questions: unresolved.questions,
-        final: unresolved.questions.every((question) => question.id === FINAL_BRIEFING_QUESTION.id),
+        final: unresolved.questions.every(
+          (question) => question.id === designAgent().FINAL_BRIEFING_QUESTION.id,
+        ),
       })
       this.#designInputByThread.set(threadId, unresolved.id)
       return
     }
 
-    const openTurnId = openTurn(this.#store.history(threadId))
     if (openTurnId) {
       this.#designTurns.set(openTurnId, threadId)
       return
@@ -2631,22 +2988,27 @@ export class Orchestrator {
   }
 
   #designPromptFor(flow: DesignFlow): string {
-    if (flow.phase === 'brief') return designBriefingPrompt(flow.originalRequest)
-    const brief = readDesignBrief(flow.workspacePath)
-    if (flow.phase === 'brand') return designBrandPrompt(brief)
-    const brand = readBrandSystem(flow.workspacePath)
-    if (flow.phase === 'page') return designPagePrompt(brief, brand)
-    const page = readPageBlueprint(flow.workspacePath)
-    if (flow.phase === 'assets') return designAssetPrompt(brief, brand, page)
+    if (flow.phase === 'brief') return designAgent().designBriefingPrompt(flow.originalRequest)
+    const brief = designAgent().readDesignBrief(flow.workspacePath)
+    if (flow.phase === 'brand') return designAgent().designBrandPrompt(brief)
+    const brand = designAgent().readBrandSystem(flow.workspacePath)
+    if (flow.phase === 'page') return designAgent().designPagePrompt(brief, brand)
+    const page = designAgent().readPageBlueprint(flow.workspacePath)
+    if (flow.phase === 'assets') return designAgent().designAssetPrompt(brief, brand, page)
     if (flow.phase === 'build') {
-      return designBuildPrompt(brief, brand, page, readAssetManifest(flow.workspacePath))
+      return designAgent().designBuildPrompt(
+        brief,
+        brand,
+        page,
+        designAgent().readAssetManifest(flow.workspacePath),
+      )
     }
-    if (flow.phase === 'preview') return designPreviewPrompt()
+    if (flow.phase === 'preview') return designAgent().designPreviewPrompt()
     if (flow.phase === 'review' && flow.screenshots) {
-      return designReviewPrompt(brief, brand, page, flow.screenshots)
+      return designAgent().designReviewPrompt(brief, brand, page, flow.screenshots)
     }
     if (flow.phase === 'repair' && flow.review) {
-      return designRepairPrompt(flow.review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
+      return designAgent().designRepairPrompt(flow.review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
     }
     throw new Error(`cannot resume design phase ${flow.phase}`)
   }
@@ -2669,7 +3031,7 @@ export class Orchestrator {
         this.#completeDesignActivity(threadId, turnId)
       }
     }
-    this.#designStartingThreads.add(threadId)
+    this.#addSidebarStatus(this.#designStartingThreads, threadId)
     let resolveStarted = (_turnId: string) => {}
     const started = new Promise<string>((resolve) => (resolveStarted = resolve))
     this.#designStartWaiters.set(threadId, resolveStarted)
@@ -2723,7 +3085,7 @@ export class Orchestrator {
         this.#designStartWaiters.delete(threadId)
       }
       this.#forgetPendingTurnStart(threadId, pendingStart)
-      this.#designStartingThreads.delete(threadId)
+      this.#deleteSidebarStatus(this.#designStartingThreads, threadId)
     }
   }
 
@@ -2771,11 +3133,21 @@ export class Orchestrator {
     }
   }
 
+  #deleteAcceptedTurnStart(threadId: string, turnId: string): void {
+    const starts = this.#acceptedTurnStarts.get(threadId)
+    if (!starts) return
+    starts.delete(turnId)
+    if (starts.size === 0) this.#acceptedTurnStarts.delete(threadId)
+  }
+
   #assertFreshSubmissionId(threadId: string, clientSubmissionId: string): void {
     const pending = this.#pendingTurnStarts.get(threadId)?.submission?.id === clientSubmissionId
-    const accepted = [...(this.#acceptedTurnStarts.get(threadId)?.values() ?? [])].some(
-      (start) => start.submission?.id === clientSubmissionId,
-    )
+    let accepted = false
+    for (const start of this.#acceptedTurnStarts.get(threadId)?.values() ?? []) {
+      if (start.submission?.id !== clientSubmissionId) continue
+      accepted = true
+      break
+    }
     const queued = this.#queueEntries(threadId).some(
       (turn) => turn.clientSubmissionId === clientSubmissionId,
     )
@@ -2786,7 +3158,7 @@ export class Orchestrator {
       queued ||
       inFlight ||
       this.#store.hasQueuedSubmission(threadId, clientSubmissionId) ||
-      this.#store.hasItem(threadId, clientSubmissionId)
+      this.#store.hasUserSubmission(threadId, clientSubmissionId)
     ) {
       throw new Error(`clientSubmissionId "${clientSubmissionId}" was already used for this thread`)
     }
@@ -2936,7 +3308,7 @@ export class Orchestrator {
       this.#completeDesignPhase(threadId, turnId, flow, text)
       return
     }
-    const output = parseBriefingOutput(text)
+    const output = designAgent().parseBriefingOutput(text)
     flow.correcting = false
     if (output.status === 'questions') {
       const round = flow.askedQuestions ? 'follow-up' : 'first'
@@ -2967,7 +3339,7 @@ export class Orchestrator {
       flow.pendingBrief = brief
       flow.finalAsked = true
       this.#saveDesignFlow(threadId)
-      this.#requestDesignInput(threadId, turnId, [FINAL_BRIEFING_QUESTION], true)
+      this.#requestDesignInput(threadId, turnId, [designAgent().FINAL_BRIEFING_QUESTION], true)
       return
     }
     this.#completeDesignBrief(threadId, turnId, brief)
@@ -3034,13 +3406,13 @@ export class Orchestrator {
   #completeDesignBrief(threadId: string, turnId: string, brief: DesignBriefInput): void {
     const flow = this.#designFlows.get(threadId)
     if (!flow) return
-    const saved = writeDesignBrief(flow.workspacePath, {
+    const saved = designAgent().writeDesignBrief(flow.workspacePath, {
       ...brief,
       explicitAnswers: flow.explicitAnswers,
     })
     this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
-    const prompt = designBrandPrompt(saved)
+    const prompt = designAgent().designBrandPrompt(saved)
     if (this.#activeTurns.has(threadId)) {
       flow.pendingPrompt = prompt
       this.#saveDesignFlow(threadId)
@@ -3054,66 +3426,69 @@ export class Orchestrator {
 
   #completeDesignPhase(threadId: string, turnId: string, flow: DesignFlow, text: string): void {
     if (flow.phase === 'brand') {
-      const output = parseBrandPhaseOutput(text)
+      const output = designAgent().parseBrandPhaseOutput(text)
       flow.correcting = false
-      const brand = writeBrandSystem(flow.workspacePath, output)
+      const brand = designAgent().writeBrandSystem(flow.workspacePath, output)
       flow.phase = 'page'
-      flow.pendingPrompt = designPagePrompt(readDesignBrief(flow.workspacePath), brand)
+      flow.pendingPrompt = designAgent().designPagePrompt(
+        designAgent().readDesignBrief(flow.workspacePath),
+        brand,
+      )
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'page') {
-      const output = parsePagePhaseOutput(text)
+      const output = designAgent().parsePagePhaseOutput(text)
       flow.correcting = false
-      const page = writePageBlueprint(flow.workspacePath, output)
+      const page = designAgent().writePageBlueprint(flow.workspacePath, output)
       flow.phase = 'assets'
-      flow.pendingPrompt = designAssetPrompt(
-        readDesignBrief(flow.workspacePath),
-        readBrandSystem(flow.workspacePath),
+      flow.pendingPrompt = designAgent().designAssetPrompt(
+        designAgent().readDesignBrief(flow.workspacePath),
+        designAgent().readBrandSystem(flow.workspacePath),
         page,
       )
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'assets') {
-      const output = parseAssetPhaseOutput(text)
+      const output = designAgent().parseAssetPhaseOutput(text)
       flow.correcting = false
-      const assets = writeAssetManifest(flow.workspacePath, output)
-      flow.buildFileBaseline = exactBuildFileBaseline(
+      const assets = designAgent().writeAssetManifest(flow.workspacePath, output)
+      flow.buildFileBaseline = designAgent().exactBuildFileBaseline(
         flow.workspacePath,
-        readDesignBrief(flow.workspacePath),
+        designAgent().readDesignBrief(flow.workspacePath),
       )
       flow.phase = 'build'
-      flow.pendingPrompt = designBuildPrompt(
-        readDesignBrief(flow.workspacePath),
-        readBrandSystem(flow.workspacePath),
-        readPageBlueprint(flow.workspacePath),
+      flow.pendingPrompt = designAgent().designBuildPrompt(
+        designAgent().readDesignBrief(flow.workspacePath),
+        designAgent().readBrandSystem(flow.workspacePath),
+        designAgent().readPageBlueprint(flow.workspacePath),
         assets,
       )
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'build') {
-      const output = parseBuildPhaseOutput(text)
+      const output = designAgent().parseBuildPhaseOutput(text)
       if (output.status === 'failed') throw new Error(output.error)
       if (output.summary.startsWith('Verify before publishing:')) {
         flow.buildSummary = output.summary
       } else {
         delete flow.buildSummary
       }
-      validateExactBuildFiles(
+      designAgent().validateExactBuildFiles(
         flow.workspacePath,
-        readDesignBrief(flow.workspacePath),
+        designAgent().readDesignBrief(flow.workspacePath),
         flow.buildFileBaseline,
       )
       flow.correcting = false
       flow.phase = 'preview'
-      flow.pendingPrompt = designPreviewPrompt()
+      flow.pendingPrompt = designAgent().designPreviewPrompt()
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'preview') {
-      const plan = parsePreviewPhaseOutput(text)
+      const plan = designAgent().parsePreviewPhaseOutput(text)
       const task = this.#startDesignPreview(threadId, turnId, flow, plan).catch(
         (error: unknown) => {
           if (this.#designFlows.get(threadId) !== flow) return
@@ -3156,9 +3531,12 @@ export class Orchestrator {
       return
     }
     if (flow.phase === 'review') {
-      const review = writeVisualReview(
+      const review = designAgent().writeVisualReview(
         flow.workspacePath,
-        enforceDomAuditFindings(parseReviewPhaseOutput(text), flow.screenshots ?? []),
+        designAgent().enforceDomAuditFindings(
+          designAgent().parseReviewPhaseOutput(text),
+          flow.screenshots ?? [],
+        ),
       )
       flow.correcting = false
       flow.review = review
@@ -3175,13 +3553,17 @@ export class Orchestrator {
       } else {
         flow.phase = 'repair'
         flow.repairAttempt += 1
-        flow.pendingPrompt = designRepairPrompt(review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
+        flow.pendingPrompt = designAgent().designRepairPrompt(
+          review,
+          flow.repairAttempt,
+          DESIGN_REPAIR_LIMIT,
+        )
       }
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'repair') {
-      const output = parseRepairPhaseOutput(text)
+      const output = designAgent().parseRepairPhaseOutput(text)
       flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
       void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
@@ -3214,13 +3596,14 @@ export class Orchestrator {
     threadId: string,
     turnId: string,
     flow: DesignFlow,
-    plan: ReturnType<typeof parsePreviewPhaseOutput>,
+    plan: ReturnType<DesignAgentModule['parsePreviewPhaseOutput']>,
   ): Promise<void> {
     if (plan.kind === 'static') {
       const workspace = realpathSync(flow.workspacePath)
       const cwd = existingWorkspacePath(workspace, plan.cwd, true)
       assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false))
     }
+    const { startDesignPreview } = await loadDesignPreview()
     const preview = await startDesignPreview(flow.workspacePath, plan)
     if (this.#designFlows.get(threadId) !== flow) {
       await preview
@@ -3252,6 +3635,7 @@ export class Orchestrator {
       return
     }
     if (!this.#designPreviews.has(threadId)) {
+      const { startDesignPreview } = await loadDesignPreview()
       const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
       if (this.#designFlows.get(threadId) !== flow) {
         await preview
@@ -3275,10 +3659,10 @@ export class Orchestrator {
     }
     flow.phase = 'review'
     flow.screenshots = screenshots
-    flow.pendingPrompt = designReviewPrompt(
-      readDesignBrief(flow.workspacePath),
-      readBrandSystem(flow.workspacePath),
-      readPageBlueprint(flow.workspacePath),
+    flow.pendingPrompt = designAgent().designReviewPrompt(
+      designAgent().readDesignBrief(flow.workspacePath),
+      designAgent().readBrandSystem(flow.workspacePath),
+      designAgent().readPageBlueprint(flow.workspacePath),
       screenshots,
     )
     this.#saveDesignFlow(threadId)
@@ -3332,9 +3716,9 @@ export class Orchestrator {
     flow.correcting = true
     const detail = error instanceof Error ? error.message : String(error)
     const prompt =
-      flow.phase === 'build' && error instanceof ExactBuildFilesError
-        ? designBuildCorrectionPrompt(detail)
-        : designPhaseCorrectionPrompt(detail)
+      flow.phase === 'build' && error instanceof designAgent().ExactBuildFilesError
+        ? designAgent().designBuildCorrectionPrompt(detail)
+        : designAgent().designPhaseCorrectionPrompt(detail)
     flow.pendingPrompt = prompt
     this.#saveDesignFlow(threadId)
     return prompt
@@ -3398,6 +3782,7 @@ export class Orchestrator {
       .catch((error) => this.#onLog(`[terminal] project close failed: ${errorMessage(error)}`))
     this.#watchedSkillProjects.delete(projectPath)
     this.#watchedMcpProjects.delete(projectPath)
+    this.#scheduleControlIdleDisposal()
   }
 
   #completeDesignActivity(
@@ -3419,21 +3804,260 @@ export class Orchestrator {
     if (flow) this.#store.setDesignRun(threadId, flow)
   }
 
+  // This map is the release-candidate LRU, not an index of every attached
+  // thread. Adding fresh or non-resumable sessions makes each attach scan the
+  // whole live thread set and turns a many-thread start into quadratic work.
+  #markIdleRuntimeEligible(threadId: string): void {
+    if (!this.#threads.get(threadId)?.resumable) {
+      this.#idleRuntimeEligible.delete(threadId)
+      this.#runtimeRecency.delete(threadId)
+      return
+    }
+    this.#idleRuntimeEligible.add(threadId)
+    this.#touchThreadRuntime(threadId)
+  }
+
+  #touchThreadRuntime(threadId: string): void {
+    const entry = this.#threads.get(threadId)
+    if (!entry?.resumable || !this.#idleRuntimeEligible.has(threadId)) {
+      this.#runtimeRecency.delete(threadId)
+      return
+    }
+    this.#runtimeRecency.delete(threadId)
+    this.#runtimeRecency.set(threadId, performance.now())
+  }
+
+  async #withThreadRuntimeOperation<T>(
+    threadId: string,
+    operation: () => T | Promise<T>,
+  ): Promise<T> {
+    this.#runtimeOperationCounts.set(
+      threadId,
+      (this.#runtimeOperationCounts.get(threadId) ?? 0) + 1,
+    )
+    this.#touchThreadRuntime(threadId)
+    try {
+      return await operation()
+    } finally {
+      const remaining = (this.#runtimeOperationCounts.get(threadId) ?? 1) - 1
+      if (remaining === 0) this.#runtimeOperationCounts.delete(threadId)
+      else this.#runtimeOperationCounts.set(threadId, remaining)
+      this.#pruneIdleThreadRuntimes()
+    }
+  }
+
+  #canReleaseIdleRuntime(threadId: string, queuedThreadIds: ReadonlySet<string>): boolean {
+    const entry = this.#threads.get(threadId)
+    return Boolean(
+      entry?.resumable &&
+      this.#idleRuntimeEligible.has(threadId) &&
+      !queuedThreadIds.has(threadId) &&
+      !this.#sideParents.has(threadId) &&
+      !this.#startingSideThreads.has(threadId) &&
+      !this.#runtimeOperationCounts.has(threadId) &&
+      !this.#mcpOAuthThreads.has(threadId) &&
+      !this.#activeTurns.has(threadId) &&
+      !this.#startingTurns.has(threadId) &&
+      !this.#turnStartBarriers.has(threadId) &&
+      !this.#pendingTurnStarts.has(threadId) &&
+      !this.#acceptedTurnStarts.has(threadId) &&
+      !this.#inFlightSubmissionIds.has(threadId) &&
+      !this.#restoringThreads.has(threadId) &&
+      !this.#reviewingDiffs.has(threadId) &&
+      !this.#drainingQueues.has(threadId) &&
+      !this.#designFlows.has(threadId) &&
+      !this.#designStartingThreads.has(threadId) &&
+      !this.#designInputByThread.has(threadId) &&
+      !this.#resumingThreads.has(threadId),
+    )
+  }
+
+  #releaseIdleRuntime(threadId: string): void {
+    const entry = this.#threads.get(threadId)
+    if (!entry) return
+    this.#releasedIdleRuntimeSessions.add(entry.session)
+    this.#threads.delete(threadId)
+    this.#unindexThreadRuntime(threadId, entry)
+    this.#runtimeRecency.delete(threadId)
+    this.#idleRuntimeEligible.delete(threadId)
+    entry.session.dispose()
+  }
+
+  #clearIdleRuntimeTimer(): void {
+    clearTimeout(this.#idleRuntimeTimer)
+    this.#idleRuntimeTimer = undefined
+    this.#idleRuntimeTimerExpiresAt = undefined
+  }
+
+  #hasIdleRuntimeReleaseBlockers(queuedThreadIds: ReadonlySet<string>): boolean {
+    // Keep this conservative list in sync with #canReleaseIdleRuntime. A false
+    // positive only uses the slower scan; a false negative could evict work.
+    return (
+      queuedThreadIds.size > 0 ||
+      this.#sideParents.size > 0 ||
+      this.#startingSideThreads.size > 0 ||
+      this.#runtimeOperationCounts.size > 0 ||
+      this.#mcpOAuthThreads.size > 0 ||
+      this.#activeTurns.size > 0 ||
+      this.#startingTurns.size > 0 ||
+      this.#turnStartBarriers.size > 0 ||
+      this.#pendingTurnStarts.size > 0 ||
+      this.#acceptedTurnStarts.size > 0 ||
+      this.#inFlightSubmissionIds.size > 0 ||
+      this.#restoringThreads.size > 0 ||
+      this.#reviewingDiffs.size > 0 ||
+      this.#drainingQueues.size > 0 ||
+      this.#designFlows.size > 0 ||
+      this.#designStartingThreads.size > 0 ||
+      this.#designInputByThread.size > 0 ||
+      this.#resumingThreads.size > 0
+    )
+  }
+
+  #scheduleIdleRuntimeExpiry(nextExpiresAt: number, now: number): void {
+    // A timer that fires sooner is still safe. Keep it and recompute once at
+    // that boundary instead of creating and cancelling a timer for every
+    // completion in a many-thread event burst.
+    if (
+      this.#idleRuntimeTimer !== undefined &&
+      this.#idleRuntimeTimerExpiresAt !== undefined &&
+      this.#idleRuntimeTimerExpiresAt <= nextExpiresAt
+    ) {
+      return
+    }
+    this.#clearIdleRuntimeTimer()
+    this.#idleRuntimeTimerExpiresAt = nextExpiresAt
+    this.#idleRuntimeTimer = setTimeout(
+      () => {
+        this.#idleRuntimeTimer = undefined
+        this.#idleRuntimeTimerExpiresAt = undefined
+        this.#pruneIdleThreadRuntimes()
+      },
+      Math.max(1, nextExpiresAt - now),
+    )
+    this.#idleRuntimeTimer.unref?.()
+  }
+
+  #scheduleIdleRuntimePrune(): void {
+    if (this.#idleRuntimePruneScheduled) return
+    this.#idleRuntimePruneScheduled = true
+    queueMicrotask(() => {
+      if (!this.#idleRuntimePruneScheduled) return
+      this.#idleRuntimePruneScheduled = false
+      this.#pruneIdleThreadRuntimes()
+    })
+  }
+
+  #pruneIdleThreadRuntimes(): void {
+    this.#idleRuntimePruneScheduled = false
+    if (this.#runtimeRecency.size === 0) {
+      this.#clearIdleRuntimeTimer()
+      return
+    }
+    const queuedThreadIds = this.#store.queuedThreadIds()
+    const now = performance.now()
+
+    // The normal idle state has no release blockers. Map insertion order is
+    // the LRU order, so expiry and capacity pruning only need the oldest rows.
+    // Avoid rebuilding and rescanning the retained candidate list for every
+    // completion in a large burst.
+    if (!this.#hasIdleRuntimeReleaseBlockers(queuedThreadIds)) {
+      let oldest = this.#runtimeRecency.entries().next().value
+      while (
+        oldest &&
+        (oldest[1] + this.#idleThreadRuntimeMs <= now ||
+          this.#runtimeRecency.size > this.#maxIdleThreadRuntimes)
+      ) {
+        this.#releaseIdleRuntime(oldest[0])
+        oldest = this.#runtimeRecency.entries().next().value
+      }
+      if (!oldest) {
+        this.#clearIdleRuntimeTimer()
+        return
+      }
+      this.#scheduleIdleRuntimeExpiry(oldest[1] + this.#idleThreadRuntimeMs, now)
+      return
+    }
+
+    const retained: Array<{ threadId: string; expiresAt: number }> = []
+    for (const [threadId, touchedAt] of this.#runtimeRecency) {
+      if (!this.#canReleaseIdleRuntime(threadId, queuedThreadIds)) continue
+      const expiresAt = touchedAt + this.#idleThreadRuntimeMs
+      if (expiresAt <= now) this.#releaseIdleRuntime(threadId)
+      else retained.push({ threadId, expiresAt })
+    }
+
+    const releaseCount = Math.max(0, retained.length - this.#maxIdleThreadRuntimes)
+    for (let index = 0; index < releaseCount; index += 1) {
+      this.#releaseIdleRuntime(retained[index]!.threadId)
+    }
+
+    let nextExpiresAt = Number.POSITIVE_INFINITY
+    for (let index = releaseCount; index < retained.length; index += 1) {
+      nextExpiresAt = Math.min(nextExpiresAt, retained[index]!.expiresAt)
+    }
+    if (!Number.isFinite(nextExpiresAt)) {
+      this.#clearIdleRuntimeTimer()
+      return
+    }
+    this.#scheduleIdleRuntimeExpiry(nextExpiresAt, now)
+  }
+
+  #indexThreadRuntime(threadId: string, entry: AttachedThreadRuntime): void {
+    let projects = this.#runtimeThreadIdsByProject.get(entry.thread.provider)
+    if (!projects) {
+      projects = new Map()
+      this.#runtimeThreadIdsByProject.set(entry.thread.provider, projects)
+    }
+    let threadIds = projects.get(entry.projectPath)
+    if (!threadIds) {
+      threadIds = new Set()
+      projects.set(entry.projectPath, threadIds)
+    }
+    threadIds.add(threadId)
+  }
+
+  #unindexThreadRuntime(threadId: string, entry: AttachedThreadRuntime): void {
+    const projects = this.#runtimeThreadIdsByProject.get(entry.thread.provider)
+    const threadIds = projects?.get(entry.projectPath)
+    if (!projects || !threadIds) return
+    threadIds.delete(threadId)
+    if (threadIds.size === 0) projects.delete(entry.projectPath)
+    if (projects.size === 0) this.#runtimeThreadIdsByProject.delete(entry.thread.provider)
+  }
+
   #attachThread(
     thread: Thread,
     session: AgentSession,
     projectPath: string,
+    resumable: boolean,
     worktree?: Worktree,
   ): void {
     // A racing double-attach must not silently drop the previous session's
     // process — dispose it before overwriting.
-    this.#threads.get(thread.id)?.session.dispose()
-    this.#threads.set(thread.id, {
+    const previous = this.#threads.get(thread.id)
+    previous?.session.dispose()
+    if (
+      previous &&
+      (previous.thread.provider !== thread.provider || previous.projectPath !== projectPath)
+    ) {
+      this.#unindexThreadRuntime(thread.id, previous)
+    }
+    const entry: AttachedThreadRuntime = {
       thread,
       session,
+      projectPath,
+      resumable,
       ...(worktree ? { worktree } : {}),
+    }
+    this.#threads.set(thread.id, entry)
+    this.#indexThreadRuntime(thread.id, entry)
+    this.#touchThreadRuntime(thread.id)
+    session.onMcpOAuth?.((result) => {
+      this.#mcpOAuthThreads.delete(thread.id)
+      this.#onMcpOAuth(thread.provider, projectPath, result)
+      this.#pruneIdleThreadRuntimes()
     })
-    session.onMcpOAuth?.((result) => this.#onMcpOAuth(thread.provider, projectPath, result))
     session.onUsageChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session) {
         this.#onUsageChanged(thread.provider)
@@ -3447,6 +4071,11 @@ export class Orchestrator {
         this.#store.setProviderSessionId(thread.id, providerSessionId)
       }
     })
-    session.on('event', (event) => this.#handleSessionEvent(thread.id, event))
+    session.on('event', (event) => {
+      if (!this.#releasedIdleRuntimeSessions.has(session)) {
+        this.#handleSessionEvent(thread.id, event)
+      }
+    })
+    this.#pruneIdleThreadRuntimes()
   }
 }

@@ -2,16 +2,16 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   createDefaultKeybindings,
-  findKeybindingConflict,
   isEditableTarget,
   KEYBINDING_STORAGE_KEY,
-  KEYBINDING_DEFINITIONS,
+  matchesDebugSettingsShortcut,
   matchesShortcut,
   readKeybindings,
   shortcutFromKeyboardEvent,
   shortcutLabel,
   writeKeybindings,
 } from './shortcuts.js'
+import { findKeybindingConflict, KEYBINDING_DEFINITIONS } from './keybinding-definitions.js'
 
 afterEach(() => localStorage.clear())
 
@@ -41,6 +41,31 @@ describe('shortcuts', () => {
         commandPalette,
       ),
     ).toBe(false)
+  })
+
+  it('matches the physical debug key after macOS Option translates its character', () => {
+    expect(
+      matchesDebugSettingsShortcut(
+        new KeyboardEvent('keydown', {
+          key: 'Î',
+          code: 'KeyD',
+          metaKey: true,
+          altKey: true,
+          shiftKey: true,
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      matchesDebugSettingsShortcut(
+        new KeyboardEvent('keydown', {
+          key: '∂',
+          code: 'KeyD',
+          metaKey: true,
+          altKey: true,
+        }),
+      ),
+    ).toBe(false)
+    expect(KEYBINDING_DEFINITIONS.map((definition) => String(definition.id))).not.toContain('debug')
   })
 
   it('formats platform-native hints and recognizes every editable target', () => {

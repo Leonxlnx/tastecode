@@ -143,6 +143,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@dicebear/core':
+        specifier: 10.4.0
+        version: 10.4.0
+      '@dicebear/styles':
+        specifier: 10.4.0
+        version: 10.4.0
       '@fontsource-variable/geist':
         specifier: ^5.3.0
         version: 5.3.0
@@ -554,6 +560,13 @@ packages:
 
   '@chevrotain/types@11.1.2':
     resolution: {integrity: sha512-U+HFai5+zmJCkK86QsaJtoITlboZHBqrVketcO2ROv865xfCMSFpELQoz1GkX5GzME8pTa+3kbKrZHQtI0gdbw==}
+
+  '@dicebear/core@10.4.0':
+    resolution: {integrity: sha512-IeMZboyput2XB2Lypf650AZ7YDdqzsp3HIaHWEYe+M9AX9/mylDgHLNdSA0OquUy1clFtGNYWnzibb1ZMJzLFw==}
+    engines: {node: '>=22.0.0'}
+
+  '@dicebear/styles@10.4.0':
+    resolution: {integrity: sha512-Bx3HLdbUqAXhu6JqU9YaQoQwN+3g3l8uHmlOw2aI07cOtfoH1Z/Nlfok1r7zzdujJvvTBTPJSH568/bzns4MoQ==}
 
   '@electron-internal/extract-zip@1.0.4':
     resolution: {integrity: sha512-Zr1Vs7E9tpCNhZHDAbFVXc2gEVCG9RqPDjrno5+bdgB6LRAuvgyMHJut4NCVyYwtAieapMzc3fiQ3CSTi75ARg==}
@@ -3732,6 +3745,10 @@ snapshots:
   '@braintree/sanitize-url@7.1.2': {}
 
   '@chevrotain/types@11.1.2': {}
+
+  '@dicebear/core@10.4.0': {}
+
+  '@dicebear/styles@10.4.0': {}
 
   '@electron-internal/extract-zip@1.0.4': {}
 

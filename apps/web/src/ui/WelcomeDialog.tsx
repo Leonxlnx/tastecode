@@ -3,6 +3,7 @@ import { FolderOpen, Settings2 } from 'lucide-react'
 import { providerMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/welcome.css'
 
 const providers = [
   { id: 'codex', name: 'Codex' },
@@ -12,6 +13,8 @@ const providers = [
 
 export function WelcomeDialog(props: {
   providerStatuses: ProviderStatus[]
+  displayName: string
+  onDisplayNameChange: (displayName: string) => void
   onAddProject: () => void
   onOpenProviders: () => void
   onDismiss: () => void
@@ -34,9 +37,24 @@ export function WelcomeDialog(props: {
             Start your first project
           </h1>
           <p className="welcome__copy">
-            Choose a folder. TasteCode finds the coding agents already on this machine.
+            Add your name, then choose a folder. TasteCode finds the coding agents already on this
+            machine.
           </p>
         </header>
+        <div className="welcome__name">
+          <label htmlFor="welcome-display-name">What should we call you?</label>
+          <input
+            id="welcome-display-name"
+            type="text"
+            autoComplete="name"
+            autoFocus
+            maxLength={64}
+            value={props.displayName}
+            placeholder="Your name"
+            onChange={(event) => props.onDisplayNameChange(event.target.value)}
+          />
+          <p>You can change this later in Profile.</p>
+        </div>
         <div className="welcome__providers" aria-label="Supported beta plans">
           {providers.map((provider) => {
             const status = props.providerStatuses.find((entry) => entry.id === provider.id)
@@ -52,7 +70,7 @@ export function WelcomeDialog(props: {
           })}
         </div>
         <p className="welcome__privacy">
-          Projects and chats stay on this machine. Sign-in stays with each provider.
+          Your name, projects, and chats stay on this machine. Sign-in stays with each provider.
         </p>
         <footer className="welcome__actions">
           <button className="ghost" type="button" onClick={props.onDismiss}>

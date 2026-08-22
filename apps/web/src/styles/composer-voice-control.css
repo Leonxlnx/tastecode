@@ -1,0 +1,110 @@
+.composer-voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.composer-voice-bar__track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  overflow: hidden;
+}
+
+.dither-waveform {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, black 8%, black);
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.dither-waveform__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.dither-waveform__texture {
+  opacity: var(--dither-texture-opacity);
+  filter: var(--dither-texture-filter);
+}
+
+.dither-waveform__bloom {
+  opacity: var(--dither-bloom-opacity);
+  filter: var(--dither-bloom-filter);
+  image-rendering: auto;
+  mix-blend-mode: var(--dither-bloom-blend);
+}
+
+.composer-voice-bar.is-transcribing .dither-waveform {
+  opacity: 0.5;
+}
+
+.composer-voice-bar__duration {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.composer-voice-bar__button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-circle);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.composer-voice-bar__button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.composer-voice-bar__button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.composer-voice-bar__button--stop {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.composer-voice-bar__button--stop:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.composer-voice-bar__button--submit {
+  background: var(--light);
+  color: var(--on-light);
+}
+
+.composer-voice-bar__button--submit:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.composer__voice-error {
+  max-width: var(--chat-w);
+  margin: 5px auto 0;
+  padding: 0 12px;
+  color: var(--error);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}

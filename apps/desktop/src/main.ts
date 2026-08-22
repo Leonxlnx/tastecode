@@ -24,14 +24,7 @@ import {
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
-import updaterPackage from 'electron-updater'
-import { z } from 'zod'
-import {
-  PreviewDomAuditSchema,
-  PreviewCaptureRequestSchema,
-  type PreviewCaptureRequest,
-  type PreviewCaptureResult,
-} from '@harness/contracts'
+import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
   attachmentByteRange,
@@ -82,8 +75,6 @@ import {
 } from './zoom-shortcuts.js'
 import { viewedImagePath } from './viewed-image-path.js'
 
-const { autoUpdater } = updaterPackage
-
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
  *
@@ -96,10 +87,23 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
 const productIconPath = path.join(here, '../assets/tastecode-app-icon.png')
 const nativeAppName = 'Taste Code'
-const productDataPath = path.join(app.getPath('appData'), 'TasteCode')
+// Performance runs must never read or rewrite the user's real window and
+// Chromium state. Keep the override opt-in so normal installs stay on the
+// long-standing TasteCode path.
+const productDataPath = process.env['HARNESS_DESKTOP_DATA_DIR']
+  ? path.resolve(process.env['HARNESS_DESKTOP_DATA_DIR'])
+  : path.join(app.getPath('appData'), 'TasteCode')
 const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
+const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
+
+function logStartupMilestone(name: string): void {
+  if (!Number.isFinite(startupStartedAt) || startupStartedAt <= 0) return
+  console.log(`[startup] ${name} ${Date.now() - startupStartedAt}ms`)
+}
+
+logStartupMilestone('main-module')
 
 // Keep the existing storage location while the OS-facing product name gains a space.
 app.setPath('userData', productDataPath)
@@ -121,6 +125,29 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+let startupWindowReady = false
+let startupServerReady = Boolean(devServer)
+let startupRendererReady = false
+let startupHydratedReady = false
+let startupCatalogReady = false
+let startupExitScheduled = false
+
+function finishStartupBenchmarkIfReady(): void {
+  if (
+    process.env['HARNESS_STARTUP_EXIT_AFTER_READY'] !== '1' ||
+    !startupWindowReady ||
+    !startupServerReady ||
+    !startupRendererReady ||
+    !startupHydratedReady ||
+    !startupCatalogReady ||
+    startupExitScheduled
+  ) {
+    return
+  }
+  startupExitScheduled = true
+  setImmediate(() => app.quit())
+}
+
 const attachmentPreviewSecret = randomBytes(32)
 const attachmentThumbnailCache = new Map<string, Promise<Buffer | undefined>>()
 const MAX_ATTACHMENT_THUMBNAILS = 64
@@ -152,6 +179,38 @@ let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
+
+if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
+  ipcMain.on('harness:startupPreloadReady', (_event, elapsed: unknown) => {
+    if (typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0) {
+      console.log(`[startup] preload-ready ${Math.round(elapsed)}ms`)
+    }
+  })
+  ipcMain.on('harness:startupRendererMilestone', (_event, name: unknown) => {
+    if (
+      name !== 'module-loaded' &&
+      name !== 'react-commit' &&
+      name !== 'first-frame' &&
+      name !== 'projects-ready' &&
+      name !== 'catalog-ready'
+    ) {
+      return
+    }
+    logStartupMilestone(name)
+    if (name === 'first-frame') {
+      startupRendererReady = true
+      finishStartupBenchmarkIfReady()
+    }
+    if (name === 'projects-ready') {
+      startupHydratedReady = true
+      finishStartupBenchmarkIfReady()
+    }
+    if (name === 'catalog-ready') {
+      startupCatalogReady = true
+      finishStartupBenchmarkIfReady()
+    }
+  })
+}
 let nativeMenuShortcuts: NativeMenuShortcuts = {}
 const macOSHaptics = new MacOSHaptics()
 
@@ -186,7 +245,14 @@ function startOwnedServer(): void {
     command: process.execPath,
     args: [serverEntry],
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    onLog: (line) => console.log('[server]', line),
+    onLog: (line) => {
+      console.log('[server]', line)
+      if (!startupServerReady && line.startsWith('[server] listening on ')) {
+        startupServerReady = true
+        logStartupMilestone('server-ready')
+        finishStartupBenchmarkIfReady()
+      }
+    },
     onGaveUp: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         void dialog.showMessageBox(mainWindow, {
@@ -199,6 +265,7 @@ function startOwnedServer(): void {
     },
   })
   serverSupervisor.start()
+  logStartupMilestone('server-spawned')
 }
 
 function createWindow(): void {
@@ -310,7 +377,15 @@ function createWindow(): void {
   })
 
   // Avoid the white flash before React paints.
-  window.once('ready-to-show', showMainWindow)
+  window.once('ready-to-show', () => {
+    logStartupMilestone('ready-to-show')
+    startupWindowReady = true
+    if (process.env['HARNESS_STARTUP_EXIT_AFTER_READY'] === '1') {
+      finishStartupBenchmarkIfReady()
+      return
+    }
+    showMainWindow()
+  })
 
   // Nothing in this app should ever open a second window, and any external
   // link belongs in the user's browser, not in a chromeless Electron window.
@@ -436,9 +511,8 @@ ipcMain.handle('harness:getDiagnosticsEnabled', (event) => {
 
 ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
   requireOwnRenderer(event.sender)
-  const parsed = z.boolean().safeParse(enabled)
-  if (!parsed.success) throw new Error('Invalid diagnostics preference')
-  return diagnostics?.setEnabled(parsed.data) ?? false
+  if (typeof enabled !== 'boolean') throw new Error('Invalid diagnostics preference')
+  return diagnostics?.setEnabled(enabled) ?? false
 })
 
 ipcMain.handle('harness:openDiagnostics', async (event) => {
@@ -455,9 +529,8 @@ ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
 })
 
 ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
-  const parsed = z.string().safeParse(value)
-  if (!isOwnRenderer(event.sender) || !parsed.success) return
-  void diagnostics?.record('renderer', parsed.data)
+  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
+  void diagnostics?.record('renderer', value)
 })
 
 ipcMain.handle('harness:getUpdateState', (event): AppUpdateState => {
@@ -515,6 +588,7 @@ ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
 
 ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
   if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
+  const { PreviewCaptureRequestSchema } = await import('@harness/contracts')
   const parsed = PreviewCaptureRequestSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid preview capture request')
   return capturePreview(parsed.data)
@@ -538,6 +612,7 @@ async function openDiagnosticsDirectory(): Promise<boolean> {
 }
 
 async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
+  const { PreviewDomAuditSchema } = await import('@harness/contracts')
   const directory = path.join(
     app.getPath('temp'),
     'TasteCode',
@@ -749,6 +824,7 @@ if (ownsSingleInstance) {
   })
 
   void app.whenReady().then(async () => {
+    logStartupMilestone('app-ready')
     const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
     diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
       app.setPath('crashDumps', diagnosticsDirectory)
@@ -763,9 +839,10 @@ if (ownsSingleInstance) {
     process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()
+    logStartupMilestone('diagnostics-ready')
 
     appUpdater = createAppUpdateController({
-      updater: autoUpdater,
+      loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer,
     })
@@ -779,6 +856,7 @@ if (ownsSingleInstance) {
     configureMediaPermissions()
     void sweepStaleCaptures()
     createWindow()
+    logStartupMilestone('window-created')
     installApplicationMenu()
     createBackgroundTray()
     app.on('activate', showMainWindow)

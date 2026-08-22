@@ -16,6 +16,7 @@ function system(overrides: Partial<SystemProbe> = {}): SystemProbe {
   return {
     isInstalled: async () => false,
     version: async () => undefined,
+    auth: async () => 'unknown',
     acpAgents: async () => [],
     ...overrides,
   }
@@ -101,6 +102,18 @@ describe('detectProviders', () => {
 
     // We do not read credential files to answer this. See rules/security.md.
     expect(providers.every((entry) => entry.auth === 'unknown')).toBe(true)
+  })
+
+  it('reports the login state returned by an installed provider', async () => {
+    const providers = await detectProviders(
+      system({
+        isInstalled: async () => true,
+        auth: async (provider) => (provider === 'codex' ? 'authenticated' : 'unknown'),
+      }),
+    )
+
+    expect(find(providers, 'codex').auth).toBe('authenticated')
+    expect(find(providers, 'claude-code').auth).toBe('unknown')
   })
 
   it('reports every provider we know about, installed or not', async () => {

@@ -69,6 +69,26 @@ describe('PushBus', () => {
     })
   })
 
+  it('reuses stored event JSON without changing the push frame', () => {
+    const bus = new PushBus()
+    const client = socket()
+    const event = {
+      type: 'item.delta' as const,
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'quote " and newline\n',
+    }
+    bus.add(client)
+
+    bus.broadcastRecordedEvent('thread.event', 'thread-1', JSON.stringify(event), 42)
+
+    expect(JSON.parse(client.sent[0] ?? '')).toEqual({
+      channel: 'thread.event',
+      sequence: 1,
+      data: { threadId: 'thread-1', event, seq: 42 },
+    })
+  })
+
   it('closes a connection whose write failed instead of silently muting it', () => {
     // Dropping it from the map while leaving the socket open was the bug: the
     // client's onclose never fired, its gap detector only fires on a frame it

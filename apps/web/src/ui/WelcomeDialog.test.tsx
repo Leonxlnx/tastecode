@@ -6,9 +6,10 @@ import { WelcomeDialog } from './WelcomeDialog.js'
 afterEach(cleanup)
 
 describe('first-run welcome', () => {
-  it('covers exactly the three beta plans and reuses project and provider setup', () => {
+  it('asks for a local name and reuses project and provider setup', () => {
     const onAddProject = vi.fn()
     const onOpenProviders = vi.fn()
+    const onDisplayNameChange = vi.fn()
     render(
       <WelcomeDialog
         providerStatuses={[
@@ -25,11 +26,19 @@ describe('first-run welcome', () => {
             auth: 'unauthenticated',
           },
         ]}
+        displayName=""
+        onDisplayNameChange={onDisplayNameChange}
         onAddProject={onAddProject}
         onOpenProviders={onOpenProviders}
         onDismiss={vi.fn()}
       />,
     )
+
+    const name = screen.getByRole('textbox', { name: 'What should we call you?' })
+    expect(document.activeElement).toBe(name)
+    fireEvent.change(name, { target: { value: 'Blue Emi' } })
+    expect(onDisplayNameChange).toHaveBeenCalledWith('Blue Emi')
+    expect(screen.getByText(/Your name, projects, and chats stay on this machine/u)).toBeTruthy()
 
     const plans = screen.getByLabelText('Supported beta plans')
     expect(plans.textContent).toContain('CodexInstalled')
@@ -48,6 +57,8 @@ describe('first-run welcome', () => {
     render(
       <WelcomeDialog
         providerStatuses={[]}
+        displayName="Blue Emi"
+        onDisplayNameChange={vi.fn()}
         onAddProject={vi.fn()}
         onOpenProviders={vi.fn()}
         onDismiss={onDismiss}

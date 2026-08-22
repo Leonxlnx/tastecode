@@ -208,15 +208,15 @@
   width: min(270px, calc(100vw - 16px));
   min-width: min(270px, calc(100vw - 16px));
   max-height: min(390px, calc(100vh - 16px));
-  padding: 7px;
+  padding: 4px;
 }
 
 .pr-filter-menu-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 32px;
-  padding: 1px 4px 5px 9px;
+  min-height: 27px;
+  padding: 0 3px 3px 7px;
   color: var(--text-3);
   font-size: var(--t-xs);
 }
@@ -229,7 +229,7 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 4px 6px;
+  padding: 3px 5px;
   background: transparent;
   border: 0;
   border-radius: var(--r-md);
@@ -1077,7 +1077,7 @@
   width: min(310px, calc(100vw - 16px));
   min-width: min(310px, calc(100vw - 16px));
   max-height: min(390px, calc(100vh - 16px));
-  padding: 7px;
+  padding: 4px;
   overflow: hidden;
   background: var(--menu-bg);
   border-color: var(--chrome-border);

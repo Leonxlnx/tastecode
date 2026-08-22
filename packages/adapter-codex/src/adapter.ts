@@ -29,6 +29,7 @@ import {
 } from '@harness/proc'
 import { ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
+import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   mapMcpServerStatus,
   mapMcpStartupStatus,
@@ -80,6 +81,8 @@ import {
   type ToolRequestUserInputParams,
   type WarningNotification,
 } from './schemas.js'
+
+export { CODEX_CAPABILITIES } from './capabilities.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -153,17 +156,6 @@ function decodeBase64(value: string): string {
   } catch {
     return ''
   }
-}
-
-export const CODEX_CAPABILITIES: Capabilities = {
-  steer: true,
-  fork: true,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: true,
-  userInput: true,
-  autoReview: true,
-  images: true,
 }
 
 export type StartOptions = {

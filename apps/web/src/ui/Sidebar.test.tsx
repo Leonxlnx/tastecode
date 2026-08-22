@@ -11,6 +11,10 @@ const hapticMocks = vi.hoisted(() => ({
 const performHaptic = hapticMocks.perform
 const prepareHaptics = hapticMocks.prepare
 
+vi.mock('../use-default-profile-avatar.js', () => ({
+  useDefaultProfileAvatar: () => 'data:image/svg+xml;charset=utf-8,test-avatar',
+}))
+
 vi.mock('../bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../bridge.js')>()),
   isMacOS: () => true,
@@ -52,6 +56,107 @@ const session = (id: string, title: string) => ({
 })
 
 describe('Sidebar chat actions', () => {
+  it('preloads the thread UI only when a chat row gets pointer or keyboard intent', () => {
+    const onPreloadThread = vi.fn()
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            sessions: [session('thread-1', 'Open this chat')],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onPreloadThread={onPreloadThread}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(onPreloadThread).not.toHaveBeenCalled()
+    fireEvent.pointerOver(screen.getByRole('button', { name: 'New chat' }))
+    expect(onPreloadThread).not.toHaveBeenCalled()
+
+    const chat = screen.getByRole('button', { name: 'Open this chat, Codex' })
+    fireEvent.pointerOver(chat)
+    expect(onPreloadThread).toHaveBeenCalledTimes(1)
+
+    fireEvent.focus(chat)
+    expect(onPreloadThread).toHaveBeenCalledTimes(2)
+  })
+
+  it('preloads the thread UI from inbox chat rows', async () => {
+    const onPreloadThread = vi.fn()
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'Harness',
+            sessions: [session('thread-1', 'Open inbox chat')],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        mode="inbox"
+        inbox={{
+          onSettle: vi.fn(),
+          onUnsettle: vi.fn(),
+          onSnooze: vi.fn(),
+          onUnsnooze: vi.fn(),
+          onKeepActive: vi.fn(),
+        }}
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onPreloadThread={onPreloadThread}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(onPreloadThread).not.toHaveBeenCalled()
+    const title = await screen.findByText('Open inbox chat')
+    const chat = title.closest('button')
+    if (!chat) throw new Error('Missing inbox chat button')
+
+    fireEvent.pointerOver(title)
+    expect(onPreloadThread).toHaveBeenCalledTimes(1)
+
+    fireEvent.focus(chat)
+    expect(onPreloadThread).toHaveBeenCalledTimes(2)
+  })
+
   it('shows a divider below the fixed actions only after the project list scrolls', () => {
     render(
       <Sidebar
@@ -136,9 +241,10 @@ describe('Sidebar chat actions', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
-  it('uses the classic account footer in the inbox sidebar', () => {
+  it('uses the classic account footer in the inbox sidebar', async () => {
     const onAddProject = vi.fn()
     const onOpenSettings = vi.fn()
+    const onOpenUsage = vi.fn()
     render(
       <Sidebar
         projects={[]}
@@ -175,6 +281,7 @@ describe('Sidebar chat actions', () => {
           },
         ]}
         onRetryUsage={vi.fn()}
+        onOpenUsage={onOpenUsage}
         mode="inbox"
         inbox={{
           onSettle: vi.fn(),
@@ -203,14 +310,18 @@ describe('Sidebar chat actions', () => {
     )
 
     expect(screen.queryByRole('button', { name: /Switch to V[12]/ })).toBeNull()
-    expect(screen.getByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(document.querySelector('.account__avatar img')?.getAttribute('src')).toMatch(
+      /^data:image\/svg\+xml;charset=utf-8,/u,
+    )
+    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect(onAddProject).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(onOpenUsage).toHaveBeenCalledOnce()
     expect(screen.getByRole('dialog', { name: 'Account and plan limits' })).toBeTruthy()
-    expect(screen.getByText('Plan limits')).toBeTruthy()
+    expect(await screen.findByText('Plan limits')).toBeTruthy()
     expect(screen.getByText('7 days')).toBeTruthy()
     expect(screen.getByText('15% left')).toBeTruthy()
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
@@ -408,6 +519,47 @@ describe('Sidebar chat actions', () => {
     expect(onToggleSessionPin).toHaveBeenCalledWith('thread-1')
   })
 
+  it('bounds a large pinned list while keeping the selected chat mounted', () => {
+    const sessions = Array.from({ length: 30 }, (_, index) => ({
+      ...session(`thread-${index + 1}`, `Pinned ${index + 1}`),
+      pinned: true,
+    }))
+    render(
+      <Sidebar
+        projects={[{ path: '/work/harness', name: 'TasteCode', sessions }]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-30"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onToggleSessionPin={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(document.querySelectorAll('.pinned-sessions .sessrow')).toHaveLength(26)
+    expect(screen.getByRole('button', { name: 'Pinned 30, Codex' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Pinned 26, Codex' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 5 more' }))
+    expect(document.querySelectorAll('.pinned-sessions .sessrow')).toHaveLength(30)
+    expect(screen.queryByRole('button', { name: 'Show 5 more' })).toBeNull()
+  })
+
   it('keeps active and unread chats above the saved chat order', () => {
     const unread = {
       ...session('thread-unread', 'Just done'),
@@ -514,6 +666,102 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Show more' })).toBeTruthy()
   })
 
+  it('pages a very large project chat list and keeps the selected chat mounted', () => {
+    const sessions = Array.from({ length: 40 }, (_, index) =>
+      session(`thread-${index + 1}`, `Chat ${index + 1}`),
+    )
+    render(
+      <Sidebar
+        projects={[{ path: '/work/harness', name: 'TasteCode', sessions }]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-40"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(
+      document.querySelectorAll('.proj__sessions:not(.pinned-sessions) .sessrow'),
+    ).toHaveLength(6)
+    expect(screen.getByRole('button', { name: 'Chat 40, Codex' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Chat 6, Codex' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(
+      document.querySelectorAll('.proj__sessions:not(.pinned-sessions) .sessrow'),
+    ).toHaveLength(31)
+    expect(screen.queryByRole('button', { name: 'Chat 31, Codex' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    expect(
+      document.querySelectorAll('.proj__sessions:not(.pinned-sessions) .sessrow'),
+    ).toHaveLength(40)
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(
+      document.querySelectorAll('.proj__sessions:not(.pinned-sessions) .sessrow'),
+    ).toHaveLength(6)
+  })
+
+  it('bounds a large project list while keeping the active project mounted', () => {
+    const projects = Array.from({ length: 60 }, (_, index) => ({
+      path: `/work/project-${index + 1}`,
+      name: `Project ${index + 1}`,
+      sessions: [],
+    }))
+    render(
+      <Sidebar
+        projects={projects}
+        activeProjectPath="/work/project-60"
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(document.querySelectorAll('.proj')).toHaveLength(51)
+    expect(screen.getByRole('button', { name: 'Project 60' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Project 51' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 10 more projects' }))
+    expect(document.querySelectorAll('.proj')).toHaveLength(60)
+    expect(screen.getByRole('button', { name: 'Project 51' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Show 10 more projects' })).toBeNull()
+  })
+
   it('starts with only the active project expanded', () => {
     render(
       <Sidebar
@@ -550,6 +798,7 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Quiet' }).getAttribute('aria-expanded')).toBe(
       'false',
     )
+    expect(screen.queryByRole('button', { name: 'Quiet chat, Codex' })).toBeNull()
   })
 
   it('reorders chats when one is dragged between sidebar rows', () => {

@@ -12,6 +12,23 @@
       "source": "https://github.com/anthropics/claude-agent-sdk-typescript"
     },
     {
+      "name": "@dicebear/core",
+      "use": "Local default-avatar generation",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/dicebear/dicebear"
+    },
+    {
+      "name": "@dicebear/styles",
+      "use": "DiceBear Glass default-avatar definition",
+      "license": "CC0-1.0",
+      "metadataLicenses": ["CC0-1.0"],
+      "source": "https://github.com/dicebear/styles/blob/v10.4.0/LICENSE.md#glass",
+      "allowMissingMetadata": true,
+      "bundledLicense": "licenses/npm/dicebear-styles-glass-10.4.0-CC0-1.0.txt",
+      "licenseSource": "https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt"
+    },
+    {
       "name": "@fontsource-variable/geist",
       "use": "Geist variable font",
       "license": "OFL-1.1",
@@ -198,10 +215,24 @@
   ],
   "reviewedTransitiveExceptions": [
     {
+      "name": "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+      "version": "0.3.232",
+      "license": "LicenseRef-Anthropic-Commercial-Terms",
+      "metadataLicenses": ["SEE LICENSE IN LICENSE.md"]
+    },
+    {
       "name": "@anthropic-ai/claude-agent-sdk-win32-x64",
       "version": "0.3.232",
       "license": "LicenseRef-Anthropic-Commercial-Terms",
       "metadataLicenses": ["SEE LICENSE IN LICENSE.md"]
+    },
+    {
+      "name": "@napi-rs/keyring-darwin-arm64",
+      "version": "1.3.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/napi-keyring-darwin-arm64-1.3.0-MIT.txt",
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
     },
     {
       "name": "@napi-rs/keyring-win32-x64-msvc",

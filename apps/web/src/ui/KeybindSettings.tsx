@@ -1,15 +1,18 @@
 import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { RotateCcw, Search, X } from 'lucide-react'
+import '../styles/keybinds.css'
 import {
-  findKeybindingConflict,
-  KEYBINDING_DEFINITIONS,
   shortcutFromKeyboardEvent,
   shortcutLabel,
-  type KeybindingGroup,
   type KeybindingId,
   type Keybindings,
   type Shortcut,
 } from '../shortcuts.js'
+import {
+  findKeybindingConflict,
+  KEYBINDING_DEFINITIONS,
+  type KeybindingGroup,
+} from '../keybinding-definitions.js'
 
 const GROUPS = [
   'App',

@@ -19,15 +19,17 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   }
 }
 
-function ContextMenuHarness() {
+function ContextMenuHarness(props: { targetName?: string; menuLabel?: string }) {
   const target = useRef<HTMLButtonElement>(null)
+  const targetName = props.targetName ?? 'Project row'
+  const menuLabel = props.menuLabel ?? 'Project options'
 
   return (
     <>
-      <button ref={target}>Project row</button>
+      <button ref={target}>{targetName}</button>
       <Menu
         drop="down"
-        label="Project options"
+        label={menuLabel}
         contextMenuTargetRef={target}
         trigger={() => <span>Open</span>}
       >
@@ -62,6 +64,20 @@ afterEach(() => {
 })
 
 describe('Menu', () => {
+  it('shares one delegated listener set across dormant context menus', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener')
+    render(
+      <>
+        <ContextMenuHarness targetName="First row" menuLabel="First options" />
+        <ContextMenuHarness targetName="Second row" menuLabel="Second options" />
+      </>,
+    )
+
+    for (const eventName of ['contextmenu', 'pointerdown', 'keydown']) {
+      expect(addEventListener.mock.calls.filter(([type]) => type === eventName)).toHaveLength(1)
+    }
+  })
+
   it('escapes clipping containers and stays inside the viewport', () => {
     render(
       <div data-testid="clip">

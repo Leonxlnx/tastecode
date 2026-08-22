@@ -3,28 +3,25 @@ import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { detectAgents } from '@harness/adapter-acp'
-import {
-  ErrorCode,
-  methods,
-  PROTOCOL_VERSION,
-  RequestSchema,
-  type MethodName,
-} from '@harness/contracts'
+import { ErrorCode, methods, PROTOCOL_VERSION, type MethodName } from '@harness/contracts'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
-import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
-import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
+import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
 import { migrateProductFile } from './product-paths.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
-import { PullRequestService } from './pull-requests.js'
+import type { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
+import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
+import { LifecycleScheduler } from './lifecycle-scheduler.js'
+import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
+import { createHistoryResponseProjector } from './history-response.js'
+import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 
 export const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
@@ -101,11 +98,27 @@ export function startServer(
   const databasePath = storeLocation()
   const store = new Store(databasePath)
   store.recoverInterruptedThreads()
-  const pullRequests = new PullRequestService()
+  let pullRequests: Promise<PullRequestService> | undefined
+  const pullRequestService = () =>
+    (pullRequests ??= import('./pull-requests.js').then(
+      ({ PullRequestService }) => new PullRequestService(),
+    ))
+  let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
   const orchestrator = new Orchestrator(store, {
-    onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
-    onSideEvent: (threadId, event, seq) =>
-      push.broadcast('sideChat.event', { threadId, event, seq }),
+    onEvent: (threadId, event, seq, serializedEvent) => {
+      if (serializedEvent === undefined) {
+        push.broadcast('thread.event', { threadId, event, seq })
+      } else {
+        push.broadcastRecordedEvent('thread.event', threadId, serializedEvent, seq)
+      }
+    },
+    onSideEvent: (threadId, event, seq, serializedEvent) => {
+      if (serializedEvent === undefined) {
+        push.broadcast('sideChat.event', { threadId, event, seq })
+      } else {
+        push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
+      }
+    },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
@@ -118,6 +131,7 @@ export function startServer(
     onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
+    onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
     onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
@@ -126,9 +140,26 @@ export function startServer(
         ? previewCapture.capture(url, viewports)
         : Promise.resolve(undefined),
   })
-  orchestrator.refreshLifecycle()
-  const lifecycleTimer = setInterval(() => orchestrator.refreshLifecycle(), 30_000)
-  lifecycleTimer.unref()
+  const projectList = createProjectListProjector()
+  const serializeProjectList = createSerializedResultCache()
+  const historyResponse = createHistoryResponseProjector()
+  const serializeHistory = createSerializedResultCache()
+  const projectListState: ProjectListState = {
+    isTurnRunning: (threadId) => orchestrator.isTurnRunning(threadId),
+    inboxStatus: (threadId, queued, unread) => orchestrator.inboxStatus(threadId, queued, unread),
+    revision: () => orchestrator.sidebarStatusRevision(),
+    changesSince: (revision) => orchestrator.sidebarStatusChangesSince(revision),
+  }
+  const lifecycleScheduler = new LifecycleScheduler(
+    () => orchestrator.refreshLifecycle(),
+    () => store.nextLifecycleRefreshAt(),
+  )
+  notifyLifecycleScheduleChanged = (hint) => {
+    if (hint === 'later') lifecycleScheduler.changedLater()
+    else if (typeof hint === 'number') lifecycleScheduler.deadlineAdded(hint)
+    else lifecycleScheduler.changed()
+  }
+  lifecycleScheduler.refreshNow()
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
   // starts instead of failing with a message about our own leftovers.
@@ -178,12 +209,12 @@ export function startServer(
       return
     }
 
-    const envelope = RequestSchema.safeParse(parsed)
-    if (!envelope.success) {
+    const envelope = parseRequestEnvelope(parsed)
+    if (!envelope) {
       console.warn('[server] dropped malformed request')
       return
     }
-    const { id, method, params } = envelope.data
+    const { id, method, params } = envelope
 
     // hasOwn, not truthiness: `methods` is a plain object, so 'constructor',
     // 'toString' and friends pass a truthy check and then blow up on
@@ -195,7 +226,7 @@ export function startServer(
     }
     try {
       const result = await route(socket, method, params)
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
+      if (socket.readyState === socket.OPEN) socket.send(serializeSuccessResponse(id, result))
     } catch (error) {
       if (error instanceof InvalidParamsError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
@@ -238,7 +269,7 @@ export function startServer(
 
       case 'pullRequests.list': {
         const p = parseParams(method, params)
-        return pullRequests.list(
+        return (await pullRequestService()).list(
           store.projects().map((project) => project.path),
           p.refresh ?? false,
         )
@@ -246,7 +277,7 @@ export function startServer(
 
       case 'pullRequests.detail': {
         const p = parseParams(method, params)
-        return pullRequests.detail(
+        return (await pullRequestService()).detail(
           p.repository,
           p.number,
           store.projects().map((project) => project.path),
@@ -256,21 +287,26 @@ export function startServer(
 
       case 'pullRequests.files': {
         const p = parseParams(method, params)
-        return pullRequests.files(p.repository, p.number, p.page ?? 1, p.refresh ?? false)
+        return (await pullRequestService()).files(
+          p.repository,
+          p.number,
+          p.page ?? 1,
+          p.refresh ?? false,
+        )
       }
 
       case 'pullRequests.metadataOptions': {
         const p = parseParams(method, params)
-        return pullRequests.metadataOptions(p.repository, p.refresh ?? false)
+        return (await pullRequestService()).metadataOptions(p.repository, p.refresh ?? false)
       }
 
       case 'pullRequests.action': {
         const p = parseParams(method, params)
-        return pullRequests.action(p.repository, p.number, p.action)
+        return (await pullRequestService()).action(p.repository, p.number, p.action)
       }
 
       case 'providers.list':
-        return { providers: await detectProviders() }
+        return { providers: await (await import('./providers.js')).detectProviders() }
 
       case 'harnesses.list':
         return { harnesses: orchestrator.listCustomHarnesses() }
@@ -295,6 +331,7 @@ export function startServer(
 
       case 'providers.install': {
         const p = parseParams(method, params)
+        const { installCommandFor } = await import('./providers.js')
         const command = installCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
@@ -302,6 +339,7 @@ export function startServer(
 
       case 'providers.launch': {
         const p = parseParams(method, params)
+        const { launchCommandFor } = await import('./providers.js')
         const command = launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
@@ -497,7 +535,7 @@ export function startServer(
       }
 
       case 'acp.agents': {
-        const agents = await detectAgents()
+        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
         return {
           agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
             id,
@@ -511,35 +549,17 @@ export function startServer(
         }
       }
 
-      case 'projects.list':
-        orchestrator.refreshLifecycle()
-        return {
-          projects: store.projects().map((project) => ({
-            ...project,
-            sessions: store.threads(project.path).map((thread) => ({
-              id: thread.id,
-              title: thread.title,
-              pinned: thread.pinned,
-              provider: thread.provider,
-              ...(!(thread.agent === undefined) ? { agent: thread.agent } : {}),
-              createdAt: thread.createdAt,
-              running: orchestrator.isTurnRunning(thread.id),
-              status: orchestrator.inboxStatus(thread.id),
-              unread: thread.unread,
-              lifecycle: thread.lifecycle,
-              ...(!(thread.worktreeBranch === undefined)
-                ? {
-                    worktreeBranch: thread.worktreeBranch,
-                  }
-                : {}),
-              ...(!(thread.closedAt === undefined)
-                ? {
-                    closedAt: thread.closedAt,
-                  }
-                : {}),
-            })),
-          })),
-        }
+      case 'projects.list': {
+        lifecycleScheduler.refreshIfDue()
+        return serializeProjectList(
+          projectList(
+            store.projects(),
+            store.sidebarThreads(),
+            store.queuedThreadIds(),
+            projectListState,
+          ),
+        )
+      }
 
       case 'projects.add': {
         const p = parseParams(method, params)
@@ -659,17 +679,19 @@ export function startServer(
         }
         await orchestrator.close(p.threadId)
         store.deleteThread(p.threadId)
+        orchestrator.forgetDeletedThread(p.threadId)
+        lifecycleScheduler.changed()
         return {}
       }
 
       case 'thread.history': {
         const p = parseParams(method, params)
-        const result = {
-          events: await orchestrator.history(p.threadId, p.afterSeq ?? 0),
-          running: orchestrator.isTurnRunning(p.threadId),
-        }
+        const result = historyResponse(
+          await orchestrator.history(p.threadId, p.afterSeq ?? 0),
+          orchestrator.isTurnRunning(p.threadId),
+        )
         orchestrator.markThreadRead(p.threadId)
-        return result
+        return serializeHistory(result)
       }
 
       case 'thread.diff': {
@@ -875,7 +897,7 @@ export function startServer(
           ...(update.autoSettleDays === undefined ? {} : { autoSettleDays: update.autoSettleDays }),
         })
         push.broadcast('sidebar.settings', settings)
-        orchestrator.refreshLifecycle()
+        lifecycleScheduler.refreshNow()
         return settings
       }
     }
@@ -902,7 +924,7 @@ export function startServer(
   return {
     port,
     close: async () => {
-      clearInterval(lifecycleTimer)
+      lifecycleScheduler.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
@@ -990,6 +1012,10 @@ class InvalidParamsError extends Error {
 }
 
 function parseParams<M extends MethodName>(method: M, params: unknown): MethodParams<M> {
+  if (method === 'terminal.input' || method === 'terminal.resize') {
+    const frequent = parseFrequentMethodParams(method, params)
+    if (frequent) return frequent as MethodParams<M>
+  }
   const decoded = methods[method].params.safeParse(params)
   if (!decoded.success) {
     const first = decoded.error.issues[0]

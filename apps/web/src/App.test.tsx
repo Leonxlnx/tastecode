@@ -8,14 +8,15 @@ import {
   type QueuedTurn,
   type ResultOf,
 } from '@harness/contracts'
-import { StrictMode, type ComponentProps } from 'react'
+import { StrictMode, useSyncExternalStore, type ComponentProps } from 'react'
 import { z } from 'zod'
 import { App } from './App.js'
 import type { NativeMenuAction } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
-import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
+import { KEYBINDING_DEFINITIONS } from './keybinding-definitions.js'
+import { DEFAULT_KEYBINDINGS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
 import { resetInstalls } from './provider-install.js'
@@ -40,11 +41,10 @@ interface TestServerProvider extends Omit<
 }
 
 const ASSIGNED_DEFAULT_SHORTCUTS: Array<{ label: string; shortcut: Shortcut }> =
-  KEYBINDING_DEFINITIONS.flatMap((definition) =>
-    definition.defaultShortcut
-      ? [{ label: definition.label, shortcut: { ...definition.defaultShortcut } }]
-      : [],
-  )
+  KEYBINDING_DEFINITIONS.flatMap((definition) => {
+    const shortcut = DEFAULT_KEYBINDINGS[definition.id]
+    return shortcut ? [{ label: definition.label, shortcut: { ...shortcut } }] : []
+  })
 
 const transport = vi.hoisted(() => ({
   request: vi.fn<TestRequest>(),
@@ -76,7 +76,7 @@ const nativeMenu = vi.hoisted(() => ({
   listener: undefined as ((action: NativeMenuAction) => void) | undefined,
   syncShortcuts: vi.fn(),
 }))
-type ThreadProps = ComponentProps<(typeof import('./ui/Thread.js'))['Thread']>
+type ThreadProps = ComponentProps<(typeof import('./ui/LazyThread.js'))['LazyThread']>
 interface ThreadCallbacks {
   answerUserInput: ThreadProps['onAnswerUserInput'] | undefined
   undoChanges: ThreadProps['onUndoChanges'] | undefined
@@ -86,6 +86,10 @@ const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   undoChanges: undefined,
 }))
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
+
+vi.mock('./use-default-profile-avatar.js', () => ({
+  useDefaultProfileAvatar: () => 'data:image/svg+xml;charset=utf-8,test-avatar',
+}))
 
 vi.mock('./transport.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('./transport.js')>()
@@ -136,7 +140,6 @@ vi.mock('./ui/highlighter.js', () => {
     highlight: () => ({ tokens: [] }),
   }
   return {
-    onHighlighterChange: () => () => {},
     shikiPlugin: plugin,
     plainCodePlugin: plugin,
     warmHighlighter: () => {},
@@ -145,24 +148,34 @@ vi.mock('./ui/highlighter.js', () => {
 
 // App tests exercise session routing, while Thread's own tests cover its
 // virtualized renderer. happy-dom intentionally renders no virtual rows.
-vi.mock('./ui/Thread.js', () => ({
-  Thread: (props: ThreadProps) => (
-    <div
-      data-testid="thread"
-      data-started-at={props.activeTurn?.startedAt}
-      ref={() => {
-        threadCallbacks.answerUserInput = props.onAnswerUserInput
-        threadCallbacks.undoChanges = props.onUndoChanges
-      }}
-    >
-      {props.items.map((base, index) => (
-        <span key={base.id} data-item-id={base.id}>
-          {props.liveItems?.get(index)?.item.text ?? base.text}
-        </span>
-      ))}
-      {props.running && props.activeTurn ? <span>Working</span> : null}
-    </div>
-  ),
+vi.mock('./ui/LazyThread.js', () => ({
+  preloadThread: vi.fn(),
+  LazyThread: (props: ThreadProps) => {
+    const snapshot = useSyncExternalStore(
+      props.frameStore?.subscribe ?? (() => () => undefined),
+      props.frameStore?.getSnapshot ?? (() => undefined),
+      props.frameStore?.getSnapshot ?? (() => undefined),
+    )
+    const items = snapshot?.items ?? props.items
+    const liveItems = snapshot?.liveItems ?? props.liveItems
+    return (
+      <div
+        data-testid="thread"
+        data-started-at={props.activeTurn?.startedAt}
+        ref={() => {
+          threadCallbacks.answerUserInput = props.onAnswerUserInput
+          threadCallbacks.undoChanges = props.onUndoChanges
+        }}
+      >
+        {items.map((base, index) => (
+          <span key={base.id} data-item-id={base.id}>
+            {liveItems?.get(index)?.item.text ?? base.text}
+          </span>
+        ))}
+        {props.running && props.activeTurn ? <span>Working</span> : null}
+      </div>
+    )
+  },
 }))
 
 vi.mock('./ui/Sidebar.js', async (importOriginal) => {
@@ -213,12 +226,11 @@ vi.mock('./ui/CommandPalette.js', async (importOriginal) => {
   }
 })
 
-vi.mock('./ui/Settings.js', async (importOriginal) => {
-  const original = await importOriginal<typeof import('./ui/Settings.js')>()
+vi.mock('./ui/LazySettings.js', async () => {
+  const original = await vi.importActual<typeof import('./ui/Settings.js')>('./ui/Settings.js')
   const { memo } = await import('react')
   return {
-    ...original,
-    Settings: memo((props: ComponentProps<typeof original.Settings>) => {
+    LazySettings: memo((props: ComponentProps<typeof original.Settings>) => {
       utilityRenders.settings()
       return <original.Settings {...props} />
     }),
@@ -265,8 +277,8 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
 }))
 
-vi.mock('./voice-recorder.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./voice-recorder.js')>()),
+vi.mock('./voice-capability.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./voice-capability.js')>()),
   canCaptureVoice: () => true,
 }))
 
@@ -717,7 +729,7 @@ describe('web client', () => {
   })
 
   it.each(['failed', 'empty'] as const)(
-    'waits for every installed beta catalog when one is %s',
+    'defers an inactive %s catalog until the model menu opens',
     async (claudeCatalog) => {
       serverProviders = [
         ...serverProviders,
@@ -762,12 +774,50 @@ describe('web client', () => {
 
       await waitFor(() =>
         expect(transport.request).toHaveBeenCalledWith('models.list', {
+          provider: 'codex',
+        }),
+      )
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'providers.list'),
+      ).toHaveLength(1)
+      expect(transport.request).not.toHaveBeenCalledWith('connections.list', {})
+      expect(transport.request).not.toHaveBeenCalledWith('acp.agents', {})
+      expect(transport.request).not.toHaveBeenCalledWith('harnesses.list', {})
+      expect(transport.request).not.toHaveBeenCalledWith('models.list', {
+        provider: 'claude-code',
+      })
+      fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('models.list', {
           provider: 'claude-code',
         }),
       )
+      expect(transport.request).toHaveBeenCalledWith('connections.list', {})
+      expect(transport.request).toHaveBeenCalledWith('acp.agents', {})
+      expect(transport.request).toHaveBeenCalledWith('harnesses.list', {})
       expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
     },
   )
+
+  it('reuses a fresh selected catalog until the model menu requests discovery', async () => {
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('providers.list', {})
+      expect(screen.getByPlaceholderText('Do anything')).toBeTruthy()
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('models.list', { provider: 'codex' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
+    })
+  })
 
   it('keeps a visibility edit made while live discovery is pending', async () => {
     localStorage.setItem(
@@ -913,13 +963,17 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
-  it('opens the workspace directly on first launch', async () => {
+  it('opens the workspace without a full account read on first launch', async () => {
     localStorage.removeItem('harness.provider')
 
     render(<App />)
 
     expect(screen.queryByText('Set up TasteCode')).toBeNull()
     expect(document.querySelector('.shell')).not.toBeNull()
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+
+    openSettings()
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
     })
@@ -936,7 +990,7 @@ describe('web client', () => {
     const close = await screen.findByRole('button', { name: 'Hide workspace tools' })
     expect(close).toBe(launcher)
     expect(close.closest('.panel-toggles')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }))
     const terminalTab = await screen.findByRole('tab', { name: 'Terminal' })
     fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
     expect(document.querySelector('.workspace-layout')?.classList).toContain('is-panel-expanded')
@@ -950,6 +1004,19 @@ describe('web client', () => {
 
     fireEvent.click(launcher)
     expect(await screen.findByRole('tab', { name: 'Terminal' })).toBe(terminalTab)
+  })
+
+  it('keeps unused dock surfaces unmounted after the idle window', async () => {
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^New session,/ })
+    await act(async () => {
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 300))
+    })
+
+    expect(screen.queryByTestId('bottom-terminal')).toBeNull()
+    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(utilityRenders.terminalPane).not.toHaveBeenCalled()
   })
 
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
@@ -1233,7 +1300,7 @@ describe('web client', () => {
     })
   })
 
-  it('shows a validated model snapshot while discovery refreshes in the background', () => {
+  it('shows a fresh model snapshot before provider validation completes', () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -1265,7 +1332,7 @@ describe('web client', () => {
     })
     localStorage.setItem(
       'harness.modelCatalog.v1',
-      serializeModelCatalogCache([cachedCodexChoice()]),
+      serializeModelCatalogCache([cachedCodexChoice()], { validatedAt: 0 }),
     )
     localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
 
@@ -1513,8 +1580,8 @@ describe('web client', () => {
 
     expect(await screen.findByRole('button', { name: 'Attach files' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show Claude Code models' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Use Sonnet 5 through Claude Code' }))
     await waitFor(() => {
       expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
     })
@@ -1541,29 +1608,7 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
-  it('prefetches plan limits under StrictMode and reuses them when Account opens', async () => {
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    let firstUsage = true
-    let firstSocketClosed = false
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'usage.summary' && firstUsage) {
-        firstUsage = false
-        if (firstSocketClosed) return Promise.reject(new Error('Connection to server was closed'))
-      }
-      return request(method, params)
-    })
-    transport.close.mockImplementationOnce(() => {
-      firstSocketClosed = true
-    })
-    transport.connect
-      .mockImplementationOnce(() => {})
-      .mockImplementationOnce(() =>
-        window.setTimeout(() => {
-          for (const listener of transport.stateListeners) listener('open')
-        }, 0),
-      )
-
+  it('loads plan limits only after Account opens under StrictMode', async () => {
     render(
       <StrictMode>
         <App />
@@ -1571,21 +1616,22 @@ describe('new chats', () => {
     )
 
     expect(transport.close).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     await waitFor(() => {
       expect(
         transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
-      ).toHaveLength(2)
+      ).toHaveLength(1)
     })
-    transport.request.mockClear()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByText('75% left')).toBeTruthy()
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
   it('cancels trailing plan-limit refreshes after a real unmount', async () => {
     const view = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
     )
@@ -1606,23 +1652,23 @@ describe('new chats', () => {
     ]
     render(<App />)
 
+    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'claude-code' })
     })
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'grok' })
-
-    transport.request.mockClear()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
     expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
     )
@@ -1648,6 +1694,7 @@ describe('new chats', () => {
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
     ]
     render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
     )
@@ -1686,6 +1733,12 @@ describe('new chats', () => {
       },
     ]
     render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'claude-code' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    transport.request.mockClear()
     fireEvent.click(await screen.findByRole('button', { name: 'Claude thread, Claude Code' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
@@ -1726,6 +1779,11 @@ describe('new chats', () => {
     render(<App />)
 
     const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     let nextPaintReached = false
     let markNextPaint: FrameRequestCallback | undefined
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
@@ -1938,6 +1996,7 @@ describe('new chats', () => {
     render(<App />)
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Stay blocked' } })
+    await waitFor(() => expect(accountReads).toBe(1))
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
     await screen.findByRole('button', { name: 'Sign in' })
@@ -2385,7 +2444,7 @@ describe('new chats', () => {
         await waitFor(() => expect(probes).toHaveLength(2))
         if (scenario === 'switched reject') {
           fireEvent.keyDown(window, { key: 'p', metaKey: true })
-          fireEvent.click(screen.getByRole('option', { name: /^Another Project / }))
+          fireEvent.click(await screen.findByRole('option', { name: /^Another Project / }))
           await waitFor(() =>
             expect(transport.request).toHaveBeenCalledWith('workspace.info', {
               path: '/work/another-project',
@@ -3399,7 +3458,7 @@ describe('new chats', () => {
       }),
     )
     fireEvent.click(screen.getByRole('menuitem', { name: 'Checkpoint history (1)' }))
-    fireEvent.click(screen.getByRole('button', { name: /Before “Fix the parser”/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Before “Fix the parser”/ }))
 
     expect(await screen.findByText('src/parser.ts')).toBeTruthy()
     expect(screen.getByText('src/parser.test.ts')).toBeTruthy()
@@ -4804,6 +4863,7 @@ describe('global shortcuts', () => {
     transport.request.mockClear()
     render(<App />)
     const newChat = await screen.findByRole('button', { name: 'New chat' })
+    await screen.findByRole('button', { name: /^New session,/ })
     expect(newChat.getAttribute('aria-keyshortcuts')).toBe('Meta+G Control+G')
 
     fireEvent.keyDown(window, { key: 'n', metaKey: true })
@@ -4943,7 +5003,7 @@ describe('global shortcuts', () => {
     expect(terminal.textContent).toBe('/work/project')
     expect(terminal.closest('.bottom-terminal')).toBeTruthy()
     expect(document.querySelector('.stage__body')?.classList).toContain('has-terminal')
-    expect(document.querySelector('.workspace-panel')?.classList).not.toContain('is-open')
+    expect(document.querySelector('.workspace-panel')).toBeNull()
   })
 
   it('opens global app surfaces from the composer', async () => {
@@ -4965,6 +5025,43 @@ describe('global shortcuts', () => {
     })
     expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
     expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
+  })
+
+  it('opens hidden Debug settings with the full shortcut and previews onboarding', async () => {
+    localStorage.setItem('harness.onboarding.v1', 'done')
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^New session,/ })
+    fireEvent.keyDown(window, {
+      key: '∂',
+      code: 'KeyD',
+      metaKey: true,
+      altKey: true,
+    })
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+
+    fireEvent.keyDown(window, {
+      key: 'Î',
+      code: 'KeyD',
+      metaKey: true,
+      altKey: true,
+      shiftKey: true,
+    })
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Debug' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show onboarding' }))
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+    expect(await screen.findByRole('dialog', { name: 'Start your first project' })).toBeTruthy()
+    expect(localStorage.getItem('harness.onboarding.v1')).toBe('done')
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'What should we call you?' }), {
+      target: { value: 'Blue Emi' },
+    })
+    expect(localStorage.getItem('harness.profile.displayName')).toBe('Blue Emi')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip for now' }))
+    expect(screen.queryByRole('dialog', { name: 'Start your first project' })).toBeNull()
   })
 })
 
@@ -5551,6 +5648,51 @@ describe('live sessions', () => {
     expect(screen.getByTestId('thread').textContent).toContain('Hello')
   })
 
+  it('does not schedule render frames for background deltas', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    emitThreadEvent('untouched-thread', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'untouched-thread', status: 'running', createdAt: 0 },
+    })
+    emitThreadEvent('untouched-thread', {
+      type: 'item.started',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 0,
+      },
+    })
+    await act(async () => undefined)
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame')
+
+    emitThreadEvent('untouched-thread', {
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'background work',
+    })
+
+    expect(requestFrame).not.toHaveBeenCalled()
+    emitThreadEvent('untouched-thread', {
+      type: 'item.completed',
+      item: {
+        id: 'item-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'background work',
+        createdAt: 0,
+      },
+    })
+  })
+
   it('keeps static shell regions out of streamed-frame renders', async () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -5580,6 +5722,7 @@ describe('live sessions', () => {
     shellRenders.sidebar.mockClear()
     shellRenders.stageHeader.mockClear()
     shellRenders.composer.mockClear()
+    appRenders.mockClear()
 
     emitThreadEvent('untouched-thread', {
       type: 'item.delta',
@@ -5592,6 +5735,7 @@ describe('live sessions', () => {
     expect(shellRenders.sidebar).not.toHaveBeenCalled()
     expect(shellRenders.stageHeader).not.toHaveBeenCalled()
     expect(shellRenders.composer).not.toHaveBeenCalled()
+    expect(appRenders).not.toHaveBeenCalled()
   })
 
   it('keeps open utility surfaces out of streamed-frame renders', async () => {
@@ -5924,7 +6068,9 @@ describe('live sessions', () => {
     })
 
     const working = screen.getByRole('button', { name: 'First session, Codex, working' })
-    expect(working.querySelector('.sess__spinner')?.textContent).toBe('⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏')
+    expect(working.querySelector('.sess__spinner')?.textContent).toBe(
+      '⠋\n⠙\n⠹\n⠸\n⠼\n⠴\n⠦\n⠧\n⠇\n⠏',
+    )
 
     fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
     emitThreadEvent('thread-2', {
@@ -6324,6 +6470,13 @@ describe('reopening a session', () => {
       })
     })
     expect(await screen.findByText('Durable base')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'untouched-thread',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     emitThreadEvent(
       'untouched-thread',
       {
@@ -6415,6 +6568,187 @@ describe('reopening a session', () => {
     const text = screen.getByTestId('thread').textContent
     expect(text).toContain('Cached base')
     expect(text).toContain('Background suffix')
+  })
+
+  it('reloads an old long thread after the inactive history cache evicts it', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: Array.from({ length: 4 }, (_, index) => ({
+          id: `thread-${index + 1}`,
+          title: `Thread ${index + 1}`,
+          running: false,
+        })),
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const { threadId } = methods['thread.history'].params.parse(params)
+      return Promise.resolve({
+        events: Array.from({ length: 1_001 }, (_, index) =>
+          completedHistoryEvent(index + 1, `${threadId}-${index}`, `${threadId} item ${index}`),
+        ),
+        running: false,
+      })
+    })
+
+    render(<App />)
+    for (let index = 1; index <= 4; index += 1) {
+      fireEvent.click(await screen.findByRole('button', { name: new RegExp(`^Thread ${index},`) }))
+      expect(await screen.findByText(`thread-${index} item 1000`)).toBeTruthy()
+    }
+
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Thread 1,/ }))
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'thread-1',
+      }),
+    )
+    expect(await screen.findByText('thread-1 item 1000')).toBeTruthy()
+  })
+
+  it('releases a long cached prefix when its background turn starts', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Long thread', running: false },
+          { id: 'thread-2', title: 'Foreground', running: false },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let longThreadReads = 0
+    const durablePrefix = Array.from({ length: 1_001 }, (_, index) =>
+      completedHistoryEvent(index + 1, `old-${index}`, `Old item ${index}`),
+    )
+    const started = {
+      seq: 1_002,
+      event: {
+        type: 'turn.started' as const,
+        turn: {
+          id: 'turn-new',
+          threadId: 'thread-1',
+          status: 'running' as const,
+          createdAt: 1_002,
+        },
+      },
+    }
+    const submitted = {
+      seq: 1_003,
+      event: {
+        type: 'item.completed' as const,
+        item: {
+          id: 'new-prompt',
+          turnId: 'turn-new',
+          type: 'message' as const,
+          role: 'user' as const,
+          status: 'completed' as const,
+          text: 'Run in the background',
+          createdAt: 1_003,
+        },
+      },
+    }
+    const assistantStarted = {
+      seq: 1_004,
+      event: {
+        type: 'item.started' as const,
+        item: {
+          id: 'new-answer',
+          turnId: 'turn-new',
+          type: 'message' as const,
+          role: 'assistant' as const,
+          status: 'started' as const,
+          text: '',
+          createdAt: 1_004,
+        },
+      },
+    }
+    const assistantDelta = {
+      seq: 1_005,
+      event: {
+        type: 'item.delta' as const,
+        turnId: 'turn-new',
+        itemId: 'new-answer',
+        textDelta: 'Large background output',
+      },
+    }
+    const assistantCompleted = {
+      seq: 1_006,
+      event: {
+        type: 'item.completed' as const,
+        item: {
+          ...assistantStarted.event.item,
+          status: 'completed' as const,
+          text: 'Large background output',
+        },
+      },
+    }
+    let resolveReload!: (value: {
+      events: Array<{ seq: number; event: DomainEvent }>
+      running: boolean
+    }) => void
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const { threadId } = methods['thread.history'].params.parse(params)
+      if (threadId !== 'thread-1') return Promise.resolve({ events: [], running: false })
+      longThreadReads += 1
+      if (longThreadReads === 1) return Promise.resolve({ events: durablePrefix, running: false })
+      return new Promise((resolve) => {
+        resolveReload = resolve as typeof resolveReload
+      })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Long thread,/ }))
+    expect(await screen.findByText('Old item 1000')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
+    await waitFor(() => expect(screen.getByTestId('thread').textContent).not.toContain('Old item'))
+
+    emitThreadEvent('thread-1', started.event, started.seq)
+    emitThreadEvent('thread-1', submitted.event, submitted.seq)
+    emitThreadEvent('thread-1', assistantStarted.event, assistantStarted.seq)
+    emitThreadEvent('thread-1', assistantDelta.event, assistantDelta.seq)
+    emitThreadEvent('thread-1', assistantCompleted.event, assistantCompleted.seq)
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: /^Long thread,/ }))
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'thread-1',
+      }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+      threadId: 'thread-1',
+      afterSeq: 1_006,
+    })
+    expect(screen.queryByText('Large background output')).toBeNull()
+
+    await act(async () =>
+      resolveReload({
+        events: [
+          ...durablePrefix,
+          started,
+          submitted,
+          assistantStarted,
+          assistantDelta,
+          assistantCompleted,
+        ],
+        running: true,
+      }),
+    )
+    expect(await screen.findByText('Large background output')).toBeTruthy()
   })
 
   it('does not advance past a deferred delta and ignores duplicate durable pushes', async () => {
@@ -6523,6 +6857,13 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
     })
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        threadId: 'untouched-thread',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     transport.request.mockClear()
 
     act(() => {

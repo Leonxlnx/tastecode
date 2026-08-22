@@ -1,6 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderId, SearchSnippetPart, SessionSearchResult } from '@harness/contracts'
 import { LoaderCircle, Search, X } from 'lucide-react'
+import '../styles/command-palette.css'
+import '../styles/session-search.css'
 import {
   agentPresentation,
   providerDisplayName,
@@ -10,6 +12,11 @@ import {
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { AppSelect } from './AppSelect.js'
+import {
+  createSessionTitleIndexer,
+  searchSessionTitles,
+  type SessionSearchProject,
+} from '../session-title-index.js'
 
 const SEARCH_DEBOUNCE_MS = 80
 const MAX_TITLE_RESULTS = 6
@@ -29,18 +36,6 @@ const PROVIDERS: ProviderId[] = [
   'api',
 ]
 
-type SearchProject = {
-  path: string
-  name?: string | undefined
-  sessions: Array<{
-    id: string
-    title: string
-    provider: ProviderId
-    agent?: string | undefined
-    createdAt: number
-  }>
-}
-
 type DisplaySearchResult = {
   key: string
   kind: 'title' | 'content'
@@ -57,7 +52,7 @@ type DisplaySearchResult = {
 
 function SessionSearchComponent(props: {
   transport: Transport
-  projects: SearchProject[]
+  projects: SessionSearchProject[]
   initialProjectPath?: string | undefined
   onSelect: (threadId: string, turnId?: string) => void
   onClose: () => void
@@ -78,70 +73,47 @@ function SessionSearchComponent(props: {
   const term = query.trim()
   const terms = useMemo(() => searchTerms(term), [term])
   const searchable = terms.length > 0
+  const indexTitles = useMemo(createSessionTitleIndexer, [])
+  const titleIndex = useMemo(() => indexTitles(props.projects), [indexTitles, props.projects])
 
   const availableProviders = useMemo(() => {
-    const present = new Set(
-      props.projects.flatMap((project) => project.sessions.map((session) => session.provider)),
-    )
+    const present = new Set(titleIndex.map((entry) => entry.provider))
     return PROVIDERS.filter((id) => present.has(id)).map((id) => ({
       id,
       label: providerDisplayName(id),
     }))
-  }, [props.projects])
+  }, [titleIndex])
 
   const sources = useMemo(() => {
     const presentations = new Map<string, ProviderPresentation>()
-    for (const project of props.projects) {
-      for (const session of project.sessions) {
-        if (session.provider === 'acp' && session.agent) {
-          presentations.set(`${project.path}\0${session.id}`, agentPresentation(session.agent))
-        }
+    for (const entry of titleIndex) {
+      if (entry.provider === 'acp' && entry.agent) {
+        presentations.set(`${entry.projectPath}\0${entry.threadId}`, agentPresentation(entry.agent))
       }
     }
     return presentations
-  }, [props.projects])
+  }, [titleIndex])
 
   const titleResults = useMemo<DisplaySearchResult[]>(() => {
     if (!searchable) return []
-    const normalizedQuery = terms.join(' ')
-    const matches: Array<DisplaySearchResult & { rank: number }> = []
-
-    for (const project of props.projects) {
-      if (projectPath && project.path !== projectPath) continue
-      const projectName = project.name ?? basename(project.path)
-      for (const session of project.sessions) {
-        if (provider && session.provider !== provider) continue
-        const normalizedTitle = normalizeSearchText(session.title)
-        if (!terms.every((part) => normalizedTitle.includes(part))) continue
-
-        const rank =
-          normalizedTitle === normalizedQuery
-            ? 0
-            : normalizedTitle.startsWith(normalizedQuery)
-              ? 1
-              : 2
-        matches.push({
-          key: `title:${JSON.stringify([project.path, session.id])}`,
-          kind: 'title',
-          projectName,
-          threadId: session.id,
-          threadTitle: session.title,
-          provider: session.provider,
-          source: sources.get(`${project.path}\0${session.id}`),
-          createdAt: session.createdAt,
-          turnId: undefined,
-          titleParts: highlightText(session.title, terms),
-          snippet: undefined,
-          rank,
-        })
-      }
-    }
-
-    return matches
-      .sort((left, right) => left.rank - right.rank || right.createdAt - left.createdAt)
-      .slice(0, MAX_TITLE_RESULTS)
-      .map(({ rank: _rank, ...result }) => result)
-  }, [projectPath, props.projects, provider, searchable, sources, terms])
+    return searchSessionTitles(titleIndex, terms, {
+      ...(projectPath ? { projectPath } : {}),
+      ...(provider ? { provider } : {}),
+      limit: MAX_TITLE_RESULTS,
+    }).map((entry) => ({
+      key: `title:${JSON.stringify([entry.projectPath, entry.threadId])}`,
+      kind: 'title',
+      projectName: entry.projectName,
+      threadId: entry.threadId,
+      threadTitle: entry.threadTitle,
+      provider: entry.provider,
+      source: sources.get(`${entry.projectPath}\0${entry.threadId}`),
+      createdAt: entry.createdAt,
+      turnId: undefined,
+      titleParts: highlightText(entry.threadTitle, terms),
+      snippet: undefined,
+    }))
+  }, [projectPath, provider, searchable, sources, terms, titleIndex])
 
   const displayResults = useMemo<DisplaySearchResult[]>(() => {
     const legacyOccurrences = new Map<string, number>()
@@ -516,10 +488,6 @@ function resultProviderLabel(result: DisplaySearchResult): string {
 
 function searchTerms(query: string): string[] {
   return [...new Set(query.normalize('NFKC').toLowerCase().match(SEARCH_TOKEN) ?? [])]
-}
-
-function normalizeSearchText(value: string): string {
-  return value.normalize('NFKC').toLowerCase()
 }
 
 function highlightText(text: string, terms: string[]): SearchSnippetPart[] {

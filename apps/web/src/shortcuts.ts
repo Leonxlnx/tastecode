@@ -1,5 +1,3 @@
-import { z } from 'zod'
-
 export type Shortcut = {
   key: string
   primary?: boolean
@@ -9,183 +7,87 @@ export type Shortcut = {
 
 export const KEYBINDING_STORAGE_KEY = 'harness.keybindings.v1'
 
-/**
- * App-wide actions that are safe to expose as keybinds. Destructive or
- * context-specific actions start unassigned, but users can still opt in.
- */
-export const KEYBINDING_DEFINITIONS = [
-  {
-    id: 'commandPalette',
-    group: 'App',
-    label: 'Command palette',
-    description: 'Find any command, project, or chat.',
-    defaultShortcut: { key: 'k', primary: true },
-  },
-  {
-    id: 'settings',
-    group: 'App',
-    label: 'Open settings',
-    description: 'Open or close app settings.',
-    defaultShortcut: { key: ',', primary: true },
-  },
-  {
-    id: 'keybindings',
-    group: 'App',
-    label: 'Open keybinds',
-    description: 'Open this keybind editor.',
-    defaultShortcut: { key: '/', primary: true },
-  },
-  {
-    id: 'toggleSidebar',
-    group: 'App',
-    label: 'Toggle sidebar',
-    description: 'Show or hide the project sidebar.',
-    defaultShortcut: { key: 'b', primary: true },
-  },
-  {
-    id: 'newChat',
-    group: 'Chats',
-    label: 'New chat',
-    description: 'Start a chat in the current project.',
-    defaultShortcut: { key: 'n', primary: true },
-  },
-  {
-    id: 'searchSessions',
-    group: 'Chats',
-    label: 'Search chats',
-    description: 'Search titles, messages, commands, and tool output.',
-    defaultShortcut: { key: 'f', primary: true, shift: true },
-  },
-  {
-    id: 'focusComposer',
-    group: 'Chats',
-    label: 'Focus composer',
-    description: 'Move the cursor to the prompt field.',
-    defaultShortcut: { key: 'l', primary: true },
-  },
-  {
-    id: 'interrupt',
-    group: 'Chats',
-    label: 'Stop response',
-    description: 'Stop the active agent turn.',
-    defaultShortcut: { key: '.', primary: true },
-  },
-  {
-    id: 'previousChat',
-    group: 'Chats',
-    label: 'Previous chat',
-    description: 'Move to the previous chat in the sidebar.',
-    defaultShortcut: { key: 'arrowup', primary: true, alt: true },
-  },
-  {
-    id: 'nextChat',
-    group: 'Chats',
-    label: 'Next chat',
-    description: 'Move to the next chat in the sidebar.',
-    defaultShortcut: { key: 'arrowdown', primary: true, alt: true },
-  },
-  {
-    id: 'toggleSessionPin',
-    group: 'Chats',
-    label: 'Pin or unpin chat',
-    description: 'Change the pinned state of the current chat.',
-    defaultShortcut: null,
-  },
-  {
-    id: 'archiveSession',
-    group: 'Chats',
-    label: 'Archive current chat',
-    description: 'Archive the current chat after any required safety check.',
-    defaultShortcut: null,
-  },
-  {
-    id: 'rollback',
-    group: 'Chats',
-    label: 'Open restore points',
-    description: 'Review checkpoints for the current chat.',
-    defaultShortcut: null,
-  },
-  {
-    id: 'switchProject',
-    group: 'Projects',
-    label: 'Switch project',
-    description: 'Choose another project from the command palette.',
-    defaultShortcut: { key: 'p', primary: true },
-  },
-  {
-    id: 'newProject',
-    group: 'Projects',
-    label: 'Add project',
-    description: 'Add a project folder to the sidebar.',
-    defaultShortcut: { key: 'o', primary: true, shift: true },
-  },
-  {
-    id: 'openPullRequests',
-    group: 'Projects',
-    label: 'Open pull requests',
-    description: 'Open the pull request inbox.',
-    defaultShortcut: { key: 'p', primary: true, shift: true },
-  },
-  {
-    id: 'toggleTerminal',
-    group: 'Workspace',
-    label: 'Toggle terminal',
-    description: 'Show or hide the preferred terminal for the current chat.',
-    defaultShortcut: { key: 'j', primary: true },
-  },
-  {
-    id: 'toggleWorkspace',
-    group: 'Workspace',
-    label: 'Toggle workspace tools',
-    description: 'Show or hide files, review, browser, and side chat.',
-    defaultShortcut: { key: 'b', primary: true, shift: true },
-  },
-  {
-    id: 'expandWorkspace',
-    group: 'Workspace',
-    label: 'Expand workspace tools',
-    description: 'Open workspace tools or switch their full-width view.',
-    defaultShortcut: null,
-  },
-  {
-    id: 'toggleFastMode',
-    group: 'Workspace',
-    label: 'Toggle Fast mode',
-    description: 'Toggle the fast service tier when the model supports it.',
-    defaultShortcut: null,
-  },
-  {
-    id: 'toggleDesignMode',
-    group: 'Workspace',
-    label: 'Toggle Design mode',
-    description: 'Turn the design-first workflow on or off.',
-    defaultShortcut: null,
-  },
-  {
-    id: 'toggleIsolatedSession',
-    group: 'Workspace',
-    label: 'Toggle isolated checkout',
-    description: 'Use a separate checkout for the next chat.',
-    defaultShortcut: null,
-  },
-] as const
-
-export type KeybindingId = (typeof KEYBINDING_DEFINITIONS)[number]['id']
-export type KeybindingGroup = (typeof KEYBINDING_DEFINITIONS)[number]['group']
-export type Keybindings = Record<KeybindingId, Shortcut | null>
-
-export function createDefaultKeybindings(): Keybindings {
-  // SAFETY: Definitions contain one unique entry for every KeybindingId, so
-  // Object.fromEntries produces the complete Keybindings record.
-  return Object.fromEntries(
-    KEYBINDING_DEFINITIONS.map((definition) => [
-      definition.id,
-      definition.defaultShortcut ? { ...definition.defaultShortcut } : null,
-    ]),
-  ) as Keybindings
+/** Hidden from the editable keybind list so it stays difficult to trigger by accident. */
+export const DEBUG_SETTINGS_SHORTCUT: Shortcut = {
+  key: 'd',
+  primary: true,
+  shift: true,
+  alt: true,
 }
 
-export const DEFAULT_KEYBINDINGS = createDefaultKeybindings()
+export function matchesDebugSettingsShortcut(
+  event: Pick<KeyboardEvent, 'key' | 'code' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+): boolean {
+  if (!event.metaKey && !event.ctrlKey) return false
+  if (!event.altKey || !event.shiftKey) return false
+
+  // Option changes event.key into a symbol on macOS. event.code keeps the
+  // physical D key stable across that keyboard translation.
+  return event.code === 'KeyD' || normalizeShortcutKey(event.key) === 'd'
+}
+
+/** Compact runtime roster. Labels and descriptions live with lazy settings. */
+export const KEYBINDING_IDS = [
+  'commandPalette',
+  'settings',
+  'keybindings',
+  'toggleSidebar',
+  'newChat',
+  'searchSessions',
+  'focusComposer',
+  'interrupt',
+  'previousChat',
+  'nextChat',
+  'toggleSessionPin',
+  'archiveSession',
+  'rollback',
+  'switchProject',
+  'newProject',
+  'openPullRequests',
+  'toggleTerminal',
+  'toggleWorkspace',
+  'expandWorkspace',
+  'toggleFastMode',
+  'toggleDesignMode',
+  'toggleIsolatedSession',
+] as const
+
+export type KeybindingId = (typeof KEYBINDING_IDS)[number]
+export type Keybindings = Record<KeybindingId, Shortcut | null>
+
+export const DEFAULT_KEYBINDINGS = {
+  commandPalette: { key: 'k', primary: true },
+  settings: { key: ',', primary: true },
+  keybindings: { key: '/', primary: true },
+  toggleSidebar: { key: 'b', primary: true },
+  newChat: { key: 'n', primary: true },
+  searchSessions: { key: 'f', primary: true, shift: true },
+  focusComposer: { key: 'l', primary: true },
+  interrupt: { key: '.', primary: true },
+  previousChat: { key: 'arrowup', primary: true, alt: true },
+  nextChat: { key: 'arrowdown', primary: true, alt: true },
+  toggleSessionPin: null,
+  archiveSession: null,
+  rollback: null,
+  switchProject: { key: 'p', primary: true },
+  newProject: { key: 'o', primary: true, shift: true },
+  openPullRequests: { key: 'p', primary: true, shift: true },
+  toggleTerminal: { key: 'j', primary: true },
+  toggleWorkspace: { key: 'b', primary: true, shift: true },
+  expandWorkspace: null,
+  toggleFastMode: null,
+  toggleDesignMode: null,
+  toggleIsolatedSession: null,
+} as const satisfies Keybindings
+
+export function createDefaultKeybindings() {
+  const keybindings = {} as Keybindings
+  for (const id of KEYBINDING_IDS) {
+    const shortcut = DEFAULT_KEYBINDINGS[id]
+    keybindings[id] = shortcut ? { ...shortcut } : null
+  }
+  return keybindings
+}
 
 export function matchesShortcut(
   event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
@@ -254,16 +156,6 @@ export function sameShortcut(
   )
 }
 
-export function findKeybindingConflict(
-  keybindings: Keybindings,
-  action: KeybindingId,
-  shortcut: Shortcut,
-): (typeof KEYBINDING_DEFINITIONS)[number] | undefined {
-  return KEYBINDING_DEFINITIONS.find(
-    (definition) => definition.id !== action && sameShortcut(keybindings[definition.id], shortcut),
-  )
-}
-
 export function readKeybindings(): Keybindings {
   const defaults = createDefaultKeybindings()
   let raw: string | null
@@ -275,16 +167,15 @@ export function readKeybindings(): Keybindings {
   if (!raw) return defaults
 
   try {
-    const parsed = StoredKeybindingsSchema.safeParse(JSON.parse(raw))
-    if (!parsed.success) return defaults
-    const saved = parsed.data.bindings
-    for (const definition of KEYBINDING_DEFINITIONS) {
-      if (!Object.hasOwn(saved, definition.id)) continue
-      const candidate = saved[definition.id]
+    const saved = parseStoredKeybindings(JSON.parse(raw))
+    if (!saved) return defaults
+    for (const id of KEYBINDING_IDS) {
+      if (!Object.hasOwn(saved, id)) continue
+      const candidate = saved[id]
       if (candidate === null) {
-        defaults[definition.id] = null
+        defaults[id] = null
       } else if (candidate !== undefined) {
-        defaults[definition.id] = normalizedShortcut(candidate)
+        defaults[id] = normalizedShortcut(candidate)
       }
     }
     return defaults
@@ -296,9 +187,9 @@ export function readKeybindings(): Keybindings {
 export function writeKeybindings(keybindings: Keybindings): void {
   const defaults = createDefaultKeybindings()
   const bindings: Partial<Record<KeybindingId, Shortcut | null>> = {}
-  for (const definition of KEYBINDING_DEFINITIONS) {
-    const current = keybindings[definition.id]
-    if (!sameShortcut(current, defaults[definition.id])) bindings[definition.id] = current
+  for (const id of KEYBINDING_IDS) {
+    const current = keybindings[id]
+    if (!sameShortcut(current, defaults[id])) bindings[id] = current
   }
 
   try {
@@ -400,18 +291,46 @@ function ariaKey(key: string): string {
 
 const MODIFIER_KEYS = new Set(['alt', 'altgraph', 'control', 'meta', 'shift'])
 
-const ShortcutSchema = z
-  .object({
-    key: z.string().min(1).max(24),
-    primary: z.boolean().optional(),
-    shift: z.boolean().optional(),
-    alt: z.boolean().optional(),
-  })
-  .strict()
+function parseStoredKeybindings(value: unknown): Record<string, Shortcut | null> | undefined {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['version', 'bindings'])) return undefined
+  if (value['version'] !== 1 || !isRecord(value['bindings'])) return undefined
 
-const StoredKeybindingsSchema = z
-  .object({
-    version: z.literal(1),
-    bindings: z.record(z.string(), ShortcutSchema.nullable()),
-  })
-  .strict()
+  const bindings: Record<string, Shortcut | null> = {}
+  for (const [id, candidate] of Object.entries(value['bindings'])) {
+    if (candidate === null) {
+      bindings[id] = null
+      continue
+    }
+    const shortcut = parseStoredShortcut(candidate)
+    if (!shortcut) return undefined
+    bindings[id] = shortcut
+  }
+  return bindings
+}
+
+function parseStoredShortcut(value: unknown): Shortcut | undefined {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['key', 'primary', 'shift', 'alt'])) return undefined
+  const key = value['key']
+  if (typeof key !== 'string' || key.length < 1 || key.length > 24) return undefined
+  if (!isOptionalBoolean(value['primary'])) return undefined
+  if (!isOptionalBoolean(value['shift'])) return undefined
+  if (!isOptionalBoolean(value['alt'])) return undefined
+  return {
+    key,
+    ...(value['primary'] === undefined ? {} : { primary: value['primary'] }),
+    ...(value['shift'] === undefined ? {} : { shift: value['shift'] }),
+    ...(value['alt'] === undefined ? {} : { alt: value['alt'] }),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key))
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === 'boolean'
+}

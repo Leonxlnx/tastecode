@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./attachment": {
+      "types": "./dist/attachment.d.ts",
+      "default": "./dist/attachment.js"
     }
   },
   "main": "./dist/index.js",

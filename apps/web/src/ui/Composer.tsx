@@ -1,5 +1,7 @@
 import {
+  lazy,
   memo,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,7 +12,6 @@ import {
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
-import { BorderBeam } from 'border-beam'
 import {
   ArrowUp,
   Box,
@@ -45,27 +46,36 @@ import {
 } from '../bridge.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
-import {
-  describeMicrophoneError,
-  formatRecordingDuration,
-  MAX_RECORDING_MS,
-  type VoiceRecording,
-  useVoiceRecorder,
-} from '../voice-recorder.js'
-import { ComposerVoiceButton } from './ComposerVoiceButton.js'
-import { ComposerVoiceRecorderBar } from './ComposerVoiceRecorderBar.js'
+import { type VoiceRecording } from '../voice-capability.js'
+import type { ComposerVoiceState } from './ComposerVoiceControl.js'
+import { DesignBeam, preloadDesignBeamStyles } from './DesignBeam.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
-  ComposerResourcePicker,
   type ComposerResource,
   type ComposerResourcePickerHandle,
   type ComposerResourceTrigger,
-} from './ComposerResourcePicker.js'
-import { MediaViewer } from './MediaViewer.js'
+} from './composer-resource.js'
 import { Menu, MenuItem } from './Menu.js'
 import { ModelSearchField } from './ModelSearchField.js'
-import { ModelSelector } from './ModelSelector.js'
 import type { Project } from './Sidebar.js'
+
+const MediaViewer = lazy(() =>
+  import('./MediaViewer.js').then((module) => ({ default: module.MediaViewer })),
+)
+const ComposerResourcePicker = lazy(() =>
+  import('./ComposerResourcePicker.js').then((module) => ({
+    default: module.ComposerResourcePicker,
+  })),
+)
+const ModelSelector = lazy(() =>
+  import('./ModelSelector.js').then((module) => ({ default: module.ModelSelector })),
+)
+const ComposerVoiceControl = lazy(() =>
+  import('./ComposerVoiceControl.js').then((module) => ({
+    default: module.ComposerVoiceControl,
+  })),
+)
+const DRAFT_HAS_CONTENT = /\S/u
 
 declare global {
   interface File {
@@ -137,6 +147,16 @@ const PREVIEWABLE_IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 const VIDEO_RE = /\.(avi|m4v|mkv|mov|mp4|mpe?g|ogg|ogv|webm)$/i
 const COMPOSER_MIN_HEIGHT = 68
 const COMPOSER_MAX_HEIGHT = 242
+
+function composerInputOnlyInserts(previous: string, next: string, event: InputEvent): boolean {
+  if (event.isComposing) return false
+  if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
+    return next.length === previous.length + 1
+  }
+  if (event.inputType !== 'insertText' && event.inputType !== 'insertFromPaste') return false
+  return event.data !== null && next.length === previous.length + event.data.length
+}
+const COMPOSER_RESOURCE_FAST_QUERY_LENGTH = 64
 
 function BranchMenu(props: {
   branches: string[]
@@ -295,13 +315,15 @@ function QueuedMediaPreviewCard({ reference }: { reference: string }) {
         ) : null}
       </button>
       {viewerOpen && preview?.previewUrl && preview.mediaType ? (
-        <MediaViewer
-          src={preview.previewUrl}
-          name={preview.name}
-          mediaType={preview.mediaType}
-          onReveal={() => void revealPath(reference)}
-          onClose={() => setViewerOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <MediaViewer
+            src={preview.previewUrl}
+            name={preview.name}
+            mediaType={preview.mediaType}
+            onReveal={() => void revealPath(reference)}
+            onClose={() => setViewerOpen(false)}
+          />
+        </Suspense>
       ) : null}
     </>
   )
@@ -311,17 +333,67 @@ export function composerResourceTriggerAt(
   text: string,
   cursor: number,
 ): ComposerResourceTrigger | undefined {
+  if (!Number.isFinite(cursor)) return undefined
+  const position = Math.max(0, Math.min(text.length, Math.trunc(cursor)))
+  if (position === 0) return undefined
+
+  // Most resource names are short. Walk only the active token instead of
+  // slicing and running a regular expression across the complete draft on
+  // every key. A pathological long token keeps the old parser as a bounded
+  // fallback, so its worst case does not regress.
+  const fastStart = Math.max(0, position - COMPOSER_RESOURCE_FAST_QUERY_LENGTH)
+  let queryStart = position
+  while (queryStart > fastStart && isResourceQueryCharacter(text.charCodeAt(queryStart - 1))) {
+    queryStart -= 1
+  }
+  if (
+    queryStart === fastStart &&
+    queryStart > 0 &&
+    isResourceQueryCharacter(text.charCodeAt(queryStart - 1))
+  ) {
+    return composerResourceTriggerAtLongToken(text, position)
+  }
+
+  const markerIndex = queryStart - 1
+  if (markerIndex < 0) return undefined
+  if (markerIndex > 0 && !/[\s([{]/.test(text[markerIndex - 1]!)) return undefined
+
+  const marker = text[markerIndex]
+  if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
+  const query = text.slice(queryStart, position)
+  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  let end = position
+  while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
+  return { marker, query, start: markerIndex, end }
+}
+
+function composerResourceTriggerAtLongToken(
+  text: string,
+  cursor: number,
+): ComposerResourceTrigger | undefined {
   const beforeCursor = text.slice(0, cursor)
   const match = /(^|[\s([{])([/$@])([\w.:-]*)$/.exec(beforeCursor)
   if (!match) return undefined
   const marker = match[2]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
-  if (match[2] === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
   let end = cursor
-  while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
+  while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
   return { marker, query, start, end }
+}
+
+function isResourceQueryCharacter(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    code === 45 ||
+    code === 46 ||
+    code === 58 ||
+    code === 95
+  )
 }
 
 export function composerPromptWithResources(text: string, resources: ComposerResource[]): string {
@@ -363,6 +435,7 @@ function ComposerComponent(props: {
   onAttachmentsChange?: ((attachments: string[]) => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
+  onModelSelectorOpen?: (() => void) | undefined
   onModelChange: (id: string) => void
   onEffortChange: (effort: string) => void
   onServiceTierChange: (serviceTier: string | undefined) => void
@@ -385,7 +458,9 @@ function ComposerComponent(props: {
   onSteerQueuedTurn: (id: string) => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const [text, setText] = useState('')
+  // The textarea owns its full draft. React only needs the blank/nonblank
+  // boundary, so ordinary typing does not rerender the complete composer.
+  const [hasDraftText, setHasDraftText] = useState(false)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
   const [attachmentError, setAttachmentError] = useState<string>()
   const [viewingMedia, setViewingMedia] = useState<{
@@ -394,7 +469,7 @@ function ComposerComponent(props: {
     mediaType: 'image' | 'video'
     localPath?: string
   }>()
-  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
+  const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
   const [voiceError, setVoiceError] = useState<string>()
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
@@ -404,26 +479,31 @@ function ComposerComponent(props: {
   }>()
   const [selectedResources, setSelectedResources] = useState<ComposerResource[]>([])
   const [resourceTrigger, setResourceTrigger] = useState<ComposerResourceTrigger>()
+  const [resourcePickerMounted, setResourcePickerMounted] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
-  const voiceRequest = useRef<string | undefined>(undefined)
-  const voiceOperation = useRef(0)
-  const cancelVoiceRequest = useRef(props.onCancelVoice)
   const sendAvailabilityRef = useRef(props.sendAvailability)
-  const textRef = useRef(text)
+  const textRef = useRef('')
+  const hasDraftTextRef = useRef(false)
   const attachmentsSupportedRef = useRef(props.attachmentsSupported)
   const previewUrls = useRef(new Set<string>())
   const resizeFrame = useRef<number | undefined>(undefined)
+  const composerAtMaximumHeight = useRef(false)
+  const observedComposerWidth = useRef<number | undefined>(undefined)
   const composerAnchor = useRef<HTMLDivElement>(null)
   const previousNewSession = useRef(props.newSession)
   const previousComposerRect = useRef<DOMRect | null>(null)
   const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
-  const recorder = useVoiceRecorder()
   const selectedResourceKeys = useMemo(
     () => new Set(selectedResources.map((resource) => resource.key)),
     [selectedResources],
   )
+
+  const updateResourceTrigger = (trigger: ComposerResourceTrigger | undefined) => {
+    setResourceTrigger(trigger)
+    if (trigger) setResourcePickerMounted(true)
+  }
 
   const endQueueDrag = () => {
     setDraggedQueueId(undefined)
@@ -451,9 +531,7 @@ function ComposerComponent(props: {
     endQueueDrag()
   }
 
-  textRef.current = text
   attachmentsSupportedRef.current = props.attachmentsSupported
-  cancelVoiceRequest.current = props.onCancelVoice
   sendAvailabilityRef.current = props.sendAvailability
 
   useEffect(() => {
@@ -464,14 +542,28 @@ function ComposerComponent(props: {
     mounted.current = true
     return () => {
       mounted.current = false
-      void recorder.cancel()
-      if (voiceRequest.current) cancelVoiceRequest.current(voiceRequest.current)
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
       dockAnimation.current?.cancel()
       for (const url of previewUrls.current) URL.revokeObjectURL(url)
       previewUrls.current.clear()
     }
-  }, [recorder.cancel])
+  }, [])
+
+  useEffect(() => {
+    const el = area.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (width === undefined) return
+      const previousWidth = observedComposerWidth.current
+      observedComposerWidth.current = width
+      if (previousWidth !== undefined && width !== previousWidth) {
+        composerAtMaximumHeight.current = false
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   // T3 Code's draft composer uses a FLIP transition: remember where the real
   // composer was before send, render it in the docked layout, then animate only
@@ -529,6 +621,7 @@ function ComposerComponent(props: {
     const currentHeight = el.offsetHeight
     el.style.height = 'auto'
     const contentHeight = el.scrollHeight
+    composerAtMaximumHeight.current = contentHeight > COMPOSER_MAX_HEIGHT
     const nextHeight = Math.max(COMPOSER_MIN_HEIGHT, Math.min(contentHeight, COMPOSER_MAX_HEIGHT))
     el.style.height = `${currentHeight}px`
     el.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden'
@@ -539,9 +632,14 @@ function ComposerComponent(props: {
     })
   }
 
-  const updateText = (value: string) => {
+  const updateText = (value: string, syncArea = true) => {
     textRef.current = value
-    setText(value)
+    if (syncArea && area.current && area.current.value !== value) area.current.value = value
+    const nextHasDraftText = DRAFT_HAS_CONTENT.test(value)
+    if (nextHasDraftText !== hasDraftTextRef.current) {
+      hasDraftTextRef.current = nextHasDraftText
+      setHasDraftText(nextHasDraftText)
+    }
     props.onDraftChange?.(value)
   }
 
@@ -757,6 +855,7 @@ function ComposerComponent(props: {
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
     if (submission === 'steer') props.onSteer(trimmed, paths)
     else props.onSend(trimmed, paths)
+    composerAtMaximumHeight.current = false
     updateText('')
     setSelectedResources([])
     setResourceTrigger(undefined)
@@ -776,7 +875,7 @@ function ComposerComponent(props: {
 
   const submit = (submission: RunningSubmission = 'queue') => {
     if (voiceState !== 'idle') return
-    sendContent(text, submission)
+    sendContent(textRef.current, submission)
   }
 
   const editQueuedTurn = (queuedTurn: QueuedTurn) => {
@@ -803,102 +902,17 @@ function ComposerComponent(props: {
     })
   }
 
-  const startVoice = async () => {
-    const operation = voiceOperation.current + 1
-    voiceOperation.current = operation
-    setVoiceError(undefined)
-    try {
-      await recorder.start()
-      if (mounted.current && voiceOperation.current === operation) setVoiceState('recording')
-      else await recorder.cancel()
-    } catch (error) {
-      if (mounted.current && voiceOperation.current === operation) {
-        setVoiceState('idle')
-        setVoiceError(describeMicrophoneError(error))
-      }
-    }
-  }
-
-  const transcribeVoice = async (sendAfter = false) => {
-    if (voiceState !== 'recording') return
-    const operation = voiceOperation.current
-    const cursor = area.current?.selectionStart ?? textRef.current.length
-    setVoiceState('transcribing')
-    setVoiceError(undefined)
-    const recording = await recorder.stop()
-    if (!mounted.current || voiceOperation.current !== operation) return
-    if (!recording) {
-      setVoiceState('idle')
-      setVoiceError('No audio was captured. Check the selected microphone and try again.')
-      return
-    }
-    const requestId = crypto.randomUUID()
-    voiceRequest.current = requestId
-    try {
-      const transcript = await props.onTranscribeVoice(requestId, recording)
-      if (
-        mounted.current &&
-        voiceOperation.current === operation &&
-        voiceRequest.current === requestId
-      ) {
-        const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
-        if (inserted) {
-          if (!sendAfter || !sendContent(inserted.text)) insertTranscript(transcript, cursor)
-        }
-      }
-    } catch (error) {
-      if (
-        mounted.current &&
-        voiceOperation.current === operation &&
-        voiceRequest.current === requestId
-      ) {
-        setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.')
-      }
-    } finally {
-      if (
-        mounted.current &&
-        voiceOperation.current === operation &&
-        voiceRequest.current === requestId
-      ) {
-        voiceRequest.current = undefined
-        setVoiceState('idle')
-      }
-    }
-  }
-
-  const cancelVoice = () => {
-    voiceOperation.current += 1
-    if (voiceRequest.current) {
-      props.onCancelVoice(voiceRequest.current)
-      voiceRequest.current = undefined
-    }
-    void recorder.cancel()
-    setVoiceError(undefined)
+  useEffect(() => {
+    if (props.voiceAvailable) return
     setVoiceState('idle')
-  }
-
-  // Dependency-scoped: without an array this ran after every streamed frame
-  // just to check the recording cap.
-  useEffect(() => {
-    if (voiceState === 'recording' && recorder.durationMs >= MAX_RECORDING_MS) {
-      void transcribeVoice()
-    }
-  }, [voiceState, recorder.durationMs])
-
-  const voiceStateRef = useRef(voiceState)
-  voiceStateRef.current = voiceState
-  useEffect(() => {
-    if (!props.voiceAvailable && voiceStateRef.current !== 'idle') cancelVoice()
+    setVoiceError(undefined)
   }, [props.voiceAvailable])
 
   const showStop =
-    props.running &&
-    text.trim() === '' &&
-    attachments.length === 0 &&
-    selectedResources.length === 0
+    props.running && !hasDraftText && attachments.length === 0 && selectedResources.length === 0
   const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
-    composerPromptWithResources(text, selectedResources) === '' ||
+    (!hasDraftText && selectedResources.length === 0) ||
     attachments.some((attachment) => !attachment.path) ||
     props.disabled ||
     props.sendAvailability !== 'ready' ||
@@ -1108,23 +1122,23 @@ function ComposerComponent(props: {
             </div>
           ) : null}
 
-          <ComposerResourcePicker
-            ref={resourcePicker}
-            transport={props.transport}
-            provider={props.provider}
-            projectPath={props.projectPath}
-            trigger={resourceTrigger}
-            selectedKeys={selectedResourceKeys}
-            onSelect={selectResource}
-          />
+          {resourcePickerMounted ? (
+            <Suspense fallback={null}>
+              <ComposerResourcePicker
+                ref={resourcePicker}
+                transport={props.transport}
+                provider={props.provider}
+                projectPath={props.projectPath}
+                trigger={resourceTrigger}
+                selectedKeys={selectedResourceKeys}
+                onSelect={selectResource}
+              />
+            </Suspense>
+          ) : null}
 
-          <BorderBeam
+          <DesignBeam
             className={`composer__design-beam${props.newSession ? ' is-shelved' : ''}`}
-            size="md"
-            colorVariant="colorful"
             strength={1}
-            brightness={1.7}
-            duration={2.4}
             active={props.designMode}
           >
             <div className="composer__prompt">
@@ -1248,7 +1262,7 @@ function ComposerComponent(props: {
               <div className="composer__field">
                 <textarea
                   ref={area}
-                  value={text}
+                  defaultValue=""
                   rows={2}
                   spellCheck={false}
                   disabled={props.disabled}
@@ -1260,11 +1274,14 @@ function ComposerComponent(props: {
                   aria-autocomplete="list"
                   onChange={(e) => {
                     const value = e.target.value
-                    updateText(value)
-                    setResourceTrigger(
+                    const onlyInserts =
+                      composerAtMaximumHeight.current &&
+                      composerInputOnlyInserts(textRef.current, value, e.nativeEvent as InputEvent)
+                    updateText(value, false)
+                    updateResourceTrigger(
                       composerResourceTriggerAt(value, e.target.selectionStart ?? value.length),
                     )
-                    grow()
+                    if (!onlyInserts) grow()
                   }}
                   onKeyDown={(e) => {
                     // IME users press Escape to dismiss the candidate window;
@@ -1309,7 +1326,7 @@ function ComposerComponent(props: {
                   }}
                   onSelect={(e) => {
                     const target = e.currentTarget
-                    setResourceTrigger(
+                    updateResourceTrigger(
                       composerResourceTriggerAt(textRef.current, target.selectionStart ?? 0),
                     )
                   }}
@@ -1402,12 +1419,9 @@ function ComposerComponent(props: {
                   )}
                 </Menu>
 
-                <BorderBeam
+                <DesignBeam
                   className="composer__design-button-beam"
-                  size="sm"
-                  colorVariant="colorful"
                   strength={0.58}
-                  duration={2.4}
                   active={props.designMode}
                 >
                   <button
@@ -1415,13 +1429,15 @@ function ComposerComponent(props: {
                     className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
                     aria-pressed={props.designMode}
                     aria-keyshortcuts={shortcutAria(keybindings.toggleDesignMode)}
+                    onFocus={preloadDesignBeamStyles}
+                    onPointerEnter={preloadDesignBeamStyles}
                     onClick={() => props.onDesignModeChange(!props.designMode)}
                     title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
                   >
                     <Palette size={13} aria-hidden />
                     <span>Design</span>
                   </button>
-                </BorderBeam>
+                </DesignBeam>
 
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
@@ -1430,43 +1446,50 @@ function ComposerComponent(props: {
                 ) : null}
 
                 {voiceState === 'idle' && props.models.length > 0 ? (
-                  <ModelSelector
-                    models={props.models}
-                    modelId={props.modelId}
-                    effort={props.effort}
-                    serviceTier={props.serviceTier}
-                    // The active turn already captured its settings. Changes
-                    // here configure the next prompt, including a queued one.
-                    disabled={false}
-                    onModelChange={props.onModelChange}
-                    onEffortChange={props.onEffortChange}
-                    onServiceTierChange={props.onServiceTierChange}
-                  />
+                  <Suspense fallback={<span className="tool tool--quiet">Loading model…</span>}>
+                    <ModelSelector
+                      models={props.models}
+                      modelId={props.modelId}
+                      effort={props.effort}
+                      serviceTier={props.serviceTier}
+                      // The active turn already captured its settings. Changes
+                      // here configure the next prompt, including a queued one.
+                      disabled={false}
+                      onOpen={props.onModelSelectorOpen}
+                      onModelChange={props.onModelChange}
+                      onEffortChange={props.onEffortChange}
+                      onServiceTierChange={props.onServiceTierChange}
+                    />
+                  </Suspense>
                 ) : voiceState === 'idle' && showModelPlaceholder ? (
                   <span className="tool tool--quiet">Loading models…</span>
                 ) : null}
 
-                {props.voiceAvailable && voiceState === 'idle' && !props.running ? (
-                  <ComposerVoiceButton
-                    disabled={props.disabled}
-                    isRecording={false}
-                    isTranscribing={false}
-                    durationLabel={formatRecordingDuration(recorder.durationMs)}
-                    onClick={() => void startVoice()}
-                  />
+                {props.voiceAvailable ? (
+                  <Suspense fallback={null}>
+                    <ComposerVoiceControl
+                      disabled={props.disabled}
+                      running={props.running}
+                      getCursor={() => area.current?.selectionStart ?? textRef.current.length}
+                      onStateChange={setVoiceState}
+                      onError={setVoiceError}
+                      onTranscribeVoice={props.onTranscribeVoice}
+                      onCancelVoice={props.onCancelVoice}
+                      onTranscript={(transcript, cursor, sendAfter) => {
+                        const inserted = insertTranscriptAtCursor(
+                          textRef.current,
+                          transcript,
+                          cursor,
+                        )
+                        if (inserted && (!sendAfter || !sendContent(inserted.text))) {
+                          insertTranscript(transcript, cursor)
+                        }
+                      }}
+                    />
+                  </Suspense>
                 ) : null}
 
-                {props.voiceAvailable && voiceState !== 'idle' ? (
-                  <ComposerVoiceRecorderBar
-                    disabled={props.disabled || props.running}
-                    isTranscribing={voiceState === 'transcribing'}
-                    durationLabel={formatRecordingDuration(recorder.durationMs)}
-                    waveformLevels={recorder.levels}
-                    onCancel={cancelVoice}
-                    onStop={() => void transcribeVoice()}
-                    onSubmit={() => void transcribeVoice(true)}
-                  />
-                ) : (
+                {voiceState === 'idle' ? (
                   <>
                     {props.running && !showStop && props.canSteerQueue ? (
                       <button
@@ -1502,10 +1525,10 @@ function ComposerComponent(props: {
                       </button>
                     </span>
                   </>
-                )}
+                ) : null}
               </div>
             </div>
-          </BorderBeam>
+          </DesignBeam>
         </div>
       </div>
       {voiceError ? (
@@ -1514,19 +1537,21 @@ function ComposerComponent(props: {
         </div>
       ) : null}
       {viewingMedia ? (
-        <MediaViewer
-          src={viewingMedia.src}
-          name={viewingMedia.name}
-          mediaType={viewingMedia.mediaType}
-          onReveal={
-            viewingMedia.localPath
-              ? () => {
-                  if (viewingMedia.localPath) void revealPath(viewingMedia.localPath)
-                }
-              : undefined
-          }
-          onClose={() => setViewingMedia(undefined)}
-        />
+        <Suspense fallback={null}>
+          <MediaViewer
+            src={viewingMedia.src}
+            name={viewingMedia.name}
+            mediaType={viewingMedia.mediaType}
+            onReveal={
+              viewingMedia.localPath
+                ? () => {
+                    if (viewingMedia.localPath) void revealPath(viewingMedia.localPath)
+                  }
+                : undefined
+            }
+            onClose={() => setViewingMedia(undefined)}
+          />
+        </Suspense>
       ) : null}
     </>
   )

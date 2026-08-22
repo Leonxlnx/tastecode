@@ -1,4 +1,3 @@
-import { z } from 'zod'
 export type ProfileIdentityPreferences = {
   displayName: string
   avatarDataUrl?: string | undefined
@@ -43,8 +42,8 @@ export async function readProfileImage(file: File): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.addEventListener('load', () => {
-      const result = z.string().safeParse(reader.result)
-      if (result.success) resolve(result.data)
+      const result = reader.result
+      if (typeof result === 'string') resolve(result)
       else reject(new Error('Read failed.'))
     })
     reader.addEventListener('error', () => reject(new Error('The image could not be read.')))
@@ -52,20 +51,6 @@ export async function readProfileImage(file: File): Promise<string> {
   })
   if (!DATA_URL.test(dataUrl)) throw new Error('This file is not a valid image.')
   return dataUrl
-}
-
-export function profileInitials(value: string): string {
-  const words = value.trim().split(/\s+/u).filter(Boolean)
-  const initials =
-    words.length > 1
-      ? words
-          .slice(0, 2)
-          .map((word) => Array.from(word)[0])
-          .join('')
-      : Array.from(words[0] ?? '')
-          .slice(0, 2)
-          .join('')
-  return initials.toUpperCase() || 'P'
 }
 
 async function hasExpectedSignature(file: File): Promise<boolean> {
