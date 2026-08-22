@@ -166,10 +166,7 @@ describe('Grok adapter', () => {
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
       ]),
     )
-    expect(providerSessionIds).toEqual([
-      createdSessionId,
-      '019fd9b0-1c9b-7dd3-85a2-2b7b628382d3',
-    ])
+    expect(providerSessionIds).toEqual([createdSessionId, '019fd9b0-1c9b-7dd3-85a2-2b7b628382d3'])
 
     // The end frame's session id resumes the CLI's own session next turn.
     await adapter.sendTurn(thread.id, 'And now?', [], {
