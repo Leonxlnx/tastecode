@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-18 3246d7da</span>
+        <span class="meta">2026-08-22 906b6d99</span>
       </div>
     </div>
 
@@ -313,8 +313,9 @@
                 >Rate limit windows in the account popup
                 <span class="d"
                   >clear dividers separate provider groups without splitting their windows; 5 hour
-                  and weekly reset times; non-ChatGPT accounts are honestly unavailable and
-                  malformed provider responses stay errors</span
+                  and weekly reset times; earned resets offer a hover Use control that confirms on
+                  the opposite side so a second click cannot spend them; non-ChatGPT accounts are
+                  honestly unavailable and malformed provider responses stay errors</span
                 ></span
               ></label
             >
@@ -504,11 +505,13 @@
               ><input type="checkbox" /><span
                 >Effort low to max, restart-safe session resume, interrupt
                 <span class="d"
-                  >the stable TasteCode thread id stays separate from Grok's persisted native resume
-                  id, while MCP-enabled sessions reload their ACP identity; explicit Stop emits one
-                  interrupted terminal state after process shutdown and restores sending without a
-                  duplicate completion; open streamed and tool items settle on end, failure,
-                  interruption, replacement, and close</span
+                  >print-mode chooses Grok's native UUID at thread start and creates with
+                  --session-id, so a follow-up after Stop still --resume rather than opening a new
+                  Grok session; the stable TasteCode thread id stays separate from that persisted
+                  native id, while MCP-enabled sessions reload their ACP identity; explicit Stop
+                  emits one interrupted terminal state after process shutdown and restores sending
+                  without a duplicate completion; open streamed and tool items settle on end,
+                  failure, interruption, replacement, and close</span
                 ></span
               ></label
             >

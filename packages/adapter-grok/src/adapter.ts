@@ -10,12 +10,18 @@ import { z } from 'zod'
 
 /**
  * Tier 3 adapter: drives xAI's Grok Build CLI (`grok`) in headless
- * streaming-json mode — one `-p` invocation per turn, follow-ups resumed
- * through the CLI's own session id, the same shape as the Antigravity
- * adapter.
+ * streaming-json mode — one `--prompt-file` invocation per turn.
+ *
+ * Grok starts a fresh native session unless `--session-id` (create) or
+ * `--resume` (continue) is passed. The end frame also carries `sessionId`,
+ * but that arrives only after a clean stop. An interrupted first turn never
+ * emits it, so follow-ups used to look like `/new` with empty context.
+ * TasteCode therefore chooses a UUID at thread start, creates with
+ * `--session-id`, and resumes with `--resume` even if the previous child
+ * was stopped.
  *
  * Frames captured against grok 0.1.219 on Windows through real non-TTY
- * pipes (see fixtures/stream.jsonl):
+ * pipes (see fixtures/stream.jsonl), still valid on grok 1.0.5:
  *
  *   {"type":"thought","data":"..."}                             reasoning delta
  *   {"type":"text","data":"..."}                                answer delta
@@ -131,11 +137,17 @@ function applyGrokTurnOptions(current: GrokStartOptions, next: GrokTurnOptions):
   return merged
 }
 
+/** How this turn should bind to Grok's native session on disk. */
+export type GrokNativeSession = {
+  id: string
+  mode: 'create' | 'resume'
+}
+
 /** The per-turn argv. Only a prompt file path travels through CreateProcess. */
 export function grokTurnArgs(
   promptFile: string,
   options: GrokStartOptions,
-  sessionId: string | undefined,
+  session: GrokNativeSession | undefined,
 ): string[] {
   return [
     '--prompt-file',
@@ -148,7 +160,14 @@ export function grokTurnArgs(
     // not commands; full -> the CLI's own skip-everything mode.
     ...(options.approval === 'auto' ? ['--permission-mode', 'acceptEdits'] : []),
     ...(options.approval === 'full' ? ['--permission-mode', 'bypassPermissions'] : []),
-    ...(sessionId ? ['-r', sessionId] : []),
+    // Long flags: `-r` takes an optional value, so a bare `-r` can swallow the
+    // next switch or resume the wrong session. `--session-id` creates; it
+    // cannot resume an existing UUID.
+    ...(session
+      ? session.mode === 'create'
+        ? ['--session-id', session.id]
+        : ['--resume', session.id]
+      : []),
   ]
 }
 
@@ -221,6 +240,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   #threadId: string | undefined
   /** Grok's own session id, so follow-up turns resume rather than restart. */
   #providerSessionId: string | undefined
+  /**
+   * True once a child has been spawned against `#providerSessionId`. The first
+   * spawn creates with `--session-id`; every later spawn resumes with
+   * `--resume`, including after Stop.
+   */
+  #nativeSessionCreated = false
+  /** Last native id emitted to the server; used to skip duplicate announces. */
+  #announcedProviderSessionId: string | undefined
   #child: ChildProcessWithoutNullStreams | undefined
   /** Why we killed a child: only an explicit Stop completes the turn. */
   #killReasons = new WeakMap<ChildProcessWithoutNullStreams, 'interrupt' | 'silent'>()
@@ -239,6 +266,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     return GROK_CAPABILITIES
   }
 
+  /** Grok's opaque resume identity. It is not the TasteCode thread id. */
+  get providerSessionId(): string | undefined {
+    return this.#providerSessionId
+  }
+
   async startThread(workspacePath: string, options: GrokStartOptions = {}): Promise<Thread> {
     if (options.approval === 'auto-review') {
       throw new Error('Grok does not support automatic approval review')
@@ -247,7 +279,12 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     this.#options = options
     const threadId = `grok-${crypto.randomUUID()}`
     this.#threadId = threadId
-    this.#providerSessionId = undefined
+    // Chosen here, not from the end frame: Stop can kill the first child
+    // before Grok emits `sessionId`, and `--session-id` must be a UUID the
+    // CLI has not already created.
+    this.#providerSessionId = crypto.randomUUID()
+    this.#nativeSessionCreated = false
+    this.#announcedProviderSessionId = undefined
     this.#instructionsPending = Boolean(options.instructions)
     return {
       id: threadId,
@@ -260,7 +297,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   /**
    * Reattach a persisted TasteCode thread to Grok's separate native session.
    * The two ids are deliberately explicit here: passing the TasteCode id to
-   * `grok -r` would start from an identity the CLI has never heard of.
+   * `grok --resume` would start from an identity the CLI has never heard of.
    */
   async resumeThread(
     threadId: string,
@@ -277,6 +314,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     this.#options = options
     this.#threadId = threadId
     this.#providerSessionId = providerSessionId
+    this.#nativeSessionCreated = true
+    this.#announcedProviderSessionId = undefined
     // The provider session already received its initial instructions. Adding
     // them to the next user message would duplicate and expose them as text.
     this.#instructionsPending = false
@@ -318,7 +357,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       rmSync(promptDirectory, { recursive: true, force: true })
       throw error
     }
-    const args = grokTurnArgs(promptFile, this.#options, this.#providerSessionId)
+    const session = this.#providerSessionId
+      ? {
+          id: this.#providerSessionId,
+          mode: this.#nativeSessionCreated ? ('resume' as const) : ('create' as const),
+        }
+      : undefined
+    const args = grokTurnArgs(promptFile, this.#options, session)
 
     // A turn already in flight would be orphaned by the reassignment below.
     if (this.#child) this.#stop(this.#child)
@@ -335,6 +380,10 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     }
     this.#promptDirectories.set(child, promptDirectory)
     this.#child = child
+    // Spawn succeeded: the UUID now names a Grok session on disk (create) or
+    // continues one (resume). Follow-ups after Stop must use `--resume`.
+    this.#nativeSessionCreated = true
+    this.#announceProviderSessionId(this.#providerSessionId)
 
     this.emit('event', {
       type: 'turn.started',
@@ -457,14 +506,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         if (frame.type === 'end') {
           if (terminal) return
           terminal = true
-          if (
-            this.#child === child &&
-            frame.sessionId &&
-            frame.sessionId !== this.#providerSessionId
-          ) {
-            this.#providerSessionId = frame.sessionId
-            this.emit('providerSessionId', frame.sessionId)
-          }
+          if (this.#child === child) this.#announceProviderSessionId(frame.sessionId)
           finishItems(frame.stopReason === 'end_turn' ? 'completed' : 'failed')
           const usage = frame.usage
           if (usage) {
@@ -573,6 +615,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   dispose(): void {
     if (this.#child) this.#stop(this.#child)
     this.#child = undefined
+  }
+
+  #announceProviderSessionId(id: string | undefined): void {
+    if (!id || id === this.#announcedProviderSessionId) return
+    this.#providerSessionId = id
+    this.#announcedProviderSessionId = id
+    this.emit('providerSessionId', id)
   }
 
   #stop(child: ChildProcessWithoutNullStreams, reason: 'interrupt' | 'silent' = 'silent'): void {

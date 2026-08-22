@@ -69,8 +69,15 @@ class FakeTurnAdapter {
 }
 
 class FakeGrokAdapter extends FakeTurnAdapter {
+  providerSessionId: string | undefined
+
   constructor(options?: Record<string, unknown>) {
     super('grok', options)
+  }
+
+  override async startThread(workspacePath: string, options: Record<string, unknown>) {
+    this.providerSessionId = 'grok-created-session'
+    return super.startThread(workspacePath, options)
   }
 
   async resumeThread(
@@ -79,6 +86,7 @@ class FakeGrokAdapter extends FakeTurnAdapter {
     workspacePath: string,
     options: Record<string, unknown>,
   ) {
+    this.providerSessionId = providerSessionId
     this.resume = { threadId, providerSessionId, workspacePath }
     this.startOptions = options
     return { id: threadId, provider: 'grok' as const, workspacePath, createdAt: 1 }
@@ -258,7 +266,19 @@ describe('one-shot provider turn options', () => {
       workspacePath: 'C:\\repo',
     })
     expect(record.startOptions).toMatchObject({ model: 'grok-4.6' })
-    expect(learned).toEqual(['grok-native-session-rotated'])
+    expect(learned).toEqual(['grok-native-session', 'grok-native-session-rotated'])
+  })
+
+  it('reports Grok print-mode native identity as soon as the session attaches', async () => {
+    const runtime = providerRuntime(
+      'grok',
+      () => {},
+      () => undefined,
+    )
+    const { session } = await runtime.start('/repo', { model: 'grok-4.6' })
+    const learned: string[] = []
+    session.onProviderSessionId?.((sessionId) => learned.push(sessionId))
+    expect(learned).toEqual(['grok-created-session'])
   })
 
   it('resumes an MCP-enabled Grok thread through its ACP identity', async () => {

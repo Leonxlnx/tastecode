@@ -107,9 +107,14 @@ describe('Grok adapter', () => {
     await adapter.sendTurn(thread.id, 'Create hello.txt')
     const child = children[0]!
     const promptFile = args[args.indexOf('--prompt-file') + 1]!
+    const createdSessionId = args[args.indexOf('--session-id') + 1]!
     expect(readFileSync(promptFile, 'utf8')).toBe(
       '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nCreate hello.txt',
     )
+    expect(createdSessionId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    )
+    expect(providerSessionIds).toEqual([createdSessionId])
     const fixture = readFileSync(new URL('./fixtures/stream.jsonl', import.meta.url), 'utf8')
     child.stdout.end(fixture)
     await completed
@@ -123,6 +128,8 @@ describe('Grok adapter', () => {
       'grok-4.5',
       '--reasoning-effort',
       'high',
+      '--session-id',
+      createdSessionId,
     ])
 
     // Reasoning streams as its own item; the write becomes a file change.
@@ -159,15 +166,19 @@ describe('Grok adapter', () => {
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
       ]),
     )
-    expect(providerSessionIds).toEqual(['019fd9b0-1c9b-7dd3-85a2-2b7b628382d3'])
+    expect(providerSessionIds).toEqual([
+      createdSessionId,
+      '019fd9b0-1c9b-7dd3-85a2-2b7b628382d3',
+    ])
 
     // The end frame's session id resumes the CLI's own session next turn.
     await adapter.sendTurn(thread.id, 'And now?', [], {
       model: 'grok-4.5',
       effort: 'low',
     })
-    expect(args).toContain('-r')
+    expect(args).toContain('--resume')
     expect(args).toContain('019fd9b0-1c9b-7dd3-85a2-2b7b628382d3')
+    expect(args).not.toContain('--session-id')
     expect(
       args.slice(args.indexOf('--reasoning-effort'), args.indexOf('--reasoning-effort') + 2),
     ).toEqual(['--reasoning-effort', 'low'])
@@ -196,8 +207,10 @@ describe('Grok adapter', () => {
 
     expect(thread.id).toBe('grok-tastecode-thread')
     expect(turnId).toMatch(/^grok-tastecode-thread-turn-/)
-    expect(args.slice(args.indexOf('-r'))).toEqual(['-r', 'grok-native-session'])
+    expect(args.slice(args.indexOf('--resume'))).toEqual(['--resume', 'grok-native-session'])
+    expect(args).not.toContain('--session-id')
     expect(args).not.toContain('grok-tastecode-thread')
+    expect(providerSessionIds).toEqual(['grok-native-session'])
     const promptFile = args[args.indexOf('--prompt-file') + 1]!
     expect(readFileSync(promptFile, 'utf8')).toBe('Continue')
 
@@ -212,7 +225,30 @@ describe('Grok adapter', () => {
       }),
     )
     await learned
-    expect(providerSessionIds).toEqual(['grok-native-session-rotated'])
+    expect(providerSessionIds).toEqual(['grok-native-session', 'grok-native-session-rotated'])
+    adapter.dispose()
+  })
+
+  it('resumes the named Grok session after an interrupted first turn', async () => {
+    const children: FakeChild[] = []
+    const spawned: string[][] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, value) => {
+        spawned.push(value)
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'first')
+    const createdSessionId = spawned[0]![spawned[0]!.indexOf('--session-id') + 1]!
+    await adapter.interrupt()
+    await adapter.sendTurn(thread.id, 'follow-up')
+
+    expect(spawned[1]).toContain('--resume')
+    expect(spawned[1]).toContain(createdSessionId)
+    expect(spawned[1]).not.toContain('--session-id')
     adapter.dispose()
   })
 
@@ -256,7 +292,7 @@ describe('Grok adapter', () => {
     )
 
     await learned
-    expect(providerSessionIds).toEqual(['current-session'])
+    expect(providerSessionIds).toEqual(['native-session', 'current-session'])
     adapter.dispose()
   })
 
@@ -540,6 +576,14 @@ describe('Grok adapter', () => {
     expect(grokTurnArgs('x', { approval: 'ask' }, undefined).join(' ')).not.toContain(
       '--permission-mode',
     )
+    expect(grokTurnArgs('x', {}, { id: 'sess-1', mode: 'create' })).toEqual(
+      expect.arrayContaining(['--session-id', 'sess-1']),
+    )
+    expect(grokTurnArgs('x', {}, { id: 'sess-1', mode: 'resume' })).toEqual(
+      expect.arrayContaining(['--resume', 'sess-1']),
+    )
+    expect(grokTurnArgs('x', {}, { id: 'sess-1', mode: 'create' })).not.toContain('--resume')
+    expect(grokTurnArgs('x', {}, { id: 'sess-1', mode: 'resume' })).not.toContain('--session-id')
   })
 
   it('declares the one-shot print-mode capability set', () => {
