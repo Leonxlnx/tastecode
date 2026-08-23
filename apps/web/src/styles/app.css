@@ -4126,7 +4126,7 @@
   display: flex;
   align-items: center;
   gap: 1px;
-  min-height: 36px;
+  min-height: 28px;
   padding-right: 6px;
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
@@ -4161,7 +4161,7 @@
   font: inherit;
   font-size: var(--t-sm);
   font-weight: 520;
-  min-height: 32px;
+  min-height: 28px;
   padding: 4px 8px;
   text-align: left;
 }
@@ -4213,7 +4213,7 @@
 
 .proj__sessions {
   list-style: none;
-  margin: 1px 0 6px;
+  margin: 1px 0 2px;
   padding: 0;
   /* THE truncation fix. As a grid item the list defaults to min-width auto,
      so a long nowrap title made it wider than the drawer and the overflow
