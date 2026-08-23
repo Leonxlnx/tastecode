@@ -8764,7 +8764,6 @@
   background: var(--model-picker-bg);
   border-radius: var(--r-popup);
   box-shadow: none;
-  translate: -28px 0;
 }
 
 .model-selector {
@@ -9854,12 +9853,6 @@
   .composer__send-beam {
     flex: none;
     margin-left: auto;
-  }
-
-  /* The near-full-width panel must not inherit the desktop -28px offset,
-     which would shove its left edge off a phone screen. */
-  .model-selector__menu {
-    translate: none;
   }
 
   /* On short viewports (landscape phones) the fixed 246px catalog plus the

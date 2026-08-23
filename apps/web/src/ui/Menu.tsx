@@ -184,13 +184,19 @@ export function Menu(props: {
 
     const updatePosition = () => {
       const triggerBounds = trigger.current?.getBoundingClientRect()
-      const menuBounds = panel.current?.getBoundingClientRect()
-      if ((!triggerBounds && !contextPoint) || !menuBounds) return
+      const currentPanel = panel.current
+      const menuBounds = currentPanel?.getBoundingClientRect()
+      if ((!triggerBounds && !contextPoint) || !currentPanel || !menuBounds) return
+
+      // The opening animation scales the visual bounds. Layout dimensions
+      // stay stable, so right-aligned menus do not drift while it runs.
+      const menuWidth = currentPanel.offsetWidth || menuBounds.width
+      const menuHeight = currentPanel.offsetHeight || menuBounds.height
 
       // Panels that want to sit flush with their trigger (the account popup)
       // read this; everyone else keeps their intrinsic width.
-      if (triggerBounds && panel.current) {
-        panel.current.style.setProperty('--menu-trigger-w', `${triggerBounds.width}px`)
+      if (triggerBounds) {
+        currentPanel.style.setProperty('--menu-trigger-w', `${triggerBounds.width}px`)
       }
 
       const preferredDrop = props.drop ?? 'up'
@@ -201,21 +207,18 @@ export function Menu(props: {
       const spaceBelow = window.innerHeight - anchorBottom - gap - VIEWPORT_GUTTER
       let drop = preferredDrop
 
-      if (drop === 'down' && menuBounds.height > spaceBelow && spaceAbove > spaceBelow) {
+      if (drop === 'down' && menuHeight > spaceBelow && spaceAbove > spaceBelow) {
         drop = 'up'
-      } else if (drop === 'up' && menuBounds.height > spaceAbove && spaceBelow > spaceAbove) {
+      } else if (drop === 'up' && menuHeight > spaceAbove && spaceBelow > spaceAbove) {
         drop = 'down'
       }
 
       const preferredLeft = contextPoint
         ? contextPoint.x
         : props.align === 'right'
-          ? (triggerBounds?.right ?? 0) - menuBounds.width
+          ? (triggerBounds?.right ?? 0) - menuWidth
           : (triggerBounds?.left ?? 0)
-      const maxLeft = Math.max(
-        VIEWPORT_GUTTER,
-        window.innerWidth - menuBounds.width - VIEWPORT_GUTTER,
-      )
+      const maxLeft = Math.max(VIEWPORT_GUTTER, window.innerWidth - menuWidth - VIEWPORT_GUTTER)
       const left = Math.min(Math.max(preferredLeft, VIEWPORT_GUTTER), maxLeft)
       const anchorX = contextPoint
         ? contextPoint.x
@@ -223,19 +226,15 @@ export function Menu(props: {
           ? (triggerBounds?.right ?? 0)
           : (triggerBounds?.left ?? 0)
 
-      const preferredTop =
-        drop === 'down' ? anchorBottom + gap : anchorTop - gap - menuBounds.height
-      const maxTop = Math.max(
-        VIEWPORT_GUTTER,
-        window.innerHeight - menuBounds.height - VIEWPORT_GUTTER,
-      )
+      const preferredTop = drop === 'down' ? anchorBottom + gap : anchorTop - gap - menuHeight
+      const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - menuHeight - VIEWPORT_GUTTER)
       const top = Math.min(Math.max(preferredTop, VIEWPORT_GUTTER), maxTop)
       const next: MenuPosition = {
         left,
         drop,
-        originX: anchorX <= left + menuBounds.width / 2 ? 'left' : 'right',
+        originX: anchorX <= left + menuWidth / 2 ? 'left' : 'right',
         originY: drop === 'up' ? 'bottom' : 'top',
-        ...(drop === 'up' ? { bottom: window.innerHeight - top - menuBounds.height } : { top }),
+        ...(drop === 'up' ? { bottom: window.innerHeight - top - menuHeight } : { top }),
       }
 
       setPosition((current) =>

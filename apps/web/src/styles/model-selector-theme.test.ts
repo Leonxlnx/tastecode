@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest'
 
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
+const modelSelectorSource = readFileSync(
+  new URL('../ui/ModelSelector.tsx', import.meta.url),
+  'utf8',
+)
 
 describe('model selector theme CSS', () => {
   it('keeps the sticky model header opaque in light mode', () => {
@@ -25,5 +29,13 @@ describe('model selector theme CSS', () => {
       /\.model-selector__provider \{[^}]*transition:[^}]*background var\(--dur-fast\) var\(--ease-out\),[^}]*box-shadow var\(--dur-fast\) var\(--ease-out\),[^}]*color var\(--dur-fast\) var\(--ease-out\),[^}]*transform var\(--dur-press\) var\(--ease-out\);/s,
     )
     expect(appCss).not.toContain('model-provider-pop')
+  })
+
+  it('aligns the picker right edge with its trigger', () => {
+    const menu = appCss.match(/\.model-selector__menu \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+
+    expect(modelSelectorSource).toMatch(/<Menu\s+align="right"/)
+    expect(menu).not.toContain('translate:')
+    expect(menu).not.toContain('transform:')
   })
 })

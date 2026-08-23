@@ -123,6 +123,33 @@ describe('Menu', () => {
     expect(menu.style.left).toBe('139px')
   })
 
+  it('keeps a right-aligned panel fixed while its opening animation scales visual bounds', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 })
+    vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
+      if (this.classList.contains('menutrigger')) return rect(350, 170, 70, 24)
+      if (this.classList.contains('menu')) {
+        return rect(0, 0, this.classList.contains('is-positioned') ? 248 : 260, 142)
+      }
+      return rect(0, 0, 0, 0)
+    })
+
+    render(
+      <Menu align="right" label="Models" trigger={() => <span>Open</span>}>
+        {() => <div>Animated models</div>}
+      </Menu>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }))
+
+    const menu = screen.getByRole('menu')
+    Object.defineProperties(menu, {
+      offsetWidth: { configurable: true, value: 260 },
+      offsetHeight: { configurable: true, value: 142 },
+    })
+    fireEvent(window, new Event('resize'))
+
+    expect(menu.style.left).toBe('160px')
+  })
+
   it('opens at the pointer when its context-menu target is right-clicked', () => {
     vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
       if (this.textContent === 'Project row') return rect(40, 60, 100, 20)
