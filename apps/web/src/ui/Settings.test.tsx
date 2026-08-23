@@ -1324,6 +1324,7 @@ describe('provider settings', () => {
       throw new Error(`unexpected ${method}`)
     })
     const onProviderLoginTerminalOpen = vi.fn()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
     render(
       <ProviderSettings
@@ -1362,6 +1363,11 @@ describe('provider settings', () => {
       method: 'providers.launch',
       params: { provider: 'claude-code', columns: 320, rows: 30 },
     })
+    transport.emit('terminal.output', {
+      terminalId: 'term-claude-login',
+      data: 'If the browser did not open, visit https://claude.example.test/oauth\r\n',
+    })
+    expect(open).not.toHaveBeenCalled()
     expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })

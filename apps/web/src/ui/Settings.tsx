@@ -1827,7 +1827,13 @@ function CliSignInRow(props: {
     setStartError(undefined)
     setShowTerminal(false)
     setCopied(false)
-    void beginLogin(props.transport, props.target)
+    // The expanded provider CLI opens its own browser. Do not open the URL it
+    // prints as well, or one Sign in click creates two browser tabs.
+    void beginLogin(
+      props.transport,
+      props.target,
+      props.onOpenExpandedTerminal ? () => undefined : undefined,
+    )
       .then(() => {
         props.onOpenExpandedTerminal?.({
           provider: props.provider.id,
