@@ -5124,6 +5124,29 @@ describe('global shortcuts', () => {
 })
 
 describe('live sessions', () => {
+  it('starts each entered session with a fresh thread view', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'First chat', running: false },
+          { id: 'thread-2', title: 'Second chat', running: false },
+        ],
+      },
+    ]
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^First chat,/ }))
+    const firstView = screen.getByTestId('thread')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+
+    await waitFor(() => expect(screen.getByTestId('thread')).not.toBe(firstView))
+  })
+
   it('keeps a rename made while a provisional session is starting', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },

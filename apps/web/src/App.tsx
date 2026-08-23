@@ -619,6 +619,9 @@ export function App() {
     | undefined
   >()
   const [threadRevealRequest, setThreadRevealRequest] = useState(0)
+  // Session entry gets a fresh virtualizer at the latest message. A pending
+  // session becoming durable keeps this key and preserves its live view.
+  const [threadEntryKey, setThreadEntryKey] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
   const [rollbackOpen, setRollbackOpen] = useState(false)
@@ -3130,6 +3133,7 @@ export function App() {
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)
       setThreadRevealRequest((request) => request + 1)
+      setThreadEntryKey((key) => key + 1)
       setActivePath(found?.project.path)
       const cached = threadStates.current.get(id)
       if (cached) {
@@ -4292,6 +4296,7 @@ export function App() {
                 >
                   {activeId ? (
                     <Thread
+                      key={threadEntryKey}
                       items={thread.items}
                       loading={loadingThreadId === activeId}
                       liveItems={thread.liveItems}
