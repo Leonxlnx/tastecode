@@ -247,7 +247,14 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
     ...original,
     TerminalPane: memo((props: ComponentProps<typeof original.TerminalPane>) => {
       utilityRenders.terminalPane()
-      return <div data-testid="terminal-pane">{props.threadId ?? props.projectPath}</div>
+      return (
+        <div
+          data-testid="terminal-pane"
+          className={props.mode === 'workspace' ? 'terminal-pane--workspace' : undefined}
+        >
+          {props.threadId ?? props.projectPath}
+        </div>
+      )
     }),
   }
 })
