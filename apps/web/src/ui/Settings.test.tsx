@@ -1045,15 +1045,33 @@ describe('provider settings', () => {
 
     const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')
     if (!codexRow) throw new Error('Codex provider row missing')
-    const email = within(codexRow).getByText('private@example.com')
+    const email = within(codexRow).getByText('private@example.com', {
+      selector: '.settings__email-value',
+    })
     expect(email.className).toBe('settings__email-value')
-    const emailButton = email.closest<HTMLButtonElement>('.settings__email')
-    expect(emailButton?.getAttribute('title')).toBe('Click to reveal email')
-    expect(emailButton?.getAttribute('data-revealed')).toBe('false')
-    if (!emailButton) throw new Error('redacted email button missing')
+    const emailControl = email.closest<HTMLElement>('.settings__email')
+    if (!emailControl) throw new Error('redacted email control missing')
+    const emailButton = within(emailControl).getByRole('button', { name: 'Show account email' })
+    expect(emailButton.getAttribute('title')).toBe('Hover to preview or click to keep visible')
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+    expect(emailControl.getAttribute('data-pinned')).toBe('false')
+
+    fireEvent.pointerEnter(emailButton, { pointerType: 'mouse' })
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    expect(emailButton.querySelector('.settings__email-eye--hide')).toBeTruthy()
+    fireEvent.pointerLeave(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+
+    fireEvent.pointerEnter(emailButton, { pointerType: 'mouse' })
     fireEvent.click(emailButton)
-    expect(emailButton.getAttribute('data-revealed')).toBe('true')
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    expect(emailControl.getAttribute('data-pinned')).toBe('true')
     expect(emailButton.getAttribute('title')).toBe('Click to hide email')
+    fireEvent.pointerLeave(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    fireEvent.click(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+    expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
     // Beta scope: agent rows and the API-connection form stay out entirely,

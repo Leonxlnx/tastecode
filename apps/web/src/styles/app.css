@@ -2443,38 +2443,104 @@
 }
 
 .settings__email {
-  display: inline-block;
+  display: inline-flex;
   width: min(180px, 100%);
-  padding: 0;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
+  align-items: center;
+  gap: 3px;
   vertical-align: bottom;
 }
 
-.settings__email:focus-visible {
+.settings__email-toggle {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+}
+
+.settings__email-toggle:focus-visible {
   outline: 1px solid currentColor;
   outline-offset: 1px;
 }
 
+.settings__email-eye {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--dur-press) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.settings__email-eye--show {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.settings__email-eye--hide {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+.settings__email[data-revealed='true'] .settings__email-eye--show {
+  opacity: 0;
+  transform: scale(0.9);
+}
+
+.settings__email[data-revealed='true'] .settings__email-eye--hide {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.settings__email-clip {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  padding: 4px;
+  margin: -4px;
+  overflow: hidden;
+}
+
 .settings__email-value {
   display: block;
+  grid-area: 1 / 1;
   overflow: hidden;
-  filter: blur(5px);
-  text-overflow: clip;
-  transition: filter 0s;
   user-select: none;
   white-space: nowrap;
 }
 
+.settings__email-clip::before {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background: color-mix(in srgb, var(--surface) 2%, transparent);
+  backdrop-filter: blur(2.75px);
+  -webkit-backdrop-filter: blur(2.75px);
+  content: '';
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity var(--dur-reveal) var(--ease-out);
+}
+
+.settings__email[data-revealed='true'] .settings__email-clip::before {
+  opacity: 0;
+}
+
 .settings__email[data-revealed='true'] .settings__email-value {
-  filter: none;
   user-select: text;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings__email-eye,
+  .settings__email-clip::before {
+    transition: none;
+  }
 }
 
 .settings__row-control {

@@ -30,6 +30,18 @@ describe('settings viewport CSS', () => {
     )
   })
 
+  it('crossfades the softer private email blur and swaps its reveal icons', () => {
+    expect(appCss).toMatch(
+      /\.settings__email-clip::before \{[^}]*backdrop-filter: blur\(2\.75px\);[^}]*opacity: 1;[^}]*transition: opacity var\(--dur-reveal\) var\(--ease-out\);/s,
+    )
+    expect(appCss).toMatch(
+      /\.settings__email\[data-revealed='true'\] \.settings__email-eye--show \{[^}]*opacity: 0;[^}]*transform: scale\(0\.9\);/s,
+    )
+    expect(appCss).toMatch(
+      /\.settings__email\[data-revealed='true'\] \.settings__email-eye--hide \{[^}]*opacity: 1;[^}]*transform: scale\(1\);/s,
+    )
+  })
+
   it('keeps a single provider action at the far edge on wide and narrow rows', () => {
     expect(appCss).toMatch(
       /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty \{[^}]*display: none;/s,

@@ -32,6 +32,8 @@ import {
   CircleUserRound,
   Blocks,
   Database,
+  Eye,
+  EyeOff,
   Info,
   Boxes,
   Keyboard,
@@ -1965,21 +1967,40 @@ function AccountIdentity(props: { provider: ProviderId; account: Account }) {
   )
 }
 
-/** T3-style privacy: the fixed-width address stays redacted until explicitly clicked. */
+/** Preview on hover or focus, then let a click keep the address visible. */
 function AccountEmail(props: { email: string }) {
-  const [revealed, setRevealed] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const [previewed, setPreviewed] = useState(false)
+  const revealed = pinned || previewed
+
+  const togglePinned = () => {
+    setPreviewed(false)
+    setPinned((current) => !current)
+  }
+
   return (
-    <button
-      className="settings__email"
-      type="button"
-      data-revealed={revealed}
-      aria-label={revealed ? 'Hide account email' : 'Reveal account email'}
-      aria-pressed={revealed}
-      title={revealed ? 'Click to hide email' : 'Click to reveal email'}
-      onClick={() => setRevealed((current) => !current)}
-    >
-      <span className="settings__email-value">{props.email}</span>
-    </button>
+    <span className="settings__email" data-revealed={revealed} data-pinned={pinned}>
+      <button
+        className="settings__email-toggle"
+        type="button"
+        aria-label={pinned ? 'Hide account email' : 'Show account email'}
+        aria-pressed={pinned}
+        title={pinned ? 'Click to hide email' : 'Hover to preview or click to keep visible'}
+        onPointerEnter={(event) => {
+          if (event.pointerType !== 'touch') setPreviewed(true)
+        }}
+        onPointerLeave={() => setPreviewed(false)}
+        onFocus={() => setPreviewed(true)}
+        onBlur={() => setPreviewed(false)}
+        onClick={togglePinned}
+      >
+        <Eye className="settings__email-eye settings__email-eye--show" size={15} aria-hidden />
+        <EyeOff className="settings__email-eye settings__email-eye--hide" size={15} aria-hidden />
+      </button>
+      <span className="settings__email-clip">
+        <span className="settings__email-value">{props.email}</span>
+      </span>
+    </span>
   )
 }
 
