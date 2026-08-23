@@ -64,6 +64,19 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.sess:has\(\.sess__spinner\) \{[^}]*padding-left: 28px;/s)
   })
 
+  it('keeps the account popup readable beside a compact trigger', () => {
+    expect(appCss).toMatch(
+      /\.menu--settings \{[^}]*width: min\(\s*max\(320px, var\(--menu-trigger-w/s,
+    )
+    expect(appCss).toMatch(/\.menu--settings \{[^}]*max\(320px,[^}]*calc\(100vw - 16px\)[^}]*;/s)
+  })
+
+  it('makes the account trigger almost full-width with its chevron on the right', () => {
+    expect(appCss).toMatch(/\.rail__foot \.menutrigger \{[^}]*width: 100%;/s)
+    expect(appCss).toMatch(/\.account \{[^}]*width: 100%;/s)
+    expect(appCss).toMatch(/\.account__chevron \{[^}]*margin-left: auto;/s)
+  })
+
   it('uses the light foreground color for unread chat dots', () => {
     expect(appCss).toMatch(
       /\.sess__unread-dot \{[^}]*width: 6px;[^}]*height: 6px;[^}]*background: var\(--light\);/s,

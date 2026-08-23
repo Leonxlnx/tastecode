@@ -23,6 +23,7 @@ import type {
 } from '@harness/contracts'
 import {
   Archive,
+  ChevronUp,
   Ellipsis,
   Folder,
   FolderOpen,
@@ -707,6 +708,7 @@ function SidebarComponent(props: {
                   )}
                 </span>
                 <span className="account__name">{profileDisplayName || props.providerName}</span>
+                <ChevronUp className="account__chevron" size={13} aria-hidden />
               </span>
             )}
           >

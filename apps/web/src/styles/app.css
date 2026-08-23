@@ -628,17 +628,20 @@
 .account {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  width: 100%;
+  max-width: 100%;
   min-width: 0;
 }
 
 .account__avatar {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   flex: none;
   background: var(--surface-3);
+  border: 1px solid var(--chrome-border);
   border-radius: var(--r-circle);
   color: var(--text-2);
   font-size: var(--t-xs);
@@ -655,25 +658,34 @@
 .account__name {
   min-width: 0;
   font-size: var(--t-sm);
+  font-weight: 520;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Quiet like every other rail row — no raised chrome box. */
+.account__chevron {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+/* The footer padding keeps this almost full-width instead of edge-to-edge. */
 .rail__foot .menutrigger {
   width: 100%;
-  min-height: 34px;
+  min-height: 36px;
+  padding: 5px 8px 5px 5px;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: var(--text-2);
   transition:
     background var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
 
-.rail__foot .menutrigger:hover:not(:disabled) {
+.rail__foot .menutrigger:hover:not(:disabled),
+.rail__foot .menutrigger[aria-expanded='true'] {
   background: var(--control-hover);
   color: var(--text);
 }
@@ -8496,11 +8508,11 @@
 }
 
 .menu--settings {
-  /* Flush with the account trigger: same left edge, same width. The
-     fallback only exists for the first frame before positioning runs, and
-     min-width must yield or the base .menu minimum wins over the match. */
+  /* The account trigger is content-sized. Matching it can make plan-limit
+     rows too narrow to read, so keep a useful baseline while still growing
+     with a wider trigger and clamping to the viewport. */
   min-width: 0;
-  width: min(var(--menu-trigger-w, calc(var(--rail-w) - 20px)), calc(100vw - 16px));
+  width: min(max(320px, var(--menu-trigger-w, calc(var(--rail-w) - 20px))), calc(100vw - 16px));
   border-radius: var(--r-md);
 }
 
