@@ -139,14 +139,7 @@ export const ComposerResourcePicker = forwardRef<
   }, [open, contextKey, props.transport, props.provider, props.projectPath, revision])
 
   const resources = useMemo(
-    () => [
-      ...(skills?.capabilities.inventory
-        ? skills.skills.filter((skill) => skill.scope === 'project').map(skillResource)
-        : []),
-      ...(mcp?.capabilities.inventory
-        ? mcp.servers.filter((server) => server.scope === 'project').map(mcpResource)
-        : []),
-    ],
+    () => [...(skills?.skills ?? []).map(skillResource), ...(mcp?.servers ?? []).map(mcpResource)],
     [skills, mcp],
   )
   const query = props.trigger?.query.trim().toLocaleLowerCase() ?? ''

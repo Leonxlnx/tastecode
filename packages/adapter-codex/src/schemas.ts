@@ -151,8 +151,8 @@ export const SkillsListResponseSchema = z.object({
       skills: z.array(
         z.object({
           name: z.string(),
-          description: z.string(),
-          interface: z.object({ displayName: z.string().optional() }).optional(),
+          description: z.string().optional(),
+          interface: z.object({ displayName: z.string().nullish() }).optional(),
           dependencies: z.object({ tools: z.array(SkillToolDependencySchema) }).optional(),
           path: z.string(),
           scope: z.enum(['repo', 'user', 'system', 'admin']),

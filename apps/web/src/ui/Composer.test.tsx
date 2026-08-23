@@ -592,18 +592,19 @@ describe('Composer prompts', () => {
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
-  it('does not offer provider-global resources as project resources', async () => {
+  it('names user skills and global MCP servers from slash, at, and dollar', async () => {
     const transport = createResourceTransport(async (method) => {
       if (method === 'skills.list') {
         return {
-          capabilities: { inventory: true, configure: true, install: true },
+          capabilities: { inventory: true, configure: false, install: false },
           skills: [
             {
-              id: '/skills/global/SKILL.md',
-              name: 'global-skill',
-              displayName: 'Global skill',
-              source: { type: 'provider' },
-              scope: 'system',
+              id: '/Users/me/.agents/skills/animate/SKILL.md',
+              name: 'animate',
+              displayName: 'Animate',
+              description: 'Build an animation from scratch',
+              source: { type: 'folder', path: '/Users/me/.agents/skills/animate' },
+              scope: 'user',
               enabled: true,
               dependencyErrors: [],
             },
@@ -613,8 +614,29 @@ describe('Composer prompts', () => {
       }
       if (method === 'mcp.list') {
         return {
-          capabilities: { inventory: true },
-          servers: [{ id: 'global-docs', scope: 'global', enabled: true }],
+          capabilities: {
+            inventory: false,
+            add: true,
+            update: true,
+            remove: true,
+            reload: false,
+            startOAuth: false,
+            cancelOAuth: false,
+          },
+          servers: [
+            {
+              id: 'officialDocs',
+              displayName: 'Official Docs',
+              description: 'Search official product documentation',
+              scope: 'global',
+              enabled: true,
+              auth: { status: 'not_required' },
+              startup: { state: 'ready' },
+              tools: [],
+              resources: [],
+              resourceTemplates: [],
+            },
+          ],
         }
       }
       throw new Error(`Unexpected request: ${method}`)
@@ -622,11 +644,12 @@ describe('Composer prompts', () => {
     renderComposer(vi.fn(), { transport })
     const composer = screen.getByPlaceholderText('Do anything')
 
-    fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
-
-    await waitFor(() => expect(transport.request).toHaveBeenCalledTimes(2))
-    expect(screen.getByText('No more skills or MCP servers are available.')).toBeTruthy()
-    expect(screen.queryByText('Global skill')).toBeNull()
+    for (const marker of ['/', '@', '$'] as const) {
+      fireEvent.change(composer, { target: { value: marker, selectionStart: 1 } })
+      expect(await screen.findByRole('option', { name: /Animate/ })).toBeTruthy()
+      expect(screen.getByRole('option', { name: /Official Docs/ })).toBeTruthy()
+      fireEvent.keyDown(composer, { key: 'Escape' })
+    }
   })
 
   it('closes the resource picker before Escape interrupts a running turn', async () => {
