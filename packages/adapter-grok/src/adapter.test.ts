@@ -10,6 +10,8 @@ import {
   GROK_CAPABILITIES,
   GrokAdapter,
   grokPromptJson,
+  grokToolLabel,
+  grokToolOutput,
   grokTurnArgs,
   parseGrokAccount,
   parseGrokModels,
@@ -145,7 +147,8 @@ describe('Grok adapter', () => {
           item: expect.objectContaining({
             type: 'file_change',
             status: 'completed',
-            text: expect.stringMatching(/hello\.txt[\s\S]*SearchReplace/),
+            path: 'C:\\repo\\hello.txt',
+            text: expect.stringMatching(/hello\.txt[\s\S]*hi/),
           }),
         }),
         expect.objectContaining({
@@ -707,6 +710,87 @@ describe('Grok adapter', () => {
       '--session-id',
       expect.any(String),
     ])
+    adapter.dispose()
+  })
+
+  it('formats Grok tool rows as a headline and readable output', () => {
+    expect(
+      grokToolLabel('read_file', 'read_file', { file_path: '/repo/apps/web/src/ui/Thread.tsx' }),
+    ).toBe('Read /repo/apps/web/src/ui/Thread.tsx')
+    expect(grokToolLabel('grep', 'grep', { pattern: 'thoughtLabel' })).toBe('Searched thoughtLabel')
+    expect(
+      grokToolOutput({
+        content: [
+          {
+            type: 'content',
+            content: { type: 'text', text: 'found 29 matches' },
+          },
+        ],
+        rawOutput: { type: 'GrepSearch', stdout: [60, 119, 140] },
+      }),
+    ).toBe('found 29 matches')
+    expect(
+      grokToolOutput({
+        content: [
+          {
+            type: 'content',
+            content: {
+              type: 'text',
+              text: '130→ return `${event.message?.id ?? event.uuid ?? fallback}-${id}`',
+            },
+          },
+        ],
+      }),
+    ).toBe('130→ return `${event.message?.id ?? event.uuid ?? fallback}-${id}`')
+  })
+
+  it('maps a grep tool call onto a searchable headline instead of JSON', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'search')
+
+    child.stdout.end(
+      [
+        {
+          type: 'tool_call',
+          toolCallId: 'call-grep',
+          toolName: 'grep',
+          title: 'grep',
+          rawInput: { pattern: 'thoughtLabel', path: 'apps/web/src/ui/Thread.tsx' },
+        },
+        {
+          type: 'tool_call_update',
+          toolCallId: 'call-grep',
+          status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'found 12 matches' } }],
+          rawOutput: { type: 'GrepSearch', stdout: [60, 119] },
+        },
+        { type: 'end', stopReason: 'end_turn' },
+      ]
+        .map((frame) => JSON.stringify(frame))
+        .join('\n') + '\n',
+    )
+    child.emit('close', 0)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'item.started',
+          item: expect.objectContaining({ type: 'tool_call', text: 'Searched thoughtLabel' }),
+        }),
+        expect.objectContaining({
+          type: 'item.completed',
+          item: expect.objectContaining({
+            type: 'tool_call',
+            text: 'Searched thoughtLabel\nfound 12 matches',
+          }),
+        }),
+      ]),
+    )
     adapter.dispose()
   })
 

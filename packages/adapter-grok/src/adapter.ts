@@ -208,7 +208,15 @@ const GrokFrameSchema = z.object({
   title: z.string().optional(),
   status: z.string().nullable().optional(),
   rawInput: z
-    .object({ file_path: z.string().optional(), command: z.string().optional() })
+    .object({
+      file_path: z.string().optional(),
+      path: z.string().optional(),
+      target_file: z.string().optional(),
+      command: z.string().optional(),
+      pattern: z.string().optional(),
+      query: z.string().optional(),
+      regex: z.string().optional(),
+    })
     .optional(),
   content: JsonRpcValueSchema.optional(),
   rawOutput: JsonRpcValueSchema.optional(),
@@ -482,18 +490,19 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
                 ? 'command'
                 : 'tool_call'
           const itemId = `${turnId}-tool-${++toolCounter}`
+          const path = grokToolPath(frame.rawInput)
           const entry = {
             itemId,
             itemType,
-            label: frame.title ?? name,
+            label: grokToolLabel(name, frame.title, frame.rawInput),
             ...(frame.rawInput?.command
               ? {
-                  command: frame.rawInput?.command,
+                  command: frame.rawInput.command,
                 }
               : {}),
-            ...(frame.rawInput?.file_path
+            ...(path
               ? {
-                  path: frame.rawInput?.file_path,
+                  path,
                 }
               : {}),
           } satisfies OpenTool
@@ -702,17 +711,96 @@ function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promi
   })
 }
 
-function grokToolOutput(frame: GrokFrame): string | undefined {
-  const parts = [frame.content, frame.rawOutput]
-    .map((value) => {
-      if (value === null || value === undefined || value === '') return undefined
-      if (Array.isArray(value) && value.length === 0) return undefined
-      const text = z.string().safeParse(value)
-      return text.success ? text.data : JSON.stringify(value, null, 2)
-    })
-    .filter((value): value is string => value !== undefined)
+export function grokToolLabel(
+  name: string,
+  title: string | undefined,
+  input: GrokFrame['rawInput'],
+): string {
+  const path = grokToolPath(input)
+  const pattern = firstString(input, ['pattern', 'query', 'regex'])
+  switch (name) {
+    case 'read_file':
+    case 'read':
+      return path ? `Read ${path}` : 'Read file'
+    case 'grep':
+    case 'search':
+    case 'codebase_search':
+      return pattern ? `Searched ${pattern}` : 'Searched'
+    case 'list_dir':
+    case 'list_files':
+      return path ? `Listed ${path}` : 'Listed files'
+    default:
+      return title ?? name
+  }
+}
+
+export function grokToolOutput(frame: {
+  content?: unknown
+  rawOutput?: unknown
+}): string | undefined {
+  const parts = [readableGrokValue(frame.content), readableGrokValue(frame.rawOutput)].filter(
+    (value): value is string => value !== undefined,
+  )
   const unique = [...new Set(parts)]
   return unique.length ? unique.join('\n') : undefined
+}
+
+function grokToolPath(input: GrokFrame['rawInput']): string | undefined {
+  return firstString(input, ['file_path', 'path', 'target_file'])
+}
+
+function firstString(
+  input: GrokFrame['rawInput'],
+  keys: Array<keyof NonNullable<GrokFrame['rawInput']>>,
+): string | undefined {
+  if (!input) return undefined
+  for (const key of keys) {
+    const value = input[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return undefined
+}
+
+function readableGrokValue(value: unknown, depth = 0): string | undefined {
+  if (depth > 8 || value === null || value === undefined || value === '') return undefined
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return undefined
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+      try {
+        return readableGrokValue(JSON.parse(trimmed) as unknown, depth + 1) ?? value
+      } catch {
+        return value
+      }
+    }
+    return value
+  }
+  if (typeof value !== 'object') return undefined
+  if (Array.isArray(value)) {
+    if (value.length === 0 || value.every((entry) => typeof entry === 'number')) return undefined
+    const parts = value
+      .map((entry) => readableGrokValue(entry, depth + 1))
+      .filter((entry): entry is string => entry !== undefined)
+    const unique = [...new Set(parts)]
+    return unique.length ? unique.join('\n') : undefined
+  }
+  const record = value as Record<string, unknown>
+  if (typeof record.newText === 'string' || typeof record.oldText === 'string') {
+    const path = typeof record.path === 'string' ? record.path : undefined
+    const next = typeof record.newText === 'string' ? record.newText : undefined
+    const parts = [path, next].filter((entry): entry is string => Boolean(entry))
+    return parts.length ? parts.join('\n') : undefined
+  }
+  for (const key of ['text', 'stdout', 'output', 'result', 'message', 'content']) {
+    if (key in record) {
+      const extracted = readableGrokValue(record[key], depth + 1)
+      if (extracted) return extracted
+    }
+  }
+  return undefined
 }
 
 /** Auth as the CLI reports it on `grok models` — nothing else is read. */

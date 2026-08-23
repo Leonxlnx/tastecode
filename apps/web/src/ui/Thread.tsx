@@ -812,7 +812,7 @@ const Row = memo(function Row({
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
   const detail =
-    item.type === 'command'
+    item.type === 'command' || item.type === 'tool_call'
       ? activityDetail(item)
       : isContextCompaction(item)
         ? undefined
@@ -1087,6 +1087,7 @@ function activityDetail(item: Item): string | undefined {
   if (isContextCompaction(item)) return undefined
   const image = imageViewDetail(item)
   if (image !== undefined) return image
+  if (item.type === 'tool_call') return toolCallDetail(item)
   const details =
     item.type === 'command' ? [item.text] : item.type === 'file_change' ? [item.text] : [item.text]
   const unique = details.filter(
@@ -1098,6 +1099,98 @@ function activityDetail(item: Item): string | undefined {
       details.indexOf(detail) === index,
   )
   return unique.length > 0 ? unique.join('\n') : undefined
+}
+
+function toolCallHeadline(item: Item): string {
+  const firstLine = (item.text ?? '').split('\n', 1)[0]?.trim() ?? ''
+  const withoutPayload = firstLine.replace(/\s*[\[{].*$/, '').trim()
+  const raw = withoutPayload || firstLine
+  return raw ? humanToolHeadline(raw) : 'Tool call'
+}
+
+function humanToolHeadline(raw: string): string {
+  const space = raw.indexOf(' ')
+  const token = (space === -1 ? raw : raw.slice(0, space)).toLowerCase()
+  const rest = space === -1 ? '' : raw.slice(space + 1)
+  if (token === 'read_file') return rest ? `Read ${rest}` : 'Read file'
+  if (token === 'grep' || token === 'codebase_search') {
+    return rest ? `Searched ${rest}` : 'Searched'
+  }
+  if (token === 'list_dir' || token === 'list_files') {
+    return rest ? `Listed ${rest}` : 'Listed files'
+  }
+  if (/[_-]/.test(token)) {
+    const named = token.replaceAll(/[_-]+/g, ' ')
+    const titled = `${named.charAt(0).toUpperCase()}${named.slice(1)}`
+    return rest ? `${titled} ${rest}` : titled
+  }
+  return raw
+}
+
+function toolCallDetail(item: Item): string | undefined {
+  const text = item.text?.trim()
+  if (!text) return undefined
+  const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
+  const rest = text.includes('\n') ? text.slice(firstLine.length + 1).trim() : ''
+  const payloadIndex = firstLine.search(/\s[\[{]/)
+  const payload =
+    rest || (payloadIndex > 0 ? firstLine.slice(payloadIndex).trim() : '') || undefined
+  return payload ? unwrapToolPayload(payload) : undefined
+}
+
+function unwrapToolPayload(text: string): string {
+  const trimmed = text.trim()
+  if (
+    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  ) {
+    try {
+      return readableToolJson(JSON.parse(trimmed) as unknown) ?? trimmed
+    } catch {
+      return trimmed
+    }
+  }
+  return trimmed
+}
+
+function readableToolJson(value: unknown, depth = 0): string | undefined {
+  if (depth > 8 || value === null || value === undefined || value === '') return undefined
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return undefined
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+      try {
+        return readableToolJson(JSON.parse(trimmed) as unknown, depth + 1) ?? value
+      } catch {
+        return value
+      }
+    }
+    return value
+  }
+  if (typeof value !== 'object') return undefined
+  if (Array.isArray(value)) {
+    if (value.length === 0 || value.every((entry) => typeof entry === 'number')) return undefined
+    const parts = value
+      .map((entry) => readableToolJson(entry, depth + 1))
+      .filter((entry): entry is string => entry !== undefined)
+    const unique = [...new Set(parts)]
+    return unique.length ? unique.join('\n') : undefined
+  }
+  const record = value as Record<string, unknown>
+  for (const key of ['text', 'stdout', 'output', 'result', 'message', 'content']) {
+    if (key in record) {
+      const extracted = readableToolJson(record[key], depth + 1)
+      if (extracted) return extracted
+    }
+  }
+  return undefined
+}
+
+function isSearchTool(text: string): boolean {
+  return text.includes('search') || /\bgrep\b/.test(text)
 }
 
 function ViewedImagePreview({
@@ -1249,8 +1342,8 @@ function activityCategoryLabel(item: Item): string {
       const text = toolText(item)
       if (isContextCompaction(item)) return 'Compacted context window'
       if (isImageView(item) || text.includes('image')) return 'Viewed images'
-      if (text.includes('search')) return 'Searched'
-      if (text.match(/read|open|file/)) return 'Read files'
+      if (isSearchTool(text)) return 'Searched'
+      if (text.match(/read|open|file|list/)) return 'Read files'
       return 'Used tools'
     }
     default:
@@ -1282,10 +1375,10 @@ function liveActivityLabel(item: Item): string {
         return ongoing ? 'Viewing image' : 'Viewed image'
       }
       if (text.includes('image')) return ongoing ? 'Viewing images' : 'Viewed images'
-      if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
-      if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
-      const tool = inlineActivityText(item.text)
-      if (!tool) return ongoing ? 'Using a tool' : 'Used a tool'
+      if (isSearchTool(text)) return ongoing ? 'Searching' : 'Searched'
+      if (text.match(/read|open|file|list/)) return ongoing ? 'Reading files' : 'Read files'
+      const tool = inlineActivityText(toolCallHeadline(item))
+      if (!tool || tool === 'Tool call') return ongoing ? 'Using a tool' : 'Used a tool'
       return `${ongoing ? 'Using' : 'Used'} ${tool}`
     }
     case 'plan':
@@ -1558,8 +1651,8 @@ function glyph(item: Item) {
     case 'tool_call':
       if (toolText(item).includes('image')) return <Images size={14} />
       if (designPhaseLabel(toolText(item))) return <Palette size={13} />
-      if (toolText(item).includes('search')) return <Search size={14} />
-      if (toolText(item).match(/read|open|file/)) return <BookOpen size={14} />
+      if (isSearchTool(toolText(item))) return <Search size={14} />
+      if (toolText(item).match(/read|open|file|list/)) return <BookOpen size={14} />
       return <Wrench size={13} />
     case 'plan':
       return <ListChecks size={13} />
@@ -1593,8 +1686,8 @@ function summariseLive(item: Item): string {
         return ongoing ? 'Viewing image' : 'Viewed image'
       }
       if (text.includes('image')) return ongoing ? 'Viewing an image' : 'Viewed an image'
-      if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
-      if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
+      if (isSearchTool(text)) return ongoing ? 'Searching' : 'Searched'
+      if (text.match(/read|open|file|list/)) return ongoing ? 'Reading files' : 'Read files'
       return ongoing ? 'Using a tool' : 'Used a tool'
     }
     case 'plan':
@@ -1652,8 +1745,7 @@ function summarise(item: Item): string {
               : item.status === 'started'
                 ? 'Image inspection interrupted'
                 : 'Viewed image'
-            : item.text) ??
-        'Tool call'
+            : toolCallHeadline(item))
       )
     case 'plan':
       return 'Plan'
