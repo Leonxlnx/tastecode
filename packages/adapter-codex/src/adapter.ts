@@ -41,6 +41,7 @@ import {
   AccountResponseSchema,
   ApprovalParamsSchema,
   CodexRateLimitResponseSchema,
+  ConsumeRateLimitResetResponseSchema,
   CommandOutputDeltaNotificationSchema,
   ErrorNotificationSchema,
   GuardianReviewCompletedSchema,
@@ -70,6 +71,7 @@ import {
   WarningNotificationSchema,
   type CodexRateLimitResponse,
   type CodexRateLimitSnapshot,
+  type CodexResetOutcome,
   type ApprovalParams,
   type ErrorNotification,
   type GuardianReviewAction,
@@ -201,6 +203,7 @@ export type ProviderLimit = {
   usedPercent: number
   resetsAt?: number | undefined
   valueLabel?: string | undefined
+  action?: 'consume-reset' | undefined
 }
 
 export type CodexLimitSource =
@@ -597,6 +600,23 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async rateLimits(): Promise<ProviderLimit[]> {
     const source = await this.rateLimitSource()
     return source.status === 'ready' ? source.limits : []
+  }
+
+  /**
+   * Spend one earned reset. The caller owns the idempotency key so a retry of
+   * the same attempt cannot redeem a second credit.
+   */
+  async consumeRateLimitReset(idempotencyKey: string): Promise<CodexResetOutcome> {
+    const response = await this.#callParsed(
+      'account/rateLimitResetCredit/consume',
+      { idempotencyKey },
+      ConsumeRateLimitResetResponseSchema,
+      CONTROL_READ_TIMEOUT_MS,
+    ).catch((cause) => {
+      if (cause instanceof ZodError) throw new Error('Codex reset-credit response was invalid.')
+      throw cause
+    })
+    return response.outcome
   }
 
   onUsageChanged(listener: () => void): void {
@@ -1381,6 +1401,7 @@ export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLi
       label: 'Rate limit resets',
       usedPercent: 0,
       valueLabel: `${Math.floor(availableResets)} available`,
+      action: 'consume-reset',
     })
   }
   return rows

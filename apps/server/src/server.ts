@@ -723,6 +723,11 @@ export function startServer(
         )
       }
 
+      case 'usage.consumeReset': {
+        const p = parseParams(method, params)
+        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey)
+      }
+
       case 'sideChat.start': {
         const p = parseParams(method, params)
         const thread = await orchestrator.startSideThread(p.parentThreadId, {

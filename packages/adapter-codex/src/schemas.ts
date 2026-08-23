@@ -57,6 +57,11 @@ export const CodexRateLimitResponseSchema = z.object({
 export type CodexRateLimitSnapshot = z.infer<typeof CodexRateLimitSnapshotSchema>
 export type CodexRateLimitResponse = z.infer<typeof CodexRateLimitResponseSchema>
 
+export const ConsumeRateLimitResetResponseSchema = z.object({
+  outcome: z.enum(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed']),
+})
+export type CodexResetOutcome = z.infer<typeof ConsumeRateLimitResetResponseSchema>['outcome']
+
 export const LoginAccountResponseSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('apiKey') }),
   z.object({ type: z.literal('chatgpt'), loginId: z.string(), authUrl: z.string() }),

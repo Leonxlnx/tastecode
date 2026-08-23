@@ -1062,6 +1062,25 @@ export class Orchestrator {
     return { signedIn: false }
   }
 
+  async consumeRateLimitReset(
+    provider: ProviderId,
+    idempotencyKey: string,
+  ): Promise<{ outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' }> {
+    if (provider !== 'codex') {
+      throw new Error(`provider "${provider}" cannot consume a rate-limit reset`)
+    }
+    const adapter = new CodexAdapter()
+    adapter.on('log', (line) => this.#onLog(line))
+    try {
+      await adapter.start()
+      const outcome = await adapter.consumeRateLimitReset(idempotencyKey)
+      this.#onUsageChanged(provider)
+      return { outcome }
+    } finally {
+      adapter.dispose()
+    }
+  }
+
   async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
     const readers = new Map<ProviderId, () => Promise<AdapterLimitSource>>([
       [
