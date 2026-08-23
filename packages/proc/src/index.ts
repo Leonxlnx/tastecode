@@ -1,7 +1,10 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { desktopPath } from './desktop-path.js'
 import { killTree } from './kill.js'
 import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
 
+export { applyDesktopPath, desktopPath } from './desktop-path.js'
+export type { DesktopPathOptions } from './desktop-path.js'
 export { killTree } from './kill.js'
 
 export {
@@ -36,7 +39,7 @@ export function spawnCli(
 ): ChildProcessWithoutNullStreams {
   const spawnOptions = {
     ...(!(options.cwd === undefined) ? { cwd: options.cwd } : {}),
-    env: options.replaceEnv ? options.env : { ...process.env, ...options.env },
+    env: childEnvironment(options),
     stdio: ['pipe', 'pipe', 'pipe'] satisfies Array<'pipe'>,
     windowsHide: true,
   }
@@ -55,15 +58,32 @@ export function spawnCli(
  * CLIs open browsers, start sessions, and print banners on first launch, none
  * of which is an acceptable side effect of drawing a list.
  */
-export function isInstalled(command: string): Promise<boolean> {
+export function isInstalled(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
   const [lookup, args] =
     process.platform === 'win32' ? ['where.exe', [command]] : ['/usr/bin/which', [command]]
 
   return new Promise((resolve) => {
-    const child = spawn(lookup, args, { stdio: 'ignore', windowsHide: true })
+    const child = spawn(lookup, args, {
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...environment, PATH: desktopPath(environment.PATH ?? '', { env: environment }) },
+    })
     child.on('error', () => resolve(false))
     child.on('exit', (code) => resolve(code === 0))
   })
+}
+
+function childEnvironment(options: {
+  env?: NodeJS.ProcessEnv
+  replaceEnv?: boolean
+}): NodeJS.ProcessEnv | undefined {
+  if (options.replaceEnv) return options.env
+  const env = { ...process.env, ...options.env }
+  env.PATH = desktopPath(env.PATH ?? '', { env })
+  return env
 }
 
 /**

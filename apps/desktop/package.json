@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
+    "@harness/proc": "workspace:*",
     "@harness/server": "workspace:*",
     "electron-updater": "6.8.9",
     "zod": "4.4.3"

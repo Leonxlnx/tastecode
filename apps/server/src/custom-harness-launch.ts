@@ -3,8 +3,8 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
+import { desktopPath, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
-import { killTree, spawnCli } from '@harness/proc'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
 
@@ -144,42 +144,11 @@ function launchEnvironment(
   const suppliedPath = adapterEnvironment.PATH ?? custom.PATH ?? process.env.PATH ?? ''
   return {
     ...merged,
-    PATH: augmentedPath(suppliedPath),
+    PATH: desktopPath(suppliedPath, { env: merged }),
     // A wrapper can boot from its own directory without losing the project it
     // should operate on. Native protocols also receive the workspace normally.
     HARNESS_WORKSPACE_PATH: workspacePath,
   }
-}
-
-function augmentedPath(current: string): string {
-  const home = os.homedir()
-  const conventional =
-    process.platform === 'win32'
-      ? [
-          process.env['APPDATA'] ? path.join(process.env['APPDATA'], 'npm') : undefined,
-          process.env['LOCALAPPDATA']
-            ? path.join(process.env['LOCALAPPDATA'], 'Microsoft', 'WindowsApps')
-            : undefined,
-          path.join(home, '.local', 'bin'),
-          path.join(home, 'bin'),
-        ]
-      : [
-          path.join(home, '.local', 'bin'),
-          path.join(home, 'bin'),
-          path.join(home, '.cargo', 'bin'),
-          '/opt/homebrew/bin',
-          '/usr/local/bin',
-        ]
-  const seen = new Set<string>()
-  const entries = [...current.split(path.delimiter), ...conventional]
-    .filter((entry): entry is string => Boolean(entry))
-    .filter((entry) => {
-      const key = process.platform === 'win32' ? entry.toLowerCase() : entry
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-  return entries.join(path.delimiter)
 }
 
 function resolveExecutable(command: string, cwd: string, environment: NodeJS.ProcessEnv): string {

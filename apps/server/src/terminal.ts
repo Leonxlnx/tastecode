@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type IPty } from 'node-pty'
+import { desktopPath } from '@harness/proc'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
@@ -277,6 +278,7 @@ export function terminalEnvironment(
 ): NodeJS.ProcessEnv {
   return {
     ...environment,
+    PATH: desktopPath(environment.PATH ?? '', { env: environment }),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'TasteCode',

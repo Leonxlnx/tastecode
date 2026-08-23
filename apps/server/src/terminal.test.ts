@@ -20,13 +20,15 @@ describe('TerminalManager', () => {
   })
 
   it('advertises true color without dropping the native process environment', () => {
-    expect(terminalEnvironment({ PATH: '/system/bin', CUSTOM: 'kept' })).toEqual({
-      PATH: '/system/bin',
-      CUSTOM: 'kept',
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      TERM_PROGRAM: 'TasteCode',
-    })
+    const environment = terminalEnvironment({ PATH: '/system/bin', CUSTOM: 'kept' })
+    expect(environment.CUSTOM).toBe('kept')
+    expect(environment.TERM).toBe('xterm-256color')
+    expect(environment.COLORTERM).toBe('truecolor')
+    expect(environment.TERM_PROGRAM).toBe('TasteCode')
+    expect(environment.PATH?.split(path.delimiter)[0]).toBe('/system/bin')
+    expect(environment.PATH?.split(path.delimiter)).toContain(
+      path.join(os.homedir(), '.local', 'bin'),
+    )
   })
 
   it('batches high-volume PTY output without changing its byte order', () => {

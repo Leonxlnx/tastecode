@@ -32,6 +32,7 @@ import {
   type PreviewCaptureRequest,
   type PreviewCaptureResult,
 } from '@harness/contracts'
+import { applyDesktopPath, desktopPath } from '@harness/proc'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
   attachmentByteRange,
@@ -83,6 +84,8 @@ import {
 import { viewedImagePath } from './viewed-image-path.js'
 
 const { autoUpdater } = updaterPackage
+
+applyDesktopPath()
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -185,7 +188,7 @@ function startOwnedServer(): void {
   serverSupervisor = new ServerSupervisor({
     command: process.execPath,
     args: [serverEntry],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
     onLog: (line) => console.log('[server]', line),
     onGaveUp: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {

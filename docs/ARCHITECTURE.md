@@ -124,8 +124,10 @@ depend on that vendor. A different Claude surface can still replace it without t
 entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
 directory, and non-secret environment overrides in
 `~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
-never belong in this file. Custom commands resolve against a desktop-safe PATH that includes
-conventional user locations such as `~/.local/bin`. When a mod boots from its own directory,
+never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
+desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
+adds conventional user locations such as `~/.local/bin` and Homebrew's prefix rather than
+sourcing `.zshrc`. When a mod boots from its own directory,
 `HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
 receive that project normally. The source gets its own model catalog and persisted identity, so
 a fork can coexist with the stock CLI without replacing it.
@@ -358,3 +360,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.                 |
 | 2026-08-18 | Moved voice transcription from ChatGPT session reuse to explicit OpenAI API auth. |
 | 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.            |
+| 2026-08-22 | Applied the desktop-safe PATH to provider detection, CLI spawns, and the PTY.     |

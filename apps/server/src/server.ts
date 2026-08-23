@@ -11,6 +11,7 @@ import {
   RequestSchema,
   type MethodName,
 } from '@harness/contracts'
+import { applyDesktopPath } from '@harness/proc'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
 import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
@@ -74,6 +75,7 @@ export function startServer(
     accessToken?: string | undefined
   } = {},
 ) {
+  applyDesktopPath()
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
