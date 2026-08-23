@@ -103,13 +103,13 @@ describe('StageHeader', () => {
 })
 
 describe('PanelToggles', () => {
-  it('keeps both controls mounted while their icons change to hide actions', () => {
+  it('keeps both controls mounted while their open state changes', () => {
     const panels = panelProps()
     const { rerender } = render(<PanelToggles {...panels} />)
     const terminal = screen.getByRole('button', { name: 'Open terminal' })
     const workspace = screen.getByRole('button', { name: 'Show workspace tools' })
 
-    expect(terminal.querySelector('.lucide-panel-bottom-open')).not.toBeNull()
+    expect(terminal.querySelector('.lucide-square-terminal')).not.toBeNull()
     expect(workspace.querySelector('.lucide-panel-right-open')).not.toBeNull()
     fireEvent.click(terminal)
     fireEvent.click(workspace)
@@ -120,7 +120,7 @@ describe('PanelToggles', () => {
 
     expect(screen.getByRole('button', { name: 'Hide terminal' })).toBe(terminal)
     expect(screen.getByRole('button', { name: 'Hide workspace tools' })).toBe(workspace)
-    expect(terminal.querySelector('.lucide-panel-bottom-close')).not.toBeNull()
+    expect(terminal.querySelector('.lucide-square-terminal')).not.toBeNull()
     expect(workspace.querySelector('.lucide-panel-right-close')).not.toBeNull()
     expect(workspace.closest('.panel-toggles')?.classList).toContain('is-workspace-open')
   })

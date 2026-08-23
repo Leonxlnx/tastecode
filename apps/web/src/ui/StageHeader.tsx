@@ -8,8 +8,6 @@ import {
   GitPullRequest,
   History,
   Keyboard,
-  PanelBottomClose,
-  PanelBottomOpen,
   PanelLeft,
   PanelRightClose,
   PanelRightOpen,
@@ -73,11 +71,7 @@ export const PanelToggles = memo(function PanelToggles(props: {
           title={props.terminalOpen ? 'Hide terminal' : 'Open terminal'}
           onClick={props.onToggleTerminal}
         >
-          {props.terminalOpen ? (
-            <PanelBottomClose size={16} aria-hidden />
-          ) : (
-            <PanelBottomOpen size={16} aria-hidden />
-          )}
+          <SquareTerminal size={16} aria-hidden />
         </button>
       ) : null}
       <button
