@@ -1088,6 +1088,11 @@ function activityDetail(item: Item): string | undefined {
   const image = imageViewDetail(item)
   if (image !== undefined) return image
   if (item.type === 'tool_call') return toolCallDetail(item)
+  if (item.type === 'command' && item.command) {
+    const detail = toolCallDetail(item)
+    if (detail !== undefined) return detail
+    if (/\s[[{]/.test(item.text ?? '')) return undefined
+  }
   const details =
     item.type === 'command' ? [item.text] : item.type === 'file_change' ? [item.text] : [item.text]
   const unique = details.filter(
@@ -1133,24 +1138,62 @@ function toolCallDetail(item: Item): string | undefined {
   const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
   const rest = text.includes('\n') ? text.slice(firstLine.length + 1).trim() : ''
   const payloadIndex = firstLine.search(/\s[[{]/)
-  const payload =
-    rest || (payloadIndex > 0 ? firstLine.slice(payloadIndex).trim() : '') || undefined
+  const firstLinePayload = payloadIndex > 0 ? firstLine.slice(payloadIndex).trim() : ''
+  const payload = [firstLinePayload, rest].filter(Boolean).join('\n') || undefined
   return payload ? unwrapToolPayload(payload) : undefined
 }
 
-function unwrapToolPayload(text: string): string {
+function unwrapToolPayload(text: string): string | undefined {
   const trimmed = text.trim()
-  if (
-    (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-    (trimmed.startsWith('[') && trimmed.endsWith(']'))
-  ) {
+  const values = parseJsonSequence(trimmed)
+  if (!values) return trimmed
+  const parts = values
+    .map((value) => readableToolJson(value))
+    .filter((value): value is string => value !== undefined)
+  const unique = [...new Set(parts)]
+  return unique.length > 0 ? unique.join('\n') : undefined
+}
+
+function parseJsonSequence(text: string): unknown[] | undefined {
+  const values: unknown[] = []
+  let index = 0
+  while (index < text.length) {
+    while (/\s/.test(text[index] ?? '')) index += 1
+    if (index >= text.length) break
+    if (text[index] !== '{' && text[index] !== '[') return undefined
+
+    const start = index
+    let depth = 0
+    let inString = false
+    let escaped = false
+    let closed = false
+    for (; index < text.length; index += 1) {
+      const character = text[index]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (character === '\\') escaped = true
+        else if (character === '"') inString = false
+        continue
+      }
+      if (character === '"') inString = true
+      else if (character === '{' || character === '[') depth += 1
+      else if (character === '}' || character === ']') {
+        depth -= 1
+        if (depth === 0) {
+          index += 1
+          closed = true
+          break
+        }
+      }
+    }
+    if (!closed) return undefined
     try {
-      return readableToolJson(JSON.parse(trimmed) as unknown) ?? trimmed
+      values.push(JSON.parse(text.slice(start, index)) as unknown)
     } catch {
-      return trimmed
+      return undefined
     }
   }
-  return trimmed
+  return values.length > 0 ? values : undefined
 }
 
 function readableToolJson(value: unknown, depth = 0): string | undefined {

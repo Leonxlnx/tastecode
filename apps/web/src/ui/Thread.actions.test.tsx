@@ -461,22 +461,44 @@ describe('completed activity disclosure', () => {
       turnItem('prompt-1', 1, { role: 'user', text: 'Look it up' }),
       turnItem('grep-1', 2, {
         type: 'tool_call',
-        text: 'grep [ { "type": "content", "content": { "type": "text", "text": "found 29 matches" } } ]',
+        text: 'grep [ { "type": "content", "content": { "type": "text", "text": "found 29 matches" } } ]\n{ "type": "GrepSearch", "stdout": [60, 119, 140] }',
       }),
       turnItem('read-1', 3, {
         type: 'tool_call',
         text: 'Searched thoughtLabel\nfound 12 matches',
       }),
-      turnItem('answer-1', 4, { role: 'assistant', text: 'Done.' }),
+      turnItem('grep-empty', 4, {
+        type: 'tool_call',
+        text: 'grep [ { "type": "content", "content": { "type": "text", "text": "" } } ]\n{ "type": "GrepSearch", "stdout": [60, 119] }',
+      }),
+      turnItem('answer-1', 5, { role: 'assistant', text: 'Done.' }),
     ])
 
     const stack = screen.getByRole('button', { name: 'Searched' })
     expect(stack.textContent).not.toMatch(/"type": "content"/)
     fireEvent.click(stack)
     expect(screen.queryByText(/"type": "content"/)).toBeNull()
+    expect(screen.queryByText(/"type": "GrepSearch"/)).toBeNull()
     expect(screen.getByText('found 29 matches')).toBeTruthy()
     expect(screen.getByText('Searched thoughtLabel')).toBeTruthy()
     expect(screen.getByText('found 12 matches')).toBeTruthy()
+  })
+
+  it('hides empty structured output from persisted shell tool rows', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Check it' }),
+      turnItem('command-1', 2, {
+        type: 'command',
+        command: 'git status --short',
+        text: 'Bash [ { "type": "content", "content": { "type": "text", "text": "" } } ]\n{ "type": "Bash", "output": [], "exit_code": 0 }',
+      }),
+      turnItem('answer-1', 3, { role: 'assistant', text: 'Clean.' }),
+    ])
+
+    const stack = screen.getByRole('button', { name: 'Ran commands' })
+    fireEvent.click(stack)
+    expect(screen.queryByText(/"type": "content"/)).toBeNull()
+    expect(screen.queryByText(/"type": "Bash"/)).toBeNull()
   })
 
   it('stacks all tool calls across empty reasoning placeholders', () => {
