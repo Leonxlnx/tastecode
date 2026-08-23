@@ -780,7 +780,7 @@ function readableGrokValue(value: unknown, depth = 0): string | undefined {
   }
   if (typeof value !== 'object') return undefined
   if (Array.isArray(value)) {
-    if (value.length === 0 || value.every((entry) => typeof entry === 'number')) return undefined
+    if (value.every((entry) => typeof entry === 'number')) return undefined
     const parts = value
       .map((entry) => readableGrokValue(entry, depth + 1))
       .filter((entry): entry is string => entry !== undefined)

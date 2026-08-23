@@ -1103,7 +1103,7 @@ function activityDetail(item: Item): string | undefined {
 
 function toolCallHeadline(item: Item): string {
   const firstLine = (item.text ?? '').split('\n', 1)[0]?.trim() ?? ''
-  const withoutPayload = firstLine.replace(/\s*[\[{].*$/, '').trim()
+  const withoutPayload = firstLine.replace(/\s*[[{].*$/, '').trim()
   const raw = withoutPayload || firstLine
   return raw ? humanToolHeadline(raw) : 'Tool call'
 }
@@ -1132,7 +1132,7 @@ function toolCallDetail(item: Item): string | undefined {
   if (!text) return undefined
   const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
   const rest = text.includes('\n') ? text.slice(firstLine.length + 1).trim() : ''
-  const payloadIndex = firstLine.search(/\s[\[{]/)
+  const payloadIndex = firstLine.search(/\s[[{]/)
   const payload =
     rest || (payloadIndex > 0 ? firstLine.slice(payloadIndex).trim() : '') || undefined
   return payload ? unwrapToolPayload(payload) : undefined
@@ -1172,7 +1172,7 @@ function readableToolJson(value: unknown, depth = 0): string | undefined {
   }
   if (typeof value !== 'object') return undefined
   if (Array.isArray(value)) {
-    if (value.length === 0 || value.every((entry) => typeof entry === 'number')) return undefined
+    if (value.every((entry) => typeof entry === 'number')) return undefined
     const parts = value
       .map((entry) => readableToolJson(entry, depth + 1))
       .filter((entry): entry is string => entry !== undefined)
