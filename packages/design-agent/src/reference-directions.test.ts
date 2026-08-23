@@ -4,7 +4,11 @@ import { describe, expect, it } from 'vitest'
 import type { BrandSystem } from './brand.js'
 import type { DesignBrief } from './brief.js'
 import { PAGE_LAYOUT_FAMILIES } from './page.js'
-import { REFERENCE_DIRECTIONS, selectReferenceDirectionDeck } from './reference-directions.js'
+import {
+  REFERENCE_DIRECTIONS,
+  lockPageReferenceDirections,
+  selectReferenceDirectionDeck,
+} from './reference-directions.js'
 
 const brief: DesignBrief = {
   originalRequest: 'Build a calm launch page for a material research studio.',
@@ -95,5 +99,44 @@ describe('reference directions', () => {
     expect(firstDeck).toHaveLength(PAGE_LAYOUT_FAMILIES.length)
     expect(firstDeck.map(({ family }) => family)).toEqual(PAGE_LAYOUT_FAMILIES)
     expect(new Set(firstDeck.map(({ family }) => family)).size).toBe(PAGE_LAYOUT_FAMILIES.length)
+  })
+
+  it('does not reshuffle composition references when only brand styling changes', () => {
+    const restyledBrand: BrandSystem = {
+      ...brand,
+      colorPalette: [
+        { name: 'Paper', value: '#f6f3ed', usage: 'Primary surface' },
+        { name: 'Cobalt', value: '#1947e5', usage: 'Accent' },
+      ],
+      typefaces: [
+        {
+          family: 'Helvetica Neue',
+          source: 'system',
+          roles: ['display', 'body'],
+          weights: [400, 700],
+        },
+      ],
+    }
+
+    expect(selectReferenceDirectionDeck(brief, restyledBrand).map(({ id }) => id)).toEqual(
+      selectReferenceDirectionDeck(brief, brand).map(({ id }) => id),
+    )
+  })
+
+  it('locks either an attached user reference or a family-matched internal direction', () => {
+    const deck = selectReferenceDirectionDeck(brief, brand)
+    const page = {
+      version: 1 as const,
+      sections: [
+        { id: 'hero', layoutFamily: 'hero' as const, referenceDirectionId: 'user-reference-1' },
+      ],
+    } as Parameters<typeof lockPageReferenceDirections>[0]
+
+    expect(lockPageReferenceDirections(page, deck, ['user-reference-1']).sections[0]).toMatchObject(
+      { referenceDirectionId: 'user-reference-1' },
+    )
+    expect(() => lockPageReferenceDirections(page, deck)).toThrow(
+      'must identify an attached user reference or internal direction',
+    )
   })
 })

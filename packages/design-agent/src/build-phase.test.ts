@@ -3,9 +3,13 @@ import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  DesignSourceQualityError,
   designBuildPrompt,
+  designSourceQualityBaseline,
+  designSourceQualityCorrectionPrompt,
   exactBuildFileBaseline,
   parseBuildPhaseOutput,
+  validateDesignSourceQuality,
   validateExactBuildFiles,
 } from './build-phase.js'
 
@@ -63,12 +67,12 @@ describe('build phase', () => {
     const prompt = designBuildPrompt(...artifacts)
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
-    expect(prompt).toContain('Treat all three as hard composition requirements')
+    expect(prompt).toContain('The reference is the primary hard composition requirement')
     expect(prompt).toContain("Implement each section's recorded motion decision")
     expect(prompt).toContain('never use transition: all')
-    expect(prompt).toContain('Do not replace it with a generic centered heading')
+    expect(prompt).toContain('replace the reference with a generic centered heading')
     expect(prompt).toContain('Three lines is a rare maximum and four lines is always a failure')
-    expect(prompt).toContain('colored left-edge accent rails')
+    expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
     expect(prompt).toContain('Use cards generously for coherent features')
     expect(prompt).toContain('finished page must not become generic gray')
     expect(prompt).toContain('never leave a browser-default control')
@@ -80,6 +84,8 @@ describe('build phase', () => {
     expect(prompt).toContain('<brand-gradient-recipes>')
     expect(prompt).toContain("recipe's opaque contentSurface")
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
+    expect(prompt).toContain('It may not replace photography, product imagery')
+    expect(prompt).toContain('SVG is limited to an explicit functional icon, logo')
   })
 
   it('parses a completed implementation report', () => {
@@ -93,6 +99,169 @@ describe('build phase', () => {
         }),
       ),
     ).toMatchObject({ status: 'complete', files: ['src/App.tsx'] })
+  })
+
+  it('rejects generated one-sided card rails before Preview', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-source-quality-'))
+    try {
+      writeFileSync(
+        path.join(workspace, 'styles.css'),
+        '.feature-card { border-left: 3px solid #f40; padding: 1rem; }',
+      )
+      expect(() => validateDesignSourceQuality(workspace, [])).toThrow(DesignSourceQualityError)
+      expect(() => validateDesignSourceQuality(workspace, ['styles.css'])).toThrow(
+        'remove newly introduced card rails or unmanifested SVG substitutes',
+      )
+
+      writeFileSync(
+        path.join(workspace, 'styles.css'),
+        '.feature-card { background: linear-gradient(90deg, #f40 0 4px, transparent 4px); }',
+      )
+      expect(() => validateDesignSourceQuality(workspace, [])).toThrow(
+        'narrow card-edge gradient rail',
+      )
+
+      writeFileSync(
+        path.join(workspace, 'styles.css'),
+        '.feature-card > .accent { inline-size: 3px; align-self: stretch; }',
+      )
+      expect(() => validateDesignSourceQuality(workspace, [])).toThrow(
+        'full-height narrow card-edge strip',
+      )
+
+      writeFileSync(
+        path.join(workspace, 'Card.tsx'),
+        'const FeatureCard = styled.div`border-left: 3px solid #f40; padding: 1rem;`',
+      )
+      writeFileSync(path.join(workspace, 'styles.css'), '.feature-card { padding: 1rem; }')
+      expect(() => validateDesignSourceQuality(workspace, [])).toThrow(
+        'uses a one-sided card-edge border',
+      )
+
+      writeFileSync(
+        path.join(workspace, 'Card.tsx'),
+        '<article className="feature-card"><span className="absolute inset-y-0 left-0 w-[3px]" /></article>',
+      )
+      writeFileSync(path.join(workspace, 'styles.css'), '.feature-card { padding: 1rem; }')
+      expect(() => validateDesignSourceQuality(workspace, [])).toThrow(
+        'card markup contains a full-height narrow edge strip',
+      )
+
+      writeFileSync(
+        path.join(workspace, 'styles.css'),
+        '.feature-card { border: 1px solid #ddd; padding: 1rem; background: linear-gradient(to right, #fff 0%, #eee 100%); } .feature-card-atmosphere { background: linear-gradient(135deg, #fff, #eee); } .feature-card .divider { width: 40px; height: 2px; }',
+      )
+      rmSync(path.join(workspace, 'Card.tsx'))
+      mkdirSync(path.join(workspace, 'node_modules'), { recursive: true })
+      writeFileSync(
+        path.join(workspace, 'node_modules', 'vendor.css'),
+        '.feature-card { border-left: 3px solid red; }',
+      )
+      expect(() => validateDesignSourceQuality(workspace, [])).not.toThrow()
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('allows a source-quality correction to edit the offending implementation', () => {
+    const prompt = designSourceQualityCorrectionPrompt('src/Card.css contains a rail')
+    expect(prompt).toContain('Make one bounded edit pass')
+    expect(prompt).toContain('Remove every newly introduced prohibited source pattern')
+    expect(prompt).toContain('raw or standalone SVG substitutes')
+    expect(prompt).not.toContain('Do not repeat tool work')
+  })
+
+  it('rejects only source-quality violations introduced after the Build baseline', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-source-baseline-'))
+    try {
+      writeFileSync(path.join(workspace, 'legacy.css'), '.legacy-card { border-left: 2px solid; }')
+      const baseline = designSourceQualityBaseline(workspace)
+      expect(() => validateDesignSourceQuality(workspace, [], baseline)).not.toThrow()
+
+      writeFileSync(path.join(workspace, 'new.css'), '.proof-card { border-left: 3px solid; }')
+      expect(() => validateDesignSourceQuality(workspace, [], baseline)).toThrow(
+        'new.css: .proof-card uses a one-sided card-edge border',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects new SVG substitutes unless assets.json explicitly approves their functional role', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-svg-source-'))
+    const emptyAssets = { version: 1 as const, assets: [] }
+    try {
+      writeFileSync(path.join(workspace, 'legacy.svg'), '<svg viewBox="0 0 10 10"></svg>')
+      const baseline = designSourceQualityBaseline(workspace, emptyAssets)
+      expect(() => validateDesignSourceQuality(workspace, [], baseline, emptyAssets)).not.toThrow()
+
+      writeFileSync(path.join(workspace, 'brand-shape.svg'), '<svg viewBox="0 0 40 40"></svg>')
+      expect(() => validateDesignSourceQuality(workspace, [], baseline, emptyAssets)).toThrow(
+        'unmanifested standalone SVG substitute',
+      )
+
+      const deceptiveNeededAssets = {
+        version: 1 as const,
+        assets: [
+          {
+            id: 'brand-mark',
+            kind: 'icon' as const,
+            status: 'needed' as const,
+            purpose: 'Unresolved mark.',
+            requirements: [],
+            role: 'logo' as const,
+            sectionIds: ['hero'],
+            destination: 'brand-shape.svg',
+          },
+        ],
+      }
+      expect(() =>
+        validateDesignSourceQuality(workspace, [], baseline, deceptiveNeededAssets),
+      ).toThrow('unmanifested standalone SVG substitute')
+
+      const approvedAssets = {
+        version: 1 as const,
+        assets: [
+          {
+            id: 'brand-mark',
+            kind: 'icon' as const,
+            status: 'ready' as const,
+            purpose: 'Existing functional brand mark.',
+            requirements: [],
+            role: 'logo' as const,
+            sectionIds: ['hero'],
+            source: { kind: 'project' as const, reference: 'brand-shape.svg' },
+            destination: 'brand-shape.svg',
+          },
+        ],
+      }
+      expect(() =>
+        validateDesignSourceQuality(workspace, [], baseline, approvedAssets),
+      ).not.toThrow()
+
+      writeFileSync(
+        path.join(workspace, 'App.tsx'),
+        'export const Art = () => <svg viewBox="0 0 100 100"><path d="M0 0h100v100z" /></svg>',
+      )
+      expect(() => validateDesignSourceQuality(workspace, [], baseline, approvedAssets)).toThrow(
+        'unmanifested inline SVG substitute',
+      )
+      const deceptiveInlineApproval = {
+        ...approvedAssets,
+        assets: [
+          {
+            ...approvedAssets.assets[0]!,
+            source: { kind: 'project' as const, reference: 'App.tsx' },
+            destination: 'App.tsx',
+          },
+        ],
+      }
+      expect(() =>
+        validateDesignSourceQuality(workspace, [], baseline, deceptiveInlineApproval),
+      ).toThrow('unmanifested inline SVG substitute')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 
   it('rejects workspace extras when the brief requires an exact file set', () => {

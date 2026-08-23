@@ -1346,16 +1346,24 @@ describe('provider-neutral design briefing', () => {
     async (provider) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
+      const referencePath = path.join(workspace, 'reference-home.png')
+      writeFileSync(referencePath, 'reference image bytes')
       const { orchestrator, sessions, received, store, capturePreview } = harness()
       const stopCount = previewStops.count
       try {
         const thread = await orchestrator.startThread(provider, workspace, {})
-        await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT], {
-          model,
-          effort: 'xhigh',
-        })
+        await orchestrator.sendTurn(
+          thread.id,
+          'Create a website.',
+          [DESIGN_BRIEF_ATTACHMENT, referencePath],
+          {
+            model,
+            effort: 'xhigh',
+          },
+        )
 
         expect(sessions[0]?.sent[0]).toContain('TasteCode Design Briefing mode')
+        expect(sessions[0]?.sentAttachments[0]).toEqual([referencePath])
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -1380,7 +1388,11 @@ describe('provider-neutral design briefing', () => {
         expect(firstRequest?.type).toBe('user_input.requested')
         if (firstRequest?.type !== 'user_input.requested') throw new Error('missing questions')
         expect(firstRequest.request.questions).toHaveLength(5)
-        expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', askedQuestions: true })
+        expect(store.designRun(thread.id)).toMatchObject({
+          phase: 'brief',
+          askedQuestions: true,
+          referenceAttachments: [referencePath],
+        })
 
         orchestrator.respondToUserInput(thread.id, firstRequest.request.id, {
           field_0: ['Something vague'],
@@ -1465,6 +1477,7 @@ describe('provider-neutral design briefing', () => {
         ])
         expect(sessions[0]?.userInputs).toEqual([])
         expect(sessions[0]?.sent[3]).toContain('Brand phase')
+        expect(sessions[0]?.sentAttachments[3]).toEqual([referencePath])
 
         // The transcript walks the user through the briefing in plain words:
         // an invitation, an ack per answer round, a clarify nudge, a close.
@@ -1528,6 +1541,9 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'page' })
         expect(sessions[0]?.sent[4]).toContain('Page Blueprint phase')
+        expect(sessions[0]?.sent[4]).toContain('user-reference-1')
+        expect(sessions[0]?.sentAttachments[4]?.[0]).toBe(referencePath)
+        expect(sessions[0]?.sentAttachments[4]).toHaveLength(12)
 
         sessions[0]?.emit(
           message(
@@ -1550,6 +1566,7 @@ describe('provider-neutral design briefing', () => {
                   id: 'hero',
                   layoutFamily: 'hero',
                   layoutCases: ['hero-text-5', 'hero-visual-2'],
+                  referenceDirectionId: 'user-reference-1',
                   purpose: 'Introduce the offer',
                   copy: {
                     heading: 'Design that earns attention',
@@ -1571,11 +1588,13 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(6))
         expect(sessions[0]?.sent[5]).toContain('Asset phase')
+        expect(sessions[0]?.sentAttachments[5]).toEqual([referencePath])
 
         sessions[0]?.emit(message(JSON.stringify({ version: 1, assets: [] }), 's1-turn'))
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
         expect(sessions[0]?.sent[6]).toContain('Build phase')
+        expect(sessions[0]?.sentAttachments[6]).toEqual([referencePath])
 
         sessions[0]?.emit(
           message(
@@ -1609,7 +1628,8 @@ describe('provider-neutral design briefing', () => {
         )
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(9))
         expect(sessions[0]?.sent[8]).toContain('visual Review phase')
-        expect(sessions[0]?.sentAttachments[8]).toHaveLength(2)
+        expect(sessions[0]?.sentAttachments[8]).toHaveLength(3)
+        expect(sessions[0]?.sentAttachments[8]).toContain(referencePath)
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -1632,6 +1652,12 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(10))
         expect(sessions[0]?.sent[9]).toContain('repair attempt 1 of 2')
+        expect(sessions[0]?.sent[9]).toContain('<screenshots>')
+        expect(sessions[0]?.sentAttachments[9]).toHaveLength(3)
+        expect(sessions[0]?.sentAttachments[9]).toContain(referencePath)
+        expect(sessions[0]?.sentAttachments[9]).toEqual(
+          expect.arrayContaining(['/tmp/1440x1000.png', '/tmp/390x844.png']),
+        )
         sessions[0]?.emit(
           message(
             JSON.stringify({

@@ -91,6 +91,7 @@ export interface PageBlueprint {
     id: string
     layoutFamily?: PageLayoutFamily
     layoutCases?: string[]
+    referenceDirectionId?: string
     purpose: string
     userQuestion: string
     stage: 'orient' | 'qualify' | 'evaluate' | 'prove' | 'explain' | 'de_risk' | 'act' | 'continue'
@@ -145,6 +146,14 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
       ...(!(section.layoutCases === undefined)
         ? {
             layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`),
+          }
+        : {}),
+      ...(!(section.referenceDirectionId === undefined)
+        ? {
+            referenceDirectionId: string(
+              section.referenceDirectionId,
+              `sections[${index}].referenceDirectionId`,
+            ),
           }
         : {}),
       purpose: string(section.purpose, `sections[${index}].purpose`),

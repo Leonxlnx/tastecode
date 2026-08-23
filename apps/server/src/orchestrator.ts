@@ -13,6 +13,7 @@ import {
 } from '@harness/adapter-claude-code'
 import { cursorAccount, signOutCursor, startCursorLogin } from '@harness/adapter-cursor'
 import {
+  DesignSourceQualityError,
   ExactBuildFilesError,
   FINAL_BRIEFING_QUESTION,
   designAssetPrompt,
@@ -21,6 +22,8 @@ import {
   designBriefingPrompt,
   designBuildCorrectionPrompt,
   designBuildPrompt,
+  designSourceQualityBaseline,
+  designSourceQualityCorrectionPrompt,
   exactBuildFileBaseline,
   designPagePrompt,
   designPhaseCorrectionPrompt,
@@ -29,11 +32,15 @@ import {
   designReviewPrompt,
   enforceDomAuditFindings,
   isDesignBriefAttachment,
+  parseAssetManifest,
   parseAssetPhaseOutput,
   parseBrandPhaseOutput,
+  parseBrandSystem,
   parseBriefingOutput,
   parseBuildPhaseOutput,
   parsePagePhaseOutput,
+  parsePageBlueprint,
+  parseDesignBrief,
   parsePreviewPhaseOutput,
   parsePreviewPlan,
   parseRepairPhaseOutput,
@@ -42,13 +49,23 @@ import {
   readBrandSystem,
   readDesignBrief,
   readPageBlueprint,
+  referenceDirectionAttachments,
+  referenceDirectionsForPage,
+  selectReferenceDirectionDeck,
+  validateAssetManifestForPage,
+  validateDesignSourceQuality,
   validateExactBuildFiles,
+  validateResolvedDesignAssets,
   writeAssetManifest,
   writeBrandSystem,
   writeDesignBrief,
   writePageBlueprint,
   writeVisualReview,
   type BriefingQuestion,
+  type AssetManifest,
+  type BrandSystem,
+  type DesignBrief,
+  type PageBlueprint,
   type PreviewPlan,
   type ReviewScreenshot,
   type VisualReview,
@@ -68,6 +85,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { changedSince, restoreSnapshot, takeSnapshot } from './checkpoint.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
@@ -174,6 +192,7 @@ const DesignFlowPhaseSchema = z.enum([
 const DesignBriefInputSchema = z.record(z.string(), JsonValueSchema)
 const StoredDesignFlowSchema = z.object({
   originalRequest: z.string(),
+  referenceAttachments: z.array(z.string()).optional().default([]),
   options: z
     .object({
       model: z.string().optional(),
@@ -203,13 +222,19 @@ const StoredDesignFlowSchema = z.object({
     )
     .optional(),
   review: JsonValueSchema.optional(),
+  approvedBrief: JsonValueSchema.optional(),
+  approvedBrand: JsonValueSchema.optional(),
+  approvedPage: JsonValueSchema.optional(),
+  approvedAssets: JsonValueSchema.optional(),
   buildFileBaseline: z.array(z.string()).optional(),
+  designSourceBaseline: z.array(z.string()).optional(),
   buildSummary: z.string().optional(),
 })
 type DesignBriefInput = z.infer<typeof DesignBriefInputSchema>
 type DesignFlow = {
   workspacePath: string
   originalRequest: string
+  referenceAttachments: string[]
   options: TurnOptions
   phase: DesignFlowPhase
   askedQuestions: boolean
@@ -224,7 +249,12 @@ type DesignFlow = {
   previewUrl?: string
   screenshots?: ReviewScreenshot[]
   review?: VisualReview
+  approvedBrief?: DesignBrief
+  approvedBrand?: BrandSystem
+  approvedPage?: PageBlueprint
+  approvedAssets?: AssetManifest
   buildFileBaseline?: string[] | undefined
+  designSourceBaseline?: string[] | undefined
   buildSummary?: string
 }
 
@@ -250,10 +280,24 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
 
   let previewPlan: PreviewPlan | undefined
   let review: VisualReview | undefined
+  let approvedBrief: DesignBrief | undefined
+  let approvedBrand: BrandSystem | undefined
+  let approvedPage: PageBlueprint | undefined
+  let approvedAssets: AssetManifest | undefined
   try {
     if (stored.previewPlan !== undefined) previewPlan = parsePreviewPlan(stored.previewPlan)
     if (stored.review !== undefined) {
       review = parseReviewPhaseOutput(JSON.stringify(stored.review))
+    }
+    if (stored.approvedBrief !== undefined) {
+      approvedBrief = parseDesignBrief(stored.approvedBrief)
+    }
+    if (stored.approvedBrand !== undefined) {
+      approvedBrand = parseBrandSystem(stored.approvedBrand)
+    }
+    if (stored.approvedPage !== undefined) approvedPage = parsePageBlueprint(stored.approvedPage)
+    if (stored.approvedAssets !== undefined) {
+      approvedAssets = parseAssetManifest(stored.approvedAssets)
     }
   } catch {
     return undefined
@@ -271,6 +315,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   return {
     workspacePath,
     originalRequest: stored.originalRequest,
+    referenceAttachments: stored.referenceAttachments,
     options,
     phase,
     askedQuestions: stored.askedQuestions,
@@ -285,8 +330,13 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
     ...(screenshots ? { screenshots } : {}),
     ...(review ? { review } : {}),
+    ...(approvedBrief ? { approvedBrief } : {}),
+    ...(approvedBrand ? { approvedBrand } : {}),
+    ...(approvedPage ? { approvedPage } : {}),
+    ...(approvedAssets ? { approvedAssets } : {}),
     ...(stored.buildSummary ? { buildSummary: stored.buildSummary } : {}),
     ...(stored.buildFileBaseline ? { buildFileBaseline: stored.buildFileBaseline } : {}),
+    ...(stored.designSourceBaseline ? { designSourceBaseline: stored.designSourceBaseline } : {}),
   }
 }
 
@@ -1370,14 +1420,24 @@ export class Orchestrator {
       }
       const design = attachments.some(isDesignBriefAttachment)
       if (design) {
+        const referenceAttachments = attachments.filter(
+          (attachment) => !isDesignBriefAttachment(attachment),
+        )
+        if (referenceAttachments.length && !this.#get(threadId).session.capabilities.images) {
+          throw new Error(
+            'the selected provider cannot inspect the supplied design reference images',
+          )
+        }
         await this.#stopDesignPreview(threadId)
         // The flow keeps the user's own options; only brief-phase turns force
         // low effort (see #designTurnOptions). Storing the lowered options
         // here made Brand, Page, Build, and Review inherit the fast briefing
         // setting for the whole run.
+        const workspacePath = this.#repoPath(threadId)
         const flow: DesignFlow = {
-          workspacePath: this.#repoPath(threadId),
+          workspacePath,
           originalRequest: text,
+          referenceAttachments,
           options,
           phase: 'brief',
           askedQuestions: false,
@@ -1385,6 +1445,7 @@ export class Orchestrator {
           explicitAnswers: [],
           correcting: false,
           repairAttempt: 0,
+          designSourceBaseline: designSourceQualityBaseline(workspacePath),
         }
         this.#designFlows.set(threadId, flow)
         this.#saveDesignFlow(threadId)
@@ -1393,7 +1454,7 @@ export class Orchestrator {
           turnId = await this.#sendDesignTurn(
             threadId,
             designBriefingPrompt(text),
-            attachments.filter((path) => !isDesignBriefAttachment(path)),
+            referenceAttachments,
             this.#designTurnOptions(flow),
             pendingStart,
           )
@@ -2622,20 +2683,19 @@ export class Orchestrator {
     // leave #designFlows set with nothing to ever clear it, and the send
     // guard would silently queue every future prompt on this thread forever.
     let prompt: string
+    let attachments: string[]
     try {
       prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
+      attachments = this.#designAttachmentsFor(threadId, flow)
     } catch (error) {
       this.#failDesignFlow(threadId, error)
       return
     }
     delete flow.pendingPrompt
     this.#saveDesignFlow(threadId)
-    void this.#sendDesignTurn(
-      threadId,
-      prompt,
-      this.#designAttachmentsFor(flow),
-      this.#designTurnOptions(flow),
-    ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
+    void this.#sendDesignTurn(threadId, prompt, attachments, this.#designTurnOptions(flow)).catch(
+      (error: unknown) => this.#failDesignFlow(threadId, error),
+    )
   }
 
   /**
@@ -2650,27 +2710,141 @@ export class Orchestrator {
 
   #designPromptFor(flow: DesignFlow): string {
     if (flow.phase === 'brief') return designBriefingPrompt(flow.originalRequest)
-    const brief = readDesignBrief(flow.workspacePath)
-    if (flow.phase === 'brand') return designBrandPrompt(brief)
-    const brand = readBrandSystem(flow.workspacePath)
-    if (flow.phase === 'page') return designPagePrompt(brief, brand)
-    const page = readPageBlueprint(flow.workspacePath)
-    if (flow.phase === 'assets') return designAssetPrompt(brief, brand, page)
+    const brief = flow.approvedBrief ?? readDesignBrief(flow.workspacePath)
+    if (flow.phase === 'brand') return designBrandPrompt(brief, flow.referenceAttachments)
+    const brand = flow.approvedBrand ?? readBrandSystem(flow.workspacePath)
+    if (flow.phase === 'page') return designPagePrompt(brief, brand, flow.referenceAttachments)
+    const page = flow.approvedPage ?? readPageBlueprint(flow.workspacePath)
+    if (flow.phase === 'assets') {
+      return designAssetPrompt(brief, brand, page, flow.referenceAttachments)
+    }
     if (flow.phase === 'build') {
-      return designBuildPrompt(brief, brand, page, readAssetManifest(flow.workspacePath))
+      return designBuildPrompt(
+        brief,
+        brand,
+        page,
+        flow.approvedAssets ?? readAssetManifest(flow.workspacePath),
+        flow.referenceAttachments,
+      )
     }
     if (flow.phase === 'preview') return designPreviewPrompt()
     if (flow.phase === 'review' && flow.screenshots) {
-      return designReviewPrompt(brief, brand, page, flow.screenshots)
+      return designReviewPrompt(brief, brand, page, flow.screenshots, flow.referenceAttachments)
     }
     if (flow.phase === 'repair' && flow.review) {
-      return designRepairPrompt(flow.review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
+      return designRepairPrompt(
+        flow.review,
+        flow.repairAttempt,
+        DESIGN_REPAIR_LIMIT,
+        brief,
+        brand,
+        page,
+        flow.approvedAssets ?? readAssetManifest(flow.workspacePath),
+        flow.referenceAttachments,
+        flow.screenshots ?? [],
+      )
     }
     throw new Error(`cannot resume design phase ${flow.phase}`)
   }
 
-  #designAttachmentsFor(flow: DesignFlow): string[] {
-    return flow.phase === 'review' ? (flow.screenshots?.map(({ path }) => path) ?? []) : []
+  #approvedDesignArtifacts(flow: DesignFlow): {
+    brief: DesignBrief
+    brand: BrandSystem
+    page: PageBlueprint
+    assets: AssetManifest
+  } {
+    if (!flow.approvedBrief || !flow.approvedBrand || !flow.approvedPage || !flow.approvedAssets) {
+      throw new Error('approved Design artifacts are unavailable; restart the Design run')
+    }
+
+    let briefChanged = false
+    let brandChanged = false
+    let pageChanged = false
+    let assetsChanged = false
+    try {
+      briefChanged = !isDeepStrictEqual(readDesignBrief(flow.workspacePath), flow.approvedBrief)
+    } catch {
+      briefChanged = true
+    }
+    try {
+      brandChanged = !isDeepStrictEqual(readBrandSystem(flow.workspacePath), flow.approvedBrand)
+    } catch {
+      brandChanged = true
+    }
+    try {
+      pageChanged = !isDeepStrictEqual(readPageBlueprint(flow.workspacePath), flow.approvedPage)
+    } catch {
+      pageChanged = true
+    }
+    try {
+      assetsChanged = !isDeepStrictEqual(readAssetManifest(flow.workspacePath), flow.approvedAssets)
+    } catch {
+      assetsChanged = true
+    }
+    if (briefChanged) writeDesignBrief(flow.workspacePath, flow.approvedBrief)
+    if (brandChanged) writeBrandSystem(flow.workspacePath, flow.approvedBrand)
+    if (pageChanged) writePageBlueprint(flow.workspacePath, flow.approvedPage)
+    if (assetsChanged) writeAssetManifest(flow.workspacePath, flow.approvedAssets)
+    if (briefChanged || brandChanged || pageChanged || assetsChanged) {
+      throw new Error(
+        `Build and Repair may not mutate approved Design artifacts; TasteCode restored ${[
+          briefChanged ? 'brief.json' : '',
+          brandChanged ? 'brand.json' : '',
+          pageChanged ? 'page.json' : '',
+          assetsChanged ? 'assets.json' : '',
+        ]
+          .filter(Boolean)
+          .join(' and ')}`,
+      )
+    }
+    return {
+      brief: flow.approvedBrief,
+      brand: flow.approvedBrand,
+      page: flow.approvedPage,
+      assets: flow.approvedAssets,
+    }
+  }
+
+  #designAttachmentsFor(threadId: string, flow: DesignFlow): string[] {
+    if (!this.#get(threadId).session.capabilities.images) {
+      if (
+        (flow.referenceAttachments.length && flow.phase !== 'brief') ||
+        ((flow.phase === 'review' || flow.phase === 'repair') && flow.screenshots?.length)
+      ) {
+        throw new Error('the selected provider cannot inspect required design images')
+      }
+      return []
+    }
+    const attachments =
+      flow.phase === 'review' || flow.phase === 'repair'
+        ? (flow.screenshots?.map(({ path }) => path) ?? [])
+        : []
+    if (flow.phase === 'brief' || flow.phase === 'preview' || flow.phase === 'complete') {
+      return attachments
+    }
+
+    const missing = flow.referenceAttachments.filter((filePath) => !existsSync(filePath))
+    if (missing.length) {
+      throw new Error(`supplied design reference is no longer available: ${missing.join(', ')}`)
+    }
+    attachments.push(...flow.referenceAttachments)
+    if (flow.phase === 'page') {
+      const brief = flow.approvedBrief ?? readDesignBrief(flow.workspacePath)
+      const brand = flow.approvedBrand ?? readBrandSystem(flow.workspacePath)
+      attachments.push(...referenceDirectionAttachments(selectReferenceDirectionDeck(brief, brand)))
+    } else if (
+      flow.phase === 'assets' ||
+      flow.phase === 'build' ||
+      flow.phase === 'review' ||
+      flow.phase === 'repair'
+    ) {
+      attachments.push(
+        ...referenceDirectionAttachments(
+          referenceDirectionsForPage(flow.approvedPage ?? readPageBlueprint(flow.workspacePath)),
+        ),
+      )
+    }
+    return [...new Set(attachments)]
   }
 
   async #sendDesignTurn(
@@ -2931,10 +3105,17 @@ export class Orchestrator {
         delete flow.pendingPrompt
         this.#saveDesignFlow(threadId)
         this.#record(threadId, event)
+        let attachments: string[]
+        try {
+          attachments = this.#designAttachmentsFor(threadId, flow)
+        } catch (error) {
+          this.#failDesignFlow(threadId, error)
+          return
+        }
         void this.#sendDesignTurn(
           threadId,
           prompt,
-          this.#designAttachmentsFor(flow),
+          attachments,
           this.#designTurnOptions(flow),
         ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
         return
@@ -3058,18 +3239,22 @@ export class Orchestrator {
       ...brief,
       explicitAnswers: flow.explicitAnswers,
     })
+    flow.approvedBrief = saved
     this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
-    const prompt = designBrandPrompt(saved)
+    const prompt = designBrandPrompt(saved, flow.referenceAttachments)
     if (this.#activeTurns.has(threadId)) {
       flow.pendingPrompt = prompt
       this.#saveDesignFlow(threadId)
       return
     }
     this.#saveDesignFlow(threadId)
-    void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
-      (error: unknown) => this.#failDesignFlow(threadId, error),
-    )
+    void this.#sendDesignTurn(
+      threadId,
+      prompt,
+      this.#designAttachmentsFor(threadId, flow),
+      this.#designTurnOptions(flow),
+    ).catch((error: unknown) => this.#failDesignFlow(threadId, error))
   }
 
   #completeDesignPhase(threadId: string, turnId: string, flow: DesignFlow, text: string): void {
@@ -3077,38 +3262,58 @@ export class Orchestrator {
       const output = parseBrandPhaseOutput(text)
       flow.correcting = false
       const brand = writeBrandSystem(flow.workspacePath, output)
+      flow.approvedBrand = brand
       flow.phase = 'page'
-      flow.pendingPrompt = designPagePrompt(readDesignBrief(flow.workspacePath), brand)
+      flow.pendingPrompt = designPagePrompt(
+        flow.approvedBrief ?? readDesignBrief(flow.workspacePath),
+        brand,
+        flow.referenceAttachments,
+      )
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'page') {
-      const output = parsePagePhaseOutput(text)
+      const brief = flow.approvedBrief ?? readDesignBrief(flow.workspacePath)
+      const brand = flow.approvedBrand ?? readBrandSystem(flow.workspacePath)
+      const output = parsePagePhaseOutput(
+        text,
+        selectReferenceDirectionDeck(brief, brand),
+        flow.referenceAttachments.map((_, index) => `user-reference-${index + 1}`),
+      )
       flow.correcting = false
       const page = writePageBlueprint(flow.workspacePath, output)
+      flow.approvedPage = page
       flow.phase = 'assets'
       flow.pendingPrompt = designAssetPrompt(
-        readDesignBrief(flow.workspacePath),
-        readBrandSystem(flow.workspacePath),
+        flow.approvedBrief ?? readDesignBrief(flow.workspacePath),
+        flow.approvedBrand ?? readBrandSystem(flow.workspacePath),
         page,
+        flow.referenceAttachments,
       )
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'assets') {
-      const output = parseAssetPhaseOutput(text)
+      const output = parseAssetPhaseOutput(
+        text,
+        flow.approvedPage ?? readPageBlueprint(flow.workspacePath),
+        flow.workspacePath,
+        flow.referenceAttachments,
+      )
       flow.correcting = false
       const assets = writeAssetManifest(flow.workspacePath, output)
+      flow.approvedAssets = assets
       flow.buildFileBaseline = exactBuildFileBaseline(
         flow.workspacePath,
-        readDesignBrief(flow.workspacePath),
+        flow.approvedBrief ?? readDesignBrief(flow.workspacePath),
       )
       flow.phase = 'build'
       flow.pendingPrompt = designBuildPrompt(
-        readDesignBrief(flow.workspacePath),
-        readBrandSystem(flow.workspacePath),
-        readPageBlueprint(flow.workspacePath),
+        flow.approvedBrief ?? readDesignBrief(flow.workspacePath),
+        flow.approvedBrand ?? readBrandSystem(flow.workspacePath),
+        flow.approvedPage ?? readPageBlueprint(flow.workspacePath),
         assets,
+        flow.referenceAttachments,
       )
       this.#saveDesignFlow(threadId)
       return
@@ -3121,10 +3326,20 @@ export class Orchestrator {
       } else {
         delete flow.buildSummary
       }
-      validateExactBuildFiles(
+      const approved = this.#approvedDesignArtifacts(flow)
+      validateExactBuildFiles(flow.workspacePath, approved.brief, flow.buildFileBaseline)
+      const assets = validateAssetManifestForPage(
+        approved.assets,
+        approved.page,
         flow.workspacePath,
-        readDesignBrief(flow.workspacePath),
-        flow.buildFileBaseline,
+        flow.referenceAttachments,
+      )
+      validateResolvedDesignAssets(assets)
+      validateDesignSourceQuality(
+        flow.workspacePath,
+        output.files,
+        flow.designSourceBaseline,
+        assets,
       )
       flow.correcting = false
       flow.phase = 'preview'
@@ -3148,7 +3363,7 @@ export class Orchestrator {
             void this.#sendDesignTurn(
               threadId,
               prompt,
-              this.#designAttachmentsFor(flow),
+              this.#designAttachmentsFor(threadId, flow),
               this.#designTurnOptions(flow),
             ).catch((sendError: unknown) => {
               if (this.#designFlows.get(threadId) === flow) {
@@ -3195,15 +3410,40 @@ export class Orchestrator {
       } else {
         flow.phase = 'repair'
         flow.repairAttempt += 1
-        flow.pendingPrompt = designRepairPrompt(review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
+        flow.pendingPrompt = designRepairPrompt(
+          review,
+          flow.repairAttempt,
+          DESIGN_REPAIR_LIMIT,
+          flow.approvedBrief ?? readDesignBrief(flow.workspacePath),
+          flow.approvedBrand ?? readBrandSystem(flow.workspacePath),
+          flow.approvedPage ?? readPageBlueprint(flow.workspacePath),
+          flow.approvedAssets ?? readAssetManifest(flow.workspacePath),
+          flow.referenceAttachments,
+          flow.screenshots ?? [],
+        )
       }
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'repair') {
       const output = parseRepairPhaseOutput(text)
-      flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
+      const approved = this.#approvedDesignArtifacts(flow)
+      validateExactBuildFiles(flow.workspacePath, approved.brief, flow.buildFileBaseline)
+      const assets = validateAssetManifestForPage(
+        approved.assets,
+        approved.page,
+        flow.workspacePath,
+        flow.referenceAttachments,
+      )
+      validateResolvedDesignAssets(assets)
+      validateDesignSourceQuality(
+        flow.workspacePath,
+        output.files,
+        flow.designSourceBaseline,
+        assets,
+      )
+      flow.correcting = false
       void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
         if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
       })
@@ -3297,10 +3537,11 @@ export class Orchestrator {
     flow.phase = 'review'
     flow.screenshots = screenshots
     flow.pendingPrompt = designReviewPrompt(
-      readDesignBrief(flow.workspacePath),
-      readBrandSystem(flow.workspacePath),
-      readPageBlueprint(flow.workspacePath),
+      flow.approvedBrief ?? readDesignBrief(flow.workspacePath),
+      flow.approvedBrand ?? readBrandSystem(flow.workspacePath),
+      flow.approvedPage ?? readPageBlueprint(flow.workspacePath),
       screenshots,
+      flow.referenceAttachments,
     )
     this.#saveDesignFlow(threadId)
     this.#completeDesignActivity(threadId, turnId)
@@ -3312,7 +3553,7 @@ export class Orchestrator {
     await this.#sendDesignTurn(
       threadId,
       prompt,
-      this.#designAttachmentsFor(flow),
+      this.#designAttachmentsFor(threadId, flow),
       this.#designTurnOptions(flow),
     )
   }
@@ -3353,9 +3594,11 @@ export class Orchestrator {
     flow.correcting = true
     const detail = error instanceof Error ? error.message : String(error)
     const prompt =
-      flow.phase === 'build' && error instanceof ExactBuildFilesError
-        ? designBuildCorrectionPrompt(detail)
-        : designPhaseCorrectionPrompt(detail)
+      error instanceof DesignSourceQualityError
+        ? designSourceQualityCorrectionPrompt(detail)
+        : flow.phase === 'build' && error instanceof ExactBuildFilesError
+          ? designBuildCorrectionPrompt(detail)
+          : designPhaseCorrectionPrompt(detail)
     flow.pendingPrompt = prompt
     this.#saveDesignFlow(threadId)
     return prompt

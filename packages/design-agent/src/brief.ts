@@ -45,7 +45,7 @@ const STRING_ARRAY_FIELDS = [
   'unresolved',
 ] as const
 
-function parseDesignBrief(value: unknown): DesignBrief {
+export function parseDesignBrief(value: unknown): DesignBrief {
   const brief = record(value, 'design brief')
   for (const field of STRING_FIELDS) {
     string(brief[field], `design brief field ${field}`)

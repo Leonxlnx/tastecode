@@ -70,11 +70,11 @@ The layout case is only part of the result. Font choice and scale, brand colors,
 
 Apply these quality constraints to every case:
 - Keep headings deliberately scaled for the composition. Plan one or two visual lines; use three only when the rare editorial composition genuinely benefits, and never plan four.
-- Do not add eyebrows, uppercase monospace micro-labels, decorative section numbers, ornamental hairline grids, colored vertical accent rails, or arbitrary square-panel systems.
+- Do not add eyebrows, uppercase monospace micro-labels, decorative section numbers, ornamental hairline grids, or arbitrary square-panel systems. Never add a full-height one-sided line attached to or aligned with a card edge, regardless of color or whether it is built with a border, pseudo-element, gradient, or narrow child strip.
 - Use whitespace and content-shaped cards to group information. A divider is exceptional and must clarify a real relationship; it is not the default section or card skeleton.
 - Use cards generously when they contain a coherent feature, person, plan, proof point, action, or media story. Give the page one base card language and at most one emphasized variant. Keep their radius, spacing logic, media treatment, and interaction feedback related while varying size and internal composition to fit the content. Never box ordinary prose, repeat an empty three-column template, or style every card as an unrelated experiment.
 - Carry the brand accent into meaningful actions, focus and selected states, and a recurring card, media, or section treatment. Do not reduce the brand color to tiny labels or icons, and do not spread unrelated accent colors across every card.
-- Prefer relevant photography, product imagery, and interface captures. Use SVG only for a simple functional icon, a real product/interface visual, or a diagram whose meaning is immediately clear. Never select an abstract diagram merely to fill empty space.
+- Prefer relevant photography, product imagery, and interface captures. Use SVG only for a simple functional icon, logo, or truthful data diagram whose meaning is immediately clear. Never select an SVG, abstract diagram, or fake interface merely to fill empty space.
 - Keep the typography coherent across a section. Do not switch families repeatedly inside one line, sentence, card, or navigation item.
 
 Hero text-layout cases:
@@ -92,7 +92,7 @@ Hero image, graphic, and product-visual cases:
 1. Use a full-screen background image. It may be minimal, visually intense, or otherwise appropriate. Brand color is especially important; when the site has no strong brand color, choose a natural color treatment that fits the intended mood.
 2. Place one clean image on the left or right, according to the chosen text layout.
 3. Place an image in the lower part of the Hero. It may occupy about half of the screen or extend farther, but it should already be visible in the initial Hero view.
-4. Use a graphic, SVG, or more complex designed visual in the lower part of the Hero in the same way as the lower image case.
+4. Use a meaningful product image, editorial illustration, interface capture, or truthful data visual in the lower part of the Hero in the same way as the lower image case.
 5. When the text is centered, arrange fitting images or other visual assets around the central message.
 6. Place the text near the top center and show a wide dashboard, product preview, interface, or other relevant product visual beneath it. The preview may be broad without having to span the entire viewport.
 7. Use a creative image or designed visual as the Hero background.
@@ -150,12 +150,12 @@ Feature heading cases:
 6. Use only the heading when no description is necessary.
 
 Feature grid and card cases:
-1. Use one horizontal row of three cards. Place an SVG, animation, or image in the upper part of each card and its feature description beneath it.
+1. Use one horizontal row of three cards. Place a meaningful image, animation, interface fragment, or truthful data visual in the upper part of each card and its feature description beneath it.
 2. Use three larger rows stacked from top to bottom when each feature needs more content. Place text and description on one side and a visualization on the other. Alternate the sides when appropriate. The visualizations may become progressively wider from one row to the next, creating a stair-step composition. This may also use two, four, or five rows when the content requires it.
 3. Use a bento or another grid arrangement. Bento geometry may vary widely: four cards above and three below; one long and one short card above with the proportions reversed below; two-by-two or repeated pairs; or another arrangement that fits the content.
 4. Inside a grid or bento card, include a feature heading and, when needed, one explanatory sentence. The sentence may highlight important keywords. Add a fitting visualization: an image, a creative product visual, a SaaS or dashboard mockup, or another relevant designed representation.
 5. Feature cards may use colored surfaces, images, or background gradients. Use brand colors deliberately. A later gradient generator may provide fitting card backgrounds, but the gradient must serve the selected feature design.
-6. A feature visualization does not need to be an image. It may be a designed SVG or another graphic that responds on hover or animates in a fitting way.
+6. A feature visualization may be a native interactive component or truthful data diagram when that communicates the feature better than an image. It must not be an ornamental SVG or generic filler.
 
 Timed and changing Feature case:
 - Present roughly two to five features with a timed progress line. One feature begins active while its line advances; when the interval completes, activate the next feature and replace or transform the visualization.
@@ -177,7 +177,7 @@ How It Works section scope:
 How It Works layout cases:
 1. Draw one horizontal line with numbered steps such as 1, 2, and 3. Place a card beneath each step with its description and, when fitting, an image, visualization, or animation.
 2. Arrange the steps as cards that move from left to right through GSAP scrolling or direct dragging. Place clean previous and next controls beneath the sequence using left and right arrow buttons. Each card may combine one description with one visualization. Keep the card design fully open to the approved visual style.
-3. Place a vertical list of steps on the left, running from top to bottom. The labels may use stages such as Day 1 and Day 2. Show the information and visualization for the active step on the right. The sequence may loop through the steps so the user can follow the process visually.
+3. Place a vertical list of steps on the left, running from top to bottom. The labels may use stages such as Day 1 and Day 2. Show the information and visualization for the active step on the right. The sequence may loop through the steps so the user can follow the process visually. Separate steps with spacing or compact progress markers, never a continuous top-to-bottom rule attached to the cards.
 4. Reuse any compatible Feature layout when it explains the process more clearly than a dedicated step layout.
 5. Draw a winding or snake-like line through the center of the section. Alternate the numbered steps between the left and right sides of the line, giving each step a visualization, additional text, or both.
 

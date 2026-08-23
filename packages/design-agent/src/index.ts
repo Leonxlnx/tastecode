@@ -1,4 +1,5 @@
 export {
+  parseDesignBrief,
   readDesignBrief,
   writeDesignBrief,
   type DesignBrief,
@@ -47,7 +48,11 @@ export {
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
+  lockPageReferenceDirections,
   REFERENCE_DIRECTIONS,
+  referenceDirectionAttachmentPath,
+  referenceDirectionAttachments,
+  referenceDirectionsForPage,
   selectReferenceDirectionDeck,
   type ReferenceDirection,
 } from './reference-directions.js'
@@ -60,9 +65,12 @@ export {
 export {
   parseAssetManifest,
   readAssetManifest,
+  validateAssetManifestForPage,
+  validateResolvedDesignAssets,
   writeAssetManifest,
   type AssetKind,
   type AssetManifest,
+  type AssetRole,
   type AssetSourceKind,
   type AssetStatus,
   type DesignAsset,
@@ -81,10 +89,14 @@ export {
 export {
   designBuildCorrectionPrompt,
   designBuildPrompt,
+  designSourceQualityBaseline,
+  designSourceQualityCorrectionPrompt,
   exactBuildFileBaseline,
   parseBuildPhaseOutput,
+  validateDesignSourceQuality,
   validateExactBuildFiles,
   type BuildPhaseOutput,
+  DesignSourceQualityError,
   ExactBuildFilesError,
 } from './build-phase.js'
 export {
