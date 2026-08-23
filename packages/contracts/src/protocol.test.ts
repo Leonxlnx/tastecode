@@ -523,6 +523,59 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('accepts a consume-reset limit action and a UUID redemption attempt', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const limit = {
+      label: 'Rate limit resets',
+      usedPercent: 0,
+      valueLabel: '1 available',
+      action: 'consume-reset' as const,
+    }
+    expect(
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [limit],
+        limitSource: { provider: 'codex', status: 'ready', limits: [limit] },
+      }).limits[0]?.action,
+    ).toBe('consume-reset')
+    expect(() =>
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [{ label: 'Rate limit resets', usedPercent: 0, valueLabel: '1', action: 'refund' }],
+        limitSource: {
+          provider: 'codex',
+          status: 'ready',
+          limits: [
+            { label: 'Rate limit resets', usedPercent: 0, valueLabel: '1', action: 'refund' },
+          ],
+        },
+      }),
+    ).toThrow()
+
+    const key = '8ae96ff3-3425-4f4c-8772-b6fd61502868'
+    expect(
+      methods['usage.consumeReset'].params.parse({ provider: 'codex', idempotencyKey: key }),
+    ).toEqual({
+      provider: 'codex',
+      idempotencyKey: key,
+    })
+    expect(() =>
+      methods['usage.consumeReset'].params.parse({ provider: 'codex', idempotencyKey: 'retry-1' }),
+    ).toThrow()
+    expect(methods['usage.consumeReset'].result.parse({ outcome: 'reset' })).toEqual({
+      outcome: 'reset',
+    })
+    expect(() => methods['usage.consumeReset'].result.parse({ outcome: 'ok' })).toThrow()
+  })
+
   it('keeps one authoritative provider limit source with a legacy fallback', () => {
     const usage = {
       inputTokens: 0,

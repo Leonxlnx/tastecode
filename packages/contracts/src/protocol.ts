@@ -482,6 +482,8 @@ export const ProviderLimitSchema = z.object({
   resetsAt: z.number().int().nonnegative().optional(),
   /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
   valueLabel: z.string().min(1).max(160).optional(),
+  /** Present when this row can be spent as a one-shot quota reset. */
+  action: z.literal('consume-reset').optional(),
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
@@ -1147,6 +1149,20 @@ export const methods = {
   'usage.summary': {
     params: z.union([z.object({ threadId: z.string() }), z.object({ provider: ProviderIdSchema })]),
     result: UsageSummaryResultSchema,
+  },
+  /**
+   * Spend one earned rate-limit reset. The provider must have declared a
+   * `consume-reset` limit row. Callers generate a UUID and reuse it when
+   * retrying the same attempt.
+   */
+  'usage.consumeReset': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      idempotencyKey: z.string().uuid(),
+    }),
+    result: z.object({
+      outcome: z.enum(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed']),
+    }),
   },
   /** Start a temporary conversation forked from the current main chat. */
   'sideChat.start': {
