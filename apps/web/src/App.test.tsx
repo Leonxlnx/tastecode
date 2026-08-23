@@ -478,6 +478,8 @@ beforeEach(() => {
           },
           limits: [{ label: '5 hours', usedPercent: 25 }],
         })
+      case 'usage.consumeReset':
+        return Promise.resolve({ outcome: 'reset' })
       case 'pullRequests.list':
         return Promise.resolve({
           account: { available: true, authenticated: true, login: 'Blueemi' },

@@ -399,6 +399,19 @@ export function App() {
     (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
     [usageController],
   )
+  const consumeReset = useCallback(
+    async (requestedProvider: ProviderId, idempotencyKey: string) => {
+      try {
+        return await transport.request('usage.consumeReset', {
+          provider: requestedProvider,
+          idempotencyKey,
+        })
+      } finally {
+        refreshUsage(requestedProvider)
+      }
+    },
+    [transport, refreshUsage],
+  )
 
   useEffect(() => {
     // Let StrictMode's immediate replay cancel disposal, while a real unmount
@@ -4168,6 +4181,7 @@ export function App() {
           keybindings={keybindings}
           usageStates={usageState}
           onRetryUsage={refreshUsage}
+          onConsumeReset={consumeReset}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}
           collapsed={collapsed}

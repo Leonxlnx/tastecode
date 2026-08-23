@@ -14,7 +14,13 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
+import type {
+  Account,
+  ProviderId,
+  ResultOf,
+  ThreadInboxStatus,
+  ThreadLifecycle,
+} from '@harness/contracts'
 import {
   Archive,
   Ellipsis,
@@ -128,6 +134,9 @@ function SidebarComponent(props: {
   keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
+  onConsumeReset?:
+    | ((provider: ProviderId, idempotencyKey: string) => Promise<ResultOf<'usage.consumeReset'>>)
+    | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined
   collapsed: boolean
@@ -704,7 +713,11 @@ function SidebarComponent(props: {
             {(close) => (
               <>
                 {props.usageStates ? (
-                  <AccountLimits states={props.usageStates} onRetry={props.onRetryUsage ?? noop} />
+                  <AccountLimits
+                    states={props.usageStates}
+                    onRetry={props.onRetryUsage ?? noop}
+                    onConsumeReset={props.onConsumeReset}
+                  />
                 ) : null}
                 <button
                   type="button"
