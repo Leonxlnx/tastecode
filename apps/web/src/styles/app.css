@@ -6011,6 +6011,12 @@
   line-height: 1.45;
 }
 
+.aux--reasoning .reasoning-summary {
+  max-height: 300px;
+  overflow: auto;
+  margin: 8px 0 2px 24px;
+}
+
 .reasoning-summary > .md > :last-child {
   margin-bottom: 0;
 }

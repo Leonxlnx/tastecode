@@ -224,19 +224,25 @@ describe('empty thread', () => {
 })
 
 describe('completed activity disclosure', () => {
-  it('hides empty reasoning placeholders and keeps real summaries readable', () => {
+  it('hides empty reasoning placeholders and keeps real thoughts behind a reveal', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Build a website' }),
       turnItem('reasoning-empty', 1_001, { type: 'reasoning' }),
       turnItem('reasoning-summary', 2_001, {
         type: 'reasoning',
         text: 'Planning manual multi-package checks',
+        durationMs: 12_000,
       }),
     ]
 
     renderCompleted(items)
 
     expect(screen.queryByText('Thinking')).toBeNull()
+    const thought = screen.getByRole('button', { name: 'Thought for 12s' })
+    const reveal = thought.parentElement?.querySelector('.aux__reveal')
+    expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    fireEvent.click(thought)
+    expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
   })
 
@@ -406,6 +412,14 @@ describe('completed activity disclosure', () => {
     ]
     renderCompleted(items.map((entry) => ({ ...entry })))
 
+    const thought = screen.getByRole('button', { name: 'Thought' })
+    expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    )
+    fireEvent.click(thought)
+    expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
+      'false',
+    )
     expect(screen.getByText('Inspecting state')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Ran commands, searched' }))
     expect(screen.getByText('Ran pnpm test')).toBeTruthy()
@@ -425,7 +439,13 @@ describe('completed activity disclosure', () => {
       turnItem('answer-1', 6, { role: 'assistant', text: 'Done.' }),
     ])
 
-    expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Thought' })).toBeTruthy()
+    expect(
+      screen
+        .getByRole('button', { name: 'Thought' })
+        .parentElement?.querySelector('.aux__reveal')
+        ?.getAttribute('aria-hidden'),
+    ).toBe('true')
     const firstCommand = screen.getByText('Ran git status --short')
     expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('true')
     const stack = screen.getByRole('button', { name: 'Read files, ran commands' })

@@ -72,9 +72,10 @@ const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
  * rather than estimated because a single item can be three words or a 400-line
  * diff, and a wrong estimate shows up as scroll drift.
  *
- * Messages and reasoning summaries read as prose. Commands, tool calls and
- * file edits in one work batch share one line you can open. The default view
- * should read as a summary of what happened, not a transcript of every byte.
+ * Messages read as prose. Reasoning stays collapsed under a timed Thought
+ * row you can open. Commands, tool calls and file edits in one work batch
+ * share one line. The default view should read as a summary of what happened,
+ * not a transcript of every byte.
  */
 export function Thread(props: {
   items: Item[]
@@ -779,15 +780,14 @@ const Row = memo(function Row({
     const text = item.text?.trim()
     if (!text) return null
     return (
-      <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
-        <Markdown
-          text={text}
-          projectPath={projectPath}
-          streaming={live && item.status === 'started'}
-          liveUpdate={liveTextUpdate}
-          updateVersion={liveUpdateVersion}
-        />
-      </div>
+      <ReasoningDisclosure
+        item={item}
+        text={text}
+        live={live}
+        projectPath={projectPath}
+        liveTextUpdate={liveTextUpdate}
+        liveUpdateVersion={liveUpdateVersion}
+      />
     )
   }
 
@@ -881,6 +881,105 @@ function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | unde
 }
 
 type DisclosurePhase = 'closed' | 'open' | 'closing'
+
+function ReasoningDisclosure({
+  item,
+  text,
+  live,
+  projectPath,
+  liveTextUpdate,
+  liveUpdateVersion,
+}: {
+  item: Item
+  text: string
+  live: boolean
+  projectPath: string | undefined
+  liveTextUpdate: LiveItemUpdate['textUpdate'] | undefined
+  liveUpdateVersion: number | undefined
+}) {
+  const disclosure = useDisclosure()
+  const liveThinking = live && item.status === 'started'
+  const labelRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!liveThinking) return
+    const update = () => {
+      if (labelRef.current) labelRef.current.textContent = liveThoughtLabel(item.createdAt)
+    }
+    update()
+    const timer = window.setInterval(update, 1000)
+    return () => window.clearInterval(timer)
+  }, [liveThinking, item.createdAt])
+
+  return (
+    <div
+      className={`aux aux--reasoning ${live ? 'aux--live' : ''}`}
+      data-expanded={disclosure.expanded}
+    >
+      <button
+        type="button"
+        className="aux__row"
+        aria-expanded={disclosure.expanded}
+        onClick={disclosure.toggle}
+      >
+        <span className="aux__glyph" aria-hidden>
+          <Brain size={13} />
+        </span>
+        <span ref={labelRef} className="aux__label">
+          {liveThinking ? liveThoughtLabel(item.createdAt) : thoughtLabel(item, false)}
+        </span>
+        <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
+      </button>
+      <div
+        className="aux__reveal"
+        data-open={disclosure.dataOpen}
+        aria-hidden={!disclosure.expanded}
+        inert={!disclosure.expanded}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) disclosure.finishClosing()
+        }}
+      >
+        <div className="aux__reveal-clip">
+          {disclosure.expanded || disclosure.dataOpen === 'closing' ? (
+            <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
+              <Markdown
+                text={text}
+                projectPath={projectPath}
+                streaming={live && item.status === 'started'}
+                liveUpdate={liveTextUpdate}
+                updateVersion={liveUpdateVersion}
+              />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function thoughtLabel(item: Item, live: boolean): string {
+  if (live && item.status === 'started') return liveThoughtLabel(item.createdAt)
+  if (item.durationMs === undefined || item.durationMs < 1000) return 'Thought'
+  return `Thought for ${thoughtDuration(item.durationMs)}`
+}
+
+function liveThoughtLabel(startedAt: number): string {
+  if (startedAt <= 0) return 'Thinking'
+  const elapsed = Math.max(0, Date.now() - startedAt)
+  if (elapsed < 1000 || elapsed > 86_400_000) return 'Thinking'
+  return `Thought for ${thoughtDuration(elapsed)}`
+}
+
+function thoughtDuration(ms: number): string {
+  const totalSeconds = Math.max(1, Math.round(ms / 1000))
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes < 60) return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
+}
 
 function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
@@ -1478,7 +1577,7 @@ function summariseLive(item: Item): string {
     case 'command':
       return liveActivityLabel(item)
     case 'reasoning':
-      return item.text?.trim() || 'Thinking'
+      return ongoing ? 'Thinking' : thoughtLabel(item, false)
     case 'file_change':
       return ongoing ? 'Editing files' : 'Edited files'
     case 'tool_call': {
@@ -1533,7 +1632,7 @@ function summarise(item: Item): string {
       if (item.exitCode !== undefined && item.exitCode !== 0) return 'Command failed'
       return 'Ran a command'
     case 'reasoning':
-      return 'Thinking'
+      return thoughtLabel(item, false)
     case 'file_change':
       return 'Edited files'
     case 'tool_call':

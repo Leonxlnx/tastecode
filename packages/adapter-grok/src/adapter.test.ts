@@ -411,7 +411,10 @@ describe('Grok adapter', () => {
     const terminal = events.findIndex((event) => event.type === 'turn.completed')
     const completed = events.filter((event) => event.type === 'item.completed')
     expect(completed).toHaveLength(2)
-    expect(completed.every((event) => event.item.status === 'failed')).toBe(true)
+    expect(completed.find((event) => event.item.type === 'reasoning')?.item.status).toBe(
+      'completed',
+    )
+    expect(completed.find((event) => event.item.type === 'tool_call')?.item.status).toBe('failed')
     expect(events.lastIndexOf(completed[1]!)).toBeLessThan(terminal)
     expect(events).toEqual(
       expect.arrayContaining([
@@ -471,6 +474,102 @@ describe('Grok adapter', () => {
 
     expect(children[2]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+  })
+
+  it('records how long a thought ran on the completed reasoning item', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({
+      spawn: () => child,
+    })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'think')
+
+    child.stdout.write(`${JSON.stringify({ type: 'thought', data: 'first' })}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+    const started = events.find(
+      (event) => event.type === 'item.started' && event.item.type === 'reasoning',
+    )
+    child.stdout.end(
+      [
+        { type: 'thought', data: ' second' },
+        { type: 'text', data: 'Done.' },
+        { type: 'end', stopReason: 'end_turn' },
+      ]
+        .map((frame) => JSON.stringify(frame))
+        .join('\n') + '\n',
+    )
+    child.emit('close', 0)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const completed = events.find(
+      (event) => event.type === 'item.completed' && event.item.type === 'reasoning',
+    )
+    expect(started).toMatchObject({
+      item: { id: expect.any(String), createdAt: expect.any(Number) },
+    })
+    expect(completed).toMatchObject({
+      item: {
+        turnId,
+        type: 'reasoning',
+        status: 'completed',
+        text: 'first second',
+        createdAt: started && 'item' in started ? started.item.createdAt : undefined,
+        durationMs: expect.any(Number),
+      },
+    })
+    expect(
+      completed && 'item' in completed ? completed.item.durationMs : undefined,
+    ).toBeGreaterThanOrEqual(0)
+  })
+
+  it('closes a thought burst when a tool or answer starts so later thinking is its own row', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'two thoughts')
+
+    child.stdout.end(
+      [
+        { type: 'thought', data: 'first look' },
+        {
+          type: 'tool_call',
+          toolCallId: 'read-1',
+          toolName: 'read_file',
+          title: 'read_file',
+          rawInput: { file_path: 'C:\\repo\\one.txt' },
+        },
+        {
+          type: 'tool_call_update',
+          toolCallId: 'read-1',
+          status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'file contents' } }],
+        },
+        { type: 'thought', data: 'after the file' },
+        { type: 'text', data: 'Done.' },
+        { type: 'end', stopReason: 'end_turn' },
+      ]
+        .map((frame) => JSON.stringify(frame))
+        .join('\n') + '\n',
+    )
+    child.emit('close', 0)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const reasoning = events
+      .filter(
+        (event): event is Extract<DomainEvent, { type: 'item.completed' }> =>
+          event.type === 'item.completed' && event.item.type === 'reasoning',
+      )
+      .map((event) => event.item)
+    expect(reasoning).toMatchObject([
+      { text: 'first look', durationMs: expect.any(Number) },
+      { text: 'after the file', durationMs: expect.any(Number) },
+    ])
+    expect(reasoning[0]?.id).not.toBe(reasoning[1]?.id)
+    adapter.dispose()
   })
 
   it('drains a final end frame before classifying process close', async () => {

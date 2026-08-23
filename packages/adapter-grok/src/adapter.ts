@@ -410,8 +410,13 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     let terminal = false
     let messageCounter = 1
     let message = new StreamedItem(`${turnId}-message-${messageCounter}`)
-    const reasoning = new StreamedItem(`${turnId}-reasoning`)
+    let reasoningCounter = 1
+    let reasoning = new StreamedItem(`${turnId}-reasoning-${reasoningCounter}`)
     let toolCounter = 0
+    const closeReasoning = (status: 'completed' | 'failed' = 'completed') => {
+      reasoning.complete(turnId, 'reasoning', this, status)
+      reasoning = new StreamedItem(`${turnId}-reasoning-${++reasoningCounter}`)
+    }
     /** toolCallId -> the open item it maps to. */
     const tools = new Map<string, OpenTool>()
     const completeTool = (entry: OpenTool, status: 'completed' | 'failed', output?: string) => {
@@ -455,14 +460,18 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         }
         const frame = parsed.data
         if (frame.type === 'thought' && frame.data !== undefined) {
+          message.complete(turnId, 'message', this)
+          message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           if (reasoning.push(frame.data, turnId, 'reasoning', this)) return
           return
         }
         if (frame.type === 'text' && frame.data !== undefined) {
+          closeReasoning()
           message.push(frame.data, turnId, 'message', this)
           return
         }
         if (frame.type === 'tool_call' && frame.toolCallId) {
+          closeReasoning()
           message.complete(turnId, 'message', this)
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           const name = frame.toolName ?? frame.title ?? 'tool'
@@ -725,6 +734,7 @@ class StreamedItem {
   #text = ''
   #started = false
   #completed = false
+  #startedAt = 0
 
   constructor(id: string) {
     this.#id = id
@@ -739,6 +749,7 @@ class StreamedItem {
     if (!delta) return false
     if (!this.#started) {
       this.#started = true
+      this.#startedAt = Date.now()
       emitter.emit('event', {
         type: 'item.started',
         item: {
@@ -748,7 +759,7 @@ class StreamedItem {
           ...(type === 'message' ? { role: 'assistant' as const } : {}),
           status: 'started',
           text: '',
-          createdAt: Date.now(),
+          createdAt: this.#startedAt,
         },
       })
     }
@@ -765,6 +776,7 @@ class StreamedItem {
   ): void {
     if (!this.#started || this.#completed) return
     this.#completed = true
+    const createdAt = this.#startedAt || Date.now()
     emitter.emit('event', {
       type: 'item.completed',
       item: {
@@ -774,7 +786,8 @@ class StreamedItem {
         ...(type === 'message' ? { role: 'assistant' as const } : {}),
         status,
         text: this.#text.trimEnd(),
-        createdAt: Date.now(),
+        createdAt,
+        ...(type === 'reasoning' ? { durationMs: Math.max(0, Date.now() - createdAt) } : {}),
       },
     })
   }

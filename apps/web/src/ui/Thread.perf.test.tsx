@@ -142,6 +142,22 @@ describe('thread at scale', () => {
     expect(
       workLabel(
         [
+          {
+            id: 'reasoning-live',
+            turnId: 'turn-1',
+            type: 'reasoning',
+            text: 'A long chain of thought that must not become the status line',
+            status: 'started',
+            createdAt: 2,
+          },
+        ],
+        'turn-1',
+        false,
+      ),
+    ).toBe('Thinking')
+    expect(
+      workLabel(
+        [
           ...items,
           {
             id: 'search-1',
