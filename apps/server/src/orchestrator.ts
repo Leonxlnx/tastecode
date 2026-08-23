@@ -71,6 +71,7 @@ import path from 'node:path'
 import { changedSince, restoreSnapshot, takeSnapshot } from './checkpoint.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
+import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { Store, StoredCheckpoint } from './store.js'
 import {
   createWorktree,
@@ -367,11 +368,6 @@ const PROJECT_MCP_MANAGEMENT_CAPABILITIES: McpCapabilities = {
   reload: false,
   startOAuth: false,
   cancelOAuth: false,
-}
-const UNSUPPORTED_SKILL_CAPABILITIES: SkillCapabilities = {
-  inventory: false,
-  configure: false,
-  install: false,
 }
 
 /**
@@ -920,13 +916,16 @@ export class Orchestrator {
     skills: Skill[]
     errors: SkillDiscoveryError[]
   }> {
+    const local = await listLocalSkills(projectPath)
     if (provider !== 'codex') {
-      return { capabilities: UNSUPPORTED_SKILL_CAPABILITIES, skills: [], errors: [] }
+      return { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
     }
     this.#watchedSkillProjects.add(projectPath)
+    const vendor = await (await this.#controlAdapter()).listSkills(projectPath)
     return {
       capabilities: CODEX_SKILL_CAPABILITIES,
-      ...(await (await this.#controlAdapter()).listSkills(projectPath)),
+      skills: mergeSkills(vendor.skills, local.skills),
+      errors: [...vendor.errors, ...local.errors],
     }
   }
 

@@ -2728,14 +2728,43 @@ describe('MCP inventory', () => {
 })
 
 describe('skills inventory', () => {
-  it('capability-gates unsupported providers', async () => {
+  it('lists local Agent Skills when the provider has no vendor inventory', async () => {
     const { orchestrator } = harness()
+    const project = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-project-'))
+    const home = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-home-'))
+    const skillDir = path.join(home, '.agents', 'skills', 'animate')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: animate\ndescription: Build an animation from scratch\n---\n',
+    )
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
 
-    await expect(orchestrator.listSkills('claude-code', '/repo')).resolves.toEqual({
-      capabilities: { inventory: false, configure: false, install: false },
-      skills: [],
-      errors: [],
-    })
+    try {
+      await expect(orchestrator.listSkills('claude-code', project)).resolves.toEqual({
+        capabilities: { inventory: true, configure: false, install: false },
+        skills: [
+          {
+            id: path.join(skillDir, 'SKILL.md'),
+            name: 'animate',
+            description: 'Build an animation from scratch',
+            source: { type: 'folder', path: skillDir },
+            scope: 'user',
+            enabled: true,
+            dependencyErrors: [],
+          },
+        ],
+        errors: [],
+      })
+      await expect(orchestrator.listSkills('grok', project)).resolves.toMatchObject({
+        capabilities: { inventory: true },
+        skills: [expect.objectContaining({ name: 'animate', scope: 'user' })],
+      })
+    } finally {
+      homedir.mockRestore()
+      rmSync(project, { recursive: true, force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('rejects installation for unsupported providers before touching the folder', async () => {
