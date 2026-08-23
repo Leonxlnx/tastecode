@@ -1632,6 +1632,68 @@ describe('web client', () => {
   })
 })
 describe('new chats', () => {
+  it('keeps composer drafts separate for new chat and each session', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: false },
+          { id: 'thread-2', title: 'Background', running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const draft = () => composer().value
+
+    fireEvent.change(await screen.findByPlaceholderText('Do anything'), {
+      target: { value: 'New chat prompt' },
+    })
+    dropFile(composer(), '/work/new-chat.png')
+    expect(screen.getByRole('button', { name: 'Remove new-chat.png' })).toBeTruthy()
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    expect(draft()).toBe('')
+    expect(screen.queryByRole('button', { name: 'Remove new-chat.png' })).toBeNull()
+
+    fireEvent.change(composer(), { target: { value: 'Session one prompt' } })
+    dropFile(composer(), '/work/session-one.png')
+
+    fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+    expect(draft()).toBe('')
+    expect(screen.queryByRole('button', { name: 'Remove session-one.png' })).toBeNull()
+    fireEvent.change(composer(), { target: { value: 'Session two prompt' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(draft()).toBe('New chat prompt')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Remove new-chat.png' })).toBeTruthy(),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+    expect(draft()).toBe('Session one prompt')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Remove session-one.png' })).toBeTruthy(),
+    )
+    expect(screen.queryByRole('button', { name: 'Remove new-chat.png' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+    expect(draft()).toBe('Session two prompt')
+    expect(screen.queryByRole('button', { name: 'Remove session-one.png' })).toBeNull()
+
+    await import('./ui/pull-requests/PullRequestsView.js')
+    fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+    await waitFor(() => expect(draft()).toBe('Session two prompt'))
+    fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+    await waitFor(() => expect(draft()).toBe('Session one prompt'))
+    expect(screen.getByRole('button', { name: 'Remove session-one.png' })).toBeTruthy()
+  })
+
   it('prefetches plan limits under StrictMode and reuses them when Account opens', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')

@@ -100,6 +100,16 @@ import {
 import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
 import { parseSideChatCommand } from './side-chat-command.js'
 import {
+  composerDraftKey,
+  isEmptyComposerDraft,
+  moveComposerDraft,
+  NEW_CHAT_DRAFT_KEY,
+  readComposerDraft,
+  upsertComposerDraft,
+  type ComposerDraft,
+} from './composer-drafts.js'
+import type { ComposerResource } from './ui/ComposerResourcePicker.js'
+import {
   clearInstall,
   installState,
   subscribeInstalls,
@@ -471,8 +481,9 @@ export function App() {
   /** Highest durable event already reduced into each complete thread cache. */
   const durableSequences = useRef(new Map<string, number>())
   const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
-  const rejectedDrafts = useRef(new Map<string, RecoverableDraft>())
-  const rejectedDraftOwner = useRef<string | undefined>(undefined)
+  const composerDrafts = useRef(new Map<string, ComposerDraft>())
+  const composerDraftOwner = useRef(NEW_CHAT_DRAFT_KEY)
+  const composerDraftKeyRef = useRef(NEW_CHAT_DRAFT_KEY)
   const injectedDraftTransition = useRef(false)
   /** Live events parked while a history fetch for the thread is in flight. */
   const historyBuffers = useRef(
@@ -599,7 +610,13 @@ export function App() {
   }>()
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
   const [composerDraft, setComposerDraft] = useState<
-    { text: string; attachments?: string[]; request: number } | undefined
+    | {
+        text: string
+        attachments?: string[] | undefined
+        resources?: ComposerResource[] | undefined
+        request: number
+      }
+    | undefined
   >()
   const [threadRevealRequest, setThreadRevealRequest] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
@@ -952,41 +969,69 @@ export function App() {
   activeIdRef.current = activeId
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
-  const restoreRejectedDraft = useCallback((threadId: string, rejected: RecoverableDraft) => {
-    const current = rejectedDrafts.current.get(threadId)
-    const draft = {
-      text: current ? `${current.text}\n\n${rejected.text}` : rejected.text,
-      attachments: [...new Set([...(current?.attachments ?? []), ...rejected.attachments])],
-    }
-    rejectedDrafts.current.set(threadId, draft)
-    if (threadId === activeIdRef.current) {
-      rejectedDraftOwner.current = threadId
-      setComposerDraft((request) => ({ ...draft, request: (request?.request ?? 0) + 1 }))
-    }
-  }, [])
-  useEffect(() => {
-    if (injectedDraftTransition.current) {
-      injectedDraftTransition.current = false
-      return
-    }
-    const draft = activeId ? rejectedDrafts.current.get(activeId) : undefined
-    if (draft === undefined && rejectedDraftOwner.current === undefined) return
-    rejectedDraftOwner.current = draft === undefined ? undefined : activeId
+  const publishComposerDraft = useCallback((draft: ComposerDraft) => {
     setComposerDraft((current) => ({
-      text: draft?.text ?? '',
-      attachments: draft?.attachments ?? [],
+      text: draft.text,
+      attachments: draft.attachments,
+      resources: draft.resources,
       request: (current?.request ?? 0) + 1,
     }))
-  }, [activeId])
-  const updateRejectedDraft = useCallback((text: string) => {
-    const owner = rejectedDraftOwner.current
-    const draft = owner ? rejectedDrafts.current.get(owner) : undefined
-    if (owner && draft) rejectedDrafts.current.set(owner, { ...draft, text })
   }, [])
-  const updateRejectedAttachments = useCallback((attachments: string[]) => {
-    const owner = rejectedDraftOwner.current
-    const draft = owner ? rejectedDrafts.current.get(owner) : undefined
-    if (owner && draft) rejectedDrafts.current.set(owner, { ...draft, attachments })
+  const restoreRejectedDraft = useCallback(
+    (threadId: string, rejected: RecoverableDraft) => {
+      const current = composerDrafts.current.get(threadId)
+      const draft = upsertComposerDraft(composerDrafts.current, threadId, {
+        text: current ? `${current.text}\n\n${rejected.text}` : rejected.text,
+        attachments: [...new Set([...(current?.attachments ?? []), ...rejected.attachments])],
+      })
+      if (threadId === activeIdRef.current) {
+        composerDraftOwner.current = threadId
+        publishComposerDraft(draft)
+      }
+    },
+    [publishComposerDraft],
+  )
+  const restoreComposerDraft = useCallback(
+    (key: string) => {
+      composerDraftOwner.current = key
+      composerDraftKeyRef.current = key
+      publishComposerDraft(readComposerDraft(composerDrafts.current, key))
+    },
+    [publishComposerDraft],
+  )
+  const handleComposerReady = useCallback(() => {
+    restoreComposerDraft(composerDraftKey(activeIdRef.current))
+  }, [restoreComposerDraft])
+  // New chat and every session keep a separate prompt. Restore on destination
+  // change so the previous bar does not travel with the composer.
+  useEffect(() => {
+    const key = composerDraftKey(activeId)
+    if (injectedDraftTransition.current) {
+      injectedDraftTransition.current = false
+      composerDraftOwner.current = key
+      composerDraftKeyRef.current = key
+      return
+    }
+    if (composerDraftKeyRef.current === key) {
+      composerDraftOwner.current = key
+      return
+    }
+    restoreComposerDraft(key)
+  }, [activeId, restoreComposerDraft])
+  useEffect(() => {
+    if (surface !== 'chat') return
+    const key = composerDraftKey(activeIdRef.current)
+    if (isEmptyComposerDraft(readComposerDraft(composerDrafts.current, key))) return
+    restoreComposerDraft(key)
+  }, [surface, restoreComposerDraft])
+  const updateComposerDraftText = useCallback((text: string) => {
+    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { text })
+  }, [])
+  const updateComposerDraftAttachments = useCallback((attachments: string[]) => {
+    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { attachments })
+  }, [])
+  const updateComposerDraftResources = useCallback((resources: ComposerResource[]) => {
+    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { resources })
   }, [])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
@@ -2377,6 +2422,9 @@ export function App() {
           ),
         )
         if (activeIdRef.current === provisionalId) {
+          moveComposerDraft(composerDrafts.current, provisionalId, threadId)
+          if (composerDraftOwner.current === provisionalId) composerDraftOwner.current = threadId
+          if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId
           activeIdRef.current = threadId
           setActiveId(threadId)
           setThread(provisional)
@@ -2426,13 +2474,15 @@ export function App() {
     (projectPath: string, draft?: string) => {
       setSurface('chat')
       if (draft !== undefined) {
-        rejectedDraftOwner.current = undefined
-        injectedDraftTransition.current = activeIdRef.current !== undefined
-        setComposerDraft((current) => ({
+        const next = upsertComposerDraft(composerDrafts.current, NEW_CHAT_DRAFT_KEY, {
           text: draft,
           attachments: [],
-          request: (current?.request ?? 0) + 1,
-        }))
+          resources: [],
+        })
+        composerDraftOwner.current = NEW_CHAT_DRAFT_KEY
+        composerDraftKeyRef.current = NEW_CHAT_DRAFT_KEY
+        injectedDraftTransition.current = activeIdRef.current !== undefined
+        publishComposerDraft(next)
       }
       // A session nobody typed into is bookkeeping, not history. Pressing "new
       // session" twice should not leave a trail of empty ones.
@@ -2480,6 +2530,7 @@ export function App() {
       provider,
       clearWorkspaceThread,
       refreshWorkspaceAfterCompletion,
+      publishComposerDraft,
     ],
   )
 
@@ -2513,12 +2564,12 @@ export function App() {
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
       // for the paragraph someone just typed.
-      const restoreDraft = () =>
-        setComposerDraft((current) => ({
-          text,
-          attachments,
-          request: (current?.request ?? 0) + 1,
-        }))
+      const restoreDraft = () => {
+        const key = composerDraftKey(activeIdRef.current)
+        const next = upsertComposerDraft(composerDrafts.current, key, { text, attachments })
+        composerDraftOwner.current = key
+        publishComposerDraft(next)
+      }
       const sideChatCommand = parseSideChatCommand(text)
       if (sideChatCommand) {
         if (!activeId || activeId.startsWith('pending:')) {
@@ -2710,8 +2761,7 @@ export function App() {
         ])
       }
       const optimisticState = threadStates.current.get(threadId) ?? emptyThread
-      rejectedDrafts.current.delete(threadId)
-      if (rejectedDraftOwner.current === threadId) rejectedDraftOwner.current = undefined
+      composerDrafts.current.delete(threadId)
       const pendingOptimisticTurn = optimisticState.activeTurn
       const precedingTurn = wasRunning ? before.activeTurn : undefined
       const pendingSubmission: PendingSubmission = {
@@ -2896,6 +2946,7 @@ export function App() {
       settleQueueAction,
       restoreRejectedDraft,
       sendAvailability,
+      publishComposerDraft,
     ],
   )
 
@@ -3158,6 +3209,7 @@ export function App() {
     [transport],
   )
   const editMessage = useCallback((text: string) => {
+    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { text })
     setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
     setComposerFocusRequest((request) => request + 1)
   }, [])
@@ -3245,7 +3297,7 @@ export function App() {
         setActiveId(undefined)
         setThread(emptyThread)
       }
-      rejectedDrafts.current.delete(id)
+      composerDrafts.current.delete(id)
       refreshWorkspaceAfterCompletion(projectPath)
     },
     [transport, clearWorkspaceThread, refreshWorkspaceAfterCompletion],
@@ -4304,8 +4356,10 @@ export function App() {
                     keybindings={keybindings}
                     focusRequest={composerFocusRequest}
                     draftRequest={composerDraft}
-                    onDraftChange={updateRejectedDraft}
-                    onAttachmentsChange={updateRejectedAttachments}
+                    onDraftChange={updateComposerDraftText}
+                    onAttachmentsChange={updateComposerDraftAttachments}
+                    onResourcesChange={updateComposerDraftResources}
+                    onReady={handleComposerReady}
                     queuedTurns={queuedTurns}
                     canSteerQueue={canSteerQueue}
                     onModelChange={selectModel}
