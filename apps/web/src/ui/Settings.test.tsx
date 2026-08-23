@@ -629,7 +629,7 @@ describe('model settings', () => {
     )
   })
 
-  it('shows a partially visible provider as off and turns every model on', () => {
+  it('uses All and None buttons to change every model for one provider', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -710,8 +710,11 @@ describe('model settings', () => {
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    const providerToggle = screen.getByRole('switch', {
-      name: 'Include models from OpenCode in model picker',
+    const allButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
+    })
+    const noneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
     })
     const ling = screen.getByRole('switch', {
       name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
@@ -719,34 +722,48 @@ describe('model settings', () => {
     const qwen = screen.getByRole('switch', {
       name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
     })
-    expect(providerToggle.getAttribute('aria-checked')).toBe('false')
-    expect(providerToggle.classList.contains('is-on')).toBe(false)
+    expect(allButton.textContent).toBe('All')
+    expect(noneButton.textContent).toBe('None')
+    expect((allButton as HTMLButtonElement).disabled).toBe(false)
+    expect((noneButton as HTMLButtonElement).disabled).toBe(false)
+    expect(
+      screen.queryByRole('switch', {
+        name: 'Include models from OpenCode in model picker',
+      }),
+    ).toBeNull()
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
 
-    fireEvent.click(providerToggle)
+    fireEvent.click(allButton)
     expect(onModelVisibilityChange).toHaveBeenCalledOnce()
     expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set()))
-    const enabledProvider = screen.getByRole('switch', {
-      name: 'Include models from OpenCode in model picker',
+    const disabledAllButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
     })
-    expect(enabledProvider.getAttribute('aria-checked')).toBe('true')
-    expect(enabledProvider.classList.contains('is-on')).toBe(true)
-    fireEvent.click(enabledProvider)
+    const enabledNoneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
+    })
+    expect((disabledAllButton as HTMLButtonElement).disabled).toBe(true)
+    expect((enabledNoneButton as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(enabledNoneButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', false)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', false)
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
-    const disabledProvider = screen.getByRole('switch', {
-      name: 'Include models from OpenCode in model picker',
+    const enabledAllButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
     })
-    expect(disabledProvider.getAttribute('aria-checked')).toBe('false')
-    fireEvent.click(disabledProvider)
+    const disabledNoneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
+    })
+    expect((enabledAllButton as HTMLButtonElement).disabled).toBe(false)
+    expect((disabledNoneButton as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(enabledAllButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)

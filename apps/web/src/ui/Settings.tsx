@@ -1037,6 +1037,16 @@ function ModelVisibilityGroup(props: {
 }) {
   const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
   const allVisible = visibleCount === props.choices.length
+  const noneVisible = visibleCount === 0
+
+  const setAllVisible = (visible: boolean) => {
+    for (const choice of props.choices) {
+      const currentlyVisible = !props.hiddenModels.has(choice.key)
+      if (currentlyVisible !== visible) {
+        props.onModelVisibilityChange(choice.key, visible)
+      }
+    }
+  }
 
   return (
     <section className="model-visibility" aria-label={props.source}>
@@ -1046,24 +1056,28 @@ function ModelVisibilityGroup(props: {
             <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
           </h3>
         ) : null}
-        <button
-          className={`switch model-visibility__source-switch${allVisible ? ' is-on' : ''}`}
-          type="button"
-          role="switch"
-          aria-label={`Include models from ${props.source} in model picker`}
-          aria-checked={allVisible}
-          onClick={() => {
-            const visible = !allVisible
-            for (const choice of props.choices) {
-              const currentlyVisible = !props.hiddenModels.has(choice.key)
-              if (currentlyVisible !== visible) {
-                props.onModelVisibilityChange(choice.key, visible)
-              }
-            }
-          }}
+        <div
+          className="model-visibility__bulk-actions"
+          role="group"
+          aria-label={`${props.source} model visibility`}
         >
-          <span className="switch__thumb" />
-        </button>
+          <button
+            type="button"
+            aria-label={`Show all ${props.source} models in model picker`}
+            disabled={allVisible}
+            onClick={() => setAllVisible(true)}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            aria-label={`Hide all ${props.source} models from model picker`}
+            disabled={noneVisible}
+            onClick={() => setAllVisible(false)}
+          >
+            None
+          </button>
+        </div>
       </header>
 
       <div className="model-visibility__models">
