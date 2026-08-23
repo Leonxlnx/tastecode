@@ -111,4 +111,11 @@ describe('thread reply spacing', () => {
   it('uses a small gap inside one live work sequence', () => {
     expect(css).toContain('.thread__row.is-compact-to-next {\n  padding-bottom: 4px;\n}')
   })
+
+  it('keeps the last thread line clear of the docked composer border', () => {
+    const dockedComposer = css.match(/\.composer:not\(\.is-new-session\) \{(?<body>[\s\S]*?)\n\}/)
+      ?.groups?.['body']
+
+    expect(dockedComposer).toContain('padding-top: 12px')
+  })
 })
