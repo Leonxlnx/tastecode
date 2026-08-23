@@ -156,6 +156,28 @@
      so the line and the rounded corner belong to one element. */
 }
 
+.rail__folder-drop {
+  position: absolute;
+  z-index: 4;
+  inset: 8px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px dashed var(--text-2);
+  border-radius: var(--r-panel);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--t-sm);
+  text-align: center;
+  pointer-events: none;
+}
+
+.rail__folder-drop svg {
+  color: var(--text-2);
+}
+
 .rail-slot.is-collapsed .rail {
   /* The temporary reveal is the real sidebar: same width as before the
      collapse and a proper frame of its own, not a bare slab. */

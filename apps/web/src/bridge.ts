@@ -21,6 +21,7 @@ export type PickedAttachment = z.infer<typeof PickedAttachmentSchema>
 
 export type Bridge = {
   pickFolder: () => Promise<string | undefined>
+  droppedFolderPaths?: (files: File[]) => Promise<string[]>
   pickSkillFolder: () => Promise<string | undefined>
   pickFiles: () => Promise<Array<PickedAttachment | string>>
   previewViewedImage?: (reference: string) => Promise<PickedAttachment | undefined>
@@ -102,6 +103,7 @@ const attachmentPreviews = new Map<string, PickedAttachment>()
 export const isDesktop = bridge?.isDesktop === true
 export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
+export const canDropProjectFolders = bridge?.droppedFolderPaths !== undefined
 
 export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
@@ -110,6 +112,14 @@ export function isMacOS(): boolean {
 export async function pickFolder(): Promise<string | undefined> {
   if (bridge) return bridge.pickFolder()
   return window.prompt('Folder to work in')?.trim() || undefined
+}
+
+export async function droppedProjectFolderPaths(files: ArrayLike<File>): Promise<string[]> {
+  try {
+    return (await bridge?.droppedFolderPaths?.(Array.from(files))) ?? []
+  } catch {
+    return []
+  }
 }
 
 export async function pickSkillFolder(): Promise<string | undefined> {

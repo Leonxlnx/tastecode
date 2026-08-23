@@ -2246,16 +2246,25 @@ export function App() {
     [models, commitModelChoice],
   )
 
+  const addProjects = useCallback(
+    async (paths: readonly string[]) => {
+      const uniquePaths = [...new Set(paths)]
+      const activePath = uniquePaths.at(-1)
+      if (!activePath) return
+      await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
+      await refreshProjects()
+      setActivePath(activePath)
+      activeIdRef.current = undefined
+      setActiveId(undefined)
+      setThread(emptyThread)
+    },
+    [transport, refreshProjects],
+  )
+
   const addProject = useCallback(async () => {
     const path = await pickFolder()
-    if (!path) return
-    await transport.request('projects.add', { path })
-    await refreshProjects()
-    setActivePath(path)
-    activeIdRef.current = undefined
-    setActiveId(undefined)
-    setThread(emptyThread)
-  }, [transport, refreshProjects])
+    if (path) await addProjects([path])
+  }, [addProjects])
 
   const generateSessionTitle = useCallback(
     async (threadId: string, prompt: string, expectedTitle: string) => {
@@ -3442,6 +3451,13 @@ export function App() {
     setSurface('chat')
     void addProject()
   }, [addProject])
+  const addDroppedSidebarProjects = useCallback(
+    (paths: string[]) => {
+      setSurface('chat')
+      void addProjects(paths)
+    },
+    [addProjects],
+  )
   const startSidebarSession = useCallback(
     (path?: string, chooseProject?: boolean) => {
       setSurface('chat')
@@ -4161,6 +4177,7 @@ export function App() {
           onClose={closeSidebar}
           onWidthChange={resizeSidebar}
           onAddProject={addSidebarProject}
+          onAddDroppedProjects={addDroppedSidebarProjects}
           onNewSession={startSidebarSession}
           onSelectSession={selectSidebarSession}
           onRenameProject={renameSidebarProject}

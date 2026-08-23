@@ -47,6 +47,7 @@ import {
 } from './app-updater.js'
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
+import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
@@ -672,8 +673,9 @@ async function sweepStaleCaptures(): Promise<void> {
 }
 
 /**
- * Native pickers. The renderer can ask for a path but never reads the disk
- * itself — the user's own selection is the only way a path enters the app.
+ * Native path intake. The renderer can ask for a path but never reads the disk
+ * itself — the user's own picker or operating-system drop is the only way a
+ * path enters the app.
  */
 ipcMain.handle('harness:pickFolder', async (event) => {
   requireOwnRenderer(event.sender)
@@ -682,6 +684,15 @@ ipcMain.handle('harness:pickFolder', async (event) => {
     title: 'Choose a project folder',
   })
   return result.canceled ? undefined : result.filePaths[0]
+})
+
+const DroppedFolderPathsSchema = z
+  .array(z.string().min(1).max(32_768))
+  .max(MAX_DROPPED_PROJECT_PATHS)
+
+ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  return droppedFolderPaths(DroppedFolderPathsSchema.parse(value))
 })
 
 ipcMain.handle('harness:pickSkillFolder', async (event) => {

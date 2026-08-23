@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Profiler } from 'react'
 import { Sidebar } from './Sidebar.js'
 
@@ -10,9 +10,14 @@ const hapticMocks = vi.hoisted(() => ({
 }))
 const performHaptic = hapticMocks.perform
 const prepareHaptics = hapticMocks.prepare
+const droppedProjectFolderPaths = vi.hoisted(() =>
+  vi.fn<(files: ArrayLike<File>) => Promise<string[]>>(),
+)
 
 vi.mock('../bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../bridge.js')>()),
+  canDropProjectFolders: true,
+  droppedProjectFolderPaths,
   isMacOS: () => true,
 }))
 
@@ -39,6 +44,7 @@ afterEach(() => {
   cleanup()
   performHaptic.mockClear()
   prepareHaptics.mockClear()
+  droppedProjectFolderPaths.mockReset()
 })
 
 const session = (id: string, title: string) => ({
@@ -670,6 +676,92 @@ describe('Sidebar chat actions', () => {
     fireEvent.drop(target, { clientY: 75, dataTransfer })
 
     expect(onReorderProject).toHaveBeenCalledWith('/work/first', '/work/second', 'after')
+  })
+
+  it('adds all folders dropped on the sidebar with clear drop feedback', async () => {
+    const onAddDroppedProjects = vi.fn()
+    droppedProjectFolderPaths.mockResolvedValue(['/work/first', '/work/second'])
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onAddDroppedProjects={onAddDroppedProjects}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const rail = screen.getByRole('navigation')
+    const files = [new File([], 'first'), new File([], 'second')]
+    const dataTransfer = { files, types: ['Files'], dropEffect: 'none' }
+
+    fireEvent.dragEnter(rail, { dataTransfer })
+    expect(screen.getByRole('status').textContent).toContain('Drop folders to add projects')
+    expect(rail.classList).toContain('is-folder-drop-target')
+
+    expect(fireEvent.dragOver(rail, { dataTransfer })).toBe(false)
+    fireEvent.drop(rail, { dataTransfer })
+
+    expect(screen.queryByRole('status')).toBeNull()
+    await waitFor(() =>
+      expect(onAddDroppedProjects).toHaveBeenCalledWith(['/work/first', '/work/second']),
+    )
+    expect(droppedProjectFolderPaths).toHaveBeenCalledWith(files)
+  })
+
+  it('does not add anything when a drop contains no folders', async () => {
+    const onAddDroppedProjects = vi.fn()
+    droppedProjectFolderPaths.mockResolvedValue([])
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onAddDroppedProjects={onAddDroppedProjects}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    fireEvent.drop(screen.getByRole('navigation'), {
+      dataTransfer: { files: [new File([], 'notes.txt')], types: ['Files'], dropEffect: 'none' },
+    })
+
+    await waitFor(() => expect(droppedProjectFolderPaths).toHaveBeenCalledOnce())
+    expect(onAddDroppedProjects).not.toHaveBeenCalled()
   })
 
   it('closes an open sidebar from the mobile backdrop', () => {

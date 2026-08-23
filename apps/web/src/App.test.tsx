@@ -86,6 +86,9 @@ const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   undoChanges: undefined,
 }))
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
+const droppedProjectFolderPaths = vi.hoisted(() =>
+  vi.fn<(files: ArrayLike<File>) => Promise<string[]>>(),
+)
 
 vi.mock('./transport.js', async (importOriginal) => {
   const original = await importOriginal<typeof import('./transport.js')>()
@@ -251,6 +254,8 @@ vi.mock('./ui/TerminalPane.js', async (importOriginal) => {
 
 vi.mock('./bridge.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./bridge.js')>()),
+  canDropProjectFolders: true,
+  droppedProjectFolderPaths,
   pickFolder,
   syncNativeMenuShortcuts: nativeMenu.syncShortcuts,
   onNativeMenuAction: (listener: (action: NativeMenuAction) => void) => {
@@ -331,6 +336,7 @@ function contractValidServerProviders(): ServerProvider[] {
 
 beforeEach(() => {
   pickFolder.mockReset().mockResolvedValue(undefined)
+  droppedProjectFolderPaths.mockReset().mockResolvedValue([])
   nativeMenu.listener = undefined
   nativeMenu.syncShortcuts.mockClear()
   appRenders.mockClear()
@@ -948,6 +954,51 @@ describe('web client', () => {
     })
     expect(
       await screen.findByRole('heading', { name: 'What should we build in new-project?' }),
+    ).toBeTruthy()
+  })
+
+  it('adds one or many dropped folders without adding duplicates twice', async () => {
+    serverProjects = []
+    droppedProjectFolderPaths.mockResolvedValue([
+      '/work/first-project',
+      '/work/second-project',
+      '/work/first-project',
+    ])
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'projects.add') {
+        const { path } = methods['projects.add'].params.parse(params)
+        const name = path.split('/').at(-1) ?? path
+        if (!serverProjects.some((project) => project.path === path)) {
+          serverProjects.push({ path, name, pinned: false, createdAt: 0, sessions: [] })
+        }
+        return Promise.resolve({ path, name, pinned: false, createdAt: 0 })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    const rail = await screen.findByRole('navigation')
+    const files = [new File([], 'first-project'), new File([], 'second-project')]
+    const dataTransfer = { files, types: ['Files'], dropEffect: 'none' }
+    fireEvent.dragEnter(rail, { dataTransfer })
+    fireEvent.drop(rail, { dataTransfer })
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('projects.add', {
+        path: '/work/first-project',
+      })
+      expect(transport.request).toHaveBeenCalledWith('projects.add', {
+        path: '/work/second-project',
+      })
+    })
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'projects.add'),
+    ).toHaveLength(2)
+    expect(
+      await screen.findByRole('heading', { name: 'What should we build in second-project?' }),
     ).toBeTruthy()
   })
 

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import { z } from 'zod'
 import type { AppUpdateState } from './app-updater.js'
@@ -24,6 +24,19 @@ type PickedAttachment = {
  */
 const api = {
   pickFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickFolder'),
+  droppedFolderPaths: (files: File[]): Promise<string[]> => {
+    const paths = Array.from(files)
+      .slice(0, 128)
+      .map((file) => {
+        try {
+          return webUtils.getPathForFile(file)
+        } catch {
+          return ''
+        }
+      })
+      .filter(Boolean)
+    return ipcRenderer.invoke('harness:droppedFolderPaths', paths)
+  },
   pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
   pickFiles: (): Promise<PickedAttachment[]> => ipcRenderer.invoke('harness:pickFiles'),
   previewViewedImage: (reference: string): Promise<PickedAttachment | undefined> =>

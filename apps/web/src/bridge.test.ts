@@ -74,6 +74,32 @@ describe('attachment preview bridge', () => {
   })
 })
 
+describe('dropped project folder bridge', () => {
+  it('delegates dropped files to the native folder validator', async () => {
+    const files = [new File([], 'first'), new File([], 'second')]
+    const droppedFolderPaths = vi.fn().mockResolvedValue(['/work/first', '/work/second'])
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      droppedFolderPaths,
+    }
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canDropProjectFolders).toBe(true)
+    await expect(bridge.droppedProjectFolderPaths(files)).resolves.toEqual([
+      '/work/first',
+      '/work/second',
+    ])
+    expect(droppedFolderPaths).toHaveBeenCalledWith(files)
+  })
+
+  it('ignores a drop when no desktop bridge exists', async () => {
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canDropProjectFolders).toBe(false)
+    await expect(bridge.droppedProjectFolderPaths([new File([], 'project')])).resolves.toEqual([])
+  })
+})
+
 describe('clipboard bridge', () => {
   it('delegates text writes to the native bridge', async () => {
     const writeClipboardText = vi.fn().mockResolvedValue(undefined)

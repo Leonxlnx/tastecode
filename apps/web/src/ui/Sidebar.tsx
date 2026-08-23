@@ -33,7 +33,12 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { isDesktop, revealPath } from '../bridge.js'
+import {
+  canDropProjectFolders,
+  droppedProjectFolderPaths,
+  isDesktop,
+  revealPath,
+} from '../bridge.js'
 import {
   appHapticsSupported,
   performAppHaptic,
@@ -130,6 +135,7 @@ function SidebarComponent(props: {
   onClose: () => void
   onWidthChange: (width: number) => void
   onAddProject: () => void
+  onAddDroppedProjects?: ((paths: string[]) => void) | undefined
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
@@ -396,6 +402,8 @@ function SidebarComponent(props: {
     [props.projects],
   )
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
+  const [folderDropActive, setFolderDropActive] = useState(false)
+  const folderDragDepth = useRef(0)
   const [projectDropTarget, setProjectDropTarget] = useState<{
     path: string
     position: DropPosition
@@ -404,6 +412,34 @@ function SidebarComponent(props: {
   const endProjectDrag = () => {
     setDraggedProjectPath(undefined)
     setProjectDropTarget(undefined)
+  }
+
+  const folderDropEnabled = canDropProjectFolders && props.onAddDroppedProjects !== undefined
+  const hasDroppedFiles = (event: DragEvent<HTMLElement>) =>
+    Array.from(event.dataTransfer.types ?? []).includes('Files')
+
+  const showFolderDropTarget = (event: DragEvent<HTMLElement>) => {
+    if (!folderDropEnabled || !hasDroppedFiles(event)) return
+    event.preventDefault()
+    folderDragDepth.current += 1
+    if (folderDragDepth.current === 1) setFolderDropActive(true)
+  }
+
+  const hideFolderDropTarget = (event: DragEvent<HTMLElement>) => {
+    if (!folderDropEnabled || !hasDroppedFiles(event)) return
+    folderDragDepth.current = Math.max(0, folderDragDepth.current - 1)
+    if (folderDragDepth.current === 0) setFolderDropActive(false)
+  }
+
+  const addDroppedProjects = (event: DragEvent<HTMLElement>) => {
+    if (!folderDropEnabled || !hasDroppedFiles(event)) return
+    event.preventDefault()
+    folderDragDepth.current = 0
+    setFolderDropActive(false)
+    event.dataTransfer.dropEffect = 'copy'
+    void droppedProjectFolderPaths(event.dataTransfer.files).then((paths) => {
+      if (paths.length > 0) props.onAddDroppedProjects?.(paths)
+    })
   }
 
   return (
@@ -435,7 +471,25 @@ function SidebarComponent(props: {
         />
       ) : null}
 
-      <nav ref={railRef} className="rail" inert={props.collapsed ? true : undefined}>
+      <nav
+        ref={railRef}
+        className={`rail${folderDropActive ? ' is-folder-drop-target' : ''}`}
+        inert={props.collapsed ? true : undefined}
+        onDragEnter={showFolderDropTarget}
+        onDragOver={(event) => {
+          if (!folderDropEnabled || !hasDroppedFiles(event)) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'copy'
+        }}
+        onDragLeave={hideFolderDropTarget}
+        onDrop={addDroppedProjects}
+      >
+        {folderDropActive ? (
+          <div className="rail__folder-drop" role="status">
+            <FolderOpen size={18} aria-hidden />
+            <span>Drop folders to add projects</span>
+          </div>
+        ) : null}
         {inbox ? (
           <InboxSidebar
             projects={props.projects}
