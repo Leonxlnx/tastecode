@@ -64,8 +64,8 @@ export function resolveBackgroundModel(
     .filter((model) => isLuna(model))
     .sort((left, right) => compareVersions(right, left))[0]
   if (codex && luna) {
-    const medium = luna.reasoningEfforts.find((effort) => normalize(effort) === 'medium')
-    return selection(codex, luna, medium ?? lowestReasoningEffort(luna), true)
+    const low = luna.reasoningEfforts.find((effort) => normalize(effort) === 'low')
+    return selection(codex, luna, low ?? lowestReasoningEffort(luna), true)
   }
 
   const grok = sources.find(

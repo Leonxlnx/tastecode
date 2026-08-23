@@ -25,7 +25,7 @@ const model = (id: string, reasoningEfforts: string[] = [], isDefault = false): 
 })
 
 describe('background model resolution', () => {
-  it('prefers Luna medium for a ChatGPT-authenticated Codex source', () => {
+  it('prefers Luna low for a ChatGPT-authenticated Codex source', () => {
     const sources: AvailableBackgroundModelSource[] = [
       {
         id: 'codex',
@@ -51,7 +51,7 @@ describe('background model resolution', () => {
     expect(resolveBackgroundModel({ mode: 'automatic' }, sources)).toEqual({
       provider: 'codex',
       model: 'gpt-5.6-luna',
-      effort: 'medium',
+      effort: 'low',
       sourceName: 'Codex',
       automatic: true,
     })
@@ -165,7 +165,7 @@ describe('background completion', () => {
         selection: {
           provider: 'codex',
           model: 'gpt-5.6-luna',
-          effort: 'medium',
+          effort: 'low',
           sourceName: 'Codex',
           automatic: true,
         },
@@ -174,7 +174,7 @@ describe('background completion', () => {
     ).resolves.toBe('Generated title')
     expect(startOptions).toMatchObject({
       model: 'gpt-5.6-luna',
-      effort: 'medium',
+      effort: 'low',
       approval: 'ask',
       ephemeral: true,
     })

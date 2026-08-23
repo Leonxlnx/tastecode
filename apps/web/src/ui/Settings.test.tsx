@@ -526,7 +526,7 @@ describe('model settings', () => {
           resolved: {
             provider: 'codex' as const,
             model: 'gpt-5.6-luna',
-            effort: 'medium',
+            effort: 'low',
             sourceName: 'Codex',
             automatic: true,
           },
@@ -558,7 +558,7 @@ describe('model settings', () => {
 
     const picker = await screen.findByRole('combobox', { name: 'Background model' })
     expect(picker.tagName).toBe('BUTTON')
-    expect(screen.getByText(/gpt-5\.6 luna through codex at medium effort/i)).toBeTruthy()
+    expect(screen.getByText(/gpt-5\.6 luna through codex at low effort/i)).toBeTruthy()
     fireEvent.click(picker)
     fireEvent.click(screen.getByRole('option', { name: 'GPT-5.6 Luna' }))
 
