@@ -25,9 +25,20 @@ export type ClaudeQueryFactory = (input: {
   options: Options
 }) => ClaudeQueryRuntime
 
+export type ClaudeUsageQueryRuntime = Pick<
+  Query,
+  'close' | 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET'
+>
+
+export type ClaudeUsageQueryFactory = (input: {
+  prompt: AsyncIterable<SDKUserMessage>
+  options: Options
+}) => ClaudeUsageQueryRuntime
+
 export type ClaudeSpawn = typeof spawnCli
 
 export const createClaudeQuery: ClaudeQueryFactory = (input) => query(input)
+export const createClaudeUsageQuery: ClaudeUsageQueryFactory = (input) => query(input)
 
 /**
  * Let the Agent SDK own its protocol while TasteCode owns process creation.
