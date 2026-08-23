@@ -872,6 +872,82 @@ describe('Composer draft replacement', () => {
     await waitFor(() => expect(composer.value).toBe('Rewrite this request'))
     expect(document.activeElement).toBe(composer)
   })
+
+  it('does not write a hydrated draft back to the parent', async () => {
+    const onDraftChange = vi.fn()
+    const onAttachmentsChange = vi.fn()
+    const onResourcesChange = vi.fn()
+    renderComposer(vi.fn(), {
+      draftRequest: {
+        text: 'Keep this',
+        attachments: ['/work/notes.md'],
+        resources: [
+          {
+            key: 'skill:docs',
+            kind: 'skill',
+            id: '/skills/docs/SKILL.md',
+            name: 'Docs',
+            description: 'Project docs',
+            scope: 'Project',
+            token: '$docs',
+            available: true,
+          },
+        ],
+        request: 1,
+      },
+      onDraftChange,
+      onAttachmentsChange,
+      onResourcesChange,
+    })
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Keep this',
+      ),
+    )
+    expect(screen.getByRole('button', { name: 'Remove notes.md' })).toBeTruthy()
+    expect(onDraftChange).not.toHaveBeenCalled()
+    expect(onAttachmentsChange).not.toHaveBeenCalled()
+    expect(onResourcesChange).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Keep this, edited' },
+    })
+    expect(onDraftChange).toHaveBeenCalledWith('Keep this, edited')
+  })
+
+  it('replaces resource chips when a draft request includes them', async () => {
+    const view = renderComposer(vi.fn(), {
+      draftRequest: {
+        text: 'Use the docs',
+        attachments: [],
+        resources: [
+          {
+            key: 'skill:docs',
+            kind: 'skill',
+            id: '/skills/docs/SKILL.md',
+            name: 'Docs',
+            description: 'Project docs',
+            scope: 'Project',
+            token: '$docs',
+            available: true,
+          },
+        ],
+        request: 1,
+      },
+    })
+
+    expect(screen.getByText('Docs').closest('.chip--resource')).toBeTruthy()
+
+    view.rerenderComposer({
+      draftRequest: { text: '', attachments: [], resources: [], request: 2 },
+    })
+
+    await waitFor(() => {
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe('')
+    })
+    expect(screen.queryByText('Docs')).toBeNull()
+  })
 })
 
 function renderComposer(

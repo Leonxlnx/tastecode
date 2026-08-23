@@ -79,6 +79,17 @@ function contextUsageStyle(percent: number): ContextUsageStyle {
   return { '--context-used': percent }
 }
 
+function sameDraftPaths(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((path, index) => path === right[index])
+}
+
+function sameDraftResources(left: ComposerResource[], right: ComposerResource[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((resource, index) => resource.key === right[index]?.key)
+  )
+}
+
 /**
  * Prompt bar.
  *
@@ -358,9 +369,18 @@ function ComposerComponent(props: {
   designMode: boolean
   keybindings?: Keybindings | undefined
   focusRequest: number
-  draftRequest?: { text: string; attachments?: string[]; request: number } | undefined
+  draftRequest?:
+    | {
+        text: string
+        attachments?: string[] | undefined
+        resources?: ComposerResource[] | undefined
+        request: number
+      }
+    | undefined
   onDraftChange?: ((text: string) => void) | undefined
   onAttachmentsChange?: ((attachments: string[]) => void) | undefined
+  onResourcesChange?: ((resources: ComposerResource[]) => void) | undefined
+  onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
   onModelChange: (id: string) => void
@@ -416,6 +436,12 @@ function ComposerComponent(props: {
   const resizeFrame = useRef<number | undefined>(undefined)
   const composerAnchor = useRef<HTMLDivElement>(null)
   const previousNewSession = useRef(props.newSession)
+  const attachmentsChangeReady = useRef(false)
+  const resourcesChangeReady = useRef(false)
+  const onReady = useRef(props.onReady)
+  onReady.current = props.onReady
+  const draftRequestRef = useRef(props.draftRequest)
+  draftRequestRef.current = props.draftRequest
   const previousComposerRect = useRef<DOMRect | null>(null)
   const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
@@ -554,12 +580,47 @@ function ComposerComponent(props: {
     })
   }
 
+  const replaceDraft = (value: string) => {
+    textRef.current = value
+    setText(value)
+    setResourceTrigger(undefined)
+    requestAnimationFrame(() => {
+      area.current?.focus()
+      grow()
+    })
+  }
+
+  useEffect(() => {
+    onReady.current?.()
+  }, [])
+
   useEffect(() => {
     if (!props.draftRequest) return
-    setValue(props.draftRequest.text)
+    // Parent already holds this snapshot. Writing it back would let a stale
+    // empty request wipe a draft that was typed after the last publish.
+    replaceDraft(props.draftRequest.text)
     if (props.draftRequest.attachments !== undefined) {
-      clearAttachments()
-      addFiles(props.draftRequest.attachments)
+      for (const attachment of attachments) releasePreview(attachment.previewUrl)
+      setViewingMedia(undefined)
+      const paths = props.draftRequest.attachments
+      setAttachments(
+        paths.map((path) => {
+          const name = basename(path)
+          const inferredMediaType = previewMediaType('', name)
+          return {
+            id: path,
+            name,
+            path,
+            ...(inferredMediaType ? { mediaType: inferredMediaType } : {}),
+          }
+        }),
+      )
+      for (const path of paths) {
+        if (previewMediaType('', path)) hydrateAttachmentPreview(path)
+      }
+    }
+    if (props.draftRequest.resources !== undefined) {
+      setSelectedResources(props.draftRequest.resources)
     }
   }, [props.draftRequest?.request])
 
@@ -734,8 +795,25 @@ function ComposerComponent(props: {
   }
 
   useEffect(() => {
-    props.onAttachmentsChange?.(attachments.flatMap((attachment) => attachment.path ?? []))
+    if (!attachmentsChangeReady.current) {
+      attachmentsChangeReady.current = true
+      return
+    }
+    const paths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const hydrated = draftRequestRef.current?.attachments
+    if (hydrated !== undefined && sameDraftPaths(paths, hydrated)) return
+    props.onAttachmentsChange?.(paths)
   }, [attachments, props.onAttachmentsChange])
+
+  useEffect(() => {
+    if (!resourcesChangeReady.current) {
+      resourcesChangeReady.current = true
+      return
+    }
+    const hydrated = draftRequestRef.current?.resources
+    if (hydrated !== undefined && sameDraftResources(selectedResources, hydrated)) return
+    props.onResourcesChange?.(selectedResources)
+  }, [selectedResources, props.onResourcesChange])
 
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     const trimmed = composerPromptWithResources(content, selectedResources)
