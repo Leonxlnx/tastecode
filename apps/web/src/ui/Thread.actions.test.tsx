@@ -760,6 +760,40 @@ describe('completed activity disclosure', () => {
     expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
   })
 
+  it('keeps one copy action at the end of persisted Design history', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Design a site' }),
+      turnItem('design-activity-1', 2, { type: 'tool_call', text: 'design:brief' }),
+      turnItem('design-note-first', 3, {
+        role: 'assistant',
+        text: 'I have a few questions before designing.',
+      }),
+      turnItem('design-activity-2', 4, {
+        turnId: 'turn-2',
+        type: 'tool_call',
+        text: 'design:brand',
+      }),
+      turnItem('design-note-second', 5, {
+        turnId: 'turn-2',
+        role: 'assistant',
+        text: 'Brief locked in. Starting the design.',
+      }),
+      turnItem('design-complete-old', 6, {
+        turnId: 'turn-3',
+        role: 'assistant',
+        text: 'Website built. Preview ready.',
+      }),
+    ])
+
+    expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
+    expect(
+      screen
+        .getByText('Website built. Preview ready.')
+        .closest('.reply')
+        ?.querySelector('[aria-label="Copy response"]'),
+    ).toBeTruthy()
+  })
+
   it('puts the turn revert beside the completed response', () => {
     const onRevertCheckpoint = vi.fn()
     const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 0 }

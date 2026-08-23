@@ -214,7 +214,7 @@ export function presentTurns(
     [...drafts].map(([turnId, draft]) => {
       const finalAnswer =
         draft.answers.findLast(({ item }) => item.phase === 'final_answer') ??
-        draft.answers.findLast(({ item }) => item.phase === undefined)
+        draft.answers.findLast(({ item }) => isLegacyFinalAnswer(item))
       const timing = turnTiming[turnId]
       const elapsedMs =
         timing?.startedAt !== undefined && timing.completedAt !== undefined
@@ -265,6 +265,13 @@ export function presentTurns(
       ]
     }),
   )
+}
+
+function isLegacyFinalAnswer(item: Item): boolean {
+  // Design progress notes predate structured assistant phases. They are
+  // narration, not terminal answers, so old saved threads must not give each
+  // note its own response actions. Terminal Design messages use another id.
+  return item.phase === undefined && !item.id.startsWith('design-note-')
 }
 
 function isStartedAssistantTailTextUpdate(previous: Item[], next: Item[]): boolean {

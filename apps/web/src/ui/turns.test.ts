@@ -243,6 +243,45 @@ describe('turn boundaries', () => {
     })
   })
 
+  it('does not treat persisted Design progress notes as final answers', () => {
+    const items: Item[] = [
+      { ...item('user', 'brief-turn'), role: 'user', text: 'Design a site.' },
+      { ...item('design-activity-1', 'brief-turn'), type: 'tool_call', text: 'design:brief' },
+      {
+        ...item('design-note-first', 'brief-turn'),
+        role: 'assistant',
+        text: 'I have a few questions before designing.',
+      },
+      { ...item('design-activity-2', 'build-turn'), type: 'tool_call', text: 'design:build' },
+      {
+        ...item('design-note-second', 'build-turn'),
+        role: 'assistant',
+        text: 'Brief locked in. Starting the design.',
+      },
+      {
+        ...item('design-complete-old', 'complete-turn'),
+        role: 'assistant',
+        text: 'Website built. Preview ready.',
+      },
+    ]
+
+    expect(presentTurns(items).get('brief-turn')).toMatchObject({
+      responseText: '',
+      finalAnswerIndex: undefined,
+      complete: false,
+    })
+    expect(presentTurns(items).get('build-turn')).toMatchObject({
+      responseText: '',
+      finalAnswerIndex: undefined,
+      complete: false,
+    })
+    expect(presentTurns(items).get('complete-turn')).toMatchObject({
+      responseText: 'Website built. Preview ready.',
+      finalAnswerIndex: 5,
+      complete: true,
+    })
+  })
+
   it('projects completed items identically after durable history replay', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user' },

@@ -1190,6 +1190,13 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toBe(true),
     )
+    const completion = result.received.find(
+      ({ event }) =>
+        event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+    )?.event
+    expect(completion?.type === 'item.completed' ? completion.item.phase : undefined).toBe(
+      'final_answer',
+    )
     return result
   }
 
@@ -1470,15 +1477,21 @@ describe('provider-neutral design briefing', () => {
           )
           .map(({ event }) =>
             event.type === 'item.completed' && event.item.type === 'message'
-              ? event.item.text
+              ? { text: event.item.text, phase: event.item.phase }
               : undefined,
           )
         expect(notes).toEqual([
-          'I have a few questions before designing — they are right below.',
-          'Got it, thanks.',
-          'Some answers need one more pass — please take another look below.',
-          'Got it, thanks.',
-          'Brief locked in. Starting the design.',
+          {
+            text: 'I have a few questions before designing — they are right below.',
+            phase: 'commentary',
+          },
+          { text: 'Got it, thanks.', phase: 'commentary' },
+          {
+            text: 'Some answers need one more pass — please take another look below.',
+            phase: 'commentary',
+          },
+          { text: 'Got it, thanks.', phase: 'commentary' },
+          { text: 'Brief locked in. Starting the design.', phase: 'commentary' },
         ])
 
         sessions[0]?.emit(
