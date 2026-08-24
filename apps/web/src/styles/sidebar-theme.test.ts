@@ -50,7 +50,7 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*padding: 4px 8px;/s)
     expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 8px;/s)
-    expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 2px;[^}]*padding: 0;/s)
+    expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 4px;[^}]*padding: 0;/s)
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
   })
 
@@ -84,12 +84,12 @@ describe('sidebar theme CSS', () => {
   })
 
   it('gives project rows a consistent readable rhythm', () => {
-    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 0;/s)
+    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 2px;/s)
     expect(appCss).toMatch(
       /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
     )
-    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 28px;[^}]*padding-right: 6px;/s)
-    expect(appCss).toMatch(/\.proj__toggle \{[^}]*min-height: 28px;/s)
+    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 32px;[^}]*padding-right: 6px;/s)
+    expect(appCss).toMatch(/\.proj__toggle \{[^}]*font-weight: 400;[^}]*min-height: 32px;/s)
     expect(appCss).toMatch(
       /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
     )
