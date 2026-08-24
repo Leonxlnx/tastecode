@@ -56,11 +56,14 @@ export function Approval(props: {
         <button className="btn btn--quiet" onClick={() => props.onDecide('deny')}>
           Deny
         </button>
-        <button className="ghost" onClick={() => props.onDecide('abort')}>
+        <button className="approval__secondary-action" onClick={() => props.onDecide('abort')}>
           Stop the turn
         </button>
         <span className="approval__spacer" />
-        <button className="ghost" onClick={() => props.onDecide('approve-session')}>
+        <button
+          className="approval__secondary-action"
+          onClick={() => props.onDecide('approve-session')}
+        >
           Always this session
         </button>
         <button className="btn" onClick={() => props.onDecide('approve')}>
