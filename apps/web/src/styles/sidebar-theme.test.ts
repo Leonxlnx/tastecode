@@ -60,8 +60,9 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('reserves a left slot for the working chat spinner', () => {
-    expect(appCss).toMatch(/\.sess:has\(\.sess__spinner\) \{[^}]*padding-left: 28px;/s)
+  it('keeps the provider visible before the working chat spinner', () => {
+    expect(appCss).not.toContain('.sess:has(.sess__spinner)')
+    expect(appCss).toMatch(/\.sess__spinner \{[^}]*position: relative;[^}]*flex: none;/s)
   })
 
   it('keeps the account popup readable beside a compact trigger', () => {

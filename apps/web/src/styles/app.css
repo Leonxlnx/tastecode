@@ -4273,10 +4273,6 @@
   color: var(--text);
 }
 
-.sess:has(.sess__spinner) {
-  padding-left: 28px;
-}
-
 .sessrow.is-active .sess {
   color: var(--text);
 }
@@ -4369,15 +4365,13 @@
 }
 
 .sess__spinner {
-  position: absolute;
-  top: 50%;
-  left: 8px;
+  position: relative;
   width: 12px;
   height: 14px;
+  flex: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
   line-height: 1;
-  transform: translateY(-50%);
 }
 
 .sess__spinner span {
