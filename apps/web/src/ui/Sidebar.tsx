@@ -721,29 +721,31 @@ function SidebarComponent(props: {
                     onConsumeReset={props.onConsumeReset}
                   />
                 ) : null}
-                <button
-                  type="button"
-                  className="menu__item"
-                  onClick={() => {
-                    props.onOpenSettings('profile')
-                    closeOnNarrowViewport()
-                    close()
-                  }}
-                >
-                  <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
-                </button>
-                <button
-                  type="button"
-                  className="menu__item"
-                  aria-keyshortcuts={shortcutAria(keybindings.settings)}
-                  onClick={() => {
-                    props.onOpenSettings()
-                    closeOnNarrowViewport()
-                    close()
-                  }}
-                >
-                  <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
-                </button>
+                <div className="account-menu__actions">
+                  <button
+                    type="button"
+                    className="menu__item"
+                    onClick={() => {
+                      props.onOpenSettings('profile')
+                      closeOnNarrowViewport()
+                      close()
+                    }}
+                  >
+                    <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                  </button>
+                  <button
+                    type="button"
+                    className="menu__item"
+                    aria-keyshortcuts={shortcutAria(keybindings.settings)}
+                    onClick={() => {
+                      props.onOpenSettings()
+                      closeOnNarrowViewport()
+                      close()
+                    }}
+                  >
+                    <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+                  </button>
+                </div>
               </>
             )}
           </Menu>
