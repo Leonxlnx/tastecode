@@ -1,5 +1,12 @@
 export const PREVIEW_SETTLE_SCRIPT = `(async () => {
-  const frame = () => new Promise(resolve => requestAnimationFrame(resolve))
+  const wait = delay => new Promise(resolve => setTimeout(resolve, delay))
+  const frame = () => new Promise(resolve => {
+    const fallback = setTimeout(resolve, 100)
+    requestAnimationFrame(() => {
+      clearTimeout(fallback)
+      resolve()
+    })
+  })
   const start = { x: scrollX, y: scrollY }
   const images = Promise.allSettled(Array.from(document.images).map(image => {
     if (image.complete) {
@@ -18,12 +25,14 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
     scrollTo(0, y)
     await frame()
   }
-  await Promise.race([
-    Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
-    new Promise(resolve => setTimeout(resolve, 1000)),
+  await Promise.all([
+    Promise.race([
+      Promise.allSettled(document.getAnimations().map(animation => animation.finished)),
+      wait(1000),
+    ]),
+    Promise.race([document.fonts?.ready, wait(2000)]),
+    Promise.race([images, wait(2000)]),
   ])
-  await document.fonts?.ready
-  await Promise.race([images, new Promise(resolve => setTimeout(resolve, 2000))])
   scrollTo(start.x, start.y)
   await frame()
   await frame()

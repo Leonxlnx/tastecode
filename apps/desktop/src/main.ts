@@ -560,6 +560,9 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
+      // Captures scroll and wait on paint frames while the window is hidden.
+      // Keep Chromium from suspending those frames in the background.
+      backgroundThrottling: false,
       // One fixed partition, cleared after every run. A partition per request
       // would leave Electron's session registry holding a live session (and
       // its network stack) per capture for the life of the process.

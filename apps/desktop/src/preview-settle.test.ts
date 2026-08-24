@@ -29,6 +29,7 @@ describe('preview capture settling', () => {
         ],
       },
       requestAnimationFrame: frame,
+      clearTimeout,
       innerHeight: 844,
       scrollTo,
       scrollX: 0,
@@ -43,6 +44,74 @@ describe('preview capture settling', () => {
     expect(decode).toHaveBeenCalledOnce()
     expect(frame).toHaveBeenCalledTimes(6)
     expect(scrollTo).toHaveBeenLastCalledWith(0, 120)
+  })
+
+  it('finishes when a hidden renderer does not deliver animation frames', async () => {
+    vi.useFakeTimers()
+    try {
+      let finished = false
+      const settled = vm.runInNewContext(PREVIEW_SETTLE_SCRIPT, {
+        Array,
+        Promise,
+        document: {
+          body: { scrollHeight: 844 },
+          documentElement: { scrollHeight: 844 },
+          fonts: { ready: Promise.resolve() },
+          getAnimations: () => [],
+          images: [],
+        },
+        requestAnimationFrame: vi.fn(),
+        clearTimeout,
+        innerHeight: 844,
+        scrollTo: vi.fn(),
+        scrollX: 0,
+        scrollY: 0,
+        setTimeout,
+      }) as Promise<void>
+      void settled.then(() => {
+        finished = true
+      })
+
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(finished).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('finishes when a webfont never becomes ready', async () => {
+    vi.useFakeTimers()
+    try {
+      let finished = false
+      const settled = vm.runInNewContext(PREVIEW_SETTLE_SCRIPT, {
+        Array,
+        Promise,
+        document: {
+          body: { scrollHeight: 844 },
+          documentElement: { scrollHeight: 844 },
+          fonts: { ready: new Promise(() => undefined) },
+          getAnimations: () => [],
+          images: [],
+        },
+        requestAnimationFrame: (resolve: () => void) => resolve(),
+        clearTimeout,
+        innerHeight: 844,
+        scrollTo: vi.fn(),
+        scrollX: 0,
+        scrollY: 0,
+        setTimeout,
+      }) as Promise<void>
+      void settled.then(() => {
+        finished = true
+      })
+
+      await vi.advanceTimersByTimeAsync(2_100)
+
+      expect(finished).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('bounds whole-page captures to a safe bitmap height', () => {
