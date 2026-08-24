@@ -403,7 +403,7 @@
 .rail__foot {
   display: grid;
   border-top: 1px solid var(--line);
-  padding: 8px 10px 10px;
+  padding: 8px;
 }
 
 .account-menu__usage {
@@ -674,7 +674,7 @@
 .rail__foot .menutrigger {
   width: 100%;
   min-height: 36px;
-  padding: 5px 8px 5px 5px;
+  padding: 5px 8px;
   background: none;
   border: 1px solid transparent;
   border-radius: var(--r-xl);
