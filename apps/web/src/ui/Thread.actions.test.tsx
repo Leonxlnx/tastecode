@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { Item } from '@harness/contracts'
+import type { ApprovalRequest, Item } from '@harness/contracts'
 import { StrictMode } from 'react'
 import { Thread, isRepeatedDesignRow, workLabel } from './Thread.js'
 
@@ -63,6 +63,51 @@ function renderCompleted(items: Item[]) {
     />,
   )
 }
+
+describe('approval queue', () => {
+  it('shows pending requests one at a time in request order', () => {
+    const first: ApprovalRequest = {
+      id: 'approval-1',
+      kind: 'command',
+      command: 'pnpm test',
+      createdAt: 1,
+    }
+    const second: ApprovalRequest = {
+      id: 'approval-2',
+      kind: 'command',
+      command: 'pnpm build',
+      createdAt: 2,
+    }
+    const onDecide = vi.fn()
+    const view = (approvals: ApprovalRequest[]) => (
+      <Thread
+        items={[]}
+        running
+        activeTurn={{ id: 'turn-1', startedAt: 0 }}
+        plan={[]}
+        diff={undefined}
+        approvals={approvals}
+        userInputs={[]}
+        reviews={[]}
+        onDecide={onDecide}
+        onAnswerUserInput={() => undefined}
+      />
+    )
+
+    const rendered = render(view([first, second]))
+
+    expect(screen.getByText('pnpm test')).toBeTruthy()
+    expect(screen.queryByText('pnpm build')).toBeNull()
+    expect(screen.getAllByText('Run this command?')).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow once' }))
+    expect(onDecide).toHaveBeenCalledWith('approval-1', 'approve')
+
+    rendered.rerender(view([second]))
+    expect(screen.queryByText('pnpm test')).toBeNull()
+    expect(screen.getByText('pnpm build')).toBeTruthy()
+  })
+})
 
 describe('design activity rows', () => {
   const marker = (id: string, text: string): Item => ({
