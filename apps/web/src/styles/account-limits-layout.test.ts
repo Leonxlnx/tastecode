@@ -5,9 +5,7 @@ const css = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
 
 describe('account limits layout', () => {
   it('gives the limits section a full spacing rhythm', () => {
-    const usage = css.match(
-      /\.account-menu__usage \{(?<body>[\s\S]*?)\n\}/,
-    )?.groups?.['body']
+    const usage = css.match(/\.account-menu__usage \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
     const separator = css.match(
       /\.account-menu__source \+ \.account-menu__source \{(?<body>[\s\S]*?)\n\}/,
     )?.groups?.['body']
