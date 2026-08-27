@@ -50,7 +50,7 @@ describe('sidebar theme CSS', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*padding: 4px 8px;/s)
     expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 8px;/s)
-    expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 2px;[^}]*padding: 0;/s)
+    expect(appCss).toMatch(/\.proj__sessions \{[^}]*margin: 1px 0 4px;[^}]*padding: 0;/s)
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
   })
 
@@ -60,15 +60,29 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('reserves a left slot for the working chat spinner', () => {
-    expect(appCss).toMatch(/\.sess:has\(\.sess__spinner\) \{[^}]*padding-left: 28px;/s)
+  it('keeps the provider visible before the working chat spinner', () => {
+    expect(appCss).not.toContain('.sess:has(.sess__spinner)')
+    expect(appCss).toMatch(/\.sess__spinner \{[^}]*position: relative;[^}]*flex: none;/s)
   })
 
-  it('keeps the account popup readable beside a compact trigger', () => {
+  it('keeps the account popup compact and pins its actions below scrolling limits', () => {
     expect(appCss).toMatch(
-      /\.menu--settings \{[^}]*width: min\(\s*max\(320px, var\(--menu-trigger-w/s,
+      /\.menu--settings \{[^}]*width: min\(\s*max\(288px, var\(--menu-trigger-w/s,
     )
-    expect(appCss).toMatch(/\.menu--settings \{[^}]*max\(320px,[^}]*calc\(100vw - 16px\)[^}]*;/s)
+    expect(appCss).toMatch(/\.menu--settings \{[^}]*max\(288px,[^}]*calc\(100vw - 16px\)[^}]*;/s)
+    expect(appCss).toMatch(
+      /\.menu--settings \{[^}]*max-height: min\(560px, calc\(100vh - 24px\)\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;[^}]*padding: 6px;/s,
+    )
+    expect(appCss).toMatch(
+      /\.account-menu__usage \{[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;[^}]*scrollbar-gutter: stable;/s,
+    )
+    expect(appCss).toMatch(/\.account-menu__actions \{[^}]*flex: none;/s)
+  })
+
+  it('uses the soft app heading style for plan limits', () => {
+    expect(appCss).toMatch(
+      /\.account-menu__usage-head \{[^}]*font-weight: 560;[^}]*letter-spacing: -0\.014em;/s,
+    )
   })
 
   it('makes the account trigger almost full-width with its chevron on the right', () => {
@@ -84,12 +98,12 @@ describe('sidebar theme CSS', () => {
   })
 
   it('gives project rows a consistent readable rhythm', () => {
-    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 0;/s)
+    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 2px;/s)
     expect(appCss).toMatch(
       /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
     )
-    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 28px;[^}]*padding-right: 6px;/s)
-    expect(appCss).toMatch(/\.proj__toggle \{[^}]*min-height: 28px;/s)
+    expect(appCss).toMatch(/\.proj__head \{[^}]*min-height: 32px;[^}]*padding-right: 6px;/s)
+    expect(appCss).toMatch(/\.proj__toggle \{[^}]*font-weight: 400;[^}]*min-height: 32px;/s)
     expect(appCss).toMatch(
       /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
     )

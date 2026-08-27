@@ -215,7 +215,8 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect(onAddProject).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    expect(screen.getByRole('dialog', { name: 'Account and plan limits' })).toBeTruthy()
+    const accountDialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    expect(accountDialog).toBeTruthy()
     expect(screen.getByText('Plan limits')).toBeTruthy()
     expect(screen.getByText('7 days')).toBeTruthy()
     expect(screen.getByText('15% left')).toBeTruthy()
@@ -229,6 +230,18 @@ describe('Sidebar chat actions', () => {
       .getAllByRole('button')
       .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
     for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
+    expect(accountDialog.firstElementChild?.classList.contains('account-menu__usage')).toBe(true)
+    expect(accountDialog.lastElementChild?.classList.contains('account-menu__actions')).toBe(true)
+    expect(
+      within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
+        name: 'Profile',
+      }),
+    ).toBeTruthy()
+    expect(
+      within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
+        name: 'Settings',
+      }),
+    ).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')
 

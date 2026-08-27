@@ -212,7 +212,7 @@ function LimitRow(props: {
             </button>
           </span>
         ) : (
-          <span>{value}</span>
+          <span className="account-menu__limit-value">{value}</span>
         )}
       </div>
       {props.limit.valueLabel === undefined ? (

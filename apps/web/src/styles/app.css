@@ -403,25 +403,41 @@
 .rail__foot {
   display: grid;
   border-top: 1px solid var(--line);
-  padding: 8px 10px 10px;
+  padding: 8px;
 }
 
 .account-menu__usage {
+  min-height: 0;
   display: grid;
-  gap: 7px;
+  gap: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   font-size: var(--t-sm);
   color: var(--text-2);
-  padding: 7px 9px 9px;
+  padding: 14px 12px 16px;
   border-bottom: 1px solid var(--menu-line);
   margin-bottom: 4px;
+}
+
+.account-menu__actions {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  padding-top: 2px;
 }
 
 .account-menu__usage-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  min-height: 20px;
+  color: var(--text);
   font-size: var(--t-md);
-  margin: 0;
+  font-weight: 560;
+  letter-spacing: -0.014em;
+  line-height: 1.35;
+  margin: 0 0 14px;
 }
 
 .account-menu__usage-head:focus-visible {
@@ -437,30 +453,33 @@
 
 .account-menu__usage-note {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   margin: 0;
   color: var(--text-3);
+  line-height: 1.45;
 }
 
 .account-menu__source {
   display: grid;
-  gap: 7px;
+  gap: 10px;
 }
 
 .account-menu__source + .account-menu__source {
-  margin-top: 3px;
-  padding-top: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
   border-top: 1px solid var(--line-strong);
 }
 
 .account-menu__source h3 {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   margin: 0;
   color: var(--text);
   font-size: var(--t-sm);
+  font-weight: 560;
+  line-height: 1.35;
 }
 
 .account-menu__usage-error {
@@ -494,7 +513,7 @@
 
 .account-menu__limit {
   display: grid;
-  gap: 4px;
+  gap: 6px;
 }
 
 .account-menu__limit-row {
@@ -502,11 +521,21 @@
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+  min-height: 18px;
   font-variant-numeric: tabular-nums;
+  line-height: 1.35;
 }
 
 .account-menu__limit-label {
+  min-width: 0;
   color: var(--text);
+  font-weight: 520;
+}
+
+.account-menu__limit-value {
+  flex: none;
+  color: var(--text-2);
+  white-space: nowrap;
 }
 
 .account-menu__limit-slot {
@@ -586,7 +615,7 @@
 }
 
 .account-menu__limit-bar {
-  height: 4px;
+  height: 5px;
   border-radius: var(--r-pill);
   background: var(--surface-3);
   overflow: hidden;
@@ -606,6 +635,7 @@
 .account-menu__limit-reset {
   color: var(--text-3);
   font-size: var(--t-xs);
+  line-height: 1.4;
 }
 
 .search {
@@ -674,7 +704,7 @@
 .rail__foot .menutrigger {
   width: 100%;
   min-height: 36px;
-  padding: 5px 8px 5px 5px;
+  padding: 5px 8px;
   background: none;
   border: 1px solid transparent;
   border-radius: var(--r-xl);
@@ -4091,7 +4121,7 @@
 
 .proj {
   position: relative;
-  margin-bottom: 0;
+  margin-bottom: 2px;
 }
 
 .proj[draggable='true'] > .proj__head {
@@ -4126,7 +4156,7 @@
   display: flex;
   align-items: center;
   gap: 1px;
-  min-height: 28px;
+  min-height: 32px;
   padding-right: 6px;
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
@@ -4160,8 +4190,8 @@
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
-  font-weight: 520;
-  min-height: 28px;
+  font-weight: 400;
+  min-height: 32px;
   padding: 4px 8px;
   text-align: left;
 }
@@ -4213,7 +4243,7 @@
 
 .proj__sessions {
   list-style: none;
-  margin: 1px 0 2px;
+  margin: 1px 0 4px;
   padding: 0;
   /* THE truncation fix. As a grid item the list defaults to min-width auto,
      so a long nowrap title made it wider than the drawer and the overflow
@@ -4271,10 +4301,6 @@
 
 .sess:hover {
   color: var(--text);
-}
-
-.sess:has(.sess__spinner) {
-  padding-left: 28px;
 }
 
 .sessrow.is-active .sess {
@@ -4369,15 +4395,13 @@
 }
 
 .sess__spinner {
-  position: absolute;
-  top: 50%;
-  left: 8px;
+  position: relative;
   width: 12px;
   height: 14px;
+  flex: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 14px;
   line-height: 1;
-  transform: translateY(-50%);
 }
 
 .sess__spinner span {
@@ -6327,6 +6351,38 @@
 
 .approval__spacer {
   flex: 1;
+}
+
+.approval__secondary-action {
+  width: 140px;
+  min-height: 34px;
+  padding: 5px 12px;
+  background: var(--composer-action-bg);
+  border: 1px solid var(--composer-action-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--composer-action-shadow);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.approval__secondary-action:is(:hover, :focus-visible) {
+  background: var(--composer-action-bg-hover);
+  border-color: var(--composer-action-border-hover);
+  box-shadow: var(--composer-action-shadow-hover);
+  color: var(--text);
+}
+
+.approval__secondary-action:active {
+  box-shadow: var(--composer-action-shadow-active);
+  transform: scale(0.97);
 }
 
 .approval--review .approval__head {
@@ -8514,11 +8570,15 @@
 }
 
 .menu--settings {
-  /* The account trigger is content-sized. Matching it can make plan-limit
-     rows too narrow to read, so keep a useful baseline while still growing
-     with a wider trigger and clamping to the viewport. */
+  /* The limits get enough room to read as a whole. On short windows only
+     the limits scroll, while the two account actions remain reachable. */
   min-width: 0;
-  width: min(max(320px, var(--menu-trigger-w, calc(var(--rail-w) - 20px))), calc(100vw - 16px));
+  width: min(max(288px, var(--menu-trigger-w, calc(var(--rail-w) - 20px))), calc(100vw - 16px));
+  max-height: min(560px, calc(100vh - 24px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 6px;
   border-radius: var(--r-md);
 }
 

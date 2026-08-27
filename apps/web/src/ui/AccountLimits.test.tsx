@@ -115,7 +115,8 @@ describe('account limits', () => {
     expect(within(cursor).getByRole('status').textContent).toContain('Last known values')
 
     const api = screen.getByRole('region', { name: 'API connection' })
-    expect(within(api).getByText('$8.24')).toBeTruthy()
+    const apiValue = within(api).getByText('$8.24')
+    expect(apiValue.classList.contains('account-menu__limit-value')).toBe(true)
     expect(within(api).getByRole('alert').textContent).toContain('Last known values')
   })
 

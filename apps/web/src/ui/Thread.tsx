@@ -107,6 +107,7 @@ export function Thread(props: {
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
 }) {
+  const currentApproval = props.approvals[0]
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
@@ -484,13 +485,13 @@ export function Thread(props: {
             />
           ))}
 
-          {props.approvals.map((request) => (
+          {currentApproval ? (
             <Approval
-              key={request.id}
-              request={request}
-              onDecide={(d) => props.onDecide(request.id, d)}
+              key={currentApproval.id}
+              request={currentApproval}
+              onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
             />
-          ))}
+          ) : null}
 
           {props.reviews.map((review) => (
             <AutomaticApprovalReview key={review.id} review={review} />
