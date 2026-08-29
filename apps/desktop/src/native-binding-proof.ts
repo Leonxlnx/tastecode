@@ -187,6 +187,10 @@ export function proveKeyringBinding(keyring: KeyringModule): void {
   }
 }
 
+export function isNativeBindingProofPlatform(platform: NodeJS.Platform): boolean {
+  return platform === 'win32' || platform === 'darwin' || platform === 'linux'
+}
+
 export async function runNativeBindingProof(
   options: { proofFile?: string; modules?: PackagedNativeModules } = {},
 ): Promise<void> {
@@ -194,8 +198,8 @@ export async function runNativeBindingProof(
   if (!process.versions.electron || process.env.ELECTRON_RUN_AS_NODE !== '1') {
     throw new Error('native proof must run through the packaged Electron executable in Node mode')
   }
-  if (process.platform !== 'win32' && process.platform !== 'darwin') {
-    throw new Error('native proof is a Windows and macOS release gate')
+  if (!isNativeBindingProofPlatform(process.platform)) {
+    throw new Error('native proof is a Windows, macOS, and Linux release gate')
   }
   const modules = options.modules ?? loadPackagedNativeModules()
   await provePtyBinding(modules.pty)

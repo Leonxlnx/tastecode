@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   assertPackagedNativeModules,
+  isNativeBindingProofPlatform,
   proveKeyringBinding,
   provePtyBinding,
 } from './native-binding-proof.js'
@@ -37,6 +38,13 @@ function fakePty() {
 }
 
 describe('packaged native binding proof', () => {
+  it('qualifies the three desktop release platforms', () => {
+    expect(isNativeBindingProofPlatform('win32')).toBe(true)
+    expect(isNativeBindingProofPlatform('darwin')).toBe(true)
+    expect(isNativeBindingProofPlatform('linux')).toBe(true)
+    expect(isNativeBindingProofPlatform('freebsd')).toBe(false)
+  })
+
   it('requires module entries and both bindings from the packaged archive', () => {
     expect(() =>
       assertPackagedNativeModules('C:\\Taste Code\\resources\\app.asar\\dist\\proof.js', {
