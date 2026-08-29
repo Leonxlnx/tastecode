@@ -337,9 +337,11 @@ function ownedPtySessionMembers(owner: LinuxProcessIdentity): LinuxProcessIdenti
 
 function linuxPtySessionMembers(owner: LinuxProcessIdentity): LinuxProcessIdentity[] {
   const members: LinuxProcessIdentity[] = []
-  for (const entry of readdirSync('/proc', { withFileTypes: true })) {
-    if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue
-    const identity = readLinuxProcessIdentity(Number(entry.name))
+  // Dirent creation may lstat a PID after it exits; the stat reader below
+  // already handles that normal /proc race without losing the whole scan.
+  for (const entry of readdirSync('/proc')) {
+    if (!/^\d+$/.test(entry)) continue
+    const identity = readLinuxProcessIdentity(Number(entry))
     if (
       identity &&
       identity.pid !== owner.pid &&
