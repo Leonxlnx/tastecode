@@ -115,16 +115,12 @@ export async function terminatePtySession(
   if (session.kind === 'failed') throw session.error
   const owner = session.owner
   const leader = readLinuxProcessIdentity(owner.pid)
-  if (!leader) {
+  if (!leader || leader.state === 'Z' || leader.state === 'X') {
     await terminateExitedPtySession(owner, options)
     return
   }
   if (!sameLinuxProcessGeneration(leader, owner) || leader.parentId !== owner.parentId) {
     throw new Error(`PTY session leader changed before cleanup completed: ${owner.pid}`)
-  }
-  if (leader.state === 'Z' || leader.state === 'X') {
-    await terminateExitedPtySession(owner, options)
-    return
   }
   signalLinuxProcess(owner, 'SIGSTOP')
   try {
