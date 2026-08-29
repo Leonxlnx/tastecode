@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   assertPackagedNativeModules,
@@ -59,6 +62,77 @@ describe('packaged native binding proof', () => {
         ],
       }),
     ).not.toThrow()
+  })
+
+  it('accepts Electron virtual cache paths when the bindings are physically unpacked', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'tastecode-native-proof-'))
+    const archive = path.join(directory, 'resources', 'app.asar')
+    const ptyBinding = path.join(
+      archive,
+      'node_modules',
+      'node-pty',
+      'prebuilds',
+      'linux-x64',
+      'pty.node',
+    )
+    const keyringBinding = path.join(
+      archive,
+      'node_modules',
+      '@napi-rs',
+      'keyring-linux-x64-gnu',
+      'keyring.linux-x64-gnu.node',
+    )
+
+    try {
+      for (const binding of [ptyBinding, keyringBinding]) {
+        const unpackedBinding = binding.replace(
+          `${archive}${path.sep}`,
+          `${archive}.unpacked${path.sep}`,
+        )
+        mkdirSync(path.dirname(unpackedBinding), { recursive: true })
+        writeFileSync(unpackedBinding, 'native-binding')
+      }
+
+      expect(() =>
+        assertPackagedNativeModules(path.join(archive, 'dist', 'proof.js'), {
+          moduleEntries: [
+            path.join(archive, 'node_modules', 'node-pty', 'lib', 'index.js'),
+            path.join(archive, 'node_modules', '@napi-rs', 'keyring', 'index.js'),
+          ],
+          nativeBindings: [ptyBinding, keyringBinding],
+        }),
+      ).not.toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an Electron virtual cache path without an unpacked binding', () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'tastecode-missing-native-proof-'))
+    const archive = path.join(directory, 'resources', 'app.asar')
+
+    try {
+      expect(() =>
+        assertPackagedNativeModules(path.join(archive, 'dist', 'proof.js'), {
+          moduleEntries: [
+            path.join(archive, 'node_modules', 'node-pty', 'lib', 'index.js'),
+            path.join(archive, 'node_modules', '@napi-rs', 'keyring', 'index.js'),
+          ],
+          nativeBindings: [
+            path.join(archive, 'node_modules', 'node-pty', 'prebuilds', 'linux-x64', 'pty.node'),
+            path.join(
+              archive,
+              'node_modules',
+              '@napi-rs',
+              'keyring-linux-x64-gnu',
+              'keyring.linux-x64-gnu.node',
+            ),
+          ],
+        }),
+      ).toThrow('the unpacked node-pty native binding was not loaded')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('spawns, resizes, and observes a clean PTY exit', async () => {

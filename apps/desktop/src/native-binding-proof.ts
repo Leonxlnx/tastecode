@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
@@ -80,8 +80,16 @@ function isInsideArchive(pathname: string, archive: string): boolean {
   )
 }
 
-function isInsideUnpackedArchive(pathname: string, archive: string): boolean {
-  return canonicalPath(pathname).startsWith(`${canonicalPath(archive)}.unpacked/`)
+function unpackedBindingPath(pathname: string, archive: string): string | undefined {
+  const normalized = canonicalPath(pathname)
+  const canonicalArchive = canonicalPath(archive)
+  if (normalized.startsWith(`${canonicalArchive}.unpacked/`)) return pathname
+  if (!normalized.startsWith(`${canonicalArchive}/`)) return undefined
+
+  // Electron keeps the virtual app.asar path as the require.cache key even
+  // when its ASAR loader reads a native module from app.asar.unpacked.
+  const physicalPath = `${archive}.unpacked${pathname.slice(archive.length)}`
+  return existsSync(physicalPath) ? physicalPath : undefined
 }
 
 export function assertPackagedNativeModules(
@@ -95,9 +103,10 @@ export function assertPackagedNativeModules(
       throw new Error(`native module entry resolved outside the packaged application: ${entry}`)
     }
   }
-  const unpackedBindings = modules.nativeBindings.filter((binding) =>
-    isInsideUnpackedArchive(binding, archive),
-  )
+  const unpackedBindings = modules.nativeBindings.flatMap((binding) => {
+    const unpackedBinding = unpackedBindingPath(binding, archive)
+    return unpackedBinding ? [unpackedBinding] : []
+  })
   if (!unpackedBindings.some((binding) => binding.toLowerCase().includes('node-pty'))) {
     throw new Error('the unpacked node-pty native binding was not loaded')
   }
