@@ -86,7 +86,7 @@ describe('ServerSupervisor', () => {
     expect(children.length).toBe(MAX_CONSECUTIVE_FAILURES + 1)
   })
 
-  it('stop kills the child and cancels any pending restart', () => {
+  it('stop kills the child and cancels any pending restart', async () => {
     const { sup, children } = supervisor()
     sup.start()
     children[0]!.emit('exit', 1, null)
@@ -96,7 +96,9 @@ describe('ServerSupervisor', () => {
 
     const again = supervisor()
     again.sup.start()
-    again.sup.stop()
+    const stopping = again.sup.stop()
+    expect(stopping).toBeInstanceOf(Promise)
+    await stopping
     expect(again.children[0]!.wasKilled).toBe(true)
     again.children[0]!.emit('exit', null, 'SIGTERM')
     vi.advanceTimersByTime(60_000)

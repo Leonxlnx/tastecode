@@ -154,6 +154,8 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+let serverShutdown: Promise<void> | undefined
+let serverShutdownFinished = false
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
@@ -761,16 +763,35 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
     appIsQuitting = true
     mainWindowStatePersistence?.saveAndStop()
+    if (serverShutdownFinished) return
+    if (serverShutdown) {
+      event.preventDefault()
+      return
+    }
+    const supervisor = serverSupervisor
+    if (!supervisor) return
+    // Electron does not await event listeners. Hold the first quit until the
+    // owned server group has completed its bounded TERM-to-KILL shutdown.
+    event.preventDefault()
+    serverSupervisor = undefined
+    serverShutdown = supervisor
+      .stop()
+      .catch((error) => {
+        console.error('[desktop] core server cleanup failed during quit', error)
+        void diagnostics?.record('core server cleanup failed during quit', error)
+      })
+      .finally(() => {
+        serverShutdownFinished = true
+        app.quit()
+      })
   })
   app.on('will-quit', () => {
     appUpdater?.dispose()
     appUpdater = undefined
     macOSHaptics.stop()
-    serverSupervisor?.stop()
-    serverSupervisor = undefined
     tray?.destroy()
     tray = undefined
   })
