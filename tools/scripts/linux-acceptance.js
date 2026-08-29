@@ -6,13 +6,13 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
-  statSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { packagedExecutable } from './linux-acceptance-executable.js'
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const releaseDirectory = path.join(workspaceRoot, 'release')
@@ -44,16 +44,6 @@ function run(commandName, args) {
   if (result.error) throw result.error
   if (result.signal) fail(`${commandName} ended with signal ${result.signal}`)
   if (result.status !== 0) fail(`${commandName} exited with status ${result.status ?? 'unknown'}`)
-}
-
-function packagedExecutable(directory) {
-  const ignored = new Set(['chrome-sandbox', 'chrome_crashpad_handler'])
-  const candidates = readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && !ignored.has(entry.name))
-    .map((entry) => path.join(directory, entry.name))
-    .filter((file) => (statSync(file).mode & 0o111) !== 0)
-  if (candidates.length !== 1) fail(`expected one app executable, found ${candidates.length}`)
-  return candidates[0]
 }
 
 async function sha256(file) {
