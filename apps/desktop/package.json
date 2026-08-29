@@ -39,7 +39,8 @@
     "asar": true,
     "npmRebuild": false,
     "asarUnpack": [
-      "node_modules/**/*.node"
+      "node_modules/**/*.node",
+      "node_modules/**/node-pty/prebuilds/**/spawn-helper"
     ],
     "files": [
       "dist/**/*",
