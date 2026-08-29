@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { acceptanceLaunchEnvironment } from './linux-acceptance-environment.js'
 import { packagedExecutable } from './linux-acceptance-executable.js'
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -111,13 +112,11 @@ for (const relativePath of [
 run('pnpm', ['--filter', '@harness/desktop', 'verify:native-bindings', '--', executable])
 
 const profile = mkdtempSync(path.join(os.tmpdir(), 'tastecode-linux-acceptance-'))
-for (const name of ['config', 'data', 'state', 'cache']) mkdirSync(path.join(profile, name))
-const xdg = {
-  XDG_CONFIG_HOME: path.join(profile, 'config'),
-  XDG_DATA_HOME: path.join(profile, 'data'),
-  XDG_STATE_HOME: path.join(profile, 'state'),
-  XDG_CACHE_HOME: path.join(profile, 'cache'),
-}
+const launchEnvironment = acceptanceLaunchEnvironment(profile)
+for (const directory of Object.values(launchEnvironment)) mkdirSync(directory)
+const xdg = Object.fromEntries(
+  Object.entries(launchEnvironment).filter(([name]) => name.startsWith('XDG_')),
+)
 const report = {
   status: 'awaiting-manual-desktop-acceptance',
   createdAt: new Date().toISOString(),
@@ -125,6 +124,7 @@ const report = {
   executable,
   appAsarSha256: await sha256(path.join(resources, 'app.asar')),
   xdg,
+  harnessConfigDirectory: launchEnvironment.HARNESS_CONFIG_DIR,
 }
 mkdirSync(releaseDirectory, { recursive: true })
 const reportPath = path.join(releaseDirectory, 'linux-acceptance.json')
@@ -132,7 +132,7 @@ writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 
 
 process.stdout.write(`\n[linux-acceptance] automated gates passed: ${reportPath}\n`)
 process.stdout.write(
-  `[linux-acceptance] launch: ${Object.entries(xdg)
+  `[linux-acceptance] launch: ${Object.entries(launchEnvironment)
     .map(([name, value]) => `${name}=${value}`)
     .join(' ')} ${JSON.stringify(executable)}\n`,
 )
