@@ -7,6 +7,11 @@ describe('desktop background lifecycle', () => {
     expect(shouldHideWindowOnClose('linux', false)).toBe(true)
   })
 
+  it('closes normally when the tray recovery surface is unavailable', () => {
+    expect(shouldHideWindowOnClose('linux', false, false)).toBe(false)
+    expect(shouldHideWindowOnClose('win32', false, false)).toBe(false)
+  })
+
   it('uses native macOS window closing and never blocks a real app quit', () => {
     expect(shouldHideWindowOnClose('darwin', false)).toBe(false)
     expect(shouldHideWindowOnClose('win32', true)).toBe(false)
