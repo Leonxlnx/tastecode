@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -13,7 +14,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { acceptanceLaunchEnvironment } from './linux-acceptance-environment.js'
-import { packagedExecutable } from './linux-acceptance-executable.js'
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const releaseDirectory = path.join(workspaceRoot, 'release')
@@ -97,7 +97,21 @@ for (const script of ['lint', 'typecheck', 'test', 'build']) run('pnpm', [script
 run('pnpm', ['--filter', '@harness/desktop', 'dist:linux:dir'])
 
 const unpackedDirectory = path.join(releaseDirectory, 'linux-unpacked')
-const executable = packagedExecutable(unpackedDirectory)
+const desktopPackage = JSON.parse(
+  readFileSync(path.join(workspaceRoot, 'apps/desktop/package.json'), 'utf8'),
+)
+const executableName = desktopPackage.build?.linux?.executableName
+if (typeof executableName !== 'string') {
+  fail('apps/desktop/package.json must define build.linux.executableName')
+}
+const executable = path.join(unpackedDirectory, executableName)
+const executableStat = statSync(executable, { throwIfNoEntry: false })
+if (!executableStat?.isFile()) {
+  fail(`configured Linux app executable is missing from linux-unpacked: ${executableName}`)
+}
+if ((executableStat.mode & 0o111) === 0) {
+  fail(`configured Linux app executable is not executable: ${executableName}`)
+}
 const resources = path.join(unpackedDirectory, 'resources')
 for (const relativePath of [
   'app.asar',

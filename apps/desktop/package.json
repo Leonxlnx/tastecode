@@ -86,6 +86,9 @@
       }
     ],
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "executableName": "@harnessdesktop"
+    },
     "win": {
       "target": [
         {
