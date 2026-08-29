@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { killTree, ownProcessTree, ownedProcessSpawnOptions } from '@harness/proc'
 
 /**
  * The packaged app owns its core server. In development tools/scripts/dev.js
@@ -50,12 +51,15 @@ export class ServerSupervisor {
     if (this.#stopped || this.#child) return
     const spawnFn = this.#options.spawnFn ?? spawn
     this.#startedAt = Date.now()
-    const child = spawnFn(this.#options.command, this.#options.args, {
-      env: this.#options.env,
-      ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
+    const child = ownProcessTree(
+      spawnFn(this.#options.command, this.#options.args, {
+        env: this.#options.env,
+        ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...ownedProcessSpawnOptions(),
+      }),
+    )
     this.#child = child
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
@@ -80,7 +84,7 @@ export class ServerSupervisor {
     this.#restartTimer = undefined
     const child = this.#child
     this.#child = undefined
-    child?.kill()
+    if (child) killTree(child)
   }
 
   #onExit(child: ChildProcess): void {

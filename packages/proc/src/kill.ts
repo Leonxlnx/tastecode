@@ -42,6 +42,10 @@ export function killTree(child: KillableProcess): void {
     })
     if (!result.error && result.status === 0) return
   }
+  if (child.pid !== undefined && ownedUnixProcessGroups.has(child)) {
+    signalProcessGroup(child.pid, 'SIGTERM')
+    return
+  }
   child.kill()
 }
 

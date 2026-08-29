@@ -148,9 +148,14 @@ describe('killTree', () => {
     // The grandchild heartbeats into a temp file; if only the cmd.exe shim
     // died (the pre-fix Windows behavior), the heartbeat keeps ticking.
     const beat = path.join(os.tmpdir(), `harness-killtree-${Date.now()}.txt`)
-    const script = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
+    const grandchild = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
       beat,
     )},String(Date.now())),150)`
+    const script = [
+      "const { spawn } = require('node:child_process')",
+      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
+      'setInterval(() => {}, 1_000)',
+    ].join(';')
     const child = spawnCli('node', ['-e', script])
     await waitFor(() => existsSync(beat), 5_000)
 
