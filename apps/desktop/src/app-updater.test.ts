@@ -20,6 +20,25 @@ const info = { version: '0.1.0-beta.2' }
 afterEach(() => vi.useRealTimers())
 
 describe('app update controller', () => {
+  it('allows app-owned updates only for packaged AppImage, Windows, and macOS builds', () => {
+    expect(
+      appOwnsUpdates({ platform: 'linux', packaged: true, appImagePath: '/tmp/TasteCode.AppImage' }),
+    ).toBe(true)
+    expect(appOwnsUpdates({ platform: 'linux', packaged: true })).toBe(false)
+    expect(appOwnsUpdates({ platform: 'win32', packaged: true })).toBe(true)
+    expect(appOwnsUpdates({ platform: 'darwin', packaged: true })).toBe(true)
+    expect(appOwnsUpdates({ platform: 'linux', packaged: false, appImagePath: '/tmp/app' })).toBe(
+      false,
+    )
+    expect(
+      appOwnsUpdates({
+        platform: 'win32',
+        packaged: true,
+        developmentServer: 'http://localhost:5173',
+      }),
+    ).toBe(false)
+  })
+
   it('downloads an available beta once and installs only after it is ready', async () => {
     const updater = fakeUpdater()
     const states: string[] = []
@@ -57,6 +76,9 @@ describe('app update controller', () => {
 
     await expect(controller.check()).resolves.toMatchObject({ status: 'unsupported' })
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(updater.autoDownload).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+    expect(updater.listenerCount('error')).toBe(0)
   })
 
   it('checks automatically after startup', async () => {
