@@ -920,6 +920,7 @@ export function startServer(
       const errors = results
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
         .map((result) => result.reason)
+      if (errors.length === 1) throw errors[0]
       if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }

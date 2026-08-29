@@ -2385,7 +2385,7 @@ export class Orchestrator {
     if (!stored) return
     if (!stored.ephemeral) throw new Error('thread is not a Side chat')
     this.#discardedSideThreads.add(threadId)
-    void this.#disposeThreadRuntime(threadId)
+    void this.#disposeThreadRuntime(threadId).catch(() => undefined)
     if (stored.parentThreadId && this.#sideThreads.get(stored.parentThreadId) === threadId) {
       this.#sideThreads.delete(stored.parentThreadId)
     }
@@ -2421,7 +2421,7 @@ export class Orchestrator {
     this.#reviewingDiffs.delete(threadId)
     this.#queuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
-    this.#clearDesignFlow(threadId)
+    this.#clearDesignFlow(threadId, true)
     return Promise.all([terminalsClosed, previewStopped]).then(() => undefined)
   }
 
@@ -2485,6 +2485,7 @@ export class Orchestrator {
 
   async disposeAll(): Promise<void> {
     const terminalsClosed = this.#terminals.closeAll()
+    const stoppingPreviews = [...this.#stoppingDesignPreviews.values()]
     const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
       this.#stopDesignPreview(threadId),
     )
@@ -2530,9 +2531,18 @@ export class Orchestrator {
     this.#controlStarting = undefined
     this.#control?.dispose()
     this.#control = undefined
-    await Promise.allSettled([...this.#designPreviewTasks.values(), ...previewsStopped])
-    await Promise.allSettled(this.#stoppingDesignPreviews.values())
-    await terminalsClosed
+    const cleanupResults = await Promise.allSettled([
+      ...this.#designPreviewTasks.values(),
+      ...stoppingPreviews,
+      ...previewsStopped,
+      terminalsClosed,
+    ])
+    const latePreviewResults = await Promise.allSettled(this.#stoppingDesignPreviews.values())
+    const errors = [...cleanupResults, ...latePreviewResults]
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason)
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 0) throw new AggregateError(errors, 'orchestrator shutdown failed')
   }
 
   #get(threadId: string) {
@@ -3376,9 +3386,10 @@ export class Orchestrator {
     this.#designPreviews.delete(threadId)
     const stop = preview
       .stop()
-      .catch((error: unknown) =>
-        this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`),
-      )
+      .catch((error: unknown) => {
+        this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`)
+        throw error
+      })
       .finally(() => {
         if (this.#stoppingDesignPreviews.get(threadId) === stop) {
           this.#stoppingDesignPreviews.delete(threadId)
@@ -3389,7 +3400,7 @@ export class Orchestrator {
   }
 
   #clearDesignFlow(threadId: string, keepPreview = false): void {
-    if (!keepPreview) void this.#stopDesignPreview(threadId)
+    if (!keepPreview) void this.#stopDesignPreview(threadId).catch(() => undefined)
     this.#designFlows.delete(threadId)
     this.#store.deleteDesignRun(threadId)
     const requestId = this.#designInputByThread.get(threadId)

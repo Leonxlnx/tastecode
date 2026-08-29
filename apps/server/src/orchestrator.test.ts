@@ -36,7 +36,11 @@ import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/
 import { presentTurns } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
-const previewStops = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
+const previewStops = vi.hoisted(() => ({
+  count: 0,
+  barriers: [] as Promise<void>[],
+  failures: [] as unknown[],
+}))
 const previewStarts = vi.hoisted(() => ({
   count: 0,
   barriers: [] as Promise<void>[],
@@ -57,6 +61,8 @@ vi.mock('./design-preview-runner.js', () => ({
         stop: async () => {
           previewStops.count += 1
           await previewStops.barriers.shift()
+          const failure = previewStops.failures.shift()
+          if (failure) throw failure
         },
       }
     },
@@ -1244,6 +1250,18 @@ describe('provider-neutral design briefing', () => {
       await disposing
     } finally {
       release()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a preview stop failure after draining disposal', async () => {
+    const result = await completedPreviewHarness()
+    previewStops.failures.push(new Error('preview port remained in use'))
+    try {
+      await expect(result.orchestrator.disposeAll()).rejects.toThrow('preview port remained in use')
+    } finally {
       await result.orchestrator.disposeAll()
       result.store.close()
       rmSync(result.workspace, { recursive: true, force: true })
