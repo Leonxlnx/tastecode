@@ -41,6 +41,7 @@ import {
 } from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import {
+  appOwnsUpdates,
   createAppUpdateController,
   type AppUpdateController,
   type AppUpdateState,
@@ -781,7 +782,12 @@ if (ownsSingleInstance) {
     appUpdater = createAppUpdateController({
       updater: autoUpdater,
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer,
+      enabled: appOwnsUpdates({
+        platform: process.platform,
+        packaged: app.isPackaged,
+        developmentServer: devServer,
+        appImagePath: process.env['APPIMAGE'],
+      }),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
