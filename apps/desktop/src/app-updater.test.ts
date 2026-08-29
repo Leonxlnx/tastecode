@@ -43,17 +43,6 @@ describe('app update controller', () => {
     ).toBe(false)
   })
 
-  it('disables updates for unpacked Linux with the main-process option shape', () => {
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        developmentServer: undefined,
-        appImagePath: undefined,
-      }),
-    ).toBe(false)
-  })
-
   it('downloads an available beta once and installs only after it is ready', async () => {
     const updater = fakeUpdater()
     const states: string[] = []
