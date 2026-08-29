@@ -15,6 +15,7 @@ type PtyProcess = {
 
 type LinuxProcessIdentity = {
   pid: number
+  state: string
   parentId: number
   groupId: number
   sessionId: number
@@ -108,14 +109,27 @@ export async function terminatePtySession(
     return
   }
   const owner = await waitForEstablishedPtySession(captured)
-
-  const signalled = new Set<string>()
-  const members = signalNewPtySessionMembers(owner, 'SIGTERM', signalled)
-  if (members.length === 0) {
-    pty.kill()
-    return
+  if (!owner) return
+  signalLinuxProcess(owner, 'SIGSTOP')
+  try {
+    if (!(await waitForStoppedLinuxProcess(owner))) {
+      if (linuxPtySessionMembers(owner).length > 0) {
+        throw new Error(`PTY session leader exited before cleanup completed: ${owner.pid}`)
+      }
+      return
+    }
+    const signalled = new Set<string>()
+    const members = signalNewPtySessionMembers(owner, 'SIGTERM', signalled)
+    if (members.length > 0) {
+      await finishPtySessionTermination(owner, signalled, options)
+    }
+    // The frozen shell cannot run a signal handler that creates a last child
+    // after the final empty scan. SIGKILL also handles shells that ignore HUP.
+    signalLinuxProcess(owner, 'SIGKILL')
+  } catch (error) {
+    signalLinuxProcess(owner, 'SIGCONT')
+    throw error
   }
-  return finishPtySessionTermination(pty, owner, signalled, options)
 }
 
 /** Gracefully stop an owned tree, then bound shutdown with SIGKILL on Unix. */
@@ -141,7 +155,6 @@ export async function terminateTree(
 }
 
 async function finishPtySessionTermination(
-  pty: PtyProcess,
   owner: LinuxProcessIdentity,
   signalled: Set<string>,
   options: TerminateTreeOptions,
@@ -154,7 +167,6 @@ async function finishPtySessionTermination(
       signalNewLinuxProcess(identity, 'SIGTERM', signalled),
     )
   ) {
-    pty.kill()
     return
   }
 
@@ -166,23 +178,38 @@ async function finishPtySessionTermination(
   ) {
     throw new Error(`PTY session ${owner.sessionId} survived SIGKILL`)
   }
-  pty.kill()
+}
+
+async function waitForStoppedLinuxProcess(owner: LinuxProcessIdentity): Promise<boolean> {
+  const startedAt = Date.now()
+  do {
+    const current = readLinuxProcessIdentity(owner.pid)
+    if (!current) return false
+    if (!sameLinuxProcessGeneration(current, owner)) {
+      throw new Error(`PTY session leader changed while stopping: ${owner.pid}`)
+    }
+    if (current.state === 'Z' || current.state === 'X') return false
+    if (current.state === 'T' || current.state === 't') return true
+    await new Promise((resolve) => setTimeout(resolve, PTY_SESSION_SETUP_POLL_MS))
+  } while (Date.now() - startedAt < PTY_SESSION_SETUP_TIMEOUT_MS)
+  throw new Error(`PTY session leader ${owner.pid} did not stop`)
 }
 
 async function waitForEstablishedPtySession(
   captured: LinuxProcessIdentity,
-): Promise<LinuxProcessIdentity> {
+): Promise<LinuxProcessIdentity | undefined> {
   const startedAt = Date.now()
   do {
     const current = readLinuxProcessIdentity(captured.pid)
-    if (
-      !current ||
-      !sameLinuxProcessInstance(current, captured) ||
-      current.parentId !== captured.parentId
-    ) {
+    // A one-shot PTY can exit before forkpty's session boundary becomes
+    // observable. With no proven SID there is nothing safe to signal; the
+    // terminal owner still waits for node-pty's exit event.
+    if (!current) return undefined
+    if (!sameLinuxProcessInstance(current, captured) || current.parentId !== captured.parentId) {
       throw new Error(`cannot prove ownership of PTY session ${captured.pid}`)
     }
     if (current.groupId === current.pid && current.sessionId === current.pid) return current
+    if (current.state === 'Z' || current.state === 'X') return undefined
     await new Promise((resolve) => setTimeout(resolve, PTY_SESSION_SETUP_POLL_MS))
   } while (Date.now() - startedAt < PTY_SESSION_SETUP_TIMEOUT_MS)
   throw new Error(`PTY session ${captured.pid} was not established`)
@@ -244,6 +271,10 @@ function ownedPtySessionMembers(owner: LinuxProcessIdentity): LinuxProcessIdenti
     throw new Error(`PTY session leader changed before cleanup completed: ${owner.pid}`)
   }
 
+  return linuxPtySessionMembers(owner)
+}
+
+function linuxPtySessionMembers(owner: LinuxProcessIdentity): LinuxProcessIdentity[] {
   const members: LinuxProcessIdentity[] = []
   for (const entry of readdirSync('/proc', { withFileTypes: true })) {
     if (!entry.isDirectory() || !/^\d+$/.test(entry.name)) continue
@@ -251,6 +282,8 @@ function ownedPtySessionMembers(owner: LinuxProcessIdentity): LinuxProcessIdenti
     if (
       identity &&
       identity.pid !== owner.pid &&
+      identity.state !== 'Z' &&
+      identity.state !== 'X' &&
       identity.sessionId === owner.sessionId &&
       identity.uid === owner.uid
     ) {
@@ -267,11 +300,14 @@ function readLinuxProcessIdentity(pid: number): LinuxProcessIdentity | undefined
     const commandEnd = raw.lastIndexOf(')')
     if (commandEnd < 0) return undefined
     const fields = raw.slice(commandEnd + 2).split(' ')
+    const state = fields[0]
     const parentId = Number(fields[1])
     const groupId = Number(fields[2])
     const sessionId = Number(fields[3])
     const startTime = fields[19]
     if (
+      state === undefined ||
+      state.length !== 1 ||
       !validProcessGroupId(parentId) ||
       !validProcessGroupId(groupId) ||
       !validProcessGroupId(sessionId) ||
@@ -281,6 +317,7 @@ function readLinuxProcessIdentity(pid: number): LinuxProcessIdentity | undefined
     }
     return {
       pid,
+      state,
       parentId,
       groupId,
       sessionId,

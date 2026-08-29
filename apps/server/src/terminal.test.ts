@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
@@ -312,6 +312,71 @@ if (process.argv[2] === 'grandchild') {
         if (ownedProcesses) killExactProcesses(ownedProcesses)
         await manager.closeAll().catch(() => undefined)
         removeTemporaryDirectory(cwd)
+      }
+    },
+    15_000,
+  )
+
+  it.runIf(process.platform === 'linux')(
+    'prevents a PTY leader from spawning a late descendant during close',
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-hangup-'))
+      const pidFile = path.join(cwd, 'late-child.pid')
+      writeFileSync(
+        path.join(cwd, 'late-child.mjs'),
+        `process.on('SIGHUP', () => undefined)
+process.on('SIGTERM', () => undefined)
+setInterval(() => undefined, 1_000)
+`,
+      )
+      let output = ''
+      let sawReady: () => void = () => {}
+      const ready = new Promise<void>((resolve) => {
+        sawReady = resolve
+      })
+      const manager = new TerminalManager({
+        onOutput: (_terminalId, data) => {
+          output += data
+          if (output.includes('TRAP_READY')) sawReady()
+        },
+        onExit: () => {},
+      })
+
+      try {
+        const command =
+          `trap 'trap "" HUP; node ./late-child.mjs & echo $! > late-child.pid' HUP; ` +
+          `echo TRAP_READY; while :; do sleep 1; done`
+        const terminalId = manager.run('hangup-trap', command, cwd, 80, 24)
+        await within(ready)
+
+        await manager.close(terminalId)
+
+        expect(existsSync(pidFile)).toBe(false)
+      } finally {
+        if (existsSync(pidFile)) {
+          const pid = Number(readFileSync(pidFile, 'utf8').trim())
+          const startTime = processStartTime(pid)
+          if (startTime) killExactProcesses([{ pid, startTime }])
+        }
+        await manager.closeAll().catch(() => undefined)
+        removeTemporaryDirectory(cwd)
+      }
+    },
+    15_000,
+  )
+
+  it.runIf(process.platform === 'linux')(
+    'closes short-lived PTYs without treating natural exit as an ownership failure',
+    async () => {
+      const manager = new TerminalManager({ onOutput: () => {}, onExit: () => {} })
+
+      try {
+        for (let index = 0; index < 500; index += 1) {
+          const terminalId = manager.run(`fast-${index}`, ':', os.tmpdir(), 80, 24)
+          await manager.close(terminalId)
+        }
+      } finally {
+        await manager.closeAll()
       }
     },
     15_000,
