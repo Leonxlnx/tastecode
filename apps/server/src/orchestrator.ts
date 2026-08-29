@@ -356,6 +356,7 @@ type DesignInput = {
 const PANIC_STOP_TIMEOUT_MS = 5_000
 const DESIGN_START_TIMEOUT_MS = 30_000
 const DESIGN_REPAIR_LIMIT = 2
+const SHUTTING_DOWN_MESSAGE = 'TasteCode is shutting down'
 const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   inventory: false,
   add: false,
@@ -394,6 +395,7 @@ export class Orchestrator {
   #threadApprovals = new Map<string, ApprovalMode>()
   #sideThreads = new Map<string, string>()
   #sideParents = new Map<string, string>()
+  #startingThreads = new Set<Promise<Thread>>()
   #startingSideThreads = new Map<string, Promise<Thread>>()
   #discardedSideThreads = new Set<string>()
   #activeTurns = new Set<string>()
@@ -423,6 +425,7 @@ export class Orchestrator {
   #designPreviewTasks = new Map<string, Promise<void>>()
   #stoppingDesignPreviews = new Map<string, Promise<void>>()
   #resumingThreads = new Map<string, Promise<void>>()
+  #disposing = false
   #panicGeneration = 0
   #panicStopping = false
   #store: Store
@@ -1189,6 +1192,21 @@ export class Orchestrator {
     workspacePath: string,
     options: StartOptions = {},
   ): Promise<Thread> {
+    if (this.#disposing) throw new Error(SHUTTING_DOWN_MESSAGE)
+    const starting = this.#startThread(provider, workspacePath, options)
+    this.#startingThreads.add(starting)
+    try {
+      return await starting
+    } finally {
+      this.#startingThreads.delete(starting)
+    }
+  }
+
+  async #startThread(
+    provider: ProviderId,
+    workspacePath: string,
+    options: StartOptions,
+  ): Promise<Thread> {
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
@@ -1217,6 +1235,11 @@ export class Orchestrator {
     }
 
     const { thread, session } = started
+    if (this.#disposing) {
+      session.dispose()
+      if (worktree) await removeWorktree(worktree, true).catch(() => undefined)
+      throw new Error(SHUTTING_DOWN_MESSAGE)
+    }
     this.#store.addProject(workspacePath)
     this.#store.addThread({
       id: thread.id,
@@ -1250,6 +1273,7 @@ export class Orchestrator {
     parentThreadId: string,
     options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'> = {},
   ): Promise<Thread> {
+    if (this.#disposing) throw new Error(SHUTTING_DOWN_MESSAGE)
     const existingId = this.#sideThreads.get(parentThreadId)
     const existing = existingId ? this.#threads.get(existingId) : undefined
     if (existing) return existing.thread
@@ -1301,6 +1325,9 @@ export class Orchestrator {
       started = await runtime.start(workspacePath, runtimeOptions)
       const { thread, session } = started
       const currentParent = this.#store.thread(parentThreadId)
+      if (this.#disposing) {
+        throw new Error(SHUTTING_DOWN_MESSAGE)
+      }
       if (!currentParent || currentParent.closedAt !== undefined) {
         throw new Error('The main chat closed while Side chat was starting.')
       }
@@ -2490,69 +2517,85 @@ export class Orchestrator {
   }
 
   async disposeAll(): Promise<void> {
-    const terminalsClosed = this.#terminals.closeAll()
-    const stoppingPreviews = [...this.#stoppingDesignPreviews.values()]
-    const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
-      this.#stopDesignPreview(threadId),
-    )
-    for (const controller of this.#voiceRequests.values()) controller.abort()
-    this.#voiceRequests.clear()
-    for (const [, entry] of this.#threads) entry.session.dispose()
-    this.#threads.clear()
-    this.#sideThreads.clear()
-    this.#sideParents.clear()
-    this.#startingSideThreads.clear()
-    this.#discardedSideThreads.clear()
-    this.#activeTurns.clear()
-    this.#activeTurnIds.clear()
-    this.#serverOwnedUserTurns.clear()
-    this.#suppressedUserItems.clear()
-    this.#inFlightSubmissionIds.clear()
-    this.#startingTurns.clear()
-    for (const barrier of this.#turnStartBarriers.values()) barrier.release()
-    this.#turnStartBarriers.clear()
-    this.#pendingTurnStarts.clear()
-    this.#acceptedTurnStarts.clear()
-    this.#reviewingDiffs.clear()
-    this.#queuedTurns.clear()
-    this.#drainingQueues.clear()
-    this.#designFlows.clear()
-    this.#designTurns.clear()
-    this.#designStartingThreads.clear()
-    this.#designStartWaiters.clear()
-    this.#designMessageItems.clear()
-    this.#acceptedDesignOutputs.clear()
-    this.#designOutputErrors.clear()
-    this.#designActivityItems.clear()
-    this.#designInputs.clear()
-    this.#designInputByThread.clear()
-    this.#resumingThreads.clear()
-    this.#backgroundSourcesCache = undefined
-    this.#backgroundSourcesStarting = undefined
-    this.#backgroundSourcesRevision += 1
-    const controlStopped = this.#controlStarting?.then(
-      (adapter) => {
-        adapter.dispose()
-        if (this.#control === adapter) this.#control = undefined
-      },
-      () => undefined,
-    )
-    this.#controlStarting = undefined
-    this.#control?.dispose()
-    this.#control = undefined
-    const cleanupResults = await Promise.allSettled([
-      ...this.#designPreviewTasks.values(),
-      ...stoppingPreviews,
-      ...previewsStopped,
-      ...(controlStopped ? [controlStopped] : []),
-      terminalsClosed,
-    ])
-    const latePreviewResults = await Promise.allSettled(this.#stoppingDesignPreviews.values())
-    const errors = [...cleanupResults, ...latePreviewResults]
-      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-      .map((result) => result.reason)
-    if (errors.length === 1) throw errors[0]
-    if (errors.length > 0) throw new AggregateError(errors, 'orchestrator shutdown failed')
+    this.#disposing = true
+    try {
+      const sessionStarts = [
+        ...this.#startingThreads,
+        ...this.#startingSideThreads.values(),
+        ...this.#resumingThreads.values(),
+      ].map((starting) =>
+        starting.then(
+          () => undefined,
+          () => undefined,
+        ),
+      )
+      const terminalsClosed = this.#terminals.closeAll()
+      const stoppingPreviews = [...this.#stoppingDesignPreviews.values()]
+      const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
+        this.#stopDesignPreview(threadId),
+      )
+      for (const controller of this.#voiceRequests.values()) controller.abort()
+      this.#voiceRequests.clear()
+      for (const [, entry] of this.#threads) entry.session.dispose()
+      this.#threads.clear()
+      this.#sideThreads.clear()
+      this.#sideParents.clear()
+      this.#startingSideThreads.clear()
+      this.#discardedSideThreads.clear()
+      this.#activeTurns.clear()
+      this.#activeTurnIds.clear()
+      this.#serverOwnedUserTurns.clear()
+      this.#suppressedUserItems.clear()
+      this.#inFlightSubmissionIds.clear()
+      this.#startingTurns.clear()
+      for (const barrier of this.#turnStartBarriers.values()) barrier.release()
+      this.#turnStartBarriers.clear()
+      this.#pendingTurnStarts.clear()
+      this.#acceptedTurnStarts.clear()
+      this.#reviewingDiffs.clear()
+      this.#queuedTurns.clear()
+      this.#drainingQueues.clear()
+      this.#designFlows.clear()
+      this.#designTurns.clear()
+      this.#designStartingThreads.clear()
+      this.#designStartWaiters.clear()
+      this.#designMessageItems.clear()
+      this.#acceptedDesignOutputs.clear()
+      this.#designOutputErrors.clear()
+      this.#designActivityItems.clear()
+      this.#designInputs.clear()
+      this.#designInputByThread.clear()
+      this.#resumingThreads.clear()
+      this.#backgroundSourcesCache = undefined
+      this.#backgroundSourcesStarting = undefined
+      this.#backgroundSourcesRevision += 1
+      const controlStopped = this.#controlStarting?.then(
+        (adapter) => {
+          adapter.dispose()
+          if (this.#control === adapter) this.#control = undefined
+        },
+        () => undefined,
+      )
+      this.#controlStarting = undefined
+      this.#control?.dispose()
+      this.#control = undefined
+      const cleanupResults = await Promise.allSettled([
+        ...this.#designPreviewTasks.values(),
+        ...stoppingPreviews,
+        ...previewsStopped,
+        ...(controlStopped ? [controlStopped] : []),
+        ...sessionStarts,
+        terminalsClosed,
+      ])
+      const latePreviewResults = await Promise.allSettled(this.#stoppingDesignPreviews.values())
+      const errors = [...cleanupResults, ...latePreviewResults]
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason)
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 0) throw new AggregateError(errors, 'orchestrator shutdown failed')
+    } finally {
+      this.#disposing = false
+    }
   }
 
   #get(threadId: string) {
@@ -2562,6 +2605,7 @@ export class Orchestrator {
   }
 
   async #ensureThread(threadId: string): Promise<void> {
+    if (this.#disposing) throw new Error(SHUTTING_DOWN_MESSAGE)
     if (this.#threads.has(threadId)) return
     const existing = this.#resumingThreads.get(threadId)
     if (existing) return existing
@@ -2596,6 +2640,10 @@ export class Orchestrator {
     if (result.thread.id !== threadId) {
       result.session.dispose()
       throw new Error(`provider resumed unexpected thread ${result.thread.id}`)
+    }
+    if (this.#disposing) {
+      result.session.dispose()
+      throw new Error(SHUTTING_DOWN_MESSAGE)
     }
     // The thread may have been closed while the provider was resuming; a
     // late attach would leave a zombie agent process nobody can reach.

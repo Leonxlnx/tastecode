@@ -186,6 +186,8 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
   const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
   const usageChanges: ProviderId[] = []
   const queueNotificationError: QueueNotificationError = {}
+  const runtimeStarts = { count: 0, barriers: Array<Promise<void>>() }
+  const runtimeResumes = { count: 0, barriers: Array<Promise<void>>() }
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
@@ -203,6 +205,9 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
 
   const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
     async start(workspacePath, options) {
+      runtimeStarts.count += 1
+      const barrier = runtimeStarts.barriers.shift()
+      if (barrier) await barrier
       startedIn.push(workspacePath)
       startedOptions.push(options)
       const session = new FakeSession(`s${sessions.length + 1}`)
@@ -224,6 +229,9 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     ...(provider === 'codex' || provider === 'grok'
       ? {
           async resume(threadId: string, workspacePath: string, options: StartOptions) {
+            runtimeResumes.count += 1
+            const barrier = runtimeResumes.barriers.shift()
+            if (barrier) await barrier
             resumedIds.push(threadId)
             resumedIn.push(workspacePath)
             resumedOptions.push(options)
@@ -273,6 +281,8 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     queueChanges,
     usageChanges,
     queueNotificationError,
+    runtimeStarts,
+    runtimeResumes,
     orchestrator,
     startedIn,
     startedOptions,
@@ -3885,6 +3895,90 @@ function text(entries: Array<{ event: DomainEvent }>): Array<string | undefined>
 }
 
 describe('overnight race pins', () => {
+  function delayNextRuntime(barriers: Promise<void>[]): () => void {
+    let release = () => {}
+    barriers.push(new Promise<void>((resolve) => (release = resolve)))
+    return release
+  }
+
+  it('waits for an in-flight thread start and disposes its late session', async () => {
+    const result = harness()
+    const release = delayNextRuntime(result.runtimeStarts.barriers)
+    const starting = result.orchestrator.startThread('codex', '/repo')
+    void starting.catch(() => undefined)
+    await vi.waitFor(() => expect(result.runtimeStarts.count).toBe(1))
+    let disposed = false
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await expect(starting).rejects.toThrow(/shutting down/)
+      await disposing
+      expect(result.sessions[0]?.disposed).toBe(true)
+    } finally {
+      release()
+      await Promise.allSettled([starting, disposing])
+      await result.orchestrator.disposeAll()
+    }
+  })
+
+  it('waits for an in-flight Side chat start and disposes its late session', async () => {
+    const result = harness()
+    const parent = await result.orchestrator.startThread('codex', '/repo')
+    result.store.append(parent.id, userMessage('parent-user', 'Context', 'parent-turn'))
+    const release = delayNextRuntime(result.runtimeStarts.barriers)
+    const starting = result.orchestrator.startSideThread(parent.id)
+    void starting.catch(() => undefined)
+    await vi.waitFor(() => expect(result.runtimeStarts.count).toBe(2))
+    let disposed = false
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await expect(starting).rejects.toThrow(/shutting down/)
+      await disposing
+      expect(result.sessions[1]?.disposed).toBe(true)
+    } finally {
+      release()
+      await Promise.allSettled([starting, disposing])
+      await result.orchestrator.disposeAll()
+    }
+  })
+
+  it('waits for an in-flight resume and disposes its late session', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'T' })
+    const result = harness(undefined, store)
+    const release = delayNextRuntime(result.runtimeResumes.barriers)
+    const resuming = result.orchestrator.submitTurn('thread-1', 'hello')
+    void resuming.catch(() => undefined)
+    await vi.waitFor(() => expect(result.runtimeResumes.count).toBe(1))
+    let disposed = false
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await expect(resuming).rejects.toThrow(/shutting down/)
+      await disposing
+      expect(result.sessions[0]?.disposed).toBe(true)
+    } finally {
+      release()
+      await Promise.allSettled([resuming, disposing])
+      await result.orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it('disposes a resume that lands after the thread was closed', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')
