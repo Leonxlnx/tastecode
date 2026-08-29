@@ -152,6 +152,7 @@ describe('killTree', () => {
     const script = [
       "const { spawn } = require('node:child_process')",
       `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
+      'process.exit(0)',
     ].join(';')
     const child = spawnCli('node', ['-e', script])
     await waitFor(() => existsSync(beat), 5_000)
