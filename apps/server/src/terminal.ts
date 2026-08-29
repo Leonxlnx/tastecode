@@ -93,7 +93,6 @@ export class TerminalManager {
   #byId = new Map<string, TerminalEntry>()
   #byThread = new Map<string, string>()
   #closingById = new Map<string, Promise<void>>()
-  #closingByThread = new Map<string, Set<Promise<void>>>()
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
   #onOutput: (terminalId: string, data: string) => void
@@ -143,10 +142,10 @@ export class TerminalManager {
   #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
     if (this.#closingAll) throw new Error('terminal manager is closing')
     if (this.#closingThreads.has(key)) throw new Error(`terminal is closing: ${key}`)
-    if (this.#closingByThread.has(key)) throw new Error(`terminal is closing: ${key}`)
 
     const currentId = this.#byThread.get(key)
     if (currentId) {
+      if (this.#closingById.has(currentId)) throw new Error(`terminal is closing: ${key}`)
       this.resize(currentId, columns, rows)
       return currentId
     }
@@ -213,9 +212,6 @@ export class TerminalManager {
       () => undefined,
     )
     this.#closingById.set(terminalId, closing)
-    const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
-    threadClosings.add(closing)
-    this.#closingByThread.set(entry.threadId, threadClosings)
     // A timeout is a failed close, not evidence that the native process is
     // gone. Keep that generation tracked until its real exit arrives so a
     // retry cannot delete the cwd underneath it.
@@ -226,13 +222,13 @@ export class TerminalManager {
         if (this.#byThread.get(entry.threadId) === terminalId) {
           this.#byThread.delete(entry.threadId)
         }
-        this.#forgetClosing(terminalId, entry.threadId, closing)
+        this.#forgetClosing(terminalId, closing)
       },
       () => {
         // If the ownership anchor is still alive, a later close can retry.
         // Once it exits, retain the failed close as a tombstone so no new PTY
         // can reuse the thread while descendants may still exist.
-        if (!entry.hasExited) this.#forgetClosing(terminalId, entry.threadId, closing)
+        if (!entry.hasExited) this.#forgetClosing(terminalId, closing)
       },
     )
     return closing
@@ -258,10 +254,9 @@ export class TerminalManager {
   }
 
   async #drainThread(threadId: string): Promise<void> {
-    const waits = new Set(this.#closingByThread.get(threadId) ?? [])
     const terminalId = this.#byThread.get(threadId)
-    if (terminalId) waits.add(this.close(terminalId))
-    await settleAll(waits, `terminal shutdown failed for ${threadId}`)
+    if (!terminalId) return
+    await settleAll([this.close(terminalId)], `terminal shutdown failed for ${threadId}`)
   }
 
   async #drainAll(): Promise<void> {
@@ -290,11 +285,8 @@ export class TerminalManager {
     })
   }
 
-  #forgetClosing(terminalId: string, threadId: string, closing: Promise<void>): void {
+  #forgetClosing(terminalId: string, closing: Promise<void>): void {
     if (this.#closingById.get(terminalId) === closing) this.#closingById.delete(terminalId)
-    const threadClosings = this.#closingByThread.get(threadId)
-    threadClosings?.delete(closing)
-    if (threadClosings?.size === 0) this.#closingByThread.delete(threadId)
   }
 
   async #cleanupExitedTerminal(terminalId: string): Promise<void> {

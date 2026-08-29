@@ -492,8 +492,9 @@ it('does not replace a terminal until its close has finished', async () => {
   try {
     const first = manager.open('thread-1', cwd, 80, 24)
     const firstClosing = manager.close(first)
+    const threadClosing = manager.closeThread('thread-1')
     expect(() => manager.open('thread-1', cwd, 80, 24)).toThrow(/terminal is closing/i)
-    await firstClosing
+    await Promise.all([firstClosing, threadClosing])
 
     const second = manager.open('thread-1', cwd, 80, 24)
     expect(manager.open('thread-1', cwd, 80, 24)).toBe(second)
