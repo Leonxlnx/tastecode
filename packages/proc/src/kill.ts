@@ -21,7 +21,7 @@ export function ownProcessTree<T extends KillableProcess>(
   child: T,
   platform: NodeJS.Platform = process.platform,
 ): T {
-  if (platform !== 'win32' && child.pid !== undefined) ownedUnixProcessGroups.add(child)
+  if (platform !== 'win32' && validProcessGroupId(child.pid)) ownedUnixProcessGroups.add(child)
   return child
 }
 
@@ -34,6 +34,12 @@ export function ownProcessTree<T extends KillableProcess>(
  * /T takes the whole tree down.
  */
 export function killTree(child: KillableProcess): void {
+  const groupId = ownedUnixProcessGroup(child)
+  if (groupId !== undefined) {
+    // The leader may have exited while its descendants still keep the group alive.
+    signalProcessGroup(groupId, 'SIGTERM')
+    return
+  }
   // Loose != so test doubles without the fields count as still running.
   if (child.exitCode != null || child.signalCode != null) return
   if (process.platform === 'win32' && child.pid) {
@@ -41,10 +47,6 @@ export function killTree(child: KillableProcess): void {
       windowsHide: true,
     })
     if (!result.error && result.status === 0) return
-  }
-  if (child.pid !== undefined && ownedUnixProcessGroups.has(child)) {
-    signalProcessGroup(child.pid, 'SIGTERM')
-    return
   }
   child.kill()
 }
@@ -60,12 +62,8 @@ export async function terminateTree(
   child: KillableProcess,
   options: TerminateTreeOptions = {},
 ): Promise<void> {
-  if (child.exitCode != null || child.signalCode != null) return
-  if (
-    process.platform === 'win32' ||
-    child.pid === undefined ||
-    !ownedUnixProcessGroups.has(child)
-  ) {
+  const groupId = ownedUnixProcessGroup(child)
+  if (groupId === undefined) {
     killTree(child)
     return
   }
@@ -73,10 +71,24 @@ export async function terminateTree(
   const gracePeriodMs = options.gracePeriodMs ?? 1_500
   const killWaitMs = options.killWaitMs ?? 1_500
   const pollIntervalMs = options.pollIntervalMs ?? 50
-  signalProcessGroup(child.pid, 'SIGTERM')
-  if (await waitForProcessGroupExit(child.pid, gracePeriodMs, pollIntervalMs)) return
-  signalProcessGroup(child.pid, 'SIGKILL')
-  await waitForProcessGroupExit(child.pid, killWaitMs, pollIntervalMs)
+  signalProcessGroup(groupId, 'SIGTERM')
+  if (await waitForProcessGroupExit(groupId, gracePeriodMs, pollIntervalMs)) return
+  signalProcessGroup(groupId, 'SIGKILL')
+  if (!(await waitForProcessGroupExit(groupId, killWaitMs, pollIntervalMs))) {
+    throw new Error(`process group ${groupId} survived SIGKILL`)
+  }
+}
+
+function ownedUnixProcessGroup(child: KillableProcess): number | undefined {
+  return process.platform !== 'win32' &&
+    validProcessGroupId(child.pid) &&
+    ownedUnixProcessGroups.has(child)
+    ? child.pid
+    : undefined
+}
+
+function validProcessGroupId(pid: number | undefined): pid is number {
+  return Number.isInteger(pid) && (pid ?? 0) > 0
 }
 
 async function waitForProcessGroupExit(
