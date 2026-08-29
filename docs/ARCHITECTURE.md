@@ -75,7 +75,6 @@ fixed modes retain their requested CSS viewport and scale the complete guest to 
 stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
 Linux.
 
-
 ---
 
 ## Linux release boundary

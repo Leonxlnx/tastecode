@@ -4,12 +4,7 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
-import {
-  ownProcessTree,
-  ownedProcessSpawnOptions,
-  spawnCli,
-  terminateTree,
-} from '@harness/proc'
+import { ownProcessTree, ownedProcessSpawnOptions, spawnCli, terminateTree } from '@harness/proc'
 import { z } from 'zod'
 import { existingWorkspacePath } from './api-workspace-paths.js'
 import { startStaticDesignPreview } from './design-static-preview.js'

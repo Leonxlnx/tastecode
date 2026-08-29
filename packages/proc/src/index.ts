@@ -1,11 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { desktopPath } from './desktop-path.js'
-import {
-  killTree,
-  ownProcessTree,
-  ownedProcessSpawnOptions,
-  terminateTree,
-} from './kill.js'
+import { killTree, ownProcessTree, ownedProcessSpawnOptions, terminateTree } from './kill.js'
 import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
 
 export { applyDesktopPath, desktopPath } from './desktop-path.js'
@@ -60,9 +55,7 @@ export function spawnCli(
     if (/\.(?:exe|com)$/i.test(command)) {
       return ownProcessTree(spawn(command, args, spawnOptions))
     }
-    return ownProcessTree(
-      spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions),
-    )
+    return ownProcessTree(spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions))
   }
   return ownProcessTree(spawn(command, args, spawnOptions))
 }
