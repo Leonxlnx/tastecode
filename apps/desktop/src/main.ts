@@ -297,6 +297,10 @@ function createWindow(): void {
   })
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined
+    if (process.platform !== 'darwin' && !tray && !appIsQuitting) {
+      appIsQuitting = true
+      app.quit()
+    }
   })
   window.on('focus', () => restoreMainWindowPresence(process.platform, app, window))
   window.on('show', () => restoreMainWindowPresence(process.platform, app, window))
