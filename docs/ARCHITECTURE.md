@@ -119,6 +119,21 @@ draws a window but cannot open a PTY, use the credential store, or stop descenda
 release candidate. Hosted CI remains manually dispatched while Actions minutes are constrained;
 the Linux row is still part of the same platform matrix whenever that workflow is requested.
 
+Local qualification starts with `pnpm linux:acceptance` from a clean checkout on a qualified
+x64 Wayland desktop. The command freezes dependencies, runs every source gate, builds the unpacked
+artifact, proves packaged PTY, SQLite/FTS5 and keyring behavior, verifies release notices, and
+writes `release/linux-acceptance.json`. Environment blockers exit separately from product
+failures. Its result remains `awaiting-manual-desktop-acceptance`; automation cannot certify a
+real compositor, tray or GPU.
+
+The manual pass launches the reported executable with the reported isolated XDG profile and must
+prove: visible native-Wayland startup without permanent reconnecting; project open and persistence;
+terminal output, resize, interrupt and descendant cleanup; Git/checkpoint and preview start/stop;
+clipboard, drag/drop, dialogs and external-browser handoff; close-to-tray recovery; second-instance
+focus; and Quit releasing server, preview, PTY and ports. Provider-network calls, AppImage/deb,
+updater feeds, KDE/XWayland and framework upgrades are outside this first gate. A failure stops the
+layered release path instead of being converted into a warning.
+
 _Rejected:_ a second Linux backend, a giant `linux.ts`, forcing X11 globally, generic
 "supports Linux" wording, Flatpak-first distribution for a host-tooling application, and
 package-agnostic self-update.
@@ -127,7 +142,7 @@ package-agnostic self-update.
 
 |                    |                                            |                                                                         |
 | ------------------ | ------------------------------------------ | ----------------------------------------------------------------------- |
-| Language / runtime | TypeScript 5.9.3, Node 24 LTS              | One language across the server, adapters, web client, and desktop shell |
+| Language / runtime | TypeScript 5.9.3, Node >=22.18 tooling / Electron Node 24              | One language across the server, adapters, web client, and desktop shell |
 | Monorepo           | pnpm workspaces + Vite                     | pnpm's store keeps worktree-heavy development cheap                     |
 | Desktop            | Electron 43                                | One Chromium renderer across macOS and Windows                          |
 | UI                 | React 19                                   | Shared renderer behavior and app-owned controls                         |
