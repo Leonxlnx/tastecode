@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
+  createReadStream,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -54,6 +56,12 @@ function packagedExecutable(directory) {
   return candidates[0]
 }
 
+async function sha256(file) {
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(file)) hash.update(chunk)
+  return hash.digest('hex')
+}
+
 if (process.platform !== 'linux' || process.arch !== 'x64') {
   block(`requires Linux x64, received ${process.platform} ${process.arch}`)
 }
@@ -76,14 +84,17 @@ if (!['pop', 'ubuntu'].includes(distribution) || distributionVersion !== '24.04'
     `qualified environments are Pop!_OS or Ubuntu 24.04, received ${distribution} ${distributionVersion}`,
   )
 }
+const desktop = process.env['XDG_CURRENT_DESKTOP'] ?? 'unknown'
+if (!/(?:cosmic|gnome)/i.test(desktop)) block(`requires COSMIC or GNOME, received ${desktop}`)
 
 const identity = {
   commit: command('git', ['rev-parse', 'HEAD']),
   branch: command('git', ['branch', '--show-current']),
   distribution,
   distributionVersion,
-  desktop: process.env['XDG_CURRENT_DESKTOP'] ?? 'unknown',
+  desktop,
   session: process.env['XDG_SESSION_TYPE'],
+  kernel: command('uname', ['-a']),
   glibc: command('getconf', ['GNU_LIBC_VERSION']),
   node: process.version,
   pnpm: '11.8.0',
@@ -116,6 +127,7 @@ const report = {
   createdAt: new Date().toISOString(),
   ...identity,
   executable,
+  appAsarSha256: await sha256(path.join(resources, 'app.asar')),
   profile,
 }
 mkdirSync(releaseDirectory, { recursive: true })
