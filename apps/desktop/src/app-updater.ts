@@ -25,8 +25,8 @@ type Timer = ReturnType<typeof setTimeout>
 export function appOwnsUpdates(options: {
   platform: NodeJS.Platform
   packaged: boolean
-  developmentServer?: string
-  appImagePath?: string
+  developmentServer?: string | undefined
+  appImagePath?: string | undefined
 }): boolean {
   if (!options.packaged || options.developmentServer) return false
   if (options.platform === 'linux') return Boolean(options.appImagePath)
