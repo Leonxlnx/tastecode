@@ -1,4 +1,5 @@
 import { DEFAULT_PORT, startServer } from './server.js'
+import { installShutdownHandlers } from './shutdown.js'
 
 const port = Number(process.env['HARNESS_PORT'] ?? DEFAULT_PORT)
 const server = startServer({
@@ -7,8 +8,4 @@ const server = startServer({
   accessToken: process.env['HARNESS_ACCESS_TOKEN'],
 })
 
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => {
-    void server.close().finally(() => process.exit(0))
-  })
-}
+installShutdownHandlers(server)
