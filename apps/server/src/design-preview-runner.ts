@@ -4,7 +4,12 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
-import { spawnCli } from '@harness/proc'
+import {
+  ownProcessTree,
+  ownedProcessSpawnOptions,
+  spawnCli,
+  terminateTree,
+} from '@harness/proc'
 import { z } from 'zod'
 import { existingWorkspacePath } from './api-workspace-paths.js'
 import { startStaticDesignPreview } from './design-static-preview.js'
@@ -61,12 +66,14 @@ export async function startDesignPreview(
     child =
       process.platform === 'win32'
         ? spawnCli(plan.command, commandArgs, { cwd, replaceEnv: true, env: environment })
-        : spawn(plan.command, commandArgs, {
-            cwd,
-            env: environment,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            detached: true,
-          })
+        : ownProcessTree(
+            spawn(plan.command, commandArgs, {
+              cwd,
+              env: environment,
+              stdio: ['pipe', 'pipe', 'pipe'],
+              ...ownedProcessSpawnOptions(),
+            }),
+          )
     const childFailure = watchPreviewChild(child)
     child.stdin.end()
     const append = (chunk: string) => {
@@ -242,68 +249,9 @@ async function pollForPreview(
 async function stopProcess(child: ChildProcessWithoutNullStreams, url: string): Promise<void> {
   if (child.pid === undefined) return
   try {
-    if (process.platform === 'win32') {
-      await killWindowsTree(child)
-    } else {
-      await killPosixGroup(child.pid)
-    }
+    await terminateTree(child)
     await waitForPortRelease(url, 500)
   } catch {}
-}
-
-async function killPosixGroup(pid: number): Promise<void> {
-  signalProcessGroup(pid, 'SIGTERM')
-  if (await waitForProcessGroupExit(pid, 1_500)) return
-  signalProcessGroup(pid, 'SIGKILL')
-  await waitForProcessGroupExit(pid, 1_500)
-}
-
-async function waitForProcessGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
-  const startedAt = Date.now()
-  do {
-    if (!processGroupAlive(pid)) return true
-    await delay(50)
-  } while (Date.now() - startedAt < timeoutMs)
-  return false
-}
-
-function processGroupAlive(pid: number): boolean {
-  try {
-    process.kill(-pid, 0)
-    return true
-  } catch (error) {
-    const code = errorCode(error)
-    if (code === 'ESRCH') return false
-    if (code === 'EPERM') return true
-    throw error
-  }
-}
-
-function killWindowsTree(child: ChildProcessWithoutNullStreams): Promise<void> {
-  return new Promise((resolve) => {
-    const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-    killer.on('error', () => {
-      child.kill()
-      resolve()
-    })
-    killer.on('exit', () => resolve())
-  })
-}
-
-function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal)
-  } catch (error) {
-    if (errorCode(error) !== 'ESRCH') throw error
-  }
-}
-
-function errorCode(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
-  return typeof error.code === 'string' ? error.code : undefined
 }
 
 async function waitForPortRelease(url: string, timeoutMs: number): Promise<boolean> {
