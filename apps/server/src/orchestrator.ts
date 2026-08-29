@@ -2530,8 +2530,11 @@ export class Orchestrator {
     this.#backgroundSourcesCache = undefined
     this.#backgroundSourcesStarting = undefined
     this.#backgroundSourcesRevision += 1
-    void this.#controlStarting?.then(
-      (adapter) => adapter.dispose(),
+    const controlStopped = this.#controlStarting?.then(
+      (adapter) => {
+        adapter.dispose()
+        if (this.#control === adapter) this.#control = undefined
+      },
       () => undefined,
     )
     this.#controlStarting = undefined
@@ -2541,6 +2544,7 @@ export class Orchestrator {
       ...this.#designPreviewTasks.values(),
       ...stoppingPreviews,
       ...previewsStopped,
+      ...(controlStopped ? [controlStopped] : []),
       terminalsClosed,
     ])
     const latePreviewResults = await Promise.allSettled(this.#stoppingDesignPreviews.values())

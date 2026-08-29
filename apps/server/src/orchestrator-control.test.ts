@@ -4,6 +4,7 @@ import { Store } from './store.js'
 const control = vi.hoisted(() => ({
   constructed: 0,
   started: 0,
+  disposed: 0,
   releases: [] as Array<() => void>,
   usageChanged: undefined as (() => void) | undefined,
 }))
@@ -21,7 +22,9 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
       onUsageChanged(listener: () => void): void {
         control.usageChanged = listener
       }
-      dispose(): void {}
+      dispose(): void {
+        control.disposed += 1
+      }
       listModels(): [] {
         return []
       }
@@ -39,6 +42,7 @@ import { Orchestrator } from './orchestrator.js'
 beforeEach(() => {
   control.constructed = 0
   control.started = 0
+  control.disposed = 0
   control.releases = []
   control.usageChanged = undefined
 })
@@ -97,5 +101,27 @@ describe('control adapter startup', () => {
     control.releases[0]?.()
     await expect(Promise.all([first, second])).resolves.toEqual([[], []])
     await orchestrator.disposeAll()
+  })
+
+  it('waits for an in-flight control adapter to be disposed', async () => {
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+    })
+    const started = orchestrator.listModels('codex')
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    let disposed = false
+
+    const disposing = orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(disposed).toBe(false)
+    control.releases[0]?.()
+    await expect(started).resolves.toEqual([])
+    await disposing
+    expect(control.disposed).toBe(1)
   })
 })
