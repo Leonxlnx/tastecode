@@ -14,6 +14,7 @@
     "test": "node --test tools/scripts/release-licenses.test.js && pnpm -r test",
     "licenses:verify": "node tools/scripts/release-licenses.js",
     "licenses:report": "node tools/scripts/release-licenses.js --output release/license-metadata.json",
+    "linux:acceptance": "node tools/scripts/linux-acceptance.js",
     "lint": "oxlint . && prettier --check .",
     "format": "prettier --write ."
   },
