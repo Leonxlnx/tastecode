@@ -4,6 +4,7 @@ import {
   isNativeBindingProofPlatform,
   proveKeyringBinding,
   provePtyBinding,
+  proveSqliteRuntime,
 } from './native-binding-proof.js'
 
 function fakePty() {
@@ -66,6 +67,10 @@ describe('packaged native binding proof', () => {
     expect(pty.module.spawn).toHaveBeenCalledOnce()
     expect(pty.resize).toHaveBeenCalledWith(100, 30)
     expect(pty.kill).toHaveBeenCalledOnce()
+  })
+
+  it('writes, reads, searches, and removes an isolated SQLite database', () => {
+    expect(() => proveSqliteRuntime()).not.toThrow()
   })
 
   it('writes, reads, deletes, and verifies an isolated credential', () => {
