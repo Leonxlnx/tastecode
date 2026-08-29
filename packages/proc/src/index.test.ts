@@ -144,6 +144,27 @@ describe('readNdjson', () => {
 })
 
 describe('killTree', () => {
+  it('kills an owned group after its leader has already exited', async () => {
+    const beat = path.join(os.tmpdir(), `harness-orphan-group-${Date.now()}.txt`)
+    const grandchild = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
+      beat,
+    )},String(Date.now())),150)`
+    const script = [
+      "const { spawn } = require('node:child_process')",
+      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
+    ].join(';')
+    const child = spawnCli('node', ['-e', script])
+    await waitFor(() => existsSync(beat), 5_000)
+    await waitFor(() => child.exitCode !== null, 5_000)
+
+    killTree(child)
+    await sleep(700)
+    const afterKill = readFileSync(beat, 'utf8')
+    await sleep(700)
+    expect(readFileSync(beat, 'utf8')).toBe(afterKill)
+    rmSync(beat, { force: true })
+  })
+
   it('kills the real process behind the shim, not only the shim', async () => {
     // The grandchild heartbeats into a temp file; if only the cmd.exe shim
     // died (the pre-fix Windows behavior), the heartbeat keeps ticking.
