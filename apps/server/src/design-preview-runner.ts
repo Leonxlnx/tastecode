@@ -243,10 +243,10 @@ async function pollForPreview(
 
 async function stopProcess(child: ChildProcessWithoutNullStreams, url: string): Promise<void> {
   if (child.pid === undefined) return
-  try {
-    await terminateTree(child)
-    await waitForPortRelease(url, 500)
-  } catch {}
+  await terminateTree(child)
+  if (!(await waitForPortRelease(url, 500))) {
+    throw new Error(`preview port ${new URL(url).port} remained in use after stop`)
+  }
 }
 
 async function waitForPortRelease(url: string, timeoutMs: number): Promise<boolean> {
