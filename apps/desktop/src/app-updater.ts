@@ -22,6 +22,17 @@ export type AppUpdateState = {
 
 type Timer = ReturnType<typeof setTimeout>
 
+export function appOwnsUpdates(options: {
+  platform: NodeJS.Platform
+  packaged: boolean
+  developmentServer?: string
+  appImagePath?: string
+}): boolean {
+  if (!options.packaged || options.developmentServer) return false
+  if (options.platform === 'linux') return Boolean(options.appImagePath)
+  return options.platform === 'win32' || options.platform === 'darwin'
+}
+
 export function createAppUpdateController(options: {
   updater: UpdateClient
   currentVersion: string
@@ -55,28 +66,30 @@ export function createAppUpdateController(options: {
       error: cause instanceof Error ? cause.message : String(cause),
     })
 
-  options.updater.autoDownload = false
-  options.updater.autoInstallOnAppQuit = true
-  options.updater.allowPrerelease = true
-  options.updater.allowDowngrade = false
-  options.updater.on('checking-for-update', () =>
-    publish({ status: 'checking', currentVersion: options.currentVersion }),
-  )
-  options.updater.on('update-not-available', (info) => publish(versioned('current', info)))
-  options.updater.on('update-available', (info) => {
-    publish(versioned('downloading', info))
-    void options.updater.downloadUpdate().catch(fail)
-  })
-  options.updater.on('download-progress', (progress) =>
-    publish({
-      ...state,
-      status: 'downloading',
-      currentVersion: options.currentVersion,
-      progress: Math.round(progress.percent),
-    }),
-  )
-  options.updater.on('update-downloaded', (info) => publish(versioned('ready', info)))
-  options.updater.on('error', fail)
+  if (options.enabled) {
+    options.updater.autoDownload = false
+    options.updater.autoInstallOnAppQuit = true
+    options.updater.allowPrerelease = true
+    options.updater.allowDowngrade = false
+    options.updater.on('checking-for-update', () =>
+      publish({ status: 'checking', currentVersion: options.currentVersion }),
+    )
+    options.updater.on('update-not-available', (info) => publish(versioned('current', info)))
+    options.updater.on('update-available', (info) => {
+      publish(versioned('downloading', info))
+      void options.updater.downloadUpdate().catch(fail)
+    })
+    options.updater.on('download-progress', (progress) =>
+      publish({
+        ...state,
+        status: 'downloading',
+        currentVersion: options.currentVersion,
+        progress: Math.round(progress.percent),
+      }),
+    )
+    options.updater.on('update-downloaded', (info) => publish(versioned('ready', info)))
+    options.updater.on('error', fail)
+  }
 
   const check = (): Promise<AppUpdateState> => {
     if (!options.enabled) return Promise.resolve(state)
