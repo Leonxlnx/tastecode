@@ -1,7 +1,7 @@
 export function shouldHideWindowOnClose(
   platform: NodeJS.Platform,
   appIsQuitting: boolean,
-  hasRecoverySurface = true,
+  hasRecoverySurface: boolean,
 ): boolean {
   return platform !== 'darwin' && !appIsQuitting && hasRecoverySurface
 }
