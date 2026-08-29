@@ -122,18 +122,28 @@ run('pnpm', ['--filter', '@harness/desktop', 'verify:native-bindings', '--', exe
 
 const profile = mkdtempSync(path.join(os.tmpdir(), 'tastecode-linux-acceptance-'))
 for (const name of ['config', 'data', 'state', 'cache']) mkdirSync(path.join(profile, name))
+const xdg = {
+  XDG_CONFIG_HOME: path.join(profile, 'config'),
+  XDG_DATA_HOME: path.join(profile, 'data'),
+  XDG_STATE_HOME: path.join(profile, 'state'),
+  XDG_CACHE_HOME: path.join(profile, 'cache'),
+}
 const report = {
   status: 'awaiting-manual-desktop-acceptance',
   createdAt: new Date().toISOString(),
   ...identity,
   executable,
   appAsarSha256: await sha256(path.join(resources, 'app.asar')),
-  profile,
+  xdg,
 }
 mkdirSync(releaseDirectory, { recursive: true })
 const reportPath = path.join(releaseDirectory, 'linux-acceptance.json')
 writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 })
 
 process.stdout.write(`\n[linux-acceptance] automated gates passed: ${reportPath}\n`)
-process.stdout.write(`[linux-acceptance] isolated profile: ${profile}\n`)
+process.stdout.write(
+  `[linux-acceptance] launch: ${Object.entries(xdg)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(' ')} ${JSON.stringify(executable)}\n`,
+)
 process.stdout.write('[linux-acceptance] now run the packaged Wayland checklist in Architecture\n')
