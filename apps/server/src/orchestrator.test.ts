@@ -1299,6 +1299,26 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  it('reports a failed stop for a preview start already in flight during disposal', async () => {
+    const result = await previewRecoveryHarness(undefined)
+    const startCount = previewStarts.count
+    let releaseStart = () => {}
+    previewStarts.barriers.push(new Promise<void>((resolve) => (releaseStart = resolve)))
+    previewStops.failures.push(new Error('starting preview port remained in use'))
+    try {
+      result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+      const disposing = result.orchestrator.disposeAll()
+      releaseStart()
+      await expect(disposing).rejects.toThrow('starting preview port remained in use')
+    } finally {
+      releaseStart()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
   it('stops the prior successful preview before starting the next Design run', async () => {
     const result = await completedPreviewHarness()
     const stopCount = previewStops.count

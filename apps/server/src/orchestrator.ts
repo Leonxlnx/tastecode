@@ -294,6 +294,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+class StalePreviewCleanupError extends Error {
+  constructor(cause: unknown) {
+    super(errorMessage(cause), { cause })
+  }
+}
+
 function errorCode(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
   return typeof error.code === 'string' ? error.code : undefined
@@ -3144,7 +3150,10 @@ export class Orchestrator {
       const plan = parsePreviewPhaseOutput(text)
       const task = this.#startDesignPreview(threadId, turnId, flow, plan).catch(
         (error: unknown) => {
-          if (this.#designFlows.get(threadId) !== flow) return
+          if (this.#designFlows.get(threadId) !== flow) {
+            if (error instanceof StalePreviewCleanupError) throw error
+            return
+          }
           if (
             isRecoverablePreviewError(error) &&
             this.#queueDesignCorrection(threadId, flow, error)
@@ -3252,11 +3261,7 @@ export class Orchestrator {
     }
     const preview = await startDesignPreview(flow.workspacePath, plan)
     if (this.#designFlows.get(threadId) !== flow) {
-      await preview
-        .stop()
-        .catch((error: unknown) =>
-          this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
-        )
+      await this.#stopStaleDesignPreview(preview)
       return
     }
     this.#designPreviews.set(threadId, preview)
@@ -3283,11 +3288,7 @@ export class Orchestrator {
     if (!this.#designPreviews.has(threadId)) {
       const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
       if (this.#designFlows.get(threadId) !== flow) {
-        await preview
-          .stop()
-          .catch((error: unknown) =>
-            this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
-          )
+        await this.#stopStaleDesignPreview(preview)
         return
       }
       this.#designPreviews.set(threadId, preview)
@@ -3397,6 +3398,15 @@ export class Orchestrator {
       })
     this.#stoppingDesignPreviews.set(threadId, stop)
     return stop
+  }
+
+  async #stopStaleDesignPreview(preview: RunningPreview): Promise<void> {
+    try {
+      await preview.stop()
+    } catch (error) {
+      this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`)
+      throw new StalePreviewCleanupError(error)
+    }
   }
 
   #clearDesignFlow(threadId: string, keepPreview = false): void {
