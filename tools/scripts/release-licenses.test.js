@@ -190,6 +190,64 @@ test('an exact reviewed exception can supply missing metadata and bundled licens
   }
 })
 
+test('the checked-in inventory reviews the Linux Claude SDK package and ships its license', async () => {
+  const checkedInInventory = await loadLicenseInventory(repositoryRoot)
+  const externalPackageJsonPath = path.join(fixtureRoot, 'node_modules/external-a/package.json')
+  const originalExternalPackageJson = await readFile(externalPackageJsonPath, 'utf8')
+  const linuxPackageName = '@anthropic-ai/claude-agent-sdk-linux-x64'
+  const linuxPackageRoot = path.join(fixtureRoot, 'node_modules', ...linuxPackageName.split('/'))
+
+  try {
+    await json(externalPackageJsonPath, {
+      name: 'external-a',
+      version: '1.0.0',
+      license: 'MIT',
+      dependencies: { [linuxPackageName]: '0.3.232' },
+    })
+    await installedPackage(linuxPackageName, {
+      version: '0.3.232',
+      license: 'SEE LICENSE IN LICENSE.md',
+    })
+    await rm(path.join(linuxPackageRoot, 'LICENSE.fixture'))
+    await writeFile(
+      path.join(linuxPackageRoot, 'LICENSE.md'),
+      'Anthropic SDK license terms\n',
+      'utf8',
+    )
+
+    const inventory = {
+      workspaceRoots: ['apps/desktop'],
+      runtimeDevDependencies: {},
+      dependencies: [
+        {
+          name: 'external-a',
+          use: 'fixture',
+          license: 'MIT',
+          metadataLicenses: ['MIT'],
+          source: 'https://example.test/a',
+        },
+      ],
+      reviewedTransitiveExceptions: checkedInInventory.reviewedTransitiveExceptions,
+    }
+    const derived = await deriveDirectRuntimeDependencies(fixtureRoot, inventory)
+    const { report, licenseBundle } = await auditInstalledProductionGraph(
+      fixtureRoot,
+      inventory,
+      derived,
+    )
+    const linuxPackage = report.packages.find(({ name }) => name === linuxPackageName)
+
+    assert.ok(linuxPackage)
+    assert.equal(linuxPackage.reviewedLicense, 'LicenseRef-Anthropic-Commercial-Terms')
+    assert.deepEqual(linuxPackage.licenseFiles, ['LICENSE.md'])
+    assert.match(licenseBundle, /claude-agent-sdk-linux-x64@0\.3\.232/)
+    assert.match(licenseBundle, /--- LICENSE\.md ---/)
+  } finally {
+    await writeFile(externalPackageJsonPath, originalExternalPackageJson, 'utf8')
+    await rm(linuxPackageRoot, { recursive: true, force: true })
+  }
+})
+
 test('a short link-only project license is rejected', async () => {
   await assert.rejects(verifyProjectLicense(fixtureRoot), /top-level LICENSE is missing/)
   await writeFile(path.join(fixtureRoot, 'LICENSE'), 'Apache-2.0: see upstream\n', 'utf8')
