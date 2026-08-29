@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAppUpdateController } from './app-updater.js'
+import { appOwnsUpdates, createAppUpdateController } from './app-updater.js'
 
 function fakeUpdater() {
   const emitter = new EventEmitter()
