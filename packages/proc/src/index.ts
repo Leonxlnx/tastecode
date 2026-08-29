@@ -6,6 +6,7 @@ import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
 export { applyDesktopPath, desktopPath } from './desktop-path.js'
 export type { DesktopPathOptions } from './desktop-path.js'
 export {
+  cleanupExitedPtySession,
   killTree,
   ownProcessTree,
   ownPtySession,

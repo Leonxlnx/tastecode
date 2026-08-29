@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type IPty } from 'node-pty'
-import { desktopPath, ownPtySession, terminatePtySession } from '@harness/proc'
+import {
+  cleanupExitedPtySession,
+  desktopPath,
+  ownPtySession,
+  terminatePtySession,
+} from '@harness/proc'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
@@ -95,6 +100,7 @@ export class TerminalManager {
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
   #terminatePty: TerminatePty
+  #cleanupExitedPty: TerminatePty
   #closeTimeoutMs: number
 
   constructor(
@@ -105,6 +111,7 @@ export class TerminalManager {
     options: {
       spawnPty?: SpawnPty
       terminatePty?: TerminatePty
+      cleanupExitedPty?: TerminatePty
       closeTimeoutMs?: number
     } = {},
   ) {
@@ -112,6 +119,7 @@ export class TerminalManager {
     this.#onExit = handlers.onExit
     this.#spawnPty = options.spawnPty ?? spawnOwnedPty
     this.#terminatePty = options.terminatePty ?? terminatePtySession
+    this.#cleanupExitedPty = options.cleanupExitedPty ?? cleanupExitedPtySession
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
@@ -167,10 +175,7 @@ export class TerminalManager {
       outputBuffer.flush()
       output.dispose()
       entry.hasExited = true
-      if (!this.#closingById.has(terminalId) && this.#byId.get(terminalId) === entry) {
-        this.#byId.delete(terminalId)
-        this.#byThread.delete(key)
-      }
+      void this.#cleanupExitedTerminal(terminalId)
       resolveExited()
       this.#onExit(terminalId, Number.isInteger(exitCode) ? exitCode : null)
     })
@@ -194,7 +199,9 @@ export class TerminalManager {
     if (!entry) return Promise.resolve()
     // Start termination first. If ownership cannot be proved or node-pty
     // rejects synchronously, a later close can retry instead of losing it.
-    const termination = this.#terminatePty(entry.process)
+    const termination = entry.hasExited
+      ? this.#cleanupExitedPty(entry.process)
+      : this.#terminatePty(entry.process)
     const stopOutput = termination.then(() => {
       // node-pty flushes buffered output after kill(); once termination is
       // accepted, the client no longer needs those late chunks. A rejected
@@ -288,6 +295,15 @@ export class TerminalManager {
     const threadClosings = this.#closingByThread.get(threadId)
     threadClosings?.delete(closing)
     if (threadClosings?.size === 0) this.#closingByThread.delete(threadId)
+  }
+
+  async #cleanupExitedTerminal(terminalId: string): Promise<void> {
+    try {
+      await this.close(terminalId)
+    } catch {
+      // A failed natural-exit cleanup remains tracked as a tombstone so a
+      // later terminal cannot reuse the thread while descendants may exist.
+    }
   }
 
   #get(terminalId: string): TerminalEntry {

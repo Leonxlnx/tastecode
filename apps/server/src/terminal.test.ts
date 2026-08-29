@@ -71,6 +71,28 @@ describe('TerminalManager', () => {
     }
   })
 
+  it('does not kill an already exited unowned PTY', async () => {
+    const kill = vi.fn(() => {
+      throw new Error('PTY already exited')
+    })
+    const first = controlledPty({ kill })
+    const second = controlledPty()
+    const ptys = [first, second]
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => ptys.shift()! },
+    )
+
+    const firstId = manager.open('thread-natural-exit', os.tmpdir(), 80, 24)
+    first.emitExit(0)
+    await manager.closeThread('thread-natural-exit')
+
+    expect(manager.open('thread-natural-exit', os.tmpdir(), 80, 24)).not.toBe(firstId)
+    expect(kill).not.toHaveBeenCalled()
+    second.emitExit(0)
+    await manager.closeAll()
+  })
+
   it('bounds shutdown when a PTY never reports its exit', async () => {
     const pty = controlledPty()
     const manager = new TerminalManager(
@@ -366,6 +388,60 @@ setInterval(() => undefined, 1_000)
   )
 
   it.runIf(process.platform === 'linux')(
+    'cleans a descendant after the PTY shell exits naturally',
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-natural-exit-'))
+      const readyFile = path.join(cwd, 'child-ready')
+      const captureFile = path.join(cwd, 'capture-complete')
+      writeFileSync(
+        path.join(cwd, 'natural-child.mjs'),
+        `import { writeFileSync } from 'node:fs'
+process.on('SIGHUP', () => undefined)
+process.on('SIGTERM', () => undefined)
+writeFileSync('./child-ready', String(process.pid))
+setInterval(() => undefined, 1_000)
+`,
+      )
+      let finish: () => void = () => {}
+      const exited = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const manager = new TerminalManager({
+        onOutput: () => {},
+        onExit: () => finish(),
+      })
+      let child: ProcessIdentity | undefined
+
+      try {
+        manager.run(
+          'natural-exit-descendant',
+          'node ./natural-child.mjs & while [ ! -f child-ready ]; do sleep 0.01; done; while [ ! -f capture-complete ]; do sleep 0.01; done; exit',
+          cwd,
+          80,
+          24,
+        )
+        await waitForFile(readyFile)
+        const childPid = Number(readFileSync(readyFile, 'utf8').trim())
+        child = processIdentity(childPid)
+        expect(processExists(child)).toBe(true)
+        writeFileSync(captureFile, '')
+
+        await within(exited)
+        expect(processExists(child)).toBe(true)
+
+        await manager.closeAll()
+
+        expect(processExists(child)).toBe(false)
+      } finally {
+        if (child) killExactProcesses([child])
+        await manager.closeAll().catch(() => undefined)
+        removeTemporaryDirectory(cwd)
+      }
+    },
+    15_000,
+  )
+
+  it.runIf(process.platform === 'linux')(
     'closes short-lived PTYs without treating natural exit as an ownership failure',
     async () => {
       const manager = new TerminalManager({ onOutput: () => {}, onExit: () => {} })
@@ -394,6 +470,14 @@ async function within<T>(promise: Promise<T>): Promise<T> {
     ])
   } finally {
     if (timeout) clearTimeout(timeout)
+  }
+}
+
+async function waitForFile(file: string, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(file)) {
+    if (Date.now() >= deadline) throw new Error(`file did not appear: ${file}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
 

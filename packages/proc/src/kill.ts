@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'kill'>
 
 const ownedUnixProcessGroups = new WeakSet<object>()
-const ownedLinuxPtySessions = new WeakMap<object, LinuxProcessIdentity>()
+const ownedLinuxPtySessions = new WeakMap<object, Promise<LinuxPtySessionOwnership>>()
 const PTY_SESSION_SETUP_TIMEOUT_MS = 250
 const PTY_SESSION_SETUP_POLL_MS = 5
 
@@ -22,6 +22,9 @@ type LinuxProcessIdentity = {
   startTime: string
   uid: number
 }
+
+type LinuxPtySessionOwnership =
+  { kind: 'owned'; owner: LinuxProcessIdentity } | { kind: 'failed'; error: unknown }
 
 /**
  * Spawn options for a process tree that TasteCode owns.
@@ -55,7 +58,7 @@ export function ownPtySession<T extends PtyProcess>(pty: T): T {
   if (identity.parentId !== process.pid) {
     throw new Error(`cannot prove ownership of PTY session ${String(pty.pid)}`)
   }
-  ownedLinuxPtySessions.set(pty, identity)
+  ownedLinuxPtySessions.set(pty, establishLinuxPtySession(identity))
   return pty
 }
 
@@ -103,19 +106,30 @@ export async function terminatePtySession(
   pty: PtyProcess,
   options: TerminateTreeOptions = {},
 ): Promise<void> {
-  const captured = ownedLinuxPtySessions.get(pty)
-  if (!captured) {
+  const ownership = ownedLinuxPtySessions.get(pty)
+  if (!ownership) {
     pty.kill()
     return
   }
-  const owner = await waitForEstablishedPtySession(captured)
-  if (!owner) return
+  const session = await ownership
+  if (session.kind === 'failed') throw session.error
+  const owner = session.owner
+  const leader = readLinuxProcessIdentity(owner.pid)
+  if (!leader) {
+    await terminateExitedPtySession(owner, options)
+    return
+  }
+  if (!sameLinuxProcessGeneration(leader, owner) || leader.parentId !== owner.parentId) {
+    throw new Error(`PTY session leader changed before cleanup completed: ${owner.pid}`)
+  }
+  if (leader.state === 'Z' || leader.state === 'X') {
+    await terminateExitedPtySession(owner, options)
+    return
+  }
   signalLinuxProcess(owner, 'SIGSTOP')
   try {
     if (!(await waitForStoppedLinuxProcess(owner))) {
-      if (linuxPtySessionMembers(owner).length > 0) {
-        throw new Error(`PTY session leader exited before cleanup completed: ${owner.pid}`)
-      }
+      await terminateExitedPtySession(owner, options)
       return
     }
     const signalled = new Set<string>()
@@ -129,6 +143,29 @@ export async function terminatePtySession(
   } catch (error) {
     signalLinuxProcess(owner, 'SIGCONT')
     throw error
+  }
+}
+
+/** Clean descendants after node-pty has already reported the leader's exit. */
+export async function cleanupExitedPtySession(
+  pty: PtyProcess,
+  options: TerminateTreeOptions = {},
+): Promise<void> {
+  const ownership = ownedLinuxPtySessions.get(pty)
+  if (!ownership) return
+  const session = await ownership
+  if (session.kind === 'failed') throw session.error
+  await terminateExitedPtySession(session.owner, options)
+}
+
+async function terminateExitedPtySession(
+  owner: LinuxProcessIdentity,
+  options: TerminateTreeOptions,
+): Promise<void> {
+  const signalled = new Set<string>()
+  const members = signalNewPtySessionMembers(owner, 'SIGTERM', signalled, linuxPtySessionMembers)
+  if (members.length > 0) {
+    await finishPtySessionTermination(owner, signalled, options, linuxPtySessionMembers)
   }
 }
 
@@ -158,13 +195,18 @@ async function finishPtySessionTermination(
   owner: LinuxProcessIdentity,
   signalled: Set<string>,
   options: TerminateTreeOptions,
+  readMembers: (owner: LinuxProcessIdentity) => LinuxProcessIdentity[] = ownedPtySessionMembers,
 ): Promise<void> {
   const gracePeriodMs = options.gracePeriodMs ?? 1_500
   const killWaitMs = options.killWaitMs ?? 1_500
   const pollIntervalMs = options.pollIntervalMs ?? 50
   if (
-    await waitForPtySessionMembers(owner, gracePeriodMs, pollIntervalMs, (identity) =>
-      signalNewLinuxProcess(identity, 'SIGTERM', signalled),
+    await waitForPtySessionMembers(
+      owner,
+      gracePeriodMs,
+      pollIntervalMs,
+      (identity) => signalNewLinuxProcess(identity, 'SIGTERM', signalled),
+      readMembers,
     )
   ) {
     return
@@ -172,8 +214,12 @@ async function finishPtySessionTermination(
 
   const killed = new Set<string>()
   if (
-    !(await waitForPtySessionMembers(owner, killWaitMs, pollIntervalMs, (identity) =>
-      signalNewLinuxProcess(identity, 'SIGKILL', killed),
+    !(await waitForPtySessionMembers(
+      owner,
+      killWaitMs,
+      pollIntervalMs,
+      (identity) => signalNewLinuxProcess(identity, 'SIGKILL', killed),
+      readMembers,
     ))
   ) {
     throw new Error(`PTY session ${owner.sessionId} survived SIGKILL`)
@@ -197,22 +243,39 @@ async function waitForStoppedLinuxProcess(owner: LinuxProcessIdentity): Promise<
 
 async function waitForEstablishedPtySession(
   captured: LinuxProcessIdentity,
-): Promise<LinuxProcessIdentity | undefined> {
+): Promise<LinuxProcessIdentity> {
   const startedAt = Date.now()
   do {
     const current = readLinuxProcessIdentity(captured.pid)
-    // A one-shot PTY can exit before forkpty's session boundary becomes
-    // observable. With no proven SID there is nothing safe to signal; the
-    // terminal owner still waits for node-pty's exit event.
-    if (!current) return undefined
+    // forkpty creates a session whose id is the captured child pid. Once that
+    // generation disappears, any surviving member keeps the kernel SID alive
+    // and prevents that numeric id from being reused until cleanup finishes.
+    if (!current) return expectedLinuxPtySession(captured)
     if (!sameLinuxProcessInstance(current, captured) || current.parentId !== captured.parentId) {
       throw new Error(`cannot prove ownership of PTY session ${captured.pid}`)
     }
     if (current.groupId === current.pid && current.sessionId === current.pid) return current
-    if (current.state === 'Z' || current.state === 'X') return undefined
+    if (current.state === 'Z' || current.state === 'X') {
+      return expectedLinuxPtySession(captured)
+    }
     await new Promise((resolve) => setTimeout(resolve, PTY_SESSION_SETUP_POLL_MS))
   } while (Date.now() - startedAt < PTY_SESSION_SETUP_TIMEOUT_MS)
   throw new Error(`PTY session ${captured.pid} was not established`)
+}
+
+async function establishLinuxPtySession(
+  captured: LinuxProcessIdentity,
+): Promise<LinuxPtySessionOwnership> {
+  try {
+    const owner = await waitForEstablishedPtySession(captured)
+    return { kind: 'owned', owner }
+  } catch (error) {
+    return { kind: 'failed', error }
+  }
+}
+
+function expectedLinuxPtySession(captured: LinuxProcessIdentity): LinuxProcessIdentity {
+  return { ...captured, groupId: captured.pid, sessionId: captured.pid }
 }
 
 async function waitForPtySessionMembers(
@@ -220,23 +283,25 @@ async function waitForPtySessionMembers(
   timeoutMs: number,
   pollIntervalMs: number,
   onMember?: (identity: LinuxProcessIdentity) => void,
+  readMembers: (owner: LinuxProcessIdentity) => LinuxProcessIdentity[] = ownedPtySessionMembers,
 ): Promise<boolean> {
   const startedAt = Date.now()
   do {
-    const members = ownedPtySessionMembers(owner)
+    const members = readMembers(owner)
     if (members.length === 0) return true
     for (const identity of members) onMember?.(identity)
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
   } while (Date.now() - startedAt < timeoutMs)
-  return ownedPtySessionMembers(owner).length === 0
+  return readMembers(owner).length === 0
 }
 
 function signalNewPtySessionMembers(
   owner: LinuxProcessIdentity,
   signal: NodeJS.Signals,
   signalled: Set<string>,
+  readMembers: (owner: LinuxProcessIdentity) => LinuxProcessIdentity[] = ownedPtySessionMembers,
 ): LinuxProcessIdentity[] {
-  const members = ownedPtySessionMembers(owner)
+  const members = readMembers(owner)
   for (const identity of members) signalNewLinuxProcess(identity, signal, signalled)
   return members
 }
