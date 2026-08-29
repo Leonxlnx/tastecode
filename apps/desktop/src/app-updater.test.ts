@@ -22,7 +22,11 @@ afterEach(() => vi.useRealTimers())
 describe('app update controller', () => {
   it('allows app-owned updates only for packaged AppImage, Windows, and macOS builds', () => {
     expect(
-      appOwnsUpdates({ platform: 'linux', packaged: true, appImagePath: '/tmp/TasteCode.AppImage' }),
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/tmp/TasteCode.AppImage',
+      }),
     ).toBe(true)
     expect(appOwnsUpdates({ platform: 'linux', packaged: true })).toBe(false)
     expect(appOwnsUpdates({ platform: 'win32', packaged: true })).toBe(true)
