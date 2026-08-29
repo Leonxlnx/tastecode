@@ -140,19 +140,19 @@ package-agnostic self-update.
 
 ## Stack
 
-|                    |                                            |                                                                         |
-| ------------------ | ------------------------------------------ | ----------------------------------------------------------------------- |
-| Language / runtime | TypeScript 5.9.3, Node >=22.18 tooling / Electron Node 24              | One language across the server, adapters, web client, and desktop shell |
-| Monorepo           | pnpm workspaces + Vite                     | pnpm's store keeps worktree-heavy development cheap                     |
-| Desktop            | Electron 43                                | One Chromium renderer across macOS and Windows                          |
-| UI                 | React 19                                   | Shared renderer behavior and app-owned controls                         |
-| Chat list          | TanStack Virtual, end-anchored             | Variable-height streamed rows keep stable keys and cached measurement   |
-| Markdown           | Streamdown + Shiki's JavaScript engine     | Incomplete streamed blocks stay cheap without weakening the CSP         |
-| Styling            | CSS token layer                            | Themes, geometry, density, and motion remain app-owned                  |
-| State              | React external store + event-derived views | Deltas update the live tail without rebuilding completed history        |
-| DB                 | Node SQLite, WAL, FTS5                     | Append-only events and rebuildable read models remain unchanged         |
-| PTY                | `node-pty`                                 | The shared process layer handles Unix PTYs and Windows ConPTY           |
-| Tests              | Vitest + live Electron checks              | Captured provider frames and platform runs remain the final contract    |
+|                    |                                                           |                                                                         |
+| ------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Language / runtime | TypeScript 5.9.3, Node >=22.18 tooling / Electron Node 24 | One language across the server, adapters, web client, and desktop shell |
+| Monorepo           | pnpm workspaces + Vite                                    | pnpm's store keeps worktree-heavy development cheap                     |
+| Desktop            | Electron 43                                               | One Chromium renderer across macOS and Windows                          |
+| UI                 | React 19                                                  | Shared renderer behavior and app-owned controls                         |
+| Chat list          | TanStack Virtual, end-anchored                            | Variable-height streamed rows keep stable keys and cached measurement   |
+| Markdown           | Streamdown + Shiki's JavaScript engine                    | Incomplete streamed blocks stay cheap without weakening the CSP         |
+| Styling            | CSS token layer                                           | Themes, geometry, density, and motion remain app-owned                  |
+| State              | React external store + event-derived views                | Deltas update the live tail without rebuilding completed history        |
+| DB                 | Node SQLite, WAL, FTS5                                    | Append-only events and rebuildable read models remain unchanged         |
+| PTY                | `node-pty`                                                | The shared process layer handles Unix PTYs and Windows ConPTY           |
+| Tests              | Vitest + live Electron checks                             | Captured provider frames and platform runs remain the final contract    |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the
