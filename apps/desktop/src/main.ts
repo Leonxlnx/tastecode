@@ -291,7 +291,7 @@ function createWindow(): void {
   if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
   window.on('close', (event) => {
-    if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
+    if (!shouldHideWindowOnClose(process.platform, appIsQuitting, tray !== undefined)) return
     event.preventDefault()
     window.hide()
   })
@@ -381,17 +381,25 @@ function showMainWindow(): void {
 
 function createBackgroundTray(): void {
   if (process.platform === 'darwin' || tray) return
-  const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
-  tray = new Tray(icon)
-  tray.setToolTip(nativeAppName)
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: `Open ${nativeAppName}`, click: showMainWindow },
-      { type: 'separator' },
-      { label: `Quit ${nativeAppName}`, click: () => app.quit() },
-    ]),
-  )
-  tray.on('click', showMainWindow)
+  let candidate: Tray | undefined
+  try {
+    const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
+    candidate = new Tray(icon)
+    candidate.setToolTip(nativeAppName)
+    candidate.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: `Open ${nativeAppName}`, click: showMainWindow },
+        { type: 'separator' },
+        { label: `Quit ${nativeAppName}`, click: () => app.quit() },
+      ]),
+    )
+    candidate.on('click', showMainWindow)
+    tray = candidate
+  } catch (error) {
+    candidate?.destroy()
+    console.warn('[desktop] tray unavailable; close will leave the window recoverable', error)
+    void diagnostics?.record('tray', error)
+  }
 }
 
 function installApplicationMenu(): void {
