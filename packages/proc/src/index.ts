@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { desktopPath } from './desktop-path.js'
-import { killTree, ownProcessTree, ownedProcessSpawnOptions, terminateTree } from './kill.js'
+import { killTree, ownProcessTree, ownedProcessSpawnOptions } from './kill.js'
 import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
 
 export { applyDesktopPath, desktopPath } from './desktop-path.js'
@@ -8,7 +8,9 @@ export type { DesktopPathOptions } from './desktop-path.js'
 export {
   killTree,
   ownProcessTree,
+  ownPtySession,
   ownedProcessSpawnOptions,
+  terminatePtySession,
   terminateTree,
   type TerminateTreeOptions,
 } from './kill.js'

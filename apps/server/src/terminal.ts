@@ -1,11 +1,29 @@
 import { randomUUID } from 'node:crypto'
 import { spawn, type IPty } from 'node-pty'
-import { desktopPath } from '@harness/proc'
+import { desktopPath, ownPtySession, terminatePtySession } from '@harness/proc'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
 type SpawnPty = typeof spawn
+type TerminatePty = (process: IPty) => Promise<void>
+
+const spawnOwnedPty: SpawnPty = (file, args, options) => {
+  const process = spawn(file, args, options)
+  try {
+    return ownPtySession(process)
+  } catch (ownershipError) {
+    try {
+      process.kill()
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [ownershipError, cleanupError],
+        `failed to own or stop PTY ${process.pid}`,
+      )
+    }
+    throw ownershipError
+  }
+}
 
 type TerminalEntry = {
   threadId: string
@@ -13,6 +31,7 @@ type TerminalEntry = {
   output: { dispose(): void }
   outputBuffer: TerminalOutputBuffer
   exited: Promise<void>
+  hasExited: boolean
 }
 
 /**
@@ -75,6 +94,7 @@ export class TerminalManager {
   #onOutput: (terminalId: string, data: string) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
+  #terminatePty: TerminatePty
   #closeTimeoutMs: number
 
   constructor(
@@ -82,11 +102,16 @@ export class TerminalManager {
       onOutput: (terminalId: string, data: string) => void
       onExit: (terminalId: string, exitCode: number | null) => void
     },
-    options: { spawnPty?: SpawnPty; closeTimeoutMs?: number } = {},
+    options: {
+      spawnPty?: SpawnPty
+      terminatePty?: TerminatePty
+      closeTimeoutMs?: number
+    } = {},
   ) {
     this.#onOutput = handlers.onOutput
     this.#onExit = handlers.onExit
-    this.#spawnPty = options.spawnPty ?? spawn
+    this.#spawnPty = options.spawnPty ?? spawnOwnedPty
+    this.#terminatePty = options.terminatePty ?? terminatePtySession
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
@@ -110,6 +135,7 @@ export class TerminalManager {
   #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
     if (this.#closingAll) throw new Error('terminal manager is closing')
     if (this.#closingThreads.has(key)) throw new Error(`terminal is closing: ${key}`)
+    if (this.#closingByThread.has(key)) throw new Error(`terminal is closing: ${key}`)
 
     const currentId = this.#byThread.get(key)
     if (currentId) {
@@ -131,7 +157,7 @@ export class TerminalManager {
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve
     })
-    const entry = { threadId: key, process, output, outputBuffer, exited }
+    const entry = { threadId: key, process, output, outputBuffer, exited, hasExited: false }
     this.#byId.set(terminalId, entry)
     this.#byThread.set(key, terminalId)
 
@@ -140,7 +166,8 @@ export class TerminalManager {
       // Explicit close disposes the buffer first because that pane is gone.
       outputBuffer.flush()
       output.dispose()
-      if (this.#byId.get(terminalId) === entry) {
+      entry.hasExited = true
+      if (!this.#closingById.has(terminalId) && this.#byId.get(terminalId) === entry) {
         this.#byId.delete(terminalId)
         this.#byThread.delete(key)
       }
@@ -165,20 +192,19 @@ export class TerminalManager {
 
     const entry = this.#byId.get(terminalId)
     if (!entry) return Promise.resolve()
-    // Kill first. If node-pty rejects the request synchronously, the terminal
-    // remains attached and a later close can retry instead of losing it.
-    entry.process.kill()
-    this.#byId.delete(terminalId)
-    // Only unmap the key if it still points at this terminal — closing a
-    // stale id must not orphan a newer pty spawned under the same key.
-    if (this.#byThread.get(entry.threadId) === terminalId) {
-      this.#byThread.delete(entry.threadId)
-    }
-    // node-pty flushes buffered output after kill(); the client tore this
-    // pane down, so those late chunks must not be broadcast for its id.
-    entry.output.dispose()
-    entry.outputBuffer.dispose()
-    const closing = this.#boundedExit(terminalId, entry.exited)
+    // Start termination first. If ownership cannot be proved or node-pty
+    // rejects synchronously, a later close can retry instead of losing it.
+    const termination = this.#terminatePty(entry.process)
+    const stopOutput = termination.then(() => {
+      // node-pty flushes buffered output after kill(); once termination is
+      // accepted, the client no longer needs those late chunks. A rejected
+      // termination keeps the stream attached so the same PTY can be retried.
+      entry.output.dispose()
+      entry.outputBuffer.dispose()
+    })
+    const closing = Promise.all([this.#boundedExit(terminalId, entry.exited), stopOutput]).then(
+      () => undefined,
+    )
     this.#closingById.set(terminalId, closing)
     const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
     threadClosings.add(closing)
@@ -187,7 +213,21 @@ export class TerminalManager {
     // gone. Keep that generation tracked until its real exit arrives so a
     // retry cannot delete the cwd underneath it.
     void closing.catch(() => undefined)
-    void entry.exited.then(() => this.#forgetClosing(terminalId, entry.threadId, closing))
+    void closing.then(
+      () => {
+        if (this.#byId.get(terminalId) === entry) this.#byId.delete(terminalId)
+        if (this.#byThread.get(entry.threadId) === terminalId) {
+          this.#byThread.delete(entry.threadId)
+        }
+        this.#forgetClosing(terminalId, entry.threadId, closing)
+      },
+      () => {
+        // If the ownership anchor is still alive, a later close can retry.
+        // Once it exits, retain the failed close as a tombstone so no new PTY
+        // can reuse the thread while descendants may still exist.
+        if (!entry.hasExited) this.#forgetClosing(terminalId, entry.threadId, closing)
+      },
+    )
     return closing
   }
 
@@ -251,6 +291,9 @@ export class TerminalManager {
   }
 
   #get(terminalId: string): TerminalEntry {
+    if (this.#closingById.has(terminalId)) {
+      throw new Error(`terminal is closing: ${terminalId}`)
+    }
     const entry = this.#byId.get(terminalId)
     if (!entry) throw new Error(`no such terminal: ${terminalId}`)
     return entry

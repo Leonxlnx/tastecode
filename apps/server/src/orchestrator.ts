@@ -1946,10 +1946,8 @@ export class Orchestrator {
     this.#terminals.resize(terminalId, columns, rows)
   }
 
-  closeTerminal(terminalId: string): void {
-    void this.#terminals
-      .close(terminalId)
-      .catch((error) => this.#onLog(`[terminal] close failed: ${errorMessage(error)}`))
+  closeTerminal(terminalId: string): Promise<void> {
+    return this.#terminals.close(terminalId)
   }
 
   #repoPath(threadId: string): string {

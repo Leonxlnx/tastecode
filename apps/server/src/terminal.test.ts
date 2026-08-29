@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
@@ -81,25 +81,61 @@ describe('TerminalManager', () => {
     const closing = manager.close(terminalId)
 
     await expect(closing).rejects.toThrow(/shutdown timed out/i)
-    expect(manager.close(terminalId)).toBe(closing)
-    await expect(manager.closeThread('thread-1')).rejects.toThrow(/terminal shutdown failed/i)
+    const retry = manager.close(terminalId)
+    expect(retry).not.toBe(closing)
+    pty.emitExit(0)
+    await expect(retry).resolves.toBeUndefined()
+  })
+
+  it('does not resolve close before owned session cleanup finishes', async () => {
+    const pty = controlledPty()
+    let rejectTermination: (error: Error) => void = () => {}
+    const termination = new Promise<void>((_resolve, reject) => {
+      rejectTermination = reject
+    })
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => pty, terminatePty: () => termination },
+    )
+    const terminalId = manager.open('thread-1', os.tmpdir(), 80, 24)
+    const closing = manager.close(terminalId)
+    let settled = false
+    void closing.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    pty.emitExit(0)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    rejectTermination(new Error('session cleanup failed'))
+    await expect(closing).rejects.toThrow('session cleanup failed')
   })
 
   it('keeps a terminal attached when node-pty rejects the kill request', async () => {
     let rejectKill = true
+    const output: string[] = []
     const pty = controlledPty({
       kill: () => {
         if (rejectKill) throw new Error('kill failed')
       },
     })
     const manager = new TerminalManager(
-      { onOutput: () => {}, onExit: () => {} },
+      { onOutput: (_terminalId, data) => output.push(data), onExit: () => {} },
       { spawnPty: () => pty },
     )
     const terminalId = manager.open('thread-1', os.tmpdir(), 80, 24)
 
-    expect(() => manager.close(terminalId)).toThrow('kill failed')
+    await expect(manager.close(terminalId)).rejects.toThrow('kill failed')
     expect(manager.open('thread-1', os.tmpdir(), 100, 30)).toBe(terminalId)
+    pty.emitData('still attached')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(output).toEqual(['still attached'])
 
     rejectKill = false
     const closed = manager.close(terminalId)
@@ -209,13 +245,77 @@ describe('TerminalManager', () => {
     try {
       const terminalId = manager.open('thread-1', cwd, 80, 24)
       manager.closeThread('thread-1')
-      expect(() => manager.resize(terminalId, 100, 30)).toThrow(/no such terminal/i)
+      expect(() => manager.resize(terminalId, 100, 30)).toThrow(/terminal is closing/i)
       await within(exited)
     } finally {
       await manager.closeAll()
       removeTemporaryDirectory(cwd)
     }
   })
+
+  it.runIf(process.platform === 'linux')(
+    'removes a PTY child and grandchild that ignore hangup',
+    async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-tree-'))
+      const fixture = path.join(cwd, 'tree.mjs')
+      writeFileSync(
+        fixture,
+        `import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+process.on('SIGHUP', () => undefined)
+process.on('SIGTERM', () => undefined)
+
+if (process.argv[2] === 'grandchild') {
+  process.send?.('ready')
+  setInterval(() => undefined, 1_000)
+} else {
+  const grandchild = spawn(process.execPath, [fileURLToPath(import.meta.url), 'grandchild'], {
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+  })
+  grandchild.once('message', () => {
+    console.log('TREE_READY ' + process.pid + ' ' + grandchild.pid)
+  })
+  setInterval(() => undefined, 1_000)
+}
+`,
+      )
+      let output = ''
+      let sawTree: (pids: [number, number]) => void = () => {}
+      const treeReady = new Promise<[number, number]>((resolve) => {
+        sawTree = resolve
+      })
+      const manager = new TerminalManager({
+        onOutput: (_terminalId, data) => {
+          output += data
+          const match = /TREE_READY\s+(\d+)\s+(\d+)/.exec(output)
+          if (match) sawTree([Number(match[1]), Number(match[2])])
+        },
+        onExit: () => {},
+      })
+      let ownedProcesses: [ProcessIdentity, ProcessIdentity] | undefined
+
+      try {
+        const terminalId = manager.open('thread-tree', cwd, 80, 24)
+        manager.write(terminalId, 'node ./tree.mjs\r')
+        const ownedPids = await within(treeReady)
+        ownedProcesses = ownedPids.map(processIdentity) as [ProcessIdentity, ProcessIdentity]
+        expect(ownedProcesses.map(processExists)).toEqual([true, true])
+        for (const identity of ownedProcesses) process.kill(identity.pid, 'SIGHUP')
+        await Promise.resolve()
+        expect(ownedProcesses.map(processExists)).toEqual([true, true])
+
+        await manager.close(terminalId)
+
+        expect(ownedProcesses.map(processExists)).toEqual([false, false])
+      } finally {
+        if (ownedProcesses) killExactProcesses(ownedProcesses)
+        await manager.closeAll().catch(() => undefined)
+        removeTemporaryDirectory(cwd)
+      }
+    },
+    15_000,
+  )
 })
 
 async function within<T>(promise: Promise<T>): Promise<T> {
@@ -232,7 +332,7 @@ async function within<T>(promise: Promise<T>): Promise<T> {
   }
 }
 
-it('closing a stale terminal id does not unmap a newer pty under the same key', async () => {
+it('does not replace a terminal until its close has finished', async () => {
   const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-stale-'))
   const exited = new Set<string>()
   const manager = new TerminalManager({
@@ -242,15 +342,11 @@ it('closing a stale terminal id does not unmap a newer pty under the same key', 
 
   try {
     const first = manager.open('thread-1', cwd, 80, 24)
-    // Simulate the respawn race: the first pty is closed directly, a new
-    // one is opened under the same key, and then someone closes the stale
-    // first id again (a late client, a double-click).
     const firstClosing = manager.close(first)
-    const second = manager.open('thread-1', cwd, 80, 24)
-    expect(manager.close(first)).toBe(firstClosing)
+    expect(() => manager.open('thread-1', cwd, 80, 24)).toThrow(/terminal is closing/i)
+    await firstClosing
 
-    // The newer pty must still be mapped: asking for the thread's terminal
-    // reattaches instead of spawning a third.
+    const second = manager.open('thread-1', cwd, 80, 24)
     expect(manager.open('thread-1', cwd, 80, 24)).toBe(second)
     await manager.closeThread('thread-1')
     expect(exited).toEqual(new Set([first, second]))
@@ -263,6 +359,46 @@ it('closing a stale terminal id does not unmap a newer pty under the same key', 
 
 function removeTemporaryDirectory(directory: string): void {
   rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })
+}
+
+type ProcessIdentity = { pid: number; startTime: string }
+
+function processIdentity(pid: number): ProcessIdentity {
+  const startTime = processStartTime(pid)
+  if (!startTime) throw new Error(`process disappeared before identity capture: ${pid}`)
+  return { pid, startTime }
+}
+
+function processExists(identity: ProcessIdentity): boolean {
+  return processStartTime(identity.pid) === identity.startTime
+}
+
+function processStartTime(pid: number): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    const commandEnd = stat.lastIndexOf(')')
+    return commandEnd < 0 ? undefined : stat.slice(commandEnd + 2).split(' ')[19]
+  } catch (error) {
+    const code = processErrorCode(error)
+    if (code === 'ESRCH' || code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+function killExactProcesses(processes: ProcessIdentity[]): void {
+  for (const identity of processes) {
+    if (!processExists(identity)) continue
+    try {
+      process.kill(identity.pid, 'SIGKILL')
+    } catch (error) {
+      if (processErrorCode(error) !== 'ESRCH') throw error
+    }
+  }
+}
+
+function processErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
+  return typeof error.code === 'string' ? error.code : undefined
 }
 
 function controlledPty(options: { kill?: () => void } = {}): IPty & {
