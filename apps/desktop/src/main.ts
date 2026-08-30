@@ -67,7 +67,7 @@ import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
 import { clearPreviewSession } from './preview-session.js'
 import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
 import { ServerSupervisor } from './server-supervisor.js'
-import { restoreMainWindowPresence } from './window-presence.js'
+import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
   loadMainWindowState,
@@ -380,10 +380,7 @@ function showMainWindow(): void {
     createWindow()
     return
   }
-  restoreMainWindowPresence(process.platform, app, window)
-  if (window.isMinimized()) window.restore()
-  window.show()
-  window.focus()
+  presentMainWindow(process.platform, app, window)
 }
 
 function installApplicationMenu(): void {
