@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { z } from 'zod'
-import { killTree } from './kill.js'
+import { terminateTree } from './kill.js'
 
 /**
  * Newline-delimited JSON-RPC 2.0 over a child process's stdio.
@@ -97,6 +97,7 @@ export class StdioJsonRpc {
   #nextId = 1
   #buffer = ''
   #disposed = false
+  #disposePromise: Promise<void> | undefined
   #exited = false
   /** Why the transport is finished, so late callers get an answer not a hang. */
   #failure: Error | undefined
@@ -178,11 +179,12 @@ export class StdioJsonRpc {
     this.#write({ jsonrpc: '2.0', method, params })
   }
 
-  dispose(): void {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    if (this.#disposePromise) return this.#disposePromise
     this.#disposed = true
     this.#failAll(new Error('transport disposed'))
-    killTree(this.#child)
+    this.#disposePromise = terminateTree(this.#child)
+    return this.#disposePromise
   }
 
   #write(message: unknown): void {

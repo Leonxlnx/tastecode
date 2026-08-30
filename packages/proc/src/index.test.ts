@@ -10,6 +10,7 @@ import {
   runCli,
   spawnCli,
   StdioJsonRpc,
+  terminateTree,
   type StdioJsonRpcProcess,
 } from './index.js'
 
@@ -55,6 +56,36 @@ describe('StdioJsonRpc', () => {
 
     await expect(reply).resolves.toBe('drained')
     child.emit('close', 0)
+  })
+
+  it('waits for a stubborn owned process group to exit during disposal', async () => {
+    const beat = path.join(os.tmpdir(), `harness-rpc-dispose-${Date.now()}.txt`)
+    const grandchild = [
+      "const fs = require('fs')",
+      "process.on('SIGTERM', () => {})",
+      `setInterval(() => fs.writeFileSync(${JSON.stringify(beat)}, String(Date.now())), 100)`,
+    ].join(';')
+    const parent = [
+      "const { spawn } = require('node:child_process')",
+      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
+      "process.on('SIGTERM', () => {})",
+      'setInterval(() => {}, 1_000)',
+    ].join(';')
+    const child = spawnCli(process.execPath, ['-e', parent])
+    const rpc = new StdioJsonRpc(child, 'stubborn agent')
+
+    try {
+      await waitFor(() => existsSync(beat), 5_000)
+      const disposing = rpc.dispose()
+      expect(rpc.dispose()).toBe(disposing)
+      await disposing
+      const afterDispose = readFileSync(beat, 'utf8')
+      await sleep(300)
+      expect(readFileSync(beat, 'utf8')).toBe(afterDispose)
+    } finally {
+      await terminateTree(child, { gracePeriodMs: 0, killWaitMs: 1_500 })
+      rmSync(beat, { force: true })
+    }
   })
 })
 

@@ -583,8 +583,8 @@ export class Orchestrator {
         this.#control = adapter
         return adapter
       })
-      .catch((error: unknown) => {
-        adapter.dispose()
+      .catch(async (error: unknown) => {
+        await adapter.dispose()
         throw error
       })
       .finally(() => {
@@ -1086,7 +1086,7 @@ export class Orchestrator {
       this.#onUsageChanged(provider)
       return { outcome }
     } finally {
-      adapter.dispose()
+      await adapter.dispose()
     }
   }
 
@@ -1101,7 +1101,7 @@ export class Orchestrator {
             await adapter.start()
             return await adapter.rateLimitSource()
           } finally {
-            adapter.dispose()
+            await adapter.dispose()
           }
         },
       ],
@@ -1236,7 +1236,7 @@ export class Orchestrator {
 
     const { thread, session } = started
     if (this.#disposing) {
-      session.dispose()
+      await session.dispose()
       if (worktree) await removeWorktree(worktree, true).catch(() => undefined)
       throw new Error(SHUTTING_DOWN_MESSAGE)
     }
@@ -1257,7 +1257,7 @@ export class Orchestrator {
           }
         : {}),
     })
-    this.#attachThread(thread, session, workspacePath, worktree)
+    await this.#attachThread(thread, session, workspacePath, worktree)
     if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
     return thread
   }
@@ -1343,11 +1343,11 @@ export class Orchestrator {
       })
       this.#sideThreads.set(parentThreadId, thread.id)
       this.#sideParents.set(thread.id, parentThreadId)
-      this.#attachThread(thread, session, storedParent.projectPath)
+      await this.#attachThread(thread, session, storedParent.projectPath)
       this.#threadApprovals.set(thread.id, approval)
       return thread
     } catch (error) {
-      started?.session.dispose()
+      await started?.session.dispose()
       const sideThreadId = started?.thread.id
       if (sideThreadId) {
         this.#sideParents.delete(sideThreadId)
@@ -2393,11 +2393,11 @@ export class Orchestrator {
 
   async close(threadId: string): Promise<void> {
     if (this.#store.thread(threadId)?.ephemeral) {
-      this.closeSideThread(threadId)
+      await this.closeSideThread(threadId)
       return
     }
     const sideThreadId = this.#sideThreads.get(threadId)
-    if (sideThreadId) this.closeSideThread(sideThreadId)
+    if (sideThreadId) await this.closeSideThread(sideThreadId)
     const runtimeDisposed = this.#disposeThreadRuntime(threadId)
     // Always mark closed, live entry or not: closing is the user's statement
     // about the thread. Early-returning when no session was attached left a
@@ -2413,12 +2413,12 @@ export class Orchestrator {
     await runtimeDisposed
   }
 
-  closeSideThread(threadId: string): void {
+  async closeSideThread(threadId: string): Promise<void> {
     const stored = this.#store.thread(threadId)
     if (!stored) return
     if (!stored.ephemeral) throw new Error('thread is not a Side chat')
     this.#discardedSideThreads.add(threadId)
-    void this.#disposeThreadRuntime(threadId).catch(() => undefined)
+    await this.#disposeThreadRuntime(threadId)
     if (stored.parentThreadId && this.#sideThreads.get(stored.parentThreadId) === threadId) {
       this.#sideThreads.delete(stored.parentThreadId)
     }
@@ -2433,8 +2433,10 @@ export class Orchestrator {
     const previewStopped = this.#stopDesignPreview(threadId)
     this.#inboxProjections.delete(threadId)
     const entry = this.#threads.get(threadId)
+    const sessionDisposed = entry
+      ? Promise.resolve().then(() => entry.session.dispose())
+      : Promise.resolve()
     if (entry) {
-      entry.session.dispose()
       this.#threads.delete(threadId)
     }
     this.#threadApprovals.delete(threadId)
@@ -2455,7 +2457,7 @@ export class Orchestrator {
     this.#queuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
     this.#clearDesignFlow(threadId, true)
-    return Promise.all([terminalsClosed, previewStopped]).then(() => undefined)
+    return Promise.all([terminalsClosed, previewStopped, sessionDisposed]).then(() => undefined)
   }
 
   /**
@@ -2536,7 +2538,9 @@ export class Orchestrator {
       )
       for (const controller of this.#voiceRequests.values()) controller.abort()
       this.#voiceRequests.clear()
-      for (const [, entry] of this.#threads) entry.session.dispose()
+      const sessionsDisposed = [...this.#threads.values()].map((entry) =>
+        Promise.resolve().then(() => entry.session.dispose()),
+      )
       this.#threads.clear()
       this.#sideThreads.clear()
       this.#sideParents.clear()
@@ -2570,21 +2574,26 @@ export class Orchestrator {
       this.#backgroundSourcesStarting = undefined
       this.#backgroundSourcesRevision += 1
       const controlStopped = this.#controlStarting?.then(
-        (adapter) => {
-          adapter.dispose()
+        async (adapter) => {
+          await adapter.dispose()
           if (this.#control === adapter) this.#control = undefined
         },
         () => undefined,
       )
       this.#controlStarting = undefined
-      this.#control?.dispose()
+      const control = this.#control
+      const activeControlStopped = control
+        ? Promise.resolve().then(() => control.dispose())
+        : undefined
       this.#control = undefined
       const cleanupResults = await Promise.allSettled([
         ...this.#designPreviewTasks.values(),
         ...stoppingPreviews,
         ...previewsStopped,
         ...(controlStopped ? [controlStopped] : []),
+        ...(activeControlStopped ? [activeControlStopped] : []),
         ...sessionStarts,
+        ...sessionsDisposed,
         terminalsClosed,
       ])
       const latePreviewResults = await Promise.allSettled(this.#stoppingDesignPreviews.values())
@@ -2638,20 +2647,20 @@ export class Orchestrator {
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
     })
     if (result.thread.id !== threadId) {
-      result.session.dispose()
+      await result.session.dispose()
       throw new Error(`provider resumed unexpected thread ${result.thread.id}`)
     }
     if (this.#disposing) {
-      result.session.dispose()
+      await result.session.dispose()
       throw new Error(SHUTTING_DOWN_MESSAGE)
     }
     // The thread may have been closed while the provider was resuming; a
     // late attach would leave a zombie agent process nobody can reach.
     if (this.#store.thread(threadId)?.closedAt !== undefined) {
-      result.session.dispose()
+      await result.session.dispose()
       throw new Error(`thread ${threadId} was closed while resuming`)
     }
-    this.#attachThread(result.thread, result.session, stored.projectPath)
+    await this.#attachThread(result.thread, result.session, stored.projectPath)
     this.#restoreDesignFlow(threadId, workspacePath)
   }
 
@@ -3511,15 +3520,15 @@ export class Orchestrator {
     if (flow) this.#store.setDesignRun(threadId, flow)
   }
 
-  #attachThread(
+  async #attachThread(
     thread: Thread,
     session: AgentSession,
     projectPath: string,
     worktree?: Worktree,
-  ): void {
+  ): Promise<void> {
     // A racing double-attach must not silently drop the previous session's
     // process — dispose it before overwriting.
-    this.#threads.get(thread.id)?.session.dispose()
+    await this.#threads.get(thread.id)?.session.dispose()
     this.#threads.set(thread.id, {
       thread,
       session,

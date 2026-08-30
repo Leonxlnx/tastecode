@@ -180,7 +180,7 @@ export interface AgentSession {
    * design-flow note and future turns.
    */
   setApproval?(approval: ApprovalMode): void | Promise<void>
-  dispose(): void
+  dispose(): void | Promise<void>
   on(event: 'event', listener: (event: DomainEvent) => void): void
   on(event: 'log', listener: (line: string) => void): void
 }
@@ -350,7 +350,7 @@ async function probeCustomHarnessProtocol(
         await customHarnessDeadline(harness, 'initialize', adapter.start())
         return { label, status: 'passed', detail: 'Initialize handshake completed.' }
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'opencode': {
@@ -401,7 +401,7 @@ async function probeCustomHarnessProtocol(
           detail: `Initialize handshake completed${agent ? ` with ${agent}` : ''}.`,
         }
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'claude-code': {
@@ -552,7 +552,7 @@ function grokRuntime(
             : await starting
           return { thread, session: adapter }
         } catch (error) {
-          adapter.dispose()
+          await adapter.dispose()
           throw error
         }
       }
@@ -586,7 +586,7 @@ function grokRuntime(
             : await resuming
           return { thread, session: adapter }
         } catch (error) {
-          adapter.dispose()
+          await adapter.dispose()
           throw error
         }
       }
@@ -861,7 +861,7 @@ function codexRuntime(
         return { thread, session: adapter }
       } catch (error) {
         // A failing thread/start must not leak the app-server child it spawned.
-        adapter.dispose()
+        await adapter.dispose()
         throw error
       }
     },
@@ -897,7 +897,7 @@ function codexRuntime(
         })
         return { thread, session: adapter }
       } catch (error) {
-        adapter.dispose()
+        await adapter.dispose()
         throw error
       }
     },
@@ -912,7 +912,7 @@ function codexRuntime(
         await adapter.start()
         return await adapter.listModels()
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     },
   }
@@ -949,7 +949,7 @@ function acpRuntime(
           : await starting
         return { thread, session: adapter }
       } catch (error) {
-        adapter.dispose()
+        await adapter.dispose()
         throw error
       }
     },
@@ -979,7 +979,7 @@ function acpRuntime(
           : await resuming
         return { thread, session: adapter }
       } catch (error) {
-        adapter.dispose()
+        await adapter.dispose()
         throw error
       }
     },

@@ -195,7 +195,7 @@ export interface CodexRpc {
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
   notify(method: string, params?: unknown): void
-  dispose(): void
+  dispose(): void | Promise<void>
 }
 
 export type ProviderLimit = {
@@ -541,8 +541,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         { timeoutMs: CONTROL_READ_TIMEOUT_MS },
       )
     } catch (error) {
-      rpc.dispose()
       this.#rpc = undefined
+      await rpc.dispose()
       throw error
     }
     rpc.notify('initialized', {})
@@ -1006,8 +1006,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     })
   }
 
-  dispose(): void {
-    this.#rpc?.dispose()
+  async dispose(): Promise<void> {
+    const disposing = this.#rpc?.dispose()
     this.#rpc = undefined
     this.#started = false
     this.#mcpStartup.clear()
@@ -1022,6 +1022,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#userInputs.clear()
     this.#mcpLogins.clear()
     this.removeAllListeners()
+    await disposing
   }
 
   #call(method: string, params: object | undefined): Promise<JsonRpcValue | undefined> {

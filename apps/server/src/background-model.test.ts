@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   BackgroundModelPreference,
   Capabilities,
@@ -179,6 +179,67 @@ describe('background completion', () => {
       ephemeral: true,
     })
     expect(session.disposed).toBe(true)
+  })
+
+  it('waits for temporary session disposal before resolving', async () => {
+    const session = new CompletingSession()
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    session.dispose = async () => {
+      disposalStarted = true
+      await barrier
+      session.disposed = true
+    }
+    const runtime: ProviderRuntime = {
+      async start(workspacePath) {
+        return {
+          thread: {
+            id: 'background-thread',
+            provider: 'codex',
+            workspacePath,
+            createdAt: 0,
+          },
+          session,
+        }
+      },
+      async listModels() {
+        return []
+      },
+    }
+
+    const completion = runBackgroundCompletion({
+      runtime,
+      selection: {
+        provider: 'codex',
+        model: 'gpt-5.6-luna',
+        effort: 'low',
+        sourceName: 'Codex',
+        automatic: true,
+      },
+      prompt: 'Write a title.',
+    })
+    let settled = false
+    void completion.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(disposalStarted).toBe(true))
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await expect(completion).resolves.toBe('Generated title')
+      expect(session.disposed).toBe(true)
+    } finally {
+      release()
+      await completion.catch(() => undefined)
+    }
   })
 })
 

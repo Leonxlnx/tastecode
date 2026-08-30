@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProviderIdSchema } from '@harness/contracts'
+import { CodexAdapter } from '@harness/adapter-codex'
 import type {
   ApprovalMode,
   Capabilities,
@@ -308,7 +309,7 @@ describe('provider usage changes', () => {
     const thread = await orchestrator.startThread('codex', process.cwd())
     const session = sessions[0]
 
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
     session?.emitUsageChanged()
 
     expect(usageChanges).toEqual([])
@@ -452,7 +453,7 @@ describe('provider-neutral Side chat', () => {
 
       expect(await orchestrator.startSideThread(parent.id)).toBe(side)
       await expect(orchestrator.startSideThread(side.id)).rejects.toThrow('cannot be opened')
-      orchestrator.closeSideThread(side.id)
+      await orchestrator.closeSideThread(side.id)
       expect(sessions[1]?.disposed).toBe(true)
       expect(sessions[0]?.disposed).toBe(false)
       expect(store.thread(side.id)).toBeUndefined()
@@ -1754,7 +1755,7 @@ describe('provider-neutral design briefing', () => {
           'design:repair',
           'design:review',
         ])
-        orchestrator.close(thread.id)
+        await orchestrator.close(thread.id)
         await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
       } finally {
         await orchestrator.disposeAll()
@@ -2906,7 +2907,7 @@ describe('several sessions at once', () => {
     const first = await orchestrator.startThread('codex', '/repo')
     const second = await orchestrator.startThread('codex', '/repo')
 
-    orchestrator.close(first.id)
+    await orchestrator.close(first.id)
 
     expect(sessions[0]!.disposed).toBe(true)
     expect(sessions[1]!.disposed).toBe(false)
@@ -2919,7 +2920,7 @@ describe('several sessions at once', () => {
 
     const thread = await orchestrator.startThread('codex', '/repo')
     sessions[0]!.emit(message('ALPHA'))
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
 
     expect(orchestrator.isRunning(thread.id)).toBe(false)
     expect(store.history(thread.id)).toHaveLength(1)
@@ -3122,7 +3123,7 @@ describe('sidebar inbox lifecycle', () => {
     const { orchestrator, store } = harness()
     const archived = await orchestrator.startThread('codex', '/repo')
     const inactive = await orchestrator.startThread('codex', '/repo')
-    orchestrator.close(archived.id)
+    await orchestrator.close(archived.id)
 
     expect(() => orchestrator.settleThread(archived.id)).toThrow(/archived/)
     store.updateSidebarSettings({ autoSettleDays: null })
@@ -3233,7 +3234,7 @@ describe('queued turns', () => {
     sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
 
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
     sessions[0]!.release?.()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -3473,7 +3474,7 @@ describe('isolated sessions', () => {
     const thread = await orchestrator.startThread('codex', repo, { isolate: true })
     const worktreePath = store.thread(thread.id)!.worktreePath!
 
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
 
     // Closing ends the process. It says nothing about the work in there.
     expect(existsSync(worktreePath)).toBe(true)
@@ -3738,7 +3739,7 @@ describe('rolling a session back', () => {
         'cannot restore during a running turn',
       )
 
-      orchestrator.close(thread.id)
+      await orchestrator.close(thread.id)
       expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
     } finally {
       session.release?.()
@@ -3901,6 +3902,33 @@ describe('overnight race pins', () => {
     return release
   }
 
+  it('waits for provider disposal before shutdown resolves', async () => {
+    const result = harness()
+    await result.orchestrator.startThread('codex', '/repo')
+    const session = result.sessions[0]!
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    session.dispose = async () => {
+      await barrier
+      session.disposed = true
+    }
+    let disposed = false
+
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await disposing
+      expect(session.disposed).toBe(true)
+    } finally {
+      release()
+      await disposing
+    }
+  })
+
   it('waits for an in-flight thread start and disposes its late session', async () => {
     const result = harness()
     const release = delayNextRuntime(result.runtimeStarts.barriers)
@@ -4018,12 +4046,180 @@ describe('overnight race pins', () => {
     // Let the resume begin, close the thread underneath it, then let the
     // provider "answer".
     await new Promise((resolve) => setTimeout(resolve, 0))
-    orchestrator.close('thread-1')
+    await orchestrator.close('thread-1')
     release()
 
     await expect(resuming).rejects.toThrow(/closed while resuming/)
     // The late session must be disposed, never attached as a zombie.
     expect(session.disposed).toBe(true)
+  })
+})
+
+describe('Codex control disposal', () => {
+  const orchestratorOptions = {
+    onEvent: () => {},
+    onLog: () => {},
+    onLogin: () => {},
+  }
+
+  it('waits for a failed control startup to dispose before rejecting', async () => {
+    const startError = new Error('control startup failed')
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockRejectedValue(startError)
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+    const request = orchestrator.listModels('codex')
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await expect(request).rejects.toBe(startError)
+    } finally {
+      release()
+      await request.catch(() => undefined)
+      start.mockRestore()
+      dispose.mockRestore()
+    }
+  })
+
+  it('waits for a temporary Codex adapter to dispose before returning a reset', async () => {
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockResolvedValue()
+    const consume = vi
+      .spyOn(CodexAdapter.prototype, 'consumeRateLimitReset')
+      .mockResolvedValue('reset')
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+    const request = orchestrator.consumeRateLimitReset('codex', 'reset-key')
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await expect(request).resolves.toEqual({ outcome: 'reset' })
+      expect(start).toHaveBeenCalledTimes(1)
+      expect(consume).toHaveBeenCalledWith('reset-key')
+    } finally {
+      release()
+      await request.catch(() => undefined)
+      start.mockRestore()
+      consume.mockRestore()
+      dispose.mockRestore()
+    }
+  })
+
+  it('waits for a temporary Codex adapter to dispose before returning limits', async () => {
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockResolvedValue()
+    const limits = vi
+      .spyOn(CodexAdapter.prototype, 'rateLimitSource')
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+    const request = orchestrator.usageLimitSource('codex')
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await expect(request).resolves.toEqual({ provider: 'codex', status: 'ready', limits: [] })
+      expect(start).toHaveBeenCalledTimes(1)
+      expect(limits).toHaveBeenCalledTimes(1)
+    } finally {
+      release()
+      await request.catch(() => undefined)
+      start.mockRestore()
+      limits.mockRestore()
+      dispose.mockRestore()
+    }
+  })
+
+  it('waits for an active control adapter to dispose during shutdown', async () => {
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockResolvedValue()
+    const listModels = vi.spyOn(CodexAdapter.prototype, 'listModels').mockResolvedValue([])
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+
+    try {
+      await expect(orchestrator.listModels('codex')).resolves.toEqual([])
+      const shutdown = orchestrator.disposeAll()
+      let settled = false
+      void shutdown.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        },
+      )
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await shutdown
+    } finally {
+      release()
+      await orchestrator.disposeAll().catch(() => undefined)
+      start.mockRestore()
+      listModels.mockRestore()
+      dispose.mockRestore()
+    }
   })
 })
 

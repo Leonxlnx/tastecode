@@ -732,7 +732,7 @@ export async function startServer(
 
       case 'sideChat.close': {
         const p = parseParams(method, params)
-        orchestrator.closeSideThread(p.threadId)
+        await orchestrator.closeSideThread(p.threadId)
         return {}
       }
 
