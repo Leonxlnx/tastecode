@@ -68,7 +68,7 @@ function storeLocation(): string {
  * it reaches any logic, and the failure is reported as structured data rather
  * than a stack trace — "invalid message" in a log tells you nothing at 2am.
  */
-export function startServer(
+export async function startServer(
   options: {
     port?: number
     host?: string
@@ -80,29 +80,20 @@ export function startServer(
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
+  await waitForListening(wss, port)
   const push = new PushBus()
   const previewCapture = new PreviewCaptureCoordinator((socket, request) =>
     push.send(socket, 'preview.captureRequested', request),
   )
 
-  // A port clash is the most likely startup failure — a previous run that did
-  // not shut down cleanly. An unhandled 'error' event crashes the process with
-  // a stack trace that tells the user nothing.
+  // Startup errors reject before profile state is opened. Runtime server errors
+  // remain fatal because the process can no longer guarantee socket ownership.
   wss.on('error', (error: NodeJS.ErrnoException) => {
-    if (error.code === 'EADDRINUSE') {
-      console.error(
-        `[server] port ${port} is already in use — another TasteCode server is ` +
-          `probably still running. Stop it, or set HARNESS_PORT to a free port.`,
-      )
-      process.exit(1)
-    }
-    console.error(`[server] ${error.message}`)
+    console.error(`[server] ${describeListenError(error, port).message}`)
     process.exit(1)
   })
 
-  const databasePath = storeLocation()
-  const store = new Store(databasePath)
-  store.recoverInterruptedThreads()
+  const store = await initializeStore(wss)
   const pullRequests = new PullRequestService()
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
@@ -904,7 +895,7 @@ export function startServer(
     )
   }
 
-  wss.once('listening', () => console.log(`[server] listening on ws://${host}:${port}`))
+  console.log(`[server] listening on ws://${host}:${port}`)
 
   return {
     port,
@@ -912,10 +903,7 @@ export function startServer(
       clearInterval(lifecycleTimer)
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
-      const results = await Promise.allSettled([
-        orchestratorClosed,
-        new Promise<void>((resolve) => wss.close(() => resolve())),
-      ])
+      const results = await Promise.allSettled([orchestratorClosed, closeWebSocketServer(wss)])
       store.close()
       const errors = results
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
@@ -924,6 +912,51 @@ export function startServer(
       if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }
+}
+
+async function initializeStore(wss: WebSocketServer): Promise<Store> {
+  let store: Store | undefined
+  try {
+    store = new Store(storeLocation())
+    store.recoverInterruptedThreads()
+    return store
+  } catch (error) {
+    store?.close()
+    await closeWebSocketServer(wss)
+    throw error
+  }
+}
+
+function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+  return new Promise((resolve) => wss.close(() => resolve()))
+}
+
+function waitForListening(wss: WebSocketServer, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onListening = (): void => {
+      wss.off('error', onError)
+      resolve()
+    }
+    const onError = (error: NodeJS.ErrnoException): void => {
+      wss.off('listening', onListening)
+      reject(describeListenError(error, port))
+    }
+
+    wss.once('listening', onListening)
+    wss.once('error', onError)
+  })
+}
+
+function describeListenError(error: NodeJS.ErrnoException, port: number): NodeJS.ErrnoException {
+  if (error.code !== 'EADDRINUSE') return error
+  return Object.assign(
+    new Error(
+      `port ${port} is already in use — another TasteCode server is probably still running. ` +
+        'Stop it, or set HARNESS_PORT to a free port.',
+      { cause: error },
+    ),
+    { code: error.code },
+  )
 }
 
 /**

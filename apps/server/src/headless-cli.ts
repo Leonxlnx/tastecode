@@ -18,7 +18,7 @@ export async function runHeadlessCli(
   }
 
   const { startServer } = await import('./server.js')
-  const server = startServer({
+  const server = await startServer({
     port: options.port,
     host: '127.0.0.1',
     accessToken: env['HARNESS_ACCESS_TOKEN'],
