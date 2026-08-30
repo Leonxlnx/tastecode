@@ -1,0 +1,1384 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TasteCode Linux physical checklist</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0e0e0e;
+        --surface: #151515;
+        --surface-2: #1b1b1b;
+        --surface-3: #232323;
+        --line: #2b2b2b;
+        --text: #f0f0f0;
+        --text-2: #b2b2b2;
+        --text-3: #777;
+        --green: #52b788;
+        --green-dim: rgb(82 183 136 / 14%);
+        --red: #e5687a;
+        --red-dim: rgb(229 104 122 / 14%);
+        --amber: #e2b65c;
+        --amber-dim: rgb(226 182 92 / 14%);
+        --blue: #5ba8ff;
+        --blue-dim: rgb(91 168 255 / 14%);
+        --radius: 7px;
+        font-size: 15px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        min-width: 320px;
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          400 1rem/1.5 'Geist',
+          'Segoe UI Variable Text',
+          system-ui,
+          sans-serif;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button,
+      input,
+      textarea,
+      label {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 2px;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid var(--line);
+        background: rgb(14 14 14 / 92%);
+        backdrop-filter: blur(12px);
+      }
+
+      .topbar-inner,
+      main {
+        width: min(1080px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .topbar-inner {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        min-height: 58px;
+      }
+
+      .title {
+        margin-right: auto;
+        font-size: 0.95rem;
+        font-weight: 650;
+        letter-spacing: -0.01em;
+        white-space: nowrap;
+      }
+
+      .progress-copy {
+        color: var(--text-2);
+        font-size: 0.82rem;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+
+      .progress-track {
+        width: clamp(90px, 16vw, 180px);
+        height: 5px;
+        overflow: hidden;
+        border-radius: 99px;
+        background: var(--surface-3);
+      }
+
+      .progress-bar {
+        width: 0;
+        height: 100%;
+        background: var(--green);
+        transition: width 160ms ease;
+      }
+
+      main {
+        padding: 40px 0 80px;
+      }
+
+      .intro {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 24px;
+        align-items: end;
+        margin-bottom: 24px;
+      }
+
+      h1 {
+        max-width: 700px;
+        margin: 0 0 8px;
+        font-size: clamp(1.8rem, 4vw, 3rem);
+        line-height: 1.05;
+        letter-spacing: -0.04em;
+      }
+
+      .intro p {
+        max-width: 720px;
+        margin: 0;
+        color: var(--text-2);
+      }
+
+      .verdict {
+        min-width: 130px;
+        padding: 11px 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        text-align: center;
+      }
+
+      .verdict span {
+        display: block;
+        color: var(--text-3);
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .verdict strong {
+        display: block;
+        margin-top: 2px;
+        color: var(--text-2);
+        font-size: 1.05rem;
+      }
+
+      .verdict[data-verdict='pass'] strong {
+        color: var(--green);
+      }
+
+      .verdict[data-verdict='fail'] strong {
+        color: var(--red);
+      }
+
+      .verdict[data-verdict='blocked'] strong {
+        color: var(--amber);
+      }
+
+      .panel {
+        margin-bottom: 18px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .panel h2,
+      .section-heading h2 {
+        margin: 0;
+        font-size: 1rem;
+        letter-spacing: -0.01em;
+      }
+
+      .panel-heading,
+      .section-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+
+      .hint {
+        color: var(--text-3);
+        font-size: 0.78rem;
+      }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .field span {
+        color: var(--text-2);
+        font-size: 0.78rem;
+        font-weight: 600;
+      }
+
+      input[type='text'],
+      input[type='date'],
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--surface-2);
+        color: var(--text);
+      }
+
+      input[type='text'],
+      input[type='date'] {
+        min-height: 40px;
+        padding: 8px 10px;
+      }
+
+      textarea {
+        min-height: 74px;
+        padding: 9px 10px;
+        resize: vertical;
+      }
+
+      input::placeholder,
+      textarea::placeholder {
+        color: #686868;
+      }
+
+      .warning {
+        margin: 12px 0 0;
+        color: var(--amber);
+        font-size: 0.78rem;
+      }
+
+      .section-heading {
+        margin: 30px 0 12px;
+      }
+
+      .counts {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      .count {
+        padding: 2px 7px;
+        border-radius: 99px;
+        background: var(--surface-3);
+        color: var(--text-3);
+        font-size: 0.72rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .count.pass {
+        color: var(--green);
+        background: var(--green-dim);
+      }
+
+      .count.fail {
+        color: var(--red);
+        background: var(--red-dim);
+      }
+
+      .count.blocked {
+        color: var(--amber);
+        background: var(--amber-dim);
+      }
+
+      .checklist {
+        display: grid;
+        gap: 10px;
+      }
+
+      .check {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface);
+        transition:
+          border-color 120ms ease,
+          background 120ms ease;
+      }
+
+      .check[data-status='pass'] {
+        border-color: rgb(82 183 136 / 55%);
+        background: linear-gradient(90deg, var(--green-dim), var(--surface) 18%);
+      }
+
+      .check[data-status='fail'] {
+        border-color: rgb(229 104 122 / 65%);
+        background: linear-gradient(90deg, var(--red-dim), var(--surface) 18%);
+      }
+
+      .check[data-status='blocked'] {
+        border-color: rgb(226 182 92 / 60%);
+        background: linear-gradient(90deg, var(--amber-dim), var(--surface) 18%);
+      }
+
+      .check-main {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+        padding: 15px;
+      }
+
+      .number {
+        display: grid;
+        width: 28px;
+        height: 28px;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--surface-3);
+        color: var(--text-2);
+        font-size: 0.78rem;
+        font-weight: 700;
+      }
+
+      .check h3 {
+        margin: 1px 0 4px;
+        font-size: 0.94rem;
+      }
+
+      .check p {
+        margin: 0;
+        color: var(--text-2);
+        font-size: 0.84rem;
+      }
+
+      .pass-criterion {
+        margin-top: 7px !important;
+        color: var(--text-3) !important;
+      }
+
+      .pass-criterion strong {
+        color: var(--text-2);
+      }
+
+      .status-options {
+        display: flex;
+        gap: 4px;
+        min-width: 0;
+        margin: 0;
+        border: 0;
+        padding-top: 1px;
+      }
+
+      .status-options input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .status-options label {
+        min-width: 62px;
+        padding: 6px 9px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        color: var(--text-3);
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-align: center;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .status-options input:focus-visible + label {
+        outline: 2px solid var(--blue);
+        outline-offset: 2px;
+      }
+
+      .status-options input[value='pass']:checked + label {
+        border-color: var(--green);
+        background: var(--green-dim);
+        color: var(--green);
+      }
+
+      .status-options input[value='fail']:checked + label {
+        border-color: var(--red);
+        background: var(--red-dim);
+        color: var(--red);
+      }
+
+      .status-options input[value='blocked']:checked + label {
+        border-color: var(--amber);
+        background: var(--amber-dim);
+        color: var(--amber);
+      }
+
+      .note-wrap {
+        padding: 0 15px 15px 57px;
+      }
+
+      .note-wrap label {
+        display: grid;
+        gap: 5px;
+      }
+
+      .note-wrap span {
+        color: var(--text-3);
+        font-size: 0.72rem;
+      }
+
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 18px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        min-height: 40px;
+        padding: 8px 13px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--surface-2);
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: #444;
+        background: var(--surface-3);
+      }
+
+      button.primary {
+        border-color: rgb(91 168 255 / 55%);
+        background: var(--blue-dim);
+        color: var(--blue);
+      }
+
+      button.danger {
+        margin-left: auto;
+        color: var(--red);
+      }
+
+      .storage-note {
+        margin: 10px 0 0;
+        color: var(--text-3);
+        font-size: 0.76rem;
+      }
+
+      .toast {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 20;
+        max-width: min(440px, calc(100% - 36px));
+        padding: 11px 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--surface-3);
+        color: var(--text);
+        box-shadow: 0 12px 40px rgb(0 0 0 / 35%);
+        font-size: 0.82rem;
+      }
+
+      .toast[hidden] {
+        display: none;
+      }
+
+      @media (max-width: 760px) {
+        .intro,
+        .meta-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .verdict {
+          text-align: left;
+        }
+
+        .check-main {
+          grid-template-columns: 30px minmax(0, 1fr);
+        }
+
+        .status-options {
+          grid-column: 1 / -1;
+          padding-left: 42px;
+          flex-wrap: wrap;
+        }
+
+        .note-wrap {
+          padding-left: 15px;
+        }
+
+        button.danger {
+          margin-left: 0;
+        }
+      }
+
+      @media (max-width: 520px) {
+        .topbar-inner {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 8px 12px;
+          padding-block: 10px;
+        }
+
+        .title {
+          grid-column: 1 / -1;
+          margin-right: 0;
+        }
+
+        .progress-copy {
+          grid-column: 2;
+          grid-row: 2;
+        }
+
+        .progress-track {
+          grid-column: 1;
+          grid-row: 2;
+          width: 100%;
+        }
+
+        .status-options label {
+          flex: 1;
+        }
+      }
+
+      @media print {
+        .topbar,
+        .actions,
+        .storage-note,
+        .toast {
+          display: none !important;
+        }
+
+        body {
+          background: #fff;
+          color: #111;
+        }
+
+        main {
+          width: 100%;
+          padding: 0;
+        }
+
+        .panel,
+        .check,
+        .verdict {
+          break-inside: avoid;
+          border-color: #ccc !important;
+          background: #fff !important;
+        }
+
+        .intro p,
+        .check p,
+        .hint,
+        .pass-criterion,
+        .storage-note {
+          color: #444 !important;
+        }
+
+        input,
+        textarea {
+          border-color: #ccc !important;
+          background: #fff !important;
+          color: #111 !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="title">TasteCode Linux acceptance</div>
+        <div class="progress-copy" id="progress-copy">0 of 13 checked</div>
+        <div
+          class="progress-track"
+          role="progressbar"
+          aria-label="Checklist progress"
+          aria-valuemin="0"
+          aria-valuemax="13"
+          aria-valuenow="0"
+          id="progress-track"
+        >
+          <div class="progress-bar" id="progress-bar"></div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="intro">
+        <div>
+          <h1>Physical Linux check</h1>
+          <p>
+            Run each check against one exact build. Mark PASS only when the stated result is
+            visible. Use FAIL for a product defect and BLOCKED when the check cannot be performed.
+          </p>
+        </div>
+        <div class="verdict" id="verdict" data-verdict="pending">
+          <span>Overall</span>
+          <strong id="verdict-copy">PENDING</strong>
+        </div>
+      </div>
+
+      <section class="panel" aria-labelledby="build-heading">
+        <div class="panel-heading">
+          <h2 id="build-heading">Build under test</h2>
+          <span class="hint">Required before export</span>
+        </div>
+        <div class="meta-grid">
+          <label class="field">
+            <span>Commit SHA</span>
+            <input id="commit-sha" type="text" autocomplete="off" placeholder="Full Git SHA" />
+          </label>
+          <label class="field">
+            <span>Artifact or executable</span>
+            <input
+              id="artifact"
+              type="text"
+              autocomplete="off"
+              placeholder="Path or AppImage filename"
+            />
+          </label>
+          <label class="field">
+            <span>Tester</span>
+            <input id="tester" type="text" autocomplete="name" placeholder="Name" />
+          </label>
+          <label class="field">
+            <span>Test date</span>
+            <input id="test-date" type="date" />
+          </label>
+          <label class="field">
+            <span>Environment</span>
+            <input
+              id="environment"
+              type="text"
+              autocomplete="off"
+              placeholder="Pop!_OS 24.04 / COSMIC / Wayland"
+            />
+          </label>
+        </div>
+        <p class="warning">Do not enter API keys, passwords, tokens, or credential values.</p>
+      </section>
+
+      <section aria-labelledby="checks-heading">
+        <div class="section-heading">
+          <h2 id="checks-heading">Manual checks</h2>
+          <div class="counts" aria-live="polite">
+            <span class="count pass" id="pass-count">PASS 0</span>
+            <span class="count fail" id="fail-count">FAIL 0</span>
+            <span class="count blocked" id="blocked-count">BLOCKED 0</span>
+          </div>
+        </div>
+
+        <div class="checklist" id="checklist">
+          <article class="check" data-check-id="window" data-status="pending">
+            <div class="check-main">
+              <div class="number">1</div>
+              <div>
+                <h3>Window and startup</h3>
+                <p>
+                  Launch the supplied build with its reported profile on native Wayland. Do not add
+                  X11 or no-sandbox flags. Move, resize, minimize, maximize, and restore it.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The window is usable, stays visible, and does not remain
+                  blank or reconnecting. The local connection becomes ready.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Window and startup result">
+                <input id="window-pass" name="window" type="radio" value="pass" /><label
+                  for="window-pass"
+                  >PASS</label
+                >
+                <input id="window-fail" name="window" type="radio" value="fail" /><label
+                  for="window-fail"
+                  >FAIL</label
+                >
+                <input id="window-blocked" name="window" type="radio" value="blocked" /><label
+                  for="window-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="second-instance" data-status="pending">
+            <div class="check-main">
+              <div class="number">2</div>
+              <div>
+                <h3>Second instance</h3>
+                <p>Launch the same build again while the first window is open.</p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The existing window comes forward and no second app window
+                  remains.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Second instance result">
+                <input
+                  id="second-instance-pass"
+                  name="second-instance"
+                  type="radio"
+                  value="pass"
+                /><label for="second-instance-pass">PASS</label>
+                <input
+                  id="second-instance-fail"
+                  name="second-instance"
+                  type="radio"
+                  value="fail"
+                /><label for="second-instance-fail">FAIL</label>
+                <input
+                  id="second-instance-blocked"
+                  name="second-instance"
+                  type="radio"
+                  value="blocked"
+                /><label for="second-instance-blocked">BLOCKED</label>
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="tray" data-status="pending">
+            <div class="check-main">
+              <div class="number">3</div>
+              <div>
+                <h3>Close and recovery</h3>
+                <p>
+                  Close the main window. Restore it from the tray, app launcher, or another launch.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The app restores normally or exits cleanly. It never
+                  becomes an unreachable hidden process.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Close and recovery result">
+                <input id="tray-pass" name="tray" type="radio" value="pass" /><label for="tray-pass"
+                  >PASS</label
+                >
+                <input id="tray-fail" name="tray" type="radio" value="fail" /><label for="tray-fail"
+                  >FAIL</label
+                >
+                <input id="tray-blocked" name="tray" type="radio" value="blocked" /><label
+                  for="tray-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Say whether COSMIC showed a tray icon"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="dialogs" data-status="pending">
+            <div class="check-main">
+              <div class="number">4</div>
+              <div>
+                <h3>File and folder dialogs</h3>
+                <p>Open both dialogs. Cancel once, then select a folder and a Unicode filename.</p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> Cancel is harmless, the selected paths are correct, and the
+                  dialog remains responsive.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="File and folder dialogs result">
+                <input id="dialogs-pass" name="dialogs" type="radio" value="pass" /><label
+                  for="dialogs-pass"
+                  >PASS</label
+                >
+                <input id="dialogs-fail" name="dialogs" type="radio" value="fail" /><label
+                  for="dialogs-fail"
+                  >FAIL</label
+                >
+                <input id="dialogs-blocked" name="dialogs" type="radio" value="blocked" /><label
+                  for="dialogs-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="clipboard" data-status="pending">
+            <div class="check-main">
+              <div class="number">5</div>
+              <div>
+                <h3>Clipboard</h3>
+                <p>Copy multiline Unicode text to an external editor and back into TasteCode.</p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> Text is identical in both directions with no truncation or
+                  damaged characters.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Clipboard result">
+                <input id="clipboard-pass" name="clipboard" type="radio" value="pass" /><label
+                  for="clipboard-pass"
+                  >PASS</label
+                >
+                <input id="clipboard-fail" name="clipboard" type="radio" value="fail" /><label
+                  for="clipboard-fail"
+                  >FAIL</label
+                >
+                <input id="clipboard-blocked" name="clipboard" type="radio" value="blocked" /><label
+                  for="clipboard-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="drag-drop" data-status="pending">
+            <div class="check-main">
+              <div class="number">6</div>
+              <div>
+                <h3>Drag and drop</h3>
+                <p>
+                  Drop a Unicode file and the project folder into supported TasteCode targets.
+                  Repeat the file drop once, then try one unsupported target.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> Correct paths are accepted once with no duplicate event.
+                  The unsupported target fails visibly without crashing.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Drag and drop result">
+                <input id="drag-drop-pass" name="drag-drop" type="radio" value="pass" /><label
+                  for="drag-drop-pass"
+                  >PASS</label
+                >
+                <input id="drag-drop-fail" name="drag-drop" type="radio" value="fail" /><label
+                  for="drag-drop-fail"
+                  >FAIL</label
+                >
+                <input id="drag-drop-blocked" name="drag-drop" type="radio" value="blocked" /><label
+                  for="drag-drop-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="browser" data-status="pending">
+            <div class="check-main">
+              <div class="number">7</div>
+              <div>
+                <h3>External browser</h3>
+                <p>
+                  Open a normal HTTPS link from TasteCode. Try a disallowed non-web link if exposed.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> HTTPS opens in the system browser and the rejected link
+                  does not crash or freeze the app.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="External browser result">
+                <input id="browser-pass" name="browser" type="radio" value="pass" /><label
+                  for="browser-pass"
+                  >PASS</label
+                >
+                <input id="browser-fail" name="browser" type="radio" value="fail" /><label
+                  for="browser-fail"
+                  >FAIL</label
+                >
+                <input id="browser-blocked" name="browser" type="radio" value="blocked" /><label
+                  for="browser-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="project" data-status="pending">
+            <div class="check-main">
+              <div class="number">8</div>
+              <div>
+                <h3>Project and persistence</h3>
+                <p>
+                  Open a disposable project whose path contains spaces and Unicode. Create a local
+                  session if available, change window size, quit fully, then relaunch.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The selected project, available session state, and usable
+                  window geometry return with no recovery error.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Project and persistence result">
+                <input id="project-pass" name="project" type="radio" value="pass" /><label
+                  for="project-pass"
+                  >PASS</label
+                >
+                <input id="project-fail" name="project" type="radio" value="fail" /><label
+                  for="project-fail"
+                  >FAIL</label
+                >
+                <input id="project-blocked" name="project" type="radio" value="blocked" /><label
+                  for="project-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="terminal" data-status="pending">
+            <div class="check-main">
+              <div class="number">9</div>
+              <div>
+                <h3>Terminal</h3>
+                <p>
+                  Run pwd, Unicode output, and git --version. Resize, start a long command, then
+                  press Ctrl+C. Start a child that starts a grandchild, close the terminal, and ask
+                  the agent to confirm both processes stopped.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> Output is ordered, resize works, Ctrl+C returns the prompt,
+                  the terminal does not freeze, and both descendants stop.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Terminal result">
+                <input id="terminal-pass" name="terminal" type="radio" value="pass" /><label
+                  for="terminal-pass"
+                  >PASS</label
+                >
+                <input id="terminal-fail" name="terminal" type="radio" value="fail" /><label
+                  for="terminal-fail"
+                  >FAIL</label
+                >
+                <input id="terminal-blocked" name="terminal" type="radio" value="blocked" /><label
+                  for="terminal-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="git" data-status="pending">
+            <div class="check-main">
+              <div class="number">10</div>
+              <div>
+                <h3>Git and review</h3>
+                <p>
+                  Edit a Unicode-path file in the disposable project. Inspect its status and diff.
+                  Exercise checkpoint, review, and restore where available, then check with system
+                  Git.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> TasteCode and system Git agree, restore changes only the
+                  intended file, and no unrelated file changes.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Git and review result">
+                <input id="git-pass" name="git" type="radio" value="pass" /><label for="git-pass"
+                  >PASS</label
+                >
+                <input id="git-fail" name="git" type="radio" value="fail" /><label for="git-fail"
+                  >FAIL</label
+                >
+                <input id="git-blocked" name="git" type="radio" value="blocked" /><label
+                  for="git-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="preview" data-status="pending">
+            <div class="check-main">
+              <div class="number">11</div>
+              <div>
+                <h3>Local preview</h3>
+                <p>Start a local project preview, reload it, then stop it through the app.</p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> Expected content opens, reload works, and stop leaves no
+                  permanent loading or reconnect state.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Local preview result">
+                <input id="preview-pass" name="preview" type="radio" value="pass" /><label
+                  for="preview-pass"
+                  >PASS</label
+                >
+                <input id="preview-fail" name="preview" type="radio" value="fail" /><label
+                  for="preview-fail"
+                  >FAIL</label
+                >
+                <input id="preview-blocked" name="preview" type="radio" value="blocked" /><label
+                  for="preview-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="keyring" data-status="pending">
+            <div class="check-main">
+              <div class="number">12</div>
+              <div>
+                <h3>Credential persistence</h3>
+                <p>
+                  Store a disposable canary through the normal app flow. Quit, relaunch, read it,
+                  then delete it.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The canary survives relaunch, deletes successfully, and no
+                  credential value appears in this checklist.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Credential persistence result">
+                <input id="keyring-pass" name="keyring" type="radio" value="pass" /><label
+                  for="keyring-pass"
+                  >PASS</label
+                >
+                <input id="keyring-fail" name="keyring" type="radio" value="fail" /><label
+                  for="keyring-fail"
+                  >FAIL</label
+                >
+                <input id="keyring-blocked" name="keyring" type="radio" value="blocked" /><label
+                  for="keyring-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result without the credential value</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="quit" data-status="pending">
+            <div class="check-main">
+              <div class="number">13</div>
+              <div>
+                <h3>Quit and relaunch</h3>
+                <p>
+                  Use the app or tray Quit command. Wait ten seconds, relaunch, then repeat the full
+                  Quit and relaunch cycle once.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> Both relaunches work, state remains intact, and no recovery
+                  dialog or stale lock appears.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Quit and relaunch result">
+                <input id="quit-pass" name="quit" type="radio" value="pass" /><label for="quit-pass"
+                  >PASS</label
+                >
+                <input id="quit-fail" name="quit" type="radio" value="fail" /><label for="quit-fail"
+                  >FAIL</label
+                >
+                <input id="quit-blocked" name="quit" type="radio" value="blocked" /><label
+                  for="quit-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+              </label>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button class="primary" id="export" type="button">Export JSON</button>
+        <button id="copy" type="button">Copy summary</button>
+        <button type="button" onclick="window.print()">Print</button>
+        <button class="danger" id="reset" type="button">Reset checklist</button>
+      </div>
+      <p class="storage-note">
+        Progress is stored only in this browser. Export the JSON before clearing browser data or
+        moving to another machine.
+      </p>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+    <script>
+      const STORAGE_KEY = 'tastecode-linux-physical-checklist-v1'
+      const cards = [...document.querySelectorAll('.check')]
+      const metadata = {
+        commitSha: document.querySelector('#commit-sha'),
+        artifact: document.querySelector('#artifact'),
+        tester: document.querySelector('#tester'),
+        testDate: document.querySelector('#test-date'),
+        environment: document.querySelector('#environment'),
+      }
+      const toast = document.querySelector('#toast')
+      let toastTimer
+
+      function showMessage(message) {
+        window.clearTimeout(toastTimer)
+        toast.textContent = message
+        toast.hidden = false
+        toastTimer = window.setTimeout(() => {
+          toast.hidden = true
+        }, 4200)
+      }
+
+      function collectState() {
+        return {
+          schemaVersion: 1,
+          savedAt: new Date().toISOString(),
+          metadata: Object.fromEntries(
+            Object.entries(metadata).map(([key, input]) => [key, input.value.trim()]),
+          ),
+          checks: cards.map((card) => ({
+            id: card.dataset.checkId,
+            title: card.querySelector('h3').textContent,
+            status: card.querySelector('input:checked')?.value ?? 'pending',
+            note: card.querySelector('textarea').value.trim(),
+          })),
+          verdict: calculateVerdict(),
+        }
+      }
+
+      function calculateVerdict() {
+        const statuses = cards.map(
+          (card) => card.querySelector('input:checked')?.value ?? 'pending',
+        )
+        if (statuses.includes('fail')) return 'fail'
+        if (statuses.includes('blocked')) return 'blocked'
+        if (statuses.every((status) => status === 'pass')) return 'pass'
+        return 'pending'
+      }
+
+      function save() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(collectState()))
+        } catch (error) {
+          showMessage(
+            `Progress could not be saved in this browser. Export JSON before closing the page. ${String(error)}`,
+          )
+        }
+      }
+
+      function updateSummary() {
+        const counts = { pass: 0, fail: 0, blocked: 0, pending: 0 }
+        for (const card of cards) {
+          const status = card.querySelector('input:checked')?.value ?? 'pending'
+          card.dataset.status = status
+          counts[status] += 1
+        }
+
+        const checked = cards.length - counts.pending
+        const percentage = Math.round((checked / cards.length) * 100)
+        document.querySelector('#progress-copy').textContent =
+          `${checked} of ${cards.length} checked`
+        document.querySelector('#progress-bar').style.width = `${percentage}%`
+        document.querySelector('#progress-track').setAttribute('aria-valuenow', String(checked))
+        document.querySelector('#pass-count').textContent = `PASS ${counts.pass}`
+        document.querySelector('#fail-count').textContent = `FAIL ${counts.fail}`
+        document.querySelector('#blocked-count').textContent = `BLOCKED ${counts.blocked}`
+
+        const verdict = calculateVerdict()
+        document.querySelector('#verdict').dataset.verdict = verdict
+        document.querySelector('#verdict-copy').textContent = verdict.toUpperCase()
+      }
+
+      function validateForExport(state) {
+        const missing = []
+        if (!state.metadata.commitSha) missing.push('commit SHA')
+        if (!state.metadata.artifact) missing.push('artifact')
+        if (!state.metadata.tester) missing.push('tester')
+        if (!state.metadata.testDate) missing.push('test date')
+        if (!state.metadata.environment) missing.push('environment')
+
+        const noteMissing = state.checks.filter(
+          (check) => ['fail', 'blocked'].includes(check.status) && !check.note,
+        )
+        if (missing.length > 0) {
+          showMessage(
+            `Export stopped because build metadata is incomplete. Fill in ${missing.join(', ')}, then export again.`,
+          )
+          return false
+        }
+        if (noteMissing.length > 0) {
+          showMessage(
+            `Export stopped because ${noteMissing.length} FAIL or BLOCKED result has no observation. Add a short note to each affected check.`,
+          )
+          return false
+        }
+        return true
+      }
+
+      function summaryText(state) {
+        const lines = [
+          'TasteCode Linux physical acceptance',
+          `Verdict: ${state.verdict.toUpperCase()}`,
+          `Commit: ${state.metadata.commitSha || 'not recorded'}`,
+          `Artifact: ${state.metadata.artifact || 'not recorded'}`,
+          `Tester: ${state.metadata.tester || 'not recorded'}`,
+          `Date: ${state.metadata.testDate || 'not recorded'}`,
+          `Environment: ${state.metadata.environment || 'not recorded'}`,
+          '',
+        ]
+        for (const check of state.checks) {
+          lines.push(`${check.status.toUpperCase().padEnd(7)} ${check.title}`)
+          if (check.note) lines.push(`        ${check.note}`)
+        }
+        return lines.join('\n')
+      }
+
+      function restore() {
+        let saved
+        try {
+          saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')
+        } catch {
+          showMessage(
+            'Saved checklist data could not be read in this browser. Reset the checklist or export a fresh result.',
+          )
+          return
+        }
+        if (!saved || typeof saved !== 'object' || saved.schemaVersion !== 1) return
+
+        for (const [key, input] of Object.entries(metadata)) {
+          const value = saved.metadata?.[key]
+          input.value = typeof value === 'string' ? value : ''
+        }
+        const savedChecks = Array.isArray(saved.checks) ? saved.checks : []
+        const allowedStatuses = new Set(['pass', 'fail', 'blocked'])
+        for (const check of savedChecks) {
+          if (!check || typeof check !== 'object' || typeof check.id !== 'string') continue
+          const card = cards.find((candidate) => candidate.dataset.checkId === check.id)
+          if (!card) continue
+          const radio = [...card.querySelectorAll('input[type="radio"]')].find(
+            (input) => allowedStatuses.has(check.status) && input.value === check.status,
+          )
+          if (radio) radio.checked = true
+          card.querySelector('textarea').value = typeof check.note === 'string' ? check.note : ''
+        }
+      }
+
+      for (const input of [...Object.values(metadata), ...document.querySelectorAll('textarea')]) {
+        input.addEventListener('input', () => {
+          save()
+          updateSummary()
+        })
+      }
+      for (const radio of document.querySelectorAll('input[type="radio"]')) {
+        radio.addEventListener('change', () => {
+          save()
+          updateSummary()
+        })
+      }
+
+      document.querySelector('#export').addEventListener('click', () => {
+        const state = collectState()
+        if (!validateForExport(state)) return
+        const blob = new Blob([`${JSON.stringify(state, null, 2)}\n`], {
+          type: 'application/json',
+        })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `tastecode-linux-uat-${state.metadata.testDate}.json`
+        link.click()
+        URL.revokeObjectURL(url)
+        showMessage('JSON exported. Attach this exact file to the matching build evidence.')
+      })
+
+      document.querySelector('#copy').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(summaryText(collectState()))
+          showMessage('Summary copied to the clipboard.')
+        } catch (error) {
+          showMessage(
+            `Summary could not be copied from this page. Use Print or Export JSON instead. ${String(error)}`,
+          )
+        }
+      })
+
+      document.querySelector('#reset').addEventListener('click', () => {
+        if (!window.confirm('Clear every result and note stored by this checklist?')) return
+        try {
+          localStorage.removeItem(STORAGE_KEY)
+        } catch (error) {
+          showMessage(
+            `Checklist could not be reset because browser storage is unavailable. Export JSON, then clear this site's stored data. ${String(error)}`,
+          )
+          return
+        }
+        for (const input of Object.values(metadata)) input.value = ''
+        document.querySelector('#test-date').value = new Date().toISOString().slice(0, 10)
+        for (const card of cards) {
+          for (const radio of card.querySelectorAll('input[type="radio"]')) radio.checked = false
+          card.querySelector('textarea').value = ''
+        }
+        updateSummary()
+        showMessage('Checklist reset. Previous browser-local results are no longer available.')
+      })
+
+      restore()
+      if (!document.querySelector('#test-date').value) {
+        document.querySelector('#test-date').value = new Date().toISOString().slice(0, 10)
+      }
+      updateSummary()
+    </script>
+  </body>
+</html>
