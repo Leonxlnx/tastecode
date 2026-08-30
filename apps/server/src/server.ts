@@ -904,7 +904,7 @@ export function startServer(
     )
   }
 
-  console.log(`[server] listening on ws://${host}:${port}`)
+  wss.once('listening', () => console.log(`[server] listening on ws://${host}:${port}`))
 
   return {
     port,
