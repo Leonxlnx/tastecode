@@ -20,8 +20,8 @@ import {
   session,
   shell,
   systemPreferences,
-  Tray,
   type Event as ElectronEvent,
+  type Tray,
   type WebContents,
 } from 'electron'
 import updaterPackage from 'electron-updater'
@@ -40,6 +40,7 @@ import {
   pickedAttachment,
 } from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import { tryCreateBackgroundTray } from './background-tray.js'
 import {
   appOwnsUpdates,
   createAppUpdateController,
@@ -383,29 +384,6 @@ function showMainWindow(): void {
   if (window.isMinimized()) window.restore()
   window.show()
   window.focus()
-}
-
-function createBackgroundTray(): void {
-  if (process.platform === 'darwin' || tray) return
-  let candidate: Tray | undefined
-  try {
-    const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
-    candidate = new Tray(icon)
-    candidate.setToolTip(nativeAppName)
-    candidate.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: `Open ${nativeAppName}`, click: showMainWindow },
-        { type: 'separator' },
-        { label: `Quit ${nativeAppName}`, click: () => app.quit() },
-      ]),
-    )
-    candidate.on('click', showMainWindow)
-    tray = candidate
-  } catch (error) {
-    candidate?.destroy()
-    console.warn('[desktop] tray unavailable; close will leave the window recoverable', error)
-    void diagnostics?.record('tray', error)
-  }
 }
 
 function installApplicationMenu(): void {
@@ -833,7 +811,18 @@ if (ownsSingleInstance) {
     void sweepStaleCaptures()
     createWindow()
     installApplicationMenu()
-    createBackgroundTray()
+    if (process.platform !== 'darwin') {
+      tray = tryCreateBackgroundTray({
+        appName: nativeAppName,
+        iconPath: productIconPath,
+        onOpen: showMainWindow,
+        onQuit: () => app.quit(),
+        onUnavailable: (error) => {
+          console.warn('[desktop] tray unavailable; close will leave the window recoverable', error)
+          void diagnostics?.record('tray', error)
+        },
+      })
+    }
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
       app.on('did-become-active', () => {
