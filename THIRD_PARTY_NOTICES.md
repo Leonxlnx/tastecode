@@ -33,6 +33,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `micromark` | Markdown parsing | MIT | [source](https://github.com/micromark/micromark) |
 | `micromark-util-decode-string` | Markdown string decoding | MIT | [source](https://github.com/micromark/micromark) |
 | `node-pty` | Pseudoterminal integration | MIT | [source](https://github.com/microsoft/node-pty) |
+| `parse5` | Static preview HTML parsing | MIT | [source](https://github.com/inikulin/parse5) |
 | `react` | Renderer UI | MIT | [source](https://github.com/facebook/react) |
 | `react-dom` | Renderer DOM integration | MIT | [source](https://github.com/facebook/react) |
 | `shiki` | Syntax highlighting | MIT | [source](https://github.com/shikijs/shiki) |

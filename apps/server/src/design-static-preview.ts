@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
+import { parse, type DefaultTreeAdapterTypes } from 'parse5'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
 
 type StaticPlan = Extract<PreviewPlan, { kind: 'static' }>
@@ -49,11 +50,14 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
   })
   await listen(server, Number(previewUrl.port))
   try {
-    const response = await fetch(plan.url, { signal: AbortSignal.timeout(1_000) })
+    const response = await fetch(plan.url, {
+      headers: { connection: 'close' },
+      signal: AbortSignal.timeout(1_000),
+    })
     if (!response.ok || response.headers.get('x-harness-preview-id') !== previewId) {
       throw new Error('TasteCode static preview ownership check failed')
     }
-    await assertStaticResources(plan.url, await response.text())
+    assertMarkupResources(root, plan, await response.text())
   } catch (error) {
     await close(server)
     throw error
@@ -66,29 +70,101 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
   }
 }
 
-const RESOURCE_ATTRIBUTES = [
-  /<(?:audio|img|script|source|video)\b[^>]*\b(?:poster|src)\s*=\s*(["'])(.*?)\1/gi,
-  /<link\b[^>]*\bhref\s*=\s*(["'])(.*?)\1/gi,
-]
+const RESOURCE_ATTRIBUTES = new Map<string, readonly string[]>([
+  ['audio', ['src']],
+  ['img', ['src']],
+  ['script', ['src']],
+  ['source', ['src']],
+  ['video', ['poster', 'src']],
+])
+const SRCSET_ELEMENTS = new Set(['img', 'source'])
 
-async function assertStaticResources(previewUrl: string, html: string): Promise<void> {
-  const base = new URL(previewUrl)
-  const references = new Set(
-    RESOURCE_ATTRIBUTES.flatMap((pattern) =>
-      [...html.matchAll(pattern)].map((match) => match[2]).filter((value) => value !== undefined),
-    ),
-  )
-  await Promise.all(
-    [...references].map(async (reference) => {
-      const resource = new URL(reference, base)
-      if (resource.origin !== base.origin) return
-      const response = await fetch(resource, {
-        method: 'HEAD',
-        signal: AbortSignal.timeout(1_000),
-      })
-      if (!response.ok) throw new Error(`static preview resource is unavailable: ${reference}`)
-    }),
-  )
+function assertMarkupResources(root: string, plan: StaticPlan, html: string): void {
+  const previewUrl = new URL(plan.url)
+  const document = parse(html)
+  const documentBase = findBaseUrl(document, previewUrl)
+  for (const reference of markupResourceReferences(document)) {
+    if (reference.startsWith('#')) continue
+    let resource: URL
+    try {
+      resource = new URL(reference, documentBase)
+    } catch {
+      continue
+    }
+    if (resource.origin !== previewUrl.origin) continue
+    try {
+      requestFile(root, plan.entry, previewUrl.pathname, resource.href)
+    } catch {
+      throw new Error(`static preview resource is unavailable: ${reference}`)
+    }
+  }
+}
+
+function findBaseUrl(document: DefaultTreeAdapterTypes.Document, previewUrl: URL): URL {
+  for (const element of elements(document)) {
+    if (element.tagName !== 'base') continue
+    const href = attribute(element, 'href')
+    if (href) return new URL(href, previewUrl)
+  }
+  return previewUrl
+}
+
+function markupResourceReferences(document: DefaultTreeAdapterTypes.Document): Set<string> {
+  const references = new Set<string>()
+  for (const element of elements(document)) {
+    const names = RESOURCE_ATTRIBUTES.get(element.tagName)
+    for (const name of names ?? []) {
+      const value = attribute(element, name)
+      if (value) references.add(value)
+    }
+    if (SRCSET_ELEMENTS.has(element.tagName)) {
+      for (const value of parseSrcset(attribute(element, 'srcset') ?? '')) references.add(value)
+    }
+    if (
+      element.tagName === 'link' &&
+      attribute(element, 'rel')?.toLowerCase().split(/\s+/).includes('stylesheet')
+    ) {
+      const href = attribute(element, 'href')
+      if (href) references.add(href)
+    }
+  }
+  return references
+}
+
+function parseSrcset(value: string): string[] {
+  const references: string[] = []
+  let position = 0
+  while (position < value.length) {
+    while (/[\s,]/.test(value[position] ?? '')) position += 1
+    const start = position
+    while (position < value.length && !/\s/.test(value[position] ?? '')) position += 1
+    const reference = value.slice(start, position).replace(/,+$/, '')
+    if (reference) references.push(reference)
+    let parentheses = 0
+    while (position < value.length) {
+      const character = value[position]
+      position += 1
+      if (character === '(') parentheses += 1
+      if (character === ')') parentheses = Math.max(0, parentheses - 1)
+      if (character === ',' && parentheses === 0) break
+    }
+  }
+  return references
+}
+
+function* elements(
+  node: DefaultTreeAdapterTypes.ParentNode,
+): Generator<DefaultTreeAdapterTypes.Element> {
+  const pending = [...node.childNodes].reverse()
+  while (pending.length > 0) {
+    const child = pending.pop()!
+    if ('tagName' in child) yield child
+    if ('childNodes' in child) pending.push(...[...child.childNodes].reverse())
+  }
+}
+
+function attribute(element: DefaultTreeAdapterTypes.Element, name: string): string | undefined {
+  return element.attrs.find((value) => value.name === name)?.value
 }
 
 function requestFile(root: string, entry: string, base: string, requestUrl = '/'): string {

@@ -96,14 +96,7 @@ describe('design preview runner', () => {
     writeFileSync(path.join(workspace, 'index.html'), '<link rel="stylesheet" href="styles.css">')
     writeFileSync(path.join(workspace, 'styles.css'), 'body { color: tomato; }')
     writeFileSync(path.join(workspace, 'app.js'), 'document.body.dataset.ready = "true"')
-    const staticPlan = parsePreviewPlan({
-      version: 1,
-      kind: 'static',
-      entry: 'index.html',
-      cwd: '.',
-      url: `http://127.0.0.1:${port}/site/`,
-      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
-    })
+    const staticPlan = staticPreviewPlan(port, '/site/')
 
     const preview = await startDesignPreview(workspace, staticPlan)
     previews.push(preview)
@@ -127,18 +120,95 @@ describe('design preview runner', () => {
     writeFileSync(path.join(workspace, 'index.html'), '<img src="assets/hero.png" alt="">')
     mkdirSync(path.join(workspace, 'public', 'assets'), { recursive: true })
     writeFileSync(path.join(workspace, 'public', 'assets', 'hero.png'), 'image')
-    const staticPlan = parsePreviewPlan({
-      version: 1,
-      kind: 'static',
-      entry: 'index.html',
-      cwd: '.',
-      url: `http://127.0.0.1:${port}/`,
-      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
-    })
+    const staticPlan = staticPreviewPlan(port)
 
     await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
       'static preview resource is unavailable: assets/hero.png',
     )
+  })
+
+  it('ignores markup that does not load a page resource', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      [
+        '<link rel="canonical" href="missing-canonical.html">',
+        '<!-- <img src="missing-comment.png"> -->',
+        '<img data-src="missing-lazy.png" alt="">',
+      ].join('\n'),
+    )
+    const staticPlan = staticPreviewPlan(port)
+
+    const preview = await startDesignPreview(workspace, staticPlan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
+  })
+
+  it('can retry a corrected static preview on the same port', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), '<img src="assets/hero.png" alt="">')
+    const staticPlan = staticPreviewPlan(port)
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: assets/hero.png',
+    )
+    mkdirSync(path.join(workspace, 'assets'))
+    writeFileSync(path.join(workspace, 'assets', 'hero.png'), 'image')
+
+    const preview = await startDesignPreview(workspace, staticPlan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
+  })
+
+  it('checks each resource attribute parsed from valid HTML', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      '<video poster=missing-poster.png src="present.png"></video>',
+    )
+    writeFileSync(path.join(workspace, 'present.png'), 'video')
+    const staticPlan = staticPreviewPlan(port)
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: missing-poster.png',
+    )
+  })
+
+  it('rejects a missing responsive image candidate', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      '<picture><source srcset="missing.webp 1x"><img src="present.png" alt=""></picture>',
+    )
+    writeFileSync(path.join(workspace, 'present.png'), 'image')
+    const staticPlan = staticPreviewPlan(port)
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: missing.webp',
+    )
+  })
+
+  it('accepts deeply nested static markup without overflowing the stack', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      `${'<div>'.repeat(5_000)}content${'</div>'.repeat(5_000)}`,
+    )
+    const staticPlan = staticPreviewPlan(port)
+
+    const preview = await startDesignPreview(workspace, staticPlan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
   })
 
   it('does not accept a concurrent preview serving the same port', async () => {
@@ -390,6 +460,17 @@ describe('design preview runner', () => {
     )
   })
 })
+
+function staticPreviewPlan(port: number, pathname = '/') {
+  return parsePreviewPlan({
+    version: 1,
+    kind: 'static',
+    entry: 'index.html',
+    cwd: '.',
+    url: `http://127.0.0.1:${port}${pathname}`,
+    viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+  })
+}
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
