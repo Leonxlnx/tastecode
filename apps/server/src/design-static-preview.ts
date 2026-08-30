@@ -53,6 +53,7 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
     if (!response.ok || response.headers.get('x-harness-preview-id') !== previewId) {
       throw new Error('TasteCode static preview ownership check failed')
     }
+    await assertStaticResources(plan.url, await response.text())
   } catch (error) {
     await close(server)
     throw error
@@ -63,6 +64,31 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
     output: () => `TasteCode static preview at ${plan.url}`,
     stop: () => close(server),
   }
+}
+
+const RESOURCE_ATTRIBUTES = [
+  /<(?:audio|img|script|source|video)\b[^>]*\b(?:poster|src)\s*=\s*(["'])(.*?)\1/gi,
+  /<link\b[^>]*\bhref\s*=\s*(["'])(.*?)\1/gi,
+]
+
+async function assertStaticResources(previewUrl: string, html: string): Promise<void> {
+  const base = new URL(previewUrl)
+  const references = new Set(
+    RESOURCE_ATTRIBUTES.flatMap((pattern) =>
+      [...html.matchAll(pattern)].map((match) => match[2]).filter((value) => value !== undefined),
+    ),
+  )
+  await Promise.all(
+    [...references].map(async (reference) => {
+      const resource = new URL(reference, base)
+      if (resource.origin !== base.origin) return
+      const response = await fetch(resource, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(1_000),
+      })
+      if (!response.ok) throw new Error(`static preview resource is unavailable: ${reference}`)
+    }),
+  )
 }
 
 function requestFile(root: string, entry: string, base: string, requestUrl = '/'): string {

@@ -120,6 +120,27 @@ describe('design preview runner', () => {
     )
   })
 
+  it('rejects a static preview whose local image is outside the selected root', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), '<img src="assets/hero.png" alt="">')
+    mkdirSync(path.join(workspace, 'public', 'assets'), { recursive: true })
+    writeFileSync(path.join(workspace, 'public', 'assets', 'hero.png'), 'image')
+    const staticPlan = parsePreviewPlan({
+      version: 1,
+      kind: 'static',
+      entry: 'index.html',
+      cwd: '.',
+      url: `http://127.0.0.1:${port}/`,
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: assets/hero.png',
+    )
+  })
+
   it('does not accept a concurrent preview serving the same port', async () => {
     const port = await freePort()
     const firstWorkspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-first-'))
