@@ -45,7 +45,7 @@ import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
-import { allowsMicrophoneRequest } from './media-permissions.js'
+import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
 import {
   parseNativeMenuShortcuts,
   type NativeMenuAction,
@@ -925,7 +925,7 @@ if (ownsSingleInstance) {
     appUpdater.start()
     startOwnedServer()
     configureAttachmentPreviews()
-    configureMediaPermissions()
+    configureRendererPermissions()
     void sweepStaleCaptures()
     createWindow()
     logStartupMilestone('window-created')
@@ -1060,22 +1060,22 @@ async function createAttachmentThumbnail(
   return bytes.byteLength > 0 ? bytes : undefined
 }
 
-/** Allow this app's own renderer to request audio, never video or another origin. */
-function configureMediaPermissions(): void {
+/** Allow this app's own renderer to request audio and enumerate installed fonts. */
+function configureRendererPermissions(): void {
   // Chromium's synchronous check path (navigator.permissions.query, device
   // enumeration) never consults the request handler below and defaults to
   // permissive, so it needs its own answer.
   session.defaultSession.setPermissionCheckHandler(
     (webContents, permission) =>
-      permission === 'media' && webContents !== null && isOwnRenderer(webContents),
+      isOwnRendererPermission(permission) && webContents !== null && isOwnRenderer(webContents),
   )
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
-      if (
-        permission !== 'media' ||
-        !isOwnRenderer(webContents) ||
-        !allowsMicrophoneRequest(details)
-      ) {
+      if (permission !== 'media') {
+        callback(isOwnRendererPermission(permission) && isOwnRenderer(webContents))
+        return
+      }
+      if (!isOwnRenderer(webContents) || !allowsMicrophoneRequest(details)) {
         callback(false)
         return
       }

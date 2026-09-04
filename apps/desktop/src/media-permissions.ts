@@ -15,3 +15,7 @@ export function allowsMicrophoneRequest(details: unknown): boolean {
   }
   return mediaTypes.includes('audio') && !mediaTypes.includes('video')
 }
+
+export function isOwnRendererPermission(permission: string): boolean {
+  return permission === 'media' || permission === 'local-fonts'
+}
