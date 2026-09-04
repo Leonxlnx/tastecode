@@ -2,7 +2,8 @@ import { existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Account, Model, ProviderSetup } from '@harness/contracts'
-import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { isInstalled, spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 
 const KimiModelsSchema = z.object({

@@ -13,7 +13,8 @@ import {
 import path from 'node:path'
 import type { ApiTool, ApiToolCall, ApiToolResult } from '@harness/adapter-api'
 import type { ApprovalMode, ApprovalRequest } from '@harness/contracts'
-import { killTree, spawnCli } from '@harness/proc'
+import { spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 import {
   assertPublicWorkspaceFile,
@@ -42,7 +43,7 @@ const RunCommandInputSchema = z.object({
 })
 type RunCommandInput = z.infer<typeof RunCommandInputSchema>
 
-export const API_WORKSPACE_TOOLS: ApiTool[] = [
+const API_WORKSPACE_TOOLS: ApiTool[] = [
   {
     name: 'list_files',
     description: 'List one directory inside the active workspace. Secret files are omitted.',

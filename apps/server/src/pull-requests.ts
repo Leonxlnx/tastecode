@@ -17,7 +17,8 @@ import type {
   PullRequestReviewThread,
   PullRequestReviewer,
 } from '@harness/contracts'
-import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { isInstalled, spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 
 const runFile = promisify(execFile)
@@ -34,6 +35,25 @@ const METADATA_OPTIONS_LIMIT = 1_000
 const FILES_PAGE_SIZE = 30
 const REVIEW_THREAD_LIMIT = 500
 const DEFAULT_OUTPUT_LIMIT = 32 * 1024 * 1024
+const DETAIL_CACHE_LIMIT = 16
+const FILES_CACHE_LIMIT = 12
+const METADATA_OPTIONS_CACHE_LIMIT = 8
+const REPOSITORY_CACHE_LIMIT = 64
+const REVIEW_THREADS_CACHE_LIMIT = 16
+const PULL_REQUEST_TEXT_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
+
+export type GitHubSetupAction = 'install' | 'login'
+
+/** Fixed server-owned commands keep PR setup interactive without exposing a shell RPC. */
+export function githubSetupCommand(
+  action: GitHubSetupAction,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (action === 'login') return 'gh auth login'
+  if (platform === 'darwin') return 'brew install gh'
+  if (platform === 'win32') return 'winget install --id GitHub.cli'
+  throw new Error('GitHub CLI installation is not scripted on this platform')
+}
 
 type GhRunOptions = {
   stdin?: string
@@ -46,6 +66,38 @@ export type GhRunner = (args: string[], options?: GhRunOptions) => Promise<strin
 type Cache<T> = {
   expiresAt: number
   value: T
+}
+
+function readCache<T>(cache: Map<string, Cache<T>>, key: string, now: number): T | undefined {
+  const entry = cache.get(key)
+  if (!entry) return undefined
+  if (entry.expiresAt <= now) {
+    cache.delete(key)
+    return undefined
+  }
+  // Map insertion order is the LRU order. A hit becomes the newest entry.
+  cache.delete(key)
+  cache.set(key, entry)
+  return entry.value
+}
+
+function writeCache<T>(
+  cache: Map<string, Cache<T>>,
+  key: string,
+  entry: Cache<T>,
+  limit: number,
+  now: number,
+): void {
+  cache.delete(key)
+  cache.set(key, entry)
+  for (const [cachedKey, cached] of cache) {
+    if (cached.expiresAt <= now) cache.delete(cachedKey)
+  }
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
 }
 
 type MetadataSource<T> = {
@@ -390,8 +442,8 @@ export class PullRequestService {
     refresh = false,
   ): Promise<PullRequestDetail> {
     const key = targetKey(repository, number)
-    const cached = this.#detailCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#detailCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#detailInFlight.get(key)
     if (existing) return existing
 
@@ -409,8 +461,8 @@ export class PullRequestService {
     refresh = false,
   ): Promise<PullRequestFilesResult> {
     const key = `${targetKey(repository, number)}:${page}`
-    const cached = this.#filesCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#filesCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#filesInFlight.get(key)
     if (existing) return existing
 
@@ -423,8 +475,8 @@ export class PullRequestService {
 
   async metadataOptions(repository: string, refresh = false): Promise<PullRequestMetadataOptions> {
     const key = repository.toLowerCase()
-    const cached = this.#metadataOptionsCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#metadataOptionsCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#metadataOptionsInFlight.get(key)
     if (existing) return existing
 
@@ -654,17 +706,21 @@ export class PullRequestService {
       labels: uniqueMetadataLabels(labelSource.items),
       milestones: uniqueMetadataMilestones(milestoneSource.items),
       baseBranches: uniqueStrings(branchSource.items.flatMap((branch) => branch.name ?? [])).sort(
-        compareText,
+        comparePullRequestText,
       ),
       unavailable,
       truncated: [reviewerSource, assigneeSource, labelSource, milestoneSource, branchSource].some(
         (source) => source.truncated,
       ),
     }
-    this.#metadataOptionsCache.set(repository.toLowerCase(), {
-      value,
-      expiresAt: this.#now() + METADATA_OPTIONS_TTL_MS,
-    })
+    const now = this.#now()
+    writeCache(
+      this.#metadataOptionsCache,
+      repository.toLowerCase(),
+      { value, expiresAt: now + METADATA_OPTIONS_TTL_MS },
+      METADATA_OPTIONS_CACHE_LIMIT,
+      now,
+    )
     return value
   }
 
@@ -862,7 +918,14 @@ export class PullRequestService {
       },
     }
     const key = targetKey(repository, number)
-    this.#detailCache.set(key, { value: detail, expiresAt: this.#now() + DETAIL_TTL_MS })
+    const now = this.#now()
+    writeCache(
+      this.#detailCache,
+      key,
+      { value: detail, expiresAt: now + DETAIL_TTL_MS },
+      DETAIL_CACHE_LIMIT,
+      now,
+    )
     return detail
   }
 
@@ -878,10 +941,14 @@ export class PullRequestService {
     const raw = parseJson(output, 'pull-request files', z.array(RawFileSchema))
     const files = raw.map(normalizeFile)
     const value = { files, page, hasMore: files.length === FILES_PAGE_SIZE }
-    this.#filesCache.set(`${targetKey(repository, number)}:${page}`, {
-      value,
-      expiresAt: this.#now() + FILES_TTL_MS,
-    })
+    const now = this.#now()
+    writeCache(
+      this.#filesCache,
+      `${targetKey(repository, number)}:${page}`,
+      { value, expiresAt: now + FILES_TTL_MS },
+      FILES_CACHE_LIMIT,
+      now,
+    )
     return value
   }
 
@@ -1039,8 +1106,8 @@ export class PullRequestService {
 
   async #repository(repository: string, refresh: boolean): Promise<ParsedRawRepository> {
     const key = repository.toLowerCase()
-    const cached = this.#repositoryCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#repositoryCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#repositoryInFlight.get(key)
     if (existing) return existing
 
@@ -1048,10 +1115,14 @@ export class PullRequestService {
       .then((output) => parseJson(output, 'repository detail', RawRepositorySchema))
       .catch(() => ({}))
       .then((value) => {
-        this.#repositoryCache.set(key, {
-          value,
-          expiresAt: this.#now() + REPOSITORY_TTL_MS,
-        })
+        const now = this.#now()
+        writeCache(
+          this.#repositoryCache,
+          key,
+          { value, expiresAt: now + REPOSITORY_TTL_MS },
+          REPOSITORY_CACHE_LIMIT,
+          now,
+        )
         return value
       })
       .finally(() => {
@@ -1067,18 +1138,22 @@ export class PullRequestService {
     refresh: boolean,
   ): Promise<ReviewThreadsResult> {
     const key = targetKey(repository, number)
-    const cached = this.#reviewThreadsCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#reviewThreadsCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#reviewThreadsInFlight.get(key)
     if (existing) return existing
 
     const pending = this.#reviewThreads(repository, number)
       .catch(() => ({ threads: [], truncated: true }))
       .then((value) => {
-        this.#reviewThreadsCache.set(key, {
-          value,
-          expiresAt: this.#now() + REVIEW_THREADS_TTL_MS,
-        })
+        const now = this.#now()
+        writeCache(
+          this.#reviewThreadsCache,
+          key,
+          { value, expiresAt: now + REVIEW_THREADS_TTL_MS },
+          REVIEW_THREADS_CACHE_LIMIT,
+          now,
+        )
         return value
       })
       .finally(() => {
@@ -1309,7 +1384,7 @@ function uniqueActors(values: ParsedRawActor[]): PullRequestMetadataOptions['rev
       })
     }
   }
-  return [...actors.values()].sort((left, right) => compareText(left.login, right.login))
+  return [...actors.values()].sort((left, right) => comparePullRequestText(left.login, right.login))
 }
 
 function uniqueMetadataLabels(
@@ -1334,7 +1409,7 @@ function uniqueMetadataLabels(
       })
     }
   }
-  return [...labels.values()].sort((left, right) => compareText(left.name, right.name))
+  return [...labels.values()].sort((left, right) => comparePullRequestText(left.name, right.name))
 }
 
 function uniqueMetadataMilestones(
@@ -1347,7 +1422,9 @@ function uniqueMetadataMilestones(
     if (!milestones.has(value.number!))
       milestones.set(value.number!, { number: value.number!, title })
   }
-  return [...milestones.values()].sort((left, right) => compareText(left.title, right.title))
+  return [...milestones.values()].sort((left, right) =>
+    comparePullRequestText(left.title, right.title),
+  )
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -1359,8 +1436,8 @@ function uniqueStrings(values: string[]): string[] {
   return [...unique.values()]
 }
 
-function compareText(left: string, right: string): number {
-  return left.localeCompare(right, undefined, { sensitivity: 'base' })
+export function comparePullRequestText(left: string, right: string): number {
+  return PULL_REQUEST_TEXT_COLLATOR.compare(left, right)
 }
 
 /** The only process boundary used by the feature; bodies always travel over stdin. */

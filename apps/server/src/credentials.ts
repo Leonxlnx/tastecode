@@ -1,10 +1,19 @@
-import { Entry } from '@napi-rs/keyring'
+import { createRequire } from 'node:module'
+import type { Entry as KeyringEntry } from '@napi-rs/keyring'
 
 const SERVICE = 'PersonalHarness'
+const require = createRequire(import.meta.url)
+type EntryConstructor = typeof KeyringEntry
+let loadedEntry: EntryConstructor | undefined
+
+function entry(reference: string): KeyringEntry {
+  loadedEntry ??= (require('@napi-rs/keyring') as { Entry: EntryConstructor }).Entry
+  return new loadedEntry(SERVICE, reference)
+}
 
 export function readCredential(reference: string): string {
   try {
-    const value = new Entry(SERVICE, reference).getPassword()
+    const value = entry(reference).getPassword()
     if (value !== null) return value
   } catch {
     // The actionable error below deliberately excludes native error text,
@@ -15,19 +24,19 @@ export function readCredential(reference: string): string {
 
 export function hasCredential(reference: string): boolean {
   try {
-    return new Entry(SERVICE, reference).getPassword() !== null
+    return entry(reference).getPassword() !== null
   } catch {
     return false
   }
 }
 
 export function writeCredential(reference: string, value: string): void {
-  new Entry(SERVICE, reference).setPassword(value)
+  entry(reference).setPassword(value)
 }
 
 export function removeCredential(reference: string): void {
   try {
-    new Entry(SERVICE, reference).deletePassword()
+    entry(reference).deletePassword()
   } catch {
     // Removing an already absent credential is idempotent.
   }

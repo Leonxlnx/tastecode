@@ -3,7 +3,9 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
-import { desktopPath, killTree, spawnCli } from '@harness/proc'
+import { spawnCli } from '@harness/proc/cli'
+import { desktopPath } from '@harness/proc/desktop-path'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>

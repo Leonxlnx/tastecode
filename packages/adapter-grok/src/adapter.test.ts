@@ -359,11 +359,11 @@ describe('Grok adapter', () => {
       .filter((item) => item.type === 'message' || item.type === 'file_change')
     expect(items.map(({ id }) => id)).toHaveLength(new Set(items.map(({ id }) => id)).size)
     expect(items).toMatchObject([
-      { type: 'message', text: 'First, I will create one.' },
+      { type: 'message', phase: 'commentary', text: 'First, I will create one.' },
       { type: 'file_change', text: expect.stringContaining('one') },
-      { type: 'message', text: 'Next, I will create two.' },
+      { type: 'message', phase: 'commentary', text: 'Next, I will create two.' },
       { type: 'file_change', text: expect.stringContaining('two') },
-      { type: 'message', text: 'Both files are ready.' },
+      { type: 'message', phase: 'final_answer', text: 'Both files are ready.' },
     ])
   })
 

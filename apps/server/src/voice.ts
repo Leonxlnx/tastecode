@@ -1,8 +1,4 @@
-import {
-  OpenAiVoiceTranscriber,
-  VoiceTranscriptionError,
-  type VoiceTranscriptionInput,
-} from '@harness/adapter-codex'
+import type { VoiceTranscriptionInput } from '@harness/adapter-codex/voice'
 import type { ParamsOf, ProviderId, StoredModelConnection } from '@harness/contracts'
 import type { ModelConnectionStore } from './model-connections.js'
 
@@ -15,13 +11,28 @@ export type VoiceTranscriber = {
   transcribe(input: VoiceTranscriptionInput, apiKey: string, signal?: AbortSignal): Promise<string>
 }
 
+class VoiceServiceError extends Error {
+  constructor(
+    readonly code: 'unsupported_auth',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'VoiceServiceError'
+  }
+}
+
 /** Keeps OpenAI credentials in the server and outside provider CLI sessions. */
 export class VoiceService {
   constructor(
     private readonly connections: ModelConnectionStore,
     private readonly readCredential: (reference: string) => string,
-    private readonly transcriber: VoiceTranscriber = new OpenAiVoiceTranscriber(),
-  ) {}
+    transcriber?: VoiceTranscriber,
+  ) {
+    this.#transcriber = transcriber
+  }
+
+  #transcriber: VoiceTranscriber | undefined
+  #transcriberStarting: Promise<VoiceTranscriber> | undefined
 
   status(provider: ProviderId): VoiceStatus {
     if (provider !== 'codex') return { available: false, reason: 'provider_unsupported' }
@@ -33,7 +44,7 @@ export class VoiceService {
   async transcribe(input: ParamsOf<'voice.transcribe'>, signal?: AbortSignal): Promise<string> {
     const connection = this.#connection()
     if (!connection) {
-      throw new VoiceTranscriptionError(
+      throw new VoiceServiceError(
         'unsupported_auth',
         'Add and enable an OpenAI API connection to use voice transcription.',
       )
@@ -43,13 +54,14 @@ export class VoiceService {
     try {
       apiKey = this.readCredential(connection.credentialRef)
     } catch {
-      throw new VoiceTranscriptionError(
+      throw new VoiceServiceError(
         'unsupported_auth',
         'The OpenAI API key is unavailable. Save it again in Connections.',
       )
     }
 
-    return this.transcriber.transcribe(
+    const transcriber = await this.#voiceTranscriber()
+    return transcriber.transcribe(
       {
         audioBase64: input.audioBase64,
         mimeType: input.mimeType,
@@ -59,6 +71,21 @@ export class VoiceService {
       apiKey,
       signal,
     )
+  }
+
+  async #voiceTranscriber(): Promise<VoiceTranscriber> {
+    if (this.#transcriber) return this.#transcriber
+    if (this.#transcriberStarting) return this.#transcriberStarting
+    const starting = import('@harness/adapter-codex/voice').then(
+      ({ OpenAiVoiceTranscriber }) => new OpenAiVoiceTranscriber(),
+    )
+    this.#transcriberStarting = starting
+    try {
+      this.#transcriber = await starting
+      return this.#transcriber
+    } finally {
+      if (this.#transcriberStarting === starting) this.#transcriberStarting = undefined
+    }
   }
 
   #connection(): StoredModelConnection | undefined {

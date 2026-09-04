@@ -54,4 +54,49 @@ describe('project MCP config', () => {
     expect(backups).toHaveLength(1)
     expect(store.list('codex', project)).toEqual([{ id: 'fresh', enabled: false }])
   })
+
+  it('reloads hand edits after the short read cache expires', () => {
+    const { project, location } = setup()
+    let now = 1_000
+    const store = new McpConfigStore(location, () => now)
+    store.add('codex', project, {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    })
+    expect(store.list('codex', project)).toEqual([
+      {
+        id: 'docs',
+        enabled: true,
+        transport: { type: 'http', url: 'https://example.com/mcp' },
+      },
+    ])
+
+    const edited = JSON.parse(readFileSync(location, 'utf8')) as {
+      projects: Record<string, { codex: Record<string, { id: string; enabled: boolean }> }>
+    }
+    const projectKey = Object.keys(edited.projects)[0]!
+    edited.projects[projectKey]!.codex['docs']!.enabled = false
+    writeFileSync(location, JSON.stringify(edited))
+
+    expect(store.list('codex', project)[0]?.enabled).toBe(true)
+    now += 101
+    expect(store.list('codex', project)[0]?.enabled).toBe(false)
+  })
+
+  it('merges app writes with hand edits even inside the read cache window', () => {
+    const { project, location, store } = setup()
+    store.add('codex', project, { id: 'docs', enabled: false })
+    store.list('codex', project)
+
+    const edited = JSON.parse(readFileSync(location, 'utf8')) as {
+      projects: Record<string, { codex: Record<string, { id: string; enabled: boolean }> }>
+    }
+    const projectKey = Object.keys(edited.projects)[0]!
+    edited.projects[projectKey]!.codex['external'] = { id: 'external', enabled: false }
+    writeFileSync(location, JSON.stringify(edited))
+    store.add('codex', project, { id: 'fresh', enabled: false })
+
+    expect(store.list('codex', project).map(({ id }) => id)).toEqual(['docs', 'external', 'fresh'])
+  })
 })

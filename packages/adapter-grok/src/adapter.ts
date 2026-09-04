@@ -4,9 +4,19 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
+import type {
+  ApprovalMode,
+  AssistantPhase,
+  Capabilities,
+  DomainEvent,
+  Model,
+  Thread,
+} from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, readNdjson } from '@harness/proc'
 import { z } from 'zod'
+import { GROK_CAPABILITIES } from './capabilities.js'
+
+export { GROK_CAPABILITIES } from './capabilities.js'
 
 /**
  * Tier 3 adapter: drives xAI's Grok Build CLI (`grok`) in headless
@@ -47,17 +57,6 @@ import { z } from 'zod'
  */
 
 const SUPPORTED = '0.1'
-
-export const GROK_CAPABILITIES: Capabilities = {
-  // Print mode is one-shot: no steer, no fork, and permission prompts cannot
-  // be answered mid-turn — the launch mode decides them instead.
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: false,
-  images: true,
-}
 
 const IMAGE_MIME_TYPES = new Map<string, string>([
   ['.gif', 'image/gif'],
@@ -450,9 +449,9 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         },
       })
     }
-    const finishItems = (status: 'completed' | 'failed') => {
+    const finishItems = (status: 'completed' | 'failed', messagePhase?: AssistantPhase) => {
       reasoning.complete(turnId, 'reasoning', this, status)
-      message.complete(turnId, 'message', this, status)
+      message.complete(turnId, 'message', this, status, messagePhase)
       for (const entry of tools.values()) completeTool(entry, status)
       tools.clear()
     }
@@ -468,7 +467,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         }
         const frame = parsed.data
         if (frame.type === 'thought' && frame.data !== undefined) {
-          message.complete(turnId, 'message', this)
+          message.complete(turnId, 'message', this, 'completed', 'commentary')
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           if (reasoning.push(frame.data, turnId, 'reasoning', this)) return
           return
@@ -480,7 +479,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         }
         if (frame.type === 'tool_call' && frame.toolCallId) {
           closeReasoning()
-          message.complete(turnId, 'message', this)
+          message.complete(turnId, 'message', this, 'completed', 'commentary')
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           const name = frame.toolName ?? frame.title ?? 'tool'
           const itemType =
@@ -542,7 +541,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           if (terminal) return
           terminal = true
           if (this.#child === child) this.#announceProviderSessionId(frame.sessionId)
-          finishItems(frame.stopReason === 'end_turn' ? 'completed' : 'failed')
+          const status = frame.stopReason === 'end_turn' ? 'completed' : 'failed'
+          finishItems(status, status === 'completed' ? 'final_answer' : undefined)
           const usage = frame.usage
           if (usage) {
             const reasoningTokens = usage.reasoning_tokens ?? 0
@@ -861,6 +861,7 @@ class StreamedItem {
     type: 'message' | 'reasoning',
     emitter: EventEmitter<GrokAdapterEvents>,
     status: 'completed' | 'failed' = 'completed',
+    phase?: AssistantPhase,
   ): void {
     if (!this.#started || this.#completed) return
     this.#completed = true
@@ -872,6 +873,7 @@ class StreamedItem {
         turnId,
         type,
         ...(type === 'message' ? { role: 'assistant' as const } : {}),
+        ...(type === 'message' && phase ? { phase } : {}),
         status,
         text: this.#text.trimEnd(),
         createdAt,

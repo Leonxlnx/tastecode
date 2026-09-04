@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
  */
 
 const constructed: FakeOpenCodeAdapter[] = []
+let failOpenCodeThreadStart = false
 let release: (() => void) | undefined
 const turnAdapters: FakeTurnAdapter[] = []
 
@@ -125,6 +126,14 @@ class FakeOpenCodeAdapter {
   constructor() {
     constructed.push(this)
   }
+  on(): this {
+    return this
+  }
+  async start() {}
+  async startThread(workspacePath: string) {
+    if (failOpenCodeThreadStart) throw new Error('openCode startThread failed')
+    return { id: 'opencode-thread', provider: 'opencode' as const, workspacePath, createdAt: 1 }
+  }
   async listModels() {
     await new Promise<void>((resolve) => {
       release = resolve
@@ -168,6 +177,7 @@ const { providerRuntime } = await import('./adapters.js')
 
 afterEach(() => {
   constructed.length = 0
+  failOpenCodeThreadStart = false
   turnAdapters.length = 0
   release = undefined
 })
@@ -344,7 +354,17 @@ describe('one-shot provider turn options', () => {
   })
 })
 
-describe('openCodeRuntime.listModels', () => {
+describe('openCodeRuntime', () => {
+  it('disposes the adapter if session creation fails', async () => {
+    failOpenCodeThreadStart = true
+    const runtime = providerRuntime('opencode', () => {})
+
+    await expect(runtime.start('/repo', {})).rejects.toThrow('openCode startThread failed')
+
+    expect(constructed).toHaveLength(1)
+    expect(constructed[0]?.disposed).toBe(true)
+  })
+
   it('shares one adapter run between concurrent listings', async () => {
     const runtime = providerRuntime('opencode', () => {})
     const first = runtime.listModels()
@@ -353,7 +373,7 @@ describe('openCodeRuntime.listModels', () => {
     // different clients do not know about each other.
     const third = providerRuntime('opencode', () => {}).listModels()
 
-    expect(constructed).toHaveLength(1)
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
     release?.()
     await Promise.all([first, second, third])
     expect(constructed[0]?.disposed).toBe(true)
@@ -362,11 +382,12 @@ describe('openCodeRuntime.listModels', () => {
   it('runs again after the previous listing finished', async () => {
     const runtime = providerRuntime('opencode', () => {})
     const first = runtime.listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
     release?.()
     await first
 
     const second = runtime.listModels()
-    expect(constructed).toHaveLength(2)
+    await vi.waitFor(() => expect(constructed).toHaveLength(2))
     release?.()
     await second
     expect(constructed[1]?.disposed).toBe(true)
