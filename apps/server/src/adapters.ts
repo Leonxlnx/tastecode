@@ -685,47 +685,29 @@ function cursorRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
+  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+    const harness = harnessFor('cursor', options.agent, resolveHarness)
+    const { CursorAdapter } = await loadCursorAdapter()
+    const adapter = new CursorAdapter(
+      harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
+    )
+    adapter.on('log', onLog)
+    const selection = {
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
+      ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
+      ...(options.approval ? { approval: options.approval } : {}),
+      ...(options.instructions ? { instructions: options.instructions } : {}),
+    }
+    const thread =
+      threadId === undefined
+        ? await adapter.startThread(workspacePath, selection)
+        : await adapter.resumeThread(threadId, workspacePath, selection)
+    return { thread, session: adapter }
+  }
   return {
-    async start(workspacePath, options) {
-      const harness = harnessFor('cursor', options.agent, resolveHarness)
-      const { CursorAdapter } = await loadCursorAdapter()
-      const adapter = new CursorAdapter(
-        harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
-      )
-      adapter.on('log', onLog)
-      const thread = await adapter.startThread(workspacePath, {
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.effort ? { effort: options.effort } : {}),
-        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-        ...(options.approval ? { approval: options.approval } : {}),
-        ...(options.instructions
-          ? {
-              instructions: options.instructions,
-            }
-          : {}),
-      })
-      return { thread, session: adapter }
-    },
-    async resume(threadId, workspacePath, options) {
-      const harness = harnessFor('cursor', options.agent, resolveHarness)
-      const { CursorAdapter } = await loadCursorAdapter()
-      const adapter = new CursorAdapter(
-        harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
-      )
-      adapter.on('log', onLog)
-      const thread = await adapter.resumeThread(threadId, workspacePath, {
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.effort ? { effort: options.effort } : {}),
-        ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-        ...(options.approval ? { approval: options.approval } : {}),
-        ...(options.instructions
-          ? {
-              instructions: options.instructions,
-            }
-          : {}),
-      })
-      return { thread, session: adapter }
-    },
+    start: open,
+    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
     async listModels(agent) {
       const harness = harnessFor('cursor', agent, resolveHarness)
       const { CursorAdapter } = await loadCursorAdapter()
@@ -740,83 +722,43 @@ function openCodeRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
+  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+    const harness = harnessFor('opencode', options.agent, resolveHarness)
+    const { OpenCodeAdapter } = await loadOpenCodeAdapter()
+    const adapter = new OpenCodeAdapter({
+      ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+      ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+      ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
+    })
+    adapter.on('log', onLog)
+    return startedSession(adapter, async () => {
+      if (harness) {
+        await customHarnessOperation(harness, 'start its server', adapter.start())
+      } else {
+        await adapter.start()
+      }
+      const selection = {
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort } : {}),
+        ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.instructions ? { instructions: options.instructions } : {}),
+      }
+      const opening =
+        threadId === undefined
+          ? adapter.startThread(workspacePath, selection)
+          : adapter.resumeThread(threadId, workspacePath, selection)
+      return harness
+        ? await customHarnessOperation(
+            harness,
+            threadId === undefined ? 'create a session' : 'resume its session',
+            opening,
+          )
+        : await opening
+    })
+  }
   return {
-    async start(workspacePath, options) {
-      const harness = harnessFor('opencode', options.agent, resolveHarness)
-      const { OpenCodeAdapter } = await loadOpenCodeAdapter()
-      const adapter = new OpenCodeAdapter({
-        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
-        ...(options.mcpCredentials
-          ? {
-              mcpCredentials: options.mcpCredentials,
-            }
-          : {}),
-        ...(harness
-          ? {
-              spawn: customHarnessSpawn(harness),
-            }
-          : {}),
-      })
-      adapter.on('log', onLog)
-      return startedSession(adapter, async () => {
-        if (harness) {
-          await customHarnessOperation(harness, 'start its server', adapter.start())
-        } else {
-          await adapter.start()
-        }
-        const start = adapter.startThread(workspacePath, {
-          ...(options.model ? { model: options.model } : {}),
-          ...(options.effort ? { effort: options.effort } : {}),
-          ...(options.approval ? { approval: options.approval } : {}),
-          ...(options.instructions
-            ? {
-                instructions: options.instructions,
-              }
-            : {}),
-        })
-        return harness
-          ? await customHarnessOperation(harness, 'create a session', start)
-          : await start
-      })
-    },
-    async resume(threadId, workspacePath, options) {
-      const harness = harnessFor('opencode', options.agent, resolveHarness)
-      const { OpenCodeAdapter } = await loadOpenCodeAdapter()
-      const adapter = new OpenCodeAdapter({
-        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
-        ...(options.mcpCredentials
-          ? {
-              mcpCredentials: options.mcpCredentials,
-            }
-          : {}),
-        ...(harness
-          ? {
-              spawn: customHarnessSpawn(harness),
-            }
-          : {}),
-      })
-      adapter.on('log', onLog)
-      return startedSession(adapter, async () => {
-        if (harness) {
-          await customHarnessOperation(harness, 'start its server', adapter.start())
-        } else {
-          await adapter.start()
-        }
-        const resume = adapter.resumeThread(threadId, workspacePath, {
-          ...(options.model ? { model: options.model } : {}),
-          ...(options.effort ? { effort: options.effort } : {}),
-          ...(options.approval ? { approval: options.approval } : {}),
-          ...(options.instructions
-            ? {
-                instructions: options.instructions,
-              }
-            : {}),
-        })
-        return harness
-          ? await customHarnessOperation(harness, 'resume its session', resume)
-          : await resume
-      })
-    },
+    start: open,
+    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
     async listModels(agent) {
       return listOpenCodeModels(harnessFor('opencode', agent, resolveHarness))
     },
@@ -856,66 +798,31 @@ function codexRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
+  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+    const harness = harnessFor('codex', options.agent, resolveHarness)
+    const { CodexAdapter } = await loadCodexAdapter()
+    const adapter = new CodexAdapter({
+      ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
+      ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
+      ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
+    })
+    adapter.on('log', onLog)
+    return startedSession(adapter, async () => {
+      if (harness) {
+        await customHarnessOperation(harness, 'initialize app-server', adapter.start())
+      } else {
+        await adapter.start()
+      }
+      if (threadId === undefined) return adapter.startThread(workspacePath, options)
+      return adapter.resumeThread(threadId, workspacePath, {
+        ...(options.instructions ? { instructions: options.instructions } : {}),
+        ...(options.approval ? { approval: options.approval } : {}),
+      })
+    })
+  }
   return {
-    async start(workspacePath, options) {
-      const harness = harnessFor('codex', options.agent, resolveHarness)
-      const { CodexAdapter } = await loadCodexAdapter()
-      const adapter = new CodexAdapter({
-        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
-        ...(options.mcpCredentials
-          ? {
-              mcpCredentials: options.mcpCredentials,
-            }
-          : {}),
-        ...(harness
-          ? {
-              spawn: customHarnessSpawn(harness),
-            }
-          : {}),
-      })
-      adapter.on('log', onLog)
-      return startedSession(adapter, async () => {
-        if (harness) {
-          await customHarnessOperation(harness, 'initialize app-server', adapter.start())
-        } else {
-          await adapter.start()
-        }
-        return adapter.startThread(workspacePath, options)
-      })
-    },
-    async resume(threadId, workspacePath, options) {
-      const harness = harnessFor('codex', options.agent, resolveHarness)
-      const { CodexAdapter } = await loadCodexAdapter()
-      const adapter = new CodexAdapter({
-        ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
-        ...(options.mcpCredentials
-          ? {
-              mcpCredentials: options.mcpCredentials,
-            }
-          : {}),
-        ...(harness
-          ? {
-              spawn: customHarnessSpawn(harness),
-            }
-          : {}),
-      })
-      adapter.on('log', onLog)
-      return startedSession(adapter, async () => {
-        if (harness) {
-          await customHarnessOperation(harness, 'initialize app-server', adapter.start())
-        } else {
-          await adapter.start()
-        }
-        return adapter.resumeThread(threadId, workspacePath, {
-          ...(options.instructions
-            ? {
-                instructions: options.instructions,
-              }
-            : {}),
-          ...(options.approval ? { approval: options.approval } : {}),
-        })
-      })
-    },
+    start: open,
+    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
     async listModels(agent) {
       const harness = harnessFor('codex', agent, resolveHarness)
       const { CodexAdapter } = await loadCodexAdapter()
@@ -938,61 +845,46 @@ function acpRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
+  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
+    if (!options.agent) throw new Error('no ACP agent chosen')
+    const harness = harnessFor('acp', options.agent, resolveHarness)
+    const { AcpAdapter } = await loadAcpAdapter()
+    const adapter = new AcpAdapter(
+      options.agent,
+      harness
+        ? {
+            name: harness.displayName,
+            command: harness.command,
+            args: [],
+            spawn: customHarnessSpawn(harness),
+          }
+        : undefined,
+    )
+    adapter.on('log', onLog)
+    return startedSession(adapter, async () => {
+      const selection = {
+        approval: options.approval,
+        model: options.model,
+        instructions: options.instructions,
+      }
+      const opening =
+        threadId === undefined
+          ? adapter.startThread(workspacePath, selection)
+          : adapter.resumeThread(threadId, workspacePath, selection)
+      return harness
+        ? await customHarnessOperation(
+            harness,
+            threadId === undefined
+              ? 'complete the ACP session handshake'
+              : 'resume the ACP session',
+            opening,
+          )
+        : await opening
+    })
+  }
   return {
-    async start(workspacePath, options) {
-      if (!options.agent) throw new Error('no ACP agent chosen')
-      const harness = harnessFor('acp', options.agent, resolveHarness)
-      const { AcpAdapter } = await loadAcpAdapter()
-      const adapter = new AcpAdapter(
-        options.agent,
-        harness
-          ? {
-              name: harness.displayName,
-              command: harness.command,
-              args: [],
-              spawn: customHarnessSpawn(harness),
-            }
-          : undefined,
-      )
-      adapter.on('log', onLog)
-      return startedSession(adapter, async () => {
-        const starting = adapter.startThread(workspacePath, {
-          approval: options.approval,
-          model: options.model,
-          instructions: options.instructions,
-        })
-        return harness
-          ? await customHarnessOperation(harness, 'complete the ACP session handshake', starting)
-          : await starting
-      })
-    },
-    async resume(threadId, workspacePath, options) {
-      if (!options.agent) throw new Error('no ACP agent chosen')
-      const harness = harnessFor('acp', options.agent, resolveHarness)
-      const { AcpAdapter } = await loadAcpAdapter()
-      const adapter = new AcpAdapter(
-        options.agent,
-        harness
-          ? {
-              name: harness.displayName,
-              command: harness.command,
-              args: [],
-              spawn: customHarnessSpawn(harness),
-            }
-          : undefined,
-      )
-      adapter.on('log', onLog)
-      return startedSession(adapter, async () => {
-        const resuming = adapter.resumeThread(threadId, workspacePath, {
-          approval: options.approval,
-          model: options.model,
-          instructions: options.instructions,
-        })
-        return harness
-          ? await customHarnessOperation(harness, 'resume the ACP session', resuming)
-          : await resuming
-      })
-    },
+    start: open,
+    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
     async listModels(agent) {
       if (!agent) return []
       const harness = harnessFor('acp', agent, resolveHarness)
