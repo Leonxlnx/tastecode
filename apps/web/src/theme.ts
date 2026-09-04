@@ -1,8 +1,9 @@
 export type Theme = 'dark' | 'light' | 'codex'
 export type ThemeColorScheme = 'dark' | 'light'
 export type ThemePreference = Theme | 'system'
-export type FontPreference =
-  'geist' | 'inter' | 'system' | 'humanist' | 'rounded' | 'serif' | 'mono'
+export type FontPreset = 'geist' | 'inter' | 'system' | 'humanist' | 'rounded' | 'serif' | 'mono'
+export type LocalFontPreference = `local:${string}`
+export type FontPreference = FontPreset | LocalFontPreference
 export type AccentPreference =
   'neutral' | 'ocean' | 'forest' | 'sunset' | 'amber' | 'rose' | 'lavender'
 
@@ -27,6 +28,17 @@ export const BACKDROP_KEY = 'harness.backdrop'
 // mount, which would pin the new default to Off forever.
 export const GLASS_KEY = 'harness.sidebarGlass2'
 export const DARK_THEME_QUERY = '(prefers-color-scheme: dark)'
+const LOCAL_FONT_PREFIX = 'local:'
+const MAX_LOCAL_FONT_FAMILY_LENGTH = 256
+const FONT_PRESETS = new Set<FontPreset>([
+  'geist',
+  'inter',
+  'system',
+  'humanist',
+  'rounded',
+  'serif',
+  'mono',
+])
 
 export function readThemePreference(): ThemePreference {
   const stored = readStored(THEME_KEY)
@@ -54,18 +66,40 @@ export function applyTheme(theme: Theme): void {
 
 export function readFontPreference(): FontPreference {
   const stored = readStored(FONT_KEY)
-  return stored === 'inter' ||
-    stored === 'system' ||
-    stored === 'humanist' ||
-    stored === 'rounded' ||
-    stored === 'serif' ||
-    stored === 'mono'
-    ? stored
-    : 'geist'
+  if (FONT_PRESETS.has(stored as FontPreset)) return stored as FontPreset
+  if (stored?.startsWith(LOCAL_FONT_PREFIX)) {
+    return fontPreferenceForFamily(stored.slice(LOCAL_FONT_PREFIX.length)) ?? 'geist'
+  }
+  return 'geist'
+}
+
+export function fontPreferenceForFamily(family: string): LocalFontPreference | undefined {
+  const normalized = family.trim()
+  if (
+    normalized.length === 0 ||
+    normalized.length > MAX_LOCAL_FONT_FAMILY_LENGTH ||
+    /\p{Cc}/u.test(normalized)
+  ) {
+    return undefined
+  }
+  return `${LOCAL_FONT_PREFIX}${normalized}`
+}
+
+export function fontFamilyFromPreference(font: FontPreference): string | undefined {
+  if (!font.startsWith(LOCAL_FONT_PREFIX)) return undefined
+  const family = font.slice(LOCAL_FONT_PREFIX.length)
+  return fontPreferenceForFamily(family)?.slice(LOCAL_FONT_PREFIX.length)
 }
 
 export function applyFontPreference(font: FontPreference): void {
-  document.documentElement.dataset.font = font
+  const root = document.documentElement
+  const localFamily = fontFamilyFromPreference(font)
+  root.dataset.font = localFamily ? 'local' : font
+  if (localFamily) {
+    root.style.setProperty('--font-ui', `${JSON.stringify(localFamily)}, system-ui, sans-serif`)
+  } else {
+    root.style.removeProperty('--font-ui')
+  }
 }
 
 export function readAccentPreference(): AccentPreference {

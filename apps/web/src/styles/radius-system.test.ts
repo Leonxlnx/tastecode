@@ -89,10 +89,12 @@ describe('radius system', () => {
   })
 
   it('keeps floating surfaces and their interactive rows on one nested radius system', () => {
-    expect(tokensCss).toContain('--menu-bg: var(--chrome-raised);')
-    expect(tokensCss).toContain('--menu-hover: var(--chrome-raised-hover);')
+    expect(tokensCss).toContain('--menu-bg: var(--surface);')
+    expect(tokensCss).toContain('--menu-hover: var(--surface-3);')
     expect(appCss).toMatch(/\.menu \{[^}]*padding: 5px;[^}]*border-radius: var\(--r-popup\);/s)
-    expect(appCss).toMatch(/\.menu--settings \{[^}]*border-radius: var\(--r-popup\);/s)
+    expect(appCss).toMatch(
+      /\.menu--compact \{[^}]*padding: 3px;[^}]*border-radius: var\(--r-lg\);/s,
+    )
     expect(appCss).toMatch(
       /\.app-select__listbox \{[^}]*--r-popup: calc\(var\(--r-popup-item\) \+ 4px\);[^}]*border-radius: var\(--r-popup\);/s,
     )
@@ -139,7 +141,15 @@ describe('radius system', () => {
     expect(workspaceCss).toMatch(
       /\.workspace-panel__add-menu button \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
-    expect(appCss).not.toMatch(/\.menu--settings \.menu__item \{[^}]*border-radius:/s)
+    expect(appCss).toMatch(
+      /\.menu--compact \.menu__item \{[^}]*padding: 4px 7px;[^}]*border-radius: var\(--r-md\);/s,
+    )
+    expect(appCss).toMatch(
+      /\.menu__item:not\(:disabled\):focus-visible \{[^}]*border-color: var\(--text-2\);/s,
+    )
+    expect(appCss).toMatch(
+      /\.menu--project-picker \.menu__label > span \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s,
+    )
   })
 
   it('reserves state borders so selection does not change row geometry', () => {

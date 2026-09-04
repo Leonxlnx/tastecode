@@ -15,6 +15,21 @@ describe('settings viewport CSS', () => {
     )
   })
 
+  it('compacts appearance controls from their usable pane width', () => {
+    expect(settingsCss).toMatch(
+      /\.settings__content \{[^}]*container: settings-content \/ inline-size;/s,
+    )
+    expect(settingsCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.theme-picker \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s,
+    )
+    expect(settingsCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-code-preview \{[^}]*grid-template-columns: 1fr;[\s\S]*?\.appearance-editor__row \{[^}]*flex-direction: column;[\s\S]*?\.appearance-control \{[^}]*width: 100%;/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.appearance-control__select \{[^}]*width: min\(190px, 100%\);[^}]*max-width: none;/s,
+    )
+  })
+
   it('bounds state and action controls to the narrow row width', () => {
     expect(settingsCss).toMatch(
       /\.settings__row-control:has\(> \.state-label\) \{[^}]*max-width: 100%;/s,

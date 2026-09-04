@@ -37,6 +37,31 @@ function SelectHarness(props: { onChange?: (value: string) => void }) {
   )
 }
 
+function SearchableSelectHarness(props: { onChange?: (value: string) => void }) {
+  const [value, setValue] = useState('alpha')
+  return (
+    <AppSelect
+      ariaLabel="Font"
+      value={value}
+      onChange={(next) => {
+        setValue(next)
+        props.onChange?.(next)
+      }}
+      search={{
+        label: 'Search fonts',
+        placeholder: 'Search fonts…',
+        emptyMessage: 'No matching fonts',
+      }}
+      options={[
+        { value: 'alpha', label: 'Alpha Sans' },
+        { value: 'beta', label: 'Beta Serif' },
+        { value: 'brush', label: 'Brush Script' },
+        { value: 'delta', label: 'Delta Mono' },
+      ]}
+    />
+  )
+}
+
 beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
   Object.defineProperty(window, 'innerHeight', { configurable: true, value: 400 })
@@ -98,5 +123,67 @@ describe('AppSelect', () => {
     fireEvent.click(trigger)
     fireEvent.mouseDown(screen.getByRole('button', { name: 'Outside' }))
     expect(screen.queryByRole('listbox', { name: 'Project' })).toBeNull()
+  })
+
+  it('filters a searchable picker by typing on its trigger and selects the result', () => {
+    const onChange = vi.fn()
+    render(<SearchableSelectHarness onChange={onChange} />)
+    const trigger = screen.getByRole('combobox', { name: 'Font' })
+
+    fireEvent.click(trigger)
+    const search = screen.getByRole('searchbox', { name: 'Search fonts' }) as HTMLInputElement
+    expect(document.activeElement).toBe(search)
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Alpha Sans',
+      'Beta Serif',
+      'Brush Script',
+      'Delta Mono',
+    ])
+
+    fireEvent.keyDown(trigger, { key: 'b' })
+    fireEvent.keyDown(trigger, { key: 'r' })
+
+    expect(search.value).toBe('br')
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Brush Script',
+    ])
+    fireEvent.keyDown(trigger, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('brush')
+    expect(trigger.textContent).toContain('Brush Script')
+
+    fireEvent.click(trigger)
+    fireEvent.keyDown(trigger, { key: 'd' })
+    fireEvent.keyDown(trigger, { key: 'e' })
+    fireEvent.keyDown(trigger, { key: 'l' })
+    fireEvent.keyDown(trigger, { key: 't' })
+    fireEvent.keyDown(trigger, { key: 'a' })
+    fireEvent.keyDown(trigger, { key: ' ' })
+    fireEvent.keyDown(trigger, { key: 'm' })
+    expect(
+      (screen.getByRole('searchbox', { name: 'Search fonts' }) as HTMLInputElement).value,
+    ).toBe('delta m')
+    expect(screen.getByRole('option', { name: 'Delta Mono' })).toBeTruthy()
+  })
+
+  it('filters from the search field and reports an empty result', () => {
+    render(<SearchableSelectHarness />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Font' }))
+    const search = screen.getByRole('searchbox', { name: 'Search fonts' })
+
+    fireEvent.change(search, { target: { value: 'serif' } })
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Beta Serif',
+    ])
+
+    fireEvent.change(search, { target: { value: 'missing' } })
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
+    expect(screen.getByRole('status').textContent).toBe('No matching fonts')
+
+    fireEvent.change(search, { target: { value: '' } })
+    expect(search.getAttribute('aria-activedescendant')).toContain('option-0')
+
+    fireEvent.keyDown(search, { key: 'Tab' })
+    expect(screen.queryByRole('listbox', { name: 'Font' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'Font' }))
   })
 })

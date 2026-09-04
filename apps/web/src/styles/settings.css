@@ -130,6 +130,7 @@
 }
 
 .settings__content {
+  container: settings-content / inline-size;
   width: min(840px, 100%);
   margin: 0 auto;
   padding: calc(var(--titlebar-h) + 48px) 48px 64px;
@@ -543,130 +544,158 @@
   color: var(--text);
 }
 
-.appearance__text {
-  margin-top: 34px;
+.appearance-theme .settings__group-title {
+  margin-bottom: 14px;
 }
 
-.appearance-picker {
+.appearance-code-preview {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-.appearance-picker--accent {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.appearance-choice {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  min-height: 54px;
-  padding: 8px 10px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-panel);
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-  text-align: left;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
-}
-
-.appearance-choice:hover {
-  background: var(--surface-2);
-  border-color: var(--line-strong);
-}
-
-.appearance-choice:active {
-  transform: scale(0.985);
-}
-
-.appearance-choice:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
-}
-
-.appearance-choice.is-selected {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+  overflow: hidden;
   background: var(--chrome-recessed);
-  border-color: var(--text-2);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-card);
   box-shadow: var(--chrome-inset-shadow);
-  color: var(--text);
 }
 
-:root[data-theme='light'] .appearance-choice:not(.is-selected) {
-  background: var(--chrome-raised);
-  border-color: var(--chrome-border);
+.appearance-code-preview__pane {
+  min-width: 0;
+  overflow: hidden;
+  padding: 6px 0;
+}
+
+.appearance-code-preview__pane + .appearance-code-preview__pane {
+  border-left: 1px solid var(--chrome-border);
+}
+
+.appearance-code-preview__line {
+  display: grid;
+  grid-template-columns: 36px minmax(max-content, 1fr);
+  align-items: center;
+  min-height: 23px;
+  padding-right: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.appearance-code-preview__line[data-change='removed'] {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+  box-shadow: inset 3px 0 var(--error);
+}
+
+.appearance-code-preview__line[data-change='added'] {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  box-shadow: inset 3px 0 var(--success);
+}
+
+.appearance-code-preview__line code {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  text-overflow: ellipsis;
+}
+
+.appearance-code-preview__number {
+  padding-right: 10px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-align: right;
+  user-select: none;
+}
+
+.appearance-code-preview__keyword,
+.appearance-code-preview__number-value {
+  color: var(--effort);
+}
+
+.appearance-code-preview__string {
+  color: var(--success);
+}
+
+.appearance-editor {
+  margin-top: 16px;
+  overflow: hidden;
+  background: var(--bg-rail);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-panel);
   box-shadow: var(--chrome-shadow);
 }
 
-:root[data-theme='light'] .appearance-choice:not(.is-selected):hover {
-  background: var(--chrome-raised-hover);
-  border-color: var(--line-strong);
+.appearance-editor__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
 }
 
-.appearance-choice__font {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  flex: none;
-  place-items: center;
-  background: var(--bg-rail);
-  border: 1px solid var(--line);
-  border-radius: var(--r-xl);
+.appearance-editor__header h2 {
+  margin: 0;
   color: var(--text);
-  font-size: 15px;
+  font-size: var(--t-md);
+  font-weight: 520;
 }
 
-.appearance-choice__font[data-font-preview='geist'] {
-  font-family: 'Geist Variable', sans-serif;
+.appearance-editor__scope {
+  padding: 3px 8px;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-pill);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.4;
 }
 
-.appearance-choice__font[data-font-preview='inter'] {
-  font-family: 'Inter Variable', sans-serif;
+.appearance-editor__row {
+  min-height: 47px;
 }
 
-.appearance-choice__font[data-font-preview='system'] {
-  font-family:
-    'Segoe UI Variable Text',
-    -apple-system,
-    BlinkMacSystemFont,
-    system-ui,
-    sans-serif;
+.appearance-editor__row .settings__row-control {
+  width: min(272px, 52%);
+  justify-content: flex-end;
 }
 
-.appearance-choice__font[data-font-preview='humanist'] {
-  font-family: Aptos, Candara, 'Segoe UI', sans-serif;
+.appearance-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
 }
 
-.appearance-choice__font[data-font-preview='rounded'] {
-  font-family: ui-rounded, 'SF Pro Rounded', 'Arial Rounded MT Bold', system-ui, sans-serif;
+.appearance-control__select {
+  width: min(190px, 100%);
+  max-width: none;
 }
 
-.appearance-choice__font[data-font-preview='serif'] {
-  font-family: Charter, 'Iowan Old Style', Georgia, serif;
-}
-
-.appearance-choice__font[data-font-preview='mono'] {
-  font-family: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
-}
-
+.appearance-control__type,
 .appearance-choice__swatch {
   width: 34px;
   height: 34px;
   flex: none;
+  border-radius: var(--r-xl);
+}
+
+.appearance-control__type {
+  display: grid;
+  place-items: center;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  box-shadow: var(--chrome-inset-shadow);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
+}
+
+.appearance-choice__swatch {
   background: linear-gradient(135deg, var(--swatch-a), var(--swatch-b));
   border: 1px solid color-mix(in srgb, var(--swatch-a) 48%, var(--line-strong));
-  border-radius: var(--r-xl);
   box-shadow: inset 0 1px color-mix(in srgb, white 16%, transparent);
 }
 
@@ -1970,6 +1999,43 @@
   padding-top: 48px;
 }
 
+/* The settings rail can leave a narrow content pane while the window is still
+   wider than the viewport breakpoints below. Compact appearance controls from
+   their actual usable width so a resized rail or minimum-width desktop window
+   cannot squeeze four labeled swatches into one row. */
+@container settings-content (max-width: 560px) {
+  .theme-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .appearance-code-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .appearance-code-preview__pane + .appearance-code-preview__pane {
+    border-top: 1px solid var(--chrome-border);
+    border-left: 0;
+  }
+
+  .appearance-editor__row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding-block: 10px;
+  }
+
+  .appearance-editor__row .settings__row-control,
+  .appearance-control {
+    width: 100%;
+  }
+
+  .appearance-control__select {
+    width: auto;
+    max-width: none;
+    flex: 1;
+  }
+}
+
 @media (max-width: 700px) {
   /* A phone has no room for a rail column beside the settings content — the
      fixed 136px sidebar starved the panel to under half the screen. Collapse
@@ -2045,11 +2111,6 @@
   .model-visibility__model {
     align-items: center;
   }
-
-  .appearance-picker,
-  .appearance-picker--accent {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 520px) {
@@ -2093,9 +2154,15 @@
     align-self: auto;
   }
 
-  .appearance-picker,
-  .appearance-picker--accent {
-    grid-template-columns: 1fr;
+  .appearance-editor__row .settings__row-control,
+  .appearance-control {
+    width: 100%;
+  }
+
+  .appearance-control__select {
+    width: auto;
+    max-width: none;
+    flex: 1;
   }
 }
 

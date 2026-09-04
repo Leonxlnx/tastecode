@@ -132,6 +132,26 @@ describe('settings viewport layout', () => {
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
   })
 
+  it('pairs theme previews with one compact details editor', () => {
+    renderSettings()
+
+    expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
+    expect(screen.getByRole('img', { name: /code sample preview/i })).toBeTruthy()
+    expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
+      'system',
+      'light',
+      'dark',
+      'codex',
+    ])
+
+    const details = screen.getByRole('region', { name: 'Theme details' })
+    expect(
+      within(details)
+        .getAllByRole('combobox')
+        .map((control) => control.getAttribute('aria-label')),
+    ).toEqual(['Accent palette', 'Background', 'Interface font', 'Sidebar translucency'])
+  })
+
   it('lets the terminal shortcut target the right sidebar', () => {
     renderSettings({ initialSection: 'workflows' })
 
@@ -207,7 +227,7 @@ describe('settings dialog keyboard behavior', () => {
     renderSettings()
     const dialog = screen.getByRole('dialog', { name: 'Settings' })
     const first = screen.getByRole('button', { name: 'Back to app' })
-    const last = screen.getByRole('button', { name: 'Lavender' })
+    const last = screen.getByRole('combobox', { name: 'Sidebar translucency' })
 
     last.focus()
     fireEvent.keyDown(last, { key: 'Tab' })
@@ -248,7 +268,7 @@ describe('settings dialog keyboard behavior', () => {
   it('leaves Escape to a nested control that handles it', () => {
     const onClose = vi.fn()
     renderSettings({ onClose })
-    const nestedControl = screen.getByRole('button', { name: 'Lavender' })
+    const nestedControl = screen.getByRole('combobox', { name: 'Sidebar translucency' })
     nestedControl.addEventListener('keydown', (event) => event.preventDefault())
 
     nestedControl.focus()

@@ -401,15 +401,14 @@
 
 .rail__foot {
   display: grid;
-  border-top: 1px solid var(--line);
-  padding: 9px 10px 10px;
+  padding: 4px 9px 10px;
 }
 
 .account-menu__actions {
   display: grid;
   flex: none;
-  gap: 1px;
-  padding-top: 1px;
+  gap: 0;
+  padding-top: 0;
 }
 
 .search {
@@ -432,7 +431,7 @@
 .account {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -441,14 +440,14 @@
 .account__avatar {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   flex: none;
   background: var(--surface-3);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-circle);
   color: var(--text-2);
-  font-size: var(--t-xs);
+  font-size: 9px;
   font-weight: 600;
   overflow: hidden;
 }
@@ -472,9 +471,15 @@
   flex: none;
   margin-left: auto;
   color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
-/* The footer padding keeps this almost full-width instead of edge-to-edge. */
+.rail__foot .menutrigger[aria-expanded='true'] .account__chevron {
+  transform: rotate(180deg);
+}
+
+/* The full-width hit area stays easy to target while the visible content
+   leaves room for the disclosure state at the right. */
 .rail__foot .menutrigger {
   width: 100%;
   min-height: 32px;
@@ -1465,8 +1470,14 @@
 }
 
 .menu.stagehead__options-menu {
-  min-width: min(240px, calc(100vw - 16px));
-  max-height: min(520px, calc(100vh - 58px));
+  min-width: 0;
+  width: min(216px, calc(100vw - 16px));
+  max-height: min(480px, calc(100vh - 58px));
+  scrollbar-width: none;
+}
+
+.menu.stagehead__options-menu::-webkit-scrollbar {
+  display: none;
 }
 
 .panel-toggles {
@@ -1698,21 +1709,14 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  min-height: 36px;
+  min-height: 32px;
   margin: 0;
-  padding: 2px 12px;
-  --composer-shelf-shade: color-mix(in srgb, var(--bg-shelf) 58%, var(--bg-prompt) 42%);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--bg-shelf) 76%, var(--bg-prompt) 24%),
-    var(--composer-shelf-shade)
-  );
+  padding: 1px 10px;
+  background: var(--bg-shelf);
   border-radius: var(--r-2xl) var(--r-2xl) 0 0;
-  box-shadow:
-    inset 0 1px color-mix(in srgb, white 5%, transparent),
-    inset 0 -1px color-mix(in srgb, var(--line) 70%, transparent);
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--line) 70%, transparent);
 }
 
 .composer__shelf::after {
@@ -1721,7 +1725,7 @@
   bottom: -18px;
   left: 0;
   height: 20px;
-  background: var(--composer-shelf-shade);
+  background: var(--bg-shelf);
   content: '';
   pointer-events: none;
 }
@@ -2012,14 +2016,14 @@
 .shelf-control {
   width: auto;
   max-width: 100%;
-  padding: 4px 6px;
+  padding: 3px 5px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
   box-shadow: none;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -2028,7 +2032,7 @@
 }
 
 .menutrigger.shelf-control {
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 .shelf-control--mode {
@@ -2044,7 +2048,7 @@
    and the plain workspace-mode button picks up the same treatment. */
 .composer__shelf .shelf-control:hover:not(:disabled) {
   background: var(--control-hover);
-  box-shadow: inset 0 0 0 1px var(--line);
+  box-shadow: none;
   color: var(--text);
 }
 
@@ -2060,12 +2064,14 @@
 .shelf-control__content {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
 }
 
 .shelf-control__content svg {
   flex: none;
+  width: 14px;
+  height: 14px;
   color: currentColor;
 }
 
@@ -2737,39 +2743,62 @@
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
   border-radius: var(--r-popup);
-  box-shadow:
-    var(--shadow-flyout),
-    inset 0 1px var(--chrome-highlight);
+  box-shadow: var(--shadow-flyout);
 }
 
 .menu--settings {
   /* Stay close to the account trigger without letting a wide rail turn this
      small status surface into a large sheet. */
   min-width: 0;
-  width: min(260px, calc(100vw - 16px));
+  width: min(224px, calc(100vw - 16px));
   max-height: min(500px, calc(100vh - 24px));
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 5px;
-  border-radius: var(--r-popup);
+}
+
+.menu--compact {
+  gap: 0;
+  padding: 3px;
+  border-radius: var(--r-lg);
+}
+
+.menu--project-picker {
+  min-width: 0;
+  width: min(240px, calc(100vw - 16px));
+}
+
+.menu--permissions {
+  min-width: 0;
+  width: min(240px, calc(100vw - 16px));
+}
+
+.menu--compact .menu__item {
+  padding: 4px 7px;
+  border-radius: var(--r-md);
 }
 
 .menu--settings .menu__item {
-  padding: 5px 7px;
+  padding: 4px 6px;
 }
 
-.menu--settings .menu__name {
+.menu--compact .menu__name {
   font-size: var(--t-sm);
+  line-height: 1.25;
 }
 
-.menu--settings .menu__label {
-  gap: 7px;
+.menu--compact .menu__label {
+  gap: 6px;
 }
 
-.menu--settings .menu__label > svg {
+.menu--compact .menu__label > svg {
   width: 13px;
   height: 13px;
+}
+
+.menu--compact .menu__desc {
+  margin-top: 1px;
+  line-height: 1.25;
 }
 
 .menu--sidebar {
@@ -2825,15 +2854,14 @@
 }
 
 .menu.is-positioned[data-input-modality='pointer'] {
-  /* Grows from the trigger it belongs to. Nothing in the physical world
-     appears from nothing, so nothing here starts at scale(0) either. */
+  /* Keep text and icons on their final pixels while the panel appears.
+     Transforming the whole menu makes Chromium re-rasterize every child. */
   animation: menu-in var(--dur-fast) var(--ease-out);
 }
 
 @keyframes menu-in {
   from {
     opacity: 0;
-    transform: scale(0.97) translateY(2px);
   }
 }
 
@@ -2868,10 +2896,16 @@
     color var(--dur-fast) var(--ease-out);
 }
 
-.menu__item:not(:disabled):is(:hover, :focus-visible) {
+.menu__item:not(:disabled):hover {
   background: var(--menu-hover);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-shadow);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.menu__item:not(:disabled):focus-visible {
+  background: var(--menu-hover);
+  border-color: var(--text-2);
+  box-shadow: none;
   outline: 0;
 }
 
@@ -2912,6 +2946,14 @@
 
 .menu__label > svg {
   flex: none;
+}
+
+.menu--project-picker .menu__label > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .composer__permission-option--auto-review .menu__label,
@@ -3013,6 +3055,63 @@
   box-shadow:
     0 1px 2px rgb(0 0 0 / 8%),
     0 6px 18px -14px rgb(0 0 0 / 35%);
+}
+
+.app-select__search {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 3px;
+  padding: 5px 7px;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-popup-item);
+  box-shadow: var(--chrome-inset-shadow);
+  color: var(--text-3);
+}
+
+.app-select__search:focus-within {
+  border-color: color-mix(in srgb, var(--text-3) 55%, var(--chrome-border));
+  color: var(--text-2);
+}
+
+.app-select__search svg {
+  flex: none;
+}
+
+.app-select__search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  outline: 0;
+}
+
+.app-select__search input::placeholder {
+  color: var(--text-3);
+}
+
+.app-select__search input::-webkit-search-cancel-button {
+  opacity: 0.65;
+}
+
+.app-select__options {
+  display: grid;
+}
+
+.app-select__empty {
+  margin: 0;
+  padding: 8px 7px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-align: center;
 }
 
 .app-select__option {

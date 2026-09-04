@@ -5,11 +5,15 @@ import {
   BACKDROP_KEY,
   GLASS_KEY,
   THEME_KEY,
+  applyFontPreference,
   applyGlassPreference,
   applyTheme,
   colorSchemeForTheme,
+  fontFamilyFromPreference,
+  fontPreferenceForFamily,
   readAccentPreference,
   readBackdropPreference,
+  readFontPreference,
   readGlassPreference,
   readThemePreference,
 } from './theme.js'
@@ -23,6 +27,8 @@ import {
 afterEach(() => {
   localStorage.clear()
   document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('data-font')
+  document.documentElement.style.removeProperty('--font-ui')
   document.documentElement.classList.remove('dark')
 })
 
@@ -55,6 +61,33 @@ describe('preference readers', () => {
     expect(document.documentElement.dataset['theme']).toBe('codex')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(colorSchemeForTheme('codex')).toBe('dark')
+  })
+})
+
+describe('font preference', () => {
+  it('round-trips an installed font family and rejects malformed stored values', () => {
+    const preference = fontPreferenceForFamily('  Atkinson Hyperlegible  ')
+
+    expect(preference).toBe('local:Atkinson Hyperlegible')
+    expect(fontFamilyFromPreference(preference!)).toBe('Atkinson Hyperlegible')
+    localStorage.setItem('harness.font', preference!)
+    expect(readFontPreference()).toBe(preference)
+
+    localStorage.setItem('harness.font', 'local:Broken\nFamily')
+    expect(readFontPreference()).toBe('geist')
+  })
+
+  it('applies a quoted local family and clears it when returning to a preset', () => {
+    applyFontPreference('local:Atkinson Hyperlegible')
+
+    expect(document.documentElement.dataset['font']).toBe('local')
+    expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe(
+      '"Atkinson Hyperlegible", system-ui, sans-serif',
+    )
+
+    applyFontPreference('inter')
+    expect(document.documentElement.dataset['font']).toBe('inter')
+    expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe('')
   })
 })
 
