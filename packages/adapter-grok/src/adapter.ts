@@ -587,52 +587,33 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
-    child.on('close', (code) => {
+    const finishProcess = (errorMessage: string) => {
       this.#cleanupPrompt(child)
       if (this.#child === child) this.#child = undefined
       if (terminal) return
       terminal = true
       const killReason = this.#killReasons.get(child)
-      if (killReason === 'interrupt') {
-        finishItems('failed')
-        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
-        return
+      if (!killReason) {
+        this.emit('event', { type: 'thread.error', threadId, message: errorMessage })
       }
-      if (killReason === 'silent') {
-        finishItems('failed')
-        return
-      }
-      // An exit without an end frame would otherwise look like a hang.
-      this.emit('event', {
-        type: 'thread.error',
-        threadId,
-        message: `grok exited with code ${code ?? 'unknown'} before reporting a result`,
-      })
       finishItems('failed')
-      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
-    })
+      if (killReason !== 'silent') {
+        this.emit('event', {
+          type: 'turn.completed',
+          turnId,
+          status: killReason === 'interrupt' ? 'interrupted' : 'failed',
+        })
+      }
+    }
+
+    // An exit without an end frame would otherwise look like a hang.
+    child.on('close', (code) =>
+      finishProcess(`grok exited with code ${code ?? 'unknown'} before reporting a result`),
+    )
 
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
-    child.on('error', (error) => {
-      this.#cleanupPrompt(child)
-      if (this.#child === child) this.#child = undefined
-      if (terminal) return
-      terminal = true
-      const killReason = this.#killReasons.get(child)
-      if (killReason === 'interrupt') {
-        finishItems('failed')
-        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
-        return
-      }
-      if (killReason === 'silent') {
-        finishItems('failed')
-        return
-      }
-      this.emit('event', { type: 'thread.error', threadId, message: String(error) })
-      finishItems('failed')
-      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
-    })
+    child.on('error', (error) => finishProcess(String(error)))
 
     child.stdin.end()
     return turnId

@@ -390,15 +390,20 @@ describe('Grok adapter', () => {
     expect(existsSync(promptFile)).toBe(false)
   })
 
-  it('fails the turn when the process dies without an end frame', async () => {
+  it.each(['close', 'error'] as const)('fails once on process %s', async (signal) => {
     const child = new FakeChild()
+    let promptFile = ''
     const adapter = new GrokAdapter({
-      spawn: () => child,
+      spawn: (_command, args) => {
+        promptFile = args[args.indexOf('--prompt-file') + 1]!
+        return child
+      },
     })
     const events: DomainEvent[] = []
     adapter.on('event', (event) => events.push(event))
     const thread = await adapter.startThread('C:\\repo')
-    await adapter.sendTurn(thread.id, 'go')
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+    expect(existsSync(promptFile)).toBe(true)
 
     child.stdout.end(
       [
@@ -408,26 +413,37 @@ describe('Grok adapter', () => {
         .map((frame) => JSON.stringify(frame))
         .join('\n') + '\n',
     )
+    if (signal === 'close') child.emit('close', 1)
+    else child.emit('error', new Error('spawn failed'))
+    child.emit('error', new Error('late failure'))
     child.emit('close', 1)
     await new Promise((resolve) => setImmediate(resolve))
 
-    const terminal = events.findIndex((event) => event.type === 'turn.completed')
     const completed = events.filter((event) => event.type === 'item.completed')
     expect(completed).toHaveLength(2)
     expect(completed.find((event) => event.item.type === 'reasoning')?.item.status).toBe(
       'completed',
     )
     expect(completed.find((event) => event.item.type === 'tool_call')?.item.status).toBe('failed')
-    expect(events.lastIndexOf(completed[1]!)).toBeLessThan(terminal)
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: 'thread.error' }),
-        expect.objectContaining({ type: 'turn.completed', status: 'failed' }),
-      ]),
-    )
+    expect(events.slice(-3)).toEqual([
+      {
+        type: 'thread.error',
+        threadId: thread.id,
+        message:
+          signal === 'close'
+            ? 'grok exited with code 1 before reporting a result'
+            : 'Error: spawn failed',
+      },
+      completed[1],
+      { type: 'turn.completed', turnId, status: 'failed' },
+    ])
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+    expect(existsSync(promptFile)).toBe(false)
+    await adapter.interrupt()
+    expect(child.wasKilled).toBe(false)
   })
 
-  it('ends an interrupted turn exactly once while keeping replacement and disposal silent', async () => {
+  it.each(['close', 'error'] as const)('handles stopped turns on %s', async (signal) => {
     const children: FakeChild[] = []
     const adapter = new GrokAdapter({
       spawn: () => {
@@ -445,6 +461,7 @@ describe('Grok adapter', () => {
     await new Promise((resolve) => setImmediate(resolve))
     await adapter.interrupt()
     await adapter.sendTurn(thread.id, 'replace me')
+    if (signal === 'error') children[0]!.emit('error', new Error('killed'))
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(children[0]?.wasKilled).toBe(true)
@@ -460,6 +477,7 @@ describe('Grok adapter', () => {
     children[1]!.stdout.write(`${JSON.stringify({ type: 'thought', data: 'replacing' })}\n`)
     await new Promise((resolve) => setImmediate(resolve))
     await adapter.sendTurn(thread.id, 'replacement')
+    if (signal === 'error') children[1]!.emit('error', new Error('killed'))
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(children[1]?.wasKilled).toBe(true)
@@ -473,10 +491,12 @@ describe('Grok adapter', () => {
     children[2]!.stdout.write(`${JSON.stringify({ type: 'thought', data: 'disposing' })}\n`)
     await new Promise((resolve) => setImmediate(resolve))
     adapter.dispose()
+    if (signal === 'error') children[2]!.emit('error', new Error('killed'))
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(children[2]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
   })
 
   it('records how long a thought ran on the completed reasoning item', async () => {
