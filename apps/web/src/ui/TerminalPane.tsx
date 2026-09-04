@@ -6,14 +6,10 @@ import '@xterm/xterm/css/xterm.css'
 import { IconCopy as Copy, IconRotate as RotateCcw, IconX as X } from '@tabler/icons-react'
 import { memo, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { isMacOS, writeClipboardText } from '../bridge.js'
-import {
-  appHapticsEnabled,
-  performAppHaptic,
-  prepareAppHaptics,
-  ResizeHaptics,
-} from '../haptics.js'
+import { prepareAppHaptics } from '../haptics.js'
 import type { Transport, ConnectionState } from '../transport.js'
 import { errorMessage } from '../boundary.js'
+import { beginPanelResize } from './panel-resize.js'
 import '../styles/terminal-pane.css'
 
 const MIN_HEIGHT = 160
@@ -309,70 +305,24 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     if (!paneElement) return
     prepareAppHaptics()
     resizeCleanup.current()
-    const startY = event.clientY
-    const startHeight = heightRef.current
-    const maximum = Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.72))
-    const haptics = appHapticsEnabled()
-      ? new ResizeHaptics({
-          startValue: startHeight,
-          startTime: event.timeStamp,
-          minValue: MIN_HEIGHT,
-          maxValue: maximum,
-        })
-      : undefined
-    let currentHeight = startHeight
-    let resizeFrame: number | undefined
-    let pendingResize: { rawHeight: number; height: number; time: number } | undefined
-    let active = true
-    const applyPendingResize = () => {
-      resizeFrame = undefined
-      const pending = pendingResize
-      pendingResize = undefined
-      if (!pending) return
-      const tracking = pending.height !== currentHeight
-      if (tracking) {
-        currentHeight = pending.height
-        heightRef.current = pending.height
-        paneElement.style.height = `${pending.height}px`
-      }
-      const feedback = haptics?.sample({
-        rawValue: pending.rawHeight,
-        value: pending.height,
-        tracking,
-        time: pending.time,
-      })
-      if (feedback) performAppHaptic(feedback)
-    }
-    const move = (next: globalThis.PointerEvent) => {
-      const rawHeight = startHeight + startY - next.clientY
-      const nextHeight = Math.min(maximum, Math.max(MIN_HEIGHT, rawHeight))
-      pendingResize = { rawHeight, height: nextHeight, time: next.timeStamp }
-      if (resizeFrame === undefined) resizeFrame = requestAnimationFrame(applyPendingResize)
-    }
-    const cleanup = (commit: boolean) => {
-      if (!active) return
-      active = false
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
-      window.removeEventListener('blur', finish)
-      resizeCleanup.current = () => {}
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
-      resizeFrame = undefined
-      if (commit) {
-        applyPendingResize()
-        setHeight(currentHeight)
-        props.onHeightChange?.(currentHeight)
-      } else {
-        pendingResize = undefined
-      }
-    }
-    const finish = () => cleanup(true)
-    resizeCleanup.current = () => cleanup(false)
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', finish, { once: true })
-    window.addEventListener('pointercancel', finish, { once: true })
-    window.addEventListener('blur', finish, { once: true })
+    resizeCleanup.current = beginPanelResize(event, {
+      axis: 'clientY',
+      initialSize: heightRef.current,
+      minSize: MIN_HEIGHT,
+      maxSize: Math.max(MIN_HEIGHT, Math.floor(window.innerHeight * 0.72)),
+      style: paneElement.style,
+      property: 'height',
+      onResize: (size) => {
+        heightRef.current = size
+      },
+      onFinish: (size, commit) => {
+        resizeCleanup.current = () => {}
+        if (commit) {
+          setHeight(size)
+          props.onHeightChange?.(size)
+        }
+      },
+    })
   }
 
   return (

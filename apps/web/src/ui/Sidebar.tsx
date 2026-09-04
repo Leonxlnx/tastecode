@@ -208,52 +208,10 @@ function SidebarComponent(props: {
   const slotRef = useRef<HTMLDivElement>(null)
   const railRef = useRef<HTMLElement>(null)
   const resizeHandleRef = useRef<HTMLButtonElement>(null)
-  const actionsRef = useRef({
-    onClose: props.onClose,
-    onNewSession: props.onNewSession,
-    onSelectSession: props.onSelectSession,
-    onRenameProject: props.onRenameProject,
-    onRemoveProject: props.onRemoveProject,
-    onTogglePin: props.onTogglePin,
-    onRenameSession: props.onRenameSession,
-    onToggleSessionPin: props.onToggleSessionPin,
-    onDeleteSession: props.onDeleteSession,
-    onArchiveProject: props.onArchiveProject,
-    onReorderProject: props.onReorderProject,
-    onReorderSession: props.onReorderSession,
-    onOpenPullRequests: props.onOpenPullRequests,
-  })
+  const actionsRef = useRef(props)
   useLayoutEffect(() => {
-    actionsRef.current = {
-      onClose: props.onClose,
-      onNewSession: props.onNewSession,
-      onSelectSession: props.onSelectSession,
-      onRenameProject: props.onRenameProject,
-      onRemoveProject: props.onRemoveProject,
-      onTogglePin: props.onTogglePin,
-      onRenameSession: props.onRenameSession,
-      onToggleSessionPin: props.onToggleSessionPin,
-      onDeleteSession: props.onDeleteSession,
-      onArchiveProject: props.onArchiveProject,
-      onReorderProject: props.onReorderProject,
-      onReorderSession: props.onReorderSession,
-      onOpenPullRequests: props.onOpenPullRequests,
-    }
-  }, [
-    props.onArchiveProject,
-    props.onClose,
-    props.onDeleteSession,
-    props.onNewSession,
-    props.onOpenPullRequests,
-    props.onRemoveProject,
-    props.onRenameProject,
-    props.onRenameSession,
-    props.onReorderProject,
-    props.onReorderSession,
-    props.onSelectSession,
-    props.onTogglePin,
-    props.onToggleSessionPin,
-  ])
+    actionsRef.current = props
+  })
   /** Kept out of React state on purpose. Revealing used to reconcile every
    *  project and chat row before the transform could even start. */
   const edgeRevealed = useRef(false)

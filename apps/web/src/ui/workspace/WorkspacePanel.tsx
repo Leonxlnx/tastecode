@@ -23,15 +23,11 @@ import {
   IconX as X,
   type TablerIcon,
 } from '@tabler/icons-react'
-import {
-  appHapticsEnabled,
-  performAppHaptic,
-  prepareAppHaptics,
-  ResizeHaptics,
-} from '../../haptics.js'
+import { prepareAppHaptics } from '../../haptics.js'
 import { installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
 import { IconMorph } from '../IconMorph.js'
+import { beginPanelResize } from '../panel-resize.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -385,75 +381,24 @@ function WorkspacePanelComponent(props: {
     prepareAppHaptics()
     event.currentTarget.setPointerCapture(event.pointerId)
     resizeCleanup.current()
-    const startX = event.clientX
-    const startWidth = props.width
     const layout = event.currentTarget.closest<HTMLElement>('.workspace-layout')
     const layoutWidth = layout?.clientWidth || window.innerWidth
-    const maximum = Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH)
-    const haptics = appHapticsEnabled()
-      ? new ResizeHaptics({
-          startValue: startWidth,
-          startTime: event.timeStamp,
-          minValue: MIN_PANEL_WIDTH,
-          maxValue: maximum,
-        })
-      : undefined
-    let currentWidth = startWidth
-    let resizeFrame: number | undefined
-    let pendingResize: { rawWidth: number; width: number; time: number } | undefined
-    let active = true
     const previousTransition = layout?.style.transition
     if (layout) layout.style.transition = 'none'
-    const applyPendingResize = () => {
-      resizeFrame = undefined
-      const pending = pendingResize
-      pendingResize = undefined
-      if (!pending) return
-      const changed = pending.width !== currentWidth
-      const tracking = Boolean(layout) && changed
-      if (changed) {
-        currentWidth = pending.width
-        layout?.style.setProperty('--workspace-panel-w', `${pending.width}px`)
-      }
-      const feedback = haptics?.sample({
-        rawValue: pending.rawWidth,
-        value: pending.width,
-        tracking,
-        time: pending.time,
-      })
-      if (feedback) performAppHaptic(feedback)
-    }
-    const move = (next: globalThis.PointerEvent) => {
-      const rawWidth = startWidth + startX - next.clientX
-      const nextWidth = Math.min(maximum, Math.max(MIN_PANEL_WIDTH, rawWidth))
-      pendingResize = { rawWidth, width: nextWidth, time: next.timeStamp }
-      if (resizeFrame === undefined) resizeFrame = requestAnimationFrame(applyPendingResize)
-    }
-    const cleanup = (commit: boolean) => {
-      if (!active) return
-      active = false
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
-      window.removeEventListener('blur', finish)
-      resizeCleanup.current = () => {}
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
-      resizeFrame = undefined
-      if (commit) {
-        applyPendingResize()
-        props.onWidthChange(currentWidth)
-      } else {
-        pendingResize = undefined
-        layout?.style.setProperty('--workspace-panel-w', `${props.width}px`)
-      }
-      if (layout) layout.style.transition = previousTransition ?? ''
-    }
-    const finish = () => cleanup(true)
-    resizeCleanup.current = () => cleanup(false)
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', finish, { once: true })
-    window.addEventListener('pointercancel', finish, { once: true })
-    window.addEventListener('blur', finish, { once: true })
+    resizeCleanup.current = beginPanelResize(event, {
+      axis: 'clientX',
+      initialSize: props.width,
+      minSize: MIN_PANEL_WIDTH,
+      maxSize: Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH),
+      style: layout?.style,
+      property: '--workspace-panel-w',
+      onFinish: (size, commit) => {
+        resizeCleanup.current = () => {}
+        if (commit) props.onWidthChange(size)
+        else layout?.style.setProperty('--workspace-panel-w', `${props.width}px`)
+        if (layout) layout.style.transition = previousTransition ?? ''
+      },
+    })
   }
 
   return (
