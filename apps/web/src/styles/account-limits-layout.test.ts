@@ -18,7 +18,7 @@ describe('account limits layout', () => {
 
     expect(usage).toContain('gap: 0')
     expect(usage).toContain('font-size: var(--t-xs)')
-    expect(usage).toContain('padding: 0 0 3px')
+    expect(usage).toContain('padding: 0 0 2px')
     expect(reveal).toContain('order: -1')
     expect(reveal).toContain('grid-template-rows: 1fr')
     expect(reveal).toContain('grid-template-rows var(--dur-slow) var(--ease-out)')
@@ -41,7 +41,12 @@ describe('account limits layout', () => {
     expect(separator).toContain('border-top: 1px solid var(--line-strong)')
     expect(separator).toContain('margin-top: 9px')
     expect(separator).toContain('padding-top: 9px')
-    expect(css).toMatch(/\.account-menu__usage-head \{[^}]*min-height: 30px;/s)
+    expect(css).toMatch(
+      /\.account-menu__usage-head \{[^}]*min-height: 26px;[^}]*border-radius: var\(--r-md\);/s,
+    )
+    expect(css).toMatch(
+      /\.account-menu__usage-head:focus-visible \{[^}]*border-color: var\(--text-2\);/s,
+    )
     expect(css).toMatch(/\.account-menu__source \{[^}]*gap: 7px;/s)
     expect(css).toMatch(/\.account-menu__limit \{[^}]*gap: 4px;/s)
     expect(css).toMatch(/\.account-menu__limit-bar \{[^}]*height: 3px;/s)

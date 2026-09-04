@@ -862,7 +862,7 @@ function SidebarComponent(props: {
             drop="up"
             gap={14}
             label="Account"
-            panelClassName="menu--settings"
+            panelClassName="menu--compact menu--settings"
             panelRole="dialog"
             panelLabel="Account and plan limits"
             trigger={() => (
@@ -876,7 +876,9 @@ function SidebarComponent(props: {
                     )
                   )}
                 </span>
-                <span className="account__name">{profileDisplayName || props.providerName}</span>
+                <span className="account__name">
+                  {profileDisplayName || props.account?.email || props.providerName}
+                </span>
                 <ChevronUp className="account__chevron" size={13} aria-hidden />
               </span>
             )}

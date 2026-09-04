@@ -52,6 +52,7 @@ describe('StageHeader', () => {
       'true',
     )
     fireEvent.click(screen.getByRole('button', { name: 'Options for Build the landing page' }))
+    expect(screen.getByRole('menu').classList.contains('menu--compact')).toBe(true)
     for (const item of screen.getAllByRole('menuitem')) {
       expect(item.querySelector('svg')).not.toBeNull()
     }

@@ -46,7 +46,9 @@ describe('shortcuts', () => {
   it('formats platform-native hints and recognizes every editable target', () => {
     const newProject = createDefaultKeybindings().newProject!
     expect(shortcutLabel(newProject, true)).toBe('⌘⇧O')
-    expect(shortcutLabel(newProject, false)).toBe('Ctrl+Shift+O')
+    expect(shortcutLabel(newProject, false)).toBe('⌃⇧O')
+    expect(shortcutLabel({ key: 'arrowdown', primary: true, alt: true }, false)).toBe('⌃⌥↓')
+    expect(shortcutLabel({ key: 'enter', primary: true }, false)).toBe('⌃↵')
     expect(isEditableTarget(document.createElement('textarea'))).toBe(true)
     expect(isEditableTarget(document.createElement('input'))).toBe(true)
 

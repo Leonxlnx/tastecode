@@ -359,8 +359,8 @@ function MenuController(
       const menuBounds = currentPanel?.getBoundingClientRect()
       if ((!triggerBounds && !props.request.contextPoint) || !currentPanel || !menuBounds) return
 
-      // The opening animation scales the visual bounds. Layout dimensions
-      // stay stable, so right-aligned menus do not drift while it runs.
+      // Position from layout dimensions so transient visual effects or browser
+      // zoom cannot make right-aligned menus drift while they open.
       const menuWidth = currentPanel.offsetWidth || menuBounds.width
       const menuHeight = currentPanel.offsetHeight || menuBounds.height
 
@@ -586,7 +586,7 @@ export function MenuItem(props: {
       <span className="menu__name">
         <span className="menu__label">
           {props.icon}
-          <span>{props.title}</span>
+          <span title={props.title}>{props.title}</span>
         </span>
         {props.active ? (
           <span className="menu__meta">
@@ -594,7 +594,11 @@ export function MenuItem(props: {
           </span>
         ) : null}
       </span>
-      {props.detail ? <span className="menu__desc">{props.detail}</span> : null}
+      {props.detail ? (
+        <span className="menu__desc" title={props.detail}>
+          {props.detail}
+        </span>
+      ) : null}
     </button>
   )
 }

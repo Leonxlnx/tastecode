@@ -1010,6 +1010,8 @@ describe('Composer permissions', () => {
   it('shows an icon for every mode and offers auto-review only when supported', () => {
     const unsupported = renderComposer(vi.fn())
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    expect(screen.getByRole('menu').classList.contains('menu--compact')).toBe(true)
+    expect(screen.getByRole('menu').classList.contains('menu--permissions')).toBe(true)
     expect(screen.queryByRole('menuitem', { name: /Auto-review/ })).toBeNull()
     expect(screen.getByRole('menuitem', { name: /Ask first/ }).querySelector('svg')).toBeTruthy()
     expect(screen.getByRole('menuitem', { name: /Auto-approve/ }).querySelector('svg')).toBeTruthy()
@@ -1307,6 +1309,14 @@ describe('Composer context usage', () => {
 })
 
 describe('Composer branch shelf', () => {
+  it('uses the compact project picker surface', () => {
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Choose project' }))
+
+    expect(screen.getByRole('menu').classList.contains('menu--compact')).toBe(true)
+    expect(screen.getByRole('menu').classList.contains('menu--project-picker')).toBe(true)
+  })
+
   it('shows the branch picker only when the project has branches', () => {
     renderComposer(vi.fn())
     expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()

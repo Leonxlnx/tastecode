@@ -129,28 +129,28 @@ export const APPROVAL_MODES: {
     id: 'ask',
     title: 'Ask first',
     short: 'Ask first',
-    detail: 'Read-only until you approve each action',
+    detail: 'Approve each edit and command',
     icon: ShieldQuestion,
   },
   {
     id: 'auto',
     title: 'Auto-approve',
     short: 'Auto',
-    detail: 'Edits and commands inside this folder',
+    detail: 'Edits and commands in this folder',
     icon: ShieldCheck,
   },
   {
     id: 'auto-review',
     title: 'Auto-review',
     short: 'Auto-review',
-    detail: 'Codex reviews elevated actions before they run',
+    detail: 'Codex reviews elevated actions',
     icon: ScanEye,
   },
   {
     id: 'full',
     title: 'Full access',
     short: 'Full access',
-    detail: 'No sandbox, no prompts, no undo. Use with care.',
+    detail: 'No sandbox, prompts, or undo',
     icon: LockOpen,
   },
 ]
@@ -1297,6 +1297,7 @@ function ComposerComponent(props: {
                 label="Choose project"
                 drop="down"
                 triggerClassName="shelf-control shelf-control--project"
+                panelClassName="menu--compact menu--project-picker"
                 trigger={() => (
                   <span className="shelf-control__content">
                     <Folder size={15} aria-hidden />
@@ -1750,6 +1751,7 @@ function ComposerComponent(props: {
                 <Menu
                   label="Permissions"
                   triggerClassName="composer__permission"
+                  panelClassName="menu--compact menu--permissions"
                   trigger={() => (
                     <span
                       className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}

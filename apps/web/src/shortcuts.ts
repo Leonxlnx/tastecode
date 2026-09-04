@@ -217,17 +217,8 @@ export function shortcutFromKeyboardEvent(
 
 export function shortcutLabel(shortcut: Shortcut, macOS: boolean): string {
   const key = displayKey(shortcut.key)
-  if (macOS) {
-    return `${shortcut.primary ? '⌘' : ''}${shortcut.alt ? '⌥' : ''}${shortcut.shift ? '⇧' : ''}${key}`
-  }
-  return [
-    shortcut.primary ? 'Ctrl' : undefined,
-    shortcut.alt ? 'Alt' : undefined,
-    shortcut.shift ? 'Shift' : undefined,
-    key,
-  ]
-    .filter(Boolean)
-    .join('+')
+  const primary = shortcut.primary ? (macOS ? '⌘' : '⌃') : ''
+  return `${primary}${shortcut.alt ? '⌥' : ''}${shortcut.shift ? '⇧' : ''}${key}`
 }
 
 export function shortcutAria(shortcut: Shortcut | null | undefined): string | undefined {
@@ -352,17 +343,17 @@ function displayKey(key: string): string {
     case 'arrowright':
       return '→'
     case 'backspace':
-      return 'Backspace'
+      return '⌫'
     case 'delete':
-      return 'Delete'
+      return '⌦'
     case 'enter':
-      return 'Enter'
+      return '↵'
     case 'escape':
       return 'Esc'
     case 'space':
       return 'Space'
     case 'tab':
-      return 'Tab'
+      return '⇥'
     default:
       return key.length === 1 ? key.toUpperCase() : key.replace(/^f/, 'F')
   }

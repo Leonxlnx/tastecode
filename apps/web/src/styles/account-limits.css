@@ -4,21 +4,21 @@
   gap: 0;
   font-size: var(--t-xs);
   color: var(--text-2);
-  padding: 0 0 3px;
+  padding: 0 0 2px;
   border-bottom: 1px solid var(--menu-line);
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 
 .account-menu__usage-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   width: 100%;
-  min-height: 30px;
-  padding: 5px 7px;
+  min-height: 26px;
+  padding: 4px 6px;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--r-popup-item);
+  border-radius: var(--r-md);
   color: var(--text);
   cursor: pointer;
   font: inherit;
@@ -33,10 +33,16 @@
     box-shadow var(--dur-fast) var(--ease-out);
 }
 
-.account-menu__usage-head:is(:hover, :focus-visible) {
+.account-menu__usage-head:hover {
   background: var(--menu-hover);
-  border-color: var(--chrome-border);
-  box-shadow: var(--chrome-shadow);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.account-menu__usage-head:focus-visible {
+  background: var(--menu-hover);
+  border-color: var(--text-2);
+  box-shadow: none;
   outline: 0;
 }
 

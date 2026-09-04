@@ -166,7 +166,7 @@ function StageHeaderComponent(props: {
           align="left"
           label={`Options for ${props.title ?? 'New chat'}`}
           triggerClassName="stagehead__menu-trigger"
-          panelClassName="menu--sidebar stagehead__options-menu"
+          panelClassName="menu--compact stagehead__options-menu"
           trigger={() => <Ellipsis size={16} aria-hidden />}
         >
           {(close) => (

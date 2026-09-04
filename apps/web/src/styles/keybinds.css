@@ -188,6 +188,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+.keybind-shortcut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  line-height: 1;
+}
+
+.keybind-shortcut__icon {
+  flex: none;
+  stroke-width: 1.8;
+}
+
+.keybind-shortcut__icon.is-delete {
+  transform: scaleX(-1);
+}
+
+.keybind-shortcut__key {
+  min-width: 0.65em;
+  text-align: center;
+}
+
 .keybind-row__message {
   margin: 3px 0 0;
   color: var(--error);

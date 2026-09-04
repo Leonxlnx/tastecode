@@ -116,17 +116,18 @@ describe('sidebar theme CSS', () => {
   })
 
   it('keeps the account popup compact and pins its actions below scrolling limits', () => {
-    expect(appCss).toMatch(/\.menu--settings \{[^}]*width: min\(260px, calc\(100vw - 16px\)\);/s)
+    expect(appCss).toMatch(/\.menu--settings \{[^}]*width: min\(224px, calc\(100vw - 16px\)\);/s)
     expect(appCss).toMatch(
-      /\.menu--settings \{[^}]*max-height: min\(500px, calc\(100vh - 24px\)\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;[^}]*padding: 5px;[^}]*border-radius: var\(--r-popup\);/s,
+      /\.menu--settings \{[^}]*max-height: min\(500px, calc\(100vh - 24px\)\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s,
     )
+    expect(appCss).toMatch(/\.menu--compact \{[^}]*gap: 0;[^}]*padding: 3px;/s)
     expect(accountLimitsCss).toMatch(
       /\.account-menu__usage-details \{[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;[^}]*scrollbar-gutter: stable;/s,
     )
     expect(appCss).toMatch(
-      /\.account-menu__actions \{[^}]*flex: none;[^}]*gap: 1px;[^}]*padding-top: 1px;/s,
+      /\.account-menu__actions \{[^}]*flex: none;[^}]*gap: 0;[^}]*padding-top: 0;/s,
     )
-    expect(appCss).toMatch(/\.menu--settings \.menu__item \{[^}]*padding: 5px 7px;/s)
+    expect(appCss).toMatch(/\.menu--settings \.menu__item \{[^}]*padding: 4px 6px;/s)
   })
 
   it('uses the same quiet type as the other account menu rows', () => {
@@ -135,10 +136,18 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('makes the account trigger almost full-width with its chevron on the right', () => {
+  it('keeps the account trigger compact and shows its disclosure state on the right', () => {
+    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 4px 9px 10px;/s)
     expect(appCss).toMatch(/\.rail__foot \.menutrigger \{[^}]*width: 100%;/s)
-    expect(appCss).toMatch(/\.account \{[^}]*width: 100%;/s)
-    expect(appCss).toMatch(/\.account__chevron \{[^}]*margin-left: auto;/s)
+    expect(appCss).toMatch(/\.account \{[^}]*gap: 8px;[^}]*width: 100%;/s)
+    expect(appCss).toMatch(/\.account__avatar \{[^}]*width: 18px;[^}]*height: 18px;/s)
+    expect(appCss).toMatch(
+      /\.account__chevron \{[^}]*margin-left: auto;[^}]*transition: transform var\(--dur-fast\) var\(--ease-out\);/s,
+    )
+    expect(appCss).toMatch(
+      /\.rail__foot \.menutrigger\[aria-expanded='true'\] \.account__chevron \{[^}]*transform: rotate\(180deg\);/s,
+    )
+    expect(sidebarSource).toContain('IconChevronUp as ChevronUp')
   })
 
   it('uses the light foreground color for unread chat dots', () => {

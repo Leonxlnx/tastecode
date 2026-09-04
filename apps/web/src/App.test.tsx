@@ -4359,10 +4359,16 @@ describe('new chats', () => {
     const first = render(<App />)
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-    expect(
-      within(screen.getByRole('group', { name: 'Interface font' })).getAllByRole('button'),
-    ).toHaveLength(7)
-    fireEvent.click(screen.getByRole('button', { name: /Inter/ }))
+    const fontSelector = screen.getByRole('combobox', { name: 'Interface font' })
+    expect(fontSelector.textContent).toContain('Geist')
+    fireEvent.click(fontSelector)
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Geist',
+      'Geist Mono',
+      'Inter',
+      'System default',
+    ])
+    fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
 
     await waitFor(() => {
       expect(localStorage.getItem('harness.font')).toBe('inter')
@@ -4375,14 +4381,67 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.font).toBe('inter')
   })
 
+  it('loads, applies, and persists an installed interface font', async () => {
+    const originalQuery = Object.getOwnPropertyDescriptor(globalThis, 'queryLocalFonts')
+    const queryLocalFonts = vi.fn().mockResolvedValue([
+      { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Regular' },
+      { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Bold' },
+      { family: 'Zilla Slab', fullName: 'Zilla Slab Regular' },
+    ])
+    Object.defineProperty(globalThis, 'queryLocalFonts', {
+      configurable: true,
+      value: queryLocalFonts,
+    })
+
+    try {
+      const first = render(<App />)
+      openSettings()
+      fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
+      fireEvent.click(screen.getByRole('combobox', { name: 'Interface font' }))
+
+      expect(queryLocalFonts).toHaveBeenCalledOnce()
+      const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
+      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+        'Atkinson Hyperlegible',
+        'Geist',
+        'Geist Mono',
+        'Inter',
+        'System default',
+        'Zilla Slab',
+      ])
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search fonts' }), {
+        target: { value: 'atki' },
+      })
+      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+        'Atkinson Hyperlegible',
+      ])
+      fireEvent.click(atkinson)
+      await waitFor(() => {
+        expect(localStorage.getItem('harness.font')).toBe('local:Atkinson Hyperlegible')
+        expect(document.documentElement.dataset.font).toBe('local')
+        expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe(
+          '"Atkinson Hyperlegible", system-ui, sans-serif',
+        )
+      })
+
+      first.unmount()
+      render(<App />)
+      expect(screen.queryByRole('combobox', { name: 'Interface font' })).toBeNull()
+      expect(document.documentElement.dataset.font).toBe('local')
+    } finally {
+      if (originalQuery) Object.defineProperty(globalThis, 'queryLocalFonts', originalQuery)
+      else Reflect.deleteProperty(globalThis, 'queryLocalFonts')
+    }
+  })
+
   it('persists the selected accent palette', async () => {
     const first = render(<App />)
     openSettings()
-    fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    expect(
-      within(screen.getByRole('group', { name: 'Accent palette' })).getAllByRole('button'),
-    ).toHaveLength(7)
-    fireEvent.click(screen.getByRole('button', { name: /Ocean/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
+    fireEvent.click(screen.getByRole('combobox', { name: 'Accent palette' }))
+    const accentOptions = screen.getByRole('listbox', { name: 'Accent palette' })
+    expect(within(accentOptions).getAllByRole('option')).toHaveLength(7)
+    fireEvent.click(within(accentOptions).getByRole('option', { name: 'Ocean' }))
 
     await waitFor(() => {
       expect(localStorage.getItem('harness.accent')).toBe('ocean')
@@ -5645,9 +5704,11 @@ describe('global shortcuts', () => {
     const settings = await screen.findByRole('dialog', { name: 'Settings' })
     expect(within(settings).getByRole('heading', { name: 'Keybinds' })).toBeTruthy()
     expect(within(settings).getByText('Command palette')).toBeTruthy()
-    expect(
-      within(settings).getByRole('button', { name: 'Change Command palette keybind' }).textContent,
-    ).toBe('⌘K')
+    const commandPalette = within(settings).getByRole('button', {
+      name: 'Change Command palette keybind',
+    })
+    expect(commandPalette.querySelector('kbd')?.title).toBe('⌘K')
+    expect(commandPalette.querySelector('[data-shortcut-icon="command"]')).toBeTruthy()
 
     fireEvent.keyDown(settings, { key: 'n', metaKey: true })
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeTruthy()
@@ -5666,7 +5727,9 @@ describe('global shortcuts', () => {
     fireEvent.click(recorder)
     fireEvent.keyDown(recorder, { key: 'g', metaKey: true })
 
-    expect(recorder.textContent).toBe('⌘G')
+    expect(recorder.querySelector('kbd')?.title).toBe('⌘G')
+    expect(recorder.querySelector('[data-shortcut-icon="command"]')).toBeTruthy()
+    expect(recorder.querySelector('.keybind-shortcut__key')?.textContent).toBe('G')
     expect(localStorage.getItem('harness.keybindings.v1')).toContain('newChat')
     view.unmount()
 

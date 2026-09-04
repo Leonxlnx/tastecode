@@ -34,9 +34,11 @@ describe('keyboard search motion', () => {
     expect(result).not.toContain('box-shadow var(--dur-fast)')
   })
 
-  it('preserves pointer-only generic menu entry motion', () => {
+  it('keeps pointer-opened menus stationary while they fade in', () => {
     expect(css).toMatch(
       /@media \(hover: hover\) and \(pointer: fine\)[\s\S]*?\.menu\.is-positioned\[data-input-modality='pointer'\] \{[\s\S]*?animation: menu-in var\(--dur-fast\) var\(--ease-out\);/s,
     )
+    expect(rule('@keyframes menu-in')).toContain('opacity: 0;')
+    expect(rule('@keyframes menu-in')).not.toContain('transform:')
   })
 })

@@ -64,6 +64,26 @@ afterEach(() => {
 })
 
 describe('Menu', () => {
+  it('preserves full item text in native tooltips when compact menus truncate it', () => {
+    render(
+      <Menu label="Projects" trigger={() => <span>Open</span>}>
+        {() => (
+          <MenuItem
+            title="a-very-long-project-name"
+            detail="/workspace/a-very-long-project-name"
+            icon={<Pencil size={14} aria-hidden />}
+            onClick={() => undefined}
+          />
+        )}
+      </Menu>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }))
+
+    expect(screen.getByTitle('a-very-long-project-name')).toBeTruthy()
+    expect(screen.getByTitle('/workspace/a-very-long-project-name')).toBeTruthy()
+  })
+
   it('shares one delegated listener set across dormant context menus', () => {
     const addEventListener = vi.spyOn(document, 'addEventListener')
     render(
@@ -234,7 +254,7 @@ describe('Menu', () => {
     expect(menu.style.left).toBe('139px')
   })
 
-  it('keeps a right-aligned panel fixed while its opening animation scales visual bounds', () => {
+  it('keeps a right-aligned panel fixed when visual and layout bounds differ', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 })
     vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
       if (this.classList.contains('menutrigger')) return rect(350, 170, 70, 24)

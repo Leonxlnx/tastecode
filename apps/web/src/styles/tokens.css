@@ -34,8 +34,8 @@
   --surface-2: #222222;
   --surface-3: #2b2b2b;
   --control-hover: #222222;
-  --menu-bg: var(--chrome-raised);
-  --menu-hover: var(--chrome-raised-hover);
+  --menu-bg: var(--surface);
+  --menu-hover: var(--surface-3);
   --menu-line: var(--chrome-border);
 
   --line: #262626;
@@ -304,8 +304,8 @@
   --surface-2: #f5f5f6;
   --surface-3: #ececef;
   --control-hover: var(--chrome-raised-hover);
-  --menu-bg: var(--chrome-raised);
-  --menu-hover: var(--chrome-raised-hover);
+  --menu-bg: var(--surface);
+  --menu-hover: var(--surface-3);
   --menu-line: var(--chrome-border);
 
   --line: #ebebed;
