@@ -46,7 +46,10 @@ function itemWithTrackedId(
 
 const apply = (events: DomainEvent[]) => events.reduce(reduce, emptyThread)
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('thread reducer', () => {
   it('keeps the turn identity with the diff and clears both for the next turn', () => {
@@ -141,6 +144,7 @@ describe('thread reducer', () => {
   })
 
   it('keeps batched deltas from different turns equivalent to sequential events', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const current = reduce(emptyThread, {
       type: 'turn.started',
       turn: { id: 'current', threadId: 'thread', status: 'running', createdAt: 1 },
