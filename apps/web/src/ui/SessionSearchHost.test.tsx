@@ -57,7 +57,7 @@ describe('SessionSearchHost focus restoration', () => {
     opener.focus()
     fireEvent.click(opener)
     const input = await screen.findByRole('combobox', { name: 'Search every chat' })
-    expect(document.activeElement).toBe(input)
+    await waitFor(() => expect(document.activeElement).toBe(input))
 
     close(input)
 

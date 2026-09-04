@@ -1,5 +1,6 @@
 import {
   lazy,
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -11,18 +12,17 @@ import {
   type TransitionEvent,
 } from 'react'
 import {
-  FileDiff,
-  FolderOpen,
-  Globe2,
-  Maximize2,
-  MessageCirclePlus,
-  Minimize2,
-  Plus,
-  SquareTerminal,
-  X,
-  type LucideIcon,
-} from 'lucide-react'
-import { PreviewCaptureRequestSchema } from '@harness/contracts'
+  IconFileDiff as FileDiff,
+  IconFolderOpen as FolderOpen,
+  IconWorld as Globe2,
+  IconMaximize as Maximize2,
+  IconMessageCirclePlus as MessageCirclePlus,
+  IconMinimize as Minimize2,
+  IconPlus as Plus,
+  IconTerminal2 as SquareTerminal,
+  IconX as X,
+  type TablerIcon,
+} from '@tabler/icons-react'
 import {
   appHapticsEnabled,
   performAppHaptic,
@@ -31,6 +31,7 @@ import {
 } from '../../haptics.js'
 import { installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
+import { IconMorph } from '../IconMorph.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -62,6 +63,7 @@ export type WorkspaceProviderLoginRequest = {
   id: number
   title: string
   installKey: string
+  showCodeInput?: boolean
 }
 
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
@@ -74,12 +76,13 @@ type WorkspaceTab =
       requestId: number
       title: string
       installKey: string
+      showCodeInput: boolean
     }
 
 const TOOLS: Array<{
   kind: WorkspaceTool
   title: string
-  Icon: LucideIcon
+  Icon: TablerIcon
 }> = [
   {
     kind: 'review',
@@ -113,7 +116,7 @@ const MIN_CHAT_WIDTH = 360
 const DESIGN_PREVIEW_TAB_ID = 'design-preview'
 const WORKSPACE_PANEL_CLOSE_FALLBACK_MS = 340
 
-export function WorkspacePanel(props: {
+function WorkspacePanelComponent(props: {
   open: boolean
   expanded: boolean
   width: number
@@ -135,6 +138,8 @@ export function WorkspacePanel(props: {
   terminalToggleRequest?: number | undefined
   providerLogin?: WorkspaceProviderLoginRequest | undefined
   onProviderLoginClose?: ((id: number) => void) | undefined
+  externalToolRequest?: { request: number; kind: WorkspaceTool } | undefined
+  designPreviewRequest?: BrowserNavigationRequest | undefined
 }) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
   const [activeId, setActiveId] = useState<string>()
@@ -152,6 +157,8 @@ export function WorkspacePanel(props: {
   const clearAfterClose = useRef(false)
   const providerLoginTabId = useRef<string | undefined>(undefined)
   const handledTerminalToggleRequest = useRef(0)
+  const handledExternalToolRequest = useRef(0)
+  const handledDesignPreviewRequest = useRef<string | undefined>(undefined)
   const nextTabId = useRef(1)
   openRef.current = props.open
   tabsRef.current = tabs
@@ -196,6 +203,13 @@ export function WorkspacePanel(props: {
     props.onOpen()
     setActiveId(terminal.id)
   }, [openTool, props.onOpen, props.open, props.terminalToggleRequest])
+
+  useEffect(() => {
+    const request = props.externalToolRequest
+    if (!request || request.request === handledExternalToolRequest.current) return
+    handledExternalToolRequest.current = request.request
+    openTool(request.kind)
+  }, [openTool, props.externalToolRequest])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -248,6 +262,7 @@ export function WorkspacePanel(props: {
         requestId: request.id,
         title: request.title,
         installKey: request.installKey,
+        showCodeInput: request.showCodeInput !== false,
       } as const,
     ]
     tabsRef.current = next
@@ -259,26 +274,24 @@ export function WorkspacePanel(props: {
     props.onOpen,
     props.providerLogin?.id,
     props.providerLogin?.installKey,
+    props.providerLogin?.showCodeInput,
     props.providerLogin?.title,
   ])
 
-  useEffect(
-    () =>
-      props.transport.on('preview.captureRequested', (value) => {
-        const request = PreviewCaptureRequestSchema.safeParse(value)
-        if (!request.success) return
-        clearAfterClose.current = false
-        props.onOpen()
-        setTabs((current) =>
-          current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
-            ? current
-            : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
-        )
-        setActiveId(DESIGN_PREVIEW_TAB_ID)
-        setDesignPreview({ requestId: request.data.requestId, url: request.data.url })
-      }),
-    [props.onOpen, props.transport],
-  )
+  useEffect(() => {
+    const request = props.designPreviewRequest
+    if (!request || handledDesignPreviewRequest.current === request.requestId) return
+    handledDesignPreviewRequest.current = request.requestId
+    clearAfterClose.current = false
+    props.onOpen()
+    setTabs((current) =>
+      current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
+        ? current
+        : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
+    )
+    setActiveId(DESIGN_PREVIEW_TAB_ID)
+    setDesignPreview(request)
+  }, [props.designPreviewRequest, props.onOpen])
 
   useEffect(() => {
     if (!addOpen) return
@@ -529,11 +542,10 @@ export function WorkspacePanel(props: {
             aria-pressed={props.expanded}
             onClick={() => props.onExpandedChange(!props.expanded)}
           >
-            {props.expanded ? (
-              <Minimize2 size={14} aria-hidden />
-            ) : (
+            <IconMorph active={props.expanded ? 1 : 0}>
               <Maximize2 size={14} aria-hidden />
-            )}
+              <Minimize2 size={14} aria-hidden />
+            </IconMorph>
           </button>
         </div>
       </header>
@@ -576,6 +588,9 @@ export function WorkspacePanel(props: {
   )
 }
 
+/** Keep the closed host subscribed without reconciling its full shell on unrelated app updates. */
+export const WorkspacePanel = memo(WorkspacePanelComponent)
+
 function WorkspaceToolSurface(props: {
   tab: WorkspaceTab
   active: boolean
@@ -600,7 +615,9 @@ function WorkspaceToolSurface(props: {
           ariaLabel={`${props.tab.title} terminal`}
           profile="workspace"
         />
-        <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
+        {props.tab.showCodeInput ? (
+          <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
+        ) : null}
       </div>
     )
   }
@@ -685,7 +702,7 @@ function ProviderLoginCodeInput(props: { transport: Transport; installKey: strin
   return (
     <form className="workspace-provider-login__code" onSubmit={submit}>
       <label className="visually-hidden" htmlFor={`${props.installKey}-code`}>
-        Claude login code
+        Login code
       </label>
       <input
         id={`${props.installKey}-code`}

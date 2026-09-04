@@ -31,7 +31,7 @@
   padding: 0 11px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   transition:
@@ -83,15 +83,15 @@
 }
 
 .keybind-row:first-child {
-  border-radius: calc(var(--r-card) - 1px) calc(var(--r-card) - 1px) 0 0;
+  border-radius: calc(var(--r-dialog) - 1px) calc(var(--r-dialog) - 1px) 0 0;
 }
 
 .keybind-row:last-child {
-  border-radius: 0 0 calc(var(--r-card) - 1px) calc(var(--r-card) - 1px);
+  border-radius: 0 0 calc(var(--r-dialog) - 1px) calc(var(--r-dialog) - 1px);
 }
 
 .keybind-row:only-child {
-  border-radius: calc(var(--r-card) - 1px);
+  border-radius: calc(var(--r-dialog) - 1px);
 }
 
 .keybind-row:hover,
@@ -118,7 +118,7 @@
   padding: 0;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-3);
   cursor: pointer;
   opacity: 0;
@@ -149,7 +149,7 @@
   padding: 5px 9px;
   background: var(--chrome-raised);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--chrome-shadow);
   color: var(--text-3);
   cursor: pointer;
@@ -208,7 +208,7 @@
   padding: 2px 6px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   color: var(--text-3);
 }
 

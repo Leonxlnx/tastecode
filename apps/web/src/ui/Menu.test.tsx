@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef } from 'react'
-import { Pencil } from 'lucide-react'
+import { IconPencil as Pencil } from '@tabler/icons-react'
 import { Menu, MenuItem } from './Menu.js'
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -19,15 +19,17 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   }
 }
 
-function ContextMenuHarness() {
+function ContextMenuHarness(props: { targetName?: string; menuLabel?: string }) {
   const target = useRef<HTMLButtonElement>(null)
+  const targetName = props.targetName ?? 'Project row'
+  const menuLabel = props.menuLabel ?? 'Project options'
 
   return (
     <>
-      <button ref={target}>Project row</button>
+      <button ref={target}>{targetName}</button>
       <Menu
         drop="down"
-        label="Project options"
+        label={menuLabel}
         contextMenuTargetRef={target}
         trigger={() => <span>Open</span>}
       >
@@ -62,6 +64,115 @@ afterEach(() => {
 })
 
 describe('Menu', () => {
+  it('shares one delegated listener set across dormant context menus', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener')
+    render(
+      <>
+        <ContextMenuHarness targetName="First row" menuLabel="First options" />
+        <ContextMenuHarness targetName="Second row" menuLabel="Second options" />
+      </>,
+    )
+
+    for (const eventName of ['contextmenu', 'pointerdown', 'keydown']) {
+      expect(addEventListener.mock.calls.filter(([type]) => type === eventName)).toHaveLength(1)
+    }
+  })
+
+  it('opens a context-only menu without mounting a dormant trigger', () => {
+    const target = { current: null as HTMLButtonElement | null }
+    render(
+      <>
+        <button
+          ref={(element) => {
+            target.current = element
+          }}
+        >
+          Chat row
+        </button>
+        <Menu drop="down" label="Chat options" contextMenuTargetRef={target} contextMenuOnly>
+          {(close) => (
+            <MenuItem title="Rename" icon={<Pencil size={14} aria-hidden />} onClick={close} />
+          )}
+        </Menu>
+      </>,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Chat options' })).toBeNull()
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Chat row' }), {
+      clientX: 120,
+      clientY: 80,
+    })
+    expect(screen.getByRole('menu', { name: 'Chat options' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('warms enabled triggers on pointer and focus before the menu opens', () => {
+    const onTriggerIntent = vi.fn()
+    render(
+      <Menu label="Models" onTriggerIntent={onTriggerIntent} trigger={() => <span>Open</span>}>
+        {() => <div>Model list</div>}
+      </Menu>,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Models' })
+    fireEvent.pointerEnter(trigger)
+    fireEvent.focus(trigger)
+
+    expect(onTriggerIntent).toHaveBeenCalledTimes(2)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('skips trigger warming for disabled and context-only menus', () => {
+    const disabledIntent = vi.fn()
+    const contextIntent = vi.fn()
+    const target = { current: null as HTMLButtonElement | null }
+
+    render(
+      <>
+        <Menu
+          label="Disabled models"
+          disabled
+          onTriggerIntent={disabledIntent}
+          trigger={() => <span>Open</span>}
+        >
+          {() => <div>Disabled</div>}
+        </Menu>
+        <button
+          ref={(element) => {
+            target.current = element
+          }}
+        >
+          Chat row
+        </button>
+        <Menu
+          drop="down"
+          label="Chat options"
+          onTriggerIntent={contextIntent}
+          contextMenuTargetRef={target}
+          contextMenuOnly
+        >
+          {(close) => (
+            <MenuItem title="Rename" icon={<Pencil size={14} aria-hidden />} onClick={close} />
+          )}
+        </Menu>
+      </>,
+    )
+
+    const disabled = screen.getByRole('button', { name: 'Disabled models' })
+    fireEvent.pointerEnter(disabled)
+    fireEvent.focus(disabled)
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Chat row' }), {
+      clientX: 120,
+      clientY: 80,
+    })
+
+    expect(disabledIntent).not.toHaveBeenCalled()
+    expect(contextIntent).not.toHaveBeenCalled()
+    expect(screen.getByRole('menu', { name: 'Chat options' })).toBeTruthy()
+  })
+
   it('escapes clipping containers and stays inside the viewport', () => {
     render(
       <div data-testid="clip">

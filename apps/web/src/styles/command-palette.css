@@ -1,0 +1,125 @@
+/* ---------- command palette ---------- */
+
+.command-palette {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: min(13vh, 104px) 16px 16px;
+}
+
+.command-palette__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  border: 0;
+  cursor: default;
+}
+
+.command-palette__panel {
+  position: relative;
+  width: min(560px, 100%);
+  overflow: hidden;
+  background: var(--bg-rail);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-dialog);
+  box-shadow: var(--chrome-shadow), var(--shadow-modal);
+}
+
+.command-palette__search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+  box-shadow: var(--chrome-inset-shadow);
+}
+
+.command-palette__search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-md);
+}
+
+.command-palette__search input::placeholder {
+  color: var(--text-3);
+}
+
+.command-palette__results {
+  max-height: min(360px, calc(100vh - 200px));
+  overflow-y: auto;
+  padding: 9px;
+}
+
+.command-palette__group {
+  margin: 6px 0 2px;
+  padding: 0 8px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.command-palette__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-popup-item);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.command-palette__item:hover,
+.command-palette__item:focus-visible,
+.command-palette__item.is-selected {
+  background: var(--menu-hover);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-shadow);
+  outline: 0;
+}
+
+.command-palette__copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.command-palette__name,
+.command-palette__detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette__name {
+  font-size: var(--t-md);
+}
+
+.command-palette__detail {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.command-palette__empty {
+  margin: 0;
+  padding: 24px 10px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  text-align: center;
+}

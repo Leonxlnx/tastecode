@@ -48,7 +48,7 @@
   gap: 9px;
   padding: 7px 10px;
   border: 1px solid color-mix(in srgb, var(--line-strong) 68%, transparent);
-  border-radius: var(--r-popup-item);
+  border-radius: var(--r-card);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--surface-3) 50%, transparent),
@@ -191,7 +191,7 @@
   min-height: 32px;
   padding: 6px 11px;
   border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--surface-3) 58%, transparent),
@@ -252,9 +252,7 @@
 .brief-input__spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid var(--line-strong);
-  border-top-color: var(--text);
-  border-radius: var(--r-circle);
+  color: var(--text);
   animation: brief-spin 700ms linear infinite;
 }
 

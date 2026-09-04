@@ -36,6 +36,7 @@ function panelProps() {
     projectPath: 'C:\\workspace',
     terminalOpen: false,
     workspacePanelOpen: false,
+    onPrepareTerminal: vi.fn(),
     onToggleWorkspace: vi.fn(),
     onToggleTerminal: vi.fn(),
   }
@@ -60,6 +61,7 @@ describe('StageHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Options for Build the landing page' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
     const rename = screen.getByRole('textbox', { name: 'Rename chat' })
+    expect(rename.classList.contains('rename--chat')).toBe(true)
     fireEvent.change(rename, { target: { value: 'Polished landing page' } })
     fireEvent.keyDown(rename, { key: 'Enter' })
     expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Polished landing page')
@@ -109,8 +111,14 @@ describe('PanelToggles', () => {
     const terminal = screen.getByRole('button', { name: 'Open terminal' })
     const workspace = screen.getByRole('button', { name: 'Show workspace tools' })
 
-    expect(terminal.querySelector('.lucide-square-terminal')).not.toBeNull()
-    expect(workspace.querySelector('.lucide-panel-right-open')).not.toBeNull()
+    expect(panels.onPrepareTerminal).not.toHaveBeenCalled()
+    fireEvent.pointerEnter(terminal)
+    expect(panels.onPrepareTerminal).toHaveBeenCalledOnce()
+    expect(terminal.querySelector('.tabler-icon-terminal-2')).not.toBeNull()
+    expect(workspace.querySelector('.tabler-icon-layout-sidebar-right-expand')).not.toBeNull()
+    const workspaceLayers = workspace.querySelectorAll('.icon-morph__layer')
+    expect(workspaceLayers).toHaveLength(2)
+    expect(workspaceLayers[0]?.hasAttribute('data-active')).toBe(true)
     fireEvent.click(terminal)
     fireEvent.click(workspace)
     expect(panels.onToggleTerminal).toHaveBeenCalledOnce()
@@ -120,8 +128,10 @@ describe('PanelToggles', () => {
 
     expect(screen.getByRole('button', { name: 'Hide terminal' })).toBe(terminal)
     expect(screen.getByRole('button', { name: 'Hide workspace tools' })).toBe(workspace)
-    expect(terminal.querySelector('.lucide-square-terminal')).not.toBeNull()
-    expect(workspace.querySelector('.lucide-panel-right-close')).not.toBeNull()
+    expect(terminal.querySelector('.tabler-icon-terminal-2')).not.toBeNull()
+    expect(workspace.querySelector('.tabler-icon-layout-sidebar-right-collapse')).not.toBeNull()
+    expect(workspaceLayers[0]?.hasAttribute('data-active')).toBe(false)
+    expect(workspaceLayers[1]?.hasAttribute('data-active')).toBe(true)
     expect(workspace.closest('.panel-toggles')?.classList).toContain('is-workspace-open')
   })
 

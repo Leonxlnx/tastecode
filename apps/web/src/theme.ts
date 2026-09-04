@@ -1,6 +1,8 @@
-export type Theme = 'dark' | 'light'
+export type Theme = 'dark' | 'light' | 'codex'
+export type ThemeColorScheme = 'dark' | 'light'
 export type ThemePreference = Theme | 'system'
-export type FontPreference = 'geist' | 'system' | 'humanist' | 'rounded' | 'serif' | 'mono'
+export type FontPreference =
+  'geist' | 'inter' | 'system' | 'humanist' | 'rounded' | 'serif' | 'mono'
 export type AccentPreference =
   'neutral' | 'ocean' | 'forest' | 'sunset' | 'amber' | 'rose' | 'lavender'
 
@@ -28,10 +30,12 @@ export const DARK_THEME_QUERY = '(prefers-color-scheme: dark)'
 
 export function readThemePreference(): ThemePreference {
   const stored = readStored(THEME_KEY)
-  return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system'
+  return stored === 'dark' || stored === 'light' || stored === 'codex' || stored === 'system'
+    ? stored
+    : 'system'
 }
 
-export function readSystemTheme(): Theme {
+export function readSystemTheme(): ThemeColorScheme {
   return (globalThis.matchMedia?.(DARK_THEME_QUERY).matches ?? true) ? 'dark' : 'light'
 }
 
@@ -39,14 +43,19 @@ export function resolveTheme(preference: ThemePreference): Theme {
   return preference === 'system' ? readSystemTheme() : preference
 }
 
+export function colorSchemeForTheme(theme: Theme): ThemeColorScheme {
+  return theme === 'light' ? 'light' : 'dark'
+}
+
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme
-  document.documentElement.classList.toggle('dark', theme === 'dark')
+  document.documentElement.classList.toggle('dark', colorSchemeForTheme(theme) === 'dark')
 }
 
 export function readFontPreference(): FontPreference {
   const stored = readStored(FONT_KEY)
-  return stored === 'system' ||
+  return stored === 'inter' ||
+    stored === 'system' ||
     stored === 'humanist' ||
     stored === 'rounded' ||
     stored === 'serif' ||

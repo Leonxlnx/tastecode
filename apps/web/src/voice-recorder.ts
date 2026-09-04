@@ -1,21 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 
-export const VOICE_SAMPLE_RATE = 24_000
+export type { VoiceRecording } from './voice-capability.js'
+
+const VOICE_SAMPLE_RATE = 24_000
 export const MAX_RECORDING_MS = 120_000
 const BUFFER_SIZE = 4_096
 const MAX_WAVEFORM_LEVELS = 160
 const WAVEFORM_EMIT_INTERVAL_MS = 45
-
-export type VoiceRecording = {
-  audioBase64: string
-  mimeType: 'audio/wav'
-  sampleRateHz: 24_000
-  durationMs: number
-}
-
-export function canCaptureVoice(): boolean {
-  return navigator.mediaDevices !== undefined && 'AudioContext' in globalThis
-}
 
 type RecorderRuntime = {
   audioContext: AudioContext

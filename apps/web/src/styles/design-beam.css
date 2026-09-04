@@ -1,0 +1,264 @@
+/* Focused port of border-beam's two Composer variants. Static selectors avoid
+   per-instance style tags, observers, and media-query listeners while keeping
+   the same gradients, timing, masks, and fade behavior. */
+@property --composer-design-beam-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: true;
+}
+
+@property --composer-design-beam-opacity {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: true;
+}
+
+:is(.composer__design-beam, .composer__design-button-beam) {
+  position: relative;
+  overflow: hidden;
+}
+
+.composer__design-beam {
+  --design-beam-radius: var(--r-2xl);
+  --design-beam-inner-radius: calc(var(--r-2xl) - 1px);
+  --design-beam-stroke: 0.26;
+  --design-beam-inner: 0.42;
+  --design-beam-bloom: 0.24;
+  --design-beam-brightness: 1.7;
+  --design-beam-saturation: 1.2;
+  --design-beam-inner-shadow: inset 0 0 9px 1px rgb(255 255 255 / 27%);
+  --design-beam-border-gradients:
+    radial-gradient(ellipse 70px 40px at 33% -7.4%, rgb(255 50 100), transparent),
+    radial-gradient(ellipse 60px 35px at 12% -5%, rgb(40 140 255), transparent),
+    radial-gradient(ellipse 40px 70px at 2.1% 68.3%, rgb(50 200 80), transparent),
+    radial-gradient(ellipse 20px 35px at 2.1% 68.3%, rgb(30 185 170), transparent),
+    radial-gradient(ellipse 180px 32px at 74.4% 100%, rgb(100 70 255), transparent),
+    radial-gradient(ellipse 85px 26px at 55% 100%, rgb(40 140 255), transparent),
+    radial-gradient(ellipse 74px 32px at 93.9% 0%, rgb(255 120 40), transparent),
+    radial-gradient(ellipse 26px 42px at 100% 27.1%, rgb(240 50 180), transparent),
+    radial-gradient(ellipse 52px 48px at 100% 27.1%, rgb(180 40 240), transparent);
+  --design-beam-inner-gradients:
+    radial-gradient(ellipse 63px 36px at 33% -7.4%, rgb(255 50 100 / 45%), transparent),
+    radial-gradient(ellipse 54px 32px at 12% -5%, rgb(40 140 255 / 45%), transparent),
+    radial-gradient(ellipse 36px 63px at 2.1% 68.3%, rgb(50 200 80 / 45%), transparent),
+    radial-gradient(ellipse 18px 32px at 2.1% 68.3%, rgb(30 185 170 / 45%), transparent),
+    radial-gradient(ellipse 162px 29px at 74.4% 100%, rgb(100 70 255 / 45%), transparent),
+    radial-gradient(ellipse 77px 23px at 55% 100%, rgb(40 140 255 / 45%), transparent),
+    radial-gradient(ellipse 67px 29px at 93.9% 0%, rgb(255 120 40 / 45%), transparent),
+    radial-gradient(ellipse 23px 38px at 100% 27.1%, rgb(240 50 180 / 45%), transparent),
+    radial-gradient(ellipse 47px 43px at 100% 27.1%, rgb(180 40 240 / 45%), transparent);
+}
+
+.composer__design-button-beam {
+  /* Follow the real control corner instead of the old pill preset. A larger
+     mask curves inward too early and leaves a rough second edge in the button. */
+  --design-beam-radius: var(--r-xl);
+  --design-beam-inner-radius: calc(var(--r-xl) - 1px);
+  --design-beam-stroke: 0.46;
+  --design-beam-inner: 0.24;
+  --design-beam-bloom: 0.38;
+  --design-beam-brightness: 1.3;
+  --design-beam-saturation: 1.2;
+  --design-beam-inner-shadow: inset 0 0 5px 1px rgb(255 255 255 / 30%);
+  --design-beam-border-gradients:
+    radial-gradient(ellipse 9px 18px at 2% 68%, rgb(50 200 80), transparent),
+    radial-gradient(ellipse 4px 8px at 2% 68%, rgb(30 185 170), transparent),
+    radial-gradient(ellipse 59px 9px at 72% -3%, rgb(255 120 40), transparent),
+    radial-gradient(ellipse 42px 7px at 74% 100%, rgb(100 70 255), transparent),
+    radial-gradient(ellipse 10px 17px at 100% 27%, rgb(240 50 180), transparent),
+    radial-gradient(ellipse 10px 18px at 100% 27%, rgb(180 40 240), transparent),
+    radial-gradient(ellipse 5px 10px at 100% 27%, rgb(40 140 255), transparent),
+    radial-gradient(ellipse 11px 12px at 100% 27%, rgb(255 50 100), transparent);
+  --design-beam-inner-gradients:
+    radial-gradient(ellipse 9px 18px at 2% 68%, rgb(50 200 80 / 50%), transparent),
+    radial-gradient(ellipse 4px 8px at 2% 68%, rgb(30 185 170 / 45%), transparent),
+    radial-gradient(ellipse 59px 9px at 72% -3%, rgb(255 120 40 / 35%), transparent),
+    radial-gradient(ellipse 42px 7px at 74% 100%, rgb(100 70 255 / 35%), transparent),
+    radial-gradient(ellipse 10px 17px at 100% 27%, rgb(240 50 180 / 30%), transparent),
+    radial-gradient(ellipse 10px 18px at 100% 27%, rgb(180 40 240 / 40%), transparent),
+    radial-gradient(ellipse 5px 10px at 100% 27%, rgb(40 140 255 / 30%), transparent),
+    radial-gradient(ellipse 11px 12px at 100% 27%, rgb(255 50 100 / 30%), transparent);
+}
+
+:is(.composer__design-beam, .composer__design-button-beam)[data-active] {
+  animation:
+    composer-design-beam-spin 2.4s linear infinite,
+    composer-design-beam-fade-in 0.6s ease forwards;
+}
+
+:is(.composer__design-beam, .composer__design-button-beam)[data-fading] {
+  animation:
+    composer-design-beam-spin 2.4s linear infinite,
+    composer-design-beam-fade-out 0.5s ease forwards;
+}
+
+:is(.composer__design-beam, .composer__design-button-beam):is([data-active], [data-fading])::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  padding: 1px;
+  border-radius: var(--design-beam-inner-radius);
+  background:
+    conic-gradient(
+      from var(--composer-design-beam-angle),
+      transparent 0%,
+      transparent 54%,
+      rgb(255 255 255 / 10%) 57%,
+      rgb(255 255 255 / 30%) 60%,
+      rgb(255 255 255 / 60%) 63%,
+      rgb(255 255 255 / 75%) 66%,
+      rgb(255 255 255 / 60%) 69%,
+      rgb(255 255 255 / 30%) 72%,
+      rgb(255 255 255 / 10%) 75%,
+      transparent 78%,
+      transparent 100%
+    ),
+    var(--design-beam-border-gradients);
+  clip-path: inset(0 round var(--design-beam-radius));
+  content: '';
+  filter: hue-rotate(calc(var(--beam-hue-base, 0deg) - 30deg))
+    brightness(var(--design-beam-brightness)) saturate(var(--design-beam-saturation));
+  mask:
+    conic-gradient(
+      from var(--composer-design-beam-angle),
+      transparent 0%,
+      transparent 30%,
+      rgb(255 255 255 / 10%) 36%,
+      rgb(255 255 255 / 35%) 44%,
+      white 52%,
+      white 80%,
+      rgb(255 255 255 / 35%) 86%,
+      rgb(255 255 255 / 10%) 92%,
+      transparent 95%,
+      transparent 100%
+    ),
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: intersect, exclude;
+  opacity: calc(
+    var(--composer-design-beam-opacity) * var(--design-beam-stroke) *
+      var(--beam-stroke-opacity, 1) * var(--beam-strength, 1)
+  );
+  pointer-events: none;
+}
+
+:is(.composer__design-beam, .composer__design-button-beam):is(
+    [data-active],
+    [data-fading]
+  )::before {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: var(--design-beam-radius);
+  background: var(--design-beam-inner-gradients);
+  box-shadow: var(--design-beam-inner-shadow);
+  clip-path: inset(0 round var(--design-beam-radius));
+  content: '';
+  filter: hue-rotate(calc(var(--beam-hue-base, 0deg) - 30deg))
+    brightness(var(--design-beam-brightness)) saturate(var(--design-beam-saturation));
+  opacity: calc(
+    var(--composer-design-beam-opacity) * var(--design-beam-inner) * var(--beam-inner-opacity, 1) *
+      var(--beam-strength, 1)
+  );
+  pointer-events: none;
+}
+
+.composer__design-beam:is([data-active], [data-fading])::before {
+  mask-image:
+    conic-gradient(
+      from var(--composer-design-beam-angle),
+      transparent 0%,
+      transparent 30%,
+      rgb(255 255 255 / 10%) 36%,
+      rgb(255 255 255 / 35%) 44%,
+      white 52%,
+      white 80%,
+      rgb(255 255 255 / 35%) 86%,
+      rgb(255 255 255 / 10%) 92%,
+      transparent 95%,
+      transparent 100%
+    ),
+    linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+    linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+  mask-composite: intersect, add;
+}
+
+.composer__design-button-beam:is([data-active], [data-fading])::before {
+  mask-image: conic-gradient(
+    from var(--composer-design-beam-angle),
+    transparent 0%,
+    transparent 22%,
+    rgb(255 255 255 / 12%) 28%,
+    rgb(255 255 255 / 40%) 36%,
+    white 46%,
+    white 82%,
+    rgb(255 255 255 / 40%) 88%,
+    rgb(255 255 255 / 12%) 94%,
+    transparent 97%,
+    transparent 100%
+  );
+}
+
+:is(.composer__design-beam, .composer__design-button-beam) [data-beam-bloom] {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: none;
+  padding: 1px;
+  border-radius: var(--design-beam-inner-radius);
+  background: conic-gradient(
+    from var(--composer-design-beam-angle),
+    transparent 0%,
+    transparent 58%,
+    rgb(255 255 255 / 3%) 62%,
+    rgb(255 255 255 / 8%) 65%,
+    rgb(255 255 255 / 20%) 67%,
+    rgb(255 255 255 / 45%) 69%,
+    rgb(255 255 255 / 85%) 70%,
+    rgb(255 255 255 / 85%) 70.5%,
+    rgb(255 255 255 / 45%) 71.5%,
+    rgb(255 255 255 / 20%) 73%,
+    rgb(255 255 255 / 8%) 75%,
+    rgb(255 255 255 / 3%) 78%,
+    transparent 82%
+  );
+  clip-path: inset(0 round var(--design-beam-radius));
+  filter: blur(8px) brightness(var(--design-beam-brightness))
+    saturate(var(--design-beam-saturation));
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: calc(
+    var(--composer-design-beam-opacity) * var(--design-beam-bloom) * var(--beam-bloom-opacity, 1) *
+      var(--beam-strength, 1)
+  );
+  pointer-events: none;
+}
+
+:is(.composer__design-beam, .composer__design-button-beam):is([data-active], [data-fading])
+  [data-beam-bloom] {
+  display: block;
+}
+
+@keyframes composer-design-beam-spin {
+  to {
+    --composer-design-beam-angle: 360deg;
+  }
+}
+
+@keyframes composer-design-beam-fade-in {
+  to {
+    --composer-design-beam-opacity: 1;
+  }
+}
+
+@keyframes composer-design-beam-fade-out {
+  from {
+    --composer-design-beam-opacity: 1;
+  }
+
+  to {
+    --composer-design-beam-opacity: 0;
+  }
+}

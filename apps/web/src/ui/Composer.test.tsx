@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
-import { Composer } from './Composer.js'
+import { Composer, composerResourceTriggerAt } from './Composer.js'
 
 const bridge = vi.hoisted(() => ({
   pickFiles: vi.fn(),
@@ -11,6 +11,7 @@ const bridge = vi.hoisted(() => ({
   revealPath: vi.fn(),
   savePastedFile: vi.fn(),
 }))
+const preloadThread = vi.hoisted(() => vi.fn())
 
 vi.mock('../bridge.js', () => ({
   pickFiles: bridge.pickFiles,
@@ -18,6 +19,21 @@ vi.mock('../bridge.js', () => ({
   revealPath: bridge.revealPath,
   savePastedFile: bridge.savePastedFile,
 }))
+vi.mock('./LazyThread.js', () => ({ preloadThread }))
+
+function legacyComposerResourceTriggerAt(text: string, cursor: number) {
+  const beforeCursor = text.slice(0, cursor)
+  const match = /(^|[\s([{])([/$@])([\w.:-]*)$/.exec(beforeCursor)
+  if (!match) return undefined
+  const marker = match[2]
+  if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
+  const query = match[3] ?? ''
+  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  const start = cursor - query.length - 1
+  let end = cursor
+  while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
+  return { marker, query, start, end }
+}
 
 beforeEach(() => {
   bridge.pickFiles.mockResolvedValue([])
@@ -38,8 +54,96 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
   vi.clearAllMocks()
+})
+
+describe('composer resource triggers', () => {
+  it('finds each supported marker and its complete token', () => {
+    expect(composerResourceTriggerAt('@skill', 6)).toEqual({
+      marker: '@',
+      query: 'skill',
+      start: 0,
+      end: 6,
+    })
+    expect(composerResourceTriggerAt('Use ($server.foo:bar-baz)', 24)).toEqual({
+      marker: '$',
+      query: 'server.foo:bar-baz',
+      start: 5,
+      end: 24,
+    })
+    expect(composerResourceTriggerAt('Run /command-name', 17)).toEqual({
+      marker: '/',
+      query: 'command-name',
+      start: 4,
+      end: 17,
+    })
+  })
+
+  it('extends the replacement range past a cursor inside the token', () => {
+    expect(composerResourceTriggerAt('Ask @skill-more now', 10)).toEqual({
+      marker: '@',
+      query: 'skill',
+      start: 4,
+      end: 15,
+    })
+  })
+
+  it('rejects embedded markers and reserved slash commands', () => {
+    expect(composerResourceTriggerAt('email@example.com', 17)).toBeUndefined()
+    expect(composerResourceTriggerAt('Run /side', 9)).toBeUndefined()
+    expect(composerResourceTriggerAt('Run /btw', 8)).toBeUndefined()
+  })
+
+  it('preserves resource names longer than the fast scan window', () => {
+    const query = 'x'.repeat(300)
+    expect(composerResourceTriggerAt(`@${query}`, query.length + 1)).toEqual({
+      marker: '@',
+      query,
+      start: 0,
+      end: query.length + 1,
+    })
+  })
+
+  it('matches the previous parser across token boundaries and cursor positions', () => {
+    const prefixes = ['', ' ', '\t', '(', '[', '{', 'a', '.', ')']
+    const markers = ['/', '$', '@']
+    const queries = ['', 'a', 'side', 'btw', 'foo.bar', 'foo-bar', 'foo:bar', 'foo/bar', 'é']
+    const suffixes = ['', ' rest', '-tail', ')']
+    for (const prefix of prefixes) {
+      for (const marker of markers) {
+        for (const query of queries) {
+          for (const suffix of suffixes) {
+            const text = `${prefix}${marker}${query}${suffix}`
+            for (let cursor = 0; cursor <= text.length; cursor += 1) {
+              expect(composerResourceTriggerAt(text, cursor)).toEqual(
+                legacyComposerResourceTriggerAt(text, cursor),
+              )
+            }
+          }
+        }
+      }
+    }
+  })
+})
+
+describe('Composer draft state', () => {
+  it('keeps the native draft through unrelated rerenders and submits the latest text', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend)
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '   \n' } })
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(composer, { target: { value: 'Keep this native draft' } })
+    view.rerenderComposer({ approval: 'auto' })
+
+    expect(composer.value).toBe('Keep this native draft')
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('Keep this native draft', [])
+    expect(composer.value).toBe('')
+  })
 })
 
 describe('Composer docking motion', () => {
@@ -134,7 +238,7 @@ describe('Composer media attachments', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:pasted-image')
   })
 
-  it('opens a zoomable, downloadable viewer and closes it with Escape', () => {
+  it('opens a zoomable, downloadable viewer and closes it with Escape', async () => {
     renderComposer(vi.fn())
     const composer = screen.getByPlaceholderText('Do anything')
     const image = new File(['image bytes'], 'Screenshot.png', { type: 'image/png' })
@@ -144,7 +248,7 @@ describe('Composer media attachments', () => {
     open.focus()
     fireEvent.click(open)
 
-    expect(screen.getByRole('dialog', { name: 'Preview Screenshot.png' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Preview Screenshot.png' })).toBeTruthy()
     expect(screen.getByRole('img', { name: 'Screenshot.png' })).toBeTruthy()
     const download = screen.getByRole('link', { name: 'Download image' })
     expect(download.getAttribute('href')).toBe('blob:pasted-image')
@@ -204,7 +308,7 @@ describe('Composer media attachments', () => {
       open.focus()
       fireEvent.click(open)
 
-      expect(screen.getByRole('dialog', { name: `Preview ${name}` })).toBeTruthy()
+      expect(await screen.findByRole('dialog', { name: `Preview ${name}` })).toBeTruthy()
       fireEvent.click(screen.getByRole('button', { name: 'Show in folder' }))
       expect(bridge.revealPath).toHaveBeenCalledWith(path)
       if (mediaType === 'image') {
@@ -250,7 +354,7 @@ describe('Composer media attachments', () => {
     )
     fireEvent.click(open)
 
-    expect(screen.getByRole('dialog', { name: 'Preview walkthrough.mp4' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Preview walkthrough.mp4' })).toBeTruthy()
     const player = screen.getByLabelText('walkthrough.mp4') as HTMLVideoElement
     expect(player.tagName).toBe('VIDEO')
     expect(player.hasAttribute('controls')).toBe(false)
@@ -319,7 +423,7 @@ describe('Composer send handoff', () => {
 
     expect(onSend).toHaveBeenCalledWith('Ship this', [])
     const stop = screen.getByRole('button', { name: 'Stop' })
-    expect(stop.querySelector('.lucide-loader-circle')).toBeNull()
+    expect(stop.querySelector('.tabler-icon-loader-2')).toBeNull()
     expect(stop.closest('.composer__send-beam')?.hasAttribute('data-active')).toBe(false)
   })
 })
@@ -376,7 +480,7 @@ describe('Composer queue', () => {
     ).toBeNull()
 
     fireEvent.click(queuedPreview)
-    expect(screen.getByRole('dialog', { name: 'Preview reference.png' })).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: 'Preview reference.png' })).toBeTruthy()
     fireEvent.keyDown(window, { key: 'Escape' })
     fireEvent.click(screen.getByRole('button', { name: 'Edit Use these references' }))
 
@@ -392,6 +496,236 @@ describe('Composer queue', () => {
     expect(screen.queryByText('walkthrough.mp4')).toBeNull()
     expect(screen.getByText('notes.txt')).toBeTruthy()
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-media')
+  })
+
+  it('FLIPs queue reorders with transform-only motion', async () => {
+    const animate = vi.fn(() => ({ cancel: vi.fn(), finished: new Promise<void>(() => undefined) }))
+    const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+    Object.defineProperty(Element.prototype, 'animate', {
+      configurable: true,
+      writable: true,
+      value: animate,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('composer__queue')) return queueRect(0, 44)
+      const rows = Array.from(this.parentElement?.querySelectorAll('.queue-row') ?? [])
+      const index = rows.indexOf(this)
+      return queueRect(Math.max(0, index) * 22)
+    })
+
+    try {
+      const view = renderComposer(vi.fn(), {
+        newSession: false,
+        queuedTurns: [
+          {
+            id: 'queued-1',
+            text: 'First prompt',
+            attachments: [],
+            createdAt: 1,
+          },
+          {
+            id: 'queued-2',
+            text: 'Second prompt',
+            attachments: [],
+            createdAt: 2,
+          },
+        ],
+      })
+
+      view.rerenderComposer({
+        queuedTurns: [
+          {
+            id: 'queued-2',
+            text: 'Second prompt',
+            attachments: [],
+            createdAt: 2,
+          },
+          {
+            id: 'queued-1',
+            text: 'First prompt',
+            attachments: [],
+            createdAt: 1,
+          },
+        ],
+      })
+
+      await waitFor(() => expect(animate).toHaveBeenCalledTimes(2))
+      expect(animate).toHaveBeenNthCalledWith(
+        1,
+        [{ transform: 'translate3d(0px, 22px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
+        { duration: 180, easing: 'cubic-bezier(0.77, 0, 0.175, 1)' },
+      )
+      expect(animate).toHaveBeenNthCalledWith(
+        2,
+        [{ transform: 'translate3d(0px, -22px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
+        { duration: 180, easing: 'cubic-bezier(0.77, 0, 0.175, 1)' },
+      )
+    } finally {
+      if (originalAnimate) {
+        Object.defineProperty(Element.prototype, 'animate', originalAnimate)
+      } else {
+        Reflect.deleteProperty(Element.prototype, 'animate')
+      }
+    }
+  })
+
+  it('does not interrupt an entering row with a second transform animation', async () => {
+    const animate = vi.fn(() => ({ cancel: vi.fn(), finished: new Promise<void>(() => undefined) }))
+    const originalAnimate = Object.getOwnPropertyDescriptor(Element.prototype, 'animate')
+    Object.defineProperty(Element.prototype, 'animate', {
+      configurable: true,
+      writable: true,
+      value: animate,
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('composer__queue')) {
+        return queueRect(0, this.querySelectorAll('.queue-row').length * 22)
+      }
+      const rows = Array.from(this.parentElement?.querySelectorAll('.queue-row') ?? [])
+      return queueRect(Math.max(0, rows.indexOf(this)) * 22)
+    })
+
+    try {
+      const first = {
+        id: 'queued-1',
+        text: 'First prompt',
+        attachments: [],
+        createdAt: 1,
+      }
+      const second = {
+        id: 'queued-2',
+        text: 'Second prompt',
+        attachments: [],
+        createdAt: 2,
+      }
+      const view = renderComposer(vi.fn(), { newSession: false, queuedTurns: [] })
+
+      view.rerenderComposer({ queuedTurns: [first] })
+      expect(
+        screen.getByText('First prompt').closest('.queue-row')?.getAttribute('data-queue-phase'),
+      ).toBe('entering')
+      view.rerenderComposer({ queuedTurns: [first, second] })
+
+      await waitFor(() => expect(animate).toHaveBeenCalledOnce())
+      expect(animate).toHaveBeenCalledWith([{ height: '22px' }, { height: '44px' }], {
+        duration: 180,
+        easing: 'cubic-bezier(0.77, 0, 0.175, 1)',
+      })
+    } finally {
+      if (originalAnimate) {
+        Object.defineProperty(Element.prototype, 'animate', originalAnimate)
+      } else {
+        Reflect.deleteProperty(Element.prototype, 'animate')
+      }
+    }
+  })
+
+  it('keeps removed rows mounted while they fade and closes the gap around them', () => {
+    const first = {
+      id: 'queued-1',
+      text: 'First prompt',
+      attachments: [],
+      createdAt: 1,
+    }
+    const second = {
+      id: 'queued-2',
+      text: 'Second prompt',
+      attachments: [],
+      createdAt: 2,
+    }
+    const view = renderComposer(vi.fn(), {
+      newSession: false,
+      queuedTurns: [first, second],
+    })
+
+    view.rerenderComposer({ queuedTurns: [second] })
+
+    const exiting = screen.getByText('First prompt').closest('.queue-row')!
+    expect(exiting.getAttribute('data-queue-phase')).toBe('exiting')
+    expect(exiting.hasAttribute('inert')).toBe(true)
+    expect(
+      screen.getByText('Second prompt').closest('.queue-row')?.getAttribute('data-queue-phase'),
+    ).toBe('present')
+
+    fireEvent.animationEnd(exiting)
+
+    expect(screen.queryByText('First prompt')).toBeNull()
+    expect(screen.getByLabelText('Queued prompts')).toBeTruthy()
+  })
+
+  it('finishes an exit after another queue update interrupts the layout motion', () => {
+    const first = {
+      id: 'queued-1',
+      text: 'First prompt',
+      attachments: [],
+      createdAt: 1,
+    }
+    const second = {
+      id: 'queued-2',
+      text: 'Second prompt',
+      attachments: [],
+      createdAt: 2,
+    }
+    const third = {
+      id: 'queued-3',
+      text: 'Third prompt',
+      attachments: [],
+      createdAt: 3,
+    }
+    const view = renderComposer(vi.fn(), {
+      newSession: false,
+      queuedTurns: [first, second],
+    })
+
+    view.rerenderComposer({ queuedTurns: [second] })
+    const exiting = screen.getByText('First prompt').closest('.queue-row')!
+    expect(exiting.getAttribute('data-queue-phase')).toBe('exiting')
+
+    view.rerenderComposer({ queuedTurns: [second, third] })
+    expect(exiting.getAttribute('data-queue-phase')).toBe('exiting')
+    expect(
+      screen.getByText('Third prompt').closest('.queue-row')?.getAttribute('data-queue-phase'),
+    ).toBe('entering')
+
+    fireEvent.animationEnd(exiting)
+
+    expect(screen.queryByText('First prompt')).toBeNull()
+    expect(screen.getByText('Second prompt')).toBeTruthy()
+    expect(screen.getByText('Third prompt')).toBeTruthy()
+  })
+
+  it('marks only newly queued rows as entering', () => {
+    const first = {
+      id: 'queued-1',
+      text: 'First prompt',
+      attachments: [],
+      createdAt: 1,
+    }
+    const second = {
+      id: 'queued-2',
+      text: 'Second prompt',
+      attachments: [],
+      createdAt: 2,
+    }
+    const view = renderComposer(vi.fn(), {
+      newSession: false,
+      queuedTurns: [first],
+    })
+
+    view.rerenderComposer({ queuedTurns: [first, second] })
+
+    expect(
+      screen.getByText('First prompt').closest('.queue-row')?.getAttribute('data-queue-phase'),
+    ).toBe('present')
+    const entering = screen.getByText('Second prompt').closest('.queue-row')!
+    expect(entering.getAttribute('data-queue-phase')).toBe('entering')
+
+    fireEvent.animationEnd(entering)
+    expect(entering.getAttribute('data-queue-phase')).toBe('present')
   })
 
   it('changes Stop to Queue when a running session has a draft and Enter queues it', () => {
@@ -686,8 +1020,8 @@ describe('Composer permissions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
     const autoApprove = screen.getByRole('menuitem', { name: /Auto-approve/ })
     const autoReview = screen.getByRole('menuitem', { name: /Auto-review/ })
-    expect(autoApprove.querySelector('.lucide-shield-check')).toBeTruthy()
-    expect(autoReview.querySelector('.lucide-scan-eye')).toBeTruthy()
+    expect(autoApprove.querySelector('.tabler-icon-shield-check')).toBeTruthy()
+    expect(autoReview.querySelector('.tabler-icon-scan-eye')).toBeTruthy()
     expect(autoReview.classList.contains('composer__permission-option--auto-review')).toBe(true)
     expect(
       screen
@@ -731,6 +1065,10 @@ describe('Composer Design mode', () => {
     expect(design.getAttribute('aria-pressed')).toBe('false')
     expect(design.closest('.composer__design-beam')?.hasAttribute('data-active')).toBe(false)
     expect(design.closest('.composer__design-button-beam')?.hasAttribute('data-active')).toBe(false)
+    expect(design.closest('.composer__design-beam')?.querySelector('[data-beam-bloom]')).toBeNull()
+    expect(
+      design.closest('.composer__design-button-beam')?.querySelector('[data-beam-bloom]'),
+    ).toBeNull()
     fireEvent.click(design)
     expect(onDesignModeChange).toHaveBeenCalledWith(true)
 
@@ -742,6 +1080,12 @@ describe('Composer Design mode', () => {
     expect(activeDesign.closest('.composer__design-button-beam')?.hasAttribute('data-active')).toBe(
       true,
     )
+    expect(
+      activeDesign.closest('.composer__design-beam')?.querySelector('[data-beam-bloom]'),
+    ).toBeTruthy()
+    expect(
+      activeDesign.closest('.composer__design-button-beam')?.querySelector('[data-beam-bloom]'),
+    ).toBeTruthy()
   })
 })
 
@@ -767,27 +1111,160 @@ describe('Composer project requirement', () => {
 })
 
 describe('Composer height', () => {
-  it('starts at two lines and scrolls only after ten lines', async () => {
+  it('skips capped insertion layout reads but still shrinks after deletion', async () => {
     renderComposer(vi.fn())
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     let contentHeight = 120
-    Object.defineProperty(composer, 'offsetHeight', { configurable: true, value: 68 })
+    let layoutReads = 0
+    Object.defineProperty(composer, 'offsetHeight', {
+      configurable: true,
+      get: () => {
+        layoutReads += 1
+        return Number.parseInt(composer.style.height, 10) || 40
+      },
+    })
     Object.defineProperty(composer, 'scrollHeight', {
       configurable: true,
-      get: () => contentHeight,
+      get: () => {
+        layoutReads += 1
+        return contentHeight
+      },
     })
 
-    expect(composer.getAttribute('rows')).toBe('2')
+    expect(composer.getAttribute('rows')).toBe('1')
     fireEvent.change(composer, { target: { value: 'one\ntwo\nthree' } })
     await waitFor(() => expect(composer.style.height).toBe('120px'))
     expect(composer.style.overflowY).toBe('hidden')
 
     contentHeight = 300
+    const cappedText = Array.from({ length: 11 }, () => 'line').join('\n')
     fireEvent.change(composer, {
-      target: { value: Array.from({ length: 11 }, () => 'line').join('\n') },
+      target: { value: cappedText },
     })
     await waitFor(() => expect(composer.style.height).toBe('242px'))
     expect(composer.style.overflowY).toBe('auto')
+
+    const readsAtCap = layoutReads
+    fireEvent.input(composer, {
+      target: { value: `${cappedText}x` },
+      inputType: 'insertText',
+      data: 'x',
+    })
+    fireEvent.input(composer, {
+      target: { value: `${cappedText}x pasted` },
+      inputType: 'insertFromPaste',
+      data: ' pasted',
+    })
+    fireEvent.input(composer, {
+      target: { value: `${cappedText}x pasted\n` },
+      inputType: 'insertLineBreak',
+      data: null,
+    })
+    expect(layoutReads).toBe(readsAtCap)
+
+    contentHeight = 120
+    fireEvent.input(composer, {
+      target: { value: 'one\ntwo\nthree' },
+      inputType: 'deleteContentBackward',
+      data: null,
+    })
+    await waitFor(() => expect(composer.style.height).toBe('120px'))
+    expect(composer.style.overflowY).toBe('hidden')
+    expect(layoutReads).toBe(readsAtCap + 2)
+  })
+
+  it('remeasures a capped composer after its width changes', async () => {
+    let resize: ResizeObserverCallback | undefined
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('ResizeObserver', TestResizeObserver)
+
+    renderComposer(vi.fn())
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    let contentHeight = 300
+    let layoutReads = 0
+    Object.defineProperty(composer, 'offsetHeight', {
+      configurable: true,
+      get: () => {
+        layoutReads += 1
+        return Number.parseInt(composer.style.height, 10) || 40
+      },
+    })
+    Object.defineProperty(composer, 'scrollHeight', {
+      configurable: true,
+      get: () => {
+        layoutReads += 1
+        return contentHeight
+      },
+    })
+
+    const cappedText = 'line\n'.repeat(11)
+    fireEvent.change(composer, { target: { value: cappedText } })
+    await waitFor(() => expect(composer.style.height).toBe('242px'))
+    resize?.([{ contentRect: { width: 500 } } as ResizeObserverEntry], {} as ResizeObserver)
+    resize?.([{ contentRect: { width: 700 } } as ResizeObserverEntry], {} as ResizeObserver)
+
+    contentHeight = 120
+    const readsAtCap = layoutReads
+    fireEvent.input(composer, {
+      target: { value: `${cappedText}x` },
+      inputType: 'insertText',
+      data: 'x',
+    })
+    await waitFor(() => expect(composer.style.height).toBe('120px'))
+    expect(layoutReads).toBe(readsAtCap + 2)
+  })
+
+  it('remeasures injected drafts and resets the capped state after send', async () => {
+    const view = renderComposer(vi.fn())
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    let contentHeight = 300
+    let layoutReads = 0
+    Object.defineProperty(composer, 'offsetHeight', {
+      configurable: true,
+      get: () => {
+        layoutReads += 1
+        return Number.parseInt(composer.style.height, 10) || 40
+      },
+    })
+    Object.defineProperty(composer, 'scrollHeight', {
+      configurable: true,
+      get: () => {
+        layoutReads += 1
+        return contentHeight
+      },
+    })
+
+    fireEvent.change(composer, { target: { value: 'line\n'.repeat(11) } })
+    await waitFor(() => expect(composer.style.height).toBe('242px'))
+
+    contentHeight = 110
+    const readsBeforeDraft = layoutReads
+    view.rerenderComposer({ draftRequest: { text: 'Short injected draft', request: 1 } })
+    await waitFor(() => expect(composer.style.height).toBe('110px'))
+    expect(layoutReads).toBe(readsBeforeDraft + 2)
+
+    contentHeight = 300
+    fireEvent.change(composer, { target: { value: 'Send this\n'.repeat(11) } })
+    await waitFor(() => expect(composer.style.height).toBe('242px'))
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(composer.style.height).toBe('48px'))
+
+    contentHeight = 100
+    const readsAfterSend = layoutReads
+    fireEvent.input(composer, {
+      target: { value: 'x' },
+      inputType: 'insertText',
+      data: 'x',
+    })
+    await waitFor(() => expect(composer.style.height).toBe('100px'))
+    expect(layoutReads).toBe(readsAfterSend + 2)
   })
 })
 
@@ -950,6 +1427,19 @@ describe('Composer draft replacement', () => {
   })
 })
 
+describe('Composer transcript warm-up', () => {
+  it('starts loading the transcript from pointer and keyboard intent', () => {
+    renderComposer(vi.fn())
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    expect(preloadThread).not.toHaveBeenCalled()
+    fireEvent.pointerEnter(composer)
+    fireEvent.focus(composer)
+
+    expect(preloadThread).toHaveBeenCalledTimes(2)
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
@@ -960,7 +1450,7 @@ function renderComposer(
     <Composer
       transport={transport}
       provider="codex"
-      projects={[{ path: '/work/harness', name: 'TasteCode', sessions: [] }]}
+      projects={[{ path: '/work/harness', name: 'TasteCode' }]}
       projectPath="/work/harness"
       projectName="TasteCode"
       branch="main"
@@ -1011,6 +1501,20 @@ function renderComposer(
       view.rerender(composer())
     },
   })
+}
+
+function queueRect(top: number, height = 22): DOMRect {
+  return {
+    x: 0,
+    y: top,
+    top,
+    left: 0,
+    right: 400,
+    bottom: top + height,
+    width: 400,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect
 }
 
 function createResourceTransport(

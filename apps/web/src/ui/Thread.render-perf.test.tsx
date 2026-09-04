@@ -315,6 +315,70 @@ describe('streamed thread renders', () => {
     expect(rendered.container.querySelector('.activity--working')).toBeNull()
   })
 
+  it('does not wake a hidden document to update a live reasoning label', () => {
+    vi.useFakeTimers({ now: 1_500 })
+    let documentVisible = false
+    const visibility = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockImplementation(() => (documentVisible ? 'visible' : 'hidden'))
+    try {
+      const reasoning = message({
+        id: 'reasoning-live',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: 'Reviewing the result',
+        createdAt: 1_000,
+      })
+      const rendered = render(view([reasoning]))
+
+      expect(rendered.getByRole('button', { name: 'Thinking' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(0)
+      act(() => vi.advanceTimersByTime(4_500))
+      expect(rendered.getByRole('button', { name: 'Thinking' })).toBeTruthy()
+
+      documentVisible = true
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      expect(rendered.getByRole('button', { name: 'Thought for 5s' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(1)
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(rendered.getByRole('button', { name: 'Thought for 6s' })).toBeTruthy()
+
+      documentVisible = false
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+
+  it('updates hour-long reasoning labels only when the shown minute changes', () => {
+    vi.useFakeTimers({ now: 3_601_000 })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      const reasoning = message({
+        id: 'reasoning-long',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: 'Still working',
+        createdAt: 1_000,
+      })
+      const rendered = render(view([reasoning]))
+
+      expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(1)
+      act(() => vi.advanceTimersByTime(59_999))
+      expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
+      act(() => vi.advanceTimersByTime(1))
+      expect(rendered.getByRole('button', { name: 'Thought for 1h 1m' })).toBeTruthy()
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+
   it('keeps live narration close to the activity row that follows it', () => {
     const user = message({
       id: 'user-1',

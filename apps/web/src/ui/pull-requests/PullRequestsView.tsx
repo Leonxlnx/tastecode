@@ -1,31 +1,39 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type {
   PullRequestDetail,
   PullRequestListItem,
   PullRequestListResult,
 } from '@harness/contracts'
 import {
-  ChevronLeft,
-  CircleAlert,
-  FolderGit2,
-  GitBranch,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  GitPullRequestDraft,
-  Inbox,
-  ListFilter,
-  MessageSquareText,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  UserRound,
-  type LucideIcon,
-} from 'lucide-react'
+  IconChevronLeft as ChevronLeft,
+  IconAlertCircle as CircleAlert,
+  IconFolderCode as FolderGit2,
+  IconGitBranch as GitBranch,
+  IconGitMerge as GitMerge,
+  IconGitPullRequest as GitPullRequest,
+  IconGitPullRequestClosed as GitPullRequestClosed,
+  IconGitPullRequestDraft as GitPullRequestDraft,
+  IconInbox as Inbox,
+  IconFilter as ListFilter,
+  IconMessageDots as MessageSquareText,
+  IconRefresh as RefreshCw,
+  IconRotate as RotateCcw,
+  IconSearch as Search,
+  IconUser as UserRound,
+  type TablerIcon,
+} from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
 import { errorMessage as messageOf } from '../../boundary.js'
+import {
+  beginGitHubSetup,
+  githubSetupKey,
+  type GitHubSetupAction,
+  type ProviderLoginTerminalTarget,
+} from '../../provider-install.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestDetailPane } from './PullRequestDetailPane.js'
+import { countPullRequestFilterValues } from './pull-request-filter-values.js'
+import { comparePullRequestText } from './pull-request-text.js'
 import './pull-requests.css'
 
 type PullRequestFilter = 'all' | 'reviewing' | 'authored'
@@ -45,7 +53,7 @@ type PullRequestFilters = {
 const PULL_REQUEST_FILTER_CATEGORIES: ReadonlyArray<{
   value: PullRequestFilterCategory
   label: string
-  icon: LucideIcon
+  icon: TablerIcon
 }> = [
   { value: 'status', label: 'State', icon: GitPullRequest },
   { value: 'review', label: 'Review', icon: MessageSquareText },
@@ -68,6 +76,8 @@ const LIST_REVALIDATE_AFTER_MS = 30_000
 export function PullRequestsView(props: {
   transport: Transport
   onOpenChat: (pullRequest: PullRequestListItem) => void
+  onSetupTerminalOpen: (target: ProviderLoginTerminalTarget) => void
+  setupRefreshRevision?: number | undefined
 }) {
   const [result, setResult] = useState<PullRequestListResult>()
   const [error, setError] = useState<string>()
@@ -77,6 +87,8 @@ export function PullRequestsView(props: {
   const [filters, setFilters] = useState<PullRequestFilters>(DEFAULT_PULL_REQUEST_FILTERS)
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string>()
+  const [setupStarting, setSetupStarting] = useState(false)
+  const [setupError, setSetupError] = useState<string>()
   const request = useRef(0)
 
   const load = useCallback(
@@ -118,6 +130,10 @@ export function PullRequestsView(props: {
       request.current += 1
     }
   }, [load])
+
+  useEffect(() => {
+    if ((props.setupRefreshRevision ?? 0) > 0) void load(true)
+  }, [load, props.setupRefreshRevision])
 
   const normalizedQuery = query.trim().toLowerCase()
   const relationshipItems = useMemo(
@@ -181,6 +197,23 @@ export function PullRequestsView(props: {
     }
   }, [filters, result?.items])
   const activeFilterCount = countActivePullRequestFilters(filters)
+  const githubSetupAction: GitHubSetupAction = result?.account.available ? 'login' : 'install'
+
+  const startGitHubSetup = () => {
+    setSetupStarting(true)
+    setSetupError(undefined)
+    void beginGitHubSetup(props.transport, githubSetupAction)
+      .then(() => {
+        props.onSetupTerminalOpen({
+          displayName: githubSetupAction === 'install' ? 'GitHub CLI' : 'GitHub',
+          installKey: githubSetupKey(githubSetupAction),
+          operation: githubSetupAction,
+          source: 'pull-requests',
+        })
+      })
+      .catch((cause: unknown) => setSetupError(messageOf(cause)))
+      .finally(() => setSetupStarting(false))
+  }
 
   return (
     <section className="pr-workspace" aria-label="Pull requests">
@@ -253,11 +286,19 @@ export function PullRequestsView(props: {
               icon={<GitPullRequest size={19} aria-hidden />}
               title={result?.account.available ? 'Connect GitHub' : 'Install GitHub CLI'}
               detail={
+                setupError ??
                 result?.account.error ??
                 'TasteCode uses your local GitHub CLI session and never reads its token.'
               }
-              action="Open setup guide"
-              href="https://cli.github.com/manual/gh_auth_login"
+              action={
+                setupStarting
+                  ? 'Starting…'
+                  : result?.account.available
+                    ? 'Sign in'
+                    : 'Install GitHub CLI'
+              }
+              actionDisabled={setupStarting}
+              onAction={startGitHubSetup}
             />
           ) : visible.length === 0 ? (
             <ListMessage
@@ -330,62 +371,74 @@ function PullRequestGroup(props: {
       <div className="pr-list-items">
         {props.items.map((item) => {
           const key = pullRequestKey(item)
-          const stateLabel = listStateLabel(item)
           return (
-            <button
-              type="button"
-              className={`pr-list-item${props.selectedKey === key ? ' is-selected' : ''}`}
-              aria-current={props.selectedKey === key ? 'true' : undefined}
+            <PullRequestListRow
               key={key}
-              onClick={() => props.onSelect(key)}
-            >
-              <span
-                className={`pr-state-mark is-${listStatus(item)}`}
-                aria-label={stateLabel}
-                title={stateLabel}
-              >
-                {item.isDraft ? (
-                  <GitPullRequestDraft size={15} aria-hidden />
-                ) : item.state === 'MERGED' ? (
-                  <GitMerge size={15} aria-hidden />
-                ) : item.state === 'CLOSED' ? (
-                  <GitPullRequestClosed size={15} aria-hidden />
-                ) : (
-                  <GitPullRequest size={15} aria-hidden />
-                )}
-              </span>
-              <span className="pr-list-copy">
-                <span className="pr-list-item-head">
-                  <strong>{item.title}</strong>
-                  <time dateTime={item.updatedAt}>{relativeTime(item.updatedAt)}</time>
-                </span>
-                <span className="pr-list-meta">
-                  <span>{item.repository}</span>
-                  <span>#{item.number}</span>
-                  {item.isDraft || item.state !== 'OPEN' ? (
-                    <span className={`pr-list-state is-${listStatus(item)}`}>{stateLabel}</span>
-                  ) : null}
-                  {item.headRefName ? (
-                    <span className="pr-list-branch">{item.headRefName}</span>
-                  ) : null}
-                </span>
-              </span>
-              {item.headRefName ? (
-                <span
-                  className="pr-list-stats"
-                  aria-label={`${item.additions} additions and ${item.deletions} deletions`}
-                >
-                  <span className="is-addition">+{formatCount(item.additions)}</span>
-                  <span className="is-deletion">−{formatCount(item.deletions)}</span>
-                </span>
-              ) : null}
-            </button>
+              item={item}
+              selected={props.selectedKey === key}
+              onSelect={props.onSelect}
+            />
           )
         })}
       </div>
     </section>
   )
 }
+
+const PullRequestListRow = memo(function PullRequestListRow(props: {
+  item: PullRequestListItem
+  selected: boolean
+  onSelect: (key: string) => void
+}) {
+  const key = pullRequestKey(props.item)
+  const state = listStatus(props.item)
+  const stateLabel = listStateLabel(props.item)
+  return (
+    <button
+      type="button"
+      className={`pr-list-item${props.selected ? ' is-selected' : ''}`}
+      aria-current={props.selected ? 'true' : undefined}
+      onClick={() => props.onSelect(key)}
+    >
+      <span className={`pr-state-mark is-${state}`} aria-label={stateLabel} title={stateLabel}>
+        {props.item.isDraft ? (
+          <GitPullRequestDraft size={15} aria-hidden />
+        ) : props.item.state === 'MERGED' ? (
+          <GitMerge size={15} aria-hidden />
+        ) : props.item.state === 'CLOSED' ? (
+          <GitPullRequestClosed size={15} aria-hidden />
+        ) : (
+          <GitPullRequest size={15} aria-hidden />
+        )}
+      </span>
+      <span className="pr-list-copy">
+        <span className="pr-list-item-head">
+          <strong>{props.item.title}</strong>
+          <time dateTime={props.item.updatedAt}>{relativeTime(props.item.updatedAt)}</time>
+        </span>
+        <span className="pr-list-meta">
+          <span>{props.item.repository}</span>
+          <span>#{props.item.number}</span>
+          {props.item.isDraft || props.item.state !== 'OPEN' ? (
+            <span className={`pr-list-state is-${state}`}>{stateLabel}</span>
+          ) : null}
+          {props.item.headRefName ? (
+            <span className="pr-list-branch">{props.item.headRefName}</span>
+          ) : null}
+        </span>
+      </span>
+      {props.item.headRefName ? (
+        <span
+          className="pr-list-stats"
+          aria-label={`${props.item.additions} additions and ${props.item.deletions} deletions`}
+        >
+          <span className="is-addition">+{formatCount(props.item.additions)}</span>
+          <span className="is-deletion">−{formatCount(props.item.deletions)}</span>
+        </span>
+      ) : null}
+    </button>
+  )
+})
 
 function PullRequestFilterMenu(props: {
   value: PullRequestFilters
@@ -503,6 +556,7 @@ function ListMessage(props: {
   action?: string
   href?: string
   onAction?: () => void
+  actionDisabled?: boolean
 }) {
   return (
     <div className="pr-list-message">
@@ -514,7 +568,12 @@ function ListMessage(props: {
           {props.action}
         </a>
       ) : props.action ? (
-        <button type="button" className="pr-button is-secondary" onClick={props.onAction}>
+        <button
+          type="button"
+          className="pr-button is-secondary"
+          disabled={props.actionDisabled}
+          onClick={props.onAction}
+        >
           {props.action}
         </button>
       ) : null}
@@ -705,36 +764,63 @@ function pullRequestFilterOptions(
     )
   }
   if (category === 'repository') {
-    return [undefined, ...uniqueSorted(items.map((item) => item.repository))].map((value) =>
-      pullRequestFilterOption(
-        items,
-        value ?? 'All repositories',
-        `repository:${value ?? 'all'}`,
-        filters.repository === value,
-        { ...filters, repository: value },
-      ),
+    return pullRequestValueFilterOptions(
+      items,
+      filters.repository,
+      { ...filters, repository: undefined },
+      'repository',
+      'All repositories',
+      (value) => value,
+      (item) => item.repository,
+      (value) => ({ ...filters, repository: value }),
     )
   }
   if (category === 'author') {
-    return [undefined, ...uniqueSorted(items.map((item) => item.author.login))].map((value) =>
-      pullRequestFilterOption(
-        items,
-        value ? `@${value}` : 'Anyone',
-        `author:${value ?? 'all'}`,
-        filters.author === value,
-        { ...filters, author: value },
-      ),
+    return pullRequestValueFilterOptions(
+      items,
+      filters.author,
+      { ...filters, author: undefined },
+      'author',
+      'Anyone',
+      (value) => `@${value}`,
+      (item) => item.author.login,
+      (value) => ({ ...filters, author: value }),
     )
   }
-  return [undefined, ...uniqueSorted(items.map((item) => item.baseRefName))].map((value) =>
-    pullRequestFilterOption(
-      items,
-      value ?? 'All branches',
-      `base:${value ?? 'all'}`,
-      filters.base === value,
-      { ...filters, base: value },
-    ),
+  return pullRequestValueFilterOptions(
+    items,
+    filters.base,
+    { ...filters, base: undefined },
+    'base',
+    'All branches',
+    (value) => value,
+    (item) => item.baseRefName,
+    (value) => ({ ...filters, base: value }),
   )
+}
+
+function pullRequestValueFilterOptions(
+  items: PullRequestListItem[],
+  selectedValue: string | undefined,
+  filtersWithoutValue: PullRequestFilters,
+  keyPrefix: string,
+  allLabel: string,
+  valueLabel: (value: string) => string,
+  valueOf: (item: PullRequestListItem) => string,
+  nextFilters: (value: string | undefined) => PullRequestFilters,
+): PullRequestFilterOption[] {
+  const counts = countPullRequestFilterValues(
+    items,
+    (item) => matchesPullRequestFilters(item, filtersWithoutValue),
+    valueOf,
+  )
+  return [undefined, ...uniqueSorted(items.map(valueOf))].map((value) => ({
+    key: `${keyPrefix}:${value ?? 'all'}`,
+    label: value === undefined ? allLabel : valueLabel(value),
+    count: value === undefined ? counts.total : (counts.byValue.get(value) ?? 0),
+    selected: selectedValue === value,
+    next: nextFilters(value),
+  }))
 }
 
 function pullRequestFilterOption(
@@ -754,9 +840,7 @@ function pullRequestFilterOption(
 }
 
 function uniqueSorted(values: string[]): string[] {
-  return [...new Set(values.filter((value) => value.length > 0))].sort((left, right) =>
-    left.localeCompare(right, undefined, { sensitivity: 'base' }),
-  )
+  return [...new Set(values.filter((value) => value.length > 0))].sort(comparePullRequestText)
 }
 
 function statusMatches(item: PullRequestListItem, filter: PullRequestStatusFilter): boolean {

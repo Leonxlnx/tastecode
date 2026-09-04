@@ -24,9 +24,11 @@ export type InstallState = {
 export type InstallTarget = { provider: ProviderId; agent?: string }
 
 export type ProviderLoginTerminalTarget = {
-  provider: ProviderId
+  provider?: ProviderId
   displayName: string
   installKey: string
+  operation?: 'install' | 'login'
+  source?: 'providers' | 'pull-requests'
 }
 
 export function installKey(target: InstallTarget): string {
@@ -86,7 +88,14 @@ function detachTransportListeners(key: string): void {
  * session rather than installing twice.
  */
 export async function beginInstall(transport: Transport, target: InstallTarget): Promise<void> {
-  return begin(transport, 'providers.install', target, installKey(target))
+  return begin(transport, installKey(target), () =>
+    transport.request('providers.install', {
+      provider: target.provider,
+      ...(target.agent ? { agent: target.agent } : {}),
+      columns: 100,
+      rows: 30,
+    }),
+  )
 }
 
 /**
@@ -100,7 +109,38 @@ export async function beginLogin(
   target: InstallTarget,
   openUrl: (url: string) => void = (url) => window.open(url, '_blank', 'noopener,noreferrer'),
 ): Promise<void> {
-  return begin(transport, 'providers.launch', target, loginKey(target), openUrl)
+  return begin(
+    transport,
+    loginKey(target),
+    () =>
+      transport.request('providers.launch', {
+        provider: target.provider,
+        ...(target.agent ? { agent: target.agent } : {}),
+        columns: LOGIN_COLUMNS,
+        rows: 30,
+      }),
+    openUrl,
+  )
+}
+
+export type GitHubSetupAction = 'install' | 'login'
+
+export function githubSetupKey(action: GitHubSetupAction): string {
+  return `pull-requests:github:${action}`
+}
+
+/** Run GitHub CLI setup in the same attachable terminal store as provider setup. */
+export async function beginGitHubSetup(
+  transport: Transport,
+  action: GitHubSetupAction,
+): Promise<void> {
+  return begin(transport, githubSetupKey(action), () =>
+    transport.request('pullRequests.setup', {
+      action,
+      columns: action === 'login' ? LOGIN_COLUMNS : 100,
+      rows: 30,
+    }),
+  )
 }
 
 /**
@@ -153,22 +193,14 @@ const LOGIN_COLUMNS = 320
 
 async function begin(
   transport: Transport,
-  method: 'providers.install' | 'providers.launch',
-  target: InstallTarget,
   key: string,
+  openTerminal: () => Promise<{ terminalId: string }>,
   openUrl?: (url: string) => void,
 ): Promise<void> {
   const existing = installs.get(key)
   if (existing?.phase === 'running') return
 
-  const { terminalId } = await transport.request(method, {
-    provider: target.provider,
-    ...(target.agent ? { agent: target.agent } : {}),
-    // Logins get a wide pty so the OAuth URL is printed on one line — the
-    // URL detector depends on that. Installs render at a normal width.
-    columns: method === 'providers.launch' ? LOGIN_COLUMNS : 100,
-    rows: 30,
-  })
+  const { terminalId } = await openTerminal()
 
   const state: InstallState = {
     phase: 'running',

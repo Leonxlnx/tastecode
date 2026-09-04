@@ -2,7 +2,12 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const css = [
+  readFileSync(new URL('./app.css', import.meta.url), 'utf8'),
+  readFileSync(new URL('./command-palette.css', import.meta.url), 'utf8'),
+  readFileSync(new URL('./session-search.css', import.meta.url), 'utf8'),
+  readFileSync(new URL('./thread.css', import.meta.url), 'utf8'),
+].join('\n')
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

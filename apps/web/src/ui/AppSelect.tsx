@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown } from 'lucide-react'
+import { IconCheck as Check, IconChevronDown as ChevronDown } from '@tabler/icons-react'
 
 export type AppSelectOption<Value extends string = string> = {
   value: Value

@@ -1,5 +1,6 @@
 import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { RotateCcw, Search, X } from 'lucide-react'
+import { IconRotate as RotateCcw, IconSearch as Search, IconX as X } from '@tabler/icons-react'
+import '../styles/keybinds.css'
 import {
   findKeybindingConflict,
   KEYBINDING_DEFINITIONS,

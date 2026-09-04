@@ -7,7 +7,11 @@ import type {
   ResultOf,
 } from '@harness/contracts'
 import { McpTransportSchema } from '@harness/contracts'
-import { AlertTriangle, Plus, Trash2 } from 'lucide-react'
+import {
+  IconAlertTriangle as AlertTriangle,
+  IconPlus as Plus,
+  IconTrash as Trash2,
+} from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import { AppSelect } from './AppSelect.js'
 

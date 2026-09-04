@@ -1,0 +1,88 @@
+/* ---------- model selector ---------- */
+
+.menutrigger--model-selector {
+  max-width: min(270px, 42vw);
+  padding: 5px 9px 5px 8px;
+}
+
+.menutrigger--model-selector:hover:not(:disabled),
+.menutrigger--model-selector[aria-expanded='true'] {
+  border-color: var(--composer-control-border-hover);
+}
+
+.model-selector__trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text);
+}
+
+.model-selector__trigger-fast {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--light);
+}
+
+.model-selector__trigger-copy {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.model-selector__trigger-model,
+.model-selector__trigger-effort {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-selector__trigger-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: var(--t-md);
+}
+
+.model-selector__trigger-effort {
+  color: var(--text-3);
+  font-size: var(--t-md);
+}
+
+.model-selector__trigger-chevron {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text-3);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.model-selector__trigger.is-open .model-selector__trigger-chevron {
+  transform: rotate(180deg);
+}
+
+.model-selector__menu {
+  --r-popup: calc(var(--r-popup-item) + 7px);
+
+  width: min(382px, calc(100vw - 16px));
+  /* The generic .menu clamp (340px) is shorter than list + effort controls,
+     and with overflow hidden it silently amputated the effort bar. The list
+     scrolls internally, so the panel may size to its content. */
+  max-height: calc(100vh - 16px);
+  padding: 0;
+  overflow: hidden;
+  background: var(--model-picker-bg);
+  border-radius: var(--r-popup);
+  box-shadow: none;
+}
+
+.model-selector__loading {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}

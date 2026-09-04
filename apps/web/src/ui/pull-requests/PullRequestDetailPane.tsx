@@ -18,40 +18,42 @@ import type {
   PullRequestReviewThread,
 } from '@harness/contracts'
 import {
-  ArrowUp,
-  ArrowUpRight,
-  Bot,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleAlert,
-  CircleDot,
-  Clock3,
-  Ellipsis,
-  GitBranch,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  GitPullRequestDraft,
-  LoaderCircle,
-  MessageSquare,
-  Pencil,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Tag,
-  Trash2,
-  UserRound,
-  Users,
-  X,
-  XCircle,
-} from 'lucide-react'
+  IconArrowUp as ArrowUp,
+  IconArrowUpRight as ArrowUpRight,
+  IconRobot as Bot,
+  IconCheck as Check,
+  IconCircleCheck as CheckCircle2,
+  IconChevronDown as ChevronDown,
+  IconChevronRight as ChevronRight,
+  IconAlertCircle as CircleAlert,
+  IconCircleDot as CircleDot,
+  IconClock as Clock3,
+  IconDots as Ellipsis,
+  IconGitBranch as GitBranch,
+  IconGitMerge as GitMerge,
+  IconGitPullRequest as GitPullRequest,
+  IconGitPullRequestClosed as GitPullRequestClosed,
+  IconGitPullRequestDraft as GitPullRequestDraft,
+  IconLoader2 as LoaderCircle,
+  IconMessage as MessageSquare,
+  IconPencil as Pencil,
+  IconRefresh as RefreshCw,
+  IconRotate as RotateCcw,
+  IconSearch as Search,
+  IconTag as Tag,
+  IconTrash as Trash2,
+  IconUser as UserRound,
+  IconUsers as Users,
+  IconX as X,
+  IconCircleX as XCircle,
+} from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
 import { AppSelect } from '../AppSelect.js'
+import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestFiles } from './PullRequestFiles.js'
+import { comparePullRequestText } from './pull-request-text.js'
 import { errorMessage as messageOf } from '../../boundary.js'
 
 type DetailTab = 'summary' | 'files'
@@ -968,13 +970,11 @@ function PullRequestMetadataPicker(props: PullRequestMetadataPickerProps) {
         <span className="pr-fact-menu-value">
           <span>{props.trigger}</span>
           <span className="pr-fact-menu-indicator" aria-hidden>
-            {props.busy ? (
-              <LoaderCircle size={13} className="is-spinning" />
-            ) : props.indicator === 'ellipsis' ? (
-              <Ellipsis size={15} />
-            ) : (
+            <IconMorph active={props.busy ? 2 : props.indicator === 'ellipsis' ? 1 : 0}>
               <ChevronDown size={13} />
-            )}
+              <Ellipsis size={15} />
+              <LoaderCircle size={13} className="is-spinning" />
+            </IconMorph>
           </span>
         </span>
       )}
@@ -1000,7 +1000,7 @@ function PullRequestMetadataPickerPanel(
     )
     .sort((left, right) => {
       if (left.selected !== right.selected) return left.selected ? -1 : 1
-      return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })
+      return comparePullRequestText(left.label, right.label)
     })
   const waiting = !props.loaded || props.loading
 
@@ -1614,11 +1614,10 @@ function ReviewThreadCard(props: {
             })
           }
         >
-          {props.thread.resolved ? (
-            <RotateCcw size={12} aria-hidden />
-          ) : (
+          <IconMorph active={props.thread.resolved ? 1 : 0}>
             <Check size={12} aria-hidden />
-          )}
+            <RotateCcw size={12} aria-hidden />
+          </IconMorph>
           {props.thread.resolved ? 'Reopen' : 'Resolve'}
         </button>
       </header>
@@ -1985,15 +1984,14 @@ function PullRequestComposer(props: {
           disabled={props.busy || (needsBody && !body.trim())}
           onClick={() => void submit()}
         >
-          {props.busy ? (
-            <LoaderCircle size={14} className="is-spinning" aria-hidden />
-          ) : mode === 'approve' ? (
-            <Check size={14} aria-hidden />
-          ) : mode === 'request_changes' ? (
-            <X size={14} aria-hidden />
-          ) : (
+          <IconMorph
+            active={props.busy ? 3 : mode === 'approve' ? 1 : mode === 'request_changes' ? 2 : 0}
+          >
             <ArrowUp size={14} aria-hidden />
-          )}
+            <Check size={14} aria-hidden />
+            <X size={14} aria-hidden />
+            <LoaderCircle size={14} className="is-spinning" aria-hidden />
+          </IconMorph>
         </button>
       </div>
     </div>
@@ -2015,11 +2013,10 @@ function AutoMergeMenu(props: {
       trigger={() => (
         <span className={`pr-toolbar-button${props.detail.autoMerge ? ' is-enabled' : ''}`}>
           Auto-merge{' '}
-          {props.busy ? (
-            <LoaderCircle size={12} className="is-spinning" aria-hidden />
-          ) : (
+          <IconMorph active={props.busy ? 1 : 0}>
             <ChevronDown size={12} aria-hidden />
-          )}
+            <LoaderCircle size={12} className="is-spinning" aria-hidden />
+          </IconMorph>
         </span>
       )}
     >

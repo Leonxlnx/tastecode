@@ -304,7 +304,7 @@ describe('WorkspacePanel', () => {
     expect(terminal.getAttribute('aria-label')).toBe('Claude Code login terminal')
     expect(onOpen).toHaveBeenCalledOnce()
 
-    const codeElement = screen.getByLabelText('Claude login code')
+    const codeElement = screen.getByLabelText('Login code')
     expect(codeElement).toBeInstanceOf(HTMLInputElement)
     if (!(codeElement instanceof HTMLInputElement)) throw new Error('expected Claude login input')
     const code = codeElement
@@ -391,7 +391,11 @@ describe('WorkspacePanel', () => {
   it('opens one reusable Browser tab for design preview captures', async () => {
     const transport = new TestTransport()
     const onOpen = vi.fn()
-    render(
+    const request = (requestId: string) => ({
+      requestId,
+      url: 'http://127.0.0.1:4173/',
+    })
+    const view = (designPreviewRequest?: ReturnType<typeof request>) => (
       <WorkspacePanel
         open
         expanded={false}
@@ -400,26 +404,19 @@ describe('WorkspacePanel', () => {
         theme="dark"
         sideChatParentStatus="idle"
         sideChatStartOptions={{ approval: 'ask' }}
+        designPreviewRequest={designPreviewRequest}
         nativeSurfacesVisible
         onOpen={onOpen}
         onClose={vi.fn()}
         onExpandedChange={vi.fn()}
         onWidthChange={vi.fn()}
-      />,
+      />
     )
-    const request = (requestId: string) => ({
-      requestId,
-      url: 'http://127.0.0.1:4173/',
-      viewports: [{ width: 1_280, height: 800 }],
-    })
-    act(() =>
-      transport.emit('preview.captureRequested', request('00000000-0000-4000-8000-000000000001')),
-    )
+    const { rerender } = render(view())
+    rerender(view(request('00000000-0000-4000-8000-000000000001')))
     await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1))
 
-    act(() =>
-      transport.emit('preview.captureRequested', request('00000000-0000-4000-8000-000000000002')),
-    )
+    rerender(view(request('00000000-0000-4000-8000-000000000002')))
     expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1)
     expect(onOpen).toHaveBeenCalledTimes(2)
   })

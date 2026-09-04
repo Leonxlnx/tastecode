@@ -6,6 +6,8 @@ import {
   GLASS_KEY,
   THEME_KEY,
   applyGlassPreference,
+  applyTheme,
+  colorSchemeForTheme,
   readAccentPreference,
   readBackdropPreference,
   readGlassPreference,
@@ -18,7 +20,11 @@ import {
  * the default, never to a broken UI state.
  */
 
-afterEach(() => localStorage.clear())
+afterEach(() => {
+  localStorage.clear()
+  document.documentElement.removeAttribute('data-theme')
+  document.documentElement.classList.remove('dark')
+})
 
 describe('preference readers', () => {
   it('defaults to the system theme when no choice is stored', () => {
@@ -35,10 +41,20 @@ describe('preference readers', () => {
   })
 
   it('accept every advertised value', () => {
-    localStorage.setItem(THEME_KEY, 'system')
-    expect(readThemePreference()).toBe('system')
+    for (const theme of ['system', 'light', 'dark', 'codex']) {
+      localStorage.setItem(THEME_KEY, theme)
+      expect(readThemePreference()).toBe(theme)
+    }
     localStorage.setItem(BACKDROP_KEY, 'midnight')
     expect(readBackdropPreference()).toBe('midnight')
+  })
+
+  it('applies Codex with a dark browser color scheme', () => {
+    applyTheme('codex')
+
+    expect(document.documentElement.dataset['theme']).toBe('codex')
+    expect(document.documentElement.classList.contains('dark')).toBe(true)
+    expect(colorSchemeForTheme('codex')).toBe('dark')
   })
 })
 

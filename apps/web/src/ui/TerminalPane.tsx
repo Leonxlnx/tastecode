@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { Terminal, type ITheme } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { Copy, RotateCcw, X } from 'lucide-react'
+import { IconCopy as Copy, IconRotate as RotateCcw, IconX as X } from '@tabler/icons-react'
 import { memo, useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { isMacOS, writeClipboardText } from '../bridge.js'
 import {
@@ -14,12 +14,9 @@ import {
 } from '../haptics.js'
 import type { Transport, ConnectionState } from '../transport.js'
 import { errorMessage } from '../boundary.js'
+import '../styles/terminal-pane.css'
 
 const MIN_HEIGHT = 160
-
-export async function preloadTerminalRuntime(): Promise<void> {
-  await Promise.allSettled([import('@xterm/addon-webgl'), import('@xterm/addon-web-links')])
-}
 
 type TerminalStatus =
   | { state: 'connecting' }

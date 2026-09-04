@@ -1198,6 +1198,53 @@ describe('provider settings', () => {
     expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
   })
 
+  it('hands provider installs to the expanded workspace terminal', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-codex-install' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            installed: false,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://developers.openai.com/codex/cli',
+              installCommand: 'npm install -g @openai/codex',
+              login: 'provider',
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+
+    await waitFor(() =>
+      expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
+        provider: 'codex',
+        displayName: 'Codex',
+        installKey: 'codex',
+        operation: 'install',
+      }),
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'providers.install',
+      params: { provider: 'codex', columns: 100, rows: 30 },
+    })
+  })
+
   it('signs in to provider-CLI-managed logins in an in-app terminal, not a docs page', async () => {
     let signedIn = false
     const transport = new TestTransport(async (method) => {
@@ -1317,10 +1364,10 @@ describe('provider settings', () => {
     expect(onConnectionsChanged).not.toHaveBeenCalled()
   })
 
-  it('hands Claude login to the expanded workspace terminal', async () => {
+  it('hands every provider CLI login to the expanded workspace terminal', async () => {
     const transport = new TestTransport(async (method) => {
       if (method === 'auth.status') return { signedIn: false }
-      if (method === 'providers.launch') return { terminalId: 'term-claude-login' }
+      if (method === 'providers.launch') return { terminalId: 'term-grok-login' }
       throw new Error(`unexpected ${method}`)
     })
     const onProviderLoginTerminalOpen = vi.fn()
@@ -1332,13 +1379,14 @@ describe('provider settings', () => {
         account={undefined}
         providerStatuses={[
           {
-            id: 'claude-code',
-            displayName: 'Claude Code',
+            id: 'grok',
+            displayName: 'Grok',
             installed: true,
             auth: 'unknown',
             setup: {
-              installUrl: 'https://code.claude.com/docs/en/getting-started',
+              installUrl: 'https://x.ai/cli',
               login: 'provider',
+              loginOpensBrowser: false,
             },
           },
         ]}
@@ -1354,20 +1402,24 @@ describe('provider settings', () => {
 
     await waitFor(() =>
       expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
-        provider: 'claude-code',
-        displayName: 'Claude Code',
-        installKey: 'login:claude-code',
+        provider: 'grok',
+        displayName: 'Grok',
+        installKey: 'login:grok',
       }),
     )
     expect(transport.requests).toContainEqual({
       method: 'providers.launch',
-      params: { provider: 'claude-code', columns: 320, rows: 30 },
+      params: { provider: 'grok', columns: 320, rows: 30 },
     })
     transport.emit('terminal.output', {
-      terminalId: 'term-claude-login',
-      data: 'If the browser did not open, visit https://claude.example.test/oauth\r\n',
+      terminalId: 'term-grok-login',
+      data: 'If the browser did not open, visit https://grok.example.test/oauth\r\n',
     })
-    expect(open).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledWith(
+      'https://grok.example.test/oauth',
+      '_blank',
+      'noopener,noreferrer',
+    )
     expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })

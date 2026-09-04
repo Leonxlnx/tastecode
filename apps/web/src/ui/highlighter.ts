@@ -1,5 +1,13 @@
-import type { CodeHighlighterPlugin } from 'streamdown'
-import { COMMON_LANGUAGES, DARK_THEME, LIGHT_THEME, plainHighlight } from './highlighter-config.js'
+import type { CodeHighlighterPlugin, HighlightOptions } from 'streamdown'
+import {
+  COMMON_LANGUAGES,
+  DARK_THEME,
+  HIGHLIGHT_QUEUE_CHARACTER_LIMIT,
+  HIGHLIGHT_QUEUE_ENTRY_LIMIT,
+  LIGHT_THEME,
+  MAX_HIGHLIGHT_CHARACTERS,
+  plainHighlight,
+} from './highlighter-config.js'
 import type { HighlighterRuntime } from './highlighter-runtime.js'
 
 /**
@@ -12,30 +20,57 @@ import type { HighlighterRuntime } from './highlighter-runtime.js'
 
 let runtime: HighlighterRuntime | undefined
 let booting: Promise<void> | undefined
-const listeners = new Set<() => void>()
+type HighlightCallback = NonNullable<Parameters<CodeHighlighterPlugin['highlight']>[1]>
+type BootHighlight = {
+  callbacks: Set<HighlightCallback>
+  options: HighlightOptions
+}
+const bootHighlights = new Map<string, BootHighlight>()
+let bootHighlightCharacters = 0
 
-function announce(): void {
-  for (const listener of listeners) listener()
+function queueBootHighlight(options: HighlightOptions, callback: HighlightCallback): void {
+  const language = String(options.language ?? '').toLowerCase()
+  if (options.code.length > MAX_HIGHLIGHT_CHARACTERS) return
+  const key = `${language}\0${options.code}`
+  const pending = bootHighlights.get(key)
+  if (pending) {
+    pending.callbacks.add(callback)
+    return
+  }
+  if (
+    bootHighlights.size >= HIGHLIGHT_QUEUE_ENTRY_LIMIT ||
+    bootHighlightCharacters + options.code.length > HIGHLIGHT_QUEUE_CHARACTER_LIMIT
+  ) {
+    return
+  }
+  bootHighlights.set(key, { callbacks: new Set([callback]), options })
+  bootHighlightCharacters += options.code.length
 }
 
-export function onHighlighterChange(listener: () => void): () => void {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
+function flushBootHighlights(created: HighlighterRuntime): void {
+  const pending = [...bootHighlights.values()]
+  bootHighlights.clear()
+  bootHighlightCharacters = 0
+  for (const highlight of pending) {
+    created.highlight(highlight.options, (result) => {
+      for (const callback of highlight.callbacks) callback(result)
+    })
+  }
 }
 
-/** Start loading common grammars after the first app render. */
-export function warmHighlighter(): void {
-  boot()
-}
-
-function boot(): void {
+function boot(initialLanguage?: string): void {
   booting ??= import('./highlighter-runtime.js')
-    .then(({ createHighlighterRuntime }) => createHighlighterRuntime(announce))
+    .then(({ createHighlighterRuntime }) =>
+      createHighlighterRuntime(initialLanguage ? [initialLanguage] : undefined),
+    )
     .then((created) => {
       runtime = created
-      announce()
+      flushBootHighlights(created)
     })
     .catch((error) => {
+      booting = undefined
+      bootHighlights.clear()
+      bootHighlightCharacters = 0
       // Code stays plain rather than failing a message — but a silent catch
       // here cost an hour once, so it says why.
       console.warn('[highlighter] Shiki failed to load; code stays plain', error)
@@ -49,17 +84,12 @@ export const shikiPlugin: CodeHighlighterPlugin = {
   getThemes: () => [LIGHT_THEME, DARK_THEME],
   supportsLanguage: () => true,
 
-  highlight(options) {
+  highlight(options, callback) {
     if (!runtime) {
-      boot()
+      if (callback) queueBootHighlight(options, callback)
+      boot(String(options.language ?? '').toLowerCase())
       return plainHighlight(options.code)
     }
-    return runtime.highlight(options)
+    return runtime.highlight(options, callback)
   },
-}
-
-/** Streaming code stays cheap; the completed message swaps in Shiki once. */
-export const plainCodePlugin: CodeHighlighterPlugin = {
-  ...shikiPlugin,
-  highlight: (options) => plainHighlight(options.code),
 }

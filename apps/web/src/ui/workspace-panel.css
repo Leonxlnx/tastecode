@@ -1,37 +1,6 @@
 /* Right-side workspace tools. Kept in one lazy chunk so the normal chat path
    does not parse or style review, file tree, browser or terminal surfaces. */
 
-.workspace-layout {
-  position: relative;
-  display: grid;
-  width: 100%;
-  height: 100%;
-  grid-template-columns: minmax(0, 1fr) 0px;
-  min-width: 0;
-  min-height: 0;
-  overflow: visible;
-  background: var(--bg);
-  transition: grid-template-columns var(--dur-slow) var(--ease-rail);
-}
-
-.workspace-layout.is-panel-open {
-  grid-template-columns: minmax(360px, 1fr) min(var(--workspace-panel-w), calc(100% - 360px));
-}
-
-.workspace-layout.is-panel-expanded {
-  grid-template-columns: minmax(0, 1fr) 100%;
-}
-
-.workspace-layout > .stage {
-  min-width: 0;
-  transition: opacity var(--dur-slow) var(--ease-out);
-}
-
-.workspace-layout.is-panel-expanded > .stage {
-  opacity: 0;
-  pointer-events: none;
-}
-
 .workspace-panel {
   position: relative;
   z-index: 3;
@@ -112,7 +81,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -130,7 +99,7 @@
   height: 28px;
   align-items: center;
   background: transparent;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-3);
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -224,7 +193,7 @@
   padding: 5px;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-popup);
   box-shadow: var(--shadow-flyout);
 }
 
@@ -237,7 +206,7 @@
   padding: 0 8px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-popup-item);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -356,7 +325,7 @@
 .workspace-provider-login__code button {
   min-height: 32px;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-xl);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -467,7 +436,7 @@
   padding: 0 9px;
   background: var(--chrome-raised);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--chrome-shadow);
   color: var(--text-2);
   cursor: pointer;
@@ -519,7 +488,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -674,10 +643,11 @@
 }
 
 .workspace-review__tree {
+  display: flex;
   min-width: 0;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  flex-direction: column;
+  overflow: hidden;
   padding: 12px 8px;
   scrollbar-color: var(--surface-3) transparent;
 }
@@ -691,7 +661,7 @@
   padding: 0 9px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   color: var(--text-3);
 }
 
@@ -713,7 +683,29 @@
 }
 
 .workspace-review__tree-list {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: grid;
+  scrollbar-color: var(--surface-3) transparent;
+}
+
+.workspace-review__tree-list.is-virtual {
+  position: relative;
+  display: block;
+}
+
+.workspace-review__tree-canvas {
+  position: relative;
+  width: 100%;
+}
+
+.workspace-review__tree-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
 }
 
 .workspace-review__tree-folder > button,
@@ -729,7 +721,7 @@
   padding-bottom: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -743,7 +735,7 @@
   color: var(--text);
 }
 
-.workspace-review__tree-folder button > span,
+.workspace-review__tree-folder button > span:not(.icon-morph),
 .workspace-review__tree-file > span {
   min-width: 0;
   overflow: hidden;
@@ -780,7 +772,7 @@
 }
 
 @media (max-width: 560px) {
-  .workspace-review__generate-commit span {
+  .workspace-review__generate-label {
     display: none;
   }
 
@@ -859,16 +851,40 @@
 }
 
 .workspace-files__tree {
+  display: flex;
   min-width: 0;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  flex-direction: column;
+  overflow: hidden;
   padding: 12px 8px;
   scrollbar-color: var(--surface-3) transparent;
 }
 
 .workspace-files__tree-list {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: grid;
+  scrollbar-color: var(--surface-3) transparent;
+}
+
+.workspace-files__tree-list.is-virtual {
+  position: relative;
+  display: block;
+}
+
+.workspace-files__tree-canvas {
+  position: relative;
+  width: 100%;
+}
+
+.workspace-files__tree-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 29px;
 }
 
 .workspace-files__entry {
@@ -883,7 +899,7 @@
   padding-bottom: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -902,7 +918,7 @@
   opacity: 0.55;
 }
 
-.workspace-files__entry > span:not(.md-file-ref__icon) {
+.workspace-files__entry > span:not(.md-file-ref__icon, .icon-morph) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -944,11 +960,6 @@
   width: 14px;
   height: 14px;
   stroke-width: 1.75;
-}
-
-.workspace-files__tree .md-file-ref__monogram {
-  font-size: 9px;
-  line-height: 1;
 }
 
 .workspace-files__tree-loading,
@@ -1100,7 +1111,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -1127,7 +1138,7 @@
   padding: 0 3px 0 10px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   color: var(--text-3);
 }
 
@@ -1228,7 +1239,7 @@
   padding: 8px 11px;
   background: color-mix(in srgb, var(--error) 13%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--error) 35%, var(--line));
-  border-radius: var(--r-lg);
+  border-radius: var(--r-card);
   color: var(--error);
   font-size: var(--t-xs);
   transform: translateX(-50%);
@@ -1278,7 +1289,7 @@
   padding: 7px 9px;
   background: color-mix(in srgb, var(--error) 9%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--error) 26%, var(--line));
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: var(--error);
   font-size: var(--t-xs);
   line-height: 1.4;
@@ -1382,7 +1393,7 @@
   padding: 0 13px;
   background: var(--bg-rail);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-panel);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -1443,23 +1454,12 @@
 }
 
 @media (max-width: 900px) {
-  .workspace-layout.is-panel-open {
-    grid-template-columns: minmax(0, 1fr) 100%;
-  }
-
-  .workspace-layout.is-panel-open > .stage {
-    opacity: 0;
-    pointer-events: none;
-  }
-
   .workspace-panel {
     border-left: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-layout,
-  .workspace-layout > .stage,
   .workspace-panel {
     transition: none;
   }

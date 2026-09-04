@@ -1,0 +1,320 @@
+/* ---------- rendered markdown ---------- */
+
+.reply {
+  color: var(--response-text);
+  position: relative;
+}
+
+.reply > .md {
+  font-size: var(--t-md);
+  line-height: 1.52;
+  max-width: 72ch;
+}
+
+.reply > .md :is(p, ul, ol, blockquote) {
+  line-height: 1.45;
+}
+
+.reply > .md pre {
+  line-height: 1.52;
+}
+
+.reply > .md p,
+.reply > .md ul,
+.reply > .md ol {
+  margin-bottom: 6px;
+}
+
+.reply > .md li {
+  margin-block: 0;
+}
+
+.md > *:first-child {
+  margin-top: 0;
+}
+
+.md > *:last-child {
+  margin-bottom: 0;
+}
+
+.md p {
+  margin: 0 0 8px;
+  text-wrap: pretty;
+  word-break: break-word;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  font-weight: 580;
+  letter-spacing: -0.014em;
+  line-height: 1.3;
+  margin: 18px 0 6px;
+}
+
+.md h1 {
+  font-size: var(--t-xl);
+}
+.md h2 {
+  font-size: var(--t-lg);
+}
+.md h3,
+.md h4 {
+  font-size: var(--t-md);
+}
+
+.md ul,
+.md ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.md li {
+  margin: 1px 0;
+}
+
+.md li::marker {
+  color: var(--text-3);
+}
+
+.md a {
+  color: var(--response-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--text-3);
+}
+
+.md a:hover {
+  text-decoration-color: var(--text);
+}
+
+.md blockquote {
+  border-left: 2px solid var(--line-strong);
+  color: var(--text-2);
+  margin: 0 0 8px;
+  padding-left: 12px;
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 14px 0;
+}
+
+/* Inline code sits inside a line of prose, so it must not change line height. */
+.md :not(pre) > code {
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 1px 5px;
+}
+
+/* Backticked file paths read as references, not code. Keep them on the prose
+   baseline and use the file type as the only visual marker. */
+.md .md-file-ref {
+  display: inline;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--file-reference);
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.md .md-file-ref__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  margin-right: 3px;
+  vertical-align: middle;
+}
+
+.md .md-file-ref__icon > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  stroke-width: 1.85;
+}
+
+.md .md-file-link {
+  display: inline;
+  color: var(--file-reference);
+  white-space: nowrap;
+}
+
+.md button.md-file-link--action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--file-reference);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-decoration-offset: 0.14em;
+}
+
+.md button.md-file-link--action:hover {
+  text-decoration-color: currentColor;
+}
+
+.md .md-file-link--blocked {
+  color: var(--text-3);
+  white-space: normal;
+}
+
+.md .md-file-link__reason {
+  margin-left: 0.35em;
+  color: var(--text-3);
+  font-size: 0.82em;
+}
+
+/* A backticked label already carries its own file icon. Linked file references
+   own the icon so plain labels and code labels render identically. */
+.md .md-file-link .md-file-ref .md-file-ref__icon {
+  display: none;
+}
+
+/* Streamdown wraps code and tables in a container and puts its copy/download
+   controls inside it. They ship unstyled, so they are anchored to the corner
+   of the block and revealed on hover — visible when wanted, silent otherwise. */
+.md [data-streamdown='code-block'],
+.md [data-streamdown='table-wrapper'] {
+  position: relative;
+}
+
+.md [data-streamdown='code-block'] button,
+.md [data-streamdown='table-wrapper'] button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.md [data-streamdown='code-block']:hover button,
+.md [data-streamdown='table-wrapper']:hover button,
+.md [data-streamdown='code-block'] button:focus-visible,
+.md [data-streamdown='table-wrapper'] button:focus-visible {
+  opacity: 1;
+}
+
+.md [data-streamdown='code-block'] button:hover,
+.md [data-streamdown='table-wrapper'] button:hover {
+  color: var(--text);
+}
+
+.md [data-streamdown='code-block'] button svg,
+.md [data-streamdown='table-wrapper'] button svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Language label and controls share one row directly above the block. Without
+   this they stack as separate blocks and leave a hole the height of the hidden
+   buttons. */
+.md [data-streamdown='code-block-header'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 26px;
+  padding: 0 2px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+
+.md [data-streamdown='code-block-actions'] {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.md pre {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-dialog);
+  font-size: var(--t-sm);
+  margin: 0 0 14px;
+  overflow-x: auto;
+  padding: 11px 13px;
+}
+
+.md pre code {
+  font-family: var(--font-mono);
+  background: none;
+  padding: 0;
+  /* Streamdown emits one element per line; without this, indentation and blank
+     lines collapse and the block reads as one run-on line. */
+  white-space: pre;
+}
+
+/* Streamdown ships Tailwind utility classes, and this app does not use
+   Tailwind. Two rules replace the whole utility chain:
+   one to break lines, one to read the per-token colour Shiki emits as a
+   custom property. Without the second, highlighting runs correctly and every
+   token still renders in the inherited foreground. */
+.md pre code > span {
+  display: block;
+  min-height: 1lh;
+}
+
+.md pre span[style*='--sdm-c'] {
+  color: var(--sdm-c);
+}
+
+:root:not([data-theme='light']) .md pre span[style*='--sdm-c'] {
+  color: var(--shiki-dark, var(--sdm-c));
+}
+
+.md pre {
+  color: var(--sdm-fg, var(--text));
+}
+
+.md table {
+  border-collapse: collapse;
+  display: block;
+  font-size: var(--t-sm);
+  margin: 0 0 14px;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.md th,
+.md td {
+  border: 1px solid var(--line);
+  padding: 5px 9px;
+  text-align: left;
+}
+
+.md th {
+  background: var(--surface);
+  font-weight: 540;
+}
+
+/* Numbers in a table are compared, so they get tabular figures. */
+.md td {
+  font-variant-numeric: tabular-nums;
+}
+
+.md img {
+  border-radius: var(--r-dialog);
+  max-width: 100%;
+}

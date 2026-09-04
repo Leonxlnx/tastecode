@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(new URL('./pull-requests.css', import.meta.url), 'utf8')
 
 describe('pull request layout CSS', () => {
+  it('skips layout and paint for off-screen pull-request rows', () => {
+    expect(css).toMatch(
+      /\.pr-list-item \{[^}]*content-visibility: auto;[^}]*contain-intrinsic-size: auto 59px;/s,
+    )
+  })
+
   it('keeps the right-side summary compact and leaves metadata on a flat surface', () => {
     expect(css).toMatch(
       /\.pr-summary \{[^}]*width: min\(100%, 900px\);[^}]*padding: 12px 22px 88px;/s,
@@ -49,7 +55,7 @@ describe('pull request layout CSS', () => {
 
   it('keeps metadata values on one line inside a compact app-style trigger', () => {
     expect(css).toMatch(/\.pr-fact-menu-value \{[^}]*white-space: nowrap;/s)
-    expect(css).toMatch(/\.pr-fact-menu-trigger \{[^}]*border-radius: var\(--r-md\);/s)
+    expect(css).toMatch(/\.pr-fact-menu-trigger \{[^}]*border-radius: var\(--r-lg\);/s)
   })
 
   it('keeps avatar stacks out of the truncating text path', () => {

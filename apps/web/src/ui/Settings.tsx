@@ -13,6 +13,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
+import '../styles/settings.css'
 import type {
   Account,
   BackgroundModelSettings as BackgroundModelSettingsState,
@@ -27,22 +28,22 @@ import type {
 } from '@harness/contracts'
 import { z } from 'zod'
 import {
-  ArrowLeft,
-  CircleAlert,
-  CircleUserRound,
-  Blocks,
-  Database,
-  Eye,
-  EyeOff,
-  Info,
-  Boxes,
-  Keyboard,
-  Network,
-  Palette,
-  PanelLeft,
-  RotateCcw,
-  UserRound,
-} from 'lucide-react'
+  IconArrowLeft as ArrowLeft,
+  IconAlertCircle as CircleAlert,
+  IconUserCircle as CircleUserRound,
+  IconBlocks as Blocks,
+  IconDatabase as Database,
+  IconEye as Eye,
+  IconEyeOff as EyeOff,
+  IconInfoCircle as Info,
+  IconPackages as Boxes,
+  IconKeyboard as Keyboard,
+  IconNetwork as Network,
+  IconPalette as Palette,
+  IconLayoutSidebar as PanelLeft,
+  IconRotate as RotateCcw,
+  IconUser as UserRound,
+} from '@tabler/icons-react'
 import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
 import {
   appUpdateState,
@@ -95,7 +96,7 @@ import {
 } from '../terminal-placement.js'
 import { AppSelect } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
-import { groupModelsBySource } from './ModelSelector.js'
+import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
@@ -130,10 +131,12 @@ const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
+  { value: 'codex', label: 'Codex' },
 ] as const satisfies ReadonlyArray<{ value: ThemePreference; label: string }>
 
 const FONT_OPTIONS = [
   { value: 'geist', label: 'Geist' },
+  { value: 'inter', label: 'Inter' },
   { value: 'system', label: 'System' },
   { value: 'humanist', label: 'Humanist' },
   { value: 'rounded', label: 'Rounded' },
@@ -700,6 +703,7 @@ export function ProviderSettings(props: {
           target={{ provider: status.id }}
           transport={props.transport}
           onInstalled={props.onConnectionsChanged}
+          onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
         />
       )
     }
@@ -733,9 +737,7 @@ export function ProviderSettings(props: {
           target={{ provider: status.id }}
           transport={props.transport}
           onSignedIn={() => void refreshAccount(status.id, true)}
-          onOpenExpandedTerminal={
-            status.id === 'claude-code' ? props.onProviderLoginTerminalOpen : undefined
-          }
+          onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
         />
       )
     }
@@ -1660,14 +1662,16 @@ function SettingsPanel(props: { title: string; groupClassName?: string; children
 /**
  * A provider that is not on this machine yet. When the server knows a real
  * install command the button runs it in the background — no docs page — and
- * the row narrates progress from the live output. The terminal itself stays
- * hidden until the user asks for it or the install fails and needs them.
+ * the row narrates progress from the live output. App-level callers hand the
+ * live terminal to the expanded workspace card; isolated callers keep the
+ * attachable details fallback in this row.
  */
 function InstallableRow(props: {
   provider: ProviderStatus
   target: InstallTarget
   transport: Transport
   onInstalled: () => void
+  onOpenExpandedTerminal?: ((target: ProviderLoginTerminalTarget) => void) | undefined
 }) {
   const key = installKey(props.target)
   const detailsId = useId()
@@ -1707,9 +1711,18 @@ function InstallableRow(props: {
   const start = () => {
     setStartError(undefined)
     setShowTerminal(false)
-    void beginInstall(props.transport, props.target).catch((cause: unknown) =>
-      setStartError(cause instanceof Error ? cause.message : String(cause)),
-    )
+    void beginInstall(props.transport, props.target)
+      .then(() => {
+        props.onOpenExpandedTerminal?.({
+          provider: props.provider.id,
+          displayName: props.provider.displayName,
+          installKey: key,
+          operation: 'install',
+        })
+      })
+      .catch((cause: unknown) =>
+        setStartError(cause instanceof Error ? cause.message : String(cause)),
+      )
   }
 
   const status =
@@ -1776,10 +1789,10 @@ function InstallableRow(props: {
 
 /**
  * Sign-in for a provider whose login lives inside its own CLI. The button
- * launches that CLI in a server-side pty. Claude hands the attached terminal
- * to the expanded workspace pane; other provider flows keep the guided card
- * and attachable details here. A clean exit refreshes the account, while a
- * dirty exit keeps the log available for a retry.
+ * launches that CLI in a server-side pty. App-level callers hand the attached
+ * terminal to the expanded workspace pane for every provider; isolated callers
+ * keep the guided card and attachable details here. A clean exit refreshes the
+ * account, while a dirty exit keeps the log available for a retry.
  */
 function CliSignInRow(props: {
   provider: ProviderStatus
@@ -1832,7 +1845,9 @@ function CliSignInRow(props: {
     void beginLogin(
       props.transport,
       props.target,
-      props.onOpenExpandedTerminal ? () => undefined : undefined,
+      props.onOpenExpandedTerminal && props.provider.setup?.loginOpensBrowser !== false
+        ? () => undefined
+        : undefined,
     )
       .then(() => {
         props.onOpenExpandedTerminal?.({

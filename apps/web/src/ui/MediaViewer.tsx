@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Download,
-  FolderOpen,
-  Maximize2,
-  Minimize2,
-  Minus,
-  Pause,
-  Play,
-  Plus,
-  Volume2,
-  VolumeX,
-  X,
-} from 'lucide-react'
+  IconDownload as Download,
+  IconFolderOpen as FolderOpen,
+  IconMaximize as Maximize2,
+  IconMinimize as Minimize2,
+  IconMinus as Minus,
+  IconPlayerPause as Pause,
+  IconPlayerPlay as Play,
+  IconPlus as Plus,
+  IconVolume as Volume2,
+  IconVolumeOff as VolumeX,
+  IconVideoOff as VideoOff,
+  IconX as X,
+} from '@tabler/icons-react'
+import { IconMorph } from './IconMorph.js'
+import '../styles/media-viewer.css'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
@@ -348,11 +351,10 @@ export function MediaViewer(props: {
                   aria-label={paused ? 'Play video' : 'Pause video'}
                   title={paused ? 'Play' : 'Pause'}
                 >
-                  {paused ? (
+                  <IconMorph active={paused ? 0 : 1}>
                     <Play size={16} fill="currentColor" aria-hidden />
-                  ) : (
                     <Pause size={16} fill="currentColor" aria-hidden />
-                  )}
+                  </IconMorph>
                 </button>
                 <input
                   className="media-viewer__scrubber"
@@ -379,7 +381,10 @@ export function MediaViewer(props: {
                   aria-label={muted ? 'Unmute video' : 'Mute video'}
                   title={muted ? 'Unmute' : 'Mute'}
                 >
-                  {muted ? <VolumeX size={16} aria-hidden /> : <Volume2 size={16} aria-hidden />}
+                  <IconMorph active={muted ? 1 : 0}>
+                    <Volume2 size={16} aria-hidden />
+                    <VolumeX size={16} aria-hidden />
+                  </IconMorph>
                 </button>
                 <button
                   type="button"
@@ -387,11 +392,10 @@ export function MediaViewer(props: {
                   aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
                   title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
                 >
-                  {fullscreen ? (
-                    <Minimize2 size={16} aria-hidden />
-                  ) : (
+                  <IconMorph active={fullscreen ? 1 : 0}>
                     <Maximize2 size={16} aria-hidden />
-                  )}
+                    <Minimize2 size={16} aria-hidden />
+                  </IconMorph>
                 </button>
               </div>
             </div>
@@ -443,8 +447,7 @@ function formatTime(value: number): string {
 function VideoErrorIcon() {
   return (
     <span className="media-viewer__video-error-icon" aria-hidden>
-      <Play size={18} />
-      <span />
+      <VideoOff size={24} />
     </span>
   )
 }
