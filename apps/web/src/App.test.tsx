@@ -152,16 +152,15 @@ vi.mock('./ui/Thread.js', async () => {
   return {
     Thread: (props: ThreadProps) => {
       const frame = useSyncExternalStore(
-        props.frameStore?.subscribe ?? (() => () => undefined),
-        props.frameStore?.getSnapshot ?? (() => undefined),
-        props.frameStore?.getSnapshot ?? (() => undefined),
+        props.frameStore.subscribe,
+        props.frameStore.getSnapshot,
+        props.frameStore.getSnapshot,
       )
-      const items = frame?.items ?? props.items
-      const liveItems = frame?.liveItems ?? props.liveItems
+      const { items, liveItems } = frame
       return (
         <div
           data-testid="thread"
-          data-started-at={props.activeTurn?.startedAt}
+          data-started-at={frame.activeTurn?.startedAt}
           ref={() => {
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
@@ -172,7 +171,7 @@ vi.mock('./ui/Thread.js', async () => {
               {liveItems?.get(index)?.item.text ?? base.text}
             </span>
           ))}
-          {props.running && props.activeTurn ? <span>Working</span> : null}
+          {frame.running && !props.stopping && frame.activeTurn ? <span>Working</span> : null}
         </div>
       )
     },

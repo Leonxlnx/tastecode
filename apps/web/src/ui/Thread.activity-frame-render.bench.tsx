@@ -61,17 +61,6 @@ flushSync(() => {
     <Thread
       frameStore={store}
       threadId="activity-thread"
-      items={items}
-      liveItems={liveItems}
-      itemVersion={1}
-      liveStart={0}
-      running
-      activeTurn={current.activeTurn}
-      plan={[]}
-      diff={undefined}
-      approvals={[]}
-      userInputs={[]}
-      reviews={[]}
       onDecide={noop}
       onAnswerUserInput={noop}
     />,

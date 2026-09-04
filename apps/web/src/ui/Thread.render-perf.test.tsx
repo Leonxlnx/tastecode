@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
+import { ThreadFrameStore } from '../thread-frame-store.js'
+import { emptyThread } from '../thread-store.js'
 
 const markdownRender = vi.hoisted(() => vi.fn())
 const orbRender = vi.hoisted(() => vi.fn())
@@ -91,24 +93,22 @@ function view(
       { item: Item; version: number; textUpdate: { kind: 'append'; text: string } }
     >
     itemVersion?: number
-    searching?: boolean
   } = {},
 ) {
   return (
     <Thread
-      items={items}
-      liveItems={identity.liveItems}
-      itemVersion={identity.itemVersion}
-      {...(identity.searching === undefined ? {} : { searching: identity.searching })}
-      running={running}
-      activeTurn={running ? { id: 'turn-2', startedAt: 0 } : undefined}
+      frameStore={
+        new ThreadFrameStore({
+          ...emptyThread,
+          items,
+          liveItems: identity.liveItems ?? emptyThread.liveItems,
+          itemVersion: identity.itemVersion ?? 0,
+          running,
+          activeTurn: running ? { id: 'turn-2', startedAt: 0 } : undefined,
+        })
+      }
       threadId={identity.threadId}
       revealRequest={identity.revealRequest}
-      plan={[]}
-      diff={undefined}
-      approvals={[]}
-      userInputs={[]}
-      reviews={[]}
       checkpoints={[]}
       onDecide={onDecide}
       onAnswerUserInput={onAnswerUserInput}
@@ -420,10 +420,30 @@ describe('streamed thread renders', () => {
       role: 'user',
       text: 'Run the checks',
     })
-    const rendered = render(view([user]))
+    const completedPhase = message({
+      id: 'phase-1',
+      turnId: 'turn-2',
+      type: 'tool_call',
+      role: undefined,
+      text: 'design:brief',
+    })
+    const rendered = render(view([user, completedPhase]))
     const rail = rendered.container.querySelector('.activity--working')
 
-    rendered.rerender(view([user], true, { searching: true }))
+    rendered.rerender(
+      view([
+        user,
+        completedPhase,
+        message({
+          id: 'search-1',
+          turnId: 'turn-2',
+          type: 'tool_call',
+          role: undefined,
+          status: 'started',
+          text: 'search files',
+        }),
+      ]),
+    )
 
     expect(rendered.container.querySelector('.activity--working')).toBe(rail)
     expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(

@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import type { DomainEvent, Item } from '@harness/contracts'
+import { ThreadFrameStore } from '../thread-frame-store.js'
 import { Thread, workLabel } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
 import {
@@ -29,14 +30,7 @@ import {
 
 const view = (items: ReturnType<typeof makeFixtureThread>) => (
   <Thread
-    items={items}
-    running={false}
-    activeTurn={undefined}
-    plan={[]}
-    diff={undefined}
-    approvals={[]}
-    userInputs={[]}
-    reviews={[]}
+    frameStore={new ThreadFrameStore({ ...emptyThread, items })}
     onDecide={() => {}}
     onAnswerUserInput={() => {}}
   />
@@ -53,24 +47,46 @@ function timeMount(count: number): number {
 
 describe('thread at scale', () => {
   it('shows working and searching states in the activity rail', () => {
-    const props = {
-      items: [],
-      running: true,
-      activeTurn: { id: 'turn-1', startedAt: 0 },
-      plan: [],
-      diff: undefined,
-      approvals: [],
-      userInputs: [],
-      reviews: [],
-      onDecide: () => {},
-      onAnswerUserInput: () => {},
+    const completedPhase: Item = {
+      id: 'phase-1',
+      turnId: 'turn-1',
+      type: 'tool_call',
+      status: 'completed',
+      text: 'design:brief',
+      createdAt: 0,
     }
-    const rendered = render(<Thread {...props} searching={false} />)
+    const view = (items: Item[]) => (
+      <Thread
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items,
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 0 },
+          })
+        }
+        onDecide={() => {}}
+        onAnswerUserInput={() => {}}
+      />
+    )
+    const rendered = render(view([completedPhase]))
     expect(
       document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
     ).toBe('Working…')
 
-    rendered.rerender(<Thread {...props} searching />)
+    rendered.rerender(
+      view([
+        completedPhase,
+        {
+          id: 'search-1',
+          turnId: 'turn-1',
+          type: 'tool_call',
+          status: 'started',
+          text: 'search files',
+          createdAt: 1,
+        },
+      ]),
+    )
     expect(
       document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
     ).toBe('Searching…')
@@ -78,17 +94,20 @@ describe('thread at scale', () => {
 
   it('hands the placeholder rail to the first visible response without duplication', () => {
     cleanup() // earlier renders would satisfy the queries below with stale DOM
-    const props = {
-      running: true,
-      activeTurn: { id: 'turn-1', startedAt: 0 },
-      plan: [],
-      diff: undefined,
-      approvals: [],
-      userInputs: [],
-      reviews: [],
-      onDecide: () => {},
-      onAnswerUserInput: () => {},
-    }
+    const view = (items: Item[]) => (
+      <Thread
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items,
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 0 },
+          })
+        }
+        onDecide={() => {}}
+        onAnswerUserInput={() => {}}
+      />
+    )
     const asked: Item = {
       id: 'u1',
       turnId: 'turn-1',
@@ -98,7 +117,7 @@ describe('thread at scale', () => {
       text: 'hi',
       createdAt: 1,
     }
-    const rendered = render(<Thread {...props} items={[asked]} />)
+    const rendered = render(view([asked]))
     const orb = rendered.container.querySelector('.activity__working-orb canvas')
     expect(orb).not.toBeNull()
 
@@ -111,7 +130,7 @@ describe('thread at scale', () => {
       text: 'Hello',
       createdAt: 2,
     }
-    rendered.rerender(<Thread {...props} items={[asked, reply]} />)
+    rendered.rerender(view([asked, reply]))
     expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(0)
     expect(rendered.container.querySelector('.activity__working-orb canvas')).toBeNull()
     cleanup()

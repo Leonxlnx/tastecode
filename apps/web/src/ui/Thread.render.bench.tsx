@@ -3,6 +3,8 @@ import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { afterAll, bench, describe } from 'vitest'
 import type { Item } from '@harness/contracts'
+import { ThreadFrameStore } from '../thread-frame-store.js'
+import { emptyThread } from '../thread-store.js'
 import { Thread } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
 
@@ -18,25 +20,15 @@ function identify(items: Item[], prefix: string): Item[] {
 }
 
 function createThreadHarness(initialThreadId: string, initialItems: Item[]) {
+  const store = new ThreadFrameStore({ ...emptyThread, items: initialItems })
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   const render = (threadId: string, items: Item[]) => {
     flushSync(() => {
+      store.publish({ ...emptyThread, items })
       root.render(
-        <Thread
-          threadId={threadId}
-          items={items}
-          running={false}
-          activeTurn={undefined}
-          plan={[]}
-          diff={undefined}
-          approvals={[]}
-          userInputs={[]}
-          reviews={[]}
-          onDecide={noop}
-          onAnswerUserInput={noop}
-        />,
+        <Thread threadId={threadId} frameStore={store} onDecide={noop} onAnswerUserInput={noop} />,
       )
     })
   }

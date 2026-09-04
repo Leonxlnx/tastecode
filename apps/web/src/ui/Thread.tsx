@@ -11,14 +11,7 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual'
-import type {
-  ApprovalDecision,
-  ApprovalRequest,
-  ApprovalReview,
-  Item,
-  PlanStep,
-  UserInputRequest,
-} from '@harness/contracts'
+import type { ApprovalDecision, Item } from '@harness/contracts'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
   IconArrowBarToDown as ArrowDownToLine,
@@ -61,7 +54,6 @@ import {
   neighbourTurn,
   type TurnActivityGroup,
   type TurnPresentation,
-  type TurnTiming,
 } from './turns.js'
 import {
   activeTurnAnchor,
@@ -112,28 +104,14 @@ const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
  * not a transcript of every byte.
  */
 export interface ThreadProps {
-  frameStore?: ThreadFrameStore | undefined
-  items: Item[]
+  frameStore: ThreadFrameStore
   loading?: boolean
-  liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
-  itemVersion?: number | undefined
-  liveStart?: number | undefined
   projectPath?: string | undefined
-  running: boolean
-  searching?: boolean
-  activeActivityIndices?: readonly number[] | undefined
-  activeTurn: { id: string; startedAt: number } | undefined
-  turnTiming?: TurnTiming | undefined
-  plan: PlanStep[]
-  diff: string | undefined
-  diffTurnId?: string | undefined
+  stopping?: boolean | undefined
   threadId?: string | undefined
   transport?: Transport | undefined
   searchJump?: { turnId: string; request: number } | undefined
   revealRequest?: number | undefined
-  approvals: ApprovalRequest[]
-  userInputs: UserInputRequest[]
-  reviews: ApprovalReview[]
   checkpoints?: Checkpoint[] | undefined
   keyboardActive?: boolean | undefined
   onEditMessage?: ((text: string) => void) | undefined
@@ -144,8 +122,19 @@ export interface ThreadProps {
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
 }
 
-export function Thread(props: ThreadProps) {
-  const currentApproval = props.approvals[0]
+export const Thread = memo(function Thread(props: ThreadProps) {
+  const thread = useSyncExternalStore(
+    props.frameStore.subscribeStructure,
+    props.frameStore.getStructureSnapshot,
+    props.frameStore.getStructureSnapshot,
+  )
+  const running = thread.running && !props.stopping
+  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
+  const activeActivityIndices = useMemo(
+    () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
+    [thread.items, thread.activeTurn?.id, thread.liveStart],
+  )
+  const currentApproval = thread.approvals[0]
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
@@ -157,8 +146,8 @@ export function Thread(props: ThreadProps) {
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
   const activeAnchor = useMemo(
-    () => activeTurnAnchor(props.items, props.activeTurn?.id, props.liveStart),
-    [props.items, props.activeTurn?.id, props.liveStart],
+    () => activeTurnAnchor(thread.items, thread.activeTurn?.id, thread.liveStart),
+    [thread.items, thread.activeTurn?.id, thread.liveStart],
   )
   const anchoredTurn = useRef({ threadId: props.threadId, itemId: activeAnchor?.id })
   /**
@@ -182,13 +171,13 @@ export function Thread(props: ThreadProps) {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
-  const liveItems = props.liveItems ?? EMPTY_LIVE_ITEMS
-  const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
-  const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
-  const getItemKey = useVirtualItemKey(props.items, props.threadId)
+  const liveItems = thread.liveItems
+  const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
+  const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
+  const getItemKey = useVirtualItemKey(thread.items, props.threadId)
 
   const virtualizer = useVirtualizer({
-    count: props.items.length,
+    count: thread.items.length,
     getScrollElement: () => scroller.current,
     // Roughly one paragraph. Wrong estimates only cost a correction on measure.
     estimateSize: () => 72,
@@ -212,7 +201,7 @@ export function Thread(props: ThreadProps) {
       anchoredTurn.current = { threadId: props.threadId, itemId: activeAnchor?.id }
       return
     }
-    if (!props.running) {
+    if (!running) {
       anchoredTurn.current.itemId = undefined
       return
     }
@@ -222,7 +211,7 @@ export function Thread(props: ThreadProps) {
     anchorIndex.current = activeAnchor.index
     const el = scroller.current
     setMode(modeForNewTurn(el ? isAtBottom(el) : true))
-  }, [props.running, props.threadId, activeAnchor])
+  }, [running, props.threadId, activeAnchor])
 
   const onScroll = useCallback(() => {
     const el = scroller.current
@@ -281,22 +270,22 @@ export function Thread(props: ThreadProps) {
   )
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(props.items, props.turnTiming)
+  const { turns, presentations } = projectThread(thread.items, thread.turnTiming)
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
-  const repeatedDesignRowAt = projectRepeatedDesignRows(props.items)
-  const checkpoints = props.checkpoints ?? EMPTY_CHECKPOINTS
+  const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
+  const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
-  const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
+  const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
   useEffect(() => {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
-    const index = props.items.findIndex((item) => item.turnId === target.turnId)
+    const index = thread.items.findIndex((item) => item.turnId === target.turnId)
     if (index < 0) return
     completedSearchJump.current = target.request
     setFinding(false)
     setMode('free')
     virtualizer.scrollToIndex(index, { align: 'center' })
-  }, [props.items, props.searchJump, virtualizer])
+  }, [thread.items, props.searchJump, virtualizer])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
@@ -332,8 +321,8 @@ export function Thread(props: ThreadProps) {
   // maximum scroll offset, which is below the anchor row's true start
   // whenever the thread is shorter than the viewport.
   const showWorkingRail =
-    props.running &&
-    props.activeTurn !== undefined &&
+    running &&
+    thread.activeTurn !== undefined &&
     (activePresentation?.design === true || activePresentation?.firstResponseIndex === undefined)
   const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   const railOffset =
@@ -349,7 +338,6 @@ export function Thread(props: ThreadProps) {
     <div className="thread-shell">
       <FrameScrollFollower
         frameStore={props.frameStore}
-        fallbackItemVersion={props.itemVersion ?? 0}
         revealRequest={props.revealRequest ?? 0}
         completedRevealRequest={completedRevealRequest}
         scroller={scroller}
@@ -362,7 +350,7 @@ export function Thread(props: ThreadProps) {
       {finding ? (
         <Suspense fallback={null}>
           <ThreadSearch
-            items={props.items}
+            items={thread.items}
             liveItems={liveItems}
             frameStore={props.frameStore}
             threadId={props.threadId}
@@ -371,7 +359,7 @@ export function Thread(props: ThreadProps) {
           />
         </Suspense>
       ) : null}
-      {props.items.length === 0 && !props.running ? (
+      {thread.items.length === 0 && !running ? (
         props.loading ? (
           <div className="empty thread__empty" role="status">
             Loading conversation…
@@ -388,7 +376,7 @@ export function Thread(props: ThreadProps) {
         <div className="thread__col">
           <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
             {rows.map((row) => {
-              const item = threadItemAt(props.items, liveItems, row.index)
+              const item = threadItemAt(thread.items, liveItems, row.index)
               if (!item) return null
               const presentation = presentations.get(item.turnId)
               const activityGroup =
@@ -402,12 +390,11 @@ export function Thread(props: ThreadProps) {
                   start={row.start}
                   measureElement={virtualizer.measureElement}
                   frameStore={props.frameStore}
-                  items={props.items}
-                  liveItems={liveItems}
+                  items={thread.items}
                   presentation={presentation}
                   activityGroup={activityGroup}
-                  running={props.running}
-                  activeTurnId={props.activeTurn?.id}
+                  running={running}
+                  activeTurnId={thread.activeTurn?.id}
                   repeatedDesignRowAt={repeatedDesignRowAt}
                   entering={enteringItemIds.has(item.id)}
                   settlingTurnId={settledTurnId}
@@ -419,7 +406,7 @@ export function Thread(props: ThreadProps) {
                 />
               )
             })}
-            {showWorkingRail && props.activeTurn ? (
+            {showWorkingRail && thread.activeTurn ? (
               // Deliberately not keyed by turn id: the optimistic turn's id is
               // replaced by the server's a few seconds in, and a key would
               // remount the rail at exactly the moment this render position
@@ -429,25 +416,23 @@ export function Thread(props: ThreadProps) {
               <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
                 <FrameWorkingRail
                   frameStore={props.frameStore}
-                  items={props.items}
-                  liveItems={liveItems}
-                  turnId={props.activeTurn.id}
-                  searching={props.searching}
-                  liveStart={props.liveStart}
-                  activityIndices={props.activeActivityIndices}
-                  startedAt={activePresentation?.workStartedAt ?? props.activeTurn.startedAt}
+                  items={thread.items}
+                  turnId={thread.activeTurn.id}
+                  liveStart={thread.liveStart}
+                  activityIndices={activeActivityIndices}
+                  startedAt={activePresentation?.workStartedAt ?? thread.activeTurn.startedAt}
                 />
               </div>
             ) : null}
           </div>
 
-          {showWorkingRail && props.activeTurn && railIndex === undefined ? (
+          {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
             <div className="thread__rail-spacer" aria-hidden />
           ) : null}
 
           {/* Above the plan and the diff: it is the only thing here that blocks
             the agent, so it should be the first thing the eye lands on. */}
-          {props.userInputs.map((request) => (
+          {thread.userInputs.map((request) => (
             <UserInput
               key={request.id}
               request={request}
@@ -463,19 +448,19 @@ export function Thread(props: ThreadProps) {
             />
           ) : null}
 
-          {props.reviews.map((review) => (
+          {reviews.map((review) => (
             <AutomaticApprovalReview key={review.id} review={review} />
           ))}
 
-          {props.running ? <Plan steps={props.plan} compact /> : null}
-          {!props.running ? (
+          {running ? <Plan steps={thread.plan} compact /> : null}
+          {!running ? (
             <Diff
-              diff={props.diff}
+              diff={thread.diff}
               threadId={props.threadId}
               transport={props.transport}
               onUndo={
-                props.threadId && props.diffTurnId && props.diff && props.onUndoChanges
-                  ? () => props.onUndoChanges!(props.threadId!, props.diffTurnId!, props.diff!)
+                props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
+                  ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
                   : undefined
               }
             />
@@ -506,7 +491,7 @@ export function Thread(props: ThreadProps) {
       ) : null}
     </div>
   )
-}
+})
 
 /**
  * Follow-scroll needs every text frame, but the virtual list does not. Keep
@@ -515,7 +500,6 @@ export function Thread(props: ThreadProps) {
  */
 function FrameScrollFollower({
   frameStore,
-  fallbackItemVersion,
   revealRequest,
   completedRevealRequest,
   scroller,
@@ -525,8 +509,7 @@ function FrameScrollFollower({
   writeScrollTop,
   setMode,
 }: {
-  frameStore: ThreadFrameStore | undefined
-  fallbackItemVersion: number
+  frameStore: ThreadFrameStore
   revealRequest: number
   completedRevealRequest: { current: number }
   scroller: { current: HTMLDivElement | null }
@@ -536,15 +519,8 @@ function FrameScrollFollower({
   writeScrollTop: (element: HTMLElement, top: number) => void
   setMode: (mode: ScrollMode) => void
 }) {
-  const subscribe = useCallback(
-    (listener: () => void) => frameStore?.subscribe(listener) ?? (() => undefined),
-    [frameStore],
-  )
-  const getVersion = useCallback(
-    () => frameStore?.getSnapshot().itemVersion ?? fallbackItemVersion,
-    [fallbackItemVersion, frameStore],
-  )
-  const itemVersion = useSyncExternalStore(subscribe, getVersion, getVersion)
+  const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
+  const itemVersion = useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
 
   // Layout effect, not effect: this runs before paint, so the correction is
   // never visible as a jump.
@@ -594,49 +570,34 @@ const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
 
 function useFrameLiveItems(
-  frameStore: ThreadFrameStore | undefined,
-  fallback: ReadonlyMap<number, LiveItemUpdate>,
+  frameStore: ThreadFrameStore,
   indices: readonly number[],
 ): ReadonlyMap<number, LiveItemUpdate> {
   const subscribe = useCallback(
-    (listener: () => void) => frameStore?.subscribeItems(indices, listener) ?? (() => undefined),
+    (listener: () => void) => frameStore.subscribeItems(indices, listener),
     [frameStore, indices],
   )
-  const getVersion = useCallback(() => {
-    if (frameStore) return frameStore.getSnapshot().itemVersion
-    let version = 0
-    for (const index of indices) version = Math.max(version, fallback.get(index)?.version ?? 0)
-    return version
-  }, [fallback, frameStore, indices])
+  const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
   useSyncExternalStore(subscribe, getVersion, getVersion)
-  return frameStore?.getSnapshot().liveItems ?? fallback
+  return frameStore.getSnapshot().liveItems
 }
 
 function useFrameLiveItemRange(
-  frameStore: ThreadFrameStore | undefined,
-  fallback: ReadonlyMap<number, LiveItemUpdate>,
+  frameStore: ThreadFrameStore,
   firstIndex: number,
   lastIndex: number,
 ): ReadonlyMap<number, LiveItemUpdate> {
   const subscribe = useCallback(
     (listener: () => void) => {
-      if (!frameStore) return () => undefined
       return firstIndex === lastIndex
         ? frameStore.subscribeItems([firstIndex], listener)
         : frameStore.subscribeItemRange(firstIndex, lastIndex, listener)
     },
     [firstIndex, frameStore, lastIndex],
   )
-  const getVersion = useCallback(() => {
-    if (frameStore) return frameStore.getSnapshot().itemVersion
-    let version = 0
-    for (let index = firstIndex; index <= lastIndex; index += 1) {
-      version = Math.max(version, fallback.get(index)?.version ?? 0)
-    }
-    return version
-  }, [fallback, firstIndex, frameStore, lastIndex])
+  const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
   useSyncExternalStore(subscribe, getVersion, getVersion)
-  return frameStore?.getSnapshot().liveItems ?? fallback
+  return frameStore.getSnapshot().liveItems
 }
 
 const ThreadFrameRow = memo(function ThreadFrameRow({
@@ -645,7 +606,6 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   measureElement,
   frameStore,
   items,
-  liveItems: fallbackLiveItems,
   presentation,
   activityGroup,
   running,
@@ -662,9 +622,8 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   index: number
   start: number
   measureElement: (node: Element | null) => void
-  frameStore?: ThreadFrameStore | undefined
+  frameStore: ThreadFrameStore
   items: Item[]
-  liveItems: ReadonlyMap<number, LiveItemUpdate>
   presentation: TurnPresentation | undefined
   activityGroup: TurnActivityGroup | undefined
   running: boolean
@@ -680,14 +639,8 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
 }) {
   const firstSubscribedIndex = activityGroup?.firstIndex ?? index
   const lastSubscribedIndex = activityGroup?.lastIndex ?? index
-  const liveItems = useFrameLiveItemRange(
-    frameStore,
-    fallbackLiveItems,
-    firstSubscribedIndex,
-    lastSubscribedIndex,
-  )
-  const currentItems = frameStore?.getSnapshot().items ?? items
-  const item = threadItemAt(currentItems, liveItems, index)
+  const liveItems = useFrameLiveItemRange(frameStore, firstSubscribedIndex, lastSubscribedIndex)
+  const item = threadItemAt(items, liveItems, index)
   if (!item) return null
 
   const live = running && activeTurnId === item.turnId
@@ -700,7 +653,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         index !== presentation.finalAnswerIndex))
   const activityLead = compactedActivity && activityGroup.firstIndex === index
   const itemAfterActivity = activityGroup
-    ? threadItemAt(currentItems, liveItems, activityGroup.lastIndex + 1)
+    ? threadItemAt(items, liveItems, activityGroup.lastIndex + 1)
     : undefined
   const liveActivityGroup =
     live &&
@@ -718,7 +671,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
       !compactedActivity &&
       ((isActivity(item) && !designPhaseLabel(toolText(item))) || item.type === 'error'))
   const nextVisibleItem = threadItemAt(
-    currentItems,
+    items,
     liveItems,
     activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
   )
@@ -730,9 +683,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
   const activitySource =
-    activityLead && activityGroup
-      ? { group: activityGroup, items: currentItems, liveItems }
-      : undefined
+    activityLead && activityGroup ? { group: activityGroup, items, liveItems } : undefined
   const liveItemUpdate = liveItems.get(index)
 
   return (
@@ -1826,41 +1777,21 @@ function CopyAction({ text, label }: { text: string; label: string }) {
 const FrameWorkingRail = memo(function FrameWorkingRail({
   frameStore,
   items,
-  liveItems: fallbackLiveItems,
   turnId,
-  searching,
   liveStart,
   activityIndices,
   startedAt,
 }: {
-  frameStore?: ThreadFrameStore | undefined
+  frameStore: ThreadFrameStore
   items: Item[]
-  liveItems: ReadonlyMap<number, LiveItemUpdate>
   turnId: string
-  searching: boolean | undefined
-  liveStart: number | undefined
-  activityIndices: readonly number[] | undefined
+  liveStart: number
+  activityIndices: readonly number[]
   startedAt: number
 }) {
-  const trackedIndices = useMemo(
-    () => activityIndices ?? activeTurnActivityIndices(items, turnId, liveStart),
-    [activityIndices, items, liveStart, turnId],
-  )
-  const liveItems = useFrameLiveItems(frameStore, fallbackLiveItems, trackedIndices)
-  const snapshot = frameStore?.getSnapshot()
-  const currentItems = snapshot?.items ?? items
-  const currentLiveStart = snapshot?.liveStart ?? liveStart
-  const currentSearching = snapshot
-    ? activeTurnIsSearching(currentItems, turnId, liveItems, currentLiveStart, trackedIndices)
-    : searching
-  const label = workLabel(
-    currentItems,
-    turnId,
-    currentSearching,
-    liveItems,
-    currentLiveStart,
-    trackedIndices,
-  )
+  const liveItems = useFrameLiveItems(frameStore, activityIndices)
+  const searching = activeTurnIsSearching(items, turnId, liveItems, liveStart, activityIndices)
+  const label = workLabel(items, turnId, searching, liveItems, liveStart, activityIndices)
   return <WorkingRail startedAt={startedAt} label={label} />
 })
 
@@ -2273,12 +2204,6 @@ export function isRepeatedDesignRow(item: Item, items: readonly Item[], index: n
     adjacentTurn = prior.turnId
   }
   return false
-}
-
-export function createRepeatedDesignRowLookup(
-  items: readonly Item[],
-): (item: Item, index: number) => boolean {
-  return repeatedDesignRowLookup(items, new Map())
 }
 
 /** Retain the few computed phase rows when only the transcript tail changes. */

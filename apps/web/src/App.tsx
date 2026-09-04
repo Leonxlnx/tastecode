@@ -108,7 +108,7 @@ import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { NoticePresence } from './ui/NoticePresence.js'
-import { ActiveThread } from './ui/ActiveThread.js'
+import { LazyThread } from './ui/LazyThread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { serverBaseUrl } from './server-url.js'
@@ -4708,7 +4708,7 @@ export function App() {
                           </div>
                         }
                       >
-                        <ActiveThread
+                        <LazyThread
                           key={threadEntryKey}
                           frameStore={threadFrameStore}
                           stopping={stopping}

@@ -62,17 +62,6 @@ function createLiveThreadHarness(historyCount: number) {
       <Thread
         frameStore={store}
         threadId={`thread-${historyCount}`}
-        items={items}
-        liveItems={base.liveItems}
-        itemVersion={0}
-        liveStart={history.length}
-        running
-        activeTurn={base.activeTurn}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
         onDecide={noop}
         onAnswerUserInput={noop}
       />,
@@ -109,84 +98,15 @@ function createLiveThreadHarness(historyCount: number) {
   }
 }
 
-function createLegacyLiveThreadHarness(historyCount: number) {
-  const history = makeFixtureThread(historyCount)
-  const live: Item = {
-    id: `legacy-live-${historyCount}`,
-    turnId: `legacy-active-${historyCount}`,
-    type: 'message',
-    role: 'assistant',
-    status: 'started',
-    text: '',
-    createdAt: historyCount,
-  }
-  const items = [...history, live]
-  const container = document.createElement('div')
-  document.body.append(container)
-  const root = createRoot(container)
-  let version = 0
-
-  const publish = () => {
-    version += 1
-    const update: LiveItemUpdate = {
-      item: { ...live, text: 'x'.repeat(version) },
-      version,
-      textUpdate: { kind: 'append', text: 'x' },
-    }
-    flushSync(() => {
-      root.render(
-        <Thread
-          threadId={`legacy-thread-${historyCount}`}
-          items={items}
-          liveItems={new Map([[history.length, update]])}
-          itemVersion={version}
-          liveStart={history.length}
-          running
-          activeTurn={{ id: live.turnId, startedAt: historyCount }}
-          plan={[]}
-          diff={undefined}
-          approvals={[]}
-          userInputs={[]}
-          reviews={[]}
-          onDecide={noop}
-          onAnswerUserInput={noop}
-        />,
-      )
-    })
-  }
-  publish()
-  if (container.querySelector('[data-streaming-markdown]')?.textContent !== 'x') {
-    throw new Error('legacy live row did not render')
-  }
-
-  return {
-    publish,
-    dispose: () => {
-      flushSync(() => root.unmount())
-      container.remove()
-    },
-  }
-}
-
 const shortHarness = createLiveThreadHarness(0)
 const longHarness = createLiveThreadHarness(10_000)
-const legacyShortHarness = createLegacyLiveThreadHarness(0)
-const legacyLongHarness = createLegacyLiveThreadHarness(10_000)
 
 afterAll(() => {
   shortHarness.dispose()
   longHarness.dispose()
-  legacyShortHarness.dispose()
-  legacyLongHarness.dispose()
 })
 
 describe('active transcript React frame', () => {
-  bench('rerenders the transcript owner in a one-item thread', legacyShortHarness.publish, OPTIONS)
-  bench(
-    'rerenders the transcript owner in a 10,001-item thread',
-    legacyLongHarness.publish,
-    OPTIONS,
-  )
   bench('renders one live row in a one-item thread', shortHarness.publish, OPTIONS)
   bench('renders one live row in a 10,001-item thread', longHarness.publish, OPTIONS)
 })

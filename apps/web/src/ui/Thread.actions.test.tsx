@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ApprovalRequest, Item } from '@harness/contracts'
 import { StrictMode } from 'react'
+import { ThreadFrameStore } from '../thread-frame-store.js'
+import { emptyThread } from '../thread-store.js'
 import {
-  createRepeatedDesignRowLookup,
   createRepeatedDesignRowProjector,
   Thread,
   isRepeatedDesignRow,
@@ -56,14 +57,7 @@ function turnItem(id: string, createdAt: number, fields: Partial<Item>): Item {
 function renderCompleted(items: Item[]) {
   return render(
     <Thread
-      items={items}
-      running={false}
-      activeTurn={undefined}
-      plan={[]}
-      diff={undefined}
-      approvals={[]}
-      userInputs={[]}
-      reviews={[]}
+      frameStore={new ThreadFrameStore({ ...emptyThread, items })}
       onDecide={() => undefined}
       onAnswerUserInput={() => undefined}
     />,
@@ -87,14 +81,14 @@ describe('approval queue', () => {
     const onDecide = vi.fn()
     const view = (approvals: ApprovalRequest[]) => (
       <Thread
-        items={[]}
-        running
-        activeTurn={{ id: 'turn-1', startedAt: 0 }}
-        plan={[]}
-        diff={undefined}
-        approvals={approvals}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 0 },
+            approvals,
+          })
+        }
         onDecide={onDecide}
         onAnswerUserInput={() => undefined}
       />
@@ -128,14 +122,7 @@ describe('design activity rows', () => {
   it('renders the design phase label instead of the internal slug', () => {
     render(
       <Thread
-        items={[marker('m1', 'design:brief')]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items: [marker('m1', 'design:brief')] })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -167,14 +154,14 @@ describe('design activity rows', () => {
     ]
     render(
       <Thread
-        items={items}
-        running={true}
-        activeTurn={{ id: 'turn-m1', startedAt: 1 }}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items,
+            running: true,
+            activeTurn: { id: 'turn-m1', startedAt: 1 },
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -234,7 +221,7 @@ describe('design activity rows', () => {
   it('reuses repeated-design results while a transcript only streams text', () => {
     const first = marker('m1', 'design:build')
     const second = marker('m2', 'design:build')
-    const lookup = createRepeatedDesignRowLookup([first, second])
+    const lookup = createRepeatedDesignRowProjector()([first, second])
 
     expect(lookup(second, 1)).toBe(true)
     expect(lookup(second, 1)).toBe(true)
@@ -291,15 +278,8 @@ describe('empty thread', () => {
 
     rendered.rerender(
       <Thread
-        items={[]}
+        frameStore={new ThreadFrameStore(emptyThread)}
         loading
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -372,14 +352,7 @@ describe('completed activity disclosure', () => {
     ]
     const { container } = render(
       <Thread
-        items={items}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -727,20 +700,18 @@ describe('completed activity disclosure', () => {
     render(
       <StrictMode>
         <Thread
-          items={[
-            turnItem('prompt-1', 1, {
-              role: 'user',
-              text: 'Strict preview',
-              attachments: [path],
-            }),
-          ]}
-          running={false}
-          activeTurn={undefined}
-          plan={[]}
-          diff={undefined}
-          approvals={[]}
-          userInputs={[]}
-          reviews={[]}
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [
+                turnItem('prompt-1', 1, {
+                  role: 'user',
+                  text: 'Strict preview',
+                  attachments: [path],
+                }),
+              ],
+            })
+          }
           onDecide={() => undefined}
           onAnswerUserInput={() => undefined}
         />
@@ -803,22 +774,20 @@ describe('completed activity disclosure', () => {
     })
     render(
       <Thread
-        items={[
-          turnItem('prompt-1', 1, { role: 'user', text: 'Review it' }),
-          turnItem('image-1', 2, {
-            type: 'tool_call',
-            text: 'image view\nuuid-layout.png',
-          }),
-          turnItem('answer-1', 3, { role: 'assistant', text: 'Reviewed.' }),
-        ]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              turnItem('prompt-1', 1, { role: 'user', text: 'Review it' }),
+              turnItem('image-1', 2, {
+                type: 'tool_call',
+                text: 'image view\nuuid-layout.png',
+              }),
+              turnItem('answer-1', 3, { role: 'assistant', text: 'Reviewed.' }),
+            ],
+          })
+        }
         projectPath="/work/site"
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -857,14 +826,14 @@ describe('completed activity disclosure', () => {
     const failedImage = { ...startedImage, status: 'failed' as const }
     const view = (image: Item) => (
       <Thread
-        items={[image]}
-        running
-        activeTurn={{ id: 'turn-1', startedAt: 1 }}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [image],
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 1 },
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />
@@ -996,21 +965,19 @@ describe('completed activity disclosure', () => {
     const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 0 }
     render(
       <Thread
-        items={[
-          turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
-          turnItem('answer-1', 2, {
-            role: 'assistant',
-            phase: 'final_answer',
-            text: 'Fixed.',
-          }),
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+              turnItem('answer-1', 2, {
+                role: 'assistant',
+                phase: 'final_answer',
+                text: 'Fixed.',
+              }),
+            ],
+          })
+        }
         checkpoints={[checkpoint]}
         onRevertCheckpoint={onRevertCheckpoint}
         onDecide={() => undefined}
@@ -1022,30 +989,63 @@ describe('completed activity disclosure', () => {
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
+  it('hides work when stopping and keeps checkpoints hidden until the turn ends', () => {
+    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 0 }
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      items: [
+        turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+        turnItem('answer-1', 2, { role: 'assistant', text: 'Fixed.' }),
+      ],
+      running: true,
+      activeTurn: { id: 'turn-2', startedAt: 3 },
+    })
+    const props = {
+      frameStore: store,
+      checkpoints: [checkpoint],
+      onRevertCheckpoint: vi.fn(),
+      onDecide: () => undefined,
+      onAnswerUserInput: () => undefined,
+    }
+    const view = render(<Thread {...props} />)
+    expect(view.container.querySelector('.activity--working')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+
+    view.rerender(<Thread {...props} stopping />)
+
+    expect(view.container.querySelector('.activity--working')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+
+    act(() => store.publish({ ...store.getSnapshot(), running: false, activeTurn: undefined }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revert to before response' }))
+    expect(props.onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
+  })
+
   it('keeps completed response actions visible while a later turn is running', () => {
     render(
       <Thread
-        items={[
-          turnItem('prompt-1', 1, { role: 'user', text: 'Start designing' }),
-          turnItem('answer-1', 2, {
-            role: 'assistant',
-            phase: 'final_answer',
-            text: 'Got it, thanks.',
-          }),
-          turnItem('work-2', 3, {
-            turnId: 'turn-2',
-            type: 'tool_call',
-            status: 'started',
-            text: 'design:brief',
-          }),
-        ]}
-        running
-        activeTurn={{ id: 'turn-2', startedAt: 3 }}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              turnItem('prompt-1', 1, { role: 'user', text: 'Start designing' }),
+              turnItem('answer-1', 2, {
+                role: 'assistant',
+                phase: 'final_answer',
+                text: 'Got it, thanks.',
+              }),
+              turnItem('work-2', 3, {
+                turnId: 'turn-2',
+                type: 'tool_call',
+                status: 'started',
+                text: 'design:brief',
+              }),
+            ],
+            running: true,
+            activeTurn: { id: 'turn-2', startedAt: 3 },
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -1079,14 +1079,7 @@ describe('collapsed row disclosure', () => {
     ]
     const { container } = render(
       <Thread
-        items={items}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -1126,14 +1119,7 @@ describe('thread error surface', () => {
     ]
     const { container } = render(
       <Thread
-        items={items}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -1153,24 +1139,22 @@ describe('thread message actions', () => {
   it('copies the user prompt through the platform bridge', async () => {
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'Keep my exact prompt',
-            createdAt: 1,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Keep my exact prompt',
+                createdAt: 1,
+              },
+            ],
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -1190,24 +1174,22 @@ describe('thread message actions', () => {
     writeClipboardText.mockRejectedValueOnce(new Error('Invalid clipboard text'))
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'A prompt too large for the clipboard bridge',
-            createdAt: 1,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'A prompt too large for the clipboard bridge',
+                createdAt: 1,
+              },
+            ],
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -1225,24 +1207,22 @@ describe('thread message actions', () => {
     const onEditMessage = vi.fn()
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'Revise this prompt',
-            createdAt: 1,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Revise this prompt',
+                createdAt: 1,
+              },
+            ],
+          })
+        }
         onEditMessage={onEditMessage}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
@@ -1263,24 +1243,22 @@ describe('thread message actions', () => {
     }
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'Undo this turn',
-            createdAt: 100,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Undo this turn',
+                createdAt: 100,
+              },
+            ],
+          })
+        }
         checkpoints={[checkpoint]}
         onRevertCheckpoint={onRevertCheckpoint}
         onDecide={() => undefined}
@@ -1303,24 +1281,22 @@ describe('thread message actions', () => {
     }
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-2',
-            turnId: 'turn-2',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: prompt,
-            createdAt: 100,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-2',
+                turnId: 'turn-2',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: prompt,
+                createdAt: 100,
+              },
+            ],
+          })
+        }
         checkpoints={[checkpoint]}
         onRevertCheckpoint={onRevertCheckpoint}
         onDecide={() => undefined}

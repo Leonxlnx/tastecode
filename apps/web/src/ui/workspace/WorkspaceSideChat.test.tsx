@@ -2,32 +2,27 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
-import { useSyncExternalStore } from 'react'
+import { memo, useSyncExternalStore } from 'react'
 import type { ThreadFrameStore } from '../../thread-frame-store.js'
 import type { Transport } from '../../transport.js'
 
 const sideThreadRenders = vi.hoisted(() => vi.fn())
 
 vi.mock('../Thread.js', () => ({
-  Thread: (props: {
-    frameStore?: ThreadFrameStore | undefined
-    items: Array<{ id: string; text?: string | undefined }>
-    liveItems?: ReadonlyMap<number, { item: { text?: string | undefined } }> | undefined
-  }) => {
+  Thread: memo((props: { frameStore: ThreadFrameStore }) => {
     sideThreadRenders()
     const snapshot = useSyncExternalStore(
-      props.frameStore?.subscribe ?? (() => () => undefined),
-      props.frameStore?.getSnapshot ?? (() => undefined),
-      props.frameStore?.getSnapshot ?? (() => undefined),
+      props.frameStore.subscribe,
+      props.frameStore.getSnapshot,
+      props.frameStore.getSnapshot,
     )
-    const items = snapshot?.items ?? props.items
-    const liveItems = snapshot?.liveItems ?? props.liveItems
+    const { items, liveItems } = snapshot
     return (
       <div data-testid="side-thread">
         {items.map((item, index) => liveItems?.get(index)?.item.text ?? item.text).join('|')}
       </div>
     )
-  },
+  }),
 }))
 
 import { WorkspaceSideChat } from './WorkspaceSideChat.js'

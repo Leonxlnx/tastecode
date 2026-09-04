@@ -1,4 +1,4 @@
-import { lazy } from 'react'
+import { lazy, memo } from 'react'
 import type { ThreadProps } from './Thread.js'
 
 let threadModulePromise: Promise<typeof import('./Thread.js')> | undefined
@@ -28,8 +28,8 @@ export function preloadThread(): void {
   void loadThread().catch(() => undefined)
 }
 
-export function LazyThread(props: ThreadProps) {
+export const LazyThread = memo(function LazyThread(props: ThreadProps) {
   const LoadedThread = threadModule?.Thread
   if (LoadedThread) return <LoadedThread {...props} />
   return <Thread {...props} />
-}
+})

@@ -1,12 +1,4 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApprovalDecision, ApprovalMode, DomainEvent } from '@harness/contracts'
 import {
   IconArrowUp as ArrowUp,
@@ -21,8 +13,6 @@ import {
   type PendingThreadDeltaBatch,
 } from '../../thread-delta-buffer.js'
 import {
-  activeTurnActivityIndices,
-  activeTurnIsSearching,
   beginOptimisticTurn,
   emptyThread,
   reduce,
@@ -55,57 +45,6 @@ export type SideChatStartOptions = {
 
 type SequencedEvent = { event: DomainEvent; seq?: number | undefined }
 let submissionSequence = 0
-
-const SideChatThread = memo(function SideChatThread(props: {
-  frameStore: ThreadFrameStore
-  threadId?: string | undefined
-  transport: Transport
-  onDecide: (id: string, decision: ApprovalDecision) => void
-  onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void
-}) {
-  const thread = useSyncExternalStore(
-    props.frameStore.subscribeStructure,
-    props.frameStore.getStructureSnapshot,
-    props.frameStore.getStructureSnapshot,
-  )
-  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
-  const activeActivityIndices = useMemo(
-    () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
-    [thread.items, thread.activeTurn?.id, thread.liveStart],
-  )
-  const searching = activeTurnIsSearching(
-    thread.items,
-    thread.activeTurn?.id,
-    thread.liveItems,
-    thread.liveStart,
-    activeActivityIndices,
-  )
-
-  return (
-    <Thread
-      frameStore={props.frameStore}
-      items={thread.items}
-      liveItems={thread.liveItems}
-      itemVersion={thread.itemVersion}
-      liveStart={thread.liveStart}
-      running={thread.running}
-      searching={searching}
-      activeActivityIndices={activeActivityIndices}
-      activeTurn={thread.activeTurn}
-      turnTiming={thread.turnTiming}
-      plan={thread.plan}
-      diff={thread.diff}
-      threadId={props.threadId}
-      transport={props.transport}
-      approvals={thread.approvals}
-      userInputs={thread.userInputs}
-      reviews={reviews}
-      keyboardActive={false}
-      onDecide={props.onDecide}
-      onAnswerUserInput={props.onAnswerUserInput}
-    />
-  )
-})
 
 export function WorkspaceSideChat(props: {
   active: boolean
@@ -444,9 +383,10 @@ export function WorkspaceSideChat(props: {
           </div>
         ) : null}
         {hasConversation && props.active ? (
-          <SideChatThread
+          <Thread
             frameStore={frameStoreRef.current}
             threadId={sideThreadId}
+            keyboardActive={false}
             transport={props.transport}
             onDecide={decide}
             onAnswerUserInput={answer}

@@ -1,11 +1,7 @@
 // @vitest-environment happy-dom
 import { bench, describe } from 'vitest'
 import type { Item } from '@harness/contracts'
-import {
-  createRepeatedDesignRowLookup,
-  createRepeatedDesignRowProjector,
-  isRepeatedDesignRow,
-} from './Thread.js'
+import { createRepeatedDesignRowProjector, isRepeatedDesignRow } from './Thread.js'
 
 const OPTIONS = { time: 1_200, warmupTime: 300 }
 const first: Item = {
@@ -27,7 +23,7 @@ const activities: Item[] = Array.from({ length: 10_000 }, (_, index) => ({
 const repeated: Item = { ...first, id: 'repeated', createdAt: activities.length + 1 }
 const items = [first, ...activities, repeated]
 const repeatedIndex = items.length - 1
-const lookup = createRepeatedDesignRowLookup(items)
+const lookup = createRepeatedDesignRowProjector()(items)
 const structuralFrames = [
   items,
   [
@@ -71,7 +67,7 @@ describe('long design-thread row suppression', () => {
     () => {
       structuralFrame = structuralFrame === 0 ? 1 : 0
       const frame = structuralFrames[structuralFrame]!
-      if (!createRepeatedDesignRowLookup(frame)(repeated, repeatedIndex)) {
+      if (!createRepeatedDesignRowProjector()(frame)(repeated, repeatedIndex)) {
         throw new Error('repeated phase missing')
       }
     },
