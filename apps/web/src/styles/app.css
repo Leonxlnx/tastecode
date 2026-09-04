@@ -57,14 +57,8 @@
   transform: translateX(-100%);
 }
 
-/* Nothing animates while the rail edge is being dragged, nor across the commit
-   that turns a fold into a real collapse: the column has to track the pointer
-   1:1, and the flyout must not slide out from full width afterwards.
-
-   A data attribute rather than a class, deliberately. The .shell class
-   attribute belongs to React, which rewrites the whole string whenever the
-   collapsed flag changes and silently drops anything added from here — in the
-   exact commit this suppression exists to cover. */
+/* Keep dragging and fold commits instant. Use a data attribute so React's
+   className updates cannot remove this transition override. */
 .shell[data-resizing] .shell__body,
 .shell[data-resizing] .rail-slot.is-collapsed .rail {
   transition: none;
@@ -82,10 +76,8 @@
   padding-left: max(12px, env(titlebar-area-x, 12px));
   padding-right: 6px;
   width: 100%;
-  /* One element with the sidebar: the whole bar carries the rail colour
-     (native caption buttons match via titleBarOverlay in window-theme.ts).
-     The content hairline lives on .stage, not here — a bar-positioned line
-     tracked --rail-w instantly while the grid column animated behind it. */
+  /* Match the rail and native caption buttons. The hairline belongs to .stage
+     so it follows the animated column. */
   background: var(--bg-rail);
   -webkit-app-region: no-drag;
   user-select: none;
@@ -968,11 +960,7 @@
   list-style: none;
   margin: 2px 0 9px;
   padding: 0;
-  /* THE truncation fix. As a grid item the list defaults to min-width auto,
-     so a long nowrap title made it wider than the drawer and the overflow
-     clip cut rows hard at the rail edge — the title's own ellipsis boundary
-     sat invisibly beyond it. Allowed to shrink, the width chain reaches the
-     title and the ellipsis actually renders. */
+  /* Let the grid item shrink so long titles reach their ellipsis boundary. */
   min-width: 0;
   max-width: 100%;
 }
@@ -1242,10 +1230,7 @@
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   min-width: 0;
-  /* The content pane owns its frame: top and left hairline with a rounded
-     top-left corner, over the rail-coloured row behind it. Living on the pane
-     itself, the line moves in the same grid animation as the column — the
-     old bar-positioned hairline lagged the rail while resizing. */
+  /* Keep the frame on the pane so its hairline follows the animated column. */
   background: var(--bg);
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
@@ -1311,10 +1296,7 @@
 .stage__body.is-new-session {
   align-content: center;
   grid-template-rows: auto;
-  /* Very close to true center, with only a hair of upward bias left. The
-     earlier 5vh lift read as the block floating in the top half of a tall
-     window. Padding, not transform: a transformed ancestor would re-anchor
-     the position:fixed flyout menus. */
+  /* Use padding for the small upward bias; transforms would re-anchor fixed menus. */
   padding-bottom: max(clamp(0px, 1.5vh, 14px), clamp(0px, calc(648px - 100vh), 188px));
 }
 
@@ -2729,9 +2711,7 @@
 
 .menu {
   position: fixed;
-  /* Above the modal surfaces menus open from (settings 60, palette 70) —
-     at 30 the connection-preset dropdown rendered BEHIND the settings
-     dialog: invisible, unclickable, and it read as "there is only OpenAI". */
+  /* Menus must sit above their modal owners: settings (60) and palette (70). */
   z-index: 80;
   min-width: min(260px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
@@ -3588,11 +3568,7 @@
 
 @media (max-width: 700px) {
   .shell {
-    /* The touch target needs a taller bar than the desktop chrome token, so
-       the titlebar grows to 44px. Grid rows still read --titlebar-h: keeping
-       the token at 34px would let the bar overflow its row and slide the
-       sidebar drawer up underneath it, clipping its corner and overlapping
-       the reveal toggle. */
+    /* Match the grid row to the 44px touch titlebar so it cannot overlap the drawer. */
     --titlebar-h: 44px;
   }
 
@@ -3691,10 +3667,7 @@
     height: 30px;
   }
 
-  /* On a phone every composer control shares one line — attach, permission,
-     design, the model picker, voice and send. The picker shrinks first (its
-     name truncates) and the send orb stays pinned to the right edge, so the
-     rail never wraps at any phone width. */
+  /* Keep phone controls on one line: truncate the model name and pin Send right. */
   .tools {
     flex-wrap: nowrap;
   }
@@ -3758,10 +3731,7 @@
   }
 }
 
-/* ---------------------------------------------------------------------------
-   Translucent sidebar. The strength comes from --rail-glass (0..0.6, set by
-   Appearance).
-   --------------------------------------------------------------------------- */
+/* Translucent sidebar strength: --rail-glass (0..0.6), set in Appearance. */
 
 :root[data-glass='on'] .rail {
   /* A thinner pane per strength step, plus a hairline edge highlight. What
@@ -3801,11 +3771,8 @@
   background: var(--bg-rail-tint);
 }
 
-/* Real glass, the way Codex does it: on desktop the OS draws acrylic (Windows)
-   or vibrancy (macOS) behind the window. Everything stays opaque except the
-   sidebar column, so the material shows through exactly there — a clean blur
-   of whatever is behind the window. In a plain browser no material exists and
-   the rail keeps its quiet translucent tint. */
+/* Desktop acrylic/vibrancy shows through the sidebar; other columns stay opaque.
+   Browsers keep the tinted rail because they have no native material. */
 :root[data-glass='on'][data-shell='desktop']:not([data-theme='light']) body {
   background: transparent;
 }
