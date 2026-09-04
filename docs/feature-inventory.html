@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-22 906b6d99</span>
+        <span class="meta">2026-08-24 e0700302</span>
       </div>
     </div>
 
@@ -262,7 +262,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Sign in with real ChatGPT OAuth, shows email and plan in Settings</span
+                >Sign in with real ChatGPT OAuth, shows email and plan in Settings
+                <span class="d">codex login runs in the expanded setup terminal card</span></span
               ></label
             >
           </li>
@@ -341,8 +342,8 @@
               ><input type="checkbox" /><span
                 >CLI sign-in, redacted account email and plan, sign out from Settings
                 <span class="d"
-                  >claude auth login runs in the guided provider terminal; SDK initialization fills
-                  account details without sending a prompt</span
+                  >claude auth login runs in the expanded setup terminal card; SDK initialization
+                  fills account details without sending a prompt</span
                 ></span
               ></label
             >
@@ -633,7 +634,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Guided install per provider in an in-app terminal</span
+                >Guided install per provider in the expanded workspace terminal card</span
               ></label
             >
           </li>
@@ -652,11 +653,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Guided sign-in card
+                >Expanded setup terminal card
                 <span class="d"
-                  >browser opens itself, device code as copy chip, live status line, paste-ready
-                  one-time-code field for the active login terminal, terminal only behind
-                  Details</span
+                  >provider installs and sign-ins plus GitHub CLI install and login share one live
+                  workspace terminal; browser handoff, device code copy, live status, and the
+                  one-time-code field stay scoped to the active setup terminal</span
                 ></span
               ></label
             >
@@ -825,7 +826,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Permission mode selector <span class="d">ask, auto, auto-review, full</span></span
+                >Permission mode selector
+                <span class="d"
+                  >ask, auto, auto-review, and full; each provider remembers its own last
+                  choice</span
+                ></span
               ></label
             >
           </li>
@@ -1195,7 +1200,8 @@
                 state for the signed-in GitHub account
                 <span class="d"
                   >composable state, review, merge, repository, author, and base-branch filters with
-                  search and cached lazy loading</span
+                  search and cached lazy loading; missing or signed-out GitHub CLI setup opens the
+                  expanded terminal card and refreshes the list after success</span
                 ></span
               ></label
             >
