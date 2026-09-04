@@ -373,6 +373,8 @@ export const ProviderSetupSchema = z.object({
   installCommand: z.string().optional(),
   /** `app` can authenticate in Harness; `provider` finishes setup in the provider's CLI. */
   login: z.enum(['app', 'provider']),
+  /** Whether the provider CLI opens its own OAuth page during terminal sign-in. */
+  loginOpensBrowser: z.boolean().optional(),
 })
 export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
 

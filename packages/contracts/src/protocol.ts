@@ -758,6 +758,18 @@ export const methods = {
     params: z.object({ refresh: z.boolean().optional() }),
     result: PullRequestListResultSchema,
   },
+  /**
+   * Install or authenticate the local GitHub CLI in an interactive terminal.
+   * The renderer names only the fixed setup action; the server owns the
+   * platform-specific command so this boundary cannot become a remote shell.
+   */
+  'pullRequests.setup': {
+    params: z.object({
+      action: z.enum(['install', 'login']),
+      ...TerminalSizeSchema['shape'],
+    }),
+    result: z.object({ terminalId: TerminalIdSchema }),
+  },
   'pullRequests.detail': {
     params: z.object({
       repository: GitHubRepositoryNameSchema,

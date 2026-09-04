@@ -1219,6 +1219,20 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('names a fixed GitHub CLI setup action without carrying command text', () => {
+    const valid = { action: 'login', columns: 320, rows: 30 }
+    expect(methods['pullRequests.setup'].params.parse(valid)).toEqual(valid)
+    expect(methods['pullRequests.setup'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
+      valid,
+    )
+    expect(() =>
+      methods['pullRequests.setup'].params.parse({ action: 'remove', columns: 100, rows: 30 }),
+    ).toThrow()
+    expect(methods['pullRequests.setup'].result.parse({ terminalId: 'term-github' })).toEqual({
+      terminalId: 'term-github',
+    })
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({
