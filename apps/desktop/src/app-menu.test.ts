@@ -72,6 +72,8 @@ describe('application menu', () => {
     })
     expect(parseNativeMenuShortcuts({ launchAnything: { key: 'x' } })).toBeUndefined()
     expect(parseNativeMenuShortcuts({ toggleSidebar: { key: 'b', command: true } })).toBeUndefined()
+    expect(parseNativeMenuShortcuts(new Date())).toBeUndefined()
+    expect(parseNativeMenuShortcuts(new Map())).toBeUndefined()
   })
 })
 

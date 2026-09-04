@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process'
 import type { Writable } from 'node:stream'
-import { z } from 'zod'
 
 export type MacHapticPattern = 'alignment' | 'generic'
 
@@ -213,8 +212,6 @@ export class MacOSHaptics {
   }
 }
 
-const MacHapticPatternSchema = z.enum(['alignment', 'generic'])
-
 export function isMacHapticPattern(value: unknown): value is MacHapticPattern {
-  return MacHapticPatternSchema.safeParse(value).success
+  return value === 'alignment' || value === 'generic'
 }

@@ -21,18 +21,12 @@ import {
   shell,
   systemPreferences,
   Tray,
+  utilityProcess,
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
-import updaterPackage from 'electron-updater'
-import { z } from 'zod'
-import {
-  PreviewDomAuditSchema,
-  PreviewCaptureRequestSchema,
-  type PreviewCaptureRequest,
-  type PreviewCaptureResult,
-} from '@harness/contracts'
-import { applyDesktopPath, desktopPath } from '@harness/proc'
+import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import { applyDesktopPath, desktopPath } from '@harness/proc/desktop-path'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
   attachmentByteRange,
@@ -64,7 +58,8 @@ import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
 import { clearPreviewSession } from './preview-session.js'
 import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
-import { ServerSupervisor } from './server-supervisor.js'
+import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
+import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
@@ -84,8 +79,6 @@ import {
 } from './zoom-shortcuts.js'
 import { viewedImagePath } from './viewed-image-path.js'
 
-const { autoUpdater } = updaterPackage
-
 applyDesktopPath()
 
 /**
@@ -100,10 +93,24 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
 const productIconPath = path.join(here, '../assets/tastecode-app-icon.png')
 const nativeAppName = 'Taste Code'
-const productDataPath = path.join(app.getPath('appData'), 'TasteCode')
+// Performance runs must never read or rewrite the user's real window and
+// Chromium state. Keep the override opt-in so normal installs stay on the
+// long-standing TasteCode path.
+const productDataPath = process.env['HARNESS_DESKTOP_DATA_DIR']
+  ? path.resolve(process.env['HARNESS_DESKTOP_DATA_DIR'])
+  : path.join(app.getPath('appData'), 'TasteCode')
 const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
+const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
+const startupSettledMetricsDelayMs = startupSettleDelay(process.env['HARNESS_STARTUP_SETTLE_MS'])
+
+function logStartupMilestone(name: string): void {
+  if (!Number.isFinite(startupStartedAt) || startupStartedAt <= 0) return
+  console.log(`[startup] ${name} ${Date.now() - startupStartedAt}ms`)
+}
+
+logStartupMilestone('main-module')
 
 // Keep the existing storage location while the OS-facing product name gains a space.
 app.setPath('userData', productDataPath)
@@ -125,6 +132,40 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+let startupWindowReady = false
+let startupServerReady = Boolean(devServer)
+let startupRendererReady = false
+let startupHydratedReady = false
+let startupCatalogReady = false
+let startupExitScheduled = false
+
+function finishStartupBenchmarkIfReady(): void {
+  if (
+    process.env['HARNESS_STARTUP_EXIT_AFTER_READY'] !== '1' ||
+    !startupWindowReady ||
+    !startupServerReady ||
+    !startupRendererReady ||
+    !startupHydratedReady ||
+    !startupCatalogReady ||
+    startupExitScheduled
+  ) {
+    return
+  }
+  startupExitScheduled = true
+  if (startupSettledMetricsDelayMs === undefined) {
+    setImmediate(() => app.quit())
+    return
+  }
+
+  // The first read establishes the CPU and wakeup interval. Electron reports
+  // both values since the previous read; memory is sampled at the end.
+  app.getAppMetrics()
+  setTimeout(() => {
+    console.log(`[startup] settled ${JSON.stringify(summarizeAppMetrics(app.getAppMetrics()))}`)
+    app.quit()
+  }, startupSettledMetricsDelayMs)
+}
+
 const attachmentPreviewSecret = randomBytes(32)
 const attachmentThumbnailCache = new Map<string, Promise<Buffer | undefined>>()
 const MAX_ATTACHMENT_THUMBNAILS = 64
@@ -156,6 +197,43 @@ let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
+
+if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
+  ipcMain.on('harness:startupPreloadReady', (_event, elapsed: unknown) => {
+    if (typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0) {
+      console.log(`[startup] preload-ready ${Math.round(elapsed)}ms`)
+    }
+  })
+  ipcMain.on('harness:startupRendererMilestone', (_event, name: unknown) => {
+    if (
+      name !== 'module-loaded' &&
+      name !== 'react-commit' &&
+      name !== 'first-frame' &&
+      name !== 'projects-requested' &&
+      name !== 'projects-frame-parsed' &&
+      name !== 'projects-validated' &&
+      name !== 'projects-received' &&
+      name !== 'projects-reconciled' &&
+      name !== 'projects-ready' &&
+      name !== 'catalog-ready'
+    ) {
+      return
+    }
+    logStartupMilestone(name)
+    if (name === 'first-frame') {
+      startupRendererReady = true
+      finishStartupBenchmarkIfReady()
+    }
+    if (name === 'projects-ready') {
+      startupHydratedReady = true
+      finishStartupBenchmarkIfReady()
+    }
+    if (name === 'catalog-ready') {
+      startupCatalogReady = true
+      finishStartupBenchmarkIfReady()
+    }
+  })
+}
 let nativeMenuShortcuts: NativeMenuShortcuts = {}
 const macOSHaptics = new MacOSHaptics()
 
@@ -177,20 +255,24 @@ if (!ownsSingleInstance) {
  * permanent "Reconnecting…". In dev, dev.js runs the server with a watcher and
  * signals that through HARNESS_DEV_SERVER.
  *
- * The child is this same Electron binary in Node mode — the one runtime an
- * installed app is guaranteed to carry, with the Node version the server was
- * built against.
+ * Packaged builds use Electron's Node utility process so the service stays
+ * isolated without paying for a second full app executable launch. The legacy
+ * Node-mode child remains available as a field fallback.
  */
 function startOwnedServer(): void {
   if (devServer || serverSupervisor) return
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
-  serverSupervisor = new ServerSupervisor({
-    command: process.execPath,
-    args: [serverEntry],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
-    onLog: (line) => console.log('[server]', line),
+  const supervisorCallbacks = {
+    onLog: (line: string) => {
+      console.log('[server]', line)
+      if (!startupServerReady && line.startsWith('[server] listening on ')) {
+        startupServerReady = true
+        logStartupMilestone('server-ready')
+        finishStartupBenchmarkIfReady()
+      }
+    },
     onGaveUp: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         void dialog.showMessageBox(mainWindow, {
@@ -201,8 +283,44 @@ function startOwnedServer(): void {
         })
       }
     },
-  })
+  }
+  serverSupervisor =
+    process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
+      ? new ServerSupervisor({
+          command: process.execPath,
+          args: [serverEntry],
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          ...supervisorCallbacks,
+        })
+      : new ServerSupervisor({
+          launch: () => launchUtilityServer(serverEntry),
+          ...supervisorCallbacks,
+        })
   serverSupervisor.start()
+  logStartupMilestone('server-spawned')
+}
+
+function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
+  const child = utilityProcess.fork(serverEntry, [], {
+    env: { ...process.env },
+    serviceName: 'Taste Code Core Server',
+    stdio: 'pipe',
+  })
+  return {
+    get stdout() {
+      return child.stdout
+    },
+    get stderr() {
+      return child.stderr
+    },
+    kill: () => child.kill(),
+    onError: (listener) => {
+      child.on('error', (type, location) => listener(new Error(`${type} at ${location}`)))
+    },
+    onExit: (listener) => {
+      child.on('exit', (code) => listener(code, null))
+    },
+  }
 }
 
 function createWindow(): void {
@@ -314,7 +432,16 @@ function createWindow(): void {
   })
 
   // Avoid the white flash before React paints.
-  window.once('ready-to-show', showMainWindow)
+  window.once('ready-to-show', () => {
+    logStartupMilestone('ready-to-show')
+    startupWindowReady = true
+    if (process.env['HARNESS_STARTUP_EXIT_AFTER_READY'] === '1') {
+      if (startupSettledMetricsDelayMs !== undefined) window.showInactive()
+      finishStartupBenchmarkIfReady()
+      return
+    }
+    showMainWindow()
+  })
 
   // Nothing in this app should ever open a second window, and any external
   // link belongs in the user's browser, not in a chromeless Electron window.
@@ -440,9 +567,8 @@ ipcMain.handle('harness:getDiagnosticsEnabled', (event) => {
 
 ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
   requireOwnRenderer(event.sender)
-  const parsed = z.boolean().safeParse(enabled)
-  if (!parsed.success) throw new Error('Invalid diagnostics preference')
-  return diagnostics?.setEnabled(parsed.data) ?? false
+  if (typeof enabled !== 'boolean') throw new Error('Invalid diagnostics preference')
+  return diagnostics?.setEnabled(enabled) ?? false
 })
 
 ipcMain.handle('harness:openDiagnostics', async (event) => {
@@ -459,9 +585,8 @@ ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
 })
 
 ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
-  const parsed = z.string().safeParse(value)
-  if (!isOwnRenderer(event.sender) || !parsed.success) return
-  void diagnostics?.record('renderer', parsed.data)
+  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
+  void diagnostics?.record('renderer', value)
 })
 
 ipcMain.handle('harness:getUpdateState', (event): AppUpdateState => {
@@ -489,7 +614,8 @@ ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for theme change')
   nativeTheme.themeSource = windowThemeSource(preference)
-  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  const theme =
+    preference === 'codex' ? 'codex' : nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   const options = windowThemeOptions(theme)
   // Repainting an opaque background would sit on top of the acrylic/vibrancy
   // material and kill the sidebar glass; on those platforms the material owns
@@ -519,6 +645,7 @@ ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
 
 ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
   if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
+  const { PreviewCaptureRequestSchema } = await import('@harness/contracts')
   const parsed = PreviewCaptureRequestSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid preview capture request')
   return capturePreview(parsed.data)
@@ -542,6 +669,7 @@ async function openDiagnosticsDirectory(): Promise<boolean> {
 }
 
 async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
+  const { PreviewDomAuditSchema } = await import('@harness/contracts')
   const directory = path.join(
     app.getPath('temp'),
     'TasteCode',
@@ -686,13 +814,18 @@ ipcMain.handle('harness:pickFolder', async (event) => {
   return result.canceled ? undefined : result.filePaths[0]
 })
 
-const DroppedFolderPathsSchema = z
-  .array(z.string().min(1).max(32_768))
-  .max(MAX_DROPPED_PROJECT_PATHS)
+let droppedFolderPathsSchema: Promise<{ parse(value: unknown): string[] }> | undefined
+
+function parseDroppedFolderPaths(value: unknown): Promise<string[]> {
+  droppedFolderPathsSchema ??= import('zod').then(({ z }) =>
+    z.array(z.string().min(1).max(32_768)).max(MAX_DROPPED_PROJECT_PATHS),
+  )
+  return droppedFolderPathsSchema.then((schema) => schema.parse(value))
+}
 
 ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
   requireOwnRenderer(event.sender)
-  return droppedFolderPaths(DroppedFolderPathsSchema.parse(value))
+  return droppedFolderPaths(await parseDroppedFolderPaths(value))
 })
 
 ipcMain.handle('harness:pickSkillFolder', async (event) => {
@@ -763,6 +896,7 @@ if (ownsSingleInstance) {
   })
 
   void app.whenReady().then(async () => {
+    logStartupMilestone('app-ready')
     const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
     diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
       app.setPath('crashDumps', diagnosticsDirectory)
@@ -777,9 +911,10 @@ if (ownsSingleInstance) {
     process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()
+    logStartupMilestone('diagnostics-ready')
 
     appUpdater = createAppUpdateController({
-      updater: autoUpdater,
+      loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer,
     })
@@ -793,6 +928,7 @@ if (ownsSingleInstance) {
     configureMediaPermissions()
     void sweepStaleCaptures()
     createWindow()
+    logStartupMilestone('window-created')
     installApplicationMenu()
     createBackgroundTray()
     app.on('activate', showMainWindow)
