@@ -7,7 +7,7 @@
   padding: 0 10px;
   background: color-mix(in srgb, var(--surface-2) 72%, transparent);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-3);
   transition:
     background var(--dur-fast) var(--ease-out),

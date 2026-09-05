@@ -25,20 +25,12 @@ describe('keyboard search motion', () => {
     expect(rule('.find')).not.toContain('animation:')
   })
 
-  it('keeps only pointer press motion on chat-search rows', () => {
+  it('keeps chat-search rows still when pressed', () => {
     const result = rule('.session-search__result')
 
-    expect(result).toContain('transition: transform var(--dur-press) var(--ease-out);')
+    expect(result).not.toContain('transition:')
     expect(result).not.toContain('background var(--dur-fast)')
     expect(result).not.toContain('border-color var(--dur-fast)')
     expect(result).not.toContain('box-shadow var(--dur-fast)')
-  })
-
-  it('keeps pointer-opened menus stationary while they fade in', () => {
-    expect(css).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\)[\s\S]*?\.menu\.is-positioned\[data-input-modality='pointer'\] \{[\s\S]*?animation: menu-in var\(--dur-fast\) var\(--ease-out\);/s,
-    )
-    expect(rule('@keyframes menu-in')).toContain('opacity: 0;')
-    expect(rule('@keyframes menu-in')).not.toContain('transform:')
   })
 })

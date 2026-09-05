@@ -29,7 +29,7 @@
   padding: 0 9px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: none;
   color: var(--text-3);
   transition:
@@ -89,7 +89,7 @@
   padding: 0 8px;
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--composer-action-shadow);
   color: var(--text);
   cursor: pointer;
@@ -100,8 +100,7 @@
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .inbox-toolbar__new svg {
@@ -118,7 +117,7 @@
   padding: 0 8px;
   background: none;
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   box-shadow: none;
   color: var(--text-3);
   cursor: pointer;
@@ -129,19 +128,13 @@
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .inbox-toolbar__new:is(:hover, :focus-visible) {
   background: var(--composer-action-bg-hover);
   border-color: var(--composer-action-border-hover);
   box-shadow: var(--composer-action-shadow-hover);
-}
-
-.inbox-toolbar__new:active {
-  box-shadow: var(--composer-action-shadow-active);
-  transform: scale(0.985);
 }
 
 .inbox-toolbar__add:is(:hover, :focus-visible) {
@@ -159,7 +152,7 @@
   padding: 0 8px;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -169,8 +162,7 @@
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .inbox-toolbar__pulls:is(:hover, :focus-visible) {
@@ -183,11 +175,6 @@
   border-color: var(--chrome-border);
   box-shadow: var(--chrome-shadow);
   color: var(--text);
-}
-
-.inbox-toolbar__pulls:active {
-  box-shadow: var(--chrome-inset-shadow);
-  transform: translateY(1px);
 }
 
 .inbox-toolbar__pulls svg {
@@ -224,7 +211,7 @@
   padding: 0 6px 0 8px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   font: inherit;
   font-size: var(--t-sm);
@@ -290,7 +277,7 @@
   min-height: 76px;
   background: var(--inbox-card-bg);
   border: 1px solid transparent;
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   transition:
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out);
@@ -480,7 +467,7 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -552,7 +539,7 @@
   min-width: 0;
   min-height: 30px;
   border: 1px solid transparent;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 .inbox-shelf__row:hover,

@@ -39,8 +39,8 @@ describe('fast mode motion', () => {
     expect(fast).toContain('background var(--dur-fast) var(--ease-out)')
     expect(fast).toContain('border-color var(--dur-fast) var(--ease-out)')
     expect(fast).toContain('box-shadow var(--dur-fast) var(--ease-out)')
-    expect(fast).toContain('transform var(--dur-press) var(--ease-out)')
+    expect(fast).not.toContain('transform')
 
-    expect(rule('.model-selector__fast:active')).toContain('transform: scale(0.97)')
+    expect(rule('.model-selector__fast:active')).toBe('')
   })
 })

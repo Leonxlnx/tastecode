@@ -65,9 +65,15 @@
 }
 
 .model-selector__menu {
-  --r-popup: calc(var(--r-popup-item) + 7px);
+  --r-popup-item: var(--r-md);
+  --r-popup: var(--r-lg);
+  --model-picker-bg: var(--menu-bg);
+  --model-picker-title-bg: var(--menu-bg);
+  --model-picker-hover-bg: var(--menu-hover);
+  --model-picker-selected-shadow: none;
 
-  width: min(382px, calc(100vw - 16px));
+  min-width: 0;
+  width: min(300px, calc(100vw - 16px));
   /* The generic .menu clamp (340px) is shorter than list + effort controls,
      and with overflow hidden it silently amputated the effort bar. The list
      scrolls internally, so the panel may size to its content. */

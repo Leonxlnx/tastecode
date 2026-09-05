@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef } from 'react'
 import { IconPencil as Pencil } from '@tabler/icons-react'
 import { Menu, MenuItem } from './Menu.js'
@@ -64,6 +64,62 @@ afterEach(() => {
 })
 
 describe('Menu', () => {
+  it('reuses a closing panel on rapid reopen without letting the old exit remove it', async () => {
+    render(
+      <Menu label="Options" trigger={() => <span>Open</span>}>
+        {(close) => <MenuItem title="Rename" icon={<Pencil size={14} />} onClick={close} />}
+      </Menu>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Options' })
+    fireEvent.click(trigger, { detail: 1 })
+    const menu = screen.getByRole('menu')
+    let finishExit: (() => void) | undefined
+    const finished = new Promise<void>((resolve) => {
+      finishExit = resolve
+    })
+    Object.defineProperty(menu, 'getAnimations', { value: () => [{ finished }] })
+    const bottom = menu.style.bottom
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(menu.isConnected).toBe(true)
+    expect(menu.hasAttribute('inert')).toBe(true)
+    expect(menu.style.bottom).toBe(bottom)
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger, { detail: 1 })
+    expect(screen.getByRole('menu')).toBe(menu)
+    expect(menu.hasAttribute('inert')).toBe(false)
+    await act(async () => finishExit?.())
+    expect(screen.getByRole('menu')).toBe(menu)
+
+    await act(async () => fireEvent.click(trigger, { detail: 1 }))
+    expect(menu.isConnected).toBe(false)
+  })
+
+  it('cleans up a closed panel even if the browser never finishes its animation', () => {
+    vi.useFakeTimers()
+    try {
+      render(
+        <Menu label="Options" trigger={() => <span>Open</span>}>
+          {(close) => <MenuItem title="Rename" icon={<Pencil size={14} />} onClick={close} />}
+        </Menu>,
+      )
+      const trigger = screen.getByRole('button', { name: 'Options' })
+      fireEvent.click(trigger, { detail: 1 })
+      const menu = screen.getByRole('menu')
+      Object.defineProperty(menu, 'getAnimations', {
+        value: () => [{ finished: new Promise<void>(() => {}) }],
+      })
+      fireEvent.click(trigger, { detail: 1 })
+      expect(menu.isConnected).toBe(true)
+      act(() => vi.advanceTimersByTime(250))
+      expect(menu.isConnected).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('preserves full item text in native tooltips when compact menus truncate it', () => {
     render(
       <Menu label="Projects" trigger={() => <span>Open</span>}>

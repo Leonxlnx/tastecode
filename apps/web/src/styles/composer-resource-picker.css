@@ -10,22 +10,14 @@
   border-radius: var(--r-popup);
   box-shadow: var(--shadow-flyout);
   color: var(--text);
-  transform-origin: bottom left;
-  animation: composer-resource-picker-in var(--dur-fast) var(--ease-out) both;
-}
-
-@keyframes composer-resource-picker-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px) scale(0.985);
-  }
+  /* This list follows typed input; it must be ready on the next frame. */
 }
 
 .composer-resource-picker__list {
   max-height: min(240px, calc(100vh - 170px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 5px;
+  padding: 3px;
 }
 
 .composer-resource-picker__option {
@@ -34,8 +26,8 @@
   align-items: center;
   gap: 7px;
   width: 100%;
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 28px;
+  padding: 4px 7px;
   background: transparent;
   border: 0;
   border-radius: var(--r-popup-item);
@@ -79,8 +71,8 @@
   flex: none;
   max-width: 42%;
   overflow: hidden;
-  font-size: var(--t-md);
-  font-weight: 500;
+  font-size: var(--t-sm);
+  font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -89,7 +81,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-3);
-  font-size: var(--t-sm);
+  font-size: var(--t-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -112,12 +104,6 @@
 
   .composer-resource-picker__name {
     max-width: 100%;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .composer-resource-picker {
-    animation: none;
   }
 }
 

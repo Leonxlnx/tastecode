@@ -49,7 +49,7 @@ const componentSources = collectFiles(sourceDirectory, '.tsx')
   .join('\n')
 
 describe('radius system', () => {
-  it('scales each rounded rectangle from the 32px composer control anchor', () => {
+  it('uses compact corners while keeping 32px composer controls', () => {
     expect(tokensCss).toContain('--r-xs: 2px;')
     expect(tokensCss).toContain('--r-sm: 3px;')
     expect(tokensCss).toContain('--r-md: 5px;')
@@ -59,44 +59,42 @@ describe('radius system', () => {
     expect(tokensCss).toContain('--r-panel: 16px;')
     expect(tokensCss).toContain('--r-dialog: 20px;')
     expect(tokensCss).toContain('--r-2xl: 20px;')
-    expect(tokensCss).toContain('--r-popup-item: var(--r-xl);')
-    expect(tokensCss).toContain('--r-popup: calc(var(--r-popup-item) + 6px);')
+    expect(tokensCss).toContain('--r-popup-item: var(--r-md);')
+    expect(tokensCss).toContain('--r-popup: var(--r-lg);')
 
-    expect(appCss).toMatch(/\.rail__search \{[^}]*height: 26px;[^}]*border-radius: var\(--r-lg\)/s)
-    expect(appCss).toMatch(/\.navitem \{[^}]*border-radius: var\(--r-lg\);[^}]*min-height: 26px;/s)
+    expect(appCss).toMatch(/\.rail__search \{[^}]*height: 26px;[^}]*border-radius: var\(--r-md\)/s)
+    expect(appCss).toMatch(/\.navitem \{[^}]*border-radius: var\(--r-md\);[^}]*min-height: 26px;/s)
     expect(sessionSearchCss).toMatch(
-      /\.session-search__filters \.app-select__trigger \{[^}]*border-radius: var\(--r-lg\)/s,
+      /\.session-search__filters \.app-select__trigger \{[^}]*border-radius: var\(--r-md\)/s,
     )
     expect(sessionSearchCss).toMatch(
-      /\.session-search__panel \{[^}]*width: min\(520px, 100%\);[^}]*border-radius: var\(--r-dialog\)/s,
+      /\.session-search__panel \{[^}]*width: min\(520px, 100%\);[^}]*border-radius: var\(--r-lg\)/s,
     )
-    expect(inboxCss).toMatch(/\.inbox-card \{[^}]*border-radius: var\(--r-dialog\)/s)
+    expect(inboxCss).toMatch(/\.inbox-card \{[^}]*border-radius: var\(--r-lg\)/s)
     expect(commandPaletteCss).toMatch(
-      /\.command-palette__panel \{[^}]*border-radius: var\(--r-dialog\)/s,
+      /\.command-palette__panel \{[^}]*border-radius: var\(--r-lg\)/s,
     )
-    expect(appCss).toMatch(/\.composer__box \{[^}]*border-radius: var\(--r-2xl\)/s)
+    expect(appCss).toMatch(/\.composer__box \{[^}]*border-radius: var\(--r-card\)/s)
     expect(appCss).toMatch(
-      /\.tools \.composer__add \{[^}]*height: 32px;[^}]*border-radius: var\(--r-xl\)/s,
+      /\.tools \.composer__add \{[^}]*height: 32px;[^}]*border-radius: var\(--r-md\)/s,
     )
-    expect(appCss).toMatch(/\.icon-btn\.titlebar__toggle \{[^}]*border-radius: var\(--r-xl\);/s)
-    expect(appCss).toMatch(/\.stage \{[^}]*border-top-left-radius: var\(--r-dialog\)/s)
-    expect(appCss).toMatch(
-      /\.rail__resize::before \{[^}]*border-top-left-radius: var\(--r-dialog\)/s,
-    )
+    expect(appCss).toMatch(/\.icon-btn\.titlebar__toggle \{[^}]*border-radius: var\(--r-md\);/s)
+    expect(appCss).toMatch(/\.stage \{[^}]*border-top-left-radius: var\(--r-lg\)/s)
+    expect(appCss).toMatch(/\.rail__resize::before \{[^}]*border-top-left-radius: var\(--r-lg\)/s)
     expect(designBeamCss).toMatch(
-      /\.composer__design-beam \{[^}]*--design-beam-radius: var\(--r-2xl\);[^}]*--design-beam-inner-radius: calc\(var\(--r-2xl\) - 1px\);/s,
+      /\.composer__design-beam \{[^}]*--design-beam-radius: var\(--r-card\);[^}]*--design-beam-inner-radius: calc\(var\(--r-card\) - 1px\);/s,
     )
   })
 
   it('keeps floating surfaces and their interactive rows on one nested radius system', () => {
     expect(tokensCss).toContain('--menu-bg: var(--surface);')
     expect(tokensCss).toContain('--menu-hover: var(--surface-3);')
-    expect(appCss).toMatch(/\.menu \{[^}]*padding: 5px;[^}]*border-radius: var\(--r-popup\);/s)
+    expect(appCss).toMatch(/\.menu \{[^}]*padding: 3px;[^}]*border-radius: var\(--r-popup\);/s)
     expect(appCss).toMatch(
       /\.menu--compact \{[^}]*padding: 3px;[^}]*border-radius: var\(--r-lg\);/s,
     )
     expect(appCss).toMatch(
-      /\.app-select__listbox \{[^}]*--r-popup: calc\(var\(--r-popup-item\) \+ 4px\);[^}]*border-radius: var\(--r-popup\);/s,
+      /\.app-select__listbox \{[^}]*--r-popup: var\(--r-lg\);[^}]*border-radius: var\(--r-popup\);/s,
     )
     expect(appCss).toMatch(/\.app-select__option \{[^}]*border-radius: var\(--r-popup-item\);/s)
     expect(appCss).toMatch(
@@ -105,23 +103,23 @@ describe('radius system', () => {
     expect(commandPaletteCss).toMatch(
       /\.command-palette__item \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
-    expect(commandPaletteCss).toMatch(/\.command-palette__results \{[^}]*padding: 9px;/s)
+    expect(commandPaletteCss).toMatch(/\.command-palette__results \{[^}]*padding: 3px;/s)
     expect(sessionSearchCss).toMatch(
       /\.session-search__result \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
-    expect(sessionSearchCss).toMatch(/\.session-search__results \{[^}]*padding: 9px;/s)
+    expect(sessionSearchCss).toMatch(/\.session-search__results \{[^}]*padding: 3px;/s)
     expect(rollbackCss).toMatch(
       /\.rollback__checkpoint \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
-    expect(rollbackCss).toMatch(/\.rollback__list \{[^}]*padding: 4px 9px 9px;/s)
+    expect(rollbackCss).toMatch(/\.rollback__list \{[^}]*padding: 3px;/s)
     expect(modelSelectorCss).toMatch(
-      /\.model-selector__menu \{[^}]*--r-popup: calc\(var\(--r-popup-item\) \+ 7px\);[^}]*border-radius: var\(--r-popup\);/s,
+      /\.model-selector__menu \{[^}]*--r-popup-item: var\(--r-md\);[^}]*--r-popup: var\(--r-lg\);[^}]*border-radius: var\(--r-popup\);/s,
     )
     expect(modelSelectorMenuCss).toMatch(
       /\.model-selector__model \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
     expect(designInputCss).toMatch(
-      /\.brief-input__option \{[^}]*min-height: 38px;[^}]*border-radius: var\(--r-card\);/s,
+      /\.brief-input__option \{[^}]*min-height: 32px;[^}]*border-radius: var\(--r-md\);/s,
     )
     expect(resourcePickerCss).toMatch(
       /\.composer-resource-picker \{[^}]*border-radius: var\(--r-popup\);/s,
@@ -130,7 +128,7 @@ describe('radius system', () => {
       /\.composer-resource-picker__option \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
     expect(pullRequestsCss).toMatch(
-      /\.pr-metadata-menu \{[^}]*--r-popup: calc\(var\(--r-popup-item\) \+ 8px\);[^}]*border-radius: var\(--r-popup\);/s,
+      /\.pr-metadata-menu \{[^}]*--r-popup: var\(--r-lg\);[^}]*border-radius: var\(--r-popup\);/s,
     )
     expect(pullRequestsCss).toMatch(
       /\.pr-picker-option \{[^}]*border-radius: var\(--r-popup-item\);/s,
@@ -154,7 +152,7 @@ describe('radius system', () => {
 
   it('reserves state borders so selection does not change row geometry', () => {
     expect(settingsCss).toMatch(
-      /\.settings__nav-item \{[^}]*border: 1px solid transparent;[^}]*border-radius: var\(--r-xl\);/s,
+      /\.settings__nav-item \{[^}]*border: 1px solid transparent;[^}]*border-radius: var\(--r-md\);/s,
     )
     expect(settingsCss.match(/\.settings__nav-item\.is-active \{([^}]*)\}/s)?.[1]).not.toContain(
       'border-radius',

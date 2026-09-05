@@ -13,6 +13,7 @@ import {
   IconChevronDown as ChevronDown,
   IconSearch as Search,
 } from '@tabler/icons-react'
+import { usePopupPresence } from './use-popup-presence.js'
 
 export type AppSelectOption<Value extends string = string> = {
   value: Value
@@ -26,6 +27,7 @@ type SelectPosition = {
   drop: Drop
   left: number
   top: number
+  originX: 'left' | 'right'
 }
 
 type SelectSearch = {
@@ -80,11 +82,13 @@ export function AppSelect<Value extends string>(props: {
   search?: SelectSearch
 }) {
   const [open, setOpen] = useState(false)
+  const [modality, setModality] = useState<'keyboard' | 'pointer'>('keyboard')
   const [activeValue, setActiveValue] = useState<Value>()
   const [searchQuery, setSearchQuery] = useState('')
   const [position, setPosition] = useState<SelectPosition>()
   const trigger = useRef<HTMLButtonElement>(null)
   const listbox = useRef<HTMLDivElement>(null)
+  const present = usePopupPresence(open, listbox)
   const searchInput = useRef<HTMLInputElement>(null)
   const id = useId()
   const listboxId = `${id}-listbox`
@@ -140,20 +144,19 @@ export function AppSelect<Value extends string>(props: {
     updateActiveIndex(firstMatch)
   }
 
-  const openListbox = (direction: 1 | -1 = 1) => {
+  const openListbox = (direction: 1 | -1 = 1, input: 'keyboard' | 'pointer' = 'keyboard') => {
     const initial =
       selectedIndex >= 0 && !props.options[selectedIndex]?.disabled
         ? selectedIndex
         : enabledIndex(props.options, direction === 1 ? 0 : props.options.length - 1, direction)
     setSearchQuery('')
     updateActiveIndex(initial)
-    setPosition(undefined)
+    setModality(input)
     setOpen(true)
   }
 
   const closeListbox = (restoreFocus = false) => {
     setOpen(false)
-    setPosition(undefined)
     if (restoreFocus) trigger.current?.focus()
   }
 
@@ -224,10 +227,15 @@ export function AppSelect<Value extends string>(props: {
           : triggerBounds.top - SELECT_GAP - panelHeight
       const maxTop = Math.max(VIEWPORT_GUTTER, window.innerHeight - panelHeight - VIEWPORT_GUTTER)
       const top = Math.min(Math.max(preferredTop, VIEWPORT_GUTTER), maxTop)
-      const next = { drop, left, top }
+      const anchorX = props.align === 'right' ? triggerBounds.right : triggerBounds.left
+      const originX = anchorX <= left + panelWidth / 2 ? 'left' : 'right'
+      const next: SelectPosition = { drop, left, top, originX }
 
       setPosition((current) =>
-        current?.drop === next.drop && current.left === next.left && current.top === next.top
+        current?.drop === next.drop &&
+        current.left === next.left &&
+        current.top === next.top &&
+        current.originX === next.originX
           ? current
           : next,
       )
@@ -375,9 +383,9 @@ export function AppSelect<Value extends string>(props: {
         aria-haspopup="listbox"
         aria-activedescendant={open && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
         disabled={props.disabled}
-        onClick={() => {
+        onClick={(event) => {
           if (open) closeListbox()
-          else openListbox()
+          else openListbox(1, event.detail > 0 ? 'pointer' : 'keyboard')
         }}
         onKeyDown={onTriggerKeyDown}
       >
@@ -385,17 +393,25 @@ export function AppSelect<Value extends string>(props: {
         <ChevronDown className="app-select__chevron" size={14} aria-hidden />
       </button>
 
-      {open
+      {present
         ? createPortal(
             <div
               ref={listbox}
               id={props.search ? `${listboxId}-panel` : listboxId}
-              className={`app-select__listbox app-select__listbox--${position?.drop ?? props.drop ?? 'down'}${position ? ' is-positioned' : ''}`}
+              className={`app-select__listbox popup app-select__listbox--${position?.drop ?? props.drop ?? 'down'}${position ? ' is-positioned' : ''}`}
+              data-popup-state={open && position ? 'open' : 'closed'}
+              data-input-modality={modality}
+              aria-hidden={!open || undefined}
+              inert={!open}
               role={props.search ? undefined : 'listbox'}
               aria-label={props.search ? undefined : props.ariaLabel}
               style={
                 position
-                  ? { left: position.left, top: position.top }
+                  ? {
+                      left: position.left,
+                      top: position.top,
+                      transformOrigin: `${position.originX} ${position.drop === 'up' ? 'bottom' : 'top'}`,
+                    }
                   : { left: 0, top: 0, visibility: 'hidden' }
               }
             >

@@ -199,7 +199,7 @@
   flex: none;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   opacity: 0;
@@ -250,7 +250,7 @@
 .md pre {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   font-size: var(--t-sm);
   margin: 0 0 14px;
   overflow-x: auto;
@@ -315,6 +315,6 @@
 }
 
 .md img {
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   max-width: 100%;
 }

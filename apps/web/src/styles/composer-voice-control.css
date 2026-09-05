@@ -67,13 +67,6 @@
   border: 0;
   border-radius: var(--r-circle);
   cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
-}
-
-.composer-voice-bar__button:active:not(:disabled) {
-  transform: scale(0.94);
 }
 
 .composer-voice-bar__button:disabled {
@@ -94,10 +87,6 @@
 .composer-voice-bar__button--submit {
   background: var(--light);
   color: var(--on-light);
-}
-
-.composer-voice-bar__button--submit:hover:not(:disabled) {
-  transform: scale(1.05);
 }
 
 .composer__voice-error {

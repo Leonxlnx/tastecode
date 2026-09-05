@@ -6,13 +6,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   flex: none;
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
@@ -20,8 +20,7 @@
     color var(--dur-fast) var(--ease-out),
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .model-selector__fast.is-on {
@@ -46,10 +45,6 @@
   .model-selector__fast-icon svg {
     transition: fill var(--dur-press) var(--ease-out) !important;
   }
-
-  .model-selector__fast:active {
-    transform: none !important;
-  }
 }
 
 .model-selector__fast-icon svg {
@@ -61,16 +56,10 @@
   fill: currentColor;
 }
 
-.model-selector__fast:active {
-  box-shadow: var(--composer-control-shadow-active);
-  transform: scale(0.97);
-}
-
 .model-selector__controls {
   display: grid;
-  height: 89px;
-  gap: 6px;
-  padding: 8px;
+  gap: 4px;
+  padding: 6px 8px 8px;
   background: var(--model-picker-controls-bg);
   border-top: 1px solid var(--menu-line);
 }
@@ -87,15 +76,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 30px;
-  padding-left: 6px;
+  min-height: 24px;
+  padding-left: 4px;
 }
 
 .model-selector__fast-row {
   position: relative;
   display: flex;
   justify-content: flex-end;
-  min-height: 30px;
+  min-height: 24px;
 }
 
 .model-selector__fast-meta {
@@ -207,7 +196,7 @@
   display: block;
   color: var(--text-3);
   font-size: var(--t-xs);
-  font-weight: 520;
+  font-weight: 450;
 }
 
 .model-selector__effort-title span {
@@ -216,29 +205,30 @@
 
 .model-selector__catalog {
   display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
-  height: 246px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  max-height: min(246px, calc(100vh - 100px));
+  max-height: min(246px, calc(100dvh - 100px));
   overflow: hidden;
 }
 
 .model-selector__providers {
   display: flex;
-  height: 100%;
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   overflow-y: auto;
-  padding: 6px 8px;
-  background: var(--surface);
+  padding: 6px;
+  background: var(--model-picker-bg);
   border-right: 1px solid var(--menu-line);
   scrollbar-width: thin;
 }
 
 .model-selector__provider {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   flex: none;
   place-items: center;
   padding: 0;
@@ -250,8 +240,7 @@
   transition:
     background var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .model-selector__provider.is-active {
@@ -265,35 +254,32 @@
   outline-offset: 1px;
 }
 
-.model-selector__provider:active {
-  transform: scale(0.96);
-}
-
 .model-selector__provider svg {
   flex: none;
+  width: 16px;
+  height: 16px;
 }
 
 .model-selector__models {
   min-width: 0;
-  height: 100%;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px;
+  padding: 4px;
 }
 
 /* Flat layout (the default): one scrolling list, providers as inline
    headings — the provider-rail catalog is the Settings opt-in. */
 .model-selector__models--flat {
   height: auto;
-  max-height: min(246px, 42vh);
-  max-height: min(246px, 42dvh);
+  max-height: min(246px, 42vh, calc(100vh - 100px));
+  max-height: min(246px, 42dvh, calc(100dvh - 100px));
 }
 
 .model-selector__flat-head {
   position: sticky;
   z-index: 2;
-  top: -6px;
-  padding: 6px 4px 4px;
+  top: -4px;
+  padding: 4px 4px 3px;
   background: var(--model-picker-bg);
 }
 
@@ -307,12 +293,12 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 10px 4px;
+  padding: 6px 8px 3px;
 }
 
 .model-selector__models--flat .model-selector__model {
-  min-height: 34px;
-  padding: 6px 10px;
+  min-height: 28px;
+  padding: 4px 8px;
 }
 
 .model-selector__group-head {
@@ -320,12 +306,12 @@
   z-index: 1;
   top: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(120px, 184px);
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 140px);
   align-items: center;
   gap: 6px;
-  margin-inline: -6px;
-  min-height: 34px;
-  padding: 3px 10px 3px 14px;
+  margin-inline: -4px;
+  min-height: 30px;
+  padding: 2px 8px 4px 12px;
   background: var(--model-picker-title-bg);
 }
 
@@ -335,22 +321,30 @@
   margin: 0;
   padding: 0;
   color: var(--text-3);
-  font-size: 10px;
-  font-weight: 560;
-  letter-spacing: 0.02em;
+  font-size: var(--t-xs);
+  font-weight: 450;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .model-selector__search {
-  height: 26px;
-  border-radius: var(--r-lg);
+  height: 24px;
+  gap: 6px;
+  padding-inline: 6px;
+  border-color: transparent;
+  border-radius: var(--r-md);
   background: transparent;
+  box-shadow: none;
 }
 
 .model-selector__search:focus-within {
+  border-color: var(--menu-line);
   background: transparent;
   box-shadow: none;
+}
+
+.model-selector__search input {
+  font-size: var(--t-sm);
 }
 
 .model-selector__model {
@@ -365,8 +359,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 32px;
-  padding: 5px 8px;
+  min-height: 28px;
+  padding: 4px 8px;
   text-align: left;
   transition:
     background var(--dur-fast) var(--ease-out),

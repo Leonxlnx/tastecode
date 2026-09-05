@@ -126,7 +126,7 @@
      optically identical across themes. */
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--composer-action-shadow);
   color: color-mix(in srgb, var(--text) 55%, var(--text-2));
   cursor: pointer;
@@ -160,11 +160,6 @@
   box-shadow: var(--composer-action-shadow-hover);
 }
 
-.jump:active {
-  box-shadow: var(--composer-action-shadow-active);
-  transform: translateX(-50%) scale(0.97);
-}
-
 .aux__code {
   color: var(--error);
   font-family: var(--font-mono);
@@ -187,7 +182,7 @@
   max-width: 88%;
   margin-left: auto;
   background: var(--surface-2);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   padding: 7px 11px;
   font-size: var(--t-md);
   line-height: 1.45;
@@ -282,7 +277,7 @@
   height: 100%;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
 }
@@ -626,7 +621,7 @@
   overflow: hidden;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   box-shadow: var(--chrome-inset-shadow);
   cursor: zoom-in;
 }
@@ -717,7 +712,7 @@
   margin: 8px 0 2px;
   padding: 9px 11px;
   background: var(--surface);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
 }
 
 .reasoning-summary {
@@ -858,7 +853,7 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   transition:
@@ -898,7 +893,7 @@
 .plan {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   padding: 9px 12px;
 }
 
@@ -972,7 +967,7 @@
 .approval {
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   padding: 12px 14px;
 }
 
@@ -996,7 +991,7 @@
 .approval__command {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   font-family: var(--font-mono);
   font-size: var(--t-sm);
   margin: 0 0 8px;
@@ -1027,7 +1022,7 @@
 /* Quoted, because it is the agent's justification and not our claim. */
 .approval__reason {
   background: var(--surface-2);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   font-size: var(--t-sm);
   line-height: 1.6;
@@ -1052,7 +1047,7 @@
   padding: 5px 12px;
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--composer-action-shadow);
   color: var(--text-2);
   cursor: pointer;
@@ -1062,8 +1057,7 @@
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .approval__secondary-action:is(:hover, :focus-visible) {
@@ -1071,11 +1065,6 @@
   border-color: var(--composer-action-border-hover);
   box-shadow: var(--composer-action-shadow-hover);
   color: var(--text);
-}
-
-.approval__secondary-action:active {
-  box-shadow: var(--composer-action-shadow-active);
-  transform: scale(0.97);
 }
 
 .approval--review .approval__head {
@@ -1118,7 +1107,7 @@
 .diff {
   background: color-mix(in srgb, var(--surface) 55%, var(--bg));
   border: 1px solid var(--line);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   overflow: hidden;
 }
 
@@ -1136,7 +1125,7 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
 }
 
@@ -1174,7 +1163,7 @@
   padding: 0 9px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;

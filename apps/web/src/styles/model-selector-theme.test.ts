@@ -23,13 +23,13 @@ describe('model selector theme CSS', () => {
 
   it('pins the rail header at its resting inset while models scroll', () => {
     expect(modelSelectorCss).toMatch(
-      /\.model-selector__group-head \{[^}]*top: 0;[^}]*margin-inline: -6px;[^}]*padding: 3px 10px 3px 14px;/s,
+      /\.model-selector__group-head \{[^}]*top: 0;[^}]*margin-inline: -4px;[^}]*padding: 2px 8px 4px 12px;/s,
     )
   })
 
   it('uses the shared control motion for provider selection', () => {
     expect(modelSelectorCss).toMatch(
-      /\.model-selector__provider \{[^}]*transition:[^}]*background var\(--dur-fast\) var\(--ease-out\),[^}]*box-shadow var\(--dur-fast\) var\(--ease-out\),[^}]*color var\(--dur-fast\) var\(--ease-out\),[^}]*transform var\(--dur-press\) var\(--ease-out\);/s,
+      /\.model-selector__provider \{[^}]*transition:[^}]*background var\(--dur-fast\) var\(--ease-out\),[^}]*box-shadow var\(--dur-fast\) var\(--ease-out\),[^}]*color var\(--dur-fast\) var\(--ease-out\);/s,
     )
     expect(modelSelectorCss).not.toContain('model-provider-pop')
   })

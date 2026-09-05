@@ -34,6 +34,9 @@
   --surface-2: #222222;
   --surface-3: #2b2b2b;
   --control-hover: #222222;
+  --control-pressed: color-mix(in srgb, var(--text) 8%, var(--surface-2));
+  --control-press-overlay: color-mix(in srgb, currentColor 12%, transparent);
+  --control-pressed-image-opacity: 0.8;
   --menu-bg: var(--surface);
   --menu-hover: var(--surface-3);
   --menu-line: var(--chrome-border);
@@ -56,36 +59,20 @@
   --composer-orb: #ededed;
   --composer-on-orb: #101010;
   --composer-stop: #2b2b2b;
-  --composer-control-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 92%, transparent),
-    color-mix(in srgb, var(--surface-2) 52%, transparent)
-  );
-  --composer-control-bg-hover: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 100%, transparent),
-    color-mix(in srgb, var(--surface-2) 75%, transparent)
-  );
-  --composer-control-border: color-mix(in srgb, var(--text-3) 45%, var(--line-strong));
-  --composer-control-border-hover: color-mix(in srgb, var(--text-3) 70%, var(--line-strong));
-  --composer-control-shadow:
-    inset 0 1px color-mix(in srgb, white 14%, transparent),
-    0 1px 2px color-mix(in srgb, black 30%, transparent);
-  --composer-control-shadow-hover:
-    inset 0 1px color-mix(in srgb, white 18%, transparent),
-    0 2px 5px color-mix(in srgb, black 32%, transparent);
-  --composer-control-shadow-active: inset 0 1px 2px color-mix(in srgb, black 24%, transparent);
-  --composer-action-bg: var(--surface-3);
-  --composer-action-bg-hover: color-mix(in srgb, var(--surface-3) 92%, var(--text-2));
-  --composer-action-border: color-mix(in srgb, var(--text-3) 18%, var(--line-strong));
-  --composer-action-border-hover: color-mix(in srgb, var(--text-3) 36%, var(--line-strong));
-  --composer-action-shadow:
-    inset 0 1px color-mix(in srgb, white 6%, transparent),
-    0 1px 2px color-mix(in srgb, black 34%, transparent);
-  --composer-action-shadow-hover:
-    inset 0 1px color-mix(in srgb, white 9%, transparent),
-    0 2px 4px color-mix(in srgb, black 32%, transparent);
-  --composer-action-shadow-active: inset 0 1px 2px color-mix(in srgb, black 24%, transparent);
+  --composer-control-bg: var(--control-hover);
+  --composer-control-bg-hover: var(--menu-hover);
+  --composer-control-border: var(--chrome-border);
+  --composer-control-border-hover: var(--line-strong);
+  --composer-control-shadow: none;
+  --composer-control-shadow-hover: none;
+  --composer-control-shadow-active: none;
+  --composer-action-bg: var(--composer-control-bg);
+  --composer-action-bg-hover: var(--composer-control-bg-hover);
+  --composer-action-border: var(--composer-control-border);
+  --composer-action-border-hover: var(--composer-control-border-hover);
+  --composer-action-shadow: none;
+  --composer-action-shadow-hover: none;
+  --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--surface-3);
   --composer-design-border-hover: var(--composer-control-border-hover);
   --composer-design-border-active: var(--composer-control-border-hover);
@@ -96,32 +83,26 @@
   --model-picker-controls-bg: transparent;
   --model-picker-title-bg: var(--model-picker-bg);
   --model-picker-selected-bg: var(--menu-hover);
-  --model-picker-selected-shadow: inset 0 0 0 1px var(--chrome-border), var(--chrome-shadow);
+  --model-picker-selected-shadow: none;
   --model-picker-hover-bg: var(--chrome-raised);
-  --model-picker-fast-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 78%, transparent),
-    color-mix(in srgb, var(--surface) 44%, transparent)
-  );
+  --model-picker-fast-bg: var(--control-hover);
   --model-picker-fast-border: color-mix(in srgb, var(--line-strong) 80%, transparent);
-  --model-picker-fast-shadow:
-    inset 0 1px color-mix(in srgb, white 9%, transparent),
-    0 1px 2px color-mix(in srgb, black 20%, transparent);
+  --model-picker-fast-shadow: none;
   --model-picker-fast-on-bg: color-mix(in oklab, var(--light) 15%, var(--surface-3));
   --model-picker-fast-on-border: color-mix(in oklab, var(--light) 28%, var(--line-strong));
   --shadow-flyout: 0 8px 24px -14px rgb(0 0 0 / 46%);
   --shadow-modal: 0 20px 56px -24px rgb(0 0 0 / 52%);
   --shadow-rail: 12px 0 30px -18px rgb(0 0 0 / 40%);
-  --chrome-raised: linear-gradient(180deg, #242424, #1b1b1b);
-  --chrome-raised-hover: linear-gradient(180deg, #2c2c2c, #222222);
+  --chrome-raised: var(--control-hover);
+  --chrome-raised-hover: var(--menu-hover);
   --chrome-recessed: #101010;
   /* Chevron for restyled native selects. A data URI cannot read currentColor,
      so each theme carries its own text-3-coloured copy. */
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6f6f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
   --chrome-border: #303030;
-  --chrome-highlight: rgb(255 255 255 / 5%);
-  --chrome-shadow: inset 0 1px var(--chrome-highlight), 0 1px 2px rgb(0 0 0 / 28%);
-  --chrome-inset-shadow: inset 0 1px 3px rgb(0 0 0 / 34%);
+  --chrome-highlight: transparent;
+  --chrome-shadow: none;
+  --chrome-inset-shadow: none;
   --titlebar-bg: #151515;
   --titlebar-symbol: #f4f4f5;
 
@@ -187,11 +168,9 @@
   --r-card: 12px;
   --r-panel: 16px;
   --r-dialog: 20px;
-  /* Popup buttons keep the same 10px curve as the composer controls.
-     Their parent grows outward by its real inset, so the nested curves
-     share one center. The default is a 1px border plus 5px padding. */
-  --r-popup-item: var(--r-xl);
-  --r-popup: calc(var(--r-popup-item) + 6px);
+  /* Compact rows and controls use 5px corners; floating panels use 8px. */
+  --r-popup-item: var(--r-md);
+  --r-popup: var(--r-lg);
   --r-pill: 999px;
   --r-circle: 50%;
 
@@ -290,8 +269,8 @@
 
   --bg: #fdfdfd;
   --terminal-workspace-bg: #eff1f5;
-  --bg-rail: var(--chrome-raised);
-  /* The rail itself may be a gradient; the glass tint must stay a solid. */
+  --bg-rail: #fcfcfc;
+  /* Keep the glass tint aligned with the flat rail surface. */
   --bg-rail-tint: #fcfcfc;
   /* Light never shows the desktop through the window: the pane sits over the
      app itself, so it stays close to opaque and the blur frosts app content
@@ -303,7 +282,7 @@
   --surface: #fafafa;
   --surface-2: #f5f5f6;
   --surface-3: #ececef;
-  --control-hover: var(--chrome-raised-hover);
+  --control-hover: var(--surface-2);
   --menu-bg: var(--surface);
   --menu-hover: var(--surface-3);
   --menu-line: var(--chrome-border);
@@ -326,20 +305,20 @@
   --composer-orb: #1d1d1f;
   --composer-on-orb: #ffffff;
   --composer-stop: #1d1d1f;
-  --composer-control-bg: var(--chrome-raised);
-  --composer-control-bg-hover: var(--chrome-raised-hover);
+  --composer-control-bg: var(--control-hover);
+  --composer-control-bg-hover: var(--menu-hover);
   --composer-control-border: var(--chrome-border);
   --composer-control-border-hover: var(--line-strong);
-  --composer-control-shadow: var(--chrome-shadow);
-  --composer-control-shadow-hover: inset 0 1px #ffffff, 0 2px 5px -2px rgb(24 24 27 / 12%);
-  --composer-control-shadow-active: var(--chrome-inset-shadow);
+  --composer-control-shadow: none;
+  --composer-control-shadow-hover: none;
+  --composer-control-shadow-active: none;
   --composer-action-bg: var(--composer-control-bg);
   --composer-action-bg-hover: var(--composer-control-bg-hover);
   --composer-action-border: var(--composer-control-border);
   --composer-action-border-hover: var(--composer-control-border-hover);
-  --composer-action-shadow: var(--composer-control-shadow);
-  --composer-action-shadow-hover: var(--composer-control-shadow-hover);
-  --composer-action-shadow-active: var(--composer-control-shadow-active);
+  --composer-action-shadow: none;
+  --composer-action-shadow-hover: none;
+  --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--composer-control-bg);
   --composer-design-border-hover: #c7c7cd;
   --composer-design-border-active: #b9bac2;
@@ -351,26 +330,24 @@
   --model-picker-controls-bg: transparent;
   --model-picker-title-bg: var(--model-picker-bg);
   --model-picker-selected-bg: var(--menu-hover);
-  --model-picker-selected-shadow: inset 0 0 0 1px var(--chrome-border), var(--chrome-shadow);
+  --model-picker-selected-shadow: none;
   --model-picker-hover-bg: var(--chrome-raised);
-  --model-picker-fast-bg: var(--chrome-raised);
+  --model-picker-fast-bg: var(--control-hover);
   --model-picker-fast-border: var(--chrome-border);
-  --model-picker-fast-shadow: var(--chrome-shadow);
+  --model-picker-fast-shadow: none;
   --model-picker-fast-on-bg: var(--chrome-recessed);
   --model-picker-fast-on-border: var(--line-strong);
   --shadow-flyout: 0 1px 2px rgb(24 24 27 / 5%), 0 10px 28px -18px rgb(24 24 27 / 18%);
   --shadow-modal: 0 2px 6px rgb(24 24 27 / 7%), 0 24px 56px -30px rgb(24 24 27 / 24%);
   --shadow-rail: 12px 0 28px -20px rgb(24 24 27 / 16%);
-  --chrome-raised: linear-gradient(180deg, #ffffff 0%, #fafafa 100%);
-  --chrome-raised-hover: linear-gradient(180deg, #ffffff 0%, #f5f5f6 100%);
-  --chrome-recessed: #f3f3f5;
+  --chrome-raised: var(--control-hover);
+  --chrome-raised-hover: var(--menu-hover);
+  --chrome-recessed: var(--bg);
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
   --chrome-border: #e3e3e6;
-  --chrome-highlight: rgb(255 255 255 / 96%);
-  --chrome-shadow:
-    inset 0 1px var(--chrome-highlight), 0 1px 2px rgb(24 24 27 / 8%),
-    0 4px 10px -8px rgb(24 24 27 / 16%);
-  --chrome-inset-shadow: inset 0 1px 3px rgb(24 24 27 / 8%), inset 0 0 0 1px rgb(24 24 27 / 2%);
+  --chrome-highlight: transparent;
+  --chrome-shadow: none;
+  --chrome-inset-shadow: none;
   --titlebar-bg: var(--chrome-raised);
   --titlebar-symbol: #27272a;
 
@@ -644,12 +621,12 @@ html.is-macos-font-smoothing {
   --composer-on-orb: #2d2d2b;
   --composer-stop: #dededc;
 
-  --chrome-raised: #353533;
-  --chrome-raised-hover: #41413f;
+  --chrome-raised: var(--control-hover);
+  --chrome-raised-hover: var(--menu-hover);
   --chrome-recessed: #292927;
   --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c7c78' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
   --chrome-border: #4b4b48;
-  --chrome-highlight: rgb(222 222 220 / 7%);
+  --chrome-highlight: transparent;
   --titlebar-bg: #353533;
   --titlebar-symbol: #dededc;
 
