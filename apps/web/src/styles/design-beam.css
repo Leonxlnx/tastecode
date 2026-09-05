@@ -19,8 +19,8 @@
 }
 
 .composer__design-beam {
-  --design-beam-radius: var(--r-2xl);
-  --design-beam-inner-radius: calc(var(--r-2xl) - 1px);
+  --design-beam-radius: var(--r-card);
+  --design-beam-inner-radius: calc(var(--r-card) - 1px);
   --design-beam-stroke: 0.26;
   --design-beam-inner: 0.42;
   --design-beam-bloom: 0.24;
@@ -52,8 +52,8 @@
 .composer__design-button-beam {
   /* Follow the real control corner instead of the old pill preset. A larger
      mask curves inward too early and leaves a rough second edge in the button. */
-  --design-beam-radius: var(--r-xl);
-  --design-beam-inner-radius: calc(var(--r-xl) - 1px);
+  --design-beam-radius: var(--r-md);
+  --design-beam-inner-radius: calc(var(--r-md) - 1px);
   --design-beam-stroke: 0.46;
   --design-beam-inner: 0.24;
   --design-beam-bloom: 0.38;

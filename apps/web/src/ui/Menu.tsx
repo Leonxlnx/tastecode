@@ -11,6 +11,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { IconCheck as Check } from '@tabler/icons-react'
+import { usePopupPresence } from './use-popup-presence.js'
 
 type Drop = 'up' | 'down'
 
@@ -291,6 +292,7 @@ function MenuController(
 ) {
   const [position, setPosition] = useState<MenuPosition>()
   const panel = useRef<HTMLDivElement>(null)
+  const present = usePopupPresence(props.open, panel)
   const initialFocus = useRef<'first' | 'last'>(props.request.focus)
   const restoreTarget = useRef<HTMLElement | undefined>(props.request.returnFocus ?? undefined)
   const typeahead = useRef('')
@@ -305,7 +307,6 @@ function MenuController(
   }, [props.closeMenu])
 
   useLayoutEffect(() => {
-    setPosition(undefined)
     initialFocus.current = props.request.focus
     restoreTarget.current = props.request.returnFocus ?? undefined
   }, [props.request])
@@ -336,7 +337,14 @@ function MenuController(
       const target = restoreTarget.current
       if (!target) return
       const active = document.activeElement
-      if (!active || active === document.body || !document.contains(active)) target.focus()
+      if (
+        !active ||
+        active === document.body ||
+        panel.current?.contains(active) ||
+        !document.contains(active)
+      ) {
+        target.focus()
+      }
       restoreTarget.current = undefined
       return
     }
@@ -516,17 +524,20 @@ function MenuController(
     if (match) focusMenuItem(currentPanel, items.indexOf(match))
   }
 
-  return props.open
+  return present
     ? createPortal(
         <div
           ref={panel}
           id={props.panelId}
-          className={`menu menu--${position?.drop ?? props.drop ?? 'up'}${position ? ' is-positioned' : ''}${props.panelClassName ? ` ${props.panelClassName}` : ''}`}
+          className={`menu popup menu--${position?.drop ?? props.drop ?? 'up'}${position ? ' is-positioned' : ''}${props.panelClassName ? ` ${props.panelClassName}` : ''}`}
           role={panelRole}
           {...(panelLabel ? { 'aria-label': panelLabel } : {})}
           {...(!panelLabel ? { 'aria-labelledby': props.triggerId } : {})}
           aria-modal={panelRole === 'dialog' ? true : undefined}
           data-input-modality={props.request.modality}
+          data-popup-state={props.open && position ? 'open' : 'closed'}
+          aria-hidden={!props.open || undefined}
+          inert={!props.open}
           tabIndex={-1}
           onKeyDown={onPanelKeyDown}
           onFocus={(event) => {

@@ -17,7 +17,7 @@
   padding: 3px;
   background: rgb(17 17 18 / 88%);
   border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
 }
 
@@ -29,23 +29,18 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: rgb(244 244 245 / 68%);
   cursor: pointer;
   text-decoration: none;
   transition:
     background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .media-viewer__action:hover {
   background: rgb(255 255 255 / 9%);
   color: rgb(250 250 250 / 96%);
-}
-
-.media-viewer__action:active {
-  transform: scale(0.94);
 }
 
 .media-viewer__action:focus-visible,
@@ -83,7 +78,7 @@
   min-width: 0;
   min-height: 0;
   object-fit: scale-down;
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   box-shadow: 0 24px 72px rgb(0 0 0 / 42%);
   user-select: none;
 }
@@ -109,7 +104,7 @@
   overflow: hidden;
   background: #050506;
   border: 1px solid rgb(255 255 255 / 9%);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   box-shadow: 0 24px 72px rgb(0 0 0 / 46%);
 }
 
@@ -163,7 +158,7 @@
   width: 42px;
   height: 34px;
   border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 .media-viewer__video-controls {
@@ -190,7 +185,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: inherit;
   cursor: pointer;
 }
@@ -271,7 +266,7 @@
   padding: 3px;
   background: rgb(17 17 18 / 88%);
   border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
   color: rgb(244 244 245 / 72%);
   transform: translateX(-50%);
@@ -285,7 +280,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: inherit;
   cursor: pointer;
 }

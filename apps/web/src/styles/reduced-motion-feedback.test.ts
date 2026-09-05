@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const popupCss = readFileSync(new URL('./popup-motion.css', import.meta.url), 'utf8')
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
 const commandPaletteCss = readFileSync(new URL('./command-palette.css', import.meta.url), 'utf8')
 const sessionSearchCss = readFileSync(new URL('./session-search.css', import.meta.url), 'utf8')
@@ -32,8 +33,8 @@ describe('reduced-motion feedback', () => {
   })
 
   it('allowlists only finite opacity and color feedback in app CSS', () => {
-    expect(appCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.sheet__scrim,[\s\S]*?\.sheet__panel \{[\s\S]*?animation: fade-in var\(--dur-fast\) var\(--ease-out\) both !important;/s,
+    expect(popupCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.sheet__panel,[\s\S]*?\.pr-dialog \{[\s\S]*?transform: none;[\s\S]*?transition: opacity 100ms var\(--ease-out\) !important;/s,
     )
     expect(settingsCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.profile-page,[\s\S]*?\.settings__panel \{[\s\S]*?animation: fade-in var\(--dur-fast\) var\(--ease-out\) both !important;/s,
@@ -57,6 +58,7 @@ describe('reduced-motion feedback', () => {
 
   it('keeps transform, rotate, filter, clip-path, and layout properties out of reduced-motion transitions', () => {
     const reducedBlocks = [
+      ...popupCss.matchAll(/@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g),
       ...appCss.matchAll(/@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g),
       ...settingsCss.matchAll(/@media \(prefers-reduced-motion: reduce\) \{(?<body>[\s\S]*?)\n\}/g),
       ...commandPaletteCss.matchAll(
@@ -100,7 +102,7 @@ describe('reduced-motion feedback', () => {
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pr-send-button \{[\s\S]*?background-color var\(--dur-press\) var\(--ease-out\),[\s\S]*?box-shadow var\(--dur-press\) var\(--ease-out\),[\s\S]*?color var\(--dur-press\) var\(--ease-out\) !important;/s,
     )
     expect(pullRequestCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pr-send-button:hover:not\(:disabled\),[\s\S]*?\.pr-send-button:active:not\(:disabled\) \{[\s\S]*?transform: none !important;/s,
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.pr-send-button:hover:not\(:disabled\) \{[\s\S]*?transform: none !important;/s,
     )
   })
 })

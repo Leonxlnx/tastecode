@@ -81,7 +81,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -99,7 +99,7 @@
   height: 28px;
   align-items: center;
   background: transparent;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -172,7 +172,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -190,7 +190,7 @@
   left: 0;
   display: grid;
   width: 250px;
-  padding: 5px;
+  padding: 3px;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
   border-radius: var(--r-popup);
@@ -200,7 +200,7 @@
 .workspace-panel__add-menu button {
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
-  min-height: 34px;
+  min-height: 28px;
   align-items: center;
   gap: 8px;
   padding: 0 8px;
@@ -325,7 +325,7 @@
 .workspace-provider-login__code button {
   min-height: 32px;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -388,10 +388,10 @@
 
 .workspace-review__toolbar {
   display: flex;
-  min-height: 50px;
+  min-height: 40px;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px 8px 16px;
+  gap: 8px;
+  padding: 5px 10px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -436,7 +436,7 @@
   padding: 0 9px;
   background: var(--chrome-raised);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-shadow);
   color: var(--text-2);
   cursor: pointer;
@@ -488,7 +488,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -661,7 +661,7 @@
   padding: 0 9px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-3);
 }
 
@@ -721,7 +721,7 @@
   padding-bottom: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -899,7 +899,7 @@
   padding-bottom: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -1111,7 +1111,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -1138,7 +1138,7 @@
   padding: 0 3px 0 10px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--text-3);
 }
 
@@ -1239,7 +1239,7 @@
   padding: 8px 11px;
   background: color-mix(in srgb, var(--error) 13%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--error) 35%, var(--line));
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   color: var(--error);
   font-size: var(--t-xs);
   transform: translateX(-50%);
@@ -1289,7 +1289,7 @@
   padding: 7px 9px;
   background: color-mix(in srgb, var(--error) 9%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--error) 26%, var(--line));
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--error);
   font-size: var(--t-xs);
   line-height: 1.4;
@@ -1308,7 +1308,7 @@
   margin: 4px auto 12px;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }
@@ -1346,17 +1346,6 @@
   border-radius: var(--r-pill);
   color: var(--bg);
   cursor: pointer;
-  transition: transform var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .workspace-side-chat__composer button:not(:disabled):hover {
-    transform: scale(1.04);
-  }
-}
-
-.workspace-side-chat__composer button:active:not(:disabled) {
-  transform: scale(0.97);
 }
 
 .workspace-side-chat__composer button:disabled {
@@ -1393,7 +1382,7 @@
   padding: 0 13px;
   background: var(--bg-rail);
   border: 1px solid var(--line);
-  border-radius: var(--r-panel);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -1404,8 +1393,7 @@
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .workspace-selector__list > button:last-child:nth-child(odd) {
@@ -1428,11 +1416,6 @@
 
 .workspace-selector__list > button:hover {
   outline: 0;
-}
-
-.workspace-selector__list > button:active {
-  background: var(--surface-2);
-  transform: scale(0.985);
 }
 
 .workspace-selector__list > button > svg {
@@ -1464,8 +1447,7 @@
     transition: none;
   }
 
-  .workspace-side-chat__composer button:not(:disabled):hover,
-  .workspace-side-chat__composer button:active:not(:disabled) {
+  .workspace-side-chat__composer button:not(:disabled):hover {
     transform: none !important;
   }
 }

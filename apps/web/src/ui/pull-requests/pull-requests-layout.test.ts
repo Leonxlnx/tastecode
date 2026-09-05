@@ -45,7 +45,7 @@ describe('pull request layout CSS', () => {
 
   it('sizes metadata pickers like the compact reference popup', () => {
     expect(css).toMatch(/\.pr-metadata-menu \{[^}]*width: min\(310px, calc\(100vw - 16px\)\);/s)
-    expect(css).toMatch(/\.pr-picker-search \{[^}]*min-height: 34px;/s)
+    expect(css).toMatch(/\.pr-picker-search \{[^}]*min-height: 28px;/s)
   })
 
   it('lets the status menu inherit shared popup geometry without a conflicting override', () => {
@@ -55,7 +55,7 @@ describe('pull request layout CSS', () => {
 
   it('keeps metadata values on one line inside a compact app-style trigger', () => {
     expect(css).toMatch(/\.pr-fact-menu-value \{[^}]*white-space: nowrap;/s)
-    expect(css).toMatch(/\.pr-fact-menu-trigger \{[^}]*border-radius: var\(--r-lg\);/s)
+    expect(css).toMatch(/\.pr-fact-menu-trigger \{[^}]*border-radius: var\(--r-md\);/s)
   })
 
   it('keeps avatar stacks out of the truncating text path', () => {

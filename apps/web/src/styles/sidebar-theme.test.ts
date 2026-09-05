@@ -169,12 +169,12 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.proj__toggle \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*height: 26px;[^}]*min-height: 26px;/s,
     )
-    expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 25px;[^}]*border-radius: var\(--r-lg\);/ms)
+    expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 25px;[^}]*border-radius: var\(--r-md\);/ms)
     expect(sessRule).toContain('height: 25px;')
     expect(sessRule).toContain('padding: 0 12px 0 28px;')
     expect(sessRule).toContain('font-size: var(--rail-font-size);')
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
-    expect(sessRule).toContain('border-radius: var(--r-lg);')
+    expect(sessRule).toContain('border-radius: var(--r-md);')
     expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 27')
     expect(appCss).toMatch(
       /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,

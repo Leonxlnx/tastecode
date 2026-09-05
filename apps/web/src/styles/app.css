@@ -1,3 +1,6 @@
+@import './button-feedback.css';
+@import './popup-motion.css';
+
 /* Layout and components. Values come from tokens.css only. */
 
 /* App chrome behaves like native UI. Selection is restored only where copying
@@ -89,7 +92,7 @@
   min-width: 30px;
   min-height: 30px;
   padding: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--titlebar-symbol);
   pointer-events: auto;
   -webkit-app-region: no-drag;
@@ -154,7 +157,7 @@
   gap: 8px;
   padding: 16px;
   border: 1px dashed var(--text-2);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   background: var(--surface-2);
   color: var(--rail-text);
   font-size: var(--t-sm);
@@ -171,7 +174,7 @@
      collapse and a proper frame of its own, not a bare slab. */
   border: 1px solid var(--line);
   border-left: 0;
-  border-radius: 0 var(--r-dialog) var(--r-dialog) 0;
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
   transform: translateX(-100%);
   /* Promote the hidden flyout before the pointer arrives. Waiting until the
      first reveal frame made Chromium build the full-height layer on demand. */
@@ -231,7 +234,7 @@
   box-sizing: border-box;
   border-top: 2px solid var(--line-strong);
   border-left: 2px solid var(--line-strong);
-  border-top-left-radius: var(--r-dialog);
+  border-top-left-radius: var(--r-lg);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease-out);
@@ -302,13 +305,11 @@
   height: 26px;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .rail__search:is(:hover, :focus-visible) {
@@ -322,7 +323,7 @@
   gap: 8px;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--rail-text);
   cursor: pointer;
   font: inherit;
@@ -333,10 +334,8 @@
   padding: 4px 7px;
   text-align: left;
   transition:
-    background var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
   width: 100%;
 }
 
@@ -344,10 +343,6 @@
 .navitem:focus-visible {
   background: var(--control-hover);
   color: var(--rail-text);
-}
-
-.navitem:active {
-  transform: scale(0.98);
 }
 
 .navitem svg {
@@ -411,7 +406,7 @@
   padding: 0 8px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
 }
@@ -478,11 +473,9 @@
   padding: 4px 6px;
   background: none;
   border: 1px solid transparent;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--rail-text);
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .rail__foot .menutrigger:hover:not(:disabled),
@@ -514,7 +507,7 @@
   width: 100%;
   height: 25px;
   background: var(--sess-bg);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
 }
 
@@ -614,7 +607,7 @@
   place-items: center;
   width: 26px;
   height: 26px;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   opacity: 0;
   transition: opacity var(--dur-fast) var(--ease-out);
@@ -654,7 +647,6 @@
   background: rgba(0, 0, 0, 0.55);
   border: 0;
   cursor: default;
-  animation: fade-in var(--dur-fast) var(--ease-out);
 }
 
 @keyframes fade-in {
@@ -671,23 +663,8 @@
   overflow-y: auto;
   background: var(--bg-rail);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-modal);
-  animation: sheet-in 220ms var(--ease-out) both;
-}
-
-@keyframes sheet-in {
-  from {
-    opacity: 0;
-    transform: translateY(2px) scale(0.97);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sheet__scrim,
-  .sheet__panel {
-    animation: fade-in var(--dur-fast) var(--ease-out) both !important;
-  }
 }
 
 .sheet__head {
@@ -759,6 +736,7 @@
 .switch.is-on {
   background: var(--light);
   border-color: var(--light);
+  color: var(--on-light);
 }
 
 :root[data-theme='light'] .switch:not(.is-on) {
@@ -813,9 +791,7 @@
   border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .section__add:is(:hover, :focus-visible) {
@@ -872,7 +848,7 @@
   height: 26px;
   min-height: 26px;
   padding-right: 6px;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
 }
 
@@ -894,7 +870,7 @@
   gap: 8px;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--rail-text);
   cursor: pointer;
   font: inherit;
@@ -995,7 +971,7 @@
   padding: 0 28px;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
@@ -1023,7 +999,7 @@
   gap: 7px;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--rail-text);
   cursor: pointer;
   font: inherit;
@@ -1123,23 +1099,18 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .sess__action:hover,
 .sess__action:focus-visible {
   background: var(--surface-3);
   color: var(--text);
-}
-
-.sess__action:active {
-  transform: scale(0.94);
 }
 
 .sess__spinner {
@@ -1234,7 +1205,7 @@
   background: var(--bg);
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
-  border-top-left-radius: var(--r-dialog);
+  border-top-left-radius: var(--r-lg);
   overflow: hidden;
   container: chat-stage / inline-size;
 }
@@ -1440,7 +1411,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
 }
 
@@ -1489,7 +1460,7 @@
   padding: 4px;
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-flyout);
   color: var(--text-2);
 }
@@ -1504,21 +1475,16 @@
   padding: 0 8px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: inherit;
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
-  transition: transform var(--dur-press) var(--ease-out);
 }
 
 .zoom-hud button:hover:not(:disabled) {
   background: var(--surface-3);
   color: var(--text);
-}
-
-.zoom-hud button:active:not(:disabled) {
-  transform: scale(0.96);
 }
 
 .zoom-hud button:disabled {
@@ -1657,7 +1623,7 @@
   min-width: 0;
   max-width: var(--chat-w);
   margin: 0 auto;
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   /* Archiving replaces the thread in the same commit as this FLIP. Keep the
      bounded visual box promoted so that work cannot delay layer creation. */
   will-change: transform;
@@ -1668,7 +1634,7 @@
   z-index: 1;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }
@@ -1697,7 +1663,7 @@
   margin: 0;
   padding: 1px 10px;
   background: var(--bg-shelf);
-  border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+  border-radius: var(--r-card) var(--r-card) 0 0;
   box-shadow: inset 0 -1px color-mix(in srgb, var(--line) 70%, transparent);
 }
 
@@ -1738,7 +1704,7 @@
   background: var(--bg-queue);
   border: 1px solid var(--queue-line);
   border-bottom: 0;
-  border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+  border-radius: var(--r-card) var(--r-card) 0 0;
   animation: composer-queue-panel-in var(--dur-fast) var(--ease-out) both;
 }
 
@@ -1873,7 +1839,7 @@
   place-items: center;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   cursor: pointer;
@@ -1894,9 +1860,7 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--surface-3) 42%, transparent), transparent 62%),
-    var(--chrome-recessed);
+  background: var(--chrome-recessed);
 }
 
 .queue-row__media img {
@@ -1934,7 +1898,7 @@
   height: 22px;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--queue-action);
   cursor: pointer;
   font: inherit;
@@ -2008,7 +1972,6 @@
   font-size: var(--t-sm);
   box-shadow: none;
   transition:
-    background var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
@@ -2020,10 +1983,6 @@
 .shelf-control--mode {
   flex: none;
   max-width: 150px;
-}
-
-.shelf-control:active:not(:disabled) {
-  color: var(--text);
 }
 
 /* Scoped to the shelf so this outranks the flat .menutrigger:hover background,
@@ -2226,7 +2185,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: calc(var(--r-dialog) - 1px);
+  border-radius: calc(var(--r-lg) - 1px);
 }
 
 .attachment-preview img[hidden] {
@@ -2244,7 +2203,7 @@
   overflow: hidden;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   cursor: pointer;
@@ -2268,9 +2227,7 @@
   inset: 0;
   display: grid;
   place-items: center;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--surface-3) 42%, transparent), transparent 62%),
-    var(--chrome-recessed);
+  background: var(--chrome-recessed);
 }
 
 .attachment-preview__play {
@@ -2285,15 +2242,9 @@
   padding: 0 0 0 1px;
   background: rgb(14 14 15 / 78%);
   border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   box-shadow: 0 2px 8px rgb(0 0 0 / 24%);
   color: rgb(250 250 250 / 92%);
-  transform: none;
-  transition: transform var(--dur-press) var(--ease-out);
-}
-
-.attachment-preview__open:hover .attachment-preview__play {
-  transform: scale(1.06);
 }
 
 .attachment-preview__remove {
@@ -2308,20 +2259,14 @@
   padding: 0;
   background: rgb(16 16 17 / 86%);
   border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: rgb(250 250 250 / 88%);
   cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+  transition: background var(--dur-fast) var(--ease-out);
 }
 
 .attachment-preview__remove:hover {
   background: rgb(38 38 40 / 94%);
-}
-
-.attachment-preview__remove:active {
-  transform: scale(0.92);
 }
 
 .attachment-preview__loading {
@@ -2444,10 +2389,7 @@
   font-size: var(--t-xs);
   pointer-events: none;
   opacity: 0;
-  transform: translateY(3px);
-  transition:
-    opacity var(--dur-fast) var(--ease-out),
-    transform var(--dur-fast) var(--ease-out);
+  transition: opacity 90ms var(--ease-out);
 }
 
 .context-usage__tooltip strong {
@@ -2456,9 +2398,16 @@
   font-weight: 550;
 }
 
-.context-usage:is(:hover, :focus-visible) .context-usage__tooltip {
+.context-usage:focus-visible .context-usage__tooltip {
   opacity: 1;
-  transform: translateY(0);
+  transition: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .context-usage:hover .context-usage__tooltip {
+    opacity: 1;
+    transition-duration: 140ms;
+  }
 }
 
 .tool {
@@ -2516,7 +2465,7 @@
 .composer__design-beam {
   display: block;
   width: 100%;
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   --beam-stroke-opacity: var(--composer-design-beam-stroke-strength);
   --beam-inner-opacity: var(--composer-design-beam-inner-strength);
   --beam-bloom-opacity: var(--composer-design-beam-bloom-strength);
@@ -2536,7 +2485,7 @@
 .composer__design-button-beam {
   display: flex;
   flex: none;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 /* Scoped like the hover rule below: the later generic .menutrigger
@@ -2550,16 +2499,14 @@
     .menutrigger--model-selector,
     .composer-voice-button
   ) {
-  /* Both themes share the same dimensional chrome; their tokens tune the depth and contrast. */
+  /* Composer controls use the same flat surfaces in every theme. */
   background: var(--composer-control-bg);
   border: 1px solid var(--composer-control-border);
   box-shadow: var(--composer-control-shadow);
   transition:
-    background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .tools
@@ -2582,13 +2529,13 @@
   height: 32px;
   justify-content: center;
   padding: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 .tools :is(.composer__permission, .composer__design) {
   min-height: 32px;
   padding: 4px 11px;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 .tools .composer__permission .tool,
@@ -2599,7 +2546,7 @@
 .tools .menutrigger--model-selector {
   min-height: 32px;
   padding: 4px 12px;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 .composer-voice-button {
@@ -2613,28 +2560,6 @@
 .tools .composer__design:not(.is-active),
 .tools .composer__design:not(.is-active) svg {
   color: color-mix(in srgb, var(--text) 55%, var(--text-2));
-}
-
-:is(
-    .composer__add,
-    .composer__permission,
-    .composer__design,
-    .menutrigger--model-selector,
-    .composer-voice-button
-  ):active:not(:disabled) {
-  box-shadow: var(--composer-control-shadow-active);
-  transform: scale(0.97);
-}
-
-.tools
-  :is(
-    .composer__add,
-    .composer__permission,
-    .composer__design,
-    .menutrigger--model-selector,
-    .composer-voice-button
-  ):active:not(:disabled) {
-  box-shadow: var(--composer-action-shadow-active);
 }
 
 .tools .composer__design.is-active {
@@ -2692,12 +2617,11 @@
   max-width: 100%;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: inherit;
   cursor: pointer;
   font: inherit;
   padding: 5px 8px;
-  transition: background var(--dur-fast) var(--ease-out);
 }
 
 .menutrigger:hover:not(:disabled) {
@@ -2717,9 +2641,9 @@
   max-width: calc(100vw - 16px);
   max-height: min(340px, calc(100vh - 16px));
   display: grid;
-  gap: 2px;
+  gap: 0;
   overflow-y: auto;
-  padding: 5px;
+  padding: 3px;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
   border-radius: var(--r-popup);
@@ -2833,18 +2757,6 @@
   }
 }
 
-.menu.is-positioned[data-input-modality='pointer'] {
-  /* Keep text and icons on their final pixels while the panel appears.
-     Transforming the whole menu makes Chromium re-rasterize every child. */
-  animation: menu-in var(--dur-fast) var(--ease-out);
-}
-
-@keyframes menu-in {
-  from {
-    opacity: 0;
-  }
-}
-
 .menu__rule {
   height: 1px;
   background: var(--menu-line);
@@ -2867,7 +2779,7 @@
   color: var(--text);
   cursor: pointer;
   font: inherit;
-  padding: 7px 9px;
+  padding: 4px 7px;
   text-align: left;
   transition:
     background var(--dur-fast) var(--ease-out),
@@ -2894,12 +2806,6 @@
   cursor: default;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .menu.is-positioned[data-input-modality='pointer'] {
-    animation: none;
-  }
-}
-
 .menu .menu__item--danger:not(:disabled):is(:hover, :focus-visible) {
   background: color-mix(in oklab, var(--error) 12%, transparent);
   border-color: color-mix(in oklab, var(--error) 32%, var(--chrome-border));
@@ -2910,7 +2816,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
+  line-height: 1.25;
 }
 
 .menu__name svg {
@@ -2920,7 +2827,7 @@
 .menu__label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -2976,11 +2883,11 @@
   gap: 8px;
   width: 100%;
   min-width: 0;
-  height: 30px;
-  padding: 0 7px 0 9px;
-  background: var(--chrome-recessed);
+  height: 28px;
+  padding: 0 7px;
+  background: var(--bg);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-2);
   cursor: pointer;
@@ -3017,7 +2924,7 @@
 }
 
 .app-select__listbox {
-  --r-popup: calc(var(--r-popup-item) + 4px);
+  --r-popup: var(--r-lg);
 
   position: fixed;
   z-index: 90;
@@ -3146,18 +3053,14 @@
 .btn {
   background: var(--light);
   border: 0;
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   color: var(--on-light);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-md);
-  font-weight: 540;
-  padding: 7px 15px;
-  transition: transform var(--dur-press) var(--ease-out);
-}
-
-.btn:active:not(:disabled) {
-  transform: scale(0.97);
+  min-height: 28px;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  padding: 4px 10px;
 }
 
 .btn:disabled {
@@ -3188,18 +3091,16 @@
   height: 22px;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   flex: none;
   opacity: 0;
-  transition:
-    opacity var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 .icon-btn.titlebar__toggle {
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
 }
 
 .icon-btn.composer-voice-button {
@@ -3217,8 +3118,7 @@
     color: var(--text);
   }
 
-  /* The .tools prefix outranks the generic .menutrigger:hover, which would
-     otherwise flatten these gradients to the plain control-hover grey. */
+  /* Composer controls keep their own hover surface and border. */
   .tools
     :is(
       .composer__add,
@@ -3271,10 +3171,6 @@
   opacity: 1;
 }
 
-.icon-btn:active {
-  transform: scale(0.94);
-}
-
 /* Some icon buttons are the only affordance in their row, so they cannot be
    hover-revealed like the ones that sit beside a label. */
 .icon-btn--always {
@@ -3306,15 +3202,12 @@
   transition:
     background 150ms var(--ease-out),
     box-shadow 150ms var(--ease-out),
-    color 150ms var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color 150ms var(--ease-out);
 }
 
 .orb:not(.orb--stop) {
   background: color-mix(in srgb, var(--composer-orb) 90%, transparent);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    0 1px 2px 0 color-mix(in srgb, var(--composer-orb) 24%, transparent);
+  box-shadow: none;
 }
 
 .orb:disabled {
@@ -3332,24 +3225,13 @@
 @media (hover: hover) and (pointer: fine) {
   .orb:hover:not(:disabled):not(.orb--stop) {
     background: var(--composer-orb);
-    transform: scale(1.05);
   }
 
   /* Stop was the one control in the composer that ignored the pointer: every
      hover rule above excludes it. A brake with no hover state reads as dead. */
   .orb--stop:hover:not(:disabled) {
     background: color-mix(in srgb, var(--composer-stop) 82%, var(--text));
-    transform: scale(1.05);
   }
-}
-
-.orb:active:not(:disabled):not(.orb--stop) {
-  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.08);
-  transform: scale(0.97);
-}
-
-.orb--stop:active:not(:disabled) {
-  transform: scale(0.97);
 }
 
 /* Sent, not yet acknowledged. Some providers take a moment to unwind, and
@@ -3382,9 +3264,7 @@
   }
 
   .orb:hover:not(:disabled):not(.orb--stop),
-  .orb--stop:hover:not(:disabled),
-  .orb:active:not(:disabled):not(.orb--stop),
-  .orb--stop:active:not(:disabled) {
+  .orb--stop:hover:not(:disabled) {
     transform: none !important;
   }
 
@@ -3489,7 +3369,7 @@
   max-width: min(420px, calc(100vw - 36px));
   background: var(--surface-2);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-panel);
+  border-radius: var(--r-lg);
   padding: 9px 10px;
   font-size: var(--t-sm);
   opacity: 1;

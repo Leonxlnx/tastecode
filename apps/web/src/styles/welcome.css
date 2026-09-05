@@ -3,7 +3,7 @@
 }
 
 .welcome__head {
-  padding: 24px 24px 16px;
+  padding: 20px 20px 14px;
 }
 
 .welcome__eyebrow,
@@ -17,9 +17,7 @@
 .welcome__eyebrow {
   margin-bottom: 7px;
   font-size: var(--t-xs);
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
+  font-weight: 500;
 }
 
 .welcome__title {
@@ -33,7 +31,7 @@
 .welcome__name {
   display: grid;
   gap: 7px;
-  margin: 0 24px 16px;
+  margin: 0 20px 14px;
 }
 
 .welcome__name label {
@@ -44,11 +42,11 @@
 
 .welcome__name input {
   width: 100%;
-  min-height: 38px;
-  padding: 8px 11px;
+  min-height: 30px;
+  padding: 5px 8px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-card);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text);
   font: inherit;
@@ -73,10 +71,10 @@
 
 .welcome__providers {
   display: grid;
-  margin: 0 24px;
+  margin: 0 20px;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: var(--r-dialog);
+  border-radius: var(--r-lg);
 }
 
 .welcome__provider {
@@ -85,7 +83,7 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  min-height: 43px;
+  min-height: 40px;
   padding: 0 12px;
   color: var(--text);
   font-size: var(--t-sm);
@@ -107,7 +105,7 @@
 }
 
 .welcome__privacy {
-  padding: 14px 24px 0;
+  padding: 12px 20px 0;
   line-height: 1.5;
 }
 
@@ -115,7 +113,7 @@
   display: flex;
   justify-content: flex-end;
   gap: 7px;
-  padding: 18px 24px 24px;
+  padding: 14px 20px 20px;
 }
 
 .welcome__actions button {

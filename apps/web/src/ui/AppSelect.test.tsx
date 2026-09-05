@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { useState } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppSelect } from './AppSelect.js'
 
@@ -78,6 +78,32 @@ afterEach(() => {
 })
 
 describe('AppSelect', () => {
+  it('applies selection immediately while the old list exits at its original position', async () => {
+    const onChange = vi.fn()
+    render(<SelectHarness onChange={onChange} />)
+    const trigger = screen.getByRole('combobox', { name: 'Project' })
+    fireEvent.click(trigger, { detail: 1 })
+    const listbox = screen.getByRole('listbox')
+    let finishExit: (() => void) | undefined
+    const finished = new Promise<void>((resolve) => {
+      finishExit = resolve
+    })
+    Object.defineProperty(listbox, 'getAnimations', { value: () => [{ finished }] })
+    const top = listbox.style.top
+
+    fireEvent.click(screen.getByRole('option', { name: 'Beta' }))
+    expect(onChange).toHaveBeenCalledWith('beta')
+    expect(trigger.textContent).toBe('Beta')
+    expect(screen.queryByRole('listbox')).toBeNull()
+    expect(listbox.isConnected).toBe(true)
+    expect(listbox.hasAttribute('inert')).toBe(true)
+    expect(listbox.style.top).toBe(top)
+    expect(document.activeElement).toBe(trigger)
+
+    await act(async () => finishExit?.())
+    expect(listbox.isConnected).toBe(false)
+  })
+
   it('renders its own portalled listbox and selects an option', () => {
     const onChange = vi.fn()
     const { container } = render(<SelectHarness onChange={onChange} />)
