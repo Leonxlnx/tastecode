@@ -58,12 +58,10 @@ import {
 } from './composer-resource.js'
 import { Menu, MenuItem } from './Menu.js'
 import { IconMorph } from './IconMorph.js'
+import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { preloadThread } from './LazyThread.js'
 import { ModelSearchField } from './ModelSearchField.js'
 
-const MediaViewer = lazy(() =>
-  import('./MediaViewer.js').then((module) => ({ default: module.MediaViewer })),
-)
 const ComposerResourcePicker = lazy(() =>
   import('./ComposerResourcePicker.js').then((module) => ({
     default: module.ComposerResourcePicker,
@@ -332,6 +330,8 @@ function QueuedMediaPreviewCard({ reference }: { reference: string }) {
         type="button"
         className="queue-row__media"
         disabled={!canOpen}
+        onPointerEnter={preloadMediaViewer}
+        onFocus={preloadMediaViewer}
         onClick={() => setViewerOpen(true)}
         aria-label={
           canOpen ? `Open queued preview of ${name}` : `Loading queued preview of ${name}`
@@ -343,6 +343,7 @@ function QueuedMediaPreviewCard({ reference }: { reference: string }) {
         {inlineSource ? (
           <img
             src={inlineSource}
+            onLoad={preloadMediaViewer}
             alt=""
             draggable={false}
             onError={() => {
@@ -1518,6 +1519,8 @@ function ComposerComponent(props: {
                         className="attachment-preview__open"
                         type="button"
                         disabled={!attachment.previewUrl}
+                        onPointerEnter={preloadMediaViewer}
+                        onFocus={preloadMediaViewer}
                         onClick={() => {
                           if (!attachment.previewUrl || !attachment.mediaType) return
                           setViewingMedia({
@@ -1546,6 +1549,7 @@ function ComposerComponent(props: {
                         {attachmentThumbnailUrl(attachment) ? (
                           <img
                             src={attachmentThumbnailUrl(attachment)}
+                            onLoad={preloadMediaViewer}
                             alt=""
                             onError={(event) => {
                               event.currentTarget.hidden = true

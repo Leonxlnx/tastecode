@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
 import { createPortal } from 'react-dom'
 import {
   IconDownload as Download,
@@ -179,15 +186,16 @@ export function MediaViewer(props: {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (props.mediaType !== 'image') return
     const element = viewport.current
     if (!element) return
 
+    fitImageToViewport()
     const observer = new ResizeObserver(fitImageToViewport)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [fitImageToViewport, props.mediaType])
+  }, [fitImageToViewport, props.mediaType, props.src])
 
   useEffect(() => {
     const element = viewport.current
@@ -277,6 +285,7 @@ export function MediaViewer(props: {
               src={props.src}
               alt={props.name}
               draggable={false}
+              decoding="async"
               onLoad={fitImageToViewport}
             />
           </div>

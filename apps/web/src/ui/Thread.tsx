@@ -44,6 +44,7 @@ import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
 import { Diff } from './Diff.js'
 import { IconMorph } from './IconMorph.js'
+import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import {
@@ -80,9 +81,6 @@ import {
 import { enteringThreadItems } from '../thread-entry.js'
 import '../styles/thread.css'
 
-const MediaViewer = lazy(() =>
-  import('./MediaViewer.js').then((module) => ({ default: module.MediaViewer })),
-)
 const ThreadSearch = lazy(() =>
   import('./ThreadSearch.js').then((module) => ({ default: module.ThreadSearch })),
 )
@@ -1549,10 +1547,13 @@ function ViewedImagePreview({
         type="button"
         className="viewed-image-preview__open"
         aria-label={`Open preview of ${preview.name}`}
+        onPointerEnter={preloadMediaViewer}
+        onFocus={preloadMediaViewer}
         onClick={() => setViewerOpen(true)}
       >
         <img
           src={inlineSource}
+          onLoad={preloadMediaViewer}
           alt={`Preview of ${preview.name}`}
           draggable={false}
           onError={() =>
