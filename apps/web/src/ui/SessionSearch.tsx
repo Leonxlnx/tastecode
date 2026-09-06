@@ -349,9 +349,11 @@ function SessionSearchComponent(props: {
             </div>
           ) : null}
           {!term ? (
-            <p className="command-palette__empty">
-              Search chat titles, messages, commands, and tool output across projects.
-            </p>
+            <div className="session-search__intro">
+              <Search size={28} strokeWidth={1.5} aria-hidden />
+              <h2>Find a past conversation</h2>
+              <p>Search chat titles, messages, commands, and tool output across projects.</p>
+            </div>
           ) : !searchable ? (
             <p className="command-palette__empty">Type a letter or number to search.</p>
           ) : (
@@ -389,7 +391,6 @@ function SessionSearchComponent(props: {
                           presentation={resultSourcePresentation(result)}
                           density="compact"
                         />
-                        <span aria-hidden>·</span>
                         <time
                           dateTime={new Date(result.createdAt).toISOString()}
                           title={new Date(result.createdAt).toLocaleString()}

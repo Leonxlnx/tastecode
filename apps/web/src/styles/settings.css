@@ -721,9 +721,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 40px;
-  padding: 6px 12px;
+  gap: 16px;
+  min-height: 48px;
+  padding: 10px 14px;
   transition: background var(--dur-fast) var(--ease-out);
 }
 
@@ -825,20 +825,22 @@
   /* Keep paragraph margins from expanding compact rows. */
   margin: 0;
   color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 400;
+  font-size: var(--t-md);
+  font-weight: 500;
   line-height: 1.35;
 }
 
 .settings__row-note,
 .settings__group-note {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--t-xs);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .settings__row-note {
-  margin: 1px 0 0;
+  margin: 4px 0 0;
+  max-width: 52ch;
+  overflow-wrap: anywhere;
 }
 
 .settings__group-note {
@@ -877,7 +879,7 @@
   display: grid;
   grid-template-columns: 20px minmax(110px, 1fr) minmax(150px, 1.25fr) 22px max-content max-content;
   gap: 9px;
-  min-height: 40px;
+  min-height: 56px;
 }
 
 .provider-row__mark,
@@ -897,12 +899,13 @@
 
 .provider-row__identity {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
+  overflow-wrap: anywhere;
 }
 
 .provider-row__status {
   overflow: hidden;
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--t-sm);
   font-variant-numeric: tabular-nums;
   text-align: right;

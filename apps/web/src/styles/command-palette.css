@@ -20,7 +20,10 @@
 
 .command-palette__panel {
   position: relative;
+  display: flex;
+  flex-direction: column;
   width: min(560px, 100%);
+  max-height: calc(100dvh - min(13vh, 104px) - 16px);
   overflow: hidden;
   background: var(--bg-rail);
   border: 1px solid var(--chrome-border);
@@ -30,10 +33,11 @@
 
 .command-palette__search {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 9px;
-  min-height: 38px;
-  padding: 8px 10px;
+  gap: 10px;
+  min-height: 50px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--line);
   color: var(--text-3);
   box-shadow: var(--chrome-inset-shadow);
@@ -48,23 +52,29 @@
   outline: none;
   color: var(--text);
   font: inherit;
-  font-size: var(--t-sm);
+  font-size: var(--t-md);
 }
 
 .command-palette__search input::placeholder {
-  color: var(--text-3);
+  color: var(--text-2);
+}
+
+.command-palette__search > svg {
+  flex: none;
 }
 
 .command-palette__results {
-  max-height: min(360px, calc(100vh - 200px));
+  min-height: 0;
+  max-height: 360px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 3px;
 }
 
 .command-palette__group {
-  margin: 6px 0 2px;
-  padding: 0 8px;
-  color: var(--text-3);
+  margin: 10px 0 5px;
+  padding: 0 12px;
+  color: var(--text-2);
   font-size: var(--t-xs);
   font-weight: 500;
 }
@@ -72,11 +82,11 @@
 .command-palette__item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   width: 100%;
   min-width: 0;
-  min-height: 30px;
-  padding: 5px 7px;
+  min-height: 38px;
+  padding: 8px 12px;
   background: none;
   border: 1px solid transparent;
   border-radius: var(--r-popup-item);
@@ -99,6 +109,7 @@
   display: flex;
   flex: 1;
   flex-direction: column;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -111,17 +122,20 @@
 
 .command-palette__name {
   font-size: var(--t-sm);
+  font-weight: 500;
 }
 
 .command-palette__detail {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--t-xs);
+  line-height: 1.5;
 }
 
 .command-palette__empty {
   margin: 0;
-  padding: 24px 10px;
-  color: var(--text-3);
+  padding: 32px 24px;
+  color: var(--text-2);
   font-size: var(--t-sm);
+  line-height: 1.6;
   text-align: center;
 }
