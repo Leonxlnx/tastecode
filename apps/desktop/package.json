@@ -133,7 +133,11 @@
     },
     "deb": {
       "packageName": "tastecode",
-      "packageCategory": "devel"
+      "packageCategory": "devel",
+      "fpm": [
+        "--depends",
+        "libasound2t64 | libasound2"
+      ]
     },
     "win": {
       "target": [
