@@ -5,6 +5,8 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { channelFileNameForVersion, verifyLinuxUpdaterMetadata } from './linux-updater-metadata.js'
+
 // Repository desktop command that produces the Linux x64 release candidates.
 export const LINUX_DIST_COMMAND = 'pnpm --filter @harness/desktop dist'
 
@@ -13,9 +15,11 @@ const defaultReleaseDirectory = path.join(workspaceRoot, 'release')
 const defaultInventoryName = 'linux-release-evidence.json'
 const defaultChecksumsName = 'SHA256SUMS-linux-x64.txt'
 
-// Updater sidecars (latest-linux*.yml, *.blockmap, *.zip) are explicitly rejected:
-// no updater-metadata gate exists yet, so they can be neither verified nor silently
-// ignored. This evidence covers only the AppImage and deb candidates.
+// Updater sidecars (*-linux.yml plus arch-specific *-linux-arm.yml /
+// *-linux-arm64.yml, *.blockmap, *.zip) are rejected unless they are
+// the single channel file verified by the updater-metadata gate
+// (tools/scripts/linux-updater-metadata.js). The verified channel file is hashed
+// and recorded below; everything else updater-shaped fails closed.
 
 function compareAscii(left, right) {
   if (left < right) return -1
@@ -101,19 +105,22 @@ export function assertWorktreeClean(porcelain) {
   }
 }
 
+function isChannelSidecar(fileName) {
+  return /-linux(-arm64|-arm)?\.yml$/.test(fileName)
+}
+
 function sidecarReason(fileName, version) {
-  if (
-    fileName.endsWith('.blockmap') ||
-    fileName.endsWith('.zip') ||
-    (fileName.startsWith('latest-linux') && fileName.endsWith('.yml'))
-  ) {
-    return 'updater sidecar without an updater-metadata gate'
+  if (fileName.endsWith('.blockmap') || fileName.endsWith('.zip') || isChannelSidecar(fileName)) {
+    return 'updater sidecar rejected by the updater-metadata gate'
   }
   return `does not match current version ${version}`
 }
 
-function findRejectedSidecars(actualNames, { expected, inventoryName, checksumsName, version }) {
-  const allowed = new Set([...expected, inventoryName, checksumsName])
+function findRejectedSidecars(
+  actualNames,
+  { expected, channelFile, inventoryName, checksumsName, version },
+) {
+  const allowed = new Set([...expected, channelFile, inventoryName, checksumsName])
   return actualNames
     .filter((fileName) => !allowed.has(fileName))
     .filter(
@@ -122,7 +129,7 @@ function findRejectedSidecars(actualNames, { expected, inventoryName, checksumsN
         fileName.endsWith('.deb') ||
         fileName.endsWith('.blockmap') ||
         fileName.endsWith('.zip') ||
-        (fileName.startsWith('latest-linux') && fileName.endsWith('.yml')) ||
+        isChannelSidecar(fileName) ||
         fileName.startsWith('TasteCode-'),
     )
     .map((fileName) => `${fileName} (${sidecarReason(fileName, version)})`)
@@ -155,6 +162,10 @@ export async function collectLinuxReleaseEvidence(
     productName: resolvedDesktop.productName,
     name: resolvedDesktop.name,
   })
+  // The channel file is derived from semver prerelease (beta-linux.yml for
+  // 0.1.0-beta.1, latest-linux.yml for stable) and must be verified by the
+  // updater-metadata gate; it is never silently ignored.
+  const channelFile = channelFileNameForVersion(version)
   const entries = await readdir(releaseDirectory, { withFileTypes: true }).catch((error) => {
     if (error?.code === 'ENOENT') {
       throw new Error(
@@ -170,9 +181,13 @@ export async function collectLinuxReleaseEvidence(
     .sort(compareAscii)
 
   const actual = new Set(actualNames)
-  const missing = expected.filter((fileName) => !actual.has(fileName))
+  const missing = [
+    ...expected.filter((fileName) => !actual.has(fileName)),
+    ...(actual.has(channelFile) ? [] : [channelFile]),
+  ]
   const rejected = findRejectedSidecars(actualNames, {
     expected,
+    channelFile,
     inventoryName,
     checksumsName,
     version,
@@ -184,12 +199,23 @@ export async function collectLinuxReleaseEvidence(
     ]
     throw new Error(
       `[linux-release-evidence] release directory ${releaseDirectory} must contain exactly ` +
-        `${expected.join(', ')}; ${details.join('; ')}. ` +
+        `${[...expected, channelFile].join(', ')}; ${details.join('; ')}. ` +
         `Rebuild both x64 targets with ${LINUX_DIST_COMMAND}, then remove stale files. ` +
-        'Updater sidecars (latest-linux*.yml, *.blockmap, *.zip) are rejected until a dedicated ' +
-        'updater-metadata gate exists; this evidence covers only the AppImage and deb candidates.',
+        `Updater sidecars (*-linux.yml, *-linux-arm.yml, *-linux-arm64.yml, *.blockmap, *.zip) ` +
+        `are rejected unless they are ` +
+        `the verified ${channelFile}; verification lives in tools/scripts/linux-updater-metadata.js.`,
     )
   }
+
+  // Content verification recomputes SHA-512/size, checks the embedded blockmap
+  // trailer/segment/shape and legacy AppImage fields, and runs the static Linux
+  // updater check (deb stays package-owned in source/test evidence). Only a
+  // gate-verified file is recorded; this states the static evidence, not a
+  // runtime update guarantee.
+  await verifyLinuxUpdaterMetadata(releaseDirectory, {
+    version,
+    expectedArtifacts: expected,
+  })
 
   const artifacts = []
   for (const fileName of expected) {
@@ -208,9 +234,28 @@ export async function collectLinuxReleaseEvidence(
   }
   artifacts.sort((left, right) => compareAscii(left.file, right.file))
 
-  const inventory = { artifacts, commit: commit.toLowerCase(), schemaVersion: 1, version }
-  const checksumText = `${artifacts.map(({ file, sha256 }) => `${sha256}  ${file}`).join('\n')}\n`
-  return { expected, inventory, checksumText }
+  const channelPath = path.join(releaseDirectory, channelFile)
+  const channelStat = await stat(channelPath)
+  if (!channelStat.isFile() || channelStat.size === 0) {
+    throw new Error(`[linux-release-evidence] verified updater metadata is missing: ${channelFile}`)
+  }
+  const updaterMetadata = {
+    file: channelFile,
+    bytes: channelStat.size,
+    sha256: await sha256File(channelPath),
+  }
+
+  const inventory = {
+    artifacts,
+    commit: commit.toLowerCase(),
+    schemaVersion: 2,
+    updaterMetadata,
+    version,
+  }
+  const checksumText =
+    `${artifacts.map(({ file, sha256 }) => `${sha256}  ${file}`).join('\n')}\n` +
+    `${updaterMetadata.sha256}  ${updaterMetadata.file}\n`
+  return { expected, channelFile, inventory, checksumText }
 }
 
 let tempFileCounter = 0
@@ -264,6 +309,7 @@ export async function writeLinuxReleaseEvidence(
     artifacts: inventory.artifacts,
     commit: inventory.commit,
     schemaVersion: inventory.schemaVersion,
+    updaterMetadata: inventory.updaterMetadata,
     version: inventory.version,
   }
   // Checksums first, inventory last: the inventory is the completion marker.
