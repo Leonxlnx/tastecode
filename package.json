@@ -23,6 +23,7 @@
   "devDependencies": {
     "@oxlint/plugins": "1.78.0",
     "@types/node": "^26.1.1",
+    "js-yaml": "4.3.1",
     "oxlint": "1.78.0",
     "prettier": "^3.9.6",
     "tslib": "2.8.1",
