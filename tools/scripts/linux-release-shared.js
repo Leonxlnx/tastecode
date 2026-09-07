@@ -139,19 +139,23 @@ export async function readDesktopPackage(root, tag) {
 }
 
 export function parseDirArgs(argv, { usage, tag, defaultDir }) {
+  // pnpm forwards a bare `--` separator verbatim (`pnpm <script> -- --dir <d>`
+  // reaches the script as `['--', '--dir', '<d>']`). Accept exactly one
+  // optional leading separator; any other bare `--` stays fail-closed below.
+  const args = argv[0] === '--' ? argv.slice(1) : argv
   const options = { dir: defaultDir }
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index]
     if (argument === '--dir') {
-      const value = argv[index + 1]
-      if (value === undefined || value === '') {
+      const value = args[index + 1]
+      if (value === undefined || value === '' || value === '--') {
         throw fail(tag, `--dir requires a non-empty path (${usage})`)
       }
       index += 1
       options.dir = path.resolve(value)
     } else if (argument.startsWith('--dir=')) {
       const value = argument.slice('--dir='.length)
-      if (value === '') {
+      if (value === '' || value === '--') {
         throw fail(tag, `--dir requires a non-empty path (${usage})`)
       }
       options.dir = path.resolve(value)
