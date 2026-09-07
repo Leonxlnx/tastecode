@@ -22,6 +22,8 @@ import {
   systemPreferences,
   utilityProcess,
   type Event as ElectronEvent,
+  type OpenDialogOptions,
+  type OpenDialogReturnValue,
   type Tray,
   type WebContents,
 } from 'electron'
@@ -44,7 +46,8 @@ import {
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
-import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { configureEmbeddedBrowser } from './embedded-browser.js'
+import { assertSupportedExternalUrl, isSupportedExternalUrl } from './external-urls.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
@@ -118,14 +121,6 @@ logStartupMilestone('main-module')
 app.setPath('userData', productDataPath)
 app.setPath('sessionData', productDataPath)
 
-function isWebUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
 function sameOrigin(url: string, base: string): boolean {
   try {
     return new URL(url).origin === new URL(base).origin
@@ -456,7 +451,7 @@ function createWindow(): void {
   // Web links only: renderer content includes agent- and vendor-authored
   // URLs, and handing a file:/smb:/ms-*: URL to the OS is code execution.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isWebUrl(url)) void shell.openExternal(url)
+    if (isSupportedExternalUrl(url)) openExternalLink(url)
     return { action: 'deny' }
   })
 
@@ -466,7 +461,7 @@ function createWindow(): void {
     const allowed = devServer !== undefined && sameOrigin(url, devServer)
     if (!allowed) {
       event.preventDefault()
-      if (isWebUrl(url)) void shell.openExternal(url)
+      if (isSupportedExternalUrl(url)) openExternalLink(url)
     }
   })
 
@@ -495,6 +490,15 @@ function createWindow(): void {
         : path.join(here, '../../web/dist/index.html'),
     )
   }
+}
+
+/** Fire-and-forget external opens stay denied-safe: the scheme was already
+ *  validated by the caller, and a missing Linux browser must warn, not crash. */
+function openExternalLink(url: string): void {
+  void shell.openExternal(url).catch((error) => {
+    console.warn('[desktop] failed to open the link in the system browser', error)
+    void diagnostics?.record('openExternal', error)
+  })
 }
 
 function appWindows(): BrowserWindow[] {
@@ -643,7 +647,14 @@ ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
 
 ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
   requireOwnRenderer(event.sender)
-  await shell.openExternal(browserGuestUrl(url))
+  const target = assertSupportedExternalUrl(url)
+  try {
+    await shell.openExternal(target)
+  } catch (error) {
+    throw new Error(
+      `Could not open the link in the system browser: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {
@@ -795,9 +806,22 @@ async function sweepStaleCaptures(): Promise<void> {
  * itself — the user's own picker or operating-system drop is the only way a
  * path enters the app.
  */
+// Parent the chooser to the requesting window: on Wayland the file portal
+// needs the parent handle for modality, otherwise the dialog can open
+// detached or behind the window.
+async function showOpenDialogForSender(
+  sender: WebContents,
+  options: OpenDialogOptions,
+): Promise<OpenDialogReturnValue> {
+  const owner = BrowserWindow.fromWebContents(sender)
+  return owner && !owner.isDestroyed()
+    ? dialog.showOpenDialog(owner, options)
+    : dialog.showOpenDialog(options)
+}
+
 ipcMain.handle('harness:pickFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory', 'createDirectory'],
     title: 'Choose a project folder',
   })
@@ -820,7 +844,7 @@ ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
 
 ipcMain.handle('harness:pickSkillFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory'],
     title: 'Choose an Agent Skill folder',
   })
@@ -829,7 +853,7 @@ ipcMain.handle('harness:pickSkillFolder', async (event) => {
 
 ipcMain.handle('harness:pickFiles', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openFile', 'multiSelections'],
     title: 'Attach files',
   })

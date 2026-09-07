@@ -9,11 +9,15 @@ const electron = vi.hoisted(() => {
     setContextMenu: vi.fn((_menu: MenuItem[]) => undefined),
     setToolTip: vi.fn((_value: string) => undefined),
   }
-  const image = { resize: vi.fn((_size: { width: number; height: number }) => ({})) }
+  const resizedIcon = { isEmpty: vi.fn(() => false) }
+  const image = {
+    resize: vi.fn((_size: { width: number; height: number }) => resizedIcon),
+  }
 
   return {
     tray,
     image,
+    resizedIcon,
     buildFromTemplate: vi.fn((template: MenuItem[]) => template),
     createFromPath: vi.fn((_path: string) => image),
     Tray: vi.fn(function Tray() {
@@ -84,5 +88,23 @@ describe('background tray', () => {
     expect(tray).toBeUndefined()
     expect(electron.tray.destroy).toHaveBeenCalledOnce()
     expect(onUnavailable).toHaveBeenCalledWith(failure)
+  })
+
+  it('reports an unreadable tray icon instead of hiding without a host', () => {
+    electron.resizedIcon.isEmpty.mockReturnValueOnce(true)
+    const onUnavailable = vi.fn()
+
+    const tray = tryCreateBackgroundTray({
+      appName: 'Taste Code',
+      iconPath: '/product-icon.png',
+      onOpen: vi.fn(),
+      onQuit: vi.fn(),
+      onUnavailable,
+    })
+
+    expect(tray).toBeUndefined()
+    expect(electron.Tray).not.toHaveBeenCalled()
+    expect(onUnavailable).toHaveBeenCalledOnce()
+    expect(String(onUnavailable.mock.calls[0]?.[0])).toMatch(/tray icon/)
   })
 })
