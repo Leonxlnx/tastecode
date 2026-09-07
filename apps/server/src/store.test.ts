@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -2031,5 +2031,111 @@ describe('usage totals across providers', () => {
     const summary = store.usageSummary('one', 0)
     expect(summary.session).toEqual(expect.objectContaining({ totalTokens: 100 }))
     expect(summary.today).toEqual(expect.objectContaining({ totalTokens: 140 }))
+  })
+})
+describe('sensitive file permissions', () => {
+  const posixOnly = process.platform === 'win32' ? it.skip : it
+
+  posixOnly('creates the database, its sidecars, and its directory with user-only access', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-'))
+    const file = path.join(dir, 'nested', 'harness.db')
+    const db = new Store(file)
+    try {
+      db.addProject('/repo')
+      db.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'One' })
+      db.append('t1', message('hello'))
+
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      expect(statSync(path.dirname(file)).mode & 0o777).toBe(0o700)
+      // WAL carries the same rows while the connection is open; SHM goes away
+      // on a clean shutdown, so only assert it when present.
+      expect(existsSync(`${file}-wal`)).toBe(true)
+      expect(statSync(`${file}-wal`).mode & 0o777).toBe(0o600)
+      if (existsSync(`${file}-shm`)) {
+        expect(statSync(`${file}-shm`).mode & 0o777).toBe(0o600)
+      }
+    } finally {
+      db.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  posixOnly('creates private files even under a permissive umask', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-umask-'))
+    const file = path.join(dir, 'harness.db')
+    const previous = process.umask(0o022)
+    try {
+      const db = new Store(file)
+      try {
+        expect(statSync(file).mode & 0o777).toBe(0o600)
+        expect(statSync(dir).mode & 0o777).toBe(0o700)
+        expect(statSync(`${file}-wal`).mode & 0o777).toBe(0o600)
+      } finally {
+        db.close()
+      }
+    } finally {
+      process.umask(previous)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('closes the handle when opening a corrupt database fails', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-corrupt-'))
+    const file = path.join(dir, 'harness.db')
+    writeFileSync(file, 'not a database at all')
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close')
+    try {
+      expect(() => new Store(file)).toThrow()
+      expect(closeSpy).toHaveBeenCalled()
+    } finally {
+      closeSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('closes the handle when post-open setup fails', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-key-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.close()
+    const raw = new DatabaseSync(file)
+    try {
+      raw
+        .prepare(`UPDATE app_settings SET value = ? WHERE key = ?`)
+        .run('bogus', 'search_result_key_v1')
+    } finally {
+      raw.close()
+    }
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close')
+    try {
+      expect(() => new Store(file)).toThrow('Search result identity key')
+      expect(closeSpy).toHaveBeenCalled()
+    } finally {
+      closeSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  posixOnly('tightens files and directories left readable by an older build', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-loose-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.close()
+    chmodSync(file, 0o644)
+    chmodSync(dir, 0o755)
+    if (existsSync(`${file}-wal`)) chmodSync(`${file}-wal`, 0o644)
+
+    const reopened = new Store(file)
+    try {
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      expect(statSync(dir).mode & 0o777).toBe(0o700)
+      if (existsSync(`${file}-wal`)) {
+        expect(statSync(`${file}-wal`).mode & 0o777).toBe(0o600)
+      }
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

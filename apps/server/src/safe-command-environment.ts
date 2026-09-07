@@ -1,10 +1,63 @@
-import { mkdirSync } from 'node:fs'
+import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-export function safeCommandEnvironment(workspace: string): NodeJS.ProcessEnv {
-  const runtime = path.join(os.tmpdir(), 'tastecode-project-tools')
-  mkdirSync(runtime, { recursive: true })
+/**
+ * Stable per-user directory backing TEMP/TMP/APPDATA for spawned commands.
+ *
+ * A fixed name inside the world-writable temp dir lets another local user
+ * squat the path first; the uid suffix gives each user their own directory.
+ */
+export function commandRuntimeDirectory(): string {
+  if (process.platform === 'win32') return path.join(os.tmpdir(), 'tastecode-project-tools')
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+  const leaf = uid === undefined ? 'tastecode-project-tools' : `tastecode-project-tools-${uid}`
+  return path.join(os.tmpdir(), leaf)
+}
+
+function ensurePrivateDirectory(directory: string): void {
+  if (process.platform === 'win32') {
+    mkdirSync(directory, { recursive: true })
+    return
+  }
+  // Non-recursive: the parent (os.tmpdir) always exists, and an attacker-owned
+  // symlink at the path fails with EEXIST instead of being followed.
+  try {
+    mkdirSync(directory, { mode: 0o700 })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error
+  }
+  // chmodSync follows symlinks, so refuse a symlink (or a non-directory) rather
+  // than tightening — or following — someone else's target.
+  const stats = lstatSync(directory)
+  if (stats.isSymbolicLink()) {
+    throw new Error(
+      `Refusing to use symlinked command runtime directory at ${directory}. ` +
+        `Remove it and retry.`,
+    )
+  }
+  if (!stats.isDirectory()) {
+    throw new Error(
+      `Refusing to use command runtime directory at ${directory}: not a directory. ` +
+        `Remove it and retry.`,
+    )
+  }
+  if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {
+    throw new Error(
+      `Refusing to use command runtime directory at ${directory}: owned by another user. ` +
+        `Remove it and retry.`,
+    )
+  }
+  // Tightens a directory left readable by an older build.
+  chmodSync(directory, 0o700)
+}
+
+export function safeCommandEnvironment(
+  workspace: string,
+  runtimeDir = commandRuntimeDirectory(),
+): NodeJS.ProcessEnv {
+  ensurePrivateDirectory(runtimeDir)
+  const runtime = runtimeDir
   const nullFile = process.platform === 'win32' ? 'NUL' : '/dev/null'
   return {
     PATH: process.env['PATH'],
