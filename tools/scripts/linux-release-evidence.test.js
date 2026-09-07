@@ -9,6 +9,7 @@ import { deflateRawSync } from 'node:zlib'
 import yaml from 'js-yaml'
 
 import {
+  assertConfiguredDebDependencies,
   assertWorktreeClean,
   collectLinuxReleaseEvidence,
   worktreePorcelainStatus,
@@ -27,6 +28,29 @@ const DEB_PAYLOAD = `fake deb payload for ${VERSION}\n`
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
 const b64 = (data) => createHash('sha512').update(data).digest('base64')
+
+test('requires configured FPM dependencies in the built deb', () => {
+  assert.doesNotThrow(() =>
+    assertConfiguredDebDependencies(
+      'libgtk-3-0, libsecret-1-0, libasound2t64|libasound2, libuuid1',
+      {
+        depends: 'libgtk-3-0',
+        fpm: ['--depends=libasound2t64 | libasound2', '-d', 'libuuid1'],
+      },
+    ),
+  )
+  assert.throws(
+    () =>
+      assertConfiguredDebDependencies('libgtk-3-0, libsecret-1-0', {
+        fpm: ['--depends', 'libasound2t64 | libasound2'],
+      }),
+    /missing configured dependency: libasound2t64 \| libasound2/,
+  )
+  assert.throws(
+    () => assertConfiguredDebDependencies('libgtk-3-0', { fpm: ['--depends'] }),
+    /--depends requires a dependency value/,
+  )
+})
 
 function appBinary(payload) {
   const sizes = [Buffer.byteLength(payload, 'utf8')]

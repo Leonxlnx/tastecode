@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -66,6 +67,80 @@ export function assertWorktreeClean(porcelain) {
     error.code = 'LINUX_EVIDENCE_DIRTY_WORKTREE'
     throw error
   }
+}
+
+function normalizeDebDependency(dependency) {
+  return dependency
+    .trim()
+    .replaceAll(/\s+/g, ' ')
+    .replaceAll(/\s*\|\s*/g, ' | ')
+}
+
+function configuredDebDependencies(debConfig) {
+  const configured = []
+  if (typeof debConfig?.depends === 'string') configured.push(debConfig.depends)
+  if (Array.isArray(debConfig?.depends)) configured.push(...debConfig.depends)
+  const fpmArgs = Array.isArray(debConfig?.fpm) ? debConfig.fpm : []
+  for (let index = 0; index < fpmArgs.length; index += 1) {
+    const argument = fpmArgs[index]
+    if (argument === '--depends' || argument === '-d') {
+      const dependency = fpmArgs[index + 1]
+      if (typeof dependency !== 'string' || dependency.trim() === '') {
+        throw new Error(`[linux-release-evidence] ${argument} requires a dependency value`)
+      }
+      configured.push(dependency)
+      index += 1
+    } else if (argument.startsWith('--depends=')) {
+      const dependency = argument.slice('--depends='.length)
+      if (dependency.trim() === '') {
+        throw new Error('[linux-release-evidence] --depends requires a dependency value')
+      }
+      configured.push(dependency)
+    }
+  }
+  return configured.map(normalizeDebDependency)
+}
+
+export function assertConfiguredDebDependencies(actualDepends, debConfig = {}) {
+  const configured = configuredDebDependencies(debConfig)
+  const actual = new Set(actualDepends.split(',').map(normalizeDebDependency))
+  for (const dependency of configured) {
+    if (!actual.has(dependency)) {
+      throw new Error(
+        `[linux-release-evidence] deb is missing configured dependency: ${dependency}`,
+      )
+    }
+  }
+}
+
+function verifyConfiguredDebDependencies(releaseDirectory, desktopPackage) {
+  const debConfig = desktopPackage.build?.deb
+  if (configuredDebDependencies(debConfig).length === 0) return
+  const debName = expectedLinuxArtifactNames(
+    {
+      version: desktopPackage.version,
+      artifactName: desktopPackage.build?.artifactName,
+      productName: desktopPackage.productName,
+      name: desktopPackage.name,
+    },
+    TAG,
+  ).find((name) => name.endsWith('.deb'))
+  if (!debName) {
+    throw new Error('[linux-release-evidence] cannot determine the expected deb artifact name')
+  }
+  const debPath = path.join(releaseDirectory, debName)
+  if (!existsSync(debPath)) {
+    throw new Error(`[linux-release-evidence] deb is missing: ${debPath}; rebuild both x64 targets`)
+  }
+  let actualDepends
+  try {
+    actualDepends = execFileSync('dpkg-deb', ['--field', debPath, 'Depends'], { encoding: 'utf8' })
+  } catch {
+    throw new Error(
+      '[linux-release-evidence] cannot inspect deb dependencies with dpkg-deb; install dpkg and retry',
+    )
+  }
+  assertConfiguredDebDependencies(actualDepends, debConfig)
 }
 
 export async function collectLinuxReleaseEvidence(
@@ -259,6 +334,7 @@ async function main() {
     )
   }
   assertWorktreeClean(porcelain)
+  verifyConfiguredDebDependencies(options.dir, desktopPackage)
   let commit
   try {
     commit = execFileSync('git', ['rev-parse', 'HEAD'], {
