@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -83,4 +83,37 @@ describe('custom harness launch', () => {
 
     expect(result.stdout).toBe('early-late')
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'SIGKILLs stubborn descendants before reporting a timeout',
+    async () => {
+      // Audit regression: a SIGTERM-only killTree leaves a descendant that
+      // ignores SIGTERM heartbeating forever. The timeout latches first so a
+      // racing close cannot change it, and rejection waits for bounded
+      // full-tree cleanup.
+      const beat = path.join(os.tmpdir(), `harness-custom-timeout-${Date.now()}-${process.pid}.txt`)
+      const grandchild = [
+        "process.on('SIGTERM', () => {})",
+        "const fs = require('fs')",
+        `setInterval(() => fs.writeFileSync(${JSON.stringify(beat)}, String(Date.now())), 100)`,
+      ].join(';')
+      const parent = [
+        "const { spawn } = require('node:child_process')",
+        `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
+        'setInterval(() => {}, 1_000)',
+      ].join(';')
+
+      try {
+        await expect(
+          runCustomHarness(harness({ args: ['-e', parent] }), undefined, [], 400),
+        ).rejects.toThrow(/did not answer within/)
+        expect(existsSync(beat)).toBe(true)
+        const afterTimeout = readFileSync(beat, 'utf8')
+        await new Promise((resolve) => setTimeout(resolve, 600))
+        expect(readFileSync(beat, 'utf8')).toBe(afterTimeout)
+      } finally {
+        rmSync(beat, { force: true })
+      }
+    },
+  )
 })

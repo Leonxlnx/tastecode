@@ -424,7 +424,7 @@ async function probeCustomHarnessProtocol(
     }
     case 'grok': {
       const { GrokAdapter } = await loadGrokAdapter()
-      const adapter = new GrokAdapter({ spawn })
+      const adapter = new GrokAdapter({ spawn: grokHarnessSpawn(harness, workspacePath) })
       adapter.on('log', onLog)
       try {
         const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
@@ -518,6 +518,27 @@ async function startedSession<TSession extends { dispose(): void | Promise<void>
   }
 }
 
+type GrokHarnessSpawn = NonNullable<
+  NonNullable<ConstructorParameters<typeof GrokAdapter>[0]>['spawn']
+>
+
+/**
+ * Adapt a user-owned harness launch to Grok's owned direct-spawn contract.
+ *
+ * Grok passes stdio/windowsHide/detached on every spawn; the harness factory
+ * only honors cwd (plus its stored command/args/env) and builds its own
+ * stdio/ownership through spawnCli, so the extra options are intentionally
+ * not forwarded.
+ */
+function grokHarnessSpawn(
+  harness: CustomHarness,
+  fallbackWorkspacePath?: string,
+): GrokHarnessSpawn {
+  const spawnThroughHarness = customHarnessSpawn(harness, fallbackWorkspacePath)
+  return (command, args, options) =>
+    spawnThroughHarness(command, args, options.cwd === undefined ? {} : { cwd: options.cwd })
+}
+
 function grokRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
@@ -580,7 +601,7 @@ function grokRuntime(
         })
       }
       const { GrokAdapter } = await loadGrokAdapter()
-      const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new GrokAdapter(harness ? { spawn: grokHarnessSpawn(harness) } : {})
       adapter.on('log', onLog)
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
@@ -616,7 +637,7 @@ function grokRuntime(
         )
       }
       const { GrokAdapter } = await loadGrokAdapter()
-      const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+      const adapter = new GrokAdapter(harness ? { spawn: grokHarnessSpawn(harness) } : {})
       adapter.on('log', onLog)
       const thread = await adapter.resumeThread(
         threadId,
@@ -635,7 +656,7 @@ function grokRuntime(
     async listModels(agent) {
       const harness = harnessFor('grok', agent, resolveHarness)
       const { GrokAdapter } = await loadGrokAdapter()
-      return new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {}).listModels()
+      return new GrokAdapter(harness ? { spawn: grokHarnessSpawn(harness) } : {}).listModels()
     },
   }
 }

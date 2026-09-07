@@ -261,6 +261,44 @@ describe('killTree', () => {
   })
 })
 
+describe.skipIf(process.platform === 'win32')('terminateTree escalation', () => {
+  it('SIGKILLs the same group after the leader exits on SIGTERM', async () => {
+    // Audit regression: the leader dies on SIGTERM while a descendant ignores
+    // it. Escalation must still address the snapshotted group (negative PID),
+    // not just the dead leader PID, or the descendant heartbeats forever.
+    const beat = path.join(os.tmpdir(), `harness-escalate-${Date.now()}-${process.pid}.txt`)
+    const grandchild = [
+      "process.on('SIGTERM', () => {})",
+      "const fs = require('fs')",
+      `setInterval(() => fs.writeFileSync(${JSON.stringify(beat)}, String(Date.now())), 100)`,
+    ].join(';')
+    const parent = [
+      "const { spawn } = require('node:child_process')",
+      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
+      'setInterval(() => {}, 1_000)',
+    ].join(';')
+    const child = spawnCli(process.execPath, ['-e', parent])
+    try {
+      await waitFor(() => existsSync(beat), 5_000)
+
+      await terminateTree(child, { gracePeriodMs: 300, killWaitMs: 5_000, pollIntervalMs: 25 })
+
+      const afterTerminate = readFileSync(beat, 'utf8')
+      await sleep(600)
+      expect(readFileSync(beat, 'utf8')).toBe(afterTerminate)
+      // Escalation is idempotent: re-terminating the same snapshot is a no-op.
+      await terminateTree(child, { gracePeriodMs: 0, killWaitMs: 500 })
+    } finally {
+      try {
+        await terminateTree(child, { gracePeriodMs: 0, killWaitMs: 1_500 })
+      } catch {
+        // Best-effort cleanup; the assertions above already ran.
+      }
+      rmSync(beat, { force: true })
+    }
+  })
+})
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }

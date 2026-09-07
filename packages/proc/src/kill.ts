@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 
 export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'kill'>
 
-const ownedUnixProcessGroups = new WeakSet<object>()
+const ownedUnixProcessGroups = new WeakMap<object, number>()
 const ownedLinuxPtySessions = new WeakMap<object, Promise<LinuxPtySessionOwnership>>()
 const PTY_SESSION_SETUP_TIMEOUT_MS = 250
 const PTY_SESSION_SETUP_POLL_MS = 5
@@ -43,7 +43,11 @@ export function ownProcessTree<T extends KillableProcess>(
   child: T,
   platform: NodeJS.Platform = process.platform,
 ): T {
-  if (platform !== 'win32' && validProcessGroupId(child.pid)) ownedUnixProcessGroups.add(child)
+  // Snapshot the group id now. The leader may exit after SIGTERM while
+  // descendants keep the group alive; re-reading child.pid at escalate time
+  // would lose the group (or follow a mutated pid onto an arbitrary group).
+  if (platform !== 'win32' && validProcessGroupId(child.pid))
+    ownedUnixProcessGroups.set(child, child.pid)
   return child
 }
 
@@ -179,6 +183,9 @@ export async function terminateTree(
   const gracePeriodMs = options.gracePeriodMs ?? 1_500
   const killWaitMs = options.killWaitMs ?? 1_500
   const pollIntervalMs = options.pollIntervalMs ?? 50
+  // groupId is the snapshot from ownProcessTree, so SIGKILL below escalates
+  // the same group even when the leader exits after SIGTERM. Signalling is
+  // idempotent: an already-reaped group reports ESRCH and reads as exited.
   signalProcessGroup(groupId, 'SIGTERM')
   if (await waitForProcessGroupExit(groupId, gracePeriodMs, pollIntervalMs)) return
   signalProcessGroup(groupId, 'SIGKILL')
@@ -416,11 +423,14 @@ function sameLinuxProcessInstance(
 }
 
 function ownedUnixProcessGroup(child: KillableProcess): number | undefined {
-  return process.platform !== 'win32' &&
-    validProcessGroupId(child.pid) &&
-    ownedUnixProcessGroups.has(child)
-    ? child.pid
-    : undefined
+  // Owner-safe lookup: only a group TasteCode snapshotted in ownProcessTree
+  // may receive a negative-PID signal. The stored id — not the live
+  // child.pid — survives leader exit so SIGKILL escalates the same group that
+  // received SIGTERM. Anything unowned falls through to the single-PID /
+  // taskkill paths below and never sends a group signal.
+  if (process.platform === 'win32') return undefined
+  const groupId = ownedUnixProcessGroups.get(child)
+  return groupId !== undefined && validProcessGroupId(groupId) ? groupId : undefined
 }
 
 function validProcessGroupId(pid: number | undefined): pid is number {

@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, readNdjson } from '@harness/proc'
+import { ownProcessTree, ownedProcessSpawnOptions, readNdjson, terminateTree } from '@harness/proc'
 import { z } from 'zod'
 import {
   collapseAntigravityModels,
@@ -27,7 +27,8 @@ import {
  * `agy.exe` is a real executable, not a .cmd shim, so it is spawned directly
  * rather than through `spawnCli`'s cmd.exe route — cmd.exe truncates argv at
  * the first newline (#372), and a direct spawn carries multi-line prompts
- * intact (verified by capture).
+ * intact (verified by capture). Ownership still uses the shared helpers so
+ * every helper dies with its whole tree under a bounded shutdown.
  *
  * This never reads a credential. The binary authenticates itself with the
  * user's Google account on first interactive run. See rules/security.md.
@@ -145,7 +146,12 @@ export type AntigravityAdapterEvents = {
 type SpawnFn = (
   command: string,
   args: string[],
-  options: { cwd?: string; stdio: ['pipe', 'pipe', 'pipe']; windowsHide: boolean },
+  options: {
+    cwd?: string
+    stdio: ['pipe', 'pipe', 'pipe']
+    windowsHide: boolean
+    detached?: boolean | undefined
+  },
 ) => ChildProcessWithoutNullStreams
 
 export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
@@ -157,6 +163,8 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   #child: ChildProcessWithoutNullStreams | undefined
   /** Children we killed on purpose — their non-zero exits are not failures. */
   #intentionalKills = new WeakSet<ChildProcessWithoutNullStreams>()
+  /** Live turn awaiting completion; cleared when its turn completes. */
+  #turnId: string | undefined
   #turnCounter = 0
   /** Session instructions ride in front of the first prompt: the CLI has no
    *  system-prompt flag, and the same pattern is what the Cursor adapter uses. */
@@ -165,6 +173,27 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
     this.#spawn = options.spawn ?? spawn
+  }
+
+  /**
+   * Direct spawn with shared ownership.
+   *
+   * Stays off cmd.exe so multi-line prompts survive intact; the detached
+   * group plus the ownership record let terminateTree signal the whole tree.
+   */
+  #spawnOwned(
+    command: string,
+    args: string[],
+    options: { cwd?: string | undefined },
+  ): ChildProcessWithoutNullStreams {
+    return ownProcessTree(
+      this.#spawn(command, args, {
+        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...ownedProcessSpawnOptions(),
+      }),
+    )
   }
 
   get capabilities(): Capabilities {
@@ -215,13 +244,15 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
-    if (this.#child) this.#stop(this.#child)
-    const child = this.#spawn(antigravityCommand(), args, {
-      cwd: this.#workspacePath,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
+    // The replaced tree keeps a bounded shutdown in the background so the
+    // new turn starts without waiting for it.
+    if (this.#child) {
+      const previous = this.#child
+      void this.#stop(previous)
+    }
+    const child = this.#spawnOwned(antigravityCommand(), args, { cwd: this.#workspacePath })
     this.#child = child
+    this.#turnId = turnId
 
     this.emit('event', {
       type: 'turn.started',
@@ -229,6 +260,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     })
 
     let sawResult = false
+    let failureEmitted = false
     let messageStarted = false
     let messageText = ''
     const messageId = `${turnId}-message`
@@ -309,6 +341,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             })
             this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
           }
+          if (this.#turnId === turnId) this.#turnId = undefined
         }
       },
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
@@ -319,9 +352,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     child.on('close', (code) => {
       if (this.#child === child) this.#child = undefined
+      if (this.#turnId === turnId) this.#turnId = undefined
       if (this.#intentionalKills.has(child)) return
       // An exit without a result frame would otherwise look like a hang.
-      if (sawResult) return
+      // Already-reported results and earlier failures stay silent.
+      if (sawResult || failureEmitted) return
+      failureEmitted = true
       this.emit('event', {
         type: 'thread.error',
         threadId,
@@ -332,8 +368,14 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
+    // Intentional stops stay silent so a replaced old child cannot fail the
+    // new turn, and a single failure is never reported twice.
     child.on('error', (error) => {
       if (this.#child === child) this.#child = undefined
+      if (this.#turnId === turnId) this.#turnId = undefined
+      if (this.#intentionalKills.has(child)) return
+      if (sawResult || failureEmitted) return
+      failureEmitted = true
       this.emit('event', { type: 'thread.error', threadId, message: String(error) })
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
     })
@@ -343,7 +385,16 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   }
 
   async interrupt(): Promise<void> {
-    if (this.#child) this.#stop(this.#child)
+    // Latch synchronously so concurrent interrupts terminate once and report
+    // once. Replacement still works: sendTurn overwrites #child/#turnId after.
+    // Only a user interrupt completes a turn; replacement and dispose #stop
+    // silently and their close/error handlers stay silent via intentionalKills.
+    const child = this.#child
+    const turnId = this.#turnId
+    this.#child = undefined
+    this.#turnId = undefined
+    if (child) await this.#stop(child)
+    if (turnId) this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
   }
 
   /**
@@ -358,10 +409,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
    */
   async listModels(): Promise<Model[]> {
     return new Promise((resolve, reject) => {
-      const child = this.#spawn(antigravityCommand(), ['models'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      })
+      const child = this.#spawnOwned(antigravityCommand(), ['models'], {})
       let stdout = ''
       let settled = false
       const finish = (result: Model[] | Error) => {
@@ -372,8 +420,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
         else resolve(result)
       }
       const timer = setTimeout(() => {
-        killTree(child)
+        // Report the timeout first so a racing close cannot change the
+        // result; the hung tree still gets a bounded shutdown in background.
         finish(new Error('Antigravity model discovery timed out'))
+        void terminateTree(child).catch((error: unknown) =>
+          this.emit('log', `Antigravity model discovery stop failed: ${String(error)}`),
+        )
       }, 15000)
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => (stdout += chunk))
@@ -390,14 +442,20 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     })
   }
 
-  dispose(): void {
-    if (this.#child) this.#stop(this.#child)
+  async dispose(): Promise<void> {
+    const child = this.#child
     this.#child = undefined
+    this.#turnId = undefined
+    if (child) await this.#stop(child)
   }
 
-  #stop(child: ChildProcessWithoutNullStreams): void {
+  async #stop(child: ChildProcessWithoutNullStreams): Promise<void> {
     this.#intentionalKills.add(child)
-    killTree(child)
+    try {
+      await terminateTree(child)
+    } catch (error) {
+      this.emit('log', `Antigravity stop failed: ${String(error)}`)
+    }
   }
 }
 

@@ -281,10 +281,29 @@ describe('mapGrokBilling', () => {
       {
         command: grokCommand(),
         args: ['agent', '--no-leader', 'stdio'],
-        options: { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true },
+        options: {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+          detached: process.platform !== 'win32',
+        },
       },
     ])
     expect(fake.disposed).toBe(1)
+  })
+
+  it('spawns billing without a shell so Windows tree cleanup applies', async () => {
+    fake.billing = {
+      config: {
+        creditUsagePercent: 12,
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+      },
+    }
+
+    await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 12 }])
+    const options = fake.spawns[0]!.options as Record<string, unknown>
+    expect(options).not.toMatchObject({ shell: true })
+    expect(options).not.toHaveProperty('shell')
+    expect(options).toMatchObject({ windowsHide: true, detached: process.platform !== 'win32' })
   })
 
   it.each(['initialize', '_x.ai/billing'])(

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { StdioJsonRpc } from '@harness/proc'
+import { StdioJsonRpc, ownProcessTree, ownedProcessSpawnOptions } from '@harness/proc'
 import { z } from 'zod'
 import { grokAccount, grokCommand, type GrokAccount } from './adapter.js'
 
@@ -204,10 +204,16 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
 }
 
 async function readGrokBilling(): Promise<GrokBilling> {
-  const child = spawn(grokCommand(), ['agent', '--no-leader', 'stdio'], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-  })
+  // Owned through the shared proc boundary like adapter turns: direct spawn
+  // (grok is a real executable, no shell/cmd.exe) with its own Unix process
+  // group so StdioJsonRpc.dispose()'s terminateTree cleans descendants.
+  const child = ownProcessTree(
+    spawn(grokCommand(), ['agent', '--no-leader', 'stdio'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      ...ownedProcessSpawnOptions(),
+    }),
+  )
   const rpc = new StdioJsonRpc(child, 'grok billing')
   try {
     await bounded(
