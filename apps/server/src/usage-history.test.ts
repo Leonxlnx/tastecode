@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { ProviderId, UsageHistoryRange } from '@harness/contracts'
@@ -697,6 +697,56 @@ describe('local usage history', () => {
       generatedAt: 0,
       files: [],
     })
+  })
+
+  it('writes the scan cache with user-only permissions', async () => {
+    if (process.platform === 'win32') return
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(codexRoot, { recursive: true })
+    mkdirSync(claudeRoot, { recursive: true })
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+
+    const service = usageService({
+      cacheFile,
+      codexSessionsRoot: codexRoot,
+      claudeProjectsRoot: claudeRoot,
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+    await settledHistory(service, 'all')
+
+    expect(statSync(cacheFile).mode & 0o777).toBe(0o600)
+    expect(statSync(path.dirname(cacheFile)).mode & 0o777).toBe(0o700)
+  })
+
+  it('tightens a cache file and directory left readable by an older build', async () => {
+    if (process.platform === 'win32') return
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(codexRoot, { recursive: true })
+    mkdirSync(claudeRoot, { recursive: true })
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    mkdirSync(path.dirname(cacheFile), { recursive: true })
+    chmodSync(path.dirname(cacheFile), 0o755)
+    writeFileSync(
+      cacheFile,
+      JSON.stringify({ version: 7, generatedAt: 0, files: [], sources: [], warnings: [] }),
+    )
+    chmodSync(cacheFile, 0o644)
+
+    const service = usageService({
+      cacheFile,
+      codexSessionsRoot: codexRoot,
+      claudeProjectsRoot: claudeRoot,
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    })
+    await settledHistory(service, 'all')
+
+    // The atomic rename replaces the loose file with the 0600 temp inode.
+    expect(statSync(cacheFile).mode & 0o777).toBe(0o600)
+    expect(statSync(path.dirname(cacheFile)).mode & 0o777).toBe(0o700)
   })
 })
 

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
@@ -1159,8 +1159,18 @@ async function mapWithConcurrency<T>(
 }
 
 async function writeCache(filePath: string, cache: UsageCache): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true })
+  const directory = path.dirname(filePath)
+  // Mode covers a newly created cache directory; the explicit chmod also
+  // tightens one left readable by an older build.
+  await mkdir(directory, { recursive: true, mode: 0o700 })
+  if (process.platform !== 'win32') await chmod(directory, 0o700)
   const temporary = `${filePath}.${process.pid}.tmp`
-  await writeFile(temporary, JSON.stringify(cache), 'utf8')
+  // Mode applies only when the temp file is created; the explicit chmod covers
+  // pid reuse where the temp name already exists with looser permissions.
+  await writeFile(temporary, JSON.stringify(cache), { encoding: 'utf8', mode: 0o600 })
+  if (process.platform !== 'win32') await chmod(temporary, 0o600)
+  // POSIX rename replaces the destination atomically, so it inherits the temp
+  // file's tightened mode. No post-rename chmod: the path could have been
+  // swapped for a symlink, which chmod would follow.
   await rename(temporary, filePath)
 }
