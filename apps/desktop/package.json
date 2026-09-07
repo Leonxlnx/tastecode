@@ -4,6 +4,7 @@
   "description": "A local desktop workspace for coding agents.",
   "homepage": "https://tastecode.dev",
   "author": "Tasteskill Team",
+  "license": "Apache-2.0",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
   "desktopName": "dev.tastecode.desktop.desktop",
   "version": "0.1.0-beta.1",
@@ -99,6 +100,7 @@
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
     "linux": {
       "executableName": "tastecode",
+      "icon": "assets/tastecode-app-icon.png",
       "category": "Development",
       "synopsis": "Local desktop workspace for coding agents",
       "description": "A local desktop workspace for coding agents.",
@@ -117,7 +119,17 @@
           ]
         }
       ],
-      "syncDesktopName": true
+      "syncDesktopName": true,
+      "files": [
+        "!dist/**/*.map",
+        "!dist/**/*.d.ts",
+        "!node_modules/node-pty/prebuilds/darwin-*/**/*",
+        "!node_modules/node-pty/prebuilds/linux-arm64/**/*",
+        "!node_modules/node-pty/prebuilds/win32-*/**/*",
+        "!node_modules/node-pty/scripts/**/*",
+        "!node_modules/node-pty/src/win/**/*",
+        "!node_modules/node-pty/typings/**/*"
+      ]
     },
     "deb": {
       "packageName": "tastecode",
