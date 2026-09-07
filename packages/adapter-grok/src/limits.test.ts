@@ -4,6 +4,8 @@ type GrokTestState = {
   calls: Array<{ method: string; params: unknown }>
   spawns: Array<{ command: string; args: string[]; options: unknown }>
   disposed: number
+  disposeGate: Promise<void> | undefined
+  disposeError: Error | undefined
   billing: unknown
   error: Error | undefined
   hangs: Set<string>
@@ -13,6 +15,8 @@ const fake = vi.hoisted<GrokTestState>(() => ({
   calls: [],
   spawns: [],
   disposed: 0,
+  disposeGate: undefined,
+  disposeError: undefined,
   billing: {},
   error: undefined,
   hangs: new Set(),
@@ -36,7 +40,9 @@ vi.mock('@harness/proc', async (importOriginal) => ({
       if (method === 'initialize') return Promise.resolve({ protocolVersion: 1 })
       return fake.error ? Promise.reject(fake.error) : Promise.resolve(fake.billing)
     }
-    dispose(): void {
+    async dispose(): Promise<void> {
+      if (fake.disposeGate) await fake.disposeGate
+      if (fake.disposeError) throw fake.disposeError
       fake.disposed += 1
     }
   },
@@ -49,6 +55,8 @@ beforeEach(() => {
   fake.calls = []
   fake.spawns = []
   fake.disposed = 0
+  fake.disposeGate = undefined
+  fake.disposeError = undefined
   fake.error = undefined
   fake.billing = {}
   fake.hangs.clear()
@@ -330,5 +338,55 @@ describe('mapGrokBilling', () => {
     await expect(grokLimits()).resolves.toEqual([{ label: 'Weekly', usedPercent: 34 }])
     expect(fake.spawns).toHaveLength(3)
     expect(fake.disposed).toBe(3)
+  })
+
+  it('waits for billing disposal before resolving', async () => {
+    fake.billing = {
+      config: {
+        creditUsagePercent: 12,
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+      },
+    }
+    let releaseDispose!: () => void
+    fake.disposeGate = new Promise<void>((resolve) => {
+      releaseDispose = resolve
+    })
+
+    let settled = false
+    const pending = grokLimits().then(
+      (value) => {
+        settled = true
+        return value
+      },
+      (error) => {
+        settled = true
+        throw error
+      },
+    )
+    try {
+      await settle()
+      expect(fake.calls.map((call) => call.method)).toEqual(['initialize', '_x.ai/billing'])
+      expect(settled).toBe(false)
+      expect(fake.disposed).toBe(0)
+      releaseDispose()
+      await expect(pending).resolves.toEqual([{ label: 'Weekly', usedPercent: 12 }])
+      expect(fake.disposed).toBe(1)
+    } finally {
+      releaseDispose()
+      await pending.catch(() => undefined)
+    }
+  })
+
+  it('surfaces a billing disposal failure instead of hanging', async () => {
+    fake.billing = {
+      config: {
+        creditUsagePercent: 12,
+        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+      },
+    }
+    fake.disposeError = new Error('billing transport close failed')
+
+    await expect(grokLimits()).rejects.toThrow('billing transport close failed')
+    expect(fake.disposed).toBe(0)
   })
 })

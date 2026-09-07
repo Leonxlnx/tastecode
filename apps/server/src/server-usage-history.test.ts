@@ -79,7 +79,7 @@ describe('usage.history requests', () => {
   it('rejects an unknown range instead of passing it to the history scan', async () => {
     temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), 'harness-usage-history-request-'))
     process.env['HARNESS_DATA_DIR'] = temporaryDirectory
-    const server = startServer({ port: await freePort() })
+    const server = await startServer({ port: await freePort() })
     const { socket, request } = await openSocket(server.port)
     try {
       const rejected = await request('bad-range', 'usage.history', { range: 'bogus' })

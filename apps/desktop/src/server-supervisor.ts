@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { ownProcessTree, ownedProcessSpawnOptions, terminateTree } from '@harness/proc'
 
 /**
  * The packaged app owns its core server. In development tools/scripts/dev.js
@@ -19,6 +20,9 @@ export function restartDelayMs(consecutiveFailures: number): number {
 
 /** A run that survived this long counts as healthy and resets the backoff. */
 const HEALTHY_RUN_MS = 30_000
+
+/** How long stop() waits for the utility-process server to exit after kill. */
+const UTILITY_STOP_TIMEOUT_MS = 5_000
 
 /** After this many failures in a row the server is not coming back on its own. */
 export const MAX_CONSECUTIVE_FAILURES = 8
@@ -62,9 +66,29 @@ function supervisedChildProcess(child: ChildProcess): SupervisedServerProcess {
   }
 }
 
+/**
+ * Resolve when a launched server reports exit (or error), giving up after
+ * timeoutMs so stop() never waits forever. Uses only the existing
+ * SupervisedServerProcess subscriptions, so no interface change is needed.
+ */
+function waitForSupervisedExit(child: SupervisedServerProcess, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs)
+    const done = () => {
+      clearTimeout(timer)
+      resolve()
+    }
+    child.onExit(done)
+    child.onError(done)
+  })
+}
+
 export class ServerSupervisor {
   readonly #options: SupervisorOptions
   #child: SupervisedServerProcess | undefined
+  // Raw spawned child for tree termination. The utility-process launcher has
+  // no pid to own, so only the command path registers one here.
+  #processChild: ChildProcess | undefined
   #stopped = false
   #failures = 0
   #startedAt = 0
@@ -80,14 +104,7 @@ export class ServerSupervisor {
     const child =
       'launch' in this.#options
         ? this.#options.launch()
-        : supervisedChildProcess(
-            (this.#options.spawnFn ?? spawn)(this.#options.command, this.#options.args, {
-              env: this.#options.env,
-              ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
-              stdio: ['ignore', 'pipe', 'pipe'],
-              windowsHide: true,
-            }),
-          )
+        : supervisedChildProcess(this.#spawnOwned())
     this.#child = child
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
@@ -106,18 +123,46 @@ export class ServerSupervisor {
     })
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.#stopped = true
     if (this.#restartTimer) clearTimeout(this.#restartTimer)
     this.#restartTimer = undefined
     const child = this.#child
+    const processChild = this.#processChild
     this.#child = undefined
-    child?.kill()
+    this.#processChild = undefined
+    // An owned process group outlives a bare child kill: the whole tree gets
+    // a bounded TERM-to-KILL shutdown so quit leaves nothing behind on Linux.
+    if (processChild) await terminateTree(processChild)
+    else if (child) {
+      // The default Electron utility-process path has no pid to own, so there
+      // is no tree to terminate. Kill it, then wait for its exit event so
+      // before-quit does not relaunch the app while the server still holds
+      // the socket. The wait is bounded so a hung server cannot block quit.
+      child.kill()
+      await waitForSupervisedExit(child, UTILITY_STOP_TIMEOUT_MS)
+    }
+  }
+
+  #spawnOwned(): ChildProcess {
+    if ('launch' in this.#options) throw new Error('Launcher processes own their own lifetime.')
+    const raw = ownProcessTree(
+      (this.#options.spawnFn ?? spawn)(this.#options.command, this.#options.args, {
+        env: this.#options.env,
+        ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        ...ownedProcessSpawnOptions(),
+      }),
+    )
+    this.#processChild = raw
+    return raw
   }
 
   #onExit(child: SupervisedServerProcess): void {
     if (this.#child !== child) return
     this.#child = undefined
+    this.#processChild = undefined
     if (this.#stopped) return
     const healthy = Date.now() - this.#startedAt >= HEALTHY_RUN_MS
     this.#failures = healthy ? 1 : this.#failures + 1

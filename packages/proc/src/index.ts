@@ -2,7 +2,16 @@ import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
 
 export { applyDesktopPath, desktopPath } from './desktop-path.js'
 export type { DesktopPathOptions } from './desktop-path.js'
-export { killTree } from './kill.js'
+export {
+  cleanupExitedPtySession,
+  killTree,
+  ownProcessTree,
+  ownPtySession,
+  ownedProcessSpawnOptions,
+  terminatePtySession,
+  terminateTree,
+  type TerminateTreeOptions,
+} from './kill.js'
 export { commandVersion, isInstalled, runCli, spawnCli } from './cli.js'
 
 export {

@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 
 function packagedPaths(argument) {
   const supplied = path.resolve(argument)
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' || process.platform === 'linux') {
     return {
       executable: supplied,
       resources: path.join(path.dirname(supplied), 'resources'),
@@ -22,7 +22,7 @@ function packagedPaths(argument) {
       resources: path.join(app, 'Contents', 'Resources'),
     }
   }
-  throw new Error('packaged native proof is supported only on Windows and macOS')
+  throw new Error('packaged native proof is supported only on Windows, macOS, and Linux')
 }
 
 function singleMacExecutable(directory) {

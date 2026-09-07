@@ -299,6 +299,12 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+class StalePreviewCleanupError extends Error {
+  constructor(cause: unknown) {
+    super(errorMessage(cause), { cause })
+  }
+}
+
 function errorCode(error: unknown): string | undefined {
   if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
   return typeof error.code === 'string' ? error.code : undefined
@@ -371,6 +377,7 @@ type DesignInput = {
 const PANIC_STOP_TIMEOUT_MS = 5_000
 const DESIGN_START_TIMEOUT_MS = 30_000
 const DESIGN_REPAIR_LIMIT = 2
+const SHUTTING_DOWN_MESSAGE = 'TasteCode is shutting down'
 const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   inventory: false,
   add: false,
@@ -416,10 +423,12 @@ export class Orchestrator {
   #runtimeOperationCounts = new Map<string, number>()
   #mcpOAuthThreads = new Set<string>()
   #releasedIdleRuntimeSessions = new WeakSet<AgentSession>()
+  #idleRuntimeDisposals = new Set<Promise<void>>()
   /** Approval mode selected for each attached or pending-resume thread; not persisted. */
   #threadApprovals = new Map<string, ApprovalMode>()
   #sideThreads = new Map<string, string>()
   #sideParents = new Map<string, string>()
+  #startingThreads = new Set<Promise<Thread>>()
   #startingSideThreads = new Map<string, Promise<Thread>>()
   #discardedSideThreads = new Set<string>()
   #activeTurns = new Set<string>()
@@ -450,6 +459,7 @@ export class Orchestrator {
   #designPreviewTasks = new Map<string, Promise<void>>()
   #stoppingDesignPreviews = new Map<string, Promise<void>>()
   #resumingThreads = new Map<string, Promise<void>>()
+  #disposing = false
   #panicGeneration = 0
   #panicStopping = false
   #store: Store
@@ -605,6 +615,7 @@ export class Orchestrator {
    */
   #control: CodexAdapter | undefined
   #controlStarting: Promise<CodexAdapter> | undefined
+  #controlDisposing: Promise<void> | undefined
   #controlIdleTimer: ReturnType<typeof setTimeout> | undefined
   #controlUsers = 0
   #controlPinned = false
@@ -615,6 +626,14 @@ export class Orchestrator {
     this.#clearControlIdleTimer()
     if (this.#control) return this.#control
     if (this.#controlStarting) return this.#controlStarting
+    if (this.#controlDisposing) {
+      // An idle disposal is still tearing down the previous process. Wait
+      // for it so the replacement cannot overlap the old process. The idle
+      // failure is already logged; a new request still proceeds.
+      await this.#controlDisposing.catch(() => undefined)
+      if (this.#control) return this.#control
+      if (this.#controlStarting) return this.#controlStarting
+    }
     const starting = (async () => {
       const { CodexAdapter } = await loadCodexAdapter()
       const adapter = new CodexAdapter()
@@ -645,7 +664,7 @@ export class Orchestrator {
         this.#control = adapter
         return adapter
       } catch (error) {
-        adapter.dispose()
+        await adapter.dispose()
         throw error
       }
     })()
@@ -694,8 +713,33 @@ export class Orchestrator {
         return
       }
       const control = this.#control
+      if (!control) return
       this.#control = undefined
-      control?.dispose()
+      // Track the teardown so a racing request waits for it instead of
+      // starting an overlapping replacement, and so shutdown can await it.
+      // The catch logs the background failure; the tracked promise still
+      // rejects so disposeAll can surface an in-flight failure. Synchronous
+      // disposals complete inline to preserve eviction timing.
+      let disposing: Promise<void> | undefined
+      try {
+        const result = control.dispose()
+        if (result instanceof Promise) disposing = result
+        else if (result !== undefined && typeof (result as Promise<void>).then === 'function') {
+          disposing = Promise.resolve(result)
+        }
+      } catch (error) {
+        this.#onLog(`[control] idle dispose failed: ${errorMessage(error)}`)
+        return
+      }
+      if (!disposing) return
+      this.#controlDisposing = disposing
+      void disposing
+        .catch((error) => {
+          this.#onLog(`[control] idle dispose failed: ${errorMessage(error)}`)
+        })
+        .finally(() => {
+          if (this.#controlDisposing === disposing) this.#controlDisposing = undefined
+        })
     }, this.#controlIdleMs)
   }
 
@@ -1217,7 +1261,7 @@ export class Orchestrator {
       this.#onUsageChanged(provider)
       return { outcome }
     } finally {
-      adapter.dispose()
+      await adapter.dispose()
     }
   }
 
@@ -1233,7 +1277,7 @@ export class Orchestrator {
             await adapter.start()
             return await adapter.rateLimitSource()
           } finally {
-            adapter.dispose()
+            await adapter.dispose()
           }
         },
       ],
@@ -1343,6 +1387,21 @@ export class Orchestrator {
     workspacePath: string,
     options: StartOptions = {},
   ): Promise<Thread> {
+    if (this.#disposing) throw new Error(SHUTTING_DOWN_MESSAGE)
+    const starting = this.#startThread(provider, workspacePath, options)
+    this.#startingThreads.add(starting)
+    try {
+      return await starting
+    } finally {
+      this.#startingThreads.delete(starting)
+    }
+  }
+
+  async #startThread(
+    provider: ProviderId,
+    workspacePath: string,
+    options: StartOptions,
+  ): Promise<Thread> {
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
@@ -1371,6 +1430,11 @@ export class Orchestrator {
     }
 
     const { thread, session } = started
+    if (this.#disposing) {
+      await session.dispose()
+      if (worktree) await removeWorktree(worktree, true).catch(() => undefined)
+      throw new Error(SHUTTING_DOWN_MESSAGE)
+    }
     this.#store.addProject(workspacePath)
     this.#store.addThread({
       id: thread.id,
@@ -1392,7 +1456,7 @@ export class Orchestrator {
     this.#onLifecycleScheduleChanged(
       autoSettleDays === null ? 'later' : thread.createdAt + autoSettleDays * 24 * 60 * 60 * 1_000,
     )
-    this.#attachThread(thread, session, workspacePath, runtime.resume !== undefined, worktree)
+    await this.#attachThread(thread, session, workspacePath, runtime.resume !== undefined, worktree)
     if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
     return thread
   }
@@ -1408,6 +1472,7 @@ export class Orchestrator {
     parentThreadId: string,
     options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'> = {},
   ): Promise<Thread> {
+    if (this.#disposing) throw new Error(SHUTTING_DOWN_MESSAGE)
     const existingId = this.#sideThreads.get(parentThreadId)
     const existing = existingId ? this.#threads.get(existingId) : undefined
     if (existing) return existing.thread
@@ -1461,6 +1526,9 @@ export class Orchestrator {
       started = await runtime.start(workspacePath, runtimeOptions)
       const { thread, session } = started
       const currentParent = this.#store.thread(parentThreadId)
+      if (this.#disposing) {
+        throw new Error(SHUTTING_DOWN_MESSAGE)
+      }
       if (!currentParent || currentParent.closedAt !== undefined) {
         throw new Error('The main chat closed while Side chat was starting.')
       }
@@ -1476,11 +1544,16 @@ export class Orchestrator {
       })
       this.#sideThreads.set(parentThreadId, thread.id)
       this.#sideParents.set(thread.id, parentThreadId)
-      this.#attachThread(thread, session, storedParent.projectPath, runtime.resume !== undefined)
+      await this.#attachThread(
+        thread,
+        session,
+        storedParent.projectPath,
+        runtime.resume !== undefined,
+      )
       this.#threadApprovals.set(thread.id, approval)
       return thread
     } catch (error) {
-      started?.session.dispose()
+      await started?.session.dispose()
       const sideThreadId = started?.thread.id
       if (sideThreadId) {
         this.#sideParents.delete(sideThreadId)
@@ -2270,10 +2343,8 @@ export class Orchestrator {
     this.#terminals.resize(terminalId, columns, rows)
   }
 
-  closeTerminal(terminalId: string): void {
-    void this.#terminals
-      .close(terminalId)
-      .catch((error) => this.#onLog(`[terminal] close failed: ${errorMessage(error)}`))
+  closeTerminal(terminalId: string): Promise<void> {
+    return this.#terminals.close(terminalId)
   }
 
   #repoPath(threadId: string): string {
@@ -2716,11 +2787,11 @@ export class Orchestrator {
 
   async close(threadId: string): Promise<void> {
     if (this.#store.thread(threadId)?.ephemeral) {
-      this.closeSideThread(threadId)
+      await this.closeSideThread(threadId)
       return
     }
     const sideThreadId = this.#sideThreads.get(threadId)
-    if (sideThreadId) this.closeSideThread(sideThreadId)
+    if (sideThreadId) await this.closeSideThread(sideThreadId)
     const runtimeDisposed = this.#disposeThreadRuntime(threadId)
     this.#recordedDeltas.flush(threadId)
     // Always mark closed, live entry or not: closing is the user's statement
@@ -2738,13 +2809,13 @@ export class Orchestrator {
     await runtimeDisposed
   }
 
-  closeSideThread(threadId: string): void {
+  async closeSideThread(threadId: string): Promise<void> {
     const stored = this.#store.thread(threadId)
     if (!stored) return
     if (!stored.ephemeral) throw new Error('thread is not a Side chat')
     this.#discardedSideThreads.add(threadId)
     this.#recordedDeltas.discard(threadId)
-    void this.#disposeThreadRuntime(threadId)
+    await this.#disposeThreadRuntime(threadId)
     if (stored.parentThreadId && this.#sideThreads.get(stored.parentThreadId) === threadId) {
       this.#sideThreads.delete(stored.parentThreadId)
     }
@@ -2759,11 +2830,13 @@ export class Orchestrator {
       .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
     const previewStopped = this.#stopDesignPreview(threadId)
     const entry = this.#threads.get(threadId)
+    const sessionDisposed = entry
+      ? Promise.resolve().then(() => entry.session.dispose())
+      : Promise.resolve()
     if (entry) {
       this.#threads.delete(threadId)
       this.#unindexThreadRuntime(threadId, entry)
       this.#runtimeRecency.delete(threadId)
-      entry.session.dispose()
     }
     this.#idleRuntimeEligible.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)
@@ -2786,8 +2859,8 @@ export class Orchestrator {
     this.#queuedTurns.delete(threadId)
     this.#emptyQueuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
-    this.#clearDesignFlow(threadId)
-    return Promise.all([terminalsClosed, previewStopped]).then(() => undefined)
+    this.#clearDesignFlow(threadId, true)
+    return Promise.all([terminalsClosed, previewStopped, sessionDisposed]).then(() => undefined)
   }
 
   /**
@@ -2849,69 +2922,110 @@ export class Orchestrator {
   }
 
   async disposeAll(): Promise<void> {
-    const terminalsClosed = this.#terminals.closeAll()
-    const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
-      this.#stopDesignPreview(threadId),
-    )
-    for (const controller of this.#voiceRequests.values()) controller.abort()
-    this.#voiceRequests.clear()
-    for (const [, entry] of this.#threads) entry.session.dispose()
-    this.#recordedDeltas.flushAll()
-    this.#threads.clear()
-    this.#runtimeThreadIdsByProject.clear()
-    this.#runtimeRecency.clear()
-    this.#clearIdleRuntimeTimer()
-    this.#idleRuntimeEligible.clear()
-    this.#runtimeOperationCounts.clear()
-    this.#mcpOAuthThreads.clear()
-    this.#sideThreads.clear()
-    this.#sideParents.clear()
-    this.#startingSideThreads.clear()
-    this.#discardedSideThreads.clear()
-    this.#activeTurns.clear()
-    this.#activeTurnIds.clear()
-    this.#serverOwnedUserTurns.clear()
-    this.#suppressedUserItems.clear()
-    this.#inFlightSubmissionIds.clear()
-    this.#startingTurns.clear()
-    for (const barrier of this.#turnStartBarriers.values()) barrier.release()
-    this.#turnStartBarriers.clear()
-    this.#pendingTurnStarts.clear()
-    this.#acceptedTurnStarts.clear()
-    this.#reviewingDiffs.clear()
-    this.#queuedTurns.clear()
-    this.#emptyQueuedTurns.clear()
-    this.#drainingQueues.clear()
-    this.#designFlows.clear()
-    this.#designTurns.clear()
-    this.#designStartingThreads.clear()
-    this.#designStartWaiters.clear()
-    this.#designMessageItems.clear()
-    this.#acceptedDesignOutputs.clear()
-    this.#designOutputErrors.clear()
-    this.#designActivityItems.clear()
-    this.#designInputs.clear()
-    this.#designInputByThread.clear()
-    this.#resumingThreads.clear()
-    this.#inboxProjections.clear()
-    this.#inboxProjectionsLoaded = false
-    this.#staleInboxProjectionThreads.clear()
-    this.#backgroundSourcesCache = undefined
-    this.#backgroundSourcesStarting = undefined
-    this.#backgroundSourcesRevision += 1
-    this.#clearControlIdleTimer()
-    this.#controlUsers = 0
-    this.#controlPinned = false
-    void this.#controlStarting?.then(
-      (adapter) => adapter.dispose(),
-      () => undefined,
-    )
-    this.#controlStarting = undefined
-    this.#control?.dispose()
-    this.#control = undefined
-    await Promise.allSettled([...this.#designPreviewTasks.values(), ...previewsStopped])
-    await Promise.allSettled(this.#stoppingDesignPreviews.values())
-    await terminalsClosed
+    this.#disposing = true
+    try {
+      const sessionStarts = [
+        ...this.#startingThreads,
+        ...this.#startingSideThreads.values(),
+        ...this.#resumingThreads.values(),
+      ].map((starting) =>
+        starting.then(
+          () => undefined,
+          () => undefined,
+        ),
+      )
+      const terminalsClosed = this.#terminals.closeAll()
+      const stoppingPreviews = [...this.#stoppingDesignPreviews.values()]
+      const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
+        this.#stopDesignPreview(threadId),
+      )
+      for (const controller of this.#voiceRequests.values()) controller.abort()
+      this.#voiceRequests.clear()
+      const sessionsDisposed = [...this.#threads.values()].map((entry) =>
+        Promise.resolve().then(() => entry.session.dispose()),
+      )
+      const idleRuntimeStopped = [...this.#idleRuntimeDisposals]
+      this.#threads.clear()
+      this.#runtimeThreadIdsByProject.clear()
+      this.#runtimeRecency.clear()
+      this.#clearIdleRuntimeTimer()
+      this.#idleRuntimeEligible.clear()
+      this.#runtimeOperationCounts.clear()
+      this.#mcpOAuthThreads.clear()
+      this.#recordedDeltas.flushAll()
+      this.#sideThreads.clear()
+      this.#sideParents.clear()
+      this.#startingSideThreads.clear()
+      this.#discardedSideThreads.clear()
+      this.#activeTurns.clear()
+      this.#activeTurnIds.clear()
+      this.#serverOwnedUserTurns.clear()
+      this.#suppressedUserItems.clear()
+      this.#inFlightSubmissionIds.clear()
+      this.#startingTurns.clear()
+      for (const barrier of this.#turnStartBarriers.values()) barrier.release()
+      this.#turnStartBarriers.clear()
+      this.#pendingTurnStarts.clear()
+      this.#acceptedTurnStarts.clear()
+      this.#reviewingDiffs.clear()
+      this.#queuedTurns.clear()
+      this.#emptyQueuedTurns.clear()
+      this.#drainingQueues.clear()
+      this.#designFlows.clear()
+      this.#designTurns.clear()
+      this.#designStartingThreads.clear()
+      this.#designStartWaiters.clear()
+      this.#designMessageItems.clear()
+      this.#acceptedDesignOutputs.clear()
+      this.#designOutputErrors.clear()
+      this.#designActivityItems.clear()
+      this.#designInputs.clear()
+      this.#designInputByThread.clear()
+      this.#resumingThreads.clear()
+      this.#inboxProjections.clear()
+      this.#inboxProjectionsLoaded = false
+      this.#staleInboxProjectionThreads.clear()
+      this.#backgroundSourcesCache = undefined
+      this.#backgroundSourcesStarting = undefined
+      this.#backgroundSourcesRevision += 1
+      this.#clearControlIdleTimer()
+      this.#controlUsers = 0
+      this.#controlPinned = false
+      const controlStopped = this.#controlStarting?.then(
+        async (adapter) => {
+          await adapter.dispose()
+          if (this.#control === adapter) this.#control = undefined
+        },
+        () => undefined,
+      )
+      this.#controlStarting = undefined
+      const control = this.#control
+      const activeControlStopped = control
+        ? Promise.resolve().then(() => control.dispose())
+        : undefined
+      this.#control = undefined
+      const idleControlStopped = this.#controlDisposing
+      const cleanupResults = await Promise.allSettled([
+        ...this.#designPreviewTasks.values(),
+        ...stoppingPreviews,
+        ...previewsStopped,
+        ...(controlStopped ? [controlStopped] : []),
+        ...(activeControlStopped ? [activeControlStopped] : []),
+        ...(idleControlStopped ? [idleControlStopped] : []),
+        ...idleRuntimeStopped,
+        ...sessionStarts,
+        ...sessionsDisposed,
+        terminalsClosed,
+      ])
+      const latePreviewResults = await Promise.allSettled(this.#stoppingDesignPreviews.values())
+      const errors = [...cleanupResults, ...latePreviewResults]
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map((result) => result.reason)
+      if (errors.length === 1) throw errors[0]
+      if (errors.length > 0) throw new AggregateError(errors, 'orchestrator shutdown failed')
+    } finally {
+      this.#disposing = false
+    }
   }
 
   #get(threadId: string) {
@@ -2921,6 +3035,7 @@ export class Orchestrator {
   }
 
   async #ensureThread(threadId: string): Promise<void> {
+    if (this.#disposing) throw new Error(SHUTTING_DOWN_MESSAGE)
     if (this.#threads.has(threadId)) return
     const existing = this.#resumingThreads.get(threadId)
     if (existing) return existing
@@ -2959,16 +3074,20 @@ export class Orchestrator {
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
     })
     if (result.thread.id !== threadId) {
-      result.session.dispose()
+      await result.session.dispose()
       throw new Error(`provider resumed unexpected thread ${result.thread.id}`)
+    }
+    if (this.#disposing) {
+      await result.session.dispose()
+      throw new Error(SHUTTING_DOWN_MESSAGE)
     }
     // The thread may have been closed while the provider was resuming; a
     // late attach would leave a zombie agent process nobody can reach.
     if (this.#store.thread(threadId)?.closedAt !== undefined) {
-      result.session.dispose()
+      await result.session.dispose()
       throw new Error(`thread ${threadId} was closed while resuming`)
     }
-    this.#attachThread(
+    await this.#attachThread(
       result.thread,
       result.session,
       stored.projectPath,
@@ -3546,7 +3665,10 @@ export class Orchestrator {
       const plan = designAgent().parsePreviewPhaseOutput(text)
       const task = this.#startDesignPreview(threadId, turnId, flow, plan).catch(
         (error: unknown) => {
-          if (this.#designFlows.get(threadId) !== flow) return
+          if (this.#designFlows.get(threadId) !== flow) {
+            if (error instanceof StalePreviewCleanupError) throw error
+            return
+          }
           if (
             isRecoverablePreviewError(error) &&
             this.#queueDesignCorrection(threadId, flow, error)
@@ -3662,11 +3784,7 @@ export class Orchestrator {
     const { startDesignPreview } = await loadDesignPreview()
     const preview = await startDesignPreview(flow.workspacePath, plan)
     if (this.#designFlows.get(threadId) !== flow) {
-      await preview
-        .stop()
-        .catch((error: unknown) =>
-          this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
-        )
+      await this.#stopStaleDesignPreview(preview)
       return
     }
     this.#designPreviews.set(threadId, preview)
@@ -3694,11 +3812,7 @@ export class Orchestrator {
       const { startDesignPreview } = await loadDesignPreview()
       const preview = await startDesignPreview(flow.workspacePath, flow.previewPlan)
       if (this.#designFlows.get(threadId) !== flow) {
-        await preview
-          .stop()
-          .catch((error: unknown) =>
-            this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`),
-          )
+        await this.#stopStaleDesignPreview(preview)
         return
       }
       this.#designPreviews.set(threadId, preview)
@@ -3797,9 +3911,10 @@ export class Orchestrator {
     this.#designPreviews.delete(threadId)
     const stop = preview
       .stop()
-      .catch((error: unknown) =>
-        this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`),
-      )
+      .catch((error: unknown) => {
+        this.#onLog(`[design] preview stop failed: ${errorMessage(error)}`)
+        throw error
+      })
       .finally(() => {
         if (this.#stoppingDesignPreviews.get(threadId) === stop) {
           this.#stoppingDesignPreviews.delete(threadId)
@@ -3809,8 +3924,17 @@ export class Orchestrator {
     return stop
   }
 
+  async #stopStaleDesignPreview(preview: RunningPreview): Promise<void> {
+    try {
+      await preview.stop()
+    } catch (error) {
+      this.#onLog(`[design] stale preview stop failed: ${errorMessage(error)}`)
+      throw new StalePreviewCleanupError(error)
+    }
+  }
+
   #clearDesignFlow(threadId: string, keepPreview = false): void {
-    if (!keepPreview) void this.#stopDesignPreview(threadId)
+    if (!keepPreview) void this.#stopDesignPreview(threadId).catch(() => undefined)
     this.#designFlows.delete(threadId)
     this.#store.deleteDesignRun(threadId)
     const requestId = this.#designInputByThread.get(threadId)
@@ -3936,7 +4060,31 @@ export class Orchestrator {
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
-    entry.session.dispose()
+    // Track the teardown so shutdown can await background evictions. The
+    // catch logs the background failure without producing an unhandled
+    // rejection; the tracked promise still rejects so disposeAll can surface
+    // an in-flight failure. Synchronous disposals complete inline to preserve
+    // the existing synchronous eviction timing.
+    let disposing: Promise<void> | undefined
+    try {
+      const result = entry.session.dispose()
+      if (result instanceof Promise) disposing = result
+      else if (result !== undefined && typeof (result as Promise<void>).then === 'function') {
+        disposing = Promise.resolve(result)
+      }
+    } catch (error) {
+      this.#onLog(`[runtime] idle dispose failed: ${errorMessage(error)}`)
+      return
+    }
+    if (!disposing) return
+    this.#idleRuntimeDisposals.add(disposing)
+    void disposing
+      .catch((error) => {
+        this.#onLog(`[runtime] idle dispose failed: ${errorMessage(error)}`)
+      })
+      .finally(() => {
+        this.#idleRuntimeDisposals.delete(disposing)
+      })
   }
 
   #clearIdleRuntimeTimer(): void {
@@ -4082,22 +4230,38 @@ export class Orchestrator {
     if (projects.size === 0) this.#runtimeThreadIdsByProject.delete(entry.thread.provider)
   }
 
-  #attachThread(
+  async #attachThread(
     thread: Thread,
     session: AgentSession,
     projectPath: string,
     resumable: boolean,
     worktree?: Worktree,
-  ): void {
+  ): Promise<void> {
     // A racing double-attach must not silently drop the previous session's
     // process — dispose it before overwriting.
+    //
+    // Policy when disposing the previous session fails: keep the previous
+    // entry and fail the attach, but never leak the newly started session.
+    // The newcomer is disposed before the cleanup failure propagates; when
+    // both disposals fail the combined error is reported.
     const previous = this.#threads.get(thread.id)
-    previous?.session.dispose()
-    if (
-      previous &&
-      (previous.thread.provider !== thread.provider || previous.projectPath !== projectPath)
-    ) {
-      this.#unindexThreadRuntime(thread.id, previous)
+    if (previous) {
+      try {
+        await previous.session.dispose()
+      } catch (error) {
+        try {
+          await session.dispose()
+        } catch (newError) {
+          throw new AggregateError(
+            [error, newError],
+            `failed to dispose racing sessions for thread ${thread.id}`,
+          )
+        }
+        throw error
+      }
+      if (previous.thread.provider !== thread.provider || previous.projectPath !== projectPath) {
+        this.#unindexThreadRuntime(thread.id, previous)
+      }
     }
     const entry: AttachedThreadRuntime = {
       thread,
