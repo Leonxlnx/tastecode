@@ -26,6 +26,8 @@ describe('app update controller', () => {
         platform: 'linux',
         packaged: true,
         appImagePath: '/tmp/TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
       }),
     ).toBe(true)
     expect(appOwnsUpdates({ platform: 'linux', packaged: true })).toBe(false)
@@ -39,6 +41,138 @@ describe('app update controller', () => {
         platform: 'win32',
         packaged: true,
         developmentServer: 'http://localhost:5173',
+      }),
+    ).toBe(false)
+  })
+
+  it('owns updates when the executable is inside its own AppImage mount', () => {
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
+      }),
+    ).toBe(true)
+  })
+
+  it('refuses updates when APPIMAGE is inherited but the executable is unpacked', () => {
+    // Child unpacked binary keeps T3's APPIMAGE but runs outside T3's APPDIR.
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/T3-Code.AppImage',
+        appDirPath: '/tmp/.mount_T3CodeXYZ999',
+        executablePath: '/home/user/taste-code/release/linux-unpacked/tastecode',
+      }),
+    ).toBe(false)
+  })
+
+  it('refuses Linux updates without both APPIMAGE and its own APPDIR proof', () => {
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/TasteCode.AppImage',
+      }),
+    ).toBe(false)
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
+      }),
+    ).toBe(false)
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+      }),
+    ).toBe(false)
+  })
+
+  it('refuses Linux updates on a sibling-prefix path trick', () => {
+    // String prefix is not containment.
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCode',
+        executablePath: '/tmp/.mount_TasteCode-evil/tastecode',
+      }),
+    ).toBe(false)
+  })
+
+  it('owns updates for a nested executable inside its own AppImage mount', () => {
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+        executablePath: '/tmp/.mount_TasteCoABC123/usr/bin/tastecode',
+      }),
+    ).toBe(true)
+  })
+
+  it('refuses Linux updates on traversal and equality tricks', () => {
+    // `..` escapes the mount even though the string contains the APPDIR prefix.
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+        executablePath: '/tmp/.mount_TasteCoABC123/../evil/tastecode',
+      }),
+    ).toBe(false)
+    // The mount directory itself is not an executable inside it.
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/opt/TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+        executablePath: '/tmp/.mount_TasteCoABC123',
+      }),
+    ).toBe(false)
+  })
+
+  it('refuses Linux updates for a relative or extracted APPIMAGE', () => {
+    // A relative APPIMAGE proves nothing about the running mount.
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: 'TasteCode.AppImage',
+        appDirPath: '/tmp/.mount_TasteCoABC123',
+        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
+      }),
+    ).toBe(false)
+    // An extracted squashfs-root keeps the image inside APPDIR, unlike a
+    // real Type-2 mount where the image file lives outside it.
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/tmp/squashfs-root/TasteCode.AppImage',
+        appDirPath: '/tmp/squashfs-root',
+        executablePath: '/tmp/squashfs-root/tastecode',
+      }),
+    ).toBe(false)
+    expect(
+      appOwnsUpdates({
+        platform: 'linux',
+        packaged: true,
+        appImagePath: '/tmp/squashfs-root',
+        appDirPath: '/tmp/squashfs-root',
+        executablePath: '/tmp/squashfs-root/tastecode',
       }),
     ).toBe(false)
   })
