@@ -238,3 +238,20 @@ test('parses shared CLI args', () => {
   assert.throws(() => parseDirArgs(['--dir'], args), /--dir requires/)
   assert.throws(() => parseDirArgs(['--bogus'], args), /unknown argument/)
 })
+
+test('accepts exactly one leading pnpm separator', () => {
+  const args = { usage: 'node x [--dir <d>]', tag: '[t]', defaultDir: '/d' }
+  // `pnpm <script> -- --dir <d>` reaches the script with a leading bare `--`.
+  assert.equal(parseDirArgs(['--', '--dir', 'release'], args).dir, path.resolve('release'))
+  assert.equal(parseDirArgs(['--', '--dir=/tmp/x'], args).dir, path.resolve('/tmp/x'))
+  assert.equal(parseDirArgs(['--', '--help'], args).help, true)
+  assert.equal(parseDirArgs(['--'], args).dir, '/d')
+  // Any other bare separator stays fail-closed.
+  assert.throws(() => parseDirArgs(['--', '--'], args), /unknown argument: --/)
+  assert.throws(() => parseDirArgs(['--', '--', '--dir', 'release'], args), /unknown argument/)
+  assert.throws(() => parseDirArgs(['--dir', 'release', '--'], args), /unknown argument/)
+  assert.throws(() => parseDirArgs(['--help', '--'], args), /unknown argument/)
+  assert.throws(() => parseDirArgs(['--', '--dir', '--'], args), /--dir requires/)
+  assert.throws(() => parseDirArgs(['--dir', '--'], args), /--dir requires/)
+  assert.throws(() => parseDirArgs(['--dir=--'], args), /--dir requires/)
+})
