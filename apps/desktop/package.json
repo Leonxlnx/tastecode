@@ -2,8 +2,10 @@
   "name": "@harness/desktop",
   "productName": "Taste Code",
   "description": "A local desktop workspace for coding agents.",
+  "homepage": "https://tastecode.dev",
   "author": "Tasteskill Team",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
+  "desktopName": "dev.tastecode.desktop.desktop",
   "version": "0.1.0-beta.1",
   "private": true,
   "type": "module",
@@ -96,7 +98,30 @@
     ],
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
     "linux": {
-      "executableName": "@harnessdesktop"
+      "executableName": "tastecode",
+      "category": "Development",
+      "synopsis": "Local desktop workspace for coding agents",
+      "description": "A local desktop workspace for coding agents.",
+      "maintainer": "Tasteskill Team",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "syncDesktopName": true
+    },
+    "deb": {
+      "packageName": "tastecode",
+      "packageCategory": "devel"
     },
     "win": {
       "target": [
