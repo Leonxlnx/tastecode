@@ -1,11 +1,21 @@
-import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { createReadStream } from 'node:fs'
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { channelFileNameForVersion, verifyLinuxUpdaterMetadata } from './linux-updater-metadata.js'
+import {
+  channelFileNameForVersion,
+  compareAscii,
+  expectedLinuxArtifactNames,
+  isChannelSidecar,
+  listReleaseFiles,
+  parseDirArgs,
+  readDesktopPackage,
+  sha256File,
+} from './linux-release-shared.js'
+import { verifyLinuxUpdaterMetadata } from './linux-updater-metadata.js'
+
+const TAG = '[linux-release-evidence]'
 
 // Repository desktop command that produces the Linux x64 release candidates.
 export const LINUX_DIST_COMMAND = 'pnpm --filter @harness/desktop dist'
@@ -14,81 +24,34 @@ const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const defaultReleaseDirectory = path.join(workspaceRoot, 'release')
 const defaultInventoryName = 'linux-release-evidence.json'
 const defaultChecksumsName = 'SHA256SUMS-linux-x64.txt'
+const USAGE = 'node tools/scripts/linux-release-evidence.js [--dir <releaseDir>]'
 
-// Updater sidecars (*-linux.yml plus arch-specific *-linux-arm.yml /
-// *-linux-arm64.yml, *.blockmap, *.zip) are rejected unless they are
-// the single channel file verified by the updater-metadata gate
-// (tools/scripts/linux-updater-metadata.js). The verified channel file is hashed
-// and recorded below; everything else updater-shaped fails closed.
-
-function compareAscii(left, right) {
-  if (left < right) return -1
-  if (left > right) return 1
-  return 0
-}
-
-// Electron-builder maps the x64 arch token per Linux target extension
-// (builder-util getArtifactArchName): AppImage uses x86_64, deb uses amd64.
-function linuxArchName(extension) {
-  if (extension === 'AppImage') return 'x86_64'
-  if (extension === 'deb') return 'amd64'
-  throw new Error(`[linux-release-evidence] unsupported Linux target extension: ${extension}`)
-}
-
-function expandArtifactName(template, values) {
-  return template.replaceAll(/\$\{([^}]+)\}/g, (match, token) => {
-    if (Object.hasOwn(values, token)) return values[token]
-    throw new Error(
-      `[linux-release-evidence] unsupported artifactName macro \${${token}} in ${template}`,
+// Updater sidecars (*-linux.yml plus *-linux-arm/arm64.yml, *.blockmap, *.zip)
+// are rejected unless they are the single channel file verified by the
+// updater-metadata gate. The verified file is hashed and recorded below;
+// everything else updater-shaped fails closed.
+function findRejected(
+  actualNames,
+  { expected, channelFile, inventoryName, checksumsName, version },
+) {
+  const allowed = new Set([...expected, channelFile, inventoryName, checksumsName])
+  const reason = (name) =>
+    name.endsWith('.blockmap') || name.endsWith('.zip') || isChannelSidecar(name)
+      ? 'updater sidecar rejected by the updater-metadata gate'
+      : `does not match current version ${version}`
+  return actualNames
+    .filter((name) => !allowed.has(name))
+    .filter(
+      (name) =>
+        name.endsWith('.AppImage') ||
+        name.endsWith('.deb') ||
+        name.endsWith('.blockmap') ||
+        name.endsWith('.zip') ||
+        isChannelSidecar(name) ||
+        name.startsWith('TasteCode-'),
     )
-  })
-}
-
-const SAFE_ARTIFACT_PATTERN = /^[A-Za-z0-9._+-]+$/
-
-function assertSafeArtifactName(fileName, template) {
-  if (
-    fileName === '' ||
-    fileName === '.' ||
-    fileName === '..' ||
-    fileName !== path.basename(fileName) ||
-    fileName.includes('/') ||
-    fileName.includes('\\') ||
-    !SAFE_ARTIFACT_PATTERN.test(fileName)
-  ) {
-    throw new Error(
-      `[linux-release-evidence] unsafe artifact name ${JSON.stringify(fileName)} ` +
-        `from template ${template}; artifact names must stay inside the release directory`,
-    )
-  }
-}
-
-// Expand the desktop artifactName template the same way electron-builder does
-// for the two required x64 Linux targets. Falls back to the checked-in
-// template when the desktop config does not declare one.
-export function expectedLinuxArtifactNames({ version, artifactName, productName, name }) {
-  if (!version || typeof version !== 'string') {
-    throw new Error('[linux-release-evidence] a desktop package version is required')
-  }
-  const template = artifactName ?? 'TasteCode-${version}-${os}-${arch}.${ext}'
-  const base = { version, os: 'linux', productName: productName ?? '', name: name ?? '' }
-  return ['AppImage', 'deb']
-    .map((extension) => {
-      const fileName = expandArtifactName(template, {
-        ...base,
-        arch: linuxArchName(extension),
-        ext: extension,
-      })
-      assertSafeArtifactName(fileName, template)
-      return fileName
-    })
+    .map((name) => `${name} (${reason(name)})`)
     .sort(compareAscii)
-}
-
-export async function sha256File(filePath) {
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(filePath)) hash.update(chunk)
-  return hash.digest('hex')
 }
 
 export function worktreePorcelainStatus(cwd, run = execFileSync) {
@@ -103,37 +66,6 @@ export function assertWorktreeClean(porcelain) {
     error.code = 'LINUX_EVIDENCE_DIRTY_WORKTREE'
     throw error
   }
-}
-
-function isChannelSidecar(fileName) {
-  return /-linux(-arm64|-arm)?\.yml$/.test(fileName)
-}
-
-function sidecarReason(fileName, version) {
-  if (fileName.endsWith('.blockmap') || fileName.endsWith('.zip') || isChannelSidecar(fileName)) {
-    return 'updater sidecar rejected by the updater-metadata gate'
-  }
-  return `does not match current version ${version}`
-}
-
-function findRejectedSidecars(
-  actualNames,
-  { expected, channelFile, inventoryName, checksumsName, version },
-) {
-  const allowed = new Set([...expected, channelFile, inventoryName, checksumsName])
-  return actualNames
-    .filter((fileName) => !allowed.has(fileName))
-    .filter(
-      (fileName) =>
-        fileName.endsWith('.AppImage') ||
-        fileName.endsWith('.deb') ||
-        fileName.endsWith('.blockmap') ||
-        fileName.endsWith('.zip') ||
-        isChannelSidecar(fileName) ||
-        fileName.startsWith('TasteCode-'),
-    )
-    .map((fileName) => `${fileName} (${sidecarReason(fileName, version)})`)
-    .sort(compareAscii)
 }
 
 export async function collectLinuxReleaseEvidence(
@@ -153,39 +85,31 @@ export async function collectLinuxReleaseEvidence(
         'rebuild from a committed checkout and retry',
     )
   }
-  const resolvedDesktop =
-    desktopPackage ??
-    JSON.parse(await readFile(path.join(workspaceRoot, 'apps/desktop/package.json'), 'utf8'))
-  const expected = expectedLinuxArtifactNames({
-    version,
-    artifactName: resolvedDesktop.build?.artifactName,
-    productName: resolvedDesktop.productName,
-    name: resolvedDesktop.name,
-  })
-  // The channel file is derived from semver prerelease (beta-linux.yml for
-  // 0.1.0-beta.1, latest-linux.yml for stable) and must be verified by the
-  // updater-metadata gate; it is never silently ignored.
-  const channelFile = channelFileNameForVersion(version)
-  const entries = await readdir(releaseDirectory, { withFileTypes: true }).catch((error) => {
-    if (error?.code === 'ENOENT') {
-      throw new Error(
-        `[linux-release-evidence] release directory is missing: ${releaseDirectory} ` +
-          `(${LINUX_DIST_COMMAND} builds the Linux release candidates first)`,
-      )
-    }
-    throw error
-  })
-  const actualNames = entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .sort(compareAscii)
+  const resolvedDesktop = desktopPackage ?? (await readDesktopPackage(workspaceRoot, TAG))
+  const expected = expectedLinuxArtifactNames(
+    {
+      version,
+      artifactName: resolvedDesktop.build?.artifactName,
+      productName: resolvedDesktop.productName,
+      name: resolvedDesktop.name,
+    },
+    TAG,
+  )
+  // The channel file (beta-linux.yml for 0.1.0-beta.1, latest-linux.yml for
+  // stable) must be verified by the updater-metadata gate; never silently ignored.
+  const channelFile = channelFileNameForVersion(version, TAG)
+  const actualNames = await listReleaseFiles(
+    releaseDirectory,
+    TAG,
+    ` (${LINUX_DIST_COMMAND} builds the Linux release candidates first)`,
+  )
 
   const actual = new Set(actualNames)
   const missing = [
-    ...expected.filter((fileName) => !actual.has(fileName)),
+    ...expected.filter((name) => !actual.has(name)),
     ...(actual.has(channelFile) ? [] : [channelFile]),
   ]
-  const rejected = findRejectedSidecars(actualNames, {
+  const rejected = findRejected(actualNames, {
     expected,
     channelFile,
     inventoryName,
@@ -194,7 +118,7 @@ export async function collectLinuxReleaseEvidence(
   })
   if (missing.length > 0 || rejected.length > 0) {
     const details = [
-      ...missing.map((fileName) => `missing: ${fileName}`),
+      ...missing.map((name) => `missing: ${name}`),
       ...rejected.map((entry) => `rejected: ${entry}`),
     ]
     throw new Error(
@@ -202,47 +126,40 @@ export async function collectLinuxReleaseEvidence(
         `${[...expected, channelFile].join(', ')}; ${details.join('; ')}. ` +
         `Rebuild both x64 targets with ${LINUX_DIST_COMMAND}, then remove stale files. ` +
         `Updater sidecars (*-linux.yml, *-linux-arm.yml, *-linux-arm64.yml, *.blockmap, *.zip) ` +
-        `are rejected unless they are ` +
-        `the verified ${channelFile}; verification lives in tools/scripts/linux-updater-metadata.js.`,
+        `are rejected unless they are the verified ${channelFile}.`,
     )
   }
 
   // Content verification recomputes SHA-512/size, checks the embedded blockmap
-  // trailer/segment/shape and legacy AppImage fields, and runs the static Linux
-  // updater check (deb stays package-owned in source/test evidence). Only a
-  // gate-verified file is recorded; this states the static evidence, not a
-  // runtime update guarantee.
-  await verifyLinuxUpdaterMetadata(releaseDirectory, {
-    version,
-    expectedArtifacts: expected,
-  })
+  // trailer/segment/shape and the legacy AppImage fields. Only a gate-verified
+  // file is recorded; this states the static evidence, not a runtime guarantee.
+  await verifyLinuxUpdaterMetadata(releaseDirectory, { version, expectedArtifacts: expected })
 
   const artifacts = []
-  for (const fileName of expected) {
-    const filePath = path.join(releaseDirectory, fileName)
-    const fileStat = await stat(filePath)
-    if (!fileStat.isFile()) {
-      throw new Error(`[linux-release-evidence] not a file: ${filePath}`)
-    }
-    if (fileStat.size === 0) {
+  for (const name of expected) {
+    const fileStat = await stat(path.join(releaseDirectory, name))
+    if (!fileStat.isFile() || fileStat.size === 0) {
       throw new Error(
-        `[linux-release-evidence] release candidate is empty: ${fileName} ` +
+        `[linux-release-evidence] release candidate is empty: ${name} ` +
           `(rebuild with ${LINUX_DIST_COMMAND} and retry)`,
       )
     }
-    artifacts.push({ file: fileName, bytes: fileStat.size, sha256: await sha256File(filePath) })
+    artifacts.push({
+      file: name,
+      bytes: fileStat.size,
+      sha256: await sha256File(path.join(releaseDirectory, name)),
+    })
   }
   artifacts.sort((left, right) => compareAscii(left.file, right.file))
 
-  const channelPath = path.join(releaseDirectory, channelFile)
-  const channelStat = await stat(channelPath)
+  const channelStat = await stat(path.join(releaseDirectory, channelFile))
   if (!channelStat.isFile() || channelStat.size === 0) {
     throw new Error(`[linux-release-evidence] verified updater metadata is missing: ${channelFile}`)
   }
   const updaterMetadata = {
     file: channelFile,
     bytes: channelStat.size,
-    sha256: await sha256File(channelPath),
+    sha256: await sha256File(path.join(releaseDirectory, channelFile)),
   }
 
   const inventory = {
@@ -279,7 +196,7 @@ async function removeStaleTempFiles(releaseDirectory, finalName) {
     if (error?.code === 'ENOENT') return
     throw error
   }
-  for (const entry of entries.filter((fileName) => fileName.startsWith(prefix))) {
+  for (const entry of entries.filter((name) => name.startsWith(prefix))) {
     await rm(path.join(releaseDirectory, entry), { force: true })
   }
 }
@@ -318,36 +235,12 @@ export async function writeLinuxReleaseEvidence(
   return { inventoryPath, checksumsPath, inventory }
 }
 
-const USAGE = 'node tools/scripts/linux-release-evidence.js [--dir <releaseDir>]'
-
-export function argumentsFrom(argv) {
-  const options = { dir: defaultReleaseDirectory }
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]
-    if (argument === '--dir') {
-      const value = argv[index + 1]
-      if (value === undefined || value === '') {
-        throw new Error(`[linux-release-evidence] --dir requires a non-empty path (${USAGE})`)
-      }
-      index += 1
-      options.dir = path.resolve(value)
-    } else if (argument.startsWith('--dir=')) {
-      const value = argument.slice('--dir='.length)
-      if (value === '') {
-        throw new Error(`[linux-release-evidence] --dir requires a non-empty path (${USAGE})`)
-      }
-      options.dir = path.resolve(value)
-    } else if (argument === '--help' || argument === '-h') {
-      options.help = true
-    } else {
-      throw new Error(`[linux-release-evidence] unknown argument: ${argument} (${USAGE})`)
-    }
-  }
-  return options
-}
-
 async function main() {
-  const options = argumentsFrom(process.argv.slice(2))
+  const options = parseDirArgs(process.argv.slice(2), {
+    usage: USAGE,
+    tag: TAG,
+    defaultDir: defaultReleaseDirectory,
+  })
   if (options.help) {
     process.stdout.write(
       'Validate Linux x64 AppImage/deb release candidates and write evidence files.\n' +
@@ -355,11 +248,8 @@ async function main() {
     )
     return
   }
-  const desktopPackage = JSON.parse(
-    await readFile(path.join(workspaceRoot, 'apps/desktop/package.json'), 'utf8'),
-  )
+  const desktopPackage = await readDesktopPackage(workspaceRoot, TAG)
   const version = desktopPackage.version
-  if (!version) throw new Error('[linux-release-evidence] apps/desktop/package.json has no version')
   let porcelain
   try {
     porcelain = worktreePorcelainStatus(workspaceRoot)
