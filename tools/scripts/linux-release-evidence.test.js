@@ -5,6 +5,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
+import { deflateRawSync } from 'node:zlib'
 
 import {
   argumentsFrom,
@@ -14,17 +15,27 @@ import {
   worktreePorcelainStatus,
   writeLinuxReleaseEvidence,
 } from './linux-release-evidence.js'
+import { channelFileNameForVersion } from './linux-updater-metadata.js'
 
 const version = '9.9.9-test.1'
 const commit = 'a'.repeat(40)
 const expectedNames = expectedLinuxArtifactNames({ version })
 const appImage = expectedNames.find((fileName) => fileName.endsWith('.AppImage'))
 const deb = expectedNames.find((fileName) => fileName.endsWith('.deb'))
+const channelFile = channelFileNameForVersion(version)
 const appImageContents = `fake AppImage payload for ${version}\n`
 const debContents = `fake deb payload for ${version}\n`
 
 function sha256Text(contents) {
   return createHash('sha256').update(contents, 'utf8').digest('hex')
+}
+
+function sha256Buffer(buffer) {
+  return createHash('sha256').update(buffer).digest('hex')
+}
+
+function sha512Text(contents) {
+  return createHash('sha512').update(contents, 'utf8').digest('base64')
 }
 
 async function fixtureDirectory() {
@@ -33,6 +44,70 @@ async function fixtureDirectory() {
 
 async function writeCandidate(directory, fileName, contents = `${fileName} contents\n`) {
   await writeFile(path.join(directory, fileName), contents, 'utf8')
+}
+
+// Fake AppImage bytes with a real embedded blockmap (payload + deflateRaw
+// blockmap JSON + 4-byte big-endian segment length), mirroring
+// electron-builder output so the updater-metadata gate can verify fixtures.
+function buildAppImageBinary(payload) {
+  const payloadBytes = Buffer.byteLength(payload, 'utf8')
+  const blockmapJson = JSON.stringify({
+    version: '2',
+    files: [{ name: 'file', offset: 0, checksums: [sha512Text(payload)], sizes: [payloadBytes] }],
+  })
+  const segment = deflateRawSync(Buffer.from(blockmapJson, 'utf8'))
+  const trailer = Buffer.alloc(4)
+  trailer.writeUInt32BE(segment.length)
+  return {
+    binary: Buffer.concat([Buffer.from(payload, 'utf8'), segment, trailer]),
+    blockMapSize: segment.length,
+  }
+}
+
+function sha512Buffer(buffer) {
+  return createHash('sha512').update(buffer).digest('base64')
+}
+
+// Write only the gate-verified channel file for precomputed artifact values;
+// unlike writeVerifiedSet it never touches the candidates on disk.
+async function writeVerifiedChannel(
+  directory,
+  { appBytes, appSha512, blockMapSize, debPayload = debContents },
+) {
+  const debBytes = Buffer.byteLength(debPayload, 'utf8')
+  const lines = [
+    `version: ${version}`,
+    'files:',
+    `  - url: ${appImage}`,
+    `    sha512: ${appSha512}`,
+    `    size: ${appBytes}`,
+    `    blockMapSize: ${blockMapSize}`,
+    `  - url: ${deb}`,
+    `    sha512: ${sha512Text(debPayload)}`,
+    `    size: ${debBytes}`,
+    `path: ${appImage}`,
+    `sha512: ${appSha512}`,
+    "releaseDate: '2026-09-07T16:59:40.593Z'",
+  ]
+  await writeFile(path.join(directory, channelFile), `${lines.join('\n')}\n`, 'utf8')
+}
+
+// Write candidates plus their gate-verified channel file. Payloads default to
+// the fixture contents so the metadata matches the candidates on disk.
+async function writeVerifiedSet(
+  directory,
+  { appImagePayload = appImageContents, debPayload = debContents } = {},
+) {
+  const { binary, blockMapSize } = buildAppImageBinary(appImagePayload)
+  await writeFile(path.join(directory, appImage), binary)
+  await writeCandidate(directory, deb, debPayload)
+  await writeVerifiedChannel(directory, {
+    appBytes: binary.length,
+    appSha512: sha512Buffer(binary),
+    blockMapSize,
+    debPayload,
+  })
+  return { appBinary: binary, blockMapSize }
 }
 
 function gitAvailable() {
@@ -70,25 +145,40 @@ test('unsafe artifact templates and versions are rejected', () => {
   assert.throws(() => expectedLinuxArtifactNames({ version: '../evil' }), /unsafe artifact name/)
 })
 
-test('inventory records exact checksums, byte sizes, commit, and version', async () => {
+test('inventory records exact checksums, byte sizes, commit, version, and verified metadata', async () => {
   const directory = await fixtureDirectory()
   try {
-    await writeCandidate(directory, appImage, appImageContents)
-    await writeCandidate(directory, deb, debContents)
-    const { inventory, checksumText } = await collectLinuxReleaseEvidence(directory, {
+    const { appBinary } = await writeVerifiedSet(directory)
+    const {
+      inventory,
+      checksumText,
+      channelFile: verifiedFile,
+    } = await collectLinuxReleaseEvidence(directory, {
       version,
       commit: commit.toUpperCase(),
     })
-    const appImageHash = sha256Text(appImageContents)
+    const appImageHash = sha256Buffer(appBinary)
     const debHash = sha256Text(debContents)
+    const channelContents = await readFile(path.join(directory, channelFile), 'utf8')
+    const channelHash = sha256Text(channelContents)
 
+    assert.equal(verifiedFile, channelFile)
     assert.equal(inventory.version, version)
     assert.equal(inventory.commit, commit)
+    assert.equal(inventory.schemaVersion, 2)
     assert.deepEqual(inventory.artifacts, [
       { file: deb, bytes: Buffer.byteLength(debContents), sha256: debHash },
-      { file: appImage, bytes: Buffer.byteLength(appImageContents), sha256: appImageHash },
+      { file: appImage, bytes: appBinary.length, sha256: appImageHash },
     ])
-    assert.equal(checksumText, `${debHash}  ${deb}\n${appImageHash}  ${appImage}\n`)
+    assert.deepEqual(inventory.updaterMetadata, {
+      file: channelFile,
+      bytes: Buffer.byteLength(channelContents, 'utf8'),
+      sha256: channelHash,
+    })
+    assert.equal(
+      checksumText,
+      `${debHash}  ${deb}\n${appImageHash}  ${appImage}\n${channelHash}  ${channelFile}\n`,
+    )
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -97,10 +187,32 @@ test('inventory records exact checksums, byte sizes, commit, and version', async
 test('missing candidates fail with the repository dist command', async () => {
   const directory = await fixtureDirectory()
   try {
+    // The channel describes the full set so the missing AppImage is reported.
+    const { binary, blockMapSize } = buildAppImageBinary(appImageContents)
     await writeCandidate(directory, deb, debContents)
+    await writeVerifiedChannel(directory, {
+      appBytes: binary.length,
+      appSha512: sha512Buffer(binary),
+      blockMapSize,
+      debPayload: debContents,
+    })
     await assert.rejects(
       collectLinuxReleaseEvidence(directory, { version, commit }),
       /missing: TasteCode-.*\.AppImage.*pnpm --filter @harness\/desktop dist/,
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('missing channel metadata fails instead of staying silent', async () => {
+  const directory = await fixtureDirectory()
+  try {
+    await writeVerifiedSet(directory)
+    await rm(path.join(directory, channelFile))
+    await assert.rejects(
+      collectLinuxReleaseEvidence(directory, { version, commit }),
+      new RegExp(`missing: ${channelFile.replaceAll('.', '\\.')}`),
     )
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -111,14 +223,17 @@ test('stale artifacts and updater sidecars are rejected, never ignored', async (
   const directory = await fixtureDirectory()
   const staleDeb = 'TasteCode-0.0.0-old-linux-amd64.deb'
   const blockmap = `${appImage}.blockmap`
-  const updaterMetadata = 'latest-linux.yml'
+  // Neither the foreign beta channel nor the same-channel arch leftover is the
+  // expected test-linux.yml: both must be rejected, never silently ignored.
+  const unverifiedChannel = 'beta-linux.yml'
+  const archLeftover = 'test-linux-arm64.yml'
   const zip = `TasteCode-${version}-linux-x64.zip`
   try {
-    await writeCandidate(directory, appImage, appImageContents)
-    await writeCandidate(directory, deb, debContents)
+    await writeVerifiedSet(directory)
     await writeCandidate(directory, staleDeb)
     await writeCandidate(directory, blockmap)
-    await writeCandidate(directory, updaterMetadata)
+    await writeCandidate(directory, unverifiedChannel)
+    await writeCandidate(directory, archLeftover)
     await writeCandidate(directory, zip)
 
     let error
@@ -128,10 +243,25 @@ test('stale artifacts and updater sidecars are rejected, never ignored', async (
       error = candidate
     }
     assert.ok(error, 'expected stale files and updater sidecars to be rejected')
-    for (const name of [staleDeb, blockmap, updaterMetadata, zip]) {
+    for (const name of [staleDeb, blockmap, unverifiedChannel, archLeftover, zip]) {
       assert.ok(error.message.includes(name), `expected the failure to name ${name}`)
     }
     assert.match(error.message, /updater-metadata gate/)
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('tampered channel metadata is rejected and never recorded', async () => {
+  const directory = await fixtureDirectory()
+  try {
+    await writeVerifiedSet(directory)
+    // Tamper the payload after the metadata was written so the gate hash check fails.
+    await writeCandidate(directory, deb, 'tampered deb payload\n')
+    await assert.rejects(
+      collectLinuxReleaseEvidence(directory, { version, commit }),
+      /linux-updater-metadata/,
+    )
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
@@ -142,9 +272,18 @@ test('empty candidates are rejected', async () => {
   try {
     await writeCandidate(directory, appImage, '')
     await writeCandidate(directory, deb, debContents)
+    // The channel describes the non-empty payloads so the empty candidate is
+    // reached and refused instead of masking as a hash mismatch.
+    const { binary, blockMapSize } = buildAppImageBinary(appImageContents)
+    await writeVerifiedChannel(directory, {
+      appBytes: binary.length,
+      appSha512: sha512Buffer(binary),
+      blockMapSize,
+      debPayload: debContents,
+    })
     await assert.rejects(
       collectLinuxReleaseEvidence(directory, { version, commit }),
-      /release candidate is empty/,
+      /release candidate is (empty|missing or empty)/,
     )
   } finally {
     await rm(directory, { recursive: true, force: true })
@@ -154,8 +293,7 @@ test('empty candidates are rejected', async () => {
 test('written inventory and checksums are deterministic and leave no temp files', async () => {
   const directory = await fixtureDirectory()
   try {
-    await writeCandidate(directory, appImage, appImageContents)
-    await writeCandidate(directory, deb, debContents)
+    await writeVerifiedSet(directory)
     const first = await writeLinuxReleaseEvidence(directory, { version, commit })
     const firstInventory = await readFile(first.inventoryPath, 'utf8')
     const firstChecksums = await readFile(first.checksumsPath, 'utf8')
@@ -167,6 +305,7 @@ test('written inventory and checksums are deterministic and leave no temp files'
       'artifacts',
       'commit',
       'schemaVersion',
+      'updaterMetadata',
       'version',
     ])
     assert.deepEqual(
