@@ -5,7 +5,7 @@ import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
 import { spawnCli } from '@harness/proc/cli'
 import { desktopPath } from '@harness/proc/desktop-path'
-import { killTree } from '@harness/proc/kill'
+import { terminateTree } from '@harness/proc/kill'
 import { z } from 'zod'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
@@ -76,18 +76,50 @@ export function runCustomHarness(
     }
     let stdout = ''
     let stderr = ''
+    // Latch the first outcome synchronously so a timeout cannot be
+    // overwritten by a racing close/error. The timeout promise settles only
+    // after bounded tree cleanup; normal close/error settle immediately to
+    // preserve the output contract.
+    let latched = false
     let settled = false
-    const finish = (result: { code: number | null; stdout: string } | Error) => {
+    const doResolve = (result: { code: number | null; stdout: string }) => {
       if (settled) return
       settled = true
-      clearTimeout(timer)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      resolve(result)
     }
-    const timer = setTimeout(() => {
-      killTree(child)
-      finish(new Error(`${harness.displayName} did not answer within ${timeoutMs / 1_000}s`))
-    }, timeoutMs)
+    const doReject = (error: Error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
+    const finishResolve = (result: { code: number | null; stdout: string }) => {
+      if (latched) return
+      latched = true
+      clearTimeout(timer)
+      doResolve(result)
+    }
+    const finishReject = (error: Error) => {
+      if (latched) return
+      latched = true
+      clearTimeout(timer)
+      doReject(error)
+    }
+    const finishTimeout = () => {
+      if (latched) return
+      latched = true
+      clearTimeout(timer)
+      const timeoutError = new Error(
+        `${harness.displayName} did not answer within ${timeoutMs / 1_000}s`,
+      )
+      // Full-tree shutdown (TERM-to-KILL escalation on Unix, taskkill /T on
+      // Windows via terminateTree) so stubborn descendants cannot survive a
+      // hung probe. Cleanup failures are swallowed so the actionable timeout
+      // error is what the caller sees.
+      void terminateTree(child)
+        .catch(() => undefined)
+        .then(() => doReject(timeoutError))
+    }
+    const timer = setTimeout(finishTimeout, timeoutMs)
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       if (stdout.length < 1_000_000) stdout += chunk
@@ -96,16 +128,16 @@ export function runCustomHarness(
     child.stderr.on('data', (chunk: string) => {
       if (stderr.length < 16_000) stderr += chunk
     })
-    child.on('error', (error) => finish(actionableLaunchError(harness, error)))
+    child.on('error', (error) => finishReject(actionableLaunchError(harness, error)))
     // `exit` can fire before inherited stdout/stderr pipes have drained. Waiting
     // for `close` preserves the final protocol bytes emitted during shutdown.
     child.on('close', (code) => {
       if (code === 0 || code === null) {
-        finish({ code, stdout })
+        finishResolve({ code, stdout })
         return
       }
       const detail = stderr.trim() || stdout.trim()
-      finish(
+      finishReject(
         new Error(
           `${harness.displayName} exited with code ${code}${detail ? `: ${detail.slice(0, 500)}` : ''}`,
         ),
