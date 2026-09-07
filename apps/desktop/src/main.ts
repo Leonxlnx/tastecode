@@ -954,6 +954,8 @@ if (ownsSingleInstance) {
         packaged: app.isPackaged,
         developmentServer: devServer,
         appImagePath: process.env['APPIMAGE'],
+        appDirPath: process.env['APPDIR'],
+        executablePath: process.execPath,
       }),
     })
     appUpdater.subscribe((state) => {
