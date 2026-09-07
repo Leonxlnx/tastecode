@@ -221,7 +221,7 @@ async function readGrokBilling(): Promise<GrokBilling> {
     if (!parsed.success) throw new Error('Grok billing response was invalid.')
     return parsed.data
   } finally {
-    rpc.dispose()
+    await rpc.dispose()
   }
 }
 

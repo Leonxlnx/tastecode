@@ -77,21 +77,82 @@ Linux.
 
 ---
 
+## Linux release boundary
+
+**Linux is a qualified release target, not a claim that every distribution and desktop is
+supported.** The first beta contract is x86_64 on Pop!_OS 24.04 with COSMIC/Wayland and Ubuntu
+24.04 with GNOME/Wayland. KDE Plasma/Wayland receives a smoke pass; XWayland is a diagnostic
+fallback, not the default. ARM64, RPM, Flatpak, Snap, and older distributions stay outside the
+v1 contract until their native and clean-install matrices exist.
+
+The Electron renderer, typed WebSocket protocol, server, adapters, storage, Git/checkpoint
+model, and security boundaries remain shared. Linux-specific code is limited to capabilities
+that actually differ: desktop/session diagnostics, process groups, native bindings, package
+identity, updater authority, and later tray/portal behavior. Shared product code must not
+branch on a distribution or desktop name.
+
+**Every cancellable subprocess has an owner.** On Unix, TasteCode-owned CLI and preview
+children start as process-group leaders. Shutdown signals only groups that TasteCode created;
+it never sends a negative-PID signal to an arbitrary child. Graceful TERM followed by bounded
+KILL escalation lives in `@harness/proc`, with the existing Windows `taskkill /T` behavior
+behind the same boundary. Provider-specific protocol code does not implement its own tree walk.
+
+Linux delivery is proved in layers:
+
+1. Source gate on a pinned `ubuntu-24.04` runner: frozen install, lint, typecheck, tests, build.
+2. Unpacked x64 Electron artifact: packaged server starts and renderer connects.
+3. Artifact-native proof: `node-pty` and keyring load from `app.asar`/unpacked resources,
+   PTY round-trips, and an isolated credential can be written, read, and deleted.
+4. Native Wayland acceptance on COSMIC and GNOME: window, tray recovery, dialogs, clipboard,
+   PTY, Git/SSH, preview, GPU, second-instance, and quit cleanup.
+5. AppImage and deb release candidates built from the same tested commit, with license bundle,
+   checksums, artifact inventory, and clean-machine evidence.
+
+AppImage is the portable beta channel and may use the application updater only when runtime
+package detection proves the process is an AppImage. A deb install is package-owned: until a
+signed APT repository exists, the app may notify but must not silently replace installed files.
+Updater enablement is therefore a package policy injected into the shared updater state machine,
+not a platform-wide Linux boolean.
+
+The unpacked artifact and native proof come before AppImage/deb configuration. A package that
+draws a window but cannot open a PTY, use the credential store, or stop descendants is not a
+release candidate. Hosted CI remains manually dispatched while Actions minutes are constrained;
+the Linux row is still part of the same platform matrix whenever that workflow is requested.
+
+Local qualification starts with `pnpm linux:acceptance` from a clean checkout on a qualified
+x64 Wayland desktop. The command freezes dependencies, runs every source gate, builds the unpacked
+artifact, proves packaged PTY, SQLite/FTS5 and keyring behavior, verifies release notices, and
+writes `release/linux-acceptance.json`. Environment blockers exit separately from product
+failures. Its result remains `awaiting-manual-desktop-acceptance`; automation cannot certify a
+real compositor, tray or GPU.
+
+The manual pass launches the reported executable with the reported isolated XDG profile and must
+prove: visible native-Wayland startup without permanent reconnecting; project open and persistence;
+terminal output, resize, interrupt and descendant cleanup; Git/checkpoint and preview start/stop;
+clipboard, drag/drop, dialogs and external-browser handoff; close-to-tray recovery; second-instance
+focus; and Quit releasing server, preview, PTY and ports. Provider-network calls, AppImage/deb,
+updater feeds, KDE/XWayland and framework upgrades are outside this first gate. A failure stops the
+layered release path instead of being converted into a warning.
+
+_Rejected:_ a second Linux backend, a giant `linux.ts`, forcing X11 globally, generic
+"supports Linux" wording, Flatpak-first distribution for a host-tooling application, and
+package-agnostic self-update.
+
 ## Stack
 
-|                    |                                            |                                                                         |
-| ------------------ | ------------------------------------------ | ----------------------------------------------------------------------- |
-| Language / runtime | TypeScript 5.9.3, Node 24 LTS              | One language across the server, adapters, web client, and desktop shell |
-| Monorepo           | pnpm workspaces + Vite                     | pnpm's store keeps worktree-heavy development cheap                     |
-| Desktop            | Electron 43                                | One Chromium renderer across macOS and Windows                          |
-| UI                 | React 19                                   | Shared renderer behavior and app-owned controls                         |
-| Chat list          | TanStack Virtual, end-anchored             | Variable-height streamed rows keep stable keys and cached measurement   |
-| Markdown           | Streamdown + Shiki's JavaScript engine     | Incomplete streamed blocks stay cheap without weakening the CSP         |
-| Styling            | CSS token layer                            | Themes, geometry, density, and motion remain app-owned                  |
-| State              | React external store + event-derived views | Deltas update the live tail without rebuilding completed history        |
-| DB                 | Node SQLite, WAL, FTS5                     | Append-only events and rebuildable read models remain unchanged         |
-| PTY                | `node-pty`                                 | The shared process layer handles Unix PTYs and Windows ConPTY           |
-| Tests              | Vitest + live Electron checks              | Captured provider frames and platform runs remain the final contract    |
+|                    |                                                           |                                                                         |
+| ------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Language / runtime | TypeScript 5.9.3, Node >=22.18 tooling / Electron Node 24 | One language across the server, adapters, web client, and desktop shell |
+| Monorepo           | pnpm workspaces + Vite                                    | pnpm's store keeps worktree-heavy development cheap                     |
+| Desktop            | Electron 43                                               | One Chromium renderer across macOS and Windows                          |
+| UI                 | React 19                                                  | Shared renderer behavior and app-owned controls                         |
+| Chat list          | TanStack Virtual, end-anchored                            | Variable-height streamed rows keep stable keys and cached measurement   |
+| Markdown           | Streamdown + Shiki's JavaScript engine                    | Incomplete streamed blocks stay cheap without weakening the CSP         |
+| Styling            | CSS token layer                                           | Themes, geometry, density, and motion remain app-owned                  |
+| State              | React external store + event-derived views                | Deltas update the live tail without rebuilding completed history        |
+| DB                 | Node SQLite, WAL, FTS5                                    | Append-only events and rebuildable read models remain unchanged         |
+| PTY                | `node-pty`                                                | The shared process layer handles Unix PTYs and Windows ConPTY           |
+| Tests              | Vitest + live Electron checks                             | Captured provider frames and platform runs remain the final contract    |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the

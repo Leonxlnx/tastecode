@@ -210,11 +210,25 @@
       "metadataLicenses": ["SEE LICENSE IN LICENSE.md"]
     },
     {
+      "name": "@anthropic-ai/claude-agent-sdk-linux-x64",
+      "version": "0.3.232",
+      "license": "LicenseRef-Anthropic-Commercial-Terms",
+      "metadataLicenses": ["SEE LICENSE IN LICENSE.md"]
+    },
+    {
       "name": "@napi-rs/keyring-darwin-arm64",
       "version": "1.3.0",
       "license": "MIT",
       "metadataLicenses": ["MIT"],
       "bundledLicense": "licenses/npm/napi-keyring-darwin-arm64-1.3.0-MIT.txt",
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
+    },
+    {
+      "name": "@napi-rs/keyring-linux-x64-gnu",
+      "version": "1.3.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/napi-keyring-linux-x64-gnu-1.3.0-MIT.txt",
       "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
     },
     {

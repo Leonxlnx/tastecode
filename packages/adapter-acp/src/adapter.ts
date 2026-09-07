@@ -87,7 +87,7 @@ export interface AcpRpc {
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
   notify(method: string, params?: unknown): void
-  dispose(): void
+  dispose(): void | Promise<void>
 }
 
 export type AcpMcpServer =
@@ -296,7 +296,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
     const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
-      this.dispose()
+      await this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
     await rpc.request('session/load', {
@@ -416,14 +416,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     }
   }
 
-  dispose(): void {
-    this.#rpc?.dispose()
+  async dispose(): Promise<void> {
+    const disposing = this.#rpc?.dispose()
     this.#rpc = undefined
     this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
+    await disposing
   }
 
   async #connect(workspacePath: string, model: string | undefined): Promise<AcpRpc> {
@@ -433,7 +434,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         : this.#spec.args
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
-    this.#rpc?.dispose()
+    const previousRpc = this.#rpc
+    this.#rpc = undefined
+    await previousRpc?.dispose()
     const rpc = new StdioJsonRpc(
       this.#spawn(this.#spec.command, args, { cwd: workspacePath }),
       this.#spec.name,

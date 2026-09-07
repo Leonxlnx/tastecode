@@ -22,6 +22,17 @@ export type AppUpdateState = {
 
 type Timer = ReturnType<typeof setTimeout>
 
+export function appOwnsUpdates(options: {
+  platform: NodeJS.Platform
+  packaged: boolean
+  developmentServer?: string | undefined
+  appImagePath?: string | undefined
+}): boolean {
+  if (!options.packaged || options.developmentServer) return false
+  if (options.platform === 'linux') return Boolean(options.appImagePath)
+  return options.platform === 'win32' || options.platform === 'darwin'
+}
+
 export function createAppUpdateController(
   options: {
     currentVersion: string
@@ -92,7 +103,9 @@ export function createAppUpdateController(
     return client
   }
 
-  if (updater) configureUpdater(updater)
+  // Outside a packaged build the controller stays inert: touching the updater
+  // would attach listeners and flip flags on a client nobody will ever check.
+  if (options.enabled && updater) configureUpdater(updater)
 
   const loadUpdater = (): Promise<UpdateClient> => {
     if (updater) return Promise.resolve(updater)

@@ -20,9 +20,9 @@ import {
   session,
   shell,
   systemPreferences,
-  Tray,
   utilityProcess,
   type Event as ElectronEvent,
+  type Tray,
   type WebContents,
 } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
@@ -34,7 +34,9 @@ import {
   pickedAttachment,
 } from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import { tryCreateBackgroundTray } from './background-tray.js'
 import {
+  appOwnsUpdates,
   createAppUpdateController,
   type AppUpdateController,
   type AppUpdateState,
@@ -60,7 +62,7 @@ import { clearPreviewSession } from './preview-session.js'
 import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
-import { restoreMainWindowPresence } from './window-presence.js'
+import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
   loadMainWindowState,
@@ -194,6 +196,8 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+let serverShutdown: Promise<void> | undefined
+let serverShutdownFinished = false
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
@@ -408,12 +412,16 @@ function createWindow(): void {
   if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
   window.on('close', (event) => {
-    if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
+    if (!shouldHideWindowOnClose(process.platform, appIsQuitting, tray !== undefined)) return
     event.preventDefault()
     window.hide()
   })
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined
+    if (process.platform !== 'darwin' && !tray && !appIsQuitting) {
+      appIsQuitting = true
+      app.quit()
+    }
   })
   window.on('focus', () => restoreMainWindowPresence(process.platform, app, window))
   window.on('show', () => restoreMainWindowPresence(process.platform, app, window))
@@ -499,25 +507,7 @@ function showMainWindow(): void {
     createWindow()
     return
   }
-  restoreMainWindowPresence(process.platform, app, window)
-  if (window.isMinimized()) window.restore()
-  window.show()
-  window.focus()
-}
-
-function createBackgroundTray(): void {
-  if (process.platform === 'darwin' || tray) return
-  const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
-  tray = new Tray(icon)
-  tray.setToolTip(nativeAppName)
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: `Open ${nativeAppName}`, click: showMainWindow },
-      { type: 'separator' },
-      { label: `Quit ${nativeAppName}`, click: () => app.quit() },
-    ]),
-  )
-  tray.on('click', showMainWindow)
+  presentMainWindow(process.platform, app, window)
 }
 
 function installApplicationMenu(): void {
@@ -881,16 +871,35 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
     appIsQuitting = true
     mainWindowStatePersistence?.saveAndStop()
+    if (serverShutdownFinished) return
+    if (serverShutdown) {
+      event.preventDefault()
+      return
+    }
+    const supervisor = serverSupervisor
+    if (!supervisor) return
+    // Electron does not await event listeners. Hold the first quit until the
+    // owned server group has completed its bounded TERM-to-KILL shutdown.
+    event.preventDefault()
+    serverSupervisor = undefined
+    serverShutdown = supervisor
+      .stop()
+      .catch((error) => {
+        console.error('[desktop] core server cleanup failed during quit', error)
+        void diagnostics?.record('core server cleanup failed during quit', error)
+      })
+      .finally(() => {
+        serverShutdownFinished = true
+        app.quit()
+      })
   })
   app.on('will-quit', () => {
     appUpdater?.dispose()
     appUpdater = undefined
     macOSHaptics.stop()
-    serverSupervisor?.stop()
-    serverSupervisor = undefined
     tray?.destroy()
     tray = undefined
   })
@@ -916,7 +925,12 @@ if (ownsSingleInstance) {
     appUpdater = createAppUpdateController({
       loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer,
+      enabled: appOwnsUpdates({
+        platform: process.platform,
+        packaged: app.isPackaged,
+        developmentServer: devServer,
+        appImagePath: process.env['APPIMAGE'],
+      }),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
@@ -930,7 +944,18 @@ if (ownsSingleInstance) {
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()
-    createBackgroundTray()
+    if (process.platform !== 'darwin') {
+      tray = tryCreateBackgroundTray({
+        appName: nativeAppName,
+        iconPath: productIconPath,
+        onOpen: showMainWindow,
+        onQuit: () => app.quit(),
+        onUnavailable: (error) => {
+          console.warn('[desktop] tray unavailable; close will leave the window recoverable', error)
+          void diagnostics?.record('tray', error)
+        },
+      })
+    }
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
       app.on('did-become-active', () => {

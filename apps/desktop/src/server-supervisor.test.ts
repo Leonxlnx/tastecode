@@ -101,17 +101,19 @@ describe('ServerSupervisor', () => {
     expect(children.length).toBe(MAX_CONSECUTIVE_FAILURES + 1)
   })
 
-  it('stop kills the child and cancels any pending restart', () => {
+  it('stop kills the child and cancels any pending restart', async () => {
     const { sup, children } = supervisor()
     sup.start()
     children[0]!.emit('exit', 1, null)
-    sup.stop()
+    await sup.stop()
     vi.advanceTimersByTime(60_000)
     expect(children).toHaveLength(1)
 
     const again = supervisor()
     again.sup.start()
-    again.sup.stop()
+    const stopping = again.sup.stop()
+    expect(stopping).toBeInstanceOf(Promise)
+    await stopping
     expect(again.children[0]!.wasKilled).toBe(true)
     again.children[0]!.emit('exit', null, 'SIGTERM')
     vi.advanceTimersByTime(60_000)
@@ -141,7 +143,7 @@ describe('ServerSupervisor', () => {
     expect(logs).toContain('listening on 4311')
   })
 
-  it('supervises an Electron utility-process launcher', () => {
+  it('supervises an Electron utility-process launcher', async () => {
     const children: FakeChild[] = []
     const logs: string[] = []
     const launch = vi.fn(() => {
@@ -159,7 +161,65 @@ describe('ServerSupervisor', () => {
     vi.advanceTimersByTime(500)
     expect(launch).toHaveBeenCalledTimes(2)
 
-    sup.stop()
+    const stopping = sup.stop()
     expect(children[1]!.wasKilled).toBe(true)
+    children[1]!.emit('exit', null, 'SIGTERM')
+    await stopping
+    vi.advanceTimersByTime(60_000)
+    expect(launch).toHaveBeenCalledTimes(2)
+  })
+
+  it('stop stays pending until the utility process exits', async () => {
+    const children: FakeChild[] = []
+    const launch = vi.fn(() => {
+      const child = new FakeChild()
+      children.push(child)
+      return supervised(child)
+    })
+    const sup = new ServerSupervisor({ launch, onLog: () => {} })
+
+    sup.start()
+    let settled = false
+    const stopping = sup.stop().then(() => {
+      settled = true
+    })
+    expect(children[0]!.wasKilled).toBe(true)
+    expect(settled).toBe(false)
+
+    // Still within the bounded wait: no exit yet, so stop must not resolve.
+    vi.advanceTimersByTime(1_000)
+    expect(settled).toBe(false)
+
+    children[0]!.emit('exit', null, 'SIGTERM')
+    await stopping
+    expect(settled).toBe(true)
+
+    // Restart stays suppressed after the late exit.
+    vi.advanceTimersByTime(60_000)
+    expect(launch).toHaveBeenCalledTimes(1)
+  })
+
+  it('stop does not wait forever for a hung utility process', async () => {
+    const children: FakeChild[] = []
+    const launch = vi.fn(() => {
+      const child = new FakeChild()
+      children.push(child)
+      return supervised(child)
+    })
+    const sup = new ServerSupervisor({ launch, onLog: () => {} })
+
+    sup.start()
+    let settled = false
+    const stopping = sup.stop().then(() => {
+      settled = true
+    })
+    expect(children[0]!.wasKilled).toBe(true)
+    expect(settled).toBe(false)
+
+    // No exit ever arrives: the bounded wait still lets stop() resolve.
+    vi.advanceTimersByTime(60_000)
+    await stopping
+    expect(settled).toBe(true)
+    expect(launch).toHaveBeenCalledTimes(1)
   })
 })

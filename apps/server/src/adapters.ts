@@ -183,7 +183,7 @@ export interface AgentSession {
    * design-flow note and future turns.
    */
   setApproval?(approval: ApprovalMode): void | Promise<void>
-  dispose(): void
+  dispose(): void | Promise<void>
   on(event: 'event', listener: (event: DomainEvent) => void): void
   on(event: 'log', listener: (line: string) => void): void
 }
@@ -354,7 +354,7 @@ async function probeCustomHarnessProtocol(
         await customHarnessDeadline(harness, 'initialize', adapter.start())
         return { label, status: 'passed', detail: 'Initialize handshake completed.' }
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'opencode': {
@@ -408,7 +408,7 @@ async function probeCustomHarnessProtocol(
           detail: `Initialize handshake completed${agent ? ` with ${agent}` : ''}.`,
         }
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'claude-code': {
@@ -506,14 +506,14 @@ async function customHarnessOperation<T>(
   }
 }
 
-async function startedSession<TSession extends { dispose(): void }>(
+async function startedSession<TSession extends { dispose(): void | Promise<void> }>(
   session: TSession,
   start: () => Promise<Thread>,
 ): Promise<{ thread: Thread; session: TSession }> {
   try {
     return { thread: await start(), session }
   } catch (error) {
-    session.dispose()
+    await session.dispose()
     throw error
   }
 }
@@ -835,7 +835,7 @@ function codexRuntime(
         await adapter.start()
         return await adapter.listModels()
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     },
   }

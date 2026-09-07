@@ -18,6 +18,7 @@
     "test": "vitest run src --passWithNoTests",
     "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
     "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
+    "dist:linux:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --linux dir --x64",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
@@ -44,7 +45,8 @@
     ],
     "npmRebuild": false,
     "asarUnpack": [
-      "node_modules/**/*.node"
+      "node_modules/**/*.node",
+      "node_modules/**/node-pty/prebuilds/**/spawn-helper"
     ],
     "files": [
       "dist/**/*",
@@ -93,6 +95,9 @@
       }
     ],
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "executableName": "@harnessdesktop"
+    },
     "win": {
       "target": [
         {

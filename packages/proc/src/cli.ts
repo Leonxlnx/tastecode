@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { desktopPath } from './desktop-path.js'
-import { killTree } from './kill.js'
+import { killTree, ownProcessTree, ownedProcessSpawnOptions } from './kill.js'
 
 /**
  * Spawn a CLI that may have been installed as an npm shim.
@@ -25,13 +25,16 @@ export function spawnCli(
     env: childEnvironment(options),
     stdio: ['pipe', 'pipe', 'pipe'] satisfies Array<'pipe'>,
     windowsHide: true,
+    ...ownedProcessSpawnOptions(),
   }
 
   if (process.platform === 'win32') {
-    if (/\.(?:exe|com)$/i.test(command)) return spawn(command, args, spawnOptions)
-    return spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions)
+    if (/\.(?:exe|com)$/i.test(command)) {
+      return ownProcessTree(spawn(command, args, spawnOptions))
+    }
+    return ownProcessTree(spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions))
   }
-  return spawn(command, args, spawnOptions)
+  return ownProcessTree(spawn(command, args, spawnOptions))
 }
 
 /**

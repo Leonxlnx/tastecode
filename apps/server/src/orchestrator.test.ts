@@ -12,6 +12,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProviderIdSchema } from '@harness/contracts'
+import { CodexAdapter } from '@harness/adapter-codex'
 import type {
   ApprovalMode,
   Capabilities,
@@ -37,7 +38,11 @@ import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/
 import { projectThreadItems } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
-const previewStops = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
+const previewStops = vi.hoisted(() => ({
+  count: 0,
+  barriers: [] as Promise<void>[],
+  failures: [] as unknown[],
+}))
 const previewStarts = vi.hoisted(() => ({
   count: 0,
   barriers: [] as Promise<void>[],
@@ -58,6 +63,8 @@ vi.mock('./design-preview-runner.js', () => ({
         stop: async () => {
           previewStops.count += 1
           await previewStops.barriers.shift()
+          const failure = previewStops.failures.shift()
+          if (failure) throw failure
         },
       }
     },
@@ -226,6 +233,8 @@ function harness(
   const usageChanges: ProviderId[] = []
   const queueNotificationError: QueueNotificationError = {}
   const lifecycleHook: LifecycleHook = {}
+  const runtimeStarts = { count: 0, barriers: Array<Promise<void>>() }
+  const runtimeResumes = { count: 0, barriers: Array<Promise<void>>() }
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
@@ -243,6 +252,9 @@ function harness(
 
   const runtimeFor = (provider: ProviderId): ProviderRuntime => ({
     async start(workspacePath, options) {
+      runtimeStarts.count += 1
+      const barrier = runtimeStarts.barriers.shift()
+      if (barrier) await barrier
       startedIn.push(workspacePath)
       startedOptions.push(options)
       const session = new FakeSession(`s${sessions.length + 1}`)
@@ -264,6 +276,9 @@ function harness(
     ...(provider === 'codex' || provider === 'grok'
       ? {
           async resume(threadId: string, workspacePath: string, options: StartOptions) {
+            runtimeResumes.count += 1
+            const barrier = runtimeResumes.barriers.shift()
+            if (barrier) await barrier
             resumedIds.push(threadId)
             resumedIn.push(workspacePath)
             resumedOptions.push(options)
@@ -327,6 +342,8 @@ function harness(
     usageChanges,
     queueNotificationError,
     lifecycleHook,
+    runtimeStarts,
+    runtimeResumes,
     orchestrator,
     startedIn,
     startedOptions,
@@ -352,7 +369,7 @@ describe('provider usage changes', () => {
     const thread = await orchestrator.startThread('codex', process.cwd())
     const session = sessions[0]
 
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
     session?.emitUsageChanged()
 
     expect(usageChanges).toEqual([])
@@ -875,7 +892,7 @@ describe('provider-neutral Side chat', () => {
 
       expect(await orchestrator.startSideThread(parent.id)).toBe(side)
       await expect(orchestrator.startSideThread(side.id)).rejects.toThrow('cannot be opened')
-      orchestrator.closeSideThread(side.id)
+      await orchestrator.closeSideThread(side.id)
       expect(sessions[1]?.disposed).toBe(true)
       expect(sessions[0]?.disposed).toBe(false)
       expect(store.thread(side.id)).toBeUndefined()
@@ -899,7 +916,7 @@ describe('provider-neutral Side chat', () => {
     const side = await orchestrator.startSideThread(parent.id)
 
     expect(store.tailReplaySnapshotForResponse(parent.id)).toBeDefined()
-    orchestrator.closeSideThread(side.id)
+    await orchestrator.closeSideThread(side.id)
     await orchestrator.disposeAll()
   })
 })
@@ -1974,6 +1991,18 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  it('reports a preview stop failure after draining disposal', async () => {
+    const result = await completedPreviewHarness()
+    previewStops.failures.push(new Error('preview port remained in use'))
+    try {
+      await expect(result.orchestrator.disposeAll()).rejects.toThrow('preview port remained in use')
+    } finally {
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
   it('drains a preview start already in flight before disposal resolves', async () => {
     const result = await previewRecoveryHarness(undefined)
     const startCount = previewStarts.count
@@ -1999,6 +2028,26 @@ describe('provider-neutral design briefing', () => {
     } finally {
       releaseStart()
       releaseStop()
+      await result.orchestrator.disposeAll()
+      result.store.close()
+      rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('reports a failed stop for a preview start already in flight during disposal', async () => {
+    const result = await previewRecoveryHarness(undefined)
+    const startCount = previewStarts.count
+    let releaseStart = () => {}
+    previewStarts.barriers.push(new Promise<void>((resolve) => (releaseStart = resolve)))
+    previewStops.failures.push(new Error('starting preview port remained in use'))
+    try {
+      result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      await vi.waitFor(() => expect(previewStarts.count).toBe(startCount + 1))
+      const disposing = result.orchestrator.disposeAll()
+      releaseStart()
+      await expect(disposing).rejects.toThrow('starting preview port remained in use')
+    } finally {
+      releaseStart()
       await result.orchestrator.disposeAll()
       result.store.close()
       rmSync(result.workspace, { recursive: true, force: true })
@@ -2430,7 +2479,7 @@ describe('provider-neutral design briefing', () => {
           'design:repair',
           'design:review',
         ])
-        orchestrator.close(thread.id)
+        await orchestrator.close(thread.id)
         await vi.waitFor(() => expect(previewStops.count).toBe(stopCount + 1))
       } finally {
         await orchestrator.disposeAll()
@@ -3679,7 +3728,7 @@ describe('several sessions at once', () => {
     const first = await orchestrator.startThread('codex', '/repo')
     const second = await orchestrator.startThread('codex', '/repo')
 
-    orchestrator.close(first.id)
+    await orchestrator.close(first.id)
 
     expect(sessions[0]!.disposed).toBe(true)
     expect(sessions[1]!.disposed).toBe(false)
@@ -3692,7 +3741,7 @@ describe('several sessions at once', () => {
 
     const thread = await orchestrator.startThread('codex', '/repo')
     sessions[0]!.emit(message('ALPHA'))
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
 
     expect(orchestrator.isRunning(thread.id)).toBe(false)
     expect(store.history(thread.id)).toHaveLength(1)
@@ -4092,7 +4141,7 @@ describe('sidebar inbox lifecycle', () => {
     const { orchestrator, store } = harness()
     const archived = await orchestrator.startThread('codex', '/repo')
     const inactive = await orchestrator.startThread('codex', '/repo')
-    orchestrator.close(archived.id)
+    await orchestrator.close(archived.id)
 
     expect(() => orchestrator.settleThread(archived.id)).toThrow(/archived/)
     store.updateSidebarSettings({ autoSettleDays: null })
@@ -4232,7 +4281,7 @@ describe('queued turns', () => {
     sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
 
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
     sessions[0]!.release?.()
     await new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -4472,7 +4521,7 @@ describe('isolated sessions', () => {
     const thread = await orchestrator.startThread('codex', repo, { isolate: true })
     const worktreePath = store.thread(thread.id)!.worktreePath!
 
-    orchestrator.close(thread.id)
+    await orchestrator.close(thread.id)
 
     // Closing ends the process. It says nothing about the work in there.
     expect(existsSync(worktreePath)).toBe(true)
@@ -4737,7 +4786,7 @@ describe('rolling a session back', () => {
         'cannot restore during a running turn',
       )
 
-      orchestrator.close(thread.id)
+      await orchestrator.close(thread.id)
       expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
     } finally {
       session.release?.()
@@ -4894,6 +4943,117 @@ function text(entries: Array<{ event: DomainEvent }>): Array<string | undefined>
 }
 
 describe('overnight race pins', () => {
+  function delayNextRuntime(barriers: Promise<void>[]): () => void {
+    let release = () => {}
+    barriers.push(new Promise<void>((resolve) => (release = resolve)))
+    return release
+  }
+
+  it('waits for provider disposal before shutdown resolves', async () => {
+    const result = harness()
+    await result.orchestrator.startThread('codex', '/repo')
+    const session = result.sessions[0]!
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    session.dispose = async () => {
+      await barrier
+      session.disposed = true
+    }
+    let disposed = false
+
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await disposing
+      expect(session.disposed).toBe(true)
+    } finally {
+      release()
+      await disposing
+    }
+  })
+
+  it('waits for an in-flight thread start and disposes its late session', async () => {
+    const result = harness()
+    const release = delayNextRuntime(result.runtimeStarts.barriers)
+    const starting = result.orchestrator.startThread('codex', '/repo')
+    void starting.catch(() => undefined)
+    await vi.waitFor(() => expect(result.runtimeStarts.count).toBe(1))
+    let disposed = false
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await expect(starting).rejects.toThrow(/shutting down/)
+      await disposing
+      expect(result.sessions[0]?.disposed).toBe(true)
+    } finally {
+      release()
+      await Promise.allSettled([starting, disposing])
+      await result.orchestrator.disposeAll()
+    }
+  })
+
+  it('waits for an in-flight Side chat start and disposes its late session', async () => {
+    const result = harness()
+    const parent = await result.orchestrator.startThread('codex', '/repo')
+    result.store.append(parent.id, userMessage('parent-user', 'Context', 'parent-turn'))
+    const release = delayNextRuntime(result.runtimeStarts.barriers)
+    const starting = result.orchestrator.startSideThread(parent.id)
+    void starting.catch(() => undefined)
+    await vi.waitFor(() => expect(result.runtimeStarts.count).toBe(2))
+    let disposed = false
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await expect(starting).rejects.toThrow(/shutting down/)
+      await disposing
+      expect(result.sessions[1]?.disposed).toBe(true)
+    } finally {
+      release()
+      await Promise.allSettled([starting, disposing])
+      await result.orchestrator.disposeAll()
+    }
+  })
+
+  it('waits for an in-flight resume and disposes its late session', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'T' })
+    const result = harness(undefined, store)
+    const release = delayNextRuntime(result.runtimeResumes.barriers)
+    const resuming = result.orchestrator.submitTurn('thread-1', 'hello')
+    void resuming.catch(() => undefined)
+    await vi.waitFor(() => expect(result.runtimeResumes.count).toBe(1))
+    let disposed = false
+    const disposing = result.orchestrator.disposeAll().then(() => {
+      disposed = true
+    })
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(disposed).toBe(false)
+      release()
+      await expect(resuming).rejects.toThrow(/shutting down/)
+      await disposing
+      expect(result.sessions[0]?.disposed).toBe(true)
+    } finally {
+      release()
+      await Promise.allSettled([resuming, disposing])
+      await result.orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it('disposes a resume that lands after the thread was closed', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')
@@ -4933,12 +5093,420 @@ describe('overnight race pins', () => {
     // Let the resume begin, close the thread underneath it, then let the
     // provider "answer".
     await new Promise((resolve) => setTimeout(resolve, 0))
-    orchestrator.close('thread-1')
+    await orchestrator.close('thread-1')
     release()
 
     await expect(resuming).rejects.toThrow(/closed while resuming/)
     // The late session must be disposed, never attached as a zombie.
     expect(session.disposed).toBe(true)
+  })
+})
+
+describe('Codex control disposal', () => {
+  const orchestratorOptions = {
+    onEvent: () => {},
+    onLog: () => {},
+    onLogin: () => {},
+  }
+
+  it('waits for a failed control startup to dispose before rejecting', async () => {
+    const startError = new Error('control startup failed')
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockRejectedValue(startError)
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+    const request = orchestrator.listModels('codex')
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await expect(request).rejects.toBe(startError)
+    } finally {
+      release()
+      await request.catch(() => undefined)
+      start.mockRestore()
+      dispose.mockRestore()
+    }
+  })
+
+  it('waits for a temporary Codex adapter to dispose before returning a reset', async () => {
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockResolvedValue()
+    const consume = vi
+      .spyOn(CodexAdapter.prototype, 'consumeRateLimitReset')
+      .mockResolvedValue('reset')
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+    const request = orchestrator.consumeRateLimitReset('codex', 'reset-key')
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await expect(request).resolves.toEqual({ outcome: 'reset' })
+      expect(start).toHaveBeenCalledTimes(1)
+      expect(consume).toHaveBeenCalledWith('reset-key')
+    } finally {
+      release()
+      await request.catch(() => undefined)
+      start.mockRestore()
+      consume.mockRestore()
+      dispose.mockRestore()
+    }
+  })
+
+  it('waits for a temporary Codex adapter to dispose before returning limits', async () => {
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockResolvedValue()
+    const limits = vi
+      .spyOn(CodexAdapter.prototype, 'rateLimitSource')
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+    const request = orchestrator.usageLimitSource('codex')
+    let settled = false
+    void request.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    try {
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await expect(request).resolves.toEqual({ provider: 'codex', status: 'ready', limits: [] })
+      expect(start).toHaveBeenCalledTimes(1)
+      expect(limits).toHaveBeenCalledTimes(1)
+    } finally {
+      release()
+      await request.catch(() => undefined)
+      start.mockRestore()
+      limits.mockRestore()
+      dispose.mockRestore()
+    }
+  })
+
+  it('waits for an active control adapter to dispose during shutdown', async () => {
+    const start = vi.spyOn(CodexAdapter.prototype, 'start').mockResolvedValue()
+    const listModels = vi.spyOn(CodexAdapter.prototype, 'listModels').mockResolvedValue([])
+    let release = () => {}
+    const barrier = new Promise<void>((resolve) => (release = resolve))
+    let disposalStarted = false
+    const dispose = vi.spyOn(CodexAdapter.prototype, 'dispose').mockImplementation(async () => {
+      disposalStarted = true
+      await barrier
+    })
+    const orchestrator = new Orchestrator(new Store(':memory:'), orchestratorOptions)
+
+    try {
+      await expect(orchestrator.listModels('codex')).resolves.toEqual([])
+      const shutdown = orchestrator.disposeAll()
+      let settled = false
+      void shutdown.then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        },
+      )
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1))
+      expect(disposalStarted).toBe(true)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(settled).toBe(false)
+      release()
+      await shutdown
+    } finally {
+      release()
+      await orchestrator.disposeAll().catch(() => undefined)
+      start.mockRestore()
+      listModels.mockRestore()
+      dispose.mockRestore()
+    }
+  })
+})
+
+describe('idle runtime disposal', () => {
+  it('evicts immediately while async disposal completes in the background', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const first = await orchestrator.startThread('codex', process.cwd())
+    const second = await orchestrator.startThread('codex', process.cwd())
+    const firstSession = sessions[0]!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let disposeStarted = false
+    firstSession.dispose = (async () => {
+      disposeStarted = true
+      await gate
+      firstSession.disposed = true
+    }) as unknown as () => void
+
+    try {
+      firstSession.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+      sessions[1]?.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+      expect(orchestrator.isRunning(first.id)).toBe(false)
+      expect(orchestrator.isRunning(second.id)).toBe(true)
+      expect(disposeStarted).toBe(true)
+      expect(firstSession.disposed).toBe(false)
+
+      release()
+      await vi.waitFor(() => expect(firstSession.disposed).toBe(true))
+    } finally {
+      release()
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('includes in-flight idle disposal in shutdown', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const first = await orchestrator.startThread('codex', process.cwd())
+    const second = await orchestrator.startThread('codex', process.cwd())
+    const firstSession = sessions[0]!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    firstSession.dispose = (async () => {
+      await gate
+      firstSession.disposed = true
+    }) as unknown as () => void
+
+    try {
+      firstSession.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+      sessions[1]?.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+      expect(orchestrator.isRunning(first.id)).toBe(false)
+
+      let shutdownSettled = false
+      const shutdown = orchestrator.disposeAll().then(
+        () => {
+          shutdownSettled = true
+        },
+        (error) => {
+          shutdownSettled = true
+          throw error
+        },
+      )
+      void shutdown.catch(() => undefined)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(shutdownSettled).toBe(false)
+      expect(firstSession.disposed).toBe(false)
+
+      release()
+      await shutdown
+      expect(firstSession.disposed).toBe(true)
+      expect(second.id).toBeDefined()
+    } finally {
+      release()
+      await orchestrator.disposeAll().catch(() => undefined)
+    }
+  })
+
+  it('logs an idle disposal failure without an unhandled rejection', async () => {
+    const { orchestrator, sessions, logs } = harness(undefined, new Store(':memory:'), 1)
+    const first = await orchestrator.startThread('codex', process.cwd())
+    const second = await orchestrator.startThread('codex', process.cwd())
+    sessions[0]!.dispose = (async () => {
+      throw new Error('idle runtime close failed')
+    }) as unknown as () => void
+
+    try {
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+      sessions[1]?.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+      expect(orchestrator.isRunning(first.id)).toBe(false)
+      expect(orchestrator.isRunning(second.id)).toBe(true)
+      await vi.waitFor(() =>
+        expect(logs.some((line) => line.includes('idle dispose failed'))).toBe(true),
+      )
+      // A settled background failure was already logged; shutdown succeeds.
+      await orchestrator.disposeAll()
+    } finally {
+      await orchestrator.disposeAll().catch(() => undefined)
+    }
+  })
+
+  it('reports an in-flight idle disposal failure during shutdown', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const first = await orchestrator.startThread('codex', process.cwd())
+    await orchestrator.startThread('codex', process.cwd())
+    const firstSession = sessions[0]!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    firstSession.dispose = (async () => {
+      await gate
+      throw new Error('idle runtime close failed during shutdown')
+    }) as unknown as () => void
+
+    try {
+      firstSession.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+      sessions[1]?.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+      expect(orchestrator.isRunning(first.id)).toBe(false)
+
+      const shutdown = orchestrator.disposeAll()
+      void shutdown.catch(() => undefined)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      release()
+      await expect(shutdown).rejects.toThrow('idle runtime close failed during shutdown')
+    } finally {
+      release()
+      await orchestrator.disposeAll().catch(() => undefined)
+    }
+  })
+})
+
+describe('racing session attach', () => {
+  function duplicateIdHarness() {
+    const store = new Store(':memory:')
+    const sessions: FakeSession[] = []
+    const logs: string[] = []
+    const orchestrator = new Orchestrator(store, {
+      onEvent: () => {},
+      onLog: (line) => logs.push(line),
+      onLogin: () => {},
+      runtimeFor: (provider: ProviderId) => ({
+        async start(workspacePath: string) {
+          const session = new FakeSession(`s${sessions.length + 1}`)
+          sessions.push(session)
+          return {
+            thread: {
+              id: 'thread-dup',
+              provider,
+              workspacePath,
+              createdAt: Date.now(),
+            },
+            session,
+          }
+        },
+        async listModels() {
+          return []
+        },
+      }),
+    })
+    return { orchestrator, sessions, logs, store }
+  }
+
+  it('disposes the newcomer when disposing the previous racing session fails', async () => {
+    const { orchestrator, sessions, store } = duplicateIdHarness()
+    try {
+      await orchestrator.startThread('codex', '/repo')
+      // Allow the second start to reach attach: the store row must not
+      // collide, while the live runtime still holds the previous session.
+      store.deleteThread('thread-dup')
+      orchestrator.forgetDeletedThread('thread-dup')
+      sessions[0]!.dispose = (async () => {
+        throw new Error('old dispose failed')
+      }) as unknown as () => void
+
+      await expect(orchestrator.startThread('codex', '/repo')).rejects.toThrow('old dispose failed')
+      // Policy: keep the previous entry, never leak the newcomer.
+      expect(sessions).toHaveLength(2)
+      expect(sessions[1]!.disposed).toBe(true)
+      expect(orchestrator.isRunning('thread-dup')).toBe(true)
+    } finally {
+      sessions[0]!.dispose = (() => {
+        sessions[0]!.disposed = true
+      }) as () => void
+      await orchestrator.disposeAll().catch(() => undefined)
+      store.close()
+    }
+  })
+
+  it('reports both failures when racing disposals both fail', async () => {
+    const { orchestrator, sessions, store } = duplicateIdHarness()
+    let releaseOld!: () => void
+    const oldGate = new Promise<void>((resolve) => {
+      releaseOld = resolve
+    })
+    try {
+      await orchestrator.startThread('codex', '/repo')
+      store.deleteThread('thread-dup')
+      orchestrator.forgetDeletedThread('thread-dup')
+      // Hold the previous disposal open so the newcomer exists before the
+      // attach reaches its own disposal.
+      sessions[0]!.dispose = (async () => {
+        await oldGate
+        throw new Error('old dispose failed')
+      }) as unknown as () => void
+
+      const pending = orchestrator.startThread('codex', '/repo')
+      void pending.catch(() => undefined)
+      await vi.waitFor(() => expect(sessions).toHaveLength(2))
+      sessions[1]!.dispose = (async () => {
+        throw new Error('new dispose failed')
+      }) as unknown as () => void
+      releaseOld()
+
+      const error = await pending.then(
+        () => {
+          throw new Error('expected attach to fail')
+        },
+        (failure: unknown) => failure,
+      )
+      expect(error).toBeInstanceOf(AggregateError)
+      const aggregate = error as AggregateError
+      expect(aggregate.errors.map((entry) => (entry as Error).message).sort()).toEqual(
+        ['new dispose failed', 'old dispose failed'].sort(),
+      )
+      expect(orchestrator.isRunning('thread-dup')).toBe(true)
+    } finally {
+      releaseOld()
+      for (const session of sessions) {
+        session.dispose = (() => {
+          session.disposed = true
+        }) as () => void
+      }
+      await orchestrator.disposeAll().catch(() => undefined)
+      store.close()
+    }
   })
 })
 

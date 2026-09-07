@@ -1,5 +1,6 @@
 import process from 'node:process'
 import { DEFAULT_PORT } from './server-config.js'
+import { installShutdownHandlers } from './shutdown.js'
 
 type CliOptions = {
   command: 'serve' | 'help'
@@ -17,7 +18,7 @@ export async function runHeadlessCli(
   }
 
   const { startServer } = await import('./server.js')
-  const server = startServer({
+  const server = await startServer({
     port: options.port,
     host: '127.0.0.1',
     accessToken: env['HARNESS_ACCESS_TOKEN'],
@@ -63,17 +64,6 @@ function parsePort(value: string, source: string): number {
     throw new Error(`${source} must be between 1 and 65535.`)
   }
   return port
-}
-
-function installShutdownHandlers(server: { close(): Promise<void> }): void {
-  let closing = false
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(signal, () => {
-      if (closing) return
-      closing = true
-      void server.close().finally(() => process.exit(0))
-    })
-  }
 }
 
 function helpText(): string {
