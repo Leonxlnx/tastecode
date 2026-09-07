@@ -1,8 +1,15 @@
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
+import {
+  jsonArray as array,
+  type JsonObject,
+  type JsonValue,
+  jsonNumber as number,
+  jsonObject as object,
+  parseJsonValue,
+  jsonString as string,
+} from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiToolCall, ApiTransport } from './runtime.js'
 import { httpError, serverSentEvents } from './sse.js'
-
-type JsonObject = Record<string, unknown>
 
 export type CompatibleProvider = 'openrouter' | 'kimi' | 'zai' | 'custom'
 
@@ -109,12 +116,12 @@ export function createOpenAiCompatibleTransport(options: OpenAiCompatibleOptions
     // the incomplete calls and let 'stop' report what happened.
     if (truncated) calls.clear()
 
-    for (const call of [...calls.values()]) {
+    for (const call of calls.values()) {
       if (!call.id || !call.name)
         throw new Error('OpenAI-compatible provider returned an invalid tool call')
-      let input: unknown
+      let input: JsonValue
       try {
-        input = JSON.parse(call.arguments)
+        input = parseJsonValue(call.arguments)
       } catch {
         throw new Error('OpenAI-compatible provider returned invalid tool arguments')
       }
@@ -143,7 +150,7 @@ export async function listOpenAiCompatibleModels(
   if (!response.ok) {
     throw new Error(`OpenAI-compatible model listing failed with HTTP ${response.status}`)
   }
-  const body = object(await response.json())
+  const body = object(parseJsonValue(await response.text()))
   return array(body.data)
     .map(object)
     .map((entry) => string(entry.id))
@@ -158,12 +165,14 @@ export async function listOpenAiCompatibleModels(
     }))
 }
 
-function resolve(options: OpenAiCompatibleOptions): {
+interface CompatibleConfig {
   baseUrl: string
   modelDiscovery: boolean
   streamUsage: boolean
   toolStream: boolean
-} {
+}
+
+function resolve(options: OpenAiCompatibleOptions): CompatibleConfig {
   if (options.provider === 'custom') {
     if (!options.baseUrl) throw new Error('A base URL is required for a custom endpoint')
     return { baseUrl: options.baseUrl, modelDiscovery: true, streamUsage: true, toolStream: false }
@@ -182,7 +191,11 @@ function toMessage(message: ApiMessage): JsonObject {
   return {
     role: 'assistant',
     content: message.content || null,
-    ...(message.toolCalls.length ? { tool_calls: message.toolCalls.map(toToolCall) } : {}),
+    ...(message.toolCalls.length
+      ? {
+          tool_calls: message.toolCalls.map(toToolCall),
+        }
+      : {}),
   }
 }
 
@@ -213,20 +226,4 @@ function endpointFor(baseUrl: string, path: string): URL {
 function requiredKey(value: string): string {
   if (!value.trim()) throw new Error('An API key is required')
   return value
-}
-
-function object(value: unknown): JsonObject {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
-}
-
-function array(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : []
-}
-
-function string(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function number(value: unknown): number {
-  return typeof value === 'number' ? value : 0
 }

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { McpConfigStore } from './mcp-config.js'
 
-function setup(): { project: string; location: string; store: McpConfigStore } {
+function setup() {
   const root = mkdtempSync(path.join(tmpdir(), 'harness-mcp-config-'))
   const project = path.join(root, 'project')
   mkdirSync(project)
@@ -53,5 +53,50 @@ describe('project MCP config', () => {
     const backups = readdirSync(path.dirname(location)).filter((name) => name.includes('.invalid-'))
     expect(backups).toHaveLength(1)
     expect(store.list('codex', project)).toEqual([{ id: 'fresh', enabled: false }])
+  })
+
+  it('reloads hand edits after the short read cache expires', () => {
+    const { project, location } = setup()
+    let now = 1_000
+    const store = new McpConfigStore(location, () => now)
+    store.add('codex', project, {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    })
+    expect(store.list('codex', project)).toEqual([
+      {
+        id: 'docs',
+        enabled: true,
+        transport: { type: 'http', url: 'https://example.com/mcp' },
+      },
+    ])
+
+    const edited = JSON.parse(readFileSync(location, 'utf8')) as {
+      projects: Record<string, { codex: Record<string, { id: string; enabled: boolean }> }>
+    }
+    const projectKey = Object.keys(edited.projects)[0]!
+    edited.projects[projectKey]!.codex['docs']!.enabled = false
+    writeFileSync(location, JSON.stringify(edited))
+
+    expect(store.list('codex', project)[0]?.enabled).toBe(true)
+    now += 101
+    expect(store.list('codex', project)[0]?.enabled).toBe(false)
+  })
+
+  it('merges app writes with hand edits even inside the read cache window', () => {
+    const { project, location, store } = setup()
+    store.add('codex', project, { id: 'docs', enabled: false })
+    store.list('codex', project)
+
+    const edited = JSON.parse(readFileSync(location, 'utf8')) as {
+      projects: Record<string, { codex: Record<string, { id: string; enabled: boolean }> }>
+    }
+    const projectKey = Object.keys(edited.projects)[0]!
+    edited.projects[projectKey]!.codex['external'] = { id: 'external', enabled: false }
+    writeFileSync(location, JSON.stringify(edited))
+    store.add('codex', project, { id: 'fresh', enabled: false })
+
+    expect(store.list('codex', project).map(({ id }) => id)).toEqual(['docs', 'external', 'fresh'])
   })
 })

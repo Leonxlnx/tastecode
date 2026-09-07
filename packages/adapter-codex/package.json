@@ -7,6 +7,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
+    "./auth": {
+      "types": "./dist/auth.d.ts",
+      "default": "./dist/auth.js"
+    },
+    "./voice": {
+      "types": "./dist/voice.d.ts",
+      "default": "./dist/voice.js"
     }
   },
   "main": "./dist/index.js",
@@ -19,7 +31,8 @@
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
-    "@harness/proc": "workspace:*"
+    "@harness/proc": "workspace:*",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

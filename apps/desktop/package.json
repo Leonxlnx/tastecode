@@ -1,29 +1,124 @@
 {
   "name": "@harness/desktop",
-  "version": "0.0.0",
+  "productName": "Taste Code",
+  "description": "A local desktop workspace for coding agents.",
+  "author": "Tasteskill Team",
+  "copyright": "made by @blueemi99 and @lexnlin on X :)",
+  "version": "0.1.0-beta.1",
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node scripts/build-main.js",
+    "build:main": "node scripts/build-main.js",
+    "benchmark:startup": "node scripts/benchmark-startup.js",
+    "benchmark:startup:compare": "node scripts/compare-startup.js",
     "typecheck": "tsc -b",
-    "start": "tsc -b && node scripts/build-preload.js && electron .",
-    "test": "vitest run --passWithNoTests"
+    "start": "tsc -b && node scripts/build-main.js && node scripts/build-preload.js && node scripts/start.js",
+    "test": "vitest run src --passWithNoTests",
+    "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
+    "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
+    "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
-    "@harness/contracts": "workspace:*"
+    "@harness/contracts": "workspace:*",
+    "@harness/proc": "workspace:*",
+    "@harness/server": "workspace:*",
+    "electron-updater": "6.8.9",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
     "electron": "^43.4.0",
+    "electron-builder": "26.15.3",
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
   },
   "build": {
+    "appId": "dev.tastecode.desktop",
+    "icon": "assets/tastecode-app-icon.png",
+    "asar": true,
+    "electronLanguages": [
+      "en-US"
+    ],
+    "npmRebuild": false,
+    "asarUnpack": [
+      "node_modules/**/*.node"
+    ],
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "package.json",
+      "!node_modules/@harness/*/src{,/**/*}",
+      "!node_modules/@harness/*/tsconfig*.json",
+      "!node_modules/@harness/*/*.tsbuildinfo",
+      "!node_modules/@harness/*/dist/**/*.d.ts",
+      "!node_modules/@harness/*/dist/**/*.map",
+      "!node_modules/@harness/*/dist/**/*.bench.js"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "../../LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "../../NOTICE",
+        "to": "NOTICE"
+      },
+      {
+        "from": "../../THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "../../licenses",
+        "to": "licenses"
+      },
+      {
+        "from": "../../release/THIRD_PARTY_LICENSES.txt",
+        "to": "THIRD_PARTY_LICENSES.txt"
+      }
+    ],
+    "directories": {
+      "output": "../../release"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://tastecode.dev/releases"
+      }
+    ],
+    "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
     "mac": {
+      "icon": "assets/tastecode-icon.icon",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "hardenedRuntime": true,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Personal Harness uses your microphone to record dictation that you choose to send to OpenAI for transcription."
+        "NSMicrophoneUsageDescription": "TasteCode uses your microphone to record dictation that you choose to send to OpenAI for transcription."
       },
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist"

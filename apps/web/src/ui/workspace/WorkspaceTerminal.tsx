@@ -11,7 +11,12 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
   theme: 'light' | 'dark'
   onClose: () => void
 }) {
-  if (!props.threadId && !props.projectPath) {
+  const target = props.threadId
+    ? { threadId: props.threadId }
+    : props.projectPath
+      ? { projectPath: props.projectPath }
+      : undefined
+  if (!target) {
     return (
       <WorkspaceEmptyState
         kind="terminal"
@@ -20,14 +25,11 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
       />
     )
   }
-
   return (
     <div className="workspace-terminal">
       <TerminalPane
         transport={props.transport}
-        {...(props.threadId
-          ? { threadId: props.threadId }
-          : { projectPath: props.projectPath as string })}
+        {...target}
         theme={props.theme}
         mode="workspace"
         active={props.active}

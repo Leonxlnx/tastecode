@@ -1,14 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { WebSocket } from 'ws'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 
-const socket = {} as WebSocket
+const socket = {}
 const viewports = [{ width: 1_440, height: 900 }]
 
 describe('preview capture coordinator', () => {
   it('round-trips a capture through a capable client', async () => {
     const send = vi.fn()
-    const coordinator = new PreviewCaptureCoordinator(send)
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
     coordinator.setCapability(socket, true)
     const capture = coordinator.capture('http://127.0.0.1:5183/', viewports)
     const request = send.mock.calls[0]![1]

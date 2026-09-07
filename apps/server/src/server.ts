@@ -3,36 +3,41 @@ import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { detectAgents } from '@harness/adapter-acp'
-import {
-  ErrorCode,
-  methods,
-  PROTOCOL_VERSION,
-  RequestSchema,
-  type DiffDecision,
-  type MethodName,
-  type McpServerConfig,
-  type ParamsOf,
-  type ProviderId,
-  type SidebarSettings,
-} from '@harness/contracts'
+import { ErrorCode, methods, PROTOCOL_VERSION, type MethodName } from '@harness/contracts'
+import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
-import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
-import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
+import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
+import { migrateProductFile } from './product-paths.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
-import { PullRequestService } from './pull-requests.js'
+import type { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
+import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
+import { LifecycleScheduler } from './lifecycle-scheduler.js'
+import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
+import { createHistoryResponseProjector } from './history-response.js'
+import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 
-export const SERVER_VERSION = '0.0.0'
+const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
+
+const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
+const startupMilestones = new Set<string>()
+
+function reportStartupMilestone(name: string): void {
+  if (!Number.isFinite(startupStartedAt) || startupStartedAt <= 0 || startupMilestones.has(name)) {
+    return
+  }
+  startupMilestones.add(name)
+  console.log(`[startup] ${name} ${Date.now() - startupStartedAt}ms`)
+}
 
 /**
  * Where the database lives.
@@ -44,7 +49,12 @@ export { DEFAULT_PORT } from './server-config.js'
  */
 function storeLocation(): string {
   const override = process.env['HARNESS_DATA_DIR']
-  if (override) return path.join(override, 'harness.db')
+  if (override) {
+    return migrateProductFile(
+      path.join(override, 'tastecode.db'),
+      path.join(override, 'harness.db'),
+    )
+  }
 
   const home = os.homedir()
   const base =
@@ -54,7 +64,10 @@ function storeLocation(): string {
         ? path.join(home, 'Library', 'Application Support')
         : (process.env['XDG_DATA_HOME'] ?? path.join(home, '.local', 'share'))
 
-  return path.join(base, 'PersonalHarness', 'harness.db')
+  return migrateProductFile(
+    path.join(base, 'TasteCode', 'tastecode.db'),
+    path.join(base, 'PersonalHarness', 'harness.db'),
+  )
 }
 
 /**
@@ -71,11 +84,14 @@ export function startServer(
     accessToken?: string | undefined
   } = {},
 ) {
+  applyDesktopPath()
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
   const push = new PushBus()
+  const providerService = import('./providers.js')
+  void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
   const previewCapture = new PreviewCaptureCoordinator((socket, request) =>
     push.send(socket, 'preview.captureRequested', request),
   )
@@ -86,7 +102,7 @@ export function startServer(
   wss.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EADDRINUSE') {
       console.error(
-        `[server] port ${port} is already in use — another Personal Harness server is ` +
+        `[server] port ${port} is already in use — another TasteCode server is ` +
           `probably still running. Stop it, or set HARNESS_PORT to a free port.`,
       )
       process.exit(1)
@@ -97,17 +113,35 @@ export function startServer(
 
   const databasePath = storeLocation()
   const store = new Store(databasePath)
+  reportStartupMilestone('server-store-ready')
   store.recoverInterruptedThreads()
+  reportStartupMilestone('server-recovery-ready')
   const usageHistory = new UsageHistoryService({
     cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
     harnessUsage: () => store.usageEvents(),
   })
-  const pullRequests = new PullRequestService()
   void usageHistory.startBackgroundRefresh()
+  let pullRequests: Promise<PullRequestService> | undefined
+  const pullRequestService = () =>
+    (pullRequests ??= import('./pull-requests.js').then(
+      ({ PullRequestService }) => new PullRequestService(),
+    ))
+  let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
   const orchestrator = new Orchestrator(store, {
-    onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
-    onSideEvent: (threadId, event, seq) =>
-      push.broadcast('sideChat.event', { threadId, event, seq }),
+    onEvent: (threadId, event, seq, serializedEvent) => {
+      if (serializedEvent === undefined) {
+        push.broadcast('thread.event', { threadId, event, seq })
+      } else {
+        push.broadcastRecordedEvent('thread.event', threadId, serializedEvent, seq)
+      }
+    },
+    onSideEvent: (threadId, event, seq, serializedEvent) => {
+      if (serializedEvent === undefined) {
+        push.broadcast('sideChat.event', { threadId, event, seq })
+      } else {
+        push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
+      }
+    },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
@@ -120,6 +154,7 @@ export function startServer(
     onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
+    onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
     onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
@@ -128,9 +163,29 @@ export function startServer(
         ? previewCapture.capture(url, viewports)
         : Promise.resolve(undefined),
   })
-  orchestrator.refreshLifecycle()
-  const lifecycleTimer = setInterval(() => orchestrator.refreshLifecycle(), 30_000)
-  lifecycleTimer.unref()
+  reportStartupMilestone('server-orchestrator-ready')
+  const projectList = createProjectListProjector({
+    includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
+  })
+  const serializeProjectList = createSerializedResultCache()
+  const historyResponse = createHistoryResponseProjector()
+  const serializeHistory = createSerializedResultCache()
+  const projectListState: ProjectListState = {
+    isTurnRunning: (threadId) => orchestrator.isTurnRunning(threadId),
+    inboxStatus: (threadId, queued, unread) => orchestrator.inboxStatus(threadId, queued, unread),
+    revision: () => orchestrator.sidebarStatusRevision(),
+    changesSince: (revision) => orchestrator.sidebarStatusChangesSince(revision),
+  }
+  const lifecycleScheduler = new LifecycleScheduler(
+    () => orchestrator.refreshLifecycle(),
+    () => store.nextLifecycleRefreshAt(),
+  )
+  notifyLifecycleScheduleChanged = (hint) => {
+    if (hint === 'later') lifecycleScheduler.changedLater()
+    else if (typeof hint === 'number') lifecycleScheduler.deadlineAdded(hint)
+    else lifecycleScheduler.changed()
+  }
+  lifecycleScheduler.refreshNow()
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
   // starts instead of failing with a message about our own leftovers.
@@ -180,40 +235,32 @@ export function startServer(
       return
     }
 
-    const envelope = RequestSchema.safeParse(parsed)
-    if (!envelope.success) {
+    const envelope = parseRequestEnvelope(parsed)
+    if (!envelope) {
       console.warn('[server] dropped malformed request')
       return
     }
-    const { id, method, params } = envelope.data
+    const { id, method, params } = envelope
 
     // hasOwn, not truthiness: `methods` is a plain object, so 'constructor',
     // 'toString' and friends pass a truthy check and then blow up on
     // spec.params — outside the try below, so no reply is ever sent and the
     // client's call hangs until the socket closes.
-    const spec = Object.hasOwn(methods, method) ? methods[method as MethodName] : undefined
-    if (!spec) {
+    if (!isMethodName(method)) {
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
-
-    const decoded = spec.params.safeParse(params)
-    if (!decoded.success) {
-      const first = decoded.error.issues[0]
-      respondError(
-        socket,
-        id,
-        ErrorCode.BAD_REQUEST,
-        `invalid params for ${method}`,
-        first ? `${first.path.join('.') || '(root)'}: ${first.message}` : undefined,
-      )
-      return
-    }
-
     try {
-      const result = await route(socket, method as MethodName, decoded.data)
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
+      const result = await route(socket, method, params)
+      if (socket.readyState === socket.OPEN) {
+        socket.send(serializeSuccessResponse(id, result))
+        if (method === 'projects.list') reportStartupMilestone('server-projects-sent')
+      }
     } catch (error) {
+      if (error instanceof InvalidParamsError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
+        return
+      }
       respondError(
         socket,
         id,
@@ -226,14 +273,11 @@ export function startServer(
   async function route(socket: WebSocket, method: MethodName, params: unknown): Promise<unknown> {
     switch (method) {
       case 'client.capabilities':
-        previewCapture.setCapability(
-          socket,
-          (params as ParamsOf<'client.capabilities'>).previewCapture,
-        )
+        previewCapture.setCapability(socket, parseParams(method, params).previewCapture)
         return {}
 
       case 'preview.captureResult':
-        previewCapture.complete(socket, params as ParamsOf<'preview.captureResult'>)
+        previewCapture.complete(socket, parseParams(method, params))
         return {}
 
       case 'system.info':
@@ -250,27 +294,31 @@ export function startServer(
         return checkForUpdates()
 
       case 'search.sessions':
-        return store.searchSessions(
-          params as {
-            query: string
-            projectPath?: string
-            provider?: ProviderId
-            cursor?: string
-            limit?: number
-          },
-        )
+        return store.searchSessions(parseParams(method, params))
 
       case 'pullRequests.list': {
-        const p = params as ParamsOf<'pullRequests.list'>
-        return pullRequests.list(
+        const p = parseParams(method, params)
+        return (await pullRequestService()).list(
           store.projects().map((project) => project.path),
           p.refresh ?? false,
         )
       }
 
+      case 'pullRequests.setup': {
+        const p = parseParams(method, params)
+        const { githubSetupCommand } = await import('./pull-requests.js')
+        const command = githubSetupCommand(p.action)
+        return {
+          terminalId:
+            p.action === 'install'
+              ? orchestrator.installProvider('github-cli', command, p.columns, p.rows)
+              : orchestrator.launchProviderLogin('github-cli', command, p.columns, p.rows),
+        }
+      }
+
       case 'pullRequests.detail': {
-        const p = params as ParamsOf<'pullRequests.detail'>
-        return pullRequests.detail(
+        const p = parseParams(method, params)
+        return (await pullRequestService()).detail(
           p.repository,
           p.number,
           store.projects().map((project) => project.path),
@@ -279,54 +327,61 @@ export function startServer(
       }
 
       case 'pullRequests.files': {
-        const p = params as ParamsOf<'pullRequests.files'>
-        return pullRequests.files(p.repository, p.number, p.page ?? 1, p.refresh ?? false)
+        const p = parseParams(method, params)
+        return (await pullRequestService()).files(
+          p.repository,
+          p.number,
+          p.page ?? 1,
+          p.refresh ?? false,
+        )
       }
 
       case 'pullRequests.metadataOptions': {
-        const p = params as ParamsOf<'pullRequests.metadataOptions'>
-        return pullRequests.metadataOptions(p.repository, p.refresh ?? false)
+        const p = parseParams(method, params)
+        return (await pullRequestService()).metadataOptions(p.repository, p.refresh ?? false)
       }
 
       case 'pullRequests.action': {
-        const p = params as ParamsOf<'pullRequests.action'>
-        return pullRequests.action(p.repository, p.number, p.action)
+        const p = parseParams(method, params)
+        return (await pullRequestService()).action(p.repository, p.number, p.action)
       }
 
       case 'providers.list':
-        return { providers: await detectProviders() }
+        return { providers: await (await providerService).detectProviders() }
 
       case 'harnesses.list':
         return { harnesses: orchestrator.listCustomHarnesses() }
 
       case 'harnesses.upsert':
         return {
-          harness: orchestrator.upsertCustomHarness(params as ParamsOf<'harnesses.upsert'>),
+          harness: orchestrator.upsertCustomHarness(parseParams(method, params)),
         }
 
       case 'harnesses.verify': {
-        const p = params as ParamsOf<'harnesses.verify'>
+        const p = parseParams(method, params)
         return {
           verification: await orchestrator.verifyCustomHarness(p.harness, p.workspacePath),
         }
       }
 
       case 'harnesses.remove': {
-        const p = params as ParamsOf<'harnesses.remove'>
+        const p = parseParams(method, params)
         orchestrator.removeCustomHarness(p.harnessId)
         return {}
       }
 
       case 'providers.install': {
-        const p = params as ParamsOf<'providers.install'>
-        const command = installCommandFor(p.provider, p.agent)
+        const p = parseParams(method, params)
+        const { installCommandFor } = await import('./providers.js')
+        const command = await installCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
       }
 
       case 'providers.launch': {
-        const p = params as ParamsOf<'providers.launch'>
-        const command = launchCommandFor(p.provider, p.agent)
+        const p = parseParams(method, params)
+        const { launchCommandFor } = await import('./providers.js')
+        const command = await launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
           terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
@@ -338,85 +393,72 @@ export function startServer(
 
       case 'connections.upsert':
         return {
-          connection: orchestrator.upsertModelConnection(params as ParamsOf<'connections.upsert'>),
+          connection: orchestrator.upsertModelConnection(parseParams(method, params)),
         }
 
       case 'connections.setCredential': {
-        const p = params as { connectionId: string; apiKey: string }
+        const p = parseParams(method, params)
         orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
         return { credentialConfigured: true }
       }
 
       case 'connections.remove': {
-        const p = params as { connectionId: string }
+        const p = parseParams(method, params)
         orchestrator.removeModelConnection(p.connectionId)
         return {}
       }
 
       case 'connections.models': {
-        const p = params as { connectionId: string }
+        const p = parseParams(method, params)
         return { models: await orchestrator.listConnectionModels(p.connectionId) }
       }
 
       case 'mcp.list': {
-        const p = params as { provider: ProviderId; projectPath: string }
+        const p = parseParams(method, params)
         return orchestrator.listMcpServers(p.provider, p.projectPath)
       }
 
       case 'mcp.add': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          server: McpServerConfig
-        }
+        const p = parseParams(method, params)
         orchestrator.addMcpServer(p.provider, p.projectPath, p.server)
         return {}
       }
 
       case 'mcp.update': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          server: McpServerConfig
-        }
+        const p = parseParams(method, params)
         orchestrator.updateMcpServer(p.provider, p.projectPath, p.server)
         return {}
       }
 
       case 'mcp.remove': {
-        const p = params as { provider: ProviderId; projectPath: string; serverId: string }
+        const p = parseParams(method, params)
         orchestrator.removeMcpServer(p.provider, p.projectPath, p.serverId)
         return {}
       }
 
       case 'mcp.reload': {
-        const p = params as { provider: ProviderId; projectPath: string }
+        const p = parseParams(method, params)
         await orchestrator.reloadMcpServers(p.provider, p.projectPath)
         return {}
       }
 
       case 'mcp.startOAuth': {
-        const p = params as { provider: ProviderId; projectPath: string; serverId: string }
+        const p = parseParams(method, params)
         return orchestrator.startMcpOAuth(p.provider, p.projectPath, p.serverId)
       }
 
       case 'mcp.cancelOAuth': {
-        const p = params as { provider: ProviderId }
+        const p = parseParams(method, params)
         return orchestrator.cancelMcpOAuth(p.provider)
       }
 
       case 'skills.list': {
-        const p = params as { provider: ProviderId; projectPath: string }
+        const p = parseParams(method, params)
         return orchestrator.listSkills(p.provider, p.projectPath)
       }
 
       case 'skills.setEnabled': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          skillId: string
-          enabled: boolean
-        }
+        const p = parseParams(method, params)
         return {
           enabled: await orchestrator.setSkillEnabled(
             p.provider,
@@ -428,55 +470,51 @@ export function startServer(
       }
 
       case 'skills.installFromFolder': {
-        const p = params as {
-          provider: ProviderId
-          projectPath: string
-          folderPath: string
-        }
+        const p = parseParams(method, params)
         return {
           skill: await orchestrator.installSkillFromFolder(p.provider, p.projectPath, p.folderPath),
         }
       }
 
       case 'auth.status': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = parseParams(method, params)
         return orchestrator.account(p.provider, p.agent)
       }
 
       case 'auth.startLogin': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = parseParams(method, params)
         return orchestrator.startLogin(p.provider)
       }
 
       case 'auth.cancelLogin': {
-        const p = params as { provider: ProviderId; agent?: string; loginId: string }
+        const p = parseParams(method, params)
         await orchestrator.cancelLogin(p.provider, p.loginId)
         return {}
       }
 
       case 'auth.useApiKey': {
-        const p = params as { provider: ProviderId; agent?: string; apiKey: string }
+        const p = parseParams(method, params)
         return orchestrator.useApiKey(p.provider, p.apiKey)
       }
 
       case 'auth.signOut': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = parseParams(method, params)
         await orchestrator.signOut(p.provider, p.agent)
         return {}
       }
 
       case 'workspace.info': {
-        const p = params as { path: string }
+        const p = parseParams(method, params)
         return readWorkspace(resolveWorkspacePath(p.path))
       }
 
       case 'workspace.branches': {
-        const p = params as { path: string }
+        const p = parseParams(method, params)
         return { branches: await listWorkspaceBranches(resolveWorkspacePath(p.path)) }
       }
 
       case 'workspace.switchBranch': {
-        const p = params as { path: string; branch: string }
+        const p = parseParams(method, params)
         const localSessionRunning = store
           .threads(p.path)
           .some((thread) => !thread.worktreePath && orchestrator.isRunning(thread.id))
@@ -487,41 +525,58 @@ export function startServer(
       }
 
       case 'workspace.diff': {
-        const p = params as ParamsOf<'workspace.diff'>
+        const p = parseParams(method, params)
         return readWorkspaceDiff(workspaceForRequest(store, p))
       }
 
       case 'workspace.listDirectory': {
-        const p = params as ParamsOf<'workspace.listDirectory'>
+        const p = parseParams(method, params)
         return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
       }
 
       case 'workspace.readFile': {
-        const p = params as ParamsOf<'workspace.readFile'>
+        const p = parseParams(method, params)
         return readWorkspaceTextFile(workspaceForRequest(store, p), p.path)
       }
 
       case 'models.list': {
-        const p = params as { provider: ProviderId; agent?: string }
+        const p = parseParams(method, params)
         return { models: await orchestrator.listModels(p.provider, p.agent) }
       }
 
+      case 'backgroundModel.settings':
+        return orchestrator.backgroundModelSettings()
+
+      case 'backgroundModel.updateSettings':
+        return orchestrator.updateBackgroundModelPreference(parseParams(method, params))
+
+      case 'backgroundModel.generateTitle': {
+        const p = parseParams(method, params)
+        return orchestrator.generateBackgroundTitle(p.threadId, p.prompt, p.expectedTitle)
+      }
+
+      case 'backgroundModel.generateCommitMessage': {
+        const p = parseParams(method, params)
+        const diff = await readWorkspaceDiff(workspaceForRequest(store, p))
+        return { message: await orchestrator.generateBackgroundCommitMessage(diff) }
+      }
+
       case 'voice.status': {
-        const p = params as { provider: ProviderId }
+        const p = parseParams(method, params)
         return orchestrator.voiceStatus(p.provider)
       }
 
       case 'voice.transcribe':
-        return orchestrator.transcribeVoice(params as ParamsOf<'voice.transcribe'>)
+        return orchestrator.transcribeVoice(parseParams(method, params))
 
       case 'voice.cancel': {
-        const p = params as { requestId: string }
+        const p = parseParams(method, params)
         orchestrator.cancelVoice(p.requestId)
         return {}
       }
 
       case 'acp.agents': {
-        const agents = await detectAgents()
+        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
         return {
           agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
             id,
@@ -529,55 +584,45 @@ export function startServer(
             installed,
             verified,
             setup,
-            ...(install === undefined ? {} : { install }),
-            ...(problem === undefined ? {} : { problem }),
+            ...(!(install === undefined) ? { install } : {}),
+            ...(!(problem === undefined) ? { problem } : {}),
           })),
         }
       }
 
-      case 'projects.list':
-        orchestrator.refreshLifecycle()
-        return {
-          projects: store.projects().map((project) => ({
-            ...project,
-            sessions: store.threads(project.path).map((thread) => ({
-              id: thread.id,
-              title: thread.title,
-              pinned: thread.pinned,
-              provider: thread.provider,
-              ...(thread.agent === undefined ? {} : { agent: thread.agent }),
-              createdAt: thread.createdAt,
-              running: orchestrator.isTurnRunning(thread.id),
-              status: orchestrator.inboxStatus(thread.id),
-              unread: thread.unread,
-              lifecycle: thread.lifecycle,
-              ...(thread.worktreeBranch === undefined
-                ? {}
-                : { worktreeBranch: thread.worktreeBranch }),
-              ...(thread.closedAt === undefined ? {} : { closedAt: thread.closedAt }),
-            })),
-          })),
-        }
+      case 'projects.list': {
+        reportStartupMilestone('server-projects-requested')
+        lifecycleScheduler.refreshIfDue()
+        const projects = store.projects()
+        const threads = store.sidebarThreads()
+        const queuedThreadIds = store.queuedThreadIds()
+        reportStartupMilestone('server-projects-store-ready')
+        const projected = projectList(projects, threads, queuedThreadIds, projectListState)
+        reportStartupMilestone('server-projects-projected')
+        const serialized = serializeProjectList(projected)
+        reportStartupMilestone('server-projects-serialized')
+        return serialized
+      }
 
       case 'projects.add': {
-        const p = params as { path: string; name?: string }
+        const p = parseParams(method, params)
         return store.addProject(p.path, p.name)
       }
 
       case 'projects.pin': {
-        const p = params as { path: string; pinned: boolean }
+        const p = parseParams(method, params)
         store.setPinned(p.path, p.pinned)
         return {}
       }
 
       case 'projects.rename': {
-        const p = params as { path: string; name: string }
+        const p = parseParams(method, params)
         store.renameProject(p.path, p.name)
         return {}
       }
 
       case 'projects.remove': {
-        const p = params as { path: string }
+        const p = parseParams(method, params)
         // An isolated session's checkout can only be discarded through its
         // own thread id, and removing the project hides every one of them
         // from the sidebar — so the worktree and its branch would survive
@@ -599,7 +644,7 @@ export function startServer(
       }
 
       case 'terminal.open': {
-        const p = params as ParamsOf<'terminal.open'>
+        const p = parseParams(method, params)
         return {
           terminalId:
             'threadId' in p
@@ -609,119 +654,120 @@ export function startServer(
       }
 
       case 'terminal.input': {
-        const p = params as { terminalId: string; data: string }
+        const p = parseParams(method, params)
         orchestrator.writeTerminal(p.terminalId, p.data)
         return {}
       }
 
       case 'terminal.resize': {
-        const p = params as { terminalId: string; columns: number; rows: number }
+        const p = parseParams(method, params)
         orchestrator.resizeTerminal(p.terminalId, p.columns, p.rows)
         return {}
       }
 
       case 'terminal.close': {
-        const p = params as { terminalId: string }
+        const p = parseParams(method, params)
         orchestrator.closeTerminal(p.terminalId)
         return {}
       }
 
       case 'attachments.saveImage': {
-        const p = params as ParamsOf<'attachments.saveImage'>
+        const p = parseParams(method, params)
         return {
           path: await materializeAttachment({ name: imageFileName(p.mimeType), data: p.data }),
         }
       }
 
       case 'thread.rename': {
-        const p = params as { threadId: string; title: string }
+        const p = parseParams(method, params)
         store.renameThread(p.threadId, p.title)
         return {}
       }
 
       case 'thread.pin': {
-        const p = params as { threadId: string; pinned: boolean }
+        const p = parseParams(method, params)
         store.setThreadPinned(p.threadId, p.pinned)
         return {}
       }
 
       case 'thread.settle': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         return { lifecycle: orchestrator.settleThread(p.threadId) }
       }
 
       case 'thread.unsettle': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         return { lifecycle: orchestrator.unsettleThread(p.threadId) }
       }
 
       case 'thread.snooze': {
-        const p = params as { threadId: string; wakeAt: number }
+        const p = parseParams(method, params)
         return { lifecycle: orchestrator.snoozeThread(p.threadId, p.wakeAt) }
       }
 
       case 'thread.unsnooze': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         return { lifecycle: orchestrator.unsnoozeThread(p.threadId) }
       }
 
       case 'thread.setKeepActive': {
-        const p = params as { threadId: string; keepActive: boolean }
+        const p = parseParams(method, params)
         return { lifecycle: orchestrator.setThreadKeepActive(p.threadId, p.keepActive) }
       }
 
       case 'thread.delete': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         if (store.thread(p.threadId)?.worktreePath) {
           throw new Error('discard the isolated session checkout before deleting it')
         }
         await orchestrator.close(p.threadId)
         store.deleteThread(p.threadId)
+        orchestrator.forgetDeletedThread(p.threadId)
+        lifecycleScheduler.changed()
         return {}
       }
 
       case 'thread.history': {
-        const p = params as { threadId: string; afterSeq?: number }
-        const result = {
-          events: await orchestrator.history(p.threadId, p.afterSeq ?? 0),
-          running: orchestrator.isTurnRunning(p.threadId),
-        }
+        const p = parseParams(method, params)
+        const history = await orchestrator.historyForResponse(p.threadId, p.afterSeq ?? 0)
+        const running = orchestrator.isTurnRunning(p.threadId)
+        const result = historyResponse(history.events, running)
         orchestrator.markThreadRead(p.threadId)
-        return result
+        return serializeHistory(
+          result,
+          history.serializedEvents === undefined
+            ? undefined
+            : `{"events":${history.serializedEvents},"running":${String(running)}}`,
+        )
       }
 
       case 'thread.diff': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         return orchestrator.diff(p.threadId)
       }
 
+      case 'thread.undoTurnChanges': {
+        const p = parseParams(method, params)
+        await orchestrator.undoTurnChanges(p.threadId, p.turnId, p.expectedDiff)
+        return {}
+      }
+
       case 'thread.reviewHunk': {
-        const p = params as {
-          threadId: string
-          version: string
-          path: string
-          hunkId: string
-          decision: DiffDecision
-        }
+        const p = parseParams(method, params)
         return {
           diff: await orchestrator.reviewHunk(p.threadId, p.version, p.path, p.hunkId, p.decision),
         }
       }
 
       case 'thread.reviewFile': {
-        const p = params as {
-          threadId: string
-          version: string
-          path: string
-          decision: DiffDecision
-        }
+        const p = parseParams(method, params)
         return {
           diff: await orchestrator.reviewFile(p.threadId, p.version, p.path, p.decision),
         }
       }
 
       case 'usage.summary': {
-        const p = params as { threadId: string } | { provider: ProviderId }
+        const p = parseParams(method, params)
         const thread = 'threadId' in p ? store.thread(p.threadId) : undefined
         if ('threadId' in p && !thread) throw new Error('thread not found')
         const provider = thread?.provider ?? ('provider' in p ? p.provider : undefined)
@@ -745,7 +791,7 @@ export function startServer(
       }
 
       case 'usage.history': {
-        const p = params as ParamsOf<'usage.history'>
+        const p = parseParams(method, params)
         return usageHistory.history(p.range, p.refresh ?? false)
       }
 
@@ -753,8 +799,12 @@ export function startServer(
         await usageHistory.resetAndRefresh()
         return { started: true as const }
 
+      case 'usage.consumeReset': {
+        const p = parseParams(method, params)
+        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey)
+      }
       case 'sideChat.start': {
-        const p = params as ParamsOf<'sideChat.start'>
+        const p = parseParams(method, params)
         const thread = await orchestrator.startSideThread(p.parentThreadId, {
           model: p.model,
           serviceTier: p.serviceTier,
@@ -765,23 +815,13 @@ export function startServer(
       }
 
       case 'sideChat.close': {
-        const p = params as ParamsOf<'sideChat.close'>
+        const p = parseParams(method, params)
         orchestrator.closeSideThread(p.threadId)
         return {}
       }
 
       case 'thread.start': {
-        const p = params as {
-          provider: ProviderId
-          agent?: string
-          connectionId?: string
-          workspacePath: string
-          model?: string
-          serviceTier?: string
-          effort?: string
-          approval?: 'ask' | 'auto' | 'auto-review' | 'full'
-          isolate?: boolean
-        }
+        const p = parseParams(method, params)
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
           model: p.model,
           serviceTier: p.serviceTier,
@@ -795,7 +835,7 @@ export function startServer(
       }
 
       case 'thread.checkpoints': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         return {
           checkpoints: orchestrator.checkpoints(p.threadId).map((entry) => ({
             id: entry.id,
@@ -807,23 +847,23 @@ export function startServer(
       }
 
       case 'thread.changedSince': {
-        const p = params as { threadId: string; checkpointId: number }
+        const p = parseParams(method, params)
         return { files: await orchestrator.changedSinceCheckpoint(p.threadId, p.checkpointId) }
       }
 
       case 'thread.restore': {
-        const p = params as { threadId: string; checkpointId: number }
+        const p = parseParams(method, params)
         return orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
       }
 
       case 'thread.undoRestore': {
-        const p = params as { threadId: string; undo: string }
+        const p = parseParams(method, params)
         await orchestrator.undoRestore(p.threadId, p.undo)
         return {}
       }
 
       case 'thread.unsavedWork': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         const stored = store.thread(p.threadId)
         return {
           isolated: stored?.worktreePath !== undefined,
@@ -832,13 +872,13 @@ export function startServer(
       }
 
       case 'thread.discardWorktree': {
-        const p = params as { threadId: string; force?: boolean }
+        const p = parseParams(method, params)
         await orchestrator.discardWorktree(p.threadId, p.force ?? false)
         return {}
       }
 
       case 'thread.sendTurn': {
-        const p = params as ParamsOf<'thread.sendTurn'>
+        const p = parseParams(method, params)
         return {
           ...(await orchestrator.submitTurn(
             p.threadId,
@@ -855,66 +895,54 @@ export function startServer(
       }
 
       case 'thread.queue': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         return orchestrator.queue(p.threadId)
       }
 
       case 'thread.deleteQueuedTurn': {
-        const p = params as { threadId: string; queuedTurnId: string }
+        const p = parseParams(method, params)
         orchestrator.deleteQueuedTurn(p.threadId, p.queuedTurnId)
         return {}
       }
 
       case 'thread.moveQueuedTurn': {
-        const p = params as {
-          threadId: string
-          queuedTurnId: string
-          direction: 'up' | 'down'
-        }
+        const p = parseParams(method, params)
         orchestrator.moveQueuedTurn(p.threadId, p.queuedTurnId, p.direction)
         return {}
       }
 
       case 'thread.steerQueuedTurn': {
-        const p = params as { threadId: string; queuedTurnId: string }
+        const p = parseParams(method, params)
         await orchestrator.steerQueuedTurn(p.threadId, p.queuedTurnId)
         return {}
       }
 
       case 'thread.respondToApproval': {
-        const p = params as {
-          threadId: string
-          approvalId: string
-          decision: 'approve' | 'approve-session' | 'deny' | 'abort'
-        }
+        const p = parseParams(method, params)
         orchestrator.respondToApproval(p.threadId, p.approvalId, p.decision)
         return {}
       }
 
       case 'thread.respondToUserInput': {
-        const p = params as {
-          threadId: string
-          requestId: string
-          answers: Record<string, string[]>
-        }
+        const p = parseParams(method, params)
         orchestrator.respondToUserInput(p.threadId, p.requestId, p.answers)
         return {}
       }
 
       case 'thread.interrupt': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         await orchestrator.interrupt(p.threadId)
         return {}
       }
 
       case 'thread.setApproval': {
-        const p = params as { threadId: string; approval: 'ask' | 'auto' | 'auto-review' | 'full' }
-        orchestrator.setThreadApproval(p.threadId, p.approval)
+        const p = parseParams(method, params)
+        await orchestrator.setThreadApproval(p.threadId, p.approval)
         return {}
       }
 
       case 'thread.close': {
-        const p = params as { threadId: string }
+        const p = parseParams(method, params)
         await orchestrator.close(p.threadId)
         return {}
       }
@@ -923,9 +951,13 @@ export function startServer(
         return store.sidebarSettings()
 
       case 'sidebar.updateSettings': {
-        const settings = store.updateSidebarSettings(params as Partial<SidebarSettings>)
+        const update = parseParams(method, params)
+        const settings = store.updateSidebarSettings({
+          ...(update.mode ? { mode: update.mode } : {}),
+          ...(update.autoSettleDays === undefined ? {} : { autoSettleDays: update.autoSettleDays }),
+        })
         push.broadcast('sidebar.settings', settings)
-        orchestrator.refreshLifecycle()
+        lifecycleScheduler.refreshNow()
         return settings
       }
     }
@@ -939,7 +971,12 @@ export function startServer(
     detail?: string,
   ): void {
     if (socket.readyState !== socket.OPEN) return
-    socket.send(JSON.stringify({ id, error: { code, message, ...(detail ? { detail } : {}) } }))
+    socket.send(
+      JSON.stringify({
+        id,
+        error: { code, message, ...(detail ? { detail } : {}) },
+      }),
+    )
   }
 
   console.log(`[server] listening on ws://${host}:${port}`)
@@ -947,7 +984,7 @@ export function startServer(
   return {
     port,
     close: async () => {
-      clearInterval(lifecycleTimer)
+      lifecycleScheduler.dispose()
       usageHistory.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
@@ -1020,12 +1057,49 @@ function workspaceForRequest(
   return resolveWorkspacePath(thread.worktreePath ?? project.path)
 }
 
+function isMethodName(method: string): method is MethodName {
+  return Object.hasOwn(methods, method)
+}
+
+type MethodParams<M extends MethodName> = ReturnType<(typeof methods)[M]['params']['parse']>
+
+class InvalidParamsError extends Error {
+  constructor(
+    method: MethodName,
+    readonly detail?: string,
+  ) {
+    super(`invalid params for ${method}`)
+  }
+}
+
+function parseParams<M extends MethodName>(method: M, params: unknown): MethodParams<M> {
+  if (method === 'terminal.input' || method === 'terminal.resize') {
+    const frequent = parseFrequentMethodParams(method, params)
+    if (frequent) return frequent as MethodParams<M>
+  }
+  const decoded = methods[method].params.safeParse(params)
+  if (!decoded.success) {
+    const first = decoded.error.issues[0]
+    throw new InvalidParamsError(
+      method,
+      first ? `${first.path.join('.') || '(root)'}: ${first.message}` : undefined,
+    )
+  }
+  // The same generic key selects the runtime schema and its indexed output type.
+  return decoded.data as MethodParams<M>
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined
+  return typeof error.code === 'string' ? error.code : undefined
+}
+
 export function clientErrorMessage(error: unknown): string {
-  if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+  if (errorCode(error) === 'ENOENT') {
     return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
   }
   return messageOf(error)

@@ -81,7 +81,7 @@ function runAudit(
 }
 
 describe('preview DOM audit', () => {
-  it('reports only visible undersized targets inside the captured viewport', () => {
+  it('reports visible undersized targets across the whole document', () => {
     expect(
       runAudit(0, [
         { id: 'small', label: 'Open menu', width: 32, height: 40 },
@@ -96,6 +96,7 @@ describe('preview DOM audit', () => {
       h1Count: 0,
       interactiveTargetViolations: [
         { selector: '#small', label: 'Open menu', width: 32, height: 40 },
+        { selector: '#below-fold', label: '', width: 20, height: 20 },
       ],
     })
   })

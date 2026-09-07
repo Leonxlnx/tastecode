@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson, runCli, spawnCli } from '@harness/proc'
-import { CursorEventMapper, type CursorEvent } from './events.js'
+import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
 import {
   collapseCursorModels,
   getCursorIndex,
@@ -177,7 +177,7 @@ export class CursorAdapter extends EventEmitter<Events> {
     })
     readNdjson(
       child.stdout,
-      (value) => this.#onEvent(value as CursorEvent),
+      (value) => this.#onEvent(CursorEventSchema.parse(value)),
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
     )
     child.stderr.setEncoding('utf8')
@@ -250,6 +250,7 @@ export class CursorAdapter extends EventEmitter<Events> {
   }
 }
 
+// oxlint-disable-next-line no-control-regex, no-useless-escape -- ANSI parsing requires ESC.
 const ANSI = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g
 
 /**

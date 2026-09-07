@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Minus, Plus, RotateCcw } from 'lucide-react'
+import { IconMinus as Minus, IconPlus as Plus, IconRotate as RotateCcw } from '@tabler/icons-react'
 import { onAppZoomChange, setAppZoom } from '../bridge.js'
 
 const HIDE_DELAY_MS = 3_000

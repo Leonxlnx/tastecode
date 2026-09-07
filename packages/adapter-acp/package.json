@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./agents": {
+      "types": "./dist/agents.d.ts",
+      "default": "./dist/agents.js"
     }
   },
   "main": "./dist/index.js",
@@ -18,7 +22,8 @@
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
-    "@harness/proc": "workspace:*"
+    "@harness/proc": "workspace:*",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

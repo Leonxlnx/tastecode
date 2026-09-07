@@ -20,6 +20,8 @@ import {
   SkillSchema,
   ThreadLifecycleSchema,
   UsageHistoryResultSchema,
+  type ProviderLimit,
+  type ProviderLimitSource,
 } from './protocol.js'
 
 describe('domain events', () => {
@@ -80,6 +82,23 @@ describe('domain events', () => {
     expect(ItemSchema.parse({ ...legacy, phase: 'commentary' }).phase).toBe('commentary')
     expect(ItemSchema.parse({ ...legacy, phase: 'final_answer' }).phase).toBe('final_answer')
     expect(() => ItemSchema.parse({ ...legacy, phase: 'analysis' })).toThrow()
+  })
+
+  it('preserves attachments on user messages without changing legacy messages', () => {
+    const message = {
+      id: 'i1',
+      turnId: 't1',
+      type: 'message',
+      status: 'completed',
+      role: 'user',
+      text: 'Review this',
+      createdAt: 1,
+    }
+
+    expect(ItemSchema.parse(message)).toEqual(message)
+    expect(
+      ItemSchema.parse({ ...message, attachments: ['/work/reference.png'] }).attachments,
+    ).toEqual(['/work/reference.png'])
   })
 
   it('carries one item ID through a complete lifecycle', () => {
@@ -554,6 +573,59 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('accepts a consume-reset limit action and a UUID redemption attempt', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const limit = {
+      label: 'Rate limit resets',
+      usedPercent: 0,
+      valueLabel: '1 available',
+      action: 'consume-reset' as const,
+    }
+    expect(
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [limit],
+        limitSource: { provider: 'codex', status: 'ready', limits: [limit] },
+      }).limits[0]?.action,
+    ).toBe('consume-reset')
+    expect(() =>
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [{ label: 'Rate limit resets', usedPercent: 0, valueLabel: '1', action: 'refund' }],
+        limitSource: {
+          provider: 'codex',
+          status: 'ready',
+          limits: [
+            { label: 'Rate limit resets', usedPercent: 0, valueLabel: '1', action: 'refund' },
+          ],
+        },
+      }),
+    ).toThrow()
+
+    const key = '8ae96ff3-3425-4f4c-8772-b6fd61502868'
+    expect(
+      methods['usage.consumeReset'].params.parse({ provider: 'codex', idempotencyKey: key }),
+    ).toEqual({
+      provider: 'codex',
+      idempotencyKey: key,
+    })
+    expect(() =>
+      methods['usage.consumeReset'].params.parse({ provider: 'codex', idempotencyKey: 'retry-1' }),
+    ).toThrow()
+    expect(methods['usage.consumeReset'].result.parse({ outcome: 'reset' })).toEqual({
+      outcome: 'reset',
+    })
+    expect(() => methods['usage.consumeReset'].result.parse({ outcome: 'ok' })).toThrow()
+  })
+
   it('keeps one authoritative provider limit source with a legacy fallback', () => {
     const usage = {
       inputTokens: 0,
@@ -562,7 +634,7 @@ describe('protocol envelopes', () => {
       reasoningTokens: 0,
       totalTokens: 0,
     }
-    const parse = (limits: unknown[], limitSource?: unknown) =>
+    const parse = (limits: ProviderLimit[], limitSource?: ProviderLimitSource) =>
       methods['usage.summary'].result.parse({
         session: usage,
         today: usage,
@@ -1197,6 +1269,20 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('names a fixed GitHub CLI setup action without carrying command text', () => {
+    const valid = { action: 'login', columns: 320, rows: 30 }
+    expect(methods['pullRequests.setup'].params.parse(valid)).toEqual(valid)
+    expect(methods['pullRequests.setup'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
+      valid,
+    )
+    expect(() =>
+      methods['pullRequests.setup'].params.parse({ action: 'remove', columns: 100, rows: 30 }),
+    ).toThrow()
+    expect(methods['pullRequests.setup'].result.parse({ terminalId: 'term-github' })).toEqual({
+      terminalId: 'term-github',
+    })
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({
@@ -1245,5 +1331,64 @@ describe('protocol envelopes', () => {
       threadId: 'side-1',
     })
     expect(() => methods['sideChat.start'].params.parse({ parentThreadId: '' })).toThrow()
+  })
+
+  it('keeps background model settings source-aware and non-secret', () => {
+    const target = {
+      mode: 'manual' as const,
+      target: {
+        provider: 'api' as const,
+        connectionId: 'openrouter',
+        model: 'anthropic/claude-haiku-4.5',
+        effort: 'low',
+      },
+    }
+    expect(methods['backgroundModel.updateSettings'].params.parse(target)).toEqual(target)
+    expect(() =>
+      methods['backgroundModel.updateSettings'].params.parse({
+        mode: 'manual',
+        target: { provider: 'api', model: 'missing-connection' },
+      }),
+    ).toThrow()
+    expect(
+      methods['backgroundModel.settings'].result.parse({
+        preference: { mode: 'automatic' },
+        sources: [
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            provider: 'codex',
+            models: [
+              {
+                id: 'gpt-5.6-luna',
+                displayName: 'GPT-5.6 Luna',
+                isDefault: false,
+                reasoningEfforts: ['low', 'medium'],
+                serviceTiers: [],
+              },
+            ],
+          },
+        ],
+        resolved: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'medium',
+          sourceName: 'Codex',
+          automatic: true,
+        },
+      }).resolved,
+    ).toMatchObject({ model: 'gpt-5.6-luna', effort: 'medium' })
+    expect(() =>
+      methods['backgroundModel.settings'].result.parse({
+        preference: { mode: 'automatic' },
+        sources: [],
+        resolved: {
+          provider: 'api',
+          model: 'missing-connection',
+          sourceName: 'API',
+          automatic: true,
+        },
+      }),
+    ).toThrow()
   })
 })

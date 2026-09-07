@@ -934,16 +934,18 @@ function subtractTokenCounts(current: TokenCounts, prior: TokenCounts | undefine
   }
 }
 
+type PriceEntry = {
+  pricing: UsageHistoryModel['pricing']
+  estimatedCostUsd: number
+  cacheSavingsUsd: number
+}
+
 function priceEntry(
   model: string,
   date: string,
   tokens: TokenCounts,
   longContext: boolean,
-): {
-  pricing: UsageHistoryModel['pricing']
-  estimatedCostUsd: number
-  cacheSavingsUsd: number
-} {
+): PriceEntry {
   const rate = modelRate(model, date)
   if (!rate) return { pricing: 'unpriced', estimatedCostUsd: 0, cacheSavingsUsd: 0 }
   const inputMultiplier = longContext ? (rate.longContextMultipliers?.input ?? 1) : 1

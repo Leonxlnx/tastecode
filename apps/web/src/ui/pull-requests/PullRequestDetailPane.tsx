@@ -18,40 +18,43 @@ import type {
   PullRequestReviewThread,
 } from '@harness/contracts'
 import {
-  ArrowUp,
-  ArrowUpRight,
-  Bot,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleAlert,
-  CircleDot,
-  Clock3,
-  Ellipsis,
-  GitBranch,
-  GitMerge,
-  GitPullRequest,
-  GitPullRequestClosed,
-  GitPullRequestDraft,
-  LoaderCircle,
-  MessageSquare,
-  Pencil,
-  RefreshCw,
-  RotateCcw,
-  Search,
-  Tag,
-  Trash2,
-  UserRound,
-  Users,
-  X,
-  XCircle,
-} from 'lucide-react'
+  IconArrowUp as ArrowUp,
+  IconArrowUpRight as ArrowUpRight,
+  IconRobot as Bot,
+  IconCheck as Check,
+  IconCircleCheck as CheckCircle2,
+  IconChevronDown as ChevronDown,
+  IconChevronRight as ChevronRight,
+  IconAlertCircle as CircleAlert,
+  IconCircleDot as CircleDot,
+  IconClock as Clock3,
+  IconDots as Ellipsis,
+  IconGitBranch as GitBranch,
+  IconGitMerge as GitMerge,
+  IconGitPullRequest as GitPullRequest,
+  IconGitPullRequestClosed as GitPullRequestClosed,
+  IconGitPullRequestDraft as GitPullRequestDraft,
+  IconLoader2 as LoaderCircle,
+  IconMessage as MessageSquare,
+  IconPencil as Pencil,
+  IconRefresh as RefreshCw,
+  IconRotate as RotateCcw,
+  IconSearch as Search,
+  IconTag as Tag,
+  IconTrash as Trash2,
+  IconUser as UserRound,
+  IconUsers as Users,
+  IconX as X,
+  IconCircleX as XCircle,
+} from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
 import { AppSelect } from '../AppSelect.js'
+import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestFiles } from './PullRequestFiles.js'
+import { comparePullRequestText } from './pull-request-text.js'
+import { errorMessage as messageOf } from '../../boundary.js'
 
 type DetailTab = 'summary' | 'files'
 
@@ -66,6 +69,12 @@ type Confirmation = {
 type DetailUpdater = (detail: PullRequestDetail) => PullRequestDetail
 type MetadataUpdateContext = Pick<PullRequestMetadataOptions, 'reviewers' | 'assignees' | 'labels'>
 type RunPullRequestAction = (action: PullRequestAction, update?: DetailUpdater) => Promise<boolean>
+type LabelColorStyle = CSSProperties & { '--label-color': string }
+type StoredMergeMethod = NonNullable<PullRequestDetail['autoMerge']>['mergeMethod']
+
+function labelColorStyle(color: string): LabelColorStyle {
+  return { '--label-color': `#${color}` }
+}
 
 export function PullRequestDetailPane(props: {
   item: PullRequestListItem
@@ -91,7 +100,8 @@ export function PullRequestDetailPane(props: {
     async (refresh = false, silent = false): Promise<PullRequestDetail | undefined> => {
       const id = ++request.current
       if (!silent) {
-        refresh ? setRefreshing(true) : setLoading(true)
+        if (refresh) setRefreshing(true)
+        else setLoading(true)
         setError(undefined)
       }
       try {
@@ -238,8 +248,8 @@ export function PullRequestDetailPane(props: {
             disabled={!detail.localProjectPath}
             title={
               detail.localProjectPath
-                ? 'Start a Harness chat in the local checkout'
-                : 'Add this repository as a Harness project to chat about it'
+                ? 'Start a TasteCode chat in the local checkout'
+                : 'Add this repository as a TasteCode project to chat about it'
             }
             onClick={props.onOpenChat}
           >
@@ -398,7 +408,7 @@ function PullRequestSummary(props: {
       const pending = props.transport
         .request('pullRequests.metadataOptions', {
           repository: detail.repository,
-          ...(refresh ? { refresh: true } : {}),
+          ...(refresh ? { includedValue: true } : {}),
         })
         .then((next) => {
           metadataOptionsRef.current = next
@@ -572,7 +582,7 @@ function PullRequestSummary(props: {
                 })}
                 {...pickerState('reviewers')}
                 busy={props.pendingKeys.has('metadata:reviewers')}
-                preserveTriggerShape
+                preserveTriggerLayout
                 onSelect={(login) =>
                   runMetadataAction(
                     metadataAction(
@@ -603,7 +613,7 @@ function PullRequestSummary(props: {
                 }))}
                 {...pickerState('assignees')}
                 busy={props.pendingKeys.has('metadata:assignees')}
-                preserveTriggerShape
+                preserveTriggerLayout
                 onSelect={(login) =>
                   runMetadataAction(
                     metadataAction(
@@ -631,15 +641,12 @@ function PullRequestSummary(props: {
                   detail: label.description,
                   selected: currentLabels.has(label.name.toLowerCase()),
                   icon: (
-                    <span
-                      className="pr-picker-label-color"
-                      style={{ '--label-color': `#${label.color}` } as CSSProperties}
-                    />
+                    <span className="pr-picker-label-color" style={labelColorStyle(label.color)} />
                   ),
                 }))}
                 {...pickerState('labels')}
                 busy={props.pendingKeys.has('metadata:labels')}
-                preserveTriggerShape={detail.labels.length === 0}
+                preserveTriggerLayout={detail.labels.length === 0}
                 onSelect={(name) =>
                   runMetadataAction(
                     metadataAction(
@@ -656,7 +663,7 @@ function PullRequestSummary(props: {
                         <span
                           className="pr-label"
                           key={label.name}
-                          style={{ '--label-color': `#${label.color}` } as CSSProperties}
+                          style={labelColorStyle(label.color)}
                         >
                           {label.name}
                         </span>
@@ -671,11 +678,7 @@ function PullRequestSummary(props: {
             ) : detail.labels.length > 0 ? (
               <span className="pr-label-stack">
                 {detail.labels.map((label) => (
-                  <span
-                    className="pr-label"
-                    key={label.name}
-                    style={{ '--label-color': `#${label.color}` } as CSSProperties}
-                  >
+                  <span className="pr-label" key={label.name} style={labelColorStyle(label.color)}>
                     {label.name}
                   </span>
                 ))}
@@ -708,7 +711,7 @@ function PullRequestSummary(props: {
                 {...pickerState('milestones')}
                 busy={props.pendingKeys.has('metadata:milestone')}
                 closeOnSelect
-                preserveTriggerShape={!detail.milestone}
+                preserveTriggerLayout={!detail.milestone}
                 onSelect={(title) =>
                   title === (detail.milestone ?? '')
                     ? Promise.resolve(true)
@@ -947,7 +950,7 @@ type PullRequestMetadataPickerProps = {
   truncated: boolean
   busy: boolean
   closeOnSelect?: boolean | undefined
-  preserveTriggerShape?: boolean | undefined
+  preserveTriggerLayout?: boolean | undefined
   onLoad: (refresh?: boolean) => Promise<void>
   onSelect: (key: string) => Promise<boolean>
 }
@@ -959,7 +962,7 @@ function PullRequestMetadataPicker(props: PullRequestMetadataPickerProps) {
       drop="down"
       disabled={props.busy}
       label={props.label}
-      triggerClassName={`pr-fact-menu-trigger${props.preserveTriggerShape ? ' is-shape-preserving' : ''}${props.busy ? ' is-pending' : ''}`}
+      triggerClassName={`pr-fact-menu-trigger${props.preserveTriggerLayout ? ' is-shape-preserving' : ''}${props.busy ? ' is-pending' : ''}`}
       panelRole="dialog"
       panelLabel={props.label}
       panelClassName="pr-metadata-menu"
@@ -967,13 +970,11 @@ function PullRequestMetadataPicker(props: PullRequestMetadataPickerProps) {
         <span className="pr-fact-menu-value">
           <span>{props.trigger}</span>
           <span className="pr-fact-menu-indicator" aria-hidden>
-            {props.busy ? (
-              <LoaderCircle size={13} className="is-spinning" />
-            ) : props.indicator === 'ellipsis' ? (
-              <Ellipsis size={15} />
-            ) : (
+            <IconMorph active={props.busy ? 2 : props.indicator === 'ellipsis' ? 1 : 0}>
               <ChevronDown size={13} />
-            )}
+              <Ellipsis size={15} />
+              <LoaderCircle size={13} className="is-spinning" />
+            </IconMorph>
           </span>
         </span>
       )}
@@ -999,7 +1000,7 @@ function PullRequestMetadataPickerPanel(
     )
     .sort((left, right) => {
       if (left.selected !== right.selected) return left.selected ? -1 : 1
-      return left.label.localeCompare(right.label, undefined, { sensitivity: 'base' })
+      return comparePullRequestText(left.label, right.label)
     })
   const waiting = !props.loaded || props.loading
 
@@ -1116,6 +1117,7 @@ function PullRequestStatusPicker(props: {
         <>
           <MenuItem
             title="Draft"
+            icon={<GitPullRequestDraft size={14} aria-hidden />}
             active={props.detail.state === 'OPEN' && props.detail.isDraft}
             onClick={() => {
               close()
@@ -1124,6 +1126,7 @@ function PullRequestStatusPicker(props: {
           />
           <MenuItem
             title="Ready for review"
+            icon={<CheckCircle2 size={14} aria-hidden />}
             active={props.detail.state === 'OPEN' && !props.detail.isDraft}
             onClick={() => {
               close()
@@ -1132,6 +1135,7 @@ function PullRequestStatusPicker(props: {
           />
           <MenuItem
             title="Closed"
+            icon={<GitPullRequestClosed size={14} aria-hidden />}
             active={props.detail.state === 'CLOSED'}
             onClick={() => {
               close()
@@ -1242,12 +1246,12 @@ function applySuccessfulAction(
           thread.id === action.threadId ? { ...thread, resolved: action.resolved } : thread,
         ),
       }
-    case 'edit':
-      return {
-        ...detail,
-        ...(action.title === undefined ? {} : { title: action.title }),
-        ...(action.body === undefined ? {} : { body: action.body }),
-      }
+    case 'edit': {
+      const edited = { ...detail }
+      if (action.title !== undefined) edited.title = action.title
+      if (action.body !== undefined) edited.body = action.body
+      return edited
+    }
     case 'update_metadata':
       return applyMetadataUpdate(detail, action, metadata)
     case 'set_draft':
@@ -1263,7 +1267,7 @@ function applySuccessfulAction(
     case 'enable_auto_merge':
       return {
         ...detail,
-        autoMerge: { mergeMethod: action.method.toUpperCase() as 'MERGE' | 'REBASE' | 'SQUASH' },
+        autoMerge: { mergeMethod: storedMergeMethod(action.method) },
       }
     case 'disable_auto_merge': {
       const { autoMerge: _autoMerge, ...withoutAutoMerge } = detail
@@ -1340,14 +1344,17 @@ function applyMetadataUpdate(
 
   const next: PullRequestDetail = {
     ...detail,
-    ...(action.baseRefName === undefined ? {} : { baseRefName: action.baseRefName }),
     reviewers,
     requestedReviewers,
     assignees,
     labels,
-    ...(typeof action.milestone === 'string' ? { milestone: action.milestone } : {}),
   }
-  if (action.milestone !== null) return next
+  if (action.baseRefName !== undefined) next.baseRefName = action.baseRefName
+  if (action.milestone === undefined) return next
+  if (action.milestone !== null) {
+    next.milestone = action.milestone
+    return next
+  }
   const { milestone: _milestone, ...withoutMilestone } = next
   return withoutMilestone
 }
@@ -1607,11 +1614,10 @@ function ReviewThreadCard(props: {
             })
           }
         >
-          {props.thread.resolved ? (
-            <RotateCcw size={12} aria-hidden />
-          ) : (
+          <IconMorph active={props.thread.resolved ? 1 : 0}>
             <Check size={12} aria-hidden />
-          )}
+            <RotateCcw size={12} aria-hidden />
+          </IconMorph>
           {props.thread.resolved ? 'Reopen' : 'Resolve'}
         </button>
       </header>
@@ -1978,15 +1984,14 @@ function PullRequestComposer(props: {
           disabled={props.busy || (needsBody && !body.trim())}
           onClick={() => void submit()}
         >
-          {props.busy ? (
-            <LoaderCircle size={14} className="is-spinning" aria-hidden />
-          ) : mode === 'approve' ? (
-            <Check size={14} aria-hidden />
-          ) : mode === 'request_changes' ? (
-            <X size={14} aria-hidden />
-          ) : (
+          <IconMorph
+            active={props.busy ? 3 : mode === 'approve' ? 1 : mode === 'request_changes' ? 2 : 0}
+          >
             <ArrowUp size={14} aria-hidden />
-          )}
+            <Check size={14} aria-hidden />
+            <X size={14} aria-hidden />
+            <LoaderCircle size={14} className="is-spinning" aria-hidden />
+          </IconMorph>
         </button>
       </div>
     </div>
@@ -2008,11 +2013,10 @@ function AutoMergeMenu(props: {
       trigger={() => (
         <span className={`pr-toolbar-button${props.detail.autoMerge ? ' is-enabled' : ''}`}>
           Auto-merge{' '}
-          {props.busy ? (
-            <LoaderCircle size={12} className="is-spinning" aria-hidden />
-          ) : (
+          <IconMorph active={props.busy ? 1 : 0}>
             <ChevronDown size={12} aria-hidden />
-          )}
+            <LoaderCircle size={12} className="is-spinning" aria-hidden />
+          </IconMorph>
         </span>
       )}
     >
@@ -2021,7 +2025,7 @@ function AutoMergeMenu(props: {
           {props.detail.autoMerge ? (
             <MenuItem
               title="Disable auto-merge"
-              detail={`${mergeMethodLabel(props.detail.autoMerge.mergeMethod.toLowerCase() as MergeMethod)} is currently queued`}
+              detail={`${mergeMethodLabel(editableMergeMethod(props.detail.autoMerge.mergeMethod))} is currently queued`}
               icon={<XCircle size={13} aria-hidden />}
               onClick={() => {
                 close()
@@ -2224,7 +2228,8 @@ function Dialog(props: {
   const panel = useRef<HTMLElement>(null)
   onClose.current = props.onClose
   useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement | null
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
     panel.current?.focus()
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -2383,11 +2388,13 @@ function PullRequestDetailSkeleton() {
   )
 }
 
-function pullRequestStatus(detail: PullRequestDetail): {
+type PullRequestPresentation = {
   label: string
   tone: string
   icon: ReactNode
-} {
+}
+
+function pullRequestStatus(detail: PullRequestDetail): PullRequestPresentation {
   if (detail.state === 'MERGED')
     return { label: 'Merged', tone: 'merged', icon: <GitMerge size={15} aria-hidden /> }
   if (detail.state === 'CLOSED')
@@ -2413,7 +2420,7 @@ function pullRequestStatus(detail: PullRequestDetail): {
   return { label: 'Ready for review', tone: 'open', icon: <GitPullRequest size={15} aria-hidden /> }
 }
 
-function checkSummary(detail: PullRequestDetail): { label: string; tone: string; icon: ReactNode } {
+function checkSummary(detail: PullRequestDetail): PullRequestPresentation {
   if (detail.checks.length === 0)
     return { label: 'No checks reported', tone: 'muted', icon: <CircleDot size={15} aria-hidden /> }
   const failed = detail.checks.filter(
@@ -2493,6 +2500,14 @@ function longRelativeTime(value: string): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+function storedMergeMethod(method: MergeMethod): StoredMergeMethod {
+  if (method === 'merge') return 'MERGE'
+  if (method === 'rebase') return 'REBASE'
+  return 'SQUASH'
+}
+
+function editableMergeMethod(method: StoredMergeMethod): MergeMethod {
+  if (method === 'MERGE') return 'merge'
+  if (method === 'REBASE') return 'rebase'
+  return 'squash'
 }

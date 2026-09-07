@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { member, optionalString, record, string, strings } from './parse.js'
 
 const ASSET_KINDS = ['image', 'illustration', 'video', 'icon', 'font', 'component'] as const
 const ASSET_STATUSES = ['existing', 'needed', 'ready'] as const
@@ -53,6 +54,9 @@ export function parseAssetManifest(value: unknown): AssetManifest {
     if (status === 'existing' && !source) {
       throw new Error(`assets[${index}] existing assets require a source`)
     }
+    if (status === 'ready' && source?.kind === 'external' && !source.license) {
+      throw new Error(`assets[${index}] ready external assets require a license`)
+    }
 
     return {
       id: string(asset.id, `assets[${index}].id`),
@@ -97,36 +101,4 @@ function optionalSource(value: unknown, field: string): DesignAsset['source'] {
     reference: string(source.reference, `${field}.reference`),
     ...(license ? { license } : {}),
   }
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function optionalString(value: unknown, field: string): string | undefined {
-  return value === undefined ? undefined : string(value, field)
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
 }

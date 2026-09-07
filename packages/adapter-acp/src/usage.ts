@@ -1,21 +1,28 @@
 import type { Usage } from '@harness/contracts'
+import { z } from 'zod'
 
-export type AcpTurnTokenUsage = {
-  totalTokens?: number | null
-  inputTokens?: number | null
-  outputTokens?: number | null
-  thoughtTokens?: number | null
-  cachedReadTokens?: number | null
-  cachedWriteTokens?: number | null
-}
+export const AcpTurnTokenUsageSchema = z.object({
+  totalTokens: z.number().nullable().optional(),
+  inputTokens: z.number().nullable().optional(),
+  outputTokens: z.number().nullable().optional(),
+  thoughtTokens: z.number().nullable().optional(),
+  cachedReadTokens: z.number().nullable().optional(),
+  cachedWriteTokens: z.number().nullable().optional(),
+})
 
-export type AcpSessionUsageUpdate = {
-  used?: number
-  size?: number
-  cost?: { amount?: number; currency?: string } | null
-}
+export const AcpSessionUsageUpdateSchema = z.object({
+  used: z.number().optional(),
+  size: z.number().optional(),
+  cost: z
+    .object({ amount: z.number().optional(), currency: z.string().optional() })
+    .nullable()
+    .optional(),
+})
 
-/** Maps the optional ACP end-turn usage extension onto Harness accounting. */
+export type AcpTurnTokenUsage = z.infer<typeof AcpTurnTokenUsageSchema>
+export type AcpSessionUsageUpdate = z.infer<typeof AcpSessionUsageUpdateSchema>
+
+/** Maps the optional ACP end-turn usage extension onto TasteCode accounting. */
 export function acpTurnUsage(
   value: AcpTurnTokenUsage | null | undefined,
   model?: string,
@@ -56,14 +63,16 @@ export function acpSessionUsage(value: AcpSessionUsageUpdate, model?: string): U
     totalTokens: used,
     cumulative: true,
     ...(size > 0 ? { contextWindow: size } : {}),
-    ...(amount === undefined ? {} : { costUsd: amount }),
+    ...(!(amount === undefined) ? { costUsd: amount } : {}),
   }
 }
 
-function token(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+function token(value: number | null | undefined): number {
+  return value !== null && value !== undefined && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 0
 }
 
-function positive(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
+function positive(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined
 }

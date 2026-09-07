@@ -1,19 +1,19 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { Account, ProviderId, ResultOf } from '@harness/contracts'
+import { methods, type Account, type ProviderId, type ResultOf } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
+import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
+import { TestTransport, type TestRequestResolver } from '../test-transport.js'
 import { ProviderSettings, Settings } from './Settings.js'
+import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
 
-// The real component boots xterm, which needs a canvas happy-dom does not
-// have. What these tests care about is *when* a terminal is offered, not how
-// it paints.
 vi.mock('./InstallTerminal.js', () => ({
   InstallTerminal: (props: { installKey: string }) => (
     <div data-testid="install-terminal" data-install-key={props.installKey} />
@@ -22,19 +22,17 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'data' | 'debug' | 'about'
+    initialSection?:
+      'workflows' | 'appearance' | 'models' | 'keybinds' | 'usage' | 'data' | 'debug' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
     showMacOSHaptics?: boolean
+    onKeybindingChange?: (action: KeybindingId, shortcut: Shortcut | null) => void
+    onKeybindingsReset?: () => void
   } = {},
 ) {
-  const transport =
-    options.transport ??
-    ({
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport)
+  const transport = options.transport ?? new TestTransport()
 
   return render(
     <Settings
@@ -67,6 +65,10 @@ function renderSettings(
       showMacOSFontSmoothing={false}
       macOSFontSmoothing={true}
       onMacOSFontSmoothingChange={() => {}}
+      macOS={true}
+      keybindings={createDefaultKeybindings()}
+      onKeybindingChange={options.onKeybindingChange ?? (() => {})}
+      onKeybindingsReset={options.onKeybindingsReset ?? (() => {})}
       showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
       initialSection={options.initialSection ?? 'appearance'}
@@ -89,6 +91,8 @@ afterEach(() => {
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
+  writeTerminalPlacement('bottom')
+  localStorage.removeItem(TERMINAL_PLACEMENT_KEY)
   localStorage.removeItem('harness.providerEmail.codex')
   localStorage.removeItem('harness.providerEmail.claude-code')
   localStorage.removeItem('harness.providerEmail.grok')
@@ -118,12 +122,47 @@ describe('settings viewport layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     expect(screen.getByRole('switch', { name: 'Provider rail layout' })).toBeTruthy()
+    expect(
+      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
+    ).toContain('Bottom panel')
 
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     expect(screen.queryByRole('switch', { name: 'Provider rail layout' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
+  })
+
+  it('pairs theme previews with one compact details editor', () => {
+    renderSettings()
+
+    expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
+    expect(screen.getByRole('img', { name: /code sample preview/i })).toBeTruthy()
+    expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
+      'system',
+      'light',
+      'dark',
+      'codex',
+    ])
+
+    const details = screen.getByRole('region', { name: 'Theme details' })
+    expect(
+      within(details)
+        .getAllByRole('combobox')
+        .map((control) => control.getAttribute('aria-label')),
+    ).toEqual(['Accent palette', 'Background', 'Interface font', 'Sidebar translucency'])
+  })
+
+  it('lets the terminal shortcut target the right sidebar', () => {
+    renderSettings({ initialSection: 'workflows' })
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
+    expect(
+      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
+    ).toContain('Right sidebar')
   })
 })
 
@@ -150,13 +189,13 @@ describe('about status grammar', () => {
     ['unavailable', { localCommit: '1234567890' }, 'Unavailable · No verdict'],
   ] as const)('separates %s update state from build metadata', async (state, result, label) => {
     const update = deferred<ResultOf<'system.updateCheck'>>()
-    const request = vi.fn((method: string) => {
+    const transport = new TestTransport((method) => {
       if (method === 'system.updateCheck') return update.promise
       throw new Error(`unexpected ${method}`)
     })
     const { container } = renderSettings({
       initialSection: 'about',
-      transport: { request, on: vi.fn(() => () => {}) } as unknown as Transport,
+      transport,
     })
 
     expect(screen.getByText('Browser · pre-release').className).toBe('settings-meta')
@@ -166,7 +205,7 @@ describe('about status grammar', () => {
     await act(async () => update.resolve(result))
 
     expect((await screen.findByRole('status', { name: label })).className).toContain(`is-${state}`)
-    expect(request).toHaveBeenCalledWith('system.updateCheck', {})
+    expect(transport.requests).toContainEqual({ method: 'system.updateCheck', params: {} })
     expect(container.querySelector('.settings__status')).toBeNull()
   })
 })
@@ -189,7 +228,7 @@ describe('settings dialog keyboard behavior', () => {
     renderSettings()
     const dialog = screen.getByRole('dialog', { name: 'Settings' })
     const first = screen.getByRole('button', { name: 'Back to app' })
-    const last = screen.getByRole('button', { name: 'Lavender' })
+    const last = screen.getByRole('combobox', { name: 'Sidebar translucency' })
 
     last.focus()
     fireEvent.keyDown(last, { key: 'Tab' })
@@ -230,7 +269,7 @@ describe('settings dialog keyboard behavior', () => {
   it('leaves Escape to a nested control that handles it', () => {
     const onClose = vi.fn()
     renderSettings({ onClose })
-    const nestedControl = screen.getByRole('button', { name: 'Lavender' })
+    const nestedControl = screen.getByRole('combobox', { name: 'Sidebar translucency' })
     nestedControl.addEventListener('keydown', (event) => event.preventDefault())
 
     nestedControl.focus()
@@ -290,7 +329,7 @@ describe('settings reset confirmation', () => {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  let reject!: (reason?: unknown) => void
+  let reject!: (reason?: Error) => void
   const promise = new Promise<T>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise
     reject = rejectPromise
@@ -300,17 +339,10 @@ function deferred<T>() {
 
 function renderProviders(
   statuses: ProviderStatus[],
-  request: (method: string, params: { provider?: ProviderId }) => unknown,
+  request: TestRequestResolver,
   account?: Account,
 ) {
-  let listener: ((event: unknown) => void) | undefined
-  const transport = {
-    request: (method: string, params: { provider?: ProviderId }) => request(method, params),
-    on: (_channel: string, next: (event: unknown) => void) => {
-      listener = next
-      return () => {}
-    },
-  } as unknown as Transport
+  const transport = new TestTransport(request)
   render(
     <ProviderSettings
       provider="codex"
@@ -324,13 +356,12 @@ function renderProviders(
     />,
   )
   return (loginId: string, success: boolean, error: string | null = null) =>
-    act(() => listener?.({ provider: 'codex', loginId, success, error }))
+    act(() => transport.emit('auth.event', { provider: 'codex', loginId, success, error }))
 }
 function installedProvider(id: ProviderId, displayName: string): ProviderStatus {
   return { id, displayName, installed: true, auth: 'unknown' }
 }
-const providerRow = (name: string) =>
-  screen.getByText(name).closest<HTMLElement>('.settings__row') as HTMLElement
+const providerRow = (name: string) => screen.getByText(name).closest<HTMLElement>('.settings__row')!
 const action = (row: HTMLElement, name: string) =>
   within(row).getByRole('button', { name }) as HTMLButtonElement
 describe('provider authentication states', () => {
@@ -373,7 +404,8 @@ describe('provider authentication states', () => {
       ],
       (method, params) => {
         if (method !== 'auth.status') throw new Error(`unexpected ${method}`)
-        return { signedIn: params.provider === 'codex' }
+        const request = methods[method].params.parse(params)
+        return { signedIn: request.provider === 'codex' }
       },
     )
 
@@ -417,9 +449,12 @@ describe('provider authentication states', () => {
     renderProviders(
       [installedProvider('codex', 'Codex'), installedProvider('claude-code', 'Claude Code')],
       (method, params) => {
-        if (method === 'auth.status')
-          return params.provider === 'codex' ? codexStatus.promise : { signedIn: true }
-        return params.provider === 'codex' ? codexSignOut.promise : claudeSignOut.promise
+        if (method === 'auth.status') {
+          const { provider } = methods[method].params.parse(params)
+          return provider === 'codex' ? codexStatus.promise : { signedIn: true }
+        }
+        const { provider } = methods['auth.signOut'].params.parse(params)
+        return provider === 'codex' ? codexSignOut.promise : claudeSignOut.promise
       },
       { signedIn: true },
     )
@@ -489,7 +524,135 @@ describe('app haptic setting', () => {
 })
 
 describe('model settings', () => {
-  it('keeps every model visible while toggling picker inclusion individually', () => {
+  it('shows the automatic Luna policy and persists a manual model and effort', async () => {
+    const sources = [
+      {
+        id: 'codex',
+        displayName: 'Codex',
+        provider: 'codex' as const,
+        models: [
+          {
+            id: 'gpt-5.6-luna',
+            displayName: 'GPT-5.6 Luna',
+            isDefault: false,
+            reasoningEfforts: ['low', 'medium', 'high'],
+            serviceTiers: [],
+          },
+        ],
+      },
+    ]
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'backgroundModel.settings') {
+        return {
+          preference: { mode: 'automatic' as const },
+          sources,
+          resolved: {
+            provider: 'codex' as const,
+            model: 'gpt-5.6-luna',
+            effort: 'low',
+            sourceName: 'Codex',
+            automatic: true,
+          },
+        }
+      }
+      if (method === 'backgroundModel.updateSettings') {
+        const preference = methods[method].params.parse(params)
+        const target = preference.mode === 'manual' ? preference.target : undefined
+        return {
+          preference,
+          sources,
+          ...(target
+            ? {
+                resolved: {
+                  ...target,
+                  sourceName: 'Codex',
+                  automatic: false,
+                },
+              }
+            : {}),
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'models',
+      transport,
+    })
+
+    const picker = await screen.findByRole('combobox', { name: 'Background model' })
+    expect(picker.tagName).toBe('BUTTON')
+    expect(screen.getByText(/gpt-5\.6 luna through codex at low effort/i)).toBeTruthy()
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('option', { name: 'GPT-5.6 Luna' }))
+
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'backgroundModel.updateSettings',
+        params: {
+          mode: 'manual',
+          target: {
+            provider: 'codex',
+            model: 'gpt-5.6-luna',
+            effort: 'low',
+          },
+        },
+      }),
+    )
+    const effort = await screen.findByRole('combobox', { name: 'Background reasoning effort' })
+    expect(effort.tagName).toBe('BUTTON')
+    fireEvent.click(effort)
+    fireEvent.click(screen.getByRole('option', { name: 'high' }))
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'backgroundModel.updateSettings',
+        params: {
+          mode: 'manual',
+          target: {
+            provider: 'codex',
+            model: 'gpt-5.6-luna',
+            effort: 'high',
+          },
+        },
+      }),
+    )
+  })
+
+  it('keeps a disconnected manual choice visible so Automatic can replace it', async () => {
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'backgroundModel.settings') {
+        return {
+          preference: {
+            mode: 'manual' as const,
+            target: { provider: 'grok' as const, model: 'grok-code-fast-1', effort: 'low' },
+          },
+          sources: [],
+        }
+      }
+      if (method === 'backgroundModel.updateSettings') {
+        return { preference: methods[method].params.parse(params), sources: [] }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({
+      initialSection: 'models',
+      transport,
+    })
+
+    const picker = await screen.findByRole('combobox', { name: 'Background model' })
+    expect(picker.textContent).toContain('grok-code-fast-1 (unavailable)')
+    expect(screen.getByText(/grok-code-fast-1 is unavailable/i)).toBeTruthy()
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('option', { name: 'Automatic (recommended)' }))
+
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'backgroundModel.updateSettings',
+        params: { mode: 'automatic' },
+      }),
+    )
+  })
+
+  it('uses All and None buttons to change every model for one provider', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -521,12 +684,9 @@ describe('model settings', () => {
       },
     ]
     const onModelVisibilityChange = vi.fn()
-    const transport = {
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport()
 
-    render(
+    const settings = (hiddenModels: Set<string>) => (
       <Settings
         provider="codex"
         providerName="Codex"
@@ -538,7 +698,7 @@ describe('model settings', () => {
         acpAgents={[]}
         modelConnections={[]}
         models={models}
-        hiddenModels={new Set(['opencode:ling'])}
+        hiddenModels={hiddenModels}
         onModelVisibilityChange={onModelVisibilityChange}
         onConnectionsChanged={() => {}}
         projectCount={0}
@@ -560,8 +720,9 @@ describe('model settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
-      />,
+      />
     )
+    const view = render(settings(new Set(['opencode:ling'])))
 
     const categories = screen.getByRole('navigation', { name: 'Settings categories' })
     expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('General')
@@ -572,15 +733,70 @@ describe('model settings', () => {
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
+    const allButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
+    })
+    const noneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
+    })
     const ling = screen.getByRole('switch', {
       name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
     })
     const qwen = screen.getByRole('switch', {
       name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
     })
+    expect(allButton.textContent).toBe('All')
+    expect(noneButton.textContent).toBe('None')
+    expect((allButton as HTMLButtonElement).disabled).toBe(false)
+    expect((noneButton as HTMLButtonElement).disabled).toBe(false)
+    expect(
+      screen.queryByRole('switch', {
+        name: 'Include models from OpenCode in model picker',
+      }),
+    ).toBeNull()
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
-    fireEvent.click(ling)
+
+    fireEvent.click(allButton)
+    expect(onModelVisibilityChange).toHaveBeenCalledOnce()
+    expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
+
+    onModelVisibilityChange.mockClear()
+    view.rerender(settings(new Set()))
+    const disabledAllButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
+    })
+    const enabledNoneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
+    })
+    expect((disabledAllButton as HTMLButtonElement).disabled).toBe(true)
+    expect((enabledNoneButton as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(enabledNoneButton)
+    expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', false)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', false)
+
+    onModelVisibilityChange.mockClear()
+    view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
+    const enabledAllButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
+    })
+    const disabledNoneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
+    })
+    expect((enabledAllButton as HTMLButtonElement).disabled).toBe(false)
+    expect((disabledNoneButton as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(enabledAllButton)
+    expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)
+
+    onModelVisibilityChange.mockClear()
+    fireEvent.click(
+      screen.getByRole('switch', {
+        name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
+      }),
+    )
     expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
     expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
   })
@@ -593,10 +809,7 @@ describe('model settings', () => {
     )
     const onCustomModelAdd = vi.fn()
     const onCustomModelRemove = vi.fn()
-    const transport = {
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport()
 
     render(
       <Settings
@@ -662,10 +875,7 @@ describe('model settings', () => {
       },
     ]
     const onCustomModelAdd = vi.fn()
-    const transport = {
-      request: vi.fn(),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport()
 
     render(
       <Settings
@@ -739,27 +949,31 @@ describe('provider settings', () => {
   })
 
   it('shows one account action per provider and runs that provider flow', async () => {
-    const accounts: Record<string, Account> = {
+    const accounts = {
       codex: { signedIn: true, email: 'private@example.com', plan: 'pro' },
-      'claude-code': { signedIn: true, plan: 'pro' },
+      'claude-code': { signedIn: true, email: 'claude@example.com', plan: 'pro' },
       grok: { signedIn: false },
+    } satisfies Partial<Record<ProviderId, Account>>
+    const accountFor = (provider: ProviderId): Account | undefined => {
+      if (provider === 'codex') return accounts.codex
+      if (provider === 'claude-code') return accounts['claude-code']
+      if (provider === 'grok') return accounts.grok
+      return undefined
     }
-    const transport = {
-      request: vi.fn(async (method: string, params: { provider?: ProviderId; agent?: string }) => {
-        if (method === 'auth.status') {
-          // The Kimi CLI on this machine is already logged in; Qwen is not.
-          if (params.agent) return { signedIn: params.agent === 'kimi' }
-          return accounts[params.provider ?? '']
-        }
-        if (method === 'auth.startLogin') {
-          return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
-        }
-        if (method === 'auth.signOut') return {}
-        if (method === 'providers.install') return { terminalId: 'term-install-1' }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status') {
+        const request = methods[method].params.parse(params)
+        // The Kimi CLI on this machine is already logged in; Qwen is not.
+        if (request.agent) return { signedIn: request.agent === 'kimi' }
+        return accountFor(request.provider)
+      }
+      if (method === 'auth.startLogin') {
+        return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
+      }
+      if (method === 'auth.signOut') return {}
+      if (method === 'providers.install') return { terminalId: 'term-install-1' }
+      throw new Error(`unexpected ${method}`)
+    })
     const onAccountChange = vi.fn()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
@@ -854,9 +1068,33 @@ describe('provider settings', () => {
 
     const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')
     if (!codexRow) throw new Error('Codex provider row missing')
-    const email = within(codexRow).getByText('private@example.com')
+    const email = within(codexRow).getByText('private@example.com', {
+      selector: '.settings__email-value',
+    })
     expect(email.className).toBe('settings__email-value')
-    expect(email.closest('.settings__email')?.getAttribute('title')).toBe('private@example.com')
+    const emailControl = email.closest<HTMLElement>('.settings__email')
+    if (!emailControl) throw new Error('redacted email control missing')
+    const emailButton = within(emailControl).getByRole('button', { name: 'Show account email' })
+    expect(emailButton.getAttribute('title')).toBe('Hover to preview or click to keep visible')
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+    expect(emailControl.getAttribute('data-pinned')).toBe('false')
+
+    fireEvent.pointerEnter(emailButton, { pointerType: 'mouse' })
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    expect(emailButton.querySelector('.settings__email-eye--hide')).toBeTruthy()
+    fireEvent.pointerLeave(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+
+    fireEvent.pointerEnter(emailButton, { pointerType: 'mouse' })
+    fireEvent.click(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    expect(emailControl.getAttribute('data-pinned')).toBe('true')
+    expect(emailButton.getAttribute('title')).toBe('Click to hide email')
+    fireEvent.pointerLeave(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    fireEvent.click(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+    expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
     // Retired agents stay hidden while supported ACP agents and API
@@ -868,12 +1106,15 @@ describe('provider settings', () => {
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
-    expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe('Signed in · pro')
+    expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe(
+      'Authenticated as claude@example.com · pro',
+    )
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('auth.signOut', {
-        provider: 'claude-code',
+      expect(transport.requests).toContainEqual({
+        method: 'auth.signOut',
+        params: { provider: 'claude-code' },
       }),
     )
 
@@ -883,20 +1124,11 @@ describe('provider settings', () => {
   })
 
   it('runs installs in the background and refreshes once the install exits cleanly', async () => {
-    const channels = new Map<string, Set<(data: unknown) => void>>()
-    const transport = {
-      request: vi.fn(async (method: string) => {
-        if (method === 'providers.install') return { terminalId: 'term-install-2' }
-        if (method === 'auth.status') return { signedIn: false }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
-        const listeners = channels.get(channel) ?? new Set()
-        listeners.add(listener)
-        channels.set(channel, listeners)
-        return () => listeners.delete(listener)
-      }),
-    } as unknown as Transport
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-install-2' }
+      if (method === 'auth.status') return { signedIn: false }
+      throw new Error(`unexpected ${method}`)
+    })
     const onConnectionsChanged = vi.fn()
 
     const settingsFor = (onChanged: () => void) => (
@@ -951,17 +1183,16 @@ describe('provider settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Install' }))
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('providers.install', {
-        provider: 'opencode',
-        columns: 100,
-        rows: 30,
+      expect(transport.requests).toContainEqual({
+        method: 'providers.install',
+        params: { provider: 'opencode', columns: 100, rows: 30 },
       }),
     )
 
-    const emit = (channel: string, data: unknown) => {
-      for (const listener of channels.get(channel) ?? []) listener(data)
-    }
-    emit('terminal.output', { terminalId: 'term-install-2', data: 'added 12 packages\r\n' })
+    transport.emit('terminal.output', {
+      terminalId: 'term-install-2',
+      data: 'added 12 packages\r\n',
+    })
     const installRow = providerRow('OpenCode')
     expect(within(installRow).getByRole('status').textContent).toContain('Installing…')
     expect(screen.queryByText('added 12 packages')).toBeNull()
@@ -972,7 +1203,7 @@ describe('provider settings', () => {
     expect(await screen.findByTestId('install-terminal')).toBeTruthy()
     details.focus()
 
-    emit('terminal.exit', { terminalId: 'term-install-2', exitCode: 0 })
+    transport.emit('terminal.exit', { terminalId: 'term-install-2', exitCode: 0 })
     await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalled())
     const successDetails = within(installRow).getByRole('button', { name: 'Hide details' })
     expect(successDetails.getAttribute('aria-expanded')).toBe('true')
@@ -990,22 +1221,62 @@ describe('provider settings', () => {
     expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
   })
 
+  it('hands provider installs to the expanded workspace terminal', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-codex-install' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        acpAgents={[]}
+        modelConnections={[]}
+        providerStatuses={[
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            installed: false,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://developers.openai.com/codex/cli',
+              installCommand: 'npm install -g @openai/codex',
+              login: 'provider',
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+
+    await waitFor(() =>
+      expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
+        provider: 'codex',
+        displayName: 'Codex',
+        installKey: 'codex',
+        operation: 'install',
+      }),
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'providers.install',
+      params: { provider: 'codex', columns: 100, rows: 30 },
+    })
+  })
+
   it('signs in to provider-CLI-managed logins in an in-app terminal, not a docs page', async () => {
-    const channels = new Map<string, Set<(data: unknown) => void>>()
     let signedIn = false
-    const transport = {
-      request: vi.fn(async (method: string) => {
-        if (method === 'providers.launch') return { terminalId: 'term-login-3' }
-        if (method === 'auth.status') return { signedIn }
-        throw new Error(`unexpected ${method}`)
-      }),
-      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
-        const listeners = channels.get(channel) ?? new Set()
-        listeners.add(listener)
-        channels.set(channel, listeners)
-        return () => listeners.delete(listener)
-      }),
-    } as unknown as Transport
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'term-login-3' }
+      if (method === 'auth.status') return { signedIn }
+      throw new Error(`unexpected ${method}`)
+    })
     const onConnectionsChanged = vi.fn()
     const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
@@ -1074,10 +1345,9 @@ describe('provider settings', () => {
     if (!grokRow) throw new Error('Grok row missing')
     fireEvent.click(within(grokRow).getByRole('button', { name: 'Sign in' }))
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-        provider: 'grok',
-        columns: 320,
-        rows: 30,
+      expect(transport.requests).toContainEqual({
+        method: 'providers.launch',
+        params: { provider: 'grok', columns: 320, rows: 30 },
       }),
     )
     expect(open).not.toHaveBeenCalled()
@@ -1085,10 +1355,7 @@ describe('provider settings', () => {
     await waitFor(() => expect(screen.getByText('Starting the provider sign-in…')).toBeTruthy())
     expect(screen.queryByTestId('install-terminal')).toBeNull()
 
-    const emit = (channel: string, data: unknown) => {
-      for (const listener of channels.get(channel) ?? []) listener(data)
-    }
-    emit('terminal.output', {
+    transport.emit('terminal.output', {
       terminalId: 'term-login-3',
       data: 'Visit https://example.test/device then enter code: WDJB-MJHT \r\n',
     })
@@ -1104,7 +1371,7 @@ describe('provider settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }))
     await waitFor(() => expect(screen.getByTestId('install-terminal')).toBeTruthy())
 
-    emit('terminal.output', {
+    transport.emit('terminal.output', {
       terminalId: 'term-login-3',
       data: '\u001b[32m✓ Signed in as grok.user@example.com\u001b[0m\r\n',
     })
@@ -1112,7 +1379,7 @@ describe('provider settings', () => {
       expect(localStorage.getItem('harness.providerEmail.grok')).toBe('grok.user@example.com'),
     )
     signedIn = true
-    emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
+    transport.emit('terminal.exit', { terminalId: 'term-login-3', exitCode: 0 })
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
 
@@ -1121,5 +1388,66 @@ describe('provider settings', () => {
     expect(within(kimiRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
     expect(open).toHaveBeenCalledTimes(1)
     expect(onConnectionsChanged).not.toHaveBeenCalled()
+  })
+
+  it('hands every provider CLI login to the expanded workspace terminal', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch') return { terminalId: 'term-grok-login' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        acpAgents={[]}
+        modelConnections={[]}
+        providerStatuses={[
+          {
+            id: 'grok',
+            displayName: 'Grok',
+            installed: true,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://x.ai/cli',
+              login: 'provider',
+              loginOpensBrowser: false,
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+
+    const signIn = await screen.findByRole('button', { name: 'Sign in' })
+    fireEvent.click(signIn)
+
+    await waitFor(() =>
+      expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
+        provider: 'grok',
+        displayName: 'Grok',
+        installKey: 'login:grok',
+      }),
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'providers.launch',
+      params: { provider: 'grok', columns: 320, rows: 30 },
+    })
+    transport.emit('terminal.output', {
+      terminalId: 'term-grok-login',
+      data: 'If the browser did not open, visit https://grok.example.test/oauth\r\n',
+    })
+    expect(open).toHaveBeenCalledWith(
+      'https://grok.example.test/oauth',
+      '_blank',
+      'noopener,noreferrer',
+    )
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })

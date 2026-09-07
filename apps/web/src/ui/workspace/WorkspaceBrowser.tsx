@@ -1,17 +1,20 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { z } from 'zod'
 import {
-  ArrowLeft,
-  ArrowRight,
-  ExternalLink,
-  Globe2,
-  LoaderCircle,
-  Laptop,
-  Monitor,
-  RefreshCw,
-  Smartphone,
-  Tablet,
-} from 'lucide-react'
+  IconArrowLeft as ArrowLeft,
+  IconArrowRight as ArrowRight,
+  IconExternalLink as ExternalLink,
+  IconWorld as Globe2,
+  IconLoader2 as LoaderCircle,
+  IconDeviceLaptop as Laptop,
+  IconDeviceDesktop as Monitor,
+  IconRefresh as RefreshCw,
+  IconDeviceMobile as Smartphone,
+  IconDeviceTablet as Tablet,
+} from '@tabler/icons-react'
 import { isDesktop, openExternalUrl } from '../../bridge.js'
+import { errorMessage } from '../../boundary.js'
+import { IconMorph } from '../IconMorph.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import { browserUrl } from './browser-url.js'
 import {
@@ -48,6 +51,26 @@ type BrowserGuest = HTMLElement & {
   reload(): void
   stop(): void
 }
+
+declare global {
+  interface HTMLElementTagNameMap {
+    webview: BrowserGuest
+  }
+}
+
+const NavigationEventSchema = z.object({
+  isMainFrame: z.boolean().optional(),
+  url: z.string().optional(),
+})
+const PageTitleEventSchema = z.object({ title: z.string() })
+const LoadFailureEventSchema = z.object({
+  errorCode: z.number().optional(),
+  errorDescription: z.string().optional(),
+  isMainFrame: z.boolean().optional(),
+})
+const RendererGoneEventSchema = z.object({
+  details: z.object({ reason: z.string().optional() }).optional(),
+})
 
 const EMPTY_STATE: BrowserState = {
   url: '',
@@ -103,7 +126,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     const element = host.current
     if (!element || !isDesktop) return
 
-    const view = document.createElement('webview') as BrowserGuest
+    const view = document.createElement('webview')
     view.className = 'workspace-browser__guest'
     view.setAttribute('aria-label', 'Browser page')
     view.setAttribute('partition', 'persist:harness-browser')
@@ -126,7 +149,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
     const onStop = () => syncGuestState()
     const onNavigate = (event: Event) => {
-      const url = webPageUrl((event as Event & { url?: unknown }).url)
+      const navigation = NavigationEventSchema.safeParse(event)
+      const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
       if (url) {
         setAddress(url)
         setState((current) => ({ ...current, url }))
@@ -134,26 +158,23 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState()
     }
     const onNavigateInPage = (event: Event) => {
-      const navigation = event as Event & { isMainFrame?: boolean; url?: unknown }
-      if (navigation.isMainFrame !== false) onNavigate(event)
+      const navigation = NavigationEventSchema.safeParse(event)
+      if (!navigation.success || navigation.data.isMainFrame !== false) onNavigate(event)
     }
     const onTitle = (event: Event) => {
-      const title = (event as Event & { title?: unknown }).title
-      if (typeof title === 'string') setState((current) => ({ ...current, title }))
+      const title = PageTitleEventSchema.safeParse(event)
+      if (title.success) setState((current) => ({ ...current, title: title.data.title }))
     }
     const onFail = (event: Event) => {
-      const failure = event as Event & {
-        errorCode?: number
-        errorDescription?: string
-        isMainFrame?: boolean
-      }
-      if (failure.isMainFrame !== false && failure.errorCode !== -3) {
-        setError(failure.errorDescription || 'The page could not be loaded.')
+      const failure = LoadFailureEventSchema.safeParse(event)
+      if (failure.success && failure.data.isMainFrame !== false && failure.data.errorCode !== -3) {
+        setError(failure.data.errorDescription || 'The page could not be loaded.')
       }
       syncGuestState()
     }
     const onRendererGone = (event: Event) => {
-      const reason = (event as Event & { details?: { reason?: string } }).details?.reason
+      const stopped = RendererGoneEventSchema.safeParse(event)
+      const reason = stopped.success ? stopped.data.details?.reason : undefined
       setError(`Page renderer stopped${reason ? `: ${reason}` : '.'}`)
       syncGuestState()
     }
@@ -303,11 +324,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           disabled={!state.url}
           onClick={() => action(state.loading ? 'stop' : 'reload')}
         >
-          {state.loading ? (
-            <LoaderCircle className="spinner" size={15} aria-hidden />
-          ) : (
+          <IconMorph active={state.loading ? 1 : 0}>
             <RefreshCw size={14} aria-hidden />
-          )}
+            <LoaderCircle className="spinner" size={15} aria-hidden />
+          </IconMorph>
         </button>
         <form
           className="workspace-browser__address"
@@ -400,8 +420,4 @@ function webPageUrl(value: unknown): string {
 
 function isAbortedNavigation(cause: unknown): boolean {
   return cause instanceof Error && /ERR_ABORTED|\(-3\)/i.test(cause.message)
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }

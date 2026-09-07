@@ -23,6 +23,14 @@ export type InstallState = {
 
 export type InstallTarget = { provider: ProviderId; agent?: string }
 
+export type ProviderLoginTerminalTarget = {
+  provider?: ProviderId
+  displayName: string
+  installKey: string
+  operation?: 'install' | 'login'
+  source?: 'providers' | 'pull-requests'
+}
+
 export function installKey(target: InstallTarget): string {
   return target.agent ? `${target.provider}:${target.agent}` : target.provider
 }
@@ -57,7 +65,7 @@ export function clearInstall(key: string): void {
 
 /** Test isolation only: module state must not leak between test cases. */
 export function resetInstalls(): void {
-  for (const key of [...transportListeners.keys()]) detachTransportListeners(key)
+  for (const key of transportListeners.keys()) detachTransportListeners(key)
   installs.clear()
   notify()
 }
@@ -80,7 +88,14 @@ function detachTransportListeners(key: string): void {
  * session rather than installing twice.
  */
 export async function beginInstall(transport: Transport, target: InstallTarget): Promise<void> {
-  return begin(transport, 'providers.install', target, installKey(target))
+  return begin(transport, installKey(target), () =>
+    transport.request('providers.install', {
+      provider: target.provider,
+      ...(target.agent ? { agent: target.agent } : {}),
+      columns: 100,
+      rows: 30,
+    }),
+  )
 }
 
 /**
@@ -94,7 +109,38 @@ export async function beginLogin(
   target: InstallTarget,
   openUrl: (url: string) => void = (url) => window.open(url, '_blank', 'noopener,noreferrer'),
 ): Promise<void> {
-  return begin(transport, 'providers.launch', target, loginKey(target), openUrl)
+  return begin(
+    transport,
+    loginKey(target),
+    () =>
+      transport.request('providers.launch', {
+        provider: target.provider,
+        ...(target.agent ? { agent: target.agent } : {}),
+        columns: LOGIN_COLUMNS,
+        rows: 30,
+      }),
+    openUrl,
+  )
+}
+
+export type GitHubSetupAction = 'install' | 'login'
+
+export function githubSetupKey(action: GitHubSetupAction): string {
+  return `pull-requests:github:${action}`
+}
+
+/** Run GitHub CLI setup in the same attachable terminal store as provider setup. */
+export async function beginGitHubSetup(
+  transport: Transport,
+  action: GitHubSetupAction,
+): Promise<void> {
+  return begin(transport, githubSetupKey(action), () =>
+    transport.request('pullRequests.setup', {
+      action,
+      columns: action === 'login' ? LOGIN_COLUMNS : 100,
+      rows: 30,
+    }),
+  )
 }
 
 /**
@@ -147,22 +193,14 @@ const LOGIN_COLUMNS = 320
 
 async function begin(
   transport: Transport,
-  method: 'providers.install' | 'providers.launch',
-  target: InstallTarget,
   key: string,
+  openTerminal: () => Promise<{ terminalId: string }>,
   openUrl?: (url: string) => void,
 ): Promise<void> {
   const existing = installs.get(key)
   if (existing?.phase === 'running') return
 
-  const { terminalId } = await transport.request(method, {
-    provider: target.provider,
-    ...(target.agent ? { agent: target.agent } : {}),
-    // Logins get a wide pty so the OAuth URL is printed on one line — the
-    // URL detector depends on that. Installs render at a normal width.
-    columns: method === 'providers.launch' ? LOGIN_COLUMNS : 100,
-    rows: 30,
-  })
+  const { terminalId } = await openTerminal()
 
   const state: InstallState = {
     phase: 'running',
@@ -219,6 +257,7 @@ function notify(): void {
 // CSI sequences, OSC sequences (title updates and the like), then any stray
 // control byte that is not a newline. Enough to turn pty output into a note.
 const ANSI =
+  // oxlint-disable-next-line no-control-regex, no-useless-escape -- ANSI parsing requires control bytes.
   /\u001b\[[0-9;?]*[ -\/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/g
 
 export function lastPrintableLine(log: string): string {

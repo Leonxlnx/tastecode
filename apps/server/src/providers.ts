@@ -1,12 +1,13 @@
-import { detectAgents, findAgentSpec } from '@harness/adapter-acp'
+import { detectAgents } from '@harness/adapter-acp/agents'
 import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
-import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
-import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
-import { GROK_CAPABILITIES } from '@harness/adapter-grok'
+import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
+import { codexLoginStatus } from '@harness/adapter-codex/auth'
+import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
+import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
-import { commandVersion, isInstalled } from '@harness/proc'
+import { commandVersion, isInstalled } from '@harness/proc/cli'
 
 /**
  * What this machine can actually run.
@@ -44,8 +45,10 @@ const PROBES: Probe[] = [
     setup: {
       installUrl: 'https://developers.openai.com/codex/cli',
       installCommand: 'npm install -g @openai/codex',
-      login: 'app',
+      login: 'provider',
+      loginOpensBrowser: true,
     },
+    loginCommand: 'codex login',
   },
   {
     id: 'claude-code',
@@ -55,8 +58,10 @@ const PROBES: Probe[] = [
     setup: {
       installUrl: 'https://code.claude.com/docs/en/getting-started',
       installCommand: 'npm install -g @anthropic-ai/claude-code',
-      login: 'app',
+      login: 'provider',
+      loginOpensBrowser: true,
     },
+    loginCommand: 'claude auth login',
   },
   {
     id: 'grok',
@@ -66,6 +71,7 @@ const PROBES: Probe[] = [
     setup: {
       installUrl: 'https://x.ai/cli',
       login: 'provider',
+      loginOpensBrowser: false,
     },
     // Device flow in the CLI's own terminal, same shape as `kimi login`.
     loginCommand: 'grok login',
@@ -118,12 +124,15 @@ const PROBES: Probe[] = [
 export type SystemProbe = {
   isInstalled(command: string): Promise<boolean>
   version(command: string): Promise<string | undefined>
+  auth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']>
   acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
 }
 
 const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
+  auth: (provider) =>
+    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
   acpAgents: detectAgents,
 }
 
@@ -132,10 +141,14 @@ const REAL_SYSTEM: SystemProbe = {
  * nowhere else. The renderer names a target; it never sends command text —
  * that is what keeps `providers.install` from being a remote shell.
  */
-export function installCommandFor(provider: ProviderStatus['id'], agent?: string): string {
+export async function installCommandFor(
+  provider: ProviderStatus['id'],
+  agent?: string,
+): Promise<string> {
   const target =
     provider === 'acp'
-      ? (() => {
+      ? await (async () => {
+          const { findAgentSpec } = await import('@harness/adapter-acp/agents')
           const spec = agent ? findAgentSpec(agent) : undefined
           return spec ? { name: spec.name, setup: spec.setup } : undefined
         })()
@@ -157,8 +170,12 @@ export function installCommandFor(provider: ProviderStatus['id'], agent?: string
  * ACP agents sign in inside their ordinary interactive CLI, so the launch is
  * the bare binary; direct providers name an explicit login command.
  */
-export function launchCommandFor(provider: ProviderStatus['id'], agent?: string): string {
+export async function launchCommandFor(
+  provider: ProviderStatus['id'],
+  agent?: string,
+): Promise<string> {
   if (provider === 'acp') {
+    const { findAgentSpec } = await import('@harness/adapter-acp/agents')
     const spec = agent ? findAgentSpec(agent) : undefined
     if (!spec) throw new Error(`unknown launch target: ${agent ?? provider}`)
     if (spec.setup.login !== 'provider') {
@@ -175,8 +192,44 @@ export function launchCommandFor(provider: ProviderStatus['id'], agent?: string)
 }
 
 const providerDetections = new WeakMap<SystemProbe, Promise<ProviderStatus[]>>()
+const PROVIDER_PREWARM_TTL_MS = 30_000
+const prewarmedProviderDetections = new WeakMap<
+  SystemProbe,
+  { detection: Promise<ProviderStatus[]>; expiresAt: number }
+>()
+
+/**
+ * Start one provider scan before the renderer asks for it. The resolved result
+ * is consumed once, so later refreshes still observe installs and login changes.
+ */
+export function prewarmProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
+  const current = prewarmedProviderDetections.get(system)
+  if (current) return current.detection
+
+  const detection = scanProviders(system)
+  prewarmedProviderDetections.set(system, {
+    detection,
+    expiresAt: Date.now() + PROVIDER_PREWARM_TTL_MS,
+  })
+  void detection.catch(() => {
+    if (prewarmedProviderDetections.get(system)?.detection === detection) {
+      prewarmedProviderDetections.delete(system)
+    }
+  })
+  return detection
+}
 
 export function detectProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
+  const prewarmed = prewarmedProviderDetections.get(system)
+  if (prewarmed) {
+    prewarmedProviderDetections.delete(system)
+    if (prewarmed.expiresAt >= Date.now()) return prewarmed.detection
+  }
+
+  return scanProviders(system)
+}
+
+function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
@@ -216,18 +269,20 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     }
   }
 
-  const version = await system.version(entry.command)
+  const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
   const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
   return {
     id: entry.id,
     displayName: entry.displayName,
     installed: true,
-    auth: 'unknown',
+    auth,
     setup: entry.setup,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
     ...(unsupported
-      ? { problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}` }
+      ? {
+          problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
+        }
       : {}),
   }
 }

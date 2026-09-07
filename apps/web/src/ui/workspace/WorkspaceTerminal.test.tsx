@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Transport } from '../../transport.js'
+import { TestTransport } from '../../test-transport.js'
+import { WorkspaceTerminal } from './WorkspaceTerminal.js'
 
 vi.mock('../TerminalPane.js', () => ({
   TerminalPane: (props: { threadId?: string; projectPath?: string; onClose?: () => void }) => (
@@ -17,8 +18,6 @@ vi.mock('../TerminalPane.js', () => ({
   ),
 }))
 
-import { WorkspaceTerminal } from './WorkspaceTerminal.js'
-
 afterEach(cleanup)
 
 describe('WorkspaceTerminal', () => {
@@ -26,7 +25,7 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        transport={new TestTransport()}
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={vi.fn()}
@@ -43,7 +42,7 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        transport={new TestTransport()}
         threadId="thread-1"
         projectPath="/workspace/current-project"
         theme="dark"
@@ -61,7 +60,7 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        transport={new TestTransport()}
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={onClose}

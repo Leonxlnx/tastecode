@@ -11,13 +11,13 @@ import type { SessionUpdate, ToolCallContent, ToolKind } from './protocol.js'
  */
 
 /** ACP tool kinds mapped onto how we render them. */
-const KIND_TO_ITEM: Partial<Record<ToolKind, Item['type']>> = {
-  execute: 'command',
-  edit: 'file_change',
-  delete: 'file_change',
-  move: 'file_change',
-  think: 'reasoning',
-}
+const KIND_TO_ITEM = new Map<ToolKind, Item['type']>([
+  ['execute', 'command'],
+  ['edit', 'file_change'],
+  ['delete', 'file_change'],
+  ['move', 'file_change'],
+  ['think', 'reasoning'],
+])
 
 export class Streamer {
   #turnId: string
@@ -51,7 +51,10 @@ export class Streamer {
     const known = this.#tools.get(toolCallId)
     const kind = fields.kind ?? known?.kind
     const title = fields.title ?? known?.title
-    this.#tools.set(toolCallId, { ...(kind ? { kind } : {}), ...(title ? { title } : {}) })
+    this.#tools.set(toolCallId, {
+      ...(kind ? { kind } : {}),
+      ...(title ? { title } : {}),
+    })
   }
 
   /** Called when a turn ends, so the next one does not append to a stale item. */
@@ -149,7 +152,7 @@ export class Streamer {
       ...(output ? { output } : {}),
     })
 
-    const type = (kind && KIND_TO_ITEM[kind]) ?? 'tool_call'
+    const type = (kind && KIND_TO_ITEM.get(kind)) ?? 'tool_call'
     const finished = update.status === 'completed' || update.status === 'failed'
 
     // A tool call interrupts the prose around it. Complete that message before

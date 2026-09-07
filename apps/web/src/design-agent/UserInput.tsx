@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type WheelEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { UserInputRequest } from '@harness/contracts'
-import { isIndeterminateRequestError } from '../transport.js'
+import { IconLoader2 } from '@tabler/icons-react'
+import { IndeterminateRequestError } from '../transport.js'
 import './user-input.css'
 
 export function UserInput(props: {
@@ -17,8 +18,7 @@ export function UserInput(props: {
   const question = props.request.questions[step]
   const answer = question ? answers[question.id]?.trim() : undefined
   const lastStep = step === props.request.questions.length - 1
-  const composer =
-    typeof document === 'undefined' ? null : document.querySelector<HTMLElement>('.composer__box')
+  const composer = globalThis.document?.querySelector<HTMLElement>('.composer__box') ?? null
 
   useEffect(() => {
     if (previousRequest.current === props.request) return
@@ -31,7 +31,7 @@ export function UserInput(props: {
   if (submitting) {
     const status = (
       <div className="brief-input brief-input--status" role="status">
-        <span className="brief-input__spinner" aria-hidden="true" />
+        <IconLoader2 className="brief-input__spinner" size={14} aria-hidden />
         {submissionError === 'indeterminate'
           ? 'Checking whether answers were received…'
           : 'Submitting answers…'}
@@ -90,7 +90,7 @@ export function UserInput(props: {
         setSubmitting(true)
         setSubmissionError(undefined)
         const retry = (error: unknown) => {
-          if (isIndeterminateRequestError(error)) {
+          if (error instanceof IndeterminateRequestError) {
             setSubmissionError('indeterminate')
             return
           }

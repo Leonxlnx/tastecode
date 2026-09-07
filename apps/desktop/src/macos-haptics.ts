@@ -5,8 +5,8 @@ export type MacHapticPattern = 'alignment' | 'generic'
 
 type HapticHelperProcess = {
   stdin: Writable
-  once: (event: 'error' | 'exit', listener: () => void) => unknown
-  kill: () => unknown
+  once: (event: 'error' | 'exit', listener: () => void) => HapticHelperProcess
+  kill: () => boolean
 }
 
 type MacOSHapticsOptions = {
@@ -60,7 +60,7 @@ function spawnHapticHelper(): HapticHelperProcess {
     stdio: ['pipe', 'ignore', 'ignore'],
   })
   if (!child.stdin) throw new Error('macOS haptic helper has no input pipe')
-  return child as HapticHelperProcess
+  return child
 }
 
 /** Low-latency, macOS-only AppKit haptics with a hard flood limit. */

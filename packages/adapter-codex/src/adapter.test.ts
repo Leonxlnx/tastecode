@@ -157,6 +157,11 @@ describe('Codex auto-review', () => {
       sandbox: 'workspace-write',
       approvalsReviewer: 'auto_review',
     })
+    expect(CODEX_APPROVAL.full).toEqual({
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access',
+      approvalsReviewer: 'user',
+    })
     expect(mapAutoApprovalReview(capturedStarted)).toEqual({
       id: 'captured-review',
       turnId: 'captured-turn',
@@ -287,15 +292,18 @@ describe('Codex permission approval', () => {
 
   it('shows the exact requested access separately from the provider reason', () => {
     expect(
-      mapApprovalRequest('permissions', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        itemId: 'permission-1',
-        environmentId: null,
-        startedAtMs: 1,
-        cwd: 'D:\\repo',
-        reason: 'Read the supplied reference and fetch its font.',
-        permissions: requested,
+      mapApprovalRequest({
+        kind: 'permissions',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          itemId: 'permission-1',
+          environmentId: null,
+          startedAtMs: 1,
+          cwd: 'D:\\repo',
+          reason: 'Read the supplied reference and fetch its font.',
+          permissions: requested,
+        },
       }),
     ).toMatchObject({
       id: 'permission-1',

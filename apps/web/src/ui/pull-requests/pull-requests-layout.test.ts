@@ -4,6 +4,12 @@ import { describe, expect, it } from 'vitest'
 const css = readFileSync(new URL('./pull-requests.css', import.meta.url), 'utf8')
 
 describe('pull request layout CSS', () => {
+  it('skips layout and paint for off-screen pull-request rows', () => {
+    expect(css).toMatch(
+      /\.pr-list-item \{[^}]*content-visibility: auto;[^}]*contain-intrinsic-size: auto 59px;/s,
+    )
+  })
+
   it('keeps the right-side summary compact and leaves metadata on a flat surface', () => {
     expect(css).toMatch(
       /\.pr-summary \{[^}]*width: min\(100%, 900px\);[^}]*padding: 12px 22px 88px;/s,
@@ -39,7 +45,7 @@ describe('pull request layout CSS', () => {
 
   it('sizes metadata pickers like the compact reference popup', () => {
     expect(css).toMatch(/\.pr-metadata-menu \{[^}]*width: min\(310px, calc\(100vw - 16px\)\);/s)
-    expect(css).toMatch(/\.pr-picker-search \{[^}]*min-height: 34px;/s)
+    expect(css).toMatch(/\.pr-picker-search \{[^}]*min-height: 28px;/s)
   })
 
   it('lets the status menu inherit shared popup geometry without a conflicting override', () => {

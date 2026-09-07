@@ -13,6 +13,7 @@ const validBlueprint = {
   },
   navigation: [{ label: 'Shop', target: '#shop' }],
   navigationDesign: {
+    layoutCase: 'navigation-1',
     layout: 'Left logo with direct links and a right-side action.',
     behavior: ['Become opaque after the hero.'],
     transformation: {
@@ -32,18 +33,27 @@ const validBlueprint = {
   sections: [
     {
       id: 'hero',
+      layoutFamily: 'hero',
+      layoutCases: ['hero-text-5', 'hero-visual-2'],
       purpose: 'State the offer and lead into the primary purchase path.',
       userQuestion: 'What coffee can I buy here?',
       stage: 'orient',
       dependencies: [],
       evidence: ['Seasonal beans roasted weekly'],
       copy: {
-        eyebrow: 'Roasted weekly',
         heading: 'Coffee worth waking up for.',
         body: ['Seasonal beans, roasted in small batches and shipped fresh.'],
         callsToAction: [{ label: 'Shop the roast', target: '#shop' }],
       },
       layout: 'Split copy and product image with the product leading on wide screens.',
+      motion: {
+        purpose: 'spatial_continuity',
+        trigger: 'scroll_enter',
+        behavior: 'The product image settles into the copy rail as the section enters.',
+        durationMs: 240,
+        easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
+        reducedMotion: 'Show the final composition immediately.',
+      },
       componentNeeds: ['Primary button'],
       assetNeeds: ['hero-product'],
       transformation: {
@@ -64,6 +74,8 @@ describe('page blueprint', () => {
     const blueprint = writePageBlueprint(workspace, validBlueprint)
 
     expect(blueprint.sections[0]?.id).toBe('hero')
+    expect(blueprint.sections[0]?.layoutCases).toEqual(['hero-text-5', 'hero-visual-2'])
+    expect(blueprint.navigationDesign?.layoutCase).toBe('navigation-1')
     expect(blueprint.navigationDesign?.transformation.compact).toContain('menu trigger')
     expect(JSON.parse(readFileSync(path.join(workspace, '.taste', 'page.json'), 'utf8'))).toEqual(
       blueprint,
@@ -97,18 +109,50 @@ describe('page blueprint', () => {
     ).toThrow('depends on unknown section missing-proof')
   })
 
+  it('rejects eyebrow copy at the artifact boundary', () => {
+    expect(() =>
+      parsePageBlueprint({
+        ...validBlueprint,
+        sections: [
+          {
+            ...validBlueprint.sections[0],
+            copy: { ...validBlueprint.sections[0]!.copy, eyebrow: 'Roasted weekly' },
+          },
+        ],
+      }),
+    ).toThrow('copy.eyebrow is forbidden')
+  })
+
+  it('validates motion purpose, trigger, and timing together', () => {
+    expect(() =>
+      parsePageBlueprint({
+        ...validBlueprint,
+        sections: [
+          {
+            ...validBlueprint.sections[0],
+            motion: { ...validBlueprint.sections[0]!.motion, trigger: 'none' },
+          },
+        ],
+      }),
+    ).toThrow('motion requires a trigger and 80-1200ms duration')
+  })
+
   it('keeps legacy page artifacts readable', () => {
     const {
       architecture: _architecture,
       navigationDesign: _navigationDesign,
       ...legacy
     } = validBlueprint
-    const legacySection = { ...legacy.sections[0] }
-    delete (legacySection as Partial<typeof legacySection>).userQuestion
-    delete (legacySection as Partial<typeof legacySection>).stage
-    delete (legacySection as Partial<typeof legacySection>).dependencies
-    delete (legacySection as Partial<typeof legacySection>).evidence
-    delete (legacySection as Partial<typeof legacySection>).transformation
+    const {
+      userQuestion: _userQuestion,
+      layoutFamily: _layoutFamily,
+      layoutCases: _layoutCases,
+      stage: _stage,
+      dependencies: _dependencies,
+      evidence: _evidence,
+      transformation: _transformation,
+      ...legacySection
+    } = legacy.sections[0]!
     expect(parsePageBlueprint({ ...legacy, sections: [legacySection] }).architecture.novelty).toBe(
       'medium',
     )

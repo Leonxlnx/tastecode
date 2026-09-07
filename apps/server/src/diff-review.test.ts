@@ -8,6 +8,7 @@ import {
   readWorkspaceDiff,
   reviewDiffFile,
   reviewDiffHunk,
+  reverseUnifiedDiff,
   StaleDiffSnapshotError,
 } from './diff-review.js'
 import { Store } from './store.js'
@@ -270,5 +271,32 @@ describe('structured diff review', () => {
     await reviewDiffFile(repo, 'thread-1', diff.version, renamed.path, 'reject', store)
     expect(existsSync(path.join(repo, 'old-name.txt'))).toBe(true)
     expect(existsSync(path.join(repo, 'new-name.txt'))).toBe(false)
+  })
+
+  it('reverses an absolute provider patch without touching unrelated work', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
+    const relative = git('diff', '--binary', '--no-color', '--', 'file.txt')
+    const root = repo.replaceAll('\\', '/')
+    const absolute = relative
+      .replaceAll('a/file.txt', `a/${root}/file.txt`)
+      .replaceAll('b/file.txt', `b/${root}/file.txt`)
+    writeFileSync(path.join(repo, 'unrelated.txt'), 'keep this\n')
+
+    await reverseUnifiedDiff(repo, absolute)
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(lines())
+    expect(readFileSync(path.join(repo, 'unrelated.txt'), 'utf8')).toBe('keep this\n')
+  })
+
+  it('does not partially reverse a patch after one of its files changed again', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
+    writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
+    const patch = git('diff', '--binary', '--no-color')
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'newer user change' }))
+
+    await expect(reverseUnifiedDiff(repo, patch)).rejects.toThrow()
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toContain('newer user change')
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('agent change\n')
   })
 })

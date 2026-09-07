@@ -51,7 +51,7 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
   try {
     const response = await fetch(plan.url, { signal: AbortSignal.timeout(1_000) })
     if (!response.ok || response.headers.get('x-harness-preview-id') !== previewId) {
-      throw new Error('Harness static preview ownership check failed')
+      throw new Error('TasteCode static preview ownership check failed')
     }
   } catch (error) {
     await close(server)
@@ -60,7 +60,7 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
   return {
     url: plan.url,
     viewports: plan.viewports,
-    output: () => `Harness static preview at ${plan.url}`,
+    output: () => `TasteCode static preview at ${plan.url}`,
     stop: () => close(server),
   }
 }

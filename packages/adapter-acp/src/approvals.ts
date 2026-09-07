@@ -13,12 +13,12 @@ import type { PermissionOptionKind, RequestPermissionParams } from './protocol.j
 
 export type PermissionOption = NonNullable<RequestPermissionParams['options']>[number]
 
-const DECISION_TO_KIND: Record<ApprovalDecision, PermissionOptionKind> = {
+const DECISION_TO_KIND = {
   approve: 'allow_once',
   'approve-session': 'allow_always',
   deny: 'reject_once',
   abort: 'reject_once',
-}
+} satisfies Record<ApprovalDecision, PermissionOptionKind>
 
 export function optionFor(
   options: readonly PermissionOption[],

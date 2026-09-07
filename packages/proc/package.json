@@ -7,6 +7,18 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./desktop-path": {
+      "types": "./dist/desktop-path.d.ts",
+      "default": "./dist/desktop-path.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "default": "./dist/cli.js"
+    },
+    "./kill": {
+      "types": "./dist/kill.d.ts",
+      "default": "./dist/kill.js"
     }
   },
   "main": "./dist/index.js",
@@ -20,5 +32,8 @@
     "@types/node": "^26.1.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
   }
 }

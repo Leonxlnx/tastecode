@@ -4,7 +4,12 @@ import type {
   ApprovalRequest,
   ApprovalReview as ApprovalReviewData,
 } from '@harness/contracts'
-import { LoaderCircle, ShieldAlert, ShieldCheck } from 'lucide-react'
+import {
+  IconLoader2 as LoaderCircle,
+  IconShieldExclamation as ShieldAlert,
+  IconShieldCheck as ShieldCheck,
+} from '@tabler/icons-react'
+import { IconMorph } from './IconMorph.js'
 
 /**
  * The agent asking permission.
@@ -56,11 +61,14 @@ export function Approval(props: {
         <button className="btn btn--quiet" onClick={() => props.onDecide('deny')}>
           Deny
         </button>
-        <button className="ghost" onClick={() => props.onDecide('abort')}>
+        <button className="approval__secondary-action" onClick={() => props.onDecide('abort')}>
           Stop the turn
         </button>
         <span className="approval__spacer" />
-        <button className="ghost" onClick={() => props.onDecide('approve-session')}>
+        <button
+          className="approval__secondary-action"
+          onClick={() => props.onDecide('approve-session')}
+        >
           Always this session
         </button>
         <button className="btn" onClick={() => props.onDecide('approve')}>
@@ -87,11 +95,10 @@ export function AutomaticApprovalReview({ review }: { review: ApprovalReviewData
       aria-label={`Automatic review: ${reviewStatus(review.status)}`}
     >
       <div className="approval__head">
-        {reviewing ? (
-          <LoaderCircle className="spinner" size={14} aria-hidden />
-        ) : (
+        <IconMorph active={reviewing ? 1 : 0}>
           <ShieldCheck size={14} aria-hidden />
-        )}
+          <LoaderCircle className="spinner" size={14} aria-hidden />
+        </IconMorph>
         <span className="approval__title">{reviewStatus(review.status)}</span>
         {review.riskLevel ? (
           <span className="approval-review__risk">{capitalize(review.riskLevel)} risk</span>

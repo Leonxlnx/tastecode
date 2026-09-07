@@ -8,6 +8,8 @@ import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
+  BackgroundModelPreferenceSchema,
+  BackgroundModelSettingsSchema,
   CustomHarnessSchema,
   CustomHarnessVerificationSchema,
   DomainEventSchema,
@@ -280,8 +282,10 @@ export const McpServerSchema = z.object({
   enabled: z.boolean(),
   /** Vendor-global inventory may not expose its underlying transport. */
   transport: McpTransportSchema.optional(),
-  auth: McpAuthSchema,
-  startup: McpStartupStatusSchema,
+  /** Older live provider adapters may not report authentication state yet. */
+  auth: McpAuthSchema.optional(),
+  /** Older live provider adapters may not report startup state yet. */
+  startup: McpStartupStatusSchema.optional(),
   tools: z.array(McpToolSchema),
   resources: z.array(McpResourceSchema),
   resourceTemplates: z.array(McpResourceTemplateSchema),
@@ -557,6 +561,8 @@ export const ProviderLimitSchema = z.object({
   resetsAt: z.number().int().nonnegative().optional(),
   /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
   valueLabel: z.string().min(1).max(160).optional(),
+  /** Present when this row can be spent as a one-shot quota reset. */
+  action: z.literal('consume-reset').optional(),
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
@@ -691,7 +697,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
-      ...TerminalSizeSchema.shape,
+      ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -709,7 +715,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
-      ...TerminalSizeSchema.shape,
+      ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -830,6 +836,18 @@ export const methods = {
   'pullRequests.list': {
     params: z.object({ refresh: z.boolean().optional() }),
     result: PullRequestListResultSchema,
+  },
+  /**
+   * Install or authenticate the local GitHub CLI in an interactive terminal.
+   * The renderer names only the fixed setup action; the server owns the
+   * platform-specific command so this boundary cannot become a remote shell.
+   */
+  'pullRequests.setup': {
+    params: z.object({
+      action: z.enum(['install', 'login']),
+      ...TerminalSizeSchema['shape'],
+    }),
+    result: z.object({ terminalId: TerminalIdSchema }),
   },
   'pullRequests.detail': {
     params: z.object({
@@ -966,6 +984,30 @@ export const methods = {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
+  /** Model policy for short product-owned writing tasks. */
+  'backgroundModel.settings': {
+    params: z.object({}),
+    result: BackgroundModelSettingsSchema,
+  },
+  'backgroundModel.updateSettings': {
+    params: BackgroundModelPreferenceSchema,
+    result: BackgroundModelSettingsSchema,
+  },
+  'backgroundModel.generateTitle': {
+    params: z.object({
+      threadId: z.string().min(1),
+      prompt: z.string().trim().min(1).max(40_000),
+      expectedTitle: z.string().min(1).max(200),
+    }),
+    result: z.object({ title: z.string().min(1).max(200), applied: z.boolean() }),
+  },
+  'backgroundModel.generateCommitMessage': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.object({ message: z.string().min(1).max(2_000) }),
+  },
   /**
    * Whether this provider can accept a recorded clip. Availability is account-
    * and binary-specific, so the renderer asks instead of inferring it from a mic API.
@@ -1087,8 +1129,8 @@ export const methods = {
   /** Open the platform-selected shell in a session checkout or registered project. */
   'terminal.open': {
     params: z.union([
-      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
-      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
+      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema['shape'] }).strict(),
+      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema['shape'] }).strict(),
     ]),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -1097,7 +1139,7 @@ export const methods = {
     result: z.object({}),
   },
   'terminal.resize': {
-    params: z.object({ terminalId: TerminalIdSchema, ...TerminalSizeSchema.shape }),
+    params: z.object({ terminalId: TerminalIdSchema, ...TerminalSizeSchema['shape'] }),
     result: z.object({}),
   },
   'terminal.close': {
@@ -1163,6 +1205,18 @@ export const methods = {
     params: z.object({ threadId: z.string() }),
     result: SessionDiffSchema,
   },
+  /** Reverse only the exact file patch represented by one completed turn's edit block. */
+  'thread.undoTurnChanges': {
+    params: z.object({
+      threadId: z.string(),
+      turnId: z.string(),
+      expectedDiff: z
+        .string()
+        .min(1)
+        .max(64 * 1024 * 1024),
+    }),
+    result: z.object({}),
+  },
   'thread.reviewHunk': {
     params: z.object({
       threadId: z.string(),
@@ -1203,6 +1257,20 @@ export const methods = {
   'usage.resetHistory': {
     params: z.object({}),
     result: z.object({ started: z.literal(true) }),
+  },
+  /**
+   * Spend one earned rate-limit reset. The provider must have declared a
+   * `consume-reset` limit row. Callers generate a UUID and reuse it when
+   * retrying the same attempt.
+   */
+  'usage.consumeReset': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      idempotencyKey: z.string().uuid(),
+    }),
+    result: z.object({
+      outcome: z.enum(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed']),
+    }),
   },
   /** Start a temporary conversation forked from the current main chat. */
   'sideChat.start': {

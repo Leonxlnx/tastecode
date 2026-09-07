@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process'
 import { StdioJsonRpc } from '@harness/proc'
-import { grokAccount, grokCommand } from './adapter.js'
+import { z } from 'zod'
+import { grokAccount, grokCommand, type GrokAccount } from './adapter.js'
 
 /**
  * Weekly credit pool through Grok Build's own ACP extension. The provider
  * process owns its credentials, request headers and token refresh lifecycle;
- * Harness only receives the billing response it deliberately exposes.
+ * TasteCode only receives the billing response it deliberately exposes.
  */
 
 const TIMEOUT_MS = 10_000
@@ -20,27 +21,54 @@ export type ProviderLimit = {
 export type GrokLimitSource =
   { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 
-function object(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined
+const NumericValueSchema = z.union([z.number(), z.string()]).catch(Number.NaN)
+const CentsSchema = z.object({ val: NumericValueSchema.optional() }).catch({})
+const BillingPeriodSchema = z.object({
+  type: z.string().optional(),
+  end: z.string().optional(),
+})
+const BillingConfigSchema = z.object({
+  currentPeriod: BillingPeriodSchema.optional().catch(undefined),
+  billingPeriodEnd: z.string().optional().catch(undefined),
+  creditUsagePercent: NumericValueSchema.optional(),
+  monthlyLimit: CentsSchema.optional(),
+  used: CentsSchema.optional(),
+  prepaidBalance: CentsSchema.optional(),
+  onDemandCap: CentsSchema.optional(),
+  onDemandUsed: CentsSchema.optional(),
+})
+const GrokBillingSchema = z.object({
+  config: BillingConfigSchema,
+  on_demand_enabled: z.boolean().optional().catch(undefined),
+  onDemandEnabled: z.boolean().optional().catch(undefined),
+})
+
+type NumericValue = z.infer<typeof NumericValueSchema>
+type CentsValue = z.infer<typeof CentsSchema>
+type BillingConfig = z.infer<typeof BillingConfigSchema>
+type GrokBilling = z.infer<typeof GrokBillingSchema>
+
+function finiteNumber(value: NumericValue | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const stringValue = z.string().safeParse(value)
+  if (stringValue.success) {
+    if (!stringValue.data.trim()) return undefined
+    const numeric = Number(stringValue.data)
+    return Number.isFinite(numeric) ? numeric : undefined
+  }
+  const numberValue = z.number().safeParse(value)
+  return numberValue.success && Number.isFinite(numberValue.data) ? numberValue.data : undefined
 }
 
-function finiteNumber(value: unknown): number | undefined {
-  const numeric = typeof value === 'string' && value.trim() ? Number(value) : value
-  return typeof numeric === 'number' && Number.isFinite(numeric) ? numeric : undefined
-}
-
-function percent(value: unknown): number | undefined {
+function percent(value: NumericValue | undefined): number | undefined {
   const numeric = finiteNumber(value)
   return numeric === undefined ? undefined : Math.max(0, Math.min(100, numeric))
 }
 
 /** Grok's billing RPC defines signed Cent values; an empty object is proto3 zero. */
-function cents(value: unknown): number | undefined {
-  const record = object(value)
-  if (!record) return undefined
-  const numeric = finiteNumber(Object.hasOwn(record, 'val') ? record['val'] : 0)
+function cents(value: CentsValue | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const numeric = finiteNumber(value.val ?? 0)
   return numeric !== undefined && Number.isSafeInteger(numeric) ? numeric : undefined
 }
 
@@ -48,29 +76,29 @@ function dollars(value: number): string {
   return `$${(value / 100).toFixed(2)}`
 }
 
-function timestamp(value: unknown): number | undefined {
-  if (typeof value !== 'string') return undefined
+function timestamp(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
   const parsed = Date.parse(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined
 }
 
-function includedCreditsRow(config: Record<string, unknown>): ProviderLimit[] {
-  const period = object(config['currentPeriod'])
-  const periodType = period?.['type']
+function includedCreditsRow(config: BillingConfig): ProviderLimit[] {
+  const period = config.currentPeriod
+  const periodType = period?.type
   const label =
     periodType === 'USAGE_PERIOD_TYPE_WEEKLY'
       ? 'Weekly'
-      : periodType === 'USAGE_PERIOD_TYPE_MONTHLY' || (!period && config['monthlyLimit'])
+      : periodType === 'USAGE_PERIOD_TYPE_MONTHLY' || (!period && config.monthlyLimit)
         ? 'Monthly'
         : 'Included credits'
-  const resetsAt = timestamp(period?.['end'] ?? config['billingPeriodEnd'])
-  const usedPercent = percent(config['creditUsagePercent'])
+  const resetsAt = timestamp(period?.end ?? config.billingPeriodEnd)
+  const usedPercent = percent(config.creditUsagePercent)
   if (usedPercent !== undefined) {
-    return [{ label, usedPercent, ...(resetsAt === undefined ? {} : { resetsAt }) }]
+    return [{ label, usedPercent, ...(!(resetsAt === undefined) ? { resetsAt } : {}) }]
   }
 
-  const rawLimit = cents(config['monthlyLimit'])
-  const rawUsed = cents(config['used'])
+  const rawLimit = cents(config.monthlyLimit)
+  const rawUsed = cents(config.used)
   const limit = rawLimit !== undefined && rawLimit >= 0 ? rawLimit : undefined
   const used = rawUsed !== undefined && rawUsed >= 0 ? rawUsed : undefined
   if ((limit ?? 0) > 0 || (used ?? 0) > 0) {
@@ -86,42 +114,46 @@ function includedCreditsRow(config: Record<string, unknown>): ProviderLimit[] {
         label,
         usedPercent:
           limit && includedUsed !== undefined ? percent((includedUsed / limit) * 100)! : 0,
-        ...(resetsAt === undefined ? {} : { resetsAt }),
+        ...(!(resetsAt === undefined) ? { resetsAt } : {}),
         valueLabel,
       },
     ]
   }
 
+  // Grok's credits response is protobuf JSON: zero-valued scalar fields are
+  // omitted. A current period without creditUsagePercent therefore means 0%,
+  // matching Grok Build's own credit bar mapper.
   return period
     ? [
         {
           label,
           usedPercent: 0,
-          ...(resetsAt === undefined ? {} : { resetsAt }),
-          valueLabel: 'Usage not reported',
+          ...(!(resetsAt === undefined) ? { resetsAt } : {}),
+          ...(config.creditUsagePercent !== undefined
+            ? {
+                valueLabel: 'Usage not reported',
+              }
+            : {}),
         },
       ]
     : []
 }
 
-function prepaidCreditsRow(config: Record<string, unknown>): ProviderLimit[] {
-  const balance = cents(config['prepaidBalance'])
+function prepaidCreditsRow(config: BillingConfig): ProviderLimit[] {
+  const balance = cents(config.prepaidBalance)
   const remaining = balance === undefined ? undefined : Math.abs(balance)
   return !remaining
     ? []
     : [{ label: 'Credits', usedPercent: 0, valueLabel: `${dollars(remaining)} remaining` }]
 }
 
-function onDemandCreditsRow(
-  root: Record<string, unknown>,
-  config: Record<string, unknown>,
-): ProviderLimit[] {
-  const enabled = root['on_demand_enabled'] ?? root['onDemandEnabled']
+function onDemandCreditsRow(root: GrokBilling, config: BillingConfig): ProviderLimit[] {
+  const enabled = root.on_demand_enabled ?? root.onDemandEnabled
   if (enabled === false) return []
-  const rawCap = cents(config['onDemandCap'])
-  const explicitUsed = cents(config['onDemandUsed'])
-  const totalUsed = cents(config['used'])
-  const monthlyLimit = cents(config['monthlyLimit'])
+  const rawCap = cents(config.onDemandCap)
+  const explicitUsed = cents(config.onDemandUsed)
+  const totalUsed = cents(config.used)
+  const monthlyLimit = cents(config.monthlyLimit)
   const rawUsed =
     explicitUsed ??
     (totalUsed !== undefined && monthlyLimit !== undefined
@@ -150,9 +182,10 @@ function onDemandCreditsRow(
 
 /** Pure mapping so the billing shape is testable without the network. */
 export function mapGrokBilling(body: unknown): ProviderLimit[] {
-  const root = object(body)
-  const config = object(root?.['config'])
-  if (!root || !config) return []
+  const parsed = GrokBillingSchema.safeParse(body)
+  if (!parsed.success) return []
+  const root = parsed.data
+  const config = root.config
   return [
     ...includedCreditsRow(config),
     ...prepaidCreditsRow(config),
@@ -170,7 +203,7 @@ function bounded<T>(promise: Promise<T>): Promise<T> {
   ]).finally(() => clearTimeout(timer))
 }
 
-async function readGrokBilling(): Promise<unknown> {
+async function readGrokBilling(): Promise<GrokBilling> {
   const child = spawn(grokCommand(), ['agent', '--no-leader', 'stdio'], {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -181,18 +214,20 @@ async function readGrokBilling(): Promise<unknown> {
       rpc.request('initialize', {
         protocolVersion: 1,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-        clientInfo: { name: 'personal-harness', version: '0.0.0' },
+        clientInfo: { name: 'tastecode', version: '0.0.0' },
       }),
     )
-    return await bounded(rpc.request('_x.ai/billing', {}))
+    const parsed = GrokBillingSchema.safeParse(await bounded(rpc.request('_x.ai/billing', {})))
+    if (!parsed.success) throw new Error('Grok billing response was invalid.')
+    return parsed.data
   } finally {
     rpc.dispose()
   }
 }
 
-let billingRead: Promise<unknown> | undefined
+let billingRead: Promise<GrokBilling> | undefined
 
-function grokBilling(): Promise<unknown> {
+function grokBilling(): Promise<GrokBilling> {
   billingRead ??= readGrokBilling().finally(() => {
     billingRead = undefined
   })
@@ -205,10 +240,9 @@ export async function grokLimits(): Promise<ProviderLimit[]> {
 
 /** Provider-local availability keeps shared code free of Grok auth checks. */
 export async function grokLimitSource(
-  account: typeof grokAccount = grokAccount,
+  account: () => Promise<GrokAccount> = grokAccount,
 ): Promise<GrokLimitSource> {
   if (!(await account()).signedIn) return { status: 'unavailable' }
   const body = await grokBilling()
-  if (!object(object(body)?.['config'])) throw new Error('Grok billing response was invalid.')
   return { status: 'ready', limits: mapGrokBilling(body) }
 }

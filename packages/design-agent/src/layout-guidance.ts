@@ -1,6 +1,81 @@
+import type { PageBlueprint, PageLayoutFamily } from './page.js'
+
+const numbered = (prefix: string, count: number): string[] =>
+  Array.from({ length: count }, (_, index) => `${prefix}-${index + 1}`)
+
+const NAVIGATION_CASES = new Set(numbered('navigation', 6))
+const FEATURE_CASES = [
+  ...numbered('feature-heading', 6),
+  ...numbered('feature-grid', 6),
+  'feature-timed',
+  ...numbered('feature-spatial', 3),
+]
+
+const SECTION_CASES = {
+  hero: new Set([...numbered('hero-text', 7), ...numbered('hero-visual', 7)]),
+  about: new Set([...numbered('about', 7), ...numbered('about-text', 2)]),
+  feature: new Set(FEATURE_CASES),
+  how_it_works: new Set([...numbered('how-it-works', 5), ...FEATURE_CASES]),
+  social_proof: new Set(['social-proof-carousel', 'social-proof-static-row', 'social-proof-wall']),
+  stats: new Set(numbered('stats', 3)),
+  faq: new Set(numbered('faq', 4)),
+  cta: new Set(numbered('cta', 7)),
+  pricing: new Set(numbered('pricing', 4)),
+  contact: new Set(['contact-split', 'contact-centered']),
+  footer: new Set(numbered('footer', 7)),
+} satisfies Record<PageLayoutFamily, Set<string>>
+
+export function assertPageLayoutSelections(page: PageBlueprint): PageBlueprint {
+  const navigationCase = page.navigationDesign?.layoutCase
+  if (!navigationCase || !NAVIGATION_CASES.has(navigationCase)) {
+    throw new Error('navigationDesign.layoutCase must select navigation-1 through navigation-6')
+  }
+
+  let previousSelection = ''
+  for (const [index, section] of page.sections.entries()) {
+    if (!section.layoutFamily || !section.layoutCases?.length) {
+      throw new Error(`sections[${index}] must select a layoutFamily and layoutCases`)
+    }
+    if (new Set(section.layoutCases).size !== section.layoutCases.length) {
+      throw new Error(`sections[${index}].layoutCases must not contain duplicates`)
+    }
+    const allowed = SECTION_CASES[section.layoutFamily]
+    const invalid = section.layoutCases.find((layoutCase) => !allowed.has(layoutCase))
+    if (invalid) {
+      throw new Error(
+        `sections[${index}].layoutCases contains ${invalid}, which is not a ${section.layoutFamily} case`,
+      )
+    }
+    const primaryCases = section.layoutCases.filter(
+      (layoutCase) => !layoutCase.startsWith('feature-heading-'),
+    )
+    if (primaryCases.length === 0) {
+      throw new Error(`sections[${index}].layoutCases must contain a composition case`)
+    }
+    const selection = `${section.layoutFamily}:${[...primaryCases].sort().join('+')}`
+    if (selection === previousSelection) {
+      throw new Error('adjacent sections must not repeat the same layout composition')
+    }
+    previousSelection = selection
+  }
+
+  return page
+}
+
 export const PAGE_LAYOUT_GUIDANCE = `Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, Pricing, Contact, and Footer decisions. Select the case that best fits the content and brand, or lightly combine compatible cases. Keep the described composition recognizable instead of replacing it with an unrelated default layout.
 
+Every navigation and section must record the exact case IDs it uses. Numbered IDs follow the lists below: navigation-1, hero-text-1, hero-visual-1, about-1, about-text-1, feature-heading-1, feature-grid-1, feature-timed, feature-spatial-1, how-it-works-1, stats-1, faq-1, cta-1, pricing-1, and footer-1. Social proof uses social-proof-carousel, social-proof-static-row, or social-proof-wall. Contact uses contact-split or contact-centered. A section may reuse a compatible family, such as feature for a Showcase, but it may not omit the family or replace the chosen composition with a generic default. The layout field must then explain how the selected case is applied to this page's real content.
+
 The layout case is only part of the result. Font choice and scale, brand colors, spacing, button placement and treatment, corner radii, navigation placement, media crop, and motion create much of the final feeling. Resolve all of them from the approved brand direction. Motion must fit the selected style and composition rather than being added as a generic effect.
+
+Apply these quality constraints to every case:
+- Keep headings deliberately scaled for the composition. Plan one or two visual lines; use three only when the rare editorial composition genuinely benefits, and never plan four.
+- Do not add eyebrows, uppercase monospace micro-labels, decorative section numbers, ornamental hairline grids, colored vertical accent rails, or arbitrary square-panel systems.
+- Use whitespace and content-shaped cards to group information. A divider is exceptional and must clarify a real relationship; it is not the default section or card skeleton.
+- Use cards generously when they contain a coherent feature, person, plan, proof point, action, or media story. Give the page one base card language and at most one emphasized variant. Keep their radius, spacing logic, media treatment, and interaction feedback related while varying size and internal composition to fit the content. Never box ordinary prose, repeat an empty three-column template, or style every card as an unrelated experiment.
+- Carry the brand accent into meaningful actions, focus and selected states, and a recurring card, media, or section treatment. Do not reduce the brand color to tiny labels or icons, and do not spread unrelated accent colors across every card.
+- Prefer relevant photography, product imagery, and interface captures. Use SVG only for a simple functional icon, a real product/interface visual, or a diagram whose meaning is immediately clear. Never select an abstract diagram merely to fill empty space.
+- Keep the typography coherent across a section. Do not switch families repeatedly inside one line, sentence, card, or navigation item.
 
 Hero text-layout cases:
 1. Place a short, clear headline in the center. Add one smaller supporting sentence beneath it, followed by one or two CTA buttons.

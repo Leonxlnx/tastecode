@@ -1,18 +1,29 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CodeView, type CodeViewHandle, type CodeViewReactOptions } from '@pierre/diffs/react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { DiffFile, SessionDiff } from '@harness/contracts'
 import {
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  GitBranch,
-  LoaderCircle,
-  RefreshCw,
-  Search,
-} from 'lucide-react'
+  IconCheck as Check,
+  IconChevronDown as ChevronDown,
+  IconChevronRight as ChevronRight,
+  IconCopy as Copy,
+  IconFolder as Folder,
+  IconGitBranch as GitBranch,
+  IconLoader2 as LoaderCircle,
+  IconRefresh as RefreshCw,
+  IconSearch as Search,
+  IconSparkles as Sparkles,
+} from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
+import { IconMorph } from '../IconMorph.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import {
+  buildReviewTree,
+  flattenReviewTree,
+  type ReviewTreeNode,
+  type ReviewTreeRow,
+} from './review-file-tree.js'
 import {
   workspaceDiffCollection,
   workspaceDiffItemId,
@@ -98,6 +109,10 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
+  const [commitMessage, setCommitMessage] = useState<string>()
+  const [commitError, setCommitError] = useState<string>()
+  const [generatingCommit, setGeneratingCommit] = useState(false)
+  const [copiedCommit, setCopiedCommit] = useState(false)
   const generation = useRef(0)
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
 
@@ -106,6 +121,10 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     const mine = ++generation.current
     setLoading(true)
     setError(undefined)
+    setCommitMessage(undefined)
+    setCommitError(undefined)
+    setGeneratingCommit(false)
+    setCopiedCommit(false)
     try {
       const result = await props.transport.request('workspace.diff', {
         projectPath: props.projectPath,
@@ -121,8 +140,43 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     }
   }, [props.projectPath, props.threadId, props.transport])
 
+  const generateCommitMessage = useCallback(async () => {
+    if (!props.projectPath) return
+    const mine = generation.current
+    setGeneratingCommit(true)
+    setCommitError(undefined)
+    setCopiedCommit(false)
+    try {
+      const result = await props.transport.request('backgroundModel.generateCommitMessage', {
+        projectPath: props.projectPath,
+        ...(props.threadId ? { threadId: props.threadId } : {}),
+      })
+      if (generation.current === mine) setCommitMessage(result.message)
+    } catch (cause) {
+      if (generation.current === mine) {
+        setCommitError(cause instanceof Error ? cause.message : String(cause))
+      }
+    } finally {
+      if (generation.current === mine) setGeneratingCommit(false)
+    }
+  }, [props.projectPath, props.threadId, props.transport])
+
+  const copyCommitMessage = useCallback(async () => {
+    if (!commitMessage) return
+    try {
+      await navigator.clipboard.writeText(commitMessage)
+      setCopiedCommit(true)
+    } catch {
+      setCommitError('Could not copy the commit message.')
+    }
+  }, [commitMessage])
+
   useEffect(() => {
     setDiff(undefined)
+    setCommitMessage(undefined)
+    setCommitError(undefined)
+    setGeneratingCommit(false)
+    setCopiedCommit(false)
     if (props.projectPath) void refresh()
     return () => {
       generation.current += 1
@@ -216,6 +270,20 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         </span>
         <button
           type="button"
+          className="workspace-review__generate-commit"
+          title="Draft commit message"
+          aria-label="Draft commit message"
+          disabled={loading || generatingCommit || !diff || diff.files.length === 0}
+          onClick={() => void generateCommitMessage()}
+        >
+          <IconMorph active={generatingCommit ? 1 : 0}>
+            <Sparkles size={14} aria-hidden />
+            <LoaderCircle className="spinner" size={14} aria-hidden />
+          </IconMorph>
+          <span className="workspace-review__generate-label">Commit message</span>
+        </button>
+        <button
+          type="button"
           className="icon-btn"
           title="Refresh diff"
           disabled={loading}
@@ -225,17 +293,41 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         </button>
       </header>
 
-      {error ? (
-        <div className="workspace-review__message" role="alert">
-          {error}
-        </div>
-      ) : null}
+      <div className="workspace-review__notices" aria-live="polite">
+        {error ? (
+          <div className="workspace-review__message" role="alert">
+            {error}
+          </div>
+        ) : null}
 
-      {!diff && loading ? (
-        <div className="workspace-review__message" role="status">
-          <LoaderCircle className="spinner" size={15} aria-hidden /> Loading diff…
-        </div>
-      ) : null}
+        {commitError ? (
+          <div className="workspace-review__message" role="alert">
+            {commitError}
+          </div>
+        ) : null}
+
+        {commitMessage ? (
+          <div className="workspace-review__commit-draft" role="status">
+            <pre>{commitMessage}</pre>
+            <button
+              type="button"
+              aria-label="Copy commit message"
+              onClick={() => void copyCommitMessage()}
+            >
+              <IconMorph active={copiedCommit ? 1 : 0}>
+                <Copy size={14} aria-hidden />
+                <Check size={14} aria-hidden />
+              </IconMorph>
+            </button>
+          </div>
+        ) : null}
+
+        {!diff && loading ? (
+          <div className="workspace-review__message" role="status">
+            <LoaderCircle className="spinner" size={15} aria-hidden /> Loading diff…
+          </div>
+        ) : null}
+      </div>
 
       {diff && diff.files.length === 0 ? (
         <WorkspaceEmptyState
@@ -312,14 +404,11 @@ function ReviewFallbackFiles({ fallbacks }: { fallbacks: WorkspaceDiffFallback[]
   )
 }
 
-type TreeNode = {
-  name: string
-  path: string
-  children: TreeNode[]
-  file?: DiffFile
-}
+const REVIEW_TREE_VIRTUAL_FILE_THRESHOLD = 200
+const REVIEW_TREE_ROW_HEIGHT = 29
+const EMPTY_REVIEW_TREE_ROWS: ReviewTreeRow[] = []
 
-function ReviewTree({
+export const ReviewTree = memo(function ReviewTree({
   files,
   onSelect,
 }: {
@@ -327,11 +416,122 @@ function ReviewTree({
   onSelect: (file: DiffFile) => void
 }) {
   const tree = useMemo(() => buildReviewTree(files), [files])
+  if (files.length > REVIEW_TREE_VIRTUAL_FILE_THRESHOLD) {
+    return <VirtualReviewTree tree={tree} onSelect={onSelect} />
+  }
+
   return (
     <div className="workspace-review__tree-list">
       {tree.map((node) => (
         <ReviewTreeNode key={node.path} node={node} depth={0} onSelect={onSelect} />
       ))}
+    </div>
+  )
+})
+
+function VirtualReviewTree({
+  tree,
+  onSelect,
+}: {
+  tree: ReviewTreeNode[]
+  onSelect: (file: DiffFile) => void
+}) {
+  const [closedPaths, setClosedPaths] = useState<ReadonlySet<string>>(() => new Set())
+  const rows = useMemo(
+    () => (tree.length > 0 ? flattenReviewTree(tree, closedPaths) : EMPTY_REVIEW_TREE_ROWS),
+    [closedPaths, tree],
+  )
+  const scroller = useRef<HTMLDivElement>(null)
+  const getItemKey = useCallback(
+    (index: number) => rows[index]?.node.path ?? `missing-review-row-${index}`,
+    [rows],
+  )
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scroller.current,
+    estimateSize: () => REVIEW_TREE_ROW_HEIGHT,
+    getItemKey,
+    overscan: 12,
+  })
+  const toggleFolder = useCallback((path: string) => {
+    setClosedPaths((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }, [])
+
+  return (
+    <div ref={scroller} className="workspace-review__tree-list is-virtual">
+      <div className="workspace-review__tree-canvas" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const row = rows[virtualRow.index]
+          if (!row) return null
+          return (
+            <VirtualReviewTreeRow
+              key={virtualRow.key}
+              row={row}
+              open={!closedPaths.has(row.node.path)}
+              start={virtualRow.start}
+              onSelect={onSelect}
+              onToggle={toggleFolder}
+            />
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function VirtualReviewTreeRow({
+  row,
+  open,
+  start,
+  onSelect,
+  onToggle,
+}: {
+  row: ReviewTreeRow
+  open: boolean
+  start: number
+  onSelect: (file: DiffFile) => void
+  onToggle: (path: string) => void
+}) {
+  const { node, depth } = row
+  if (node.file) {
+    return (
+      <button
+        type="button"
+        className="workspace-review__tree-file workspace-review__tree-row"
+        style={{ paddingLeft: 10 + depth * 18, transform: `translateY(${start}px)` }}
+        title={node.path}
+        onClick={() => onSelect(node.file!)}
+      >
+        <FileTypeIcon path={node.path} />
+        <span>{node.name}</span>
+        <i data-status={node.file.status}>{statusLetter(node.file.status)}</i>
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="workspace-review__tree-folder workspace-review__tree-row"
+      style={{ transform: `translateY(${start}px)` }}
+    >
+      <button
+        type="button"
+        style={{ paddingLeft: 8 + depth * 18 }}
+        aria-expanded={open}
+        onClick={() => onToggle(node.path)}
+      >
+        <IconMorph active={open ? 1 : 0}>
+          <ChevronRight size={14} aria-hidden />
+          <ChevronDown size={14} aria-hidden />
+        </IconMorph>
+        <Folder size={14} aria-hidden />
+        <span>{node.name}</span>
+      </button>
     </div>
   )
 }
@@ -341,7 +541,7 @@ function ReviewTreeNode({
   depth,
   onSelect,
 }: {
-  node: TreeNode
+  node: ReviewTreeNode
   depth: number
   onSelect: (file: DiffFile) => void
 }) {
@@ -370,7 +570,10 @@ function ReviewTreeNode({
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
       >
-        {open ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+        <IconMorph active={open ? 1 : 0}>
+          <ChevronRight size={14} aria-hidden />
+          <ChevronDown size={14} aria-hidden />
+        </IconMorph>
         <Folder size={14} aria-hidden />
         <span>{node.name}</span>
       </button>
@@ -383,32 +586,6 @@ function ReviewTreeNode({
   )
 }
 
-function buildReviewTree(files: DiffFile[]): TreeNode[] {
-  const root: TreeNode = { name: '', path: '', children: [] }
-  for (const file of files) {
-    const parts = file.path.replaceAll('\\', '/').split('/').filter(Boolean)
-    let parent = root
-    parts.forEach((part, index) => {
-      const currentPath = parts.slice(0, index + 1).join('/')
-      let node = parent.children.find((child) => child.name === part)
-      if (!node) {
-        node = { name: part, path: currentPath, children: [] }
-        parent.children.push(node)
-      }
-      if (index === parts.length - 1) node.file = file
-      parent = node
-    })
-  }
-  const sort = (nodes: TreeNode[]): TreeNode[] =>
-    nodes
-      .sort((left, right) => {
-        if (Boolean(left.file) !== Boolean(right.file)) return left.file ? 1 : -1
-        return left.name.localeCompare(right.name, undefined, { numeric: true })
-      })
-      .map((node) => ({ ...node, children: sort(node.children) }))
-  return sort(root.children)
-}
-
 function diffStats(diff: SessionDiff | undefined): { added: number; removed: number } {
   return (diff?.files ?? []).reduce(
     (total, file) => {
@@ -419,7 +596,7 @@ function diffStats(diff: SessionDiff | undefined): { added: number; removed: num
   )
 }
 
-function fileStats(file: DiffFile): { added: number; removed: number } {
+function fileStats(file: DiffFile) {
   let added = 0
   let removed = 0
   for (const hunk of file.hunks) {

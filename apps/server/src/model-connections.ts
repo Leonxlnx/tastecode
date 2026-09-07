@@ -1,31 +1,32 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import {
   StoredModelConnectionSchema,
   type ModelConnection,
   type StoredModelConnection,
 } from '@harness/contracts'
+import { z } from 'zod'
 import { hasCredential, removeCredential, writeCredential } from './credentials.js'
+import { configFile } from './product-paths.js'
 
 type ConfigFile = { version: 1; connections: StoredModelConnection[] }
 const EMPTY_CONFIG: ConfigFile = { version: 1, connections: [] }
+const ConfigFileSchema = z.object({
+  version: z.literal(1),
+  connections: z.array(StoredModelConnectionSchema),
+})
 
 function defaultLocation(): string {
-  const root = process.env['HARNESS_CONFIG_DIR'] ?? path.join(os.homedir(), '.personalharness')
-  return path.join(root, 'providers.json')
+  return configFile('providers.json')
 }
 
 function parseConfig(raw: string): ConfigFile {
-  const value = JSON.parse(raw) as { version?: unknown; connections?: unknown }
-  if (value.version !== 1 || !Array.isArray(value.connections)) {
+  const value = ConfigFileSchema.safeParse(JSON.parse(raw))
+  if (!value.success) {
     throw new Error('invalid provider config: expected a version 1 connection list')
   }
-  return {
-    version: 1,
-    connections: value.connections.map((entry) => StoredModelConnectionSchema.parse(entry)),
-  }
+  return value.data
 }
 
 function capabilities(connection: StoredModelConnection): ModelConnection['capabilities'] {
@@ -39,9 +40,24 @@ function capabilities(connection: StoredModelConnection): ModelConnection['capab
   }
 }
 
+export type ModelCredentialStore = {
+  has(reference: string): boolean
+  write(reference: string, value: string): void
+  remove(reference: string): void
+}
+
+const OS_CREDENTIALS: ModelCredentialStore = {
+  has: hasCredential,
+  write: writeCredential,
+  remove: removeCredential,
+}
+
 /** Human-readable provider configuration. API keys stay in the OS credential store. */
 export class ModelConnectionStore {
-  constructor(private readonly location = defaultLocation()) {}
+  constructor(
+    private readonly location = defaultLocation(),
+    private readonly credentials: ModelCredentialStore = OS_CREDENTIALS,
+  ) {}
 
   list(): ModelConnection[] {
     return this.#read().connections.map((connection) => this.#public(connection))
@@ -69,7 +85,7 @@ export class ModelConnectionStore {
 
   setCredential(id: string, apiKey: string): void {
     const connection = this.get(id)
-    writeCredential(connection.credentialRef, apiKey)
+    this.credentials.write(connection.credentialRef, apiKey)
   }
 
   remove(id: string): void {
@@ -78,14 +94,14 @@ export class ModelConnectionStore {
     if (index < 0) throw new Error(`model connection "${id}" does not exist`)
     const [connection] = file.connections.splice(index, 1)
     this.#write(file)
-    if (connection) removeCredential(connection.credentialRef)
+    if (connection) this.credentials.remove(connection.credentialRef)
   }
 
   #public(connection: StoredModelConnection): ModelConnection {
     const { credentialRef, ...config } = connection
     return {
       ...config,
-      credentialConfigured: hasCredential(credentialRef),
+      credentialConfigured: this.credentials.has(credentialRef),
       capabilities: capabilities(connection),
     }
   }

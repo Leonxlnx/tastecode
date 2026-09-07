@@ -15,8 +15,9 @@ ACP and API-connection surfaces, all working). Work that the beta itself needs (
 polish for the three shipped plans) still goes to `main` by PR and reaches `nightly` on the
 next sync; everything else targets `nightly`. Keep `nightly` synchronized by merging `main`
 and resolving conflicts without rewriting published history. Do not un-park a provider on
-`main` without Leon saying so. `harness-rust` stays as an
-experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklist.
+`main` without Leon saying so. The Rust + GPUI rewrite is preserved only on
+`archive/rust-rewrite-2026-08-15`; do not merge it back into `main` without Leon saying so.
+[docs/dashboard.html](./docs/dashboard.html) is the release checklist.
 
 ## Read first
 
@@ -34,7 +35,12 @@ experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklis
 - **Never commit a secret**, including in fixtures and examples.
 - **Never write a `.sh` script.** Node/TypeScript only — we are a Windows + macOS team.
 - **Never assume POSIX paths.** Use `node:path`.
+- **Stay on the current branch unless the user explicitly asks otherwise.** Do not create a
+  branch or worktree, or switch branches, as a routine setup step.
 - **Never open a PR unless the user explicitly asks for one.**
+- **Never include Rust-port or mobile-app branch changes in a PR unless the user
+  explicitly names that scope.** Broad requests such as “PR everything,” “ship all local
+  changes,” or “everything” do not authorize either branch; exclude them by default.
 - **Never push to `main`.** Branch, PR, merge. An agent may **merge its own PR without
   waiting** when the work is confidently finished: all four gates green locally, the flow
   exercised against the running app, and nothing in the PR touches `packages/contracts`,

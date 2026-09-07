@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
-import { CircleAlert, ImagePlus, RefreshCw, Trash2 } from 'lucide-react'
+import {
+  IconAlertCircle as CircleAlert,
+  IconPhotoPlus as ImagePlus,
+  IconRefresh as RefreshCw,
+  IconTrash as Trash2,
+} from '@tabler/icons-react'
 import { providerPresentation } from '../provider-presentation.js'
 import {
   PROFILE_IMAGE_ACCEPT,
@@ -43,6 +48,7 @@ export function ProfileSettings(props: {
   const [error, setError] = useState<string>()
   const [requestVersion, setRequestVersion] = useState(0)
   const forceRefresh = useRef(false)
+  const scanInProgress = useRef(false)
   const [imageError, setImageError] = useState<string>()
   const imageRequest = useRef(0)
 
@@ -65,11 +71,6 @@ export function ProfileSettings(props: {
   useEffect(() => {
     let active = true
     let pollTimer: ReturnType<typeof setTimeout> | undefined
-    const schedulePoll = () => {
-      pollTimer = setTimeout(() => {
-        if (active) setRequestVersion((version) => version + 1)
-      }, 500)
-    }
     const refresh = forceRefresh.current
     forceRefresh.current = false
     setLoading(true)
@@ -79,17 +80,21 @@ export function ProfileSettings(props: {
       .then((result) => {
         if (!active) return
         setData(result)
-        if (result.scan.status === 'scanning') {
-          schedulePoll()
-        }
+        scanInProgress.current = result.scan.status === 'scanning'
       })
       .catch((requestError: unknown) => {
         if (!active) return
         setError(requestError instanceof Error ? requestError.message : String(requestError))
-        if (data?.scan.status === 'scanning') schedulePoll()
       })
       .finally(() => {
-        if (active) setLoading(false)
+        if (active) {
+          setLoading(false)
+          if (scanInProgress.current) {
+            pollTimer = setTimeout(() => {
+              if (active) setRequestVersion((version) => version + 1)
+            }, 500)
+          }
+        }
       })
     return () => {
       active = false

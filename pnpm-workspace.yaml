@@ -10,8 +10,14 @@ allowBuilds:
   electron: true
   # Builds the official PTY native binding for this platform.
   node-pty: true
+  # Only used by electron-builder's optional Squirrel target. TasteCode ships
+  # NSIS, so its architecture-selection install script is intentionally skipped.
+  electron-winstaller: false
 minimumReleaseAgeExclude:
   - electron@43.4.0
+overrides:
+  mermaid: 11.16.1
+  dompurify: 3.4.13
 patchedDependencies:
   # @pierre/diffs keeps the gutter "+" pinned to the last commented line because
   # it never clears the selection after a gutter-utility click. See the patch.

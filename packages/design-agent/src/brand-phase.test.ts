@@ -77,10 +77,45 @@ describe('brand phase', () => {
     expect(prompt).toContain('The only valid locked role keys are canvas, surface, surfaceAlt')
     expect(prompt).toContain('Leave locked empty when no exact color is supplied')
     expect(prompt).toContain('Treat 60/30/10 only as loose composition guidance')
+    expect(prompt).toContain('Use one primary typeface family')
+    expect(prompt).toContain('spacing rhythm, content widths, section density')
+    expect(prompt).toContain("project's established icon system")
+    expect(prompt).toContain('Make motionDirection operational')
+    expect(prompt).toContain('Return each motionDirection.principles entry as one string')
+    expect(prompt).toContain('Ban universal fade-up choreography')
+    expect(prompt).toContain('Never choose IBM Plex Mono, Archivo')
+    expect(prompt).toContain('colored left-edge accent rails')
+    expect(prompt).toContain('one base card language and at most one emphasized variant')
+    expect(prompt).toContain('primary action, focus and selected states')
+    expect(prompt).toContain('prefer relevant supplied, generated, or properly sourced photographs')
   })
 
   it('parses fenced provider output through the brand validator', () => {
     expect(parseBrandPhaseOutput(`\`\`\`json\n${JSON.stringify(brand)}\n\`\`\``)).toEqual(brand)
+  })
+
+  it('normalizes structured motion principles into the persisted string format', () => {
+    const parsed = parseBrandPhaseOutput(
+      JSON.stringify({
+        ...brand,
+        motionDirection: {
+          ...brand.motionDirection,
+          principles: [
+            {
+              purpose: 'Confirm navigation state changes',
+              trigger: 'A route becomes active',
+              affectedRelationship: 'The active link and destination view',
+              timingRange: '160-220ms',
+              easingCharacter: 'Strong ease-out',
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(parsed.motionDirection.principles).toEqual([
+      'purpose: Confirm navigation state changes; trigger: A route becomes active; affected relationship: The active link and destination view; timing range: 160-220ms; easing character: Strong ease-out',
+    ])
   })
 
   it('turns a compact palette recipe into verified semantic color records', () => {
@@ -108,5 +143,33 @@ describe('brand phase', () => {
         usage: expect.stringContaining('Sparse accent.'),
       }),
     )
+  })
+
+  it.each(['IBM Plex Mono', 'Archivo', 'Archivo Narrow'])(
+    'rejects the banned typeface %s',
+    (family) => {
+      expect(() =>
+        parseBrandPhaseOutput(
+          JSON.stringify({
+            ...brand,
+            typefaces: [{ ...brand.typefaces[0], family }],
+          }),
+        ),
+      ).toThrow('is not allowed')
+    },
+  )
+
+  it('rejects more than two typeface families', () => {
+    expect(() =>
+      parseBrandPhaseOutput(
+        JSON.stringify({
+          ...brand,
+          typefaces: ['Geist', 'Newsreader', 'Inter'].map((family) => ({
+            ...brand.typefaces[0],
+            family,
+          })),
+        }),
+      ),
+    ).toThrow('at most two typeface families')
   })
 })

@@ -11,8 +11,14 @@ import type {
   Thread,
 } from '@harness/contracts'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
-import { killTree, spawnCli } from '@harness/proc'
-import { OpenCodeEventMapper, type OpenCodeV2Event, type OpenCodeWireEvent } from './events.js'
+import { JsonRpcValueSchema, killTree, spawnCli, type JsonRpcValue } from '@harness/proc'
+import { z } from 'zod'
+import {
+  OpenCodeEventMapper,
+  OpenCodeV2EventSchema,
+  type OpenCodeV2Event,
+  type OpenCodeWireEvent,
+} from './events.js'
 
 export const OPENCODE_CAPABILITIES: Capabilities = {
   steer: false,
@@ -53,25 +59,25 @@ function applyOpenCodeTurnOptions(
   return merged
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
+const VariantSchema = z.object({ id: z.string(), disabled: z.boolean().optional() })
+const VariantMapSchema = z.record(z.string(), z.object({ disabled: z.boolean().optional() }))
+const VariantsSchema = z.union([z.array(VariantSchema), VariantMapSchema])
+const ReasoningModelSchema = z.object({
+  variants: VariantsSchema.optional(),
+  options: z.object({ variants: VariantsSchema.optional() }).optional(),
+})
 
 /** OpenCode owns variant names and can add custom ones in project config.
  *  Accept both catalog shapes it uses for variants so the result remains
  *  model-specific instead of guessing from the underlying provider name. */
 export function openCodeReasoningEfforts(model: unknown): string[] {
-  const value = record(model).variants ?? record(record(model).options).variants
+  const parsed = ReasoningModelSchema.safeParse(model)
+  if (!parsed.success) return []
+  const value = parsed.data.variants ?? parsed.data.options?.variants
   const variants = Array.isArray(value)
-    ? value
-        .map((entry) => record(entry))
-        .filter((entry) => entry.disabled !== true)
-        .map((entry) => entry.id)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0)
-    : Object.entries(record(value))
-        .filter(([, entry]) => record(entry).disabled !== true)
+    ? value.filter((entry) => entry.disabled !== true).map((entry) => entry.id)
+    : Object.entries(value ?? {})
+        .filter(([, entry]) => entry.disabled !== true)
         .map(([id]) => id)
   if (variants.length === 0) return []
   return [
@@ -81,19 +87,16 @@ export function openCodeReasoningEfforts(model: unknown): string[] {
 }
 
 /**
- * Harness MCP config as the `mcp` block of an opencode config. Credential
+ * TasteCode MCP config as the `mcp` block of an opencode config. Credential
  * references resolve here — the reference, never the secret, is what crossed
  * the protocol. Verified against opencode 1.x: `OPENCODE_CONFIG_CONTENT`
  * accepts `{ mcp: { name: { type: 'local'|'remote', ... } } }`.
  */
-export function openCodeMcpConfig(
-  servers: McpServerConfig[],
-  credentials: Record<string, string>,
-): Record<string, unknown> {
+export function openCodeMcpConfig(servers: McpServerConfig[], credentials: Record<string, string>) {
   const resolve = (
     value: { source: 'literal'; value: string } | { source: 'credential'; credentialRef: string },
   ) => (value.source === 'literal' ? value.value : (credentials[value.credentialRef] ?? ''))
-  const mcp: Record<string, unknown> = {}
+  const mcp: Record<string, JsonRpcValue> = {}
   for (const server of servers) {
     if (!server.enabled) {
       mcp[server.id] = { type: 'local', command: ['true'], enabled: false }
@@ -136,6 +139,48 @@ export function openCodeMcpConfig(
   return mcp
 }
 
+const OpenCodeV2SessionSchema = z.object({
+  id: z.string(),
+  title: z.string().optional(),
+  time: z.object({ created: z.number().optional() }).optional(),
+})
+const SessionEnvelopeSchema = z.object({ data: OpenCodeV2SessionSchema })
+const OpenCodeV2ProviderSchema = z.object({ id: z.string(), name: z.string() })
+const ProviderEnvelopeSchema = z.object({ data: z.array(OpenCodeV2ProviderSchema) })
+const OpenCodeV2CatalogModelSchema = z.object({
+  id: z.string(),
+  providerID: z.string(),
+  name: z.string(),
+  enabled: z.boolean().optional(),
+  variants: JsonRpcValueSchema.optional(),
+})
+const ModelEnvelopeSchema = z.object({ data: z.array(OpenCodeV2CatalogModelSchema) })
+const OpenCodeV2AgentSchema = z.object({
+  id: z.string(),
+  mode: z.string().optional(),
+  model: z
+    .object({ id: z.string(), providerID: z.string(), variant: z.string().optional() })
+    .optional(),
+})
+const AgentEnvelopeSchema = z.object({ data: z.array(OpenCodeV2AgentSchema) })
+const HealthSchema = z.object({ healthy: z.boolean() })
+const PermissionAskedDataSchema = z.object({
+  id: z.string(),
+  action: z.string().optional(),
+  resources: z.array(z.string()).optional(),
+})
+const PermissionRepliedDataSchema = z.object({ requestID: z.string() })
+const SessionDataSchema = z.object({ sessionID: z.string().optional() })
+const LegacySessionPropertiesSchema = z.object({
+  sessionID: z.string().optional(),
+  part: z.object({ sessionID: z.string().optional() }).optional(),
+  info: z.object({ sessionID: z.string().optional() }).optional(),
+})
+
+type OpenCodeV2Session = z.infer<typeof OpenCodeV2SessionSchema>
+type OpenCodeV2Provider = z.infer<typeof OpenCodeV2ProviderSchema>
+type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
+
 export class OpenCodeAdapter extends EventEmitter<Events> {
   readonly #spawn: Spawn
   readonly #configuredBaseUrl: string | undefined
@@ -157,7 +202,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #eventController: AbortController | undefined
   #approval: ApprovalMode = 'ask'
   #pendingApprovals = new Map<string, { request: ApprovalRequest; surfaced: boolean }>()
-  #replyingApprovals = new Map<string, Promise<unknown>>()
+  #replyingApprovals = new Map<string, Promise<void>>()
   #model: string | undefined
   #effort: string | undefined
   #instructions: string | undefined
@@ -215,14 +260,18 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#instructionsPending = Boolean(options.instructions)
     if (this.#protocol === 'v2') {
       const model = openCodeV2Model(this.#model, this.#effort)
-      const result = await this.#v2Request<{ data: OpenCodeV2Session }>('/api/session', {
-        method: 'POST',
-        body: JSON.stringify({
-          title: 'Personal Harness',
-          location: { directory: workspacePath },
-          ...(model ? { model } : {}),
-        }),
-      })
+      const result = await this.#v2RequestParsed(
+        '/api/session',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            title: 'TasteCode',
+            location: { directory: workspacePath },
+            ...(model ? { model } : {}),
+          }),
+        },
+        SessionEnvelopeSchema,
+      )
       const session = result.data
       this.#sessionId = session.id
       this.#threadId = `opencode-${session.id}`
@@ -232,7 +281,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#client = this.#newClient(workspacePath)
     await this.#subscribe()
     const { data: session } = await this.#client.session.create({
-      body: { title: 'Personal Harness' },
+      body: { title: 'TasteCode' },
       throwOnError: true,
     })
     this.#sessionId = session.id
@@ -261,8 +310,10 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#instructionsPending = false
     const sessionId = threadId.startsWith('opencode-') ? threadId.slice(9) : threadId
     if (this.#protocol === 'v2') {
-      const result = await this.#v2Request<{ data: OpenCodeV2Session }>(
+      const result = await this.#v2RequestParsed(
         `/api/session/${encodeURIComponent(sessionId)}`,
+        {},
+        SessionEnvelopeSchema,
       )
       const session = result.data
       this.#sessionId = session.id
@@ -330,7 +381,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         ...(model ? { model } : {}),
         ...(variant ? { variant } : {}),
         ...(this.#instructions ? { system: this.#instructions } : {}),
-      } as never,
+      },
       throwOnError: true,
     }).catch(() => this.#failTurn(turnId))
     return turnId
@@ -364,7 +415,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       return
     const response =
       decision === 'approve-session' ? 'always' : decision === 'approve' ? 'once' : 'reject'
-    const reply =
+    const reply = (
       this.#protocol === 'v2'
         ? this.#v2Request(
             `/api/session/${encodeURIComponent(this.#sessionId)}/permission/${encodeURIComponent(approvalId)}/reply`,
@@ -375,6 +426,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
             body: { response },
             throwOnError: true,
           })
+    ).then(() => undefined)
     this.#replyingApprovals.set(approvalId, reply)
     void reply
       .then(() => {
@@ -428,7 +480,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
             isDefault: result.default[provider.id] === model.id,
             reasoningEfforts,
             ...(reasoningEfforts.length > 0
-              ? { defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT }
+              ? {
+                  defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+                }
               : {}),
             serviceTiers: [],
           }
@@ -461,7 +515,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return createOpencodeClient({
       baseUrl: this.#baseUrl!,
       ...(directory ? { directory } : {}),
-      ...(this.#authorization ? { headers: { authorization: this.#authorization } } : {}),
+      ...(this.#authorization
+        ? {
+            headers: { authorization: this.#authorization },
+          }
+        : {}),
     })
   }
 
@@ -493,21 +551,29 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         signal: AbortSignal.timeout(1500),
       })
       if (!response.ok) return 'v1'
-      const health = record(await response.json())
-      return health.healthy === true ? 'v2' : 'v1'
+      const health = HealthSchema.safeParse(await response.json())
+      return health.success && health.data.healthy ? 'v2' : 'v1'
     } catch {
       return 'v1'
     }
   }
 
-  async #v2Request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  async #v2Request(path: string, init: RequestInit = {}): Promise<unknown> {
     const headers = new Headers(init.headers)
     if (this.#authorization) headers.set('authorization', this.#authorization)
     if (init.body !== undefined) headers.set('content-type', 'application/json')
     const response = await fetch(new URL(path, this.#baseUrl), { ...init, headers })
     if (!response.ok) throw new Error(`OpenCode v2 request failed (${response.status})`)
-    if (response.status === 204) return undefined as T
-    return (await response.json()) as T
+    if (response.status === 204) return undefined
+    return response.json()
+  }
+
+  #v2RequestParsed<Result>(
+    path: string,
+    init: RequestInit,
+    result: z.ZodType<Result>,
+  ): Promise<Result> {
+    return this.#v2Request(path, init).then((value) => result.parse(value))
   }
 
   async #subscribeV2(controller: AbortController): Promise<void> {
@@ -554,10 +620,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     // first picker open would incorrectly fall back to "Provider default".
     for (let attempt = 0; attempt < 5; attempt += 1) {
       providers = (
-        await this.#v2Request<{ data: OpenCodeV2Provider[] }>(`/api/provider${location}`)
+        await this.#v2RequestParsed(`/api/provider${location}`, {}, ProviderEnvelopeSchema)
       ).data
-      models = (await this.#v2Request<{ data: OpenCodeV2CatalogModel[] }>(`/api/model${location}`))
-        .data
+      models = (await this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema)).data
       if (models.length > 0) break
       if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 250))
     }
@@ -570,11 +635,12 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
           this.#v2Request(`/api/provider/${encodeURIComponent(provider.id)}${location}`),
         ),
       )
-      models = (await this.#v2Request<{ data: OpenCodeV2CatalogModel[] }>(`/api/model${location}`))
-        .data
+      models = (await this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema)).data
     }
-    const agents = await this.#v2Request<{ data: OpenCodeV2Agent[] }>(
+    const agents = await this.#v2RequestParsed(
       `/api/agent${location}`,
+      {},
+      AgentEnvelopeSchema,
     ).catch(() => ({ data: [] }))
     const defaultModel =
       agents.data.find((agent) => agent.id === 'build')?.model ??
@@ -590,7 +656,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
           isDefault: defaultModel?.providerID === model.providerID && defaultModel.id === model.id,
           reasoningEfforts,
           ...(reasoningEfforts.length > 0
-            ? { defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT }
+            ? {
+                defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+              }
             : {}),
           serviceTiers: [],
         }
@@ -600,12 +668,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #onV2Event(event: OpenCodeV2Event): void {
     const data = event.data
     if (event.type === 'permission.asked') {
-      const approvalId = typeof data.id === 'string' ? data.id : ''
-      if (!approvalId) return
-      const action = typeof data.action === 'string' ? data.action : ''
-      const resources = Array.isArray(data.resources)
-        ? data.resources.filter((value): value is string => typeof value === 'string')
-        : []
+      const permission = PermissionAskedDataSchema.safeParse(data)
+      if (!permission.success) return
+      const approvalId = permission.data.id
+      const action = permission.data.action ?? ''
+      const resources = permission.data.resources ?? []
       const command = /bash|shell|command|execute/i.test(action)
       const request: ApprovalRequest = {
         id: approvalId,
@@ -631,8 +698,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       return
     }
     if (event.type === 'permission.replied') {
-      const approvalId = typeof data.requestID === 'string' ? data.requestID : ''
-      if (approvalId && this.#pendingApprovals.delete(approvalId)) {
+      const permission = PermissionRepliedDataSchema.safeParse(data)
+      if (permission.success && this.#pendingApprovals.delete(permission.data.requestID)) {
+        const approvalId = permission.data.requestID
         this.emit('event', { type: 'approval.resolved', id: approvalId })
       }
       return
@@ -759,26 +827,6 @@ function parseModel(
   return { providerID: value.slice(0, slash), modelID: value.slice(slash + 1) }
 }
 
-type OpenCodeV2Session = {
-  id: string
-  title?: string
-  time?: { created?: number }
-}
-
-type OpenCodeV2Provider = { id: string; name: string }
-type OpenCodeV2CatalogModel = {
-  id: string
-  providerID: string
-  name: string
-  enabled?: boolean
-  variants?: unknown
-}
-type OpenCodeV2Agent = {
-  id: string
-  mode?: string
-  model?: { id: string; providerID: string; variant?: string }
-}
-
 function openCodeThread(session: OpenCodeV2Session, workspacePath: string): Thread {
   return {
     id: `opencode-${session.id}`,
@@ -795,15 +843,16 @@ function openCodeV2Model(
 ): { id: string; providerID: string; variant?: string } | undefined {
   const model = parseModel(value)
   if (!model) return undefined
+  const variant = effort && effort !== OPENCODE_DEFAULT_VARIANT ? effort : undefined
   return {
     id: model.modelID,
     providerID: model.providerID,
-    ...(effort && effort !== OPENCODE_DEFAULT_VARIANT ? { variant: effort } : {}),
+    ...(variant ? { variant: variant } : {}),
   }
 }
 
 async function launchOpenCodeServer(
-  config: Record<string, unknown>,
+  config: Record<string, JsonRpcValue>,
   spawn: Spawn = spawnCli,
 ): Promise<{
   url: string
@@ -821,7 +870,9 @@ async function launchOpenCodeServer(
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
         ...(Object.keys(config).length > 0
-          ? { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) }
+          ? {
+              OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+            }
           : {}),
       },
     })
@@ -849,7 +900,7 @@ async function launchOpenCodeServer(
     // can include auth details, and the actionable error is the safe one above.
     child.stderr.on('data', () => undefined)
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (!settled) finish(new Error(`OpenCode server exited with code ${code ?? 'unknown'}`))
     })
   })
@@ -880,14 +931,8 @@ async function readOpenCodeSse(
           .join('\n')
         if (!data) continue
         try {
-          const parsed = record(JSON.parse(data))
-          if (typeof parsed.type !== 'string') continue
-          onEvent({
-            ...(typeof parsed.id === 'string' ? { id: parsed.id } : {}),
-            ...(typeof parsed.created === 'number' ? { created: parsed.created } : {}),
-            type: parsed.type,
-            data: record(parsed.data),
-          })
+          const parsed = OpenCodeV2EventSchema.safeParse(JSON.parse(data))
+          if (parsed.success) onEvent(parsed.data)
         } catch {
           // One malformed frame must not disconnect an otherwise healthy SSE
           // stream; OpenCode will publish the next durable event independently.
@@ -901,12 +946,13 @@ async function readOpenCodeSse(
 
 function sessionId(event: OpenCodeWireEvent): string | undefined {
   if ('data' in event) {
-    return typeof event.data.sessionID === 'string' ? event.data.sessionID : undefined
+    const data = SessionDataSchema.safeParse(event.data)
+    return data.success ? data.data.sessionID : undefined
   }
-  const properties = event.properties as {
-    sessionID?: string
-    part?: { sessionID?: string }
-    info?: { sessionID?: string }
-  }
-  return properties.sessionID ?? properties.part?.sessionID ?? properties.info?.sessionID
+  const properties = LegacySessionPropertiesSchema.safeParse(event.properties)
+  return properties.success
+    ? (properties.data.sessionID ??
+        properties.data.part?.sessionID ??
+        properties.data.info?.sessionID)
+    : undefined
 }

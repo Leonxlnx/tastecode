@@ -1,74 +1,30 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AccountRateLimitsUpdatedNotification } from './generated/v2/AccountRateLimitsUpdatedNotification.js'
+import type { JsonRpcValue } from '@harness/proc'
+import { describe, expect, it, vi } from 'vitest'
+import { CodexAdapter } from './adapter.js'
+import { FakeCodexRpc } from './fake-rpc.test-support.js'
 
-const fake = vi.hoisted(() => ({
-  account: null as unknown,
-  accountResponse: undefined as unknown,
-  calls: [] as string[],
-  disposals: 0,
-  failure: undefined as string | undefined,
-  notification: undefined as ((method: string, params: unknown) => void) | undefined,
-  rateLimitsResponse: undefined as unknown,
-  requests: [] as Array<{ method: string; timeoutMs?: number }>,
-}))
+const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
 
-vi.mock('@harness/proc', () => ({
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
   spawnCli: vi.fn(() => ({ pid: 1 })),
   StdioJsonRpc: class {
-    onStderr(): void {}
-    onNotification(listener: (method: string, params: unknown) => void): void {
-      fake.notification = listener
-    }
-    onServerRequest(): void {}
-    notify(): void {}
-    dispose(): void {
-      fake.disposals += 1
-    }
-
-    request(method: string, _params: unknown, options?: { timeoutMs?: number }): Promise<unknown> {
-      fake.calls.push(method)
-      fake.requests.push({ method, timeoutMs: options?.timeoutMs })
-      if (method === fake.failure) return Promise.reject(new Error(`${method} failed`))
-      if (method === 'account/read') {
-        return Promise.resolve(fake.accountResponse ?? { account: fake.account })
-      }
-      if (method === 'account/rateLimits/read') {
-        return Promise.resolve(
-          fake.rateLimitsResponse ?? {
-            rateLimits: {
-              limitId: 'codex',
-              limitName: null,
-              primary: null,
-              secondary: null,
-              credits: null,
-              individualLimit: null,
-              planType: null,
-              rateLimitReachedType: null,
-            },
-            rateLimitsByLimitId: null,
-            rateLimitResetCredits: null,
-          },
-        )
-      }
-      return Promise.resolve({})
+    constructor() {
+      if (!proc.rpc) throw new Error('fake Codex RPC was not installed')
+      return proc.rpc
     }
   },
 }))
 
-const { CodexAdapter } = await import('./adapter.js')
+type SourceState = {
+  account: JsonRpcValue
+  accountResponse?: JsonRpcValue
+  failure?: string
+  rateLimitsResponse?: JsonRpcValue
+  consumeResponse?: JsonRpcValue
+}
 
-beforeEach(() => {
-  fake.account = null
-  fake.accountResponse = undefined
-  fake.calls = []
-  fake.disposals = 0
-  fake.failure = undefined
-  fake.notification = undefined
-  fake.rateLimitsResponse = undefined
-  fake.requests = []
-})
-
-const capturedRateLimitUpdate = {
+const emptyRateLimits = {
   rateLimits: {
     limitId: 'codex',
     limitName: null,
@@ -79,45 +35,69 @@ const capturedRateLimitUpdate = {
     planType: null,
     rateLimitReachedType: null,
   },
-} satisfies AccountRateLimitsUpdatedNotification
+  rateLimitsByLimitId: null,
+  rateLimitResetCredits: null,
+} as const
+
+function sourceAdapter(initial: Partial<SourceState> = {}) {
+  const state: SourceState = { account: null, ...initial }
+  const rpc = new FakeCodexRpc((method) => {
+    if (method === state.failure) throw new Error(`${method} failed`)
+    if (method === 'account/read') {
+      return state.accountResponse ?? { account: state.account }
+    }
+    if (method === 'account/rateLimits/read') {
+      return state.rateLimitsResponse ?? emptyRateLimits
+    }
+    if (method === 'account/rateLimitResetCredit/consume') {
+      return state.consumeResponse ?? { outcome: 'reset' }
+    }
+    return {}
+  })
+  proc.rpc = rpc
+  return { adapter: new CodexAdapter(), rpc, state }
+}
+
+const capturedRateLimitUpdate = {
+  rateLimits: emptyRateLimits.rateLimits,
+}
 
 describe('Codex rate-limit source', () => {
   it('bounds initialization and disposes a failed transport', async () => {
-    fake.failure = 'initialize'
-    const adapter = new CodexAdapter()
+    const { adapter, rpc } = sourceAdapter({ failure: 'initialize' })
 
     await expect(adapter.start()).rejects.toThrow('initialize failed')
-    expect(fake.requests[0]).toEqual({ method: 'initialize', timeoutMs: 10_000 })
-    expect(fake.disposals).toBe(1)
+    expect(rpc.calls[0]).toMatchObject({ method: 'initialize', timeoutMs: 10_000 })
+    expect(rpc.disposals).toBe(1)
   })
 
   it('maps only the exact provider update to a quiet usage-change event', async () => {
-    const adapter = new CodexAdapter()
+    const { adapter, rpc } = sourceAdapter()
     const changed = vi.fn()
     const logged = vi.fn()
     adapter.on('usageChanged', changed)
     adapter.on('log', logged)
     await adapter.start()
 
-    fake.notification?.('account/rateLimits/updated', capturedRateLimitUpdate)
+    rpc.emitNotification('account/rateLimits/updated', capturedRateLimitUpdate)
 
     expect(changed).toHaveBeenCalledTimes(1)
     expect(logged).not.toHaveBeenCalled()
 
-    fake.notification?.('account/rateLimits/updated-v2', capturedRateLimitUpdate)
+    rpc.emitNotification('account/rateLimits/updated-v2', capturedRateLimitUpdate)
     expect(changed).toHaveBeenCalledTimes(1)
     expect(logged).toHaveBeenCalledWith('unmapped notification: account/rateLimits/updated-v2')
     adapter.dispose()
   })
 
   it('ignores a buffered usage update after disposal', async () => {
-    const adapter = new CodexAdapter()
+    const { adapter, rpc } = sourceAdapter()
     const changed = vi.fn()
     adapter.onUsageChanged(changed)
     await adapter.start()
 
     adapter.dispose()
-    fake.notification?.('account/rateLimits/updated', capturedRateLimitUpdate)
+    rpc.emitNotification('account/rateLimits/updated', capturedRateLimitUpdate)
 
     expect(changed).not.toHaveBeenCalled()
   })
@@ -126,27 +106,27 @@ describe('Codex rate-limit source', () => {
     ['signed out', null],
     ['API key', { type: 'apiKey' }],
     ['Bedrock', { type: 'amazonBedrock', credentialSource: 'environment' }],
-  ])(
+  ] satisfies Array<[string, JsonRpcValue]>)(
     'marks %s accounts unavailable without requesting subscription limits',
     async (_name, account) => {
-      fake.account = account
-      const adapter = new CodexAdapter()
+      const { adapter, rpc } = sourceAdapter({ account })
       await adapter.start()
 
       await expect(adapter.rateLimitSource()).resolves.toEqual({ status: 'unavailable' })
-      expect(fake.calls).not.toContain('account/rateLimits/read')
+      expect(rpc.calls.map(({ method }) => method)).not.toContain('account/rateLimits/read')
       adapter.dispose()
     },
   )
 
   it('marks a successful ChatGPT subscription response ready, including empty limits', async () => {
-    fake.account = { type: 'chatgpt', email: null, planType: 'pro' }
-    const adapter = new CodexAdapter()
+    const { adapter, rpc } = sourceAdapter({
+      account: { type: 'chatgpt', email: null, planType: 'pro' },
+    })
     await adapter.start()
 
     await expect(adapter.rateLimitSource()).resolves.toEqual({ status: 'ready', limits: [] })
-    expect(fake.calls).toContain('account/rateLimits/read')
-    expect(fake.requests.filter(({ method }) => method.includes('account/'))).toEqual([
+    expect(rpc.calls.map(({ method }) => method)).toContain('account/rateLimits/read')
+    expect(rpc.calls.filter(({ method }) => method.includes('account/'))).toMatchObject([
       { method: 'account/read', timeoutMs: 10_000 },
       { method: 'account/rateLimits/read', timeoutMs: 10_000 },
     ])
@@ -154,27 +134,25 @@ describe('Codex rate-limit source', () => {
   })
 
   it('accepts a reset-credit summary without optional detail rows', async () => {
-    fake.account = { type: 'chatgpt', email: null, planType: 'pro' }
-    fake.rateLimitsResponse = {
-      rateLimits: {
-        limitId: 'codex',
-        limitName: null,
-        primary: null,
-        secondary: null,
-        credits: null,
-        individualLimit: null,
-        planType: null,
-        rateLimitReachedType: null,
+    const { adapter } = sourceAdapter({
+      account: { type: 'chatgpt', email: null, planType: 'pro' },
+      rateLimitsResponse: {
+        ...emptyRateLimits,
+        rateLimitResetCredits: { availableCount: 2 },
       },
-      rateLimitsByLimitId: null,
-      rateLimitResetCredits: { availableCount: 2 },
-    }
-    const adapter = new CodexAdapter()
+    })
     await adapter.start()
 
     await expect(adapter.rateLimitSource()).resolves.toEqual({
       status: 'ready',
-      limits: [{ label: 'Rate limit resets', usedPercent: 0, valueLabel: '2 available' }],
+      limits: [
+        {
+          label: 'Rate limit resets',
+          usedPercent: 0,
+          valueLabel: '2 available',
+          action: 'consume-reset',
+        },
+      ],
     })
     adapter.dispose()
   })
@@ -182,9 +160,10 @@ describe('Codex rate-limit source', () => {
   it.each(['account/read', 'account/rateLimits/read'])(
     'propagates a failed %s request',
     async (method) => {
-      fake.account = { type: 'chatgpt', email: null, planType: 'pro' }
-      fake.failure = method
-      const adapter = new CodexAdapter()
+      const { adapter } = sourceAdapter({
+        account: { type: 'chatgpt', email: null, planType: 'pro' },
+        failure: method,
+      })
       await adapter.start()
 
       await expect(adapter.rateLimitSource()).rejects.toThrow(`${method} failed`)
@@ -193,8 +172,7 @@ describe('Codex rate-limit source', () => {
   )
 
   it('rejects a malformed successful account response', async () => {
-    fake.accountResponse = {}
-    const adapter = new CodexAdapter()
+    const { adapter } = sourceAdapter({ accountResponse: {} })
     await adapter.start()
 
     await expect(adapter.rateLimitSource()).rejects.toThrow('Codex account response was invalid.')
@@ -202,18 +180,64 @@ describe('Codex rate-limit source', () => {
   })
 
   it('rejects a malformed successful rate-limit response', async () => {
-    fake.account = { type: 'chatgpt', email: null, planType: 'pro' }
-    fake.rateLimitsResponse = {
-      rateLimits: {},
-      rateLimitsByLimitId: null,
-      rateLimitResetCredits: null,
-    }
-    const adapter = new CodexAdapter()
+    const { adapter } = sourceAdapter({
+      account: { type: 'chatgpt', email: null, planType: 'pro' },
+      rateLimitsResponse: {
+        rateLimits: {},
+        rateLimitsByLimitId: null,
+        rateLimitResetCredits: null,
+      },
+    })
     await adapter.start()
 
     await expect(adapter.rateLimitSource()).rejects.toThrow(
       'Codex rate-limit response was invalid.',
     )
+    adapter.dispose()
+  })
+})
+
+describe('Codex rate-limit reset consume', () => {
+  it('redeems the next available credit with the caller-supplied key', async () => {
+    const { adapter, rpc } = sourceAdapter()
+    await adapter.start()
+
+    await expect(
+      adapter.consumeRateLimitReset('8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+    ).resolves.toBe('reset')
+    expect(rpc.calls.filter(({ method }) => method.includes('rateLimitReset'))).toEqual([
+      {
+        method: 'account/rateLimitResetCredit/consume',
+        params: { idempotencyKey: '8ae96ff3-3425-4f4c-8772-b6fd61502868' },
+        timeoutMs: 10_000,
+      },
+    ])
+    adapter.dispose()
+  })
+
+  it.each(['nothingToReset', 'noCredit', 'alreadyRedeemed'] as const)(
+    'returns the %s outcome without selecting a credit id',
+    async (outcome) => {
+      const { adapter, rpc } = sourceAdapter({ consumeResponse: { outcome } })
+      await adapter.start()
+
+      await expect(
+        adapter.consumeRateLimitReset('8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+      ).resolves.toBe(outcome)
+      expect(rpc.calls.at(-1)?.params).toEqual({
+        idempotencyKey: '8ae96ff3-3425-4f4c-8772-b6fd61502868',
+      })
+      adapter.dispose()
+    },
+  )
+
+  it('rejects a malformed successful consume response', async () => {
+    const { adapter } = sourceAdapter({ consumeResponse: { outcome: 'ok' } })
+    await adapter.start()
+
+    await expect(
+      adapter.consumeRateLimitReset('8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+    ).rejects.toThrow('Codex reset-credit response was invalid.')
     adapter.dispose()
   })
 })

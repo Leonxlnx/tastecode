@@ -1,6 +1,6 @@
 # Design agent
 
-This document is the durable implementation guide for Personal Harness Design Mode and the
+This document is the durable implementation guide for TasteCode Design Mode and the
 internal `packages/design-agent` implementation. It explains the product goal, the current
 runtime, the artifact contracts, what shipped in the first end-to-end implementation, and what
 remains before M4 is complete.
@@ -17,17 +17,17 @@ long specification first.
 The intended experience is:
 
 1. The user selects Design in the normal composer and writes a request.
-2. Harness extracts everything it can and asks only questions whose answers materially affect
+2. TasteCode extracts everything it can and asks only questions whose answers materially affect
    the result. It asks as many questions as necessary.
-3. Harness records a validated brief before any website implementation begins.
+3. TasteCode records a validated brief before any website implementation begins.
 4. The internal Design Agent makes explicit brand, copy, layout, asset, and motion decisions.
 5. The normal selected agent implements those decisions in the user's existing project.
-6. Harness starts the real local site, opens it in a dedicated Browser tab, captures representative
+6. TasteCode starts the real local site, opens it in a dedicated Browser tab, captures representative
    viewports in a separate deterministic renderer, reviews the output, and performs bounded repairs.
 7. The user receives normal project files, inspectable `.taste` artifacts, and a clear final
-   result inside the existing Harness thread.
+   result inside the existing TasteCode thread.
 
-The milestone proof remains: Design Mode builds Personal Harness's own landing page to a standard
+The milestone proof remains: Design Mode builds TasteCode's own landing page to a standard
 the humans would actually ship.
 
 ## Scope and non-goals
@@ -37,7 +37,7 @@ experimental until the new-build path is consistently strong.
 
 Design Mode does not create a second agent framework, a second session model, or a second preview
 system. It uses the same provider adapters, server-owned thread, event log, approvals, workspace,
-checkpoints, tools, and renderer as every other Harness turn.
+checkpoints, tools, and renderer as every other TasteCode turn.
 
 The server runtime is not the source of creative taste. It owns orchestration, persistence,
 safety, preview, and recovery. The internal design-agent package owns the phase contracts,
@@ -46,7 +46,7 @@ output.
 
 ## Responsibility boundary
 
-| Harness runtime owns                           | Internal design-agent package owns                    |
+| TasteCode runtime owns                         | Internal design-agent package owns                    |
 | ---------------------------------------------- | ----------------------------------------------------- |
 | Design Mode entry and provider sessions        | Brief, Brand, Page, Asset, Build, and Review prompts  |
 | Question transport and briefing UI             | Artifact contracts and trust-boundary parsers         |
@@ -114,13 +114,13 @@ Visual review --> pass --------------------------+
 ```
 
 Briefing is a hard gate. No website implementation should begin before `brief.json` validates.
-After the brief, the current implementation advances automatically unless a normal Harness
+After the brief, the current implementation advances automatically unless a normal TasteCode
 approval or a real user decision blocks the selected provider.
 
 ## Current implementation status
 
 The first end-to-end implementation shipped in pull request
-[#314](https://github.com/Leonxlnx/personalharness/pull/314). GitHub records 45 commits, 56 changed
+[#314](https://github.com/Leonxlnx/tastecode/pull/314). GitHub records 45 commits, 56 changed
 files, 4,189 additions, and 99 deletions. The pull request was merged as `a41aa85` after its stacked
 predecessor pull requests were superseded.
 
@@ -167,8 +167,9 @@ read before claiming universal support.
 ## Entry and qualification
 
 The renderer adds the sentinel attachment
-`personal-harness://design-brief-v1` when Design is active. The sentinel is protocol metadata, not
-a filesystem path, and is removed before attachments reach the provider.
+`tastecode://design-brief-v1` when Design is active. The sentinel is protocol metadata, not a
+filesystem path, and is removed before attachments reach the provider. Saved turns carrying the
+legacy Personal Harness sentinel remain supported.
 
 The server recognizes the sentinel in `Orchestrator.sendTurn`, creates a persisted `DesignFlow`,
 and replaces the user's provider-visible text with `designBriefingPrompt`. The user still sees the
@@ -180,7 +181,7 @@ the workspace, browse, invoke skills or MCP, edit files, or build anything. This
 response fast and prevents project contents from influencing whether the user's request is a
 design task.
 
-If the provider returns `not_design`, Harness clears the flow and shows:
+If the provider returns `not_design`, TasteCode clears the flow and shows:
 
 ```text
 Design mode was turned off because this request is not a website design task.
@@ -207,7 +208,7 @@ and decisions that later phases must respect.
 | `constraints`     | Technical, legal, accessibility, content, timing, or design constraints.       |
 | `brandInputs`     | User-supplied names, colors, fonts, references, assets, or visual preferences. |
 | `creativeControl` | How much the user wants the agent to decide.                                   |
-| `explicitAnswers` | Every question and resolved answer collected by Harness.                       |
+| `explicitAnswers` | Every question and resolved answer collected by TasteCode.                     |
 | `assumptions`     | Reasonable decisions the agent made, including safe `Decide for me` choices.   |
 | `unresolved`      | Non-blocking details intentionally left for later.                             |
 
@@ -217,7 +218,7 @@ keys are stripped rather than persisted and later injected into Build instructio
 ### Question behavior
 
 The provider first infers everything reasonably supported by the request. If material information
-is missing, it returns every currently useful question in one structured response. Harness shows
+is missing, it returns every currently useful question in one structured response. TasteCode shows
 the questions one at a time and returns the collected answers together.
 
 Each question contains:
@@ -232,7 +233,7 @@ Each question contains:
 
 After the answers return, the provider re-evaluates all core fields. Vague or contradictory
 answers produce the smallest useful set of follow-up questions. Resolved questions are not asked
-again. Once the provider returns a complete candidate brief after any question round, Harness
+again. Once the provider returns a complete candidate brief after any question round, TasteCode
 always asks the final optional note:
 
 ```text
@@ -295,7 +296,8 @@ The current version-one schema contains:
 - one `creativeDirection.restraint`;
 - `creativeDirection.avoid`;
 - a `colorPalette` of semantic light or dark role records with exact value and usage;
-- `typefaces` with family, source, roles, and numeric weights;
+- at most two `typefaces` with family, source, roles, and numeric weights; IBM Plex Mono and
+  Archivo are rejected;
 - `interfaceDirection`;
 - `imageDirection` with summary, subjects, treatment, and avoid rules;
 - `motionDirection` with summary, principles, and avoid rules;
@@ -311,6 +313,11 @@ control pairs that miss WCAG 2.2 contrast. Light and dark directions are generat
 The persisted `colorPalette` remains version-one compatible, so later phases need no parallel color
 framework. `60/30/10` is only loose composition guidance for dominant surfaces, supporting
 structure, and sparse accent use, never a palette formula or pixel quota.
+
+The deterministic gradient helper derives dependency-free CSS recipes for card, section, and page
+purposes from the validated palette. It preserves an opaque content surface for readable copy and
+controls. Build may use at most one matching purpose per view; gradients remain optional and may
+not replace imagery, hierarchy, or content.
 
 Signature-device status is deliberately conservative. Existing or newly proposed devices are not
 called validated unless the input includes real category-buyer attribution evidence. Visual
@@ -329,11 +336,14 @@ The current version-one blueprint contains:
 - a page contract, dominant page mode, novelty tolerance, base grid, signature composition rule,
   and rhythm;
 - navigation labels and targets;
+- the selected navigation layout case;
 - ordered sections with unique IDs;
 - each section's purpose;
 - the user question, decision stage, prior-section dependencies, and real evidence for each section;
-- final eyebrow, heading, body copy, and calls to action;
-- layout direction;
+- final concise heading, body copy, and calls to action;
+- one beta layout family, the exact selected case IDs, and a content-specific layout direction;
+- one bounded motion decision per section with purpose, trigger, behavior, duration, easing, and a
+  reduced-motion equivalent;
 - component needs;
 - asset needs;
 - explicit compact, medium, and expanded transformations per section;
@@ -342,13 +352,29 @@ The current version-one blueprint contains:
 - acceptance criteria.
 
 Generated page copy passes an internal quality gate before the artifact is accepted. Em dashes,
-unsupported objective claims, and `click here` fail validation. Formulaic copy, generic CTA labels,
-collision-prone generated names, decorative eyebrows, and ornamental section numbering are
-contextual review signals rather than an AI-authorship score. Eyebrows are omitted by default and
-numbers such as `01 / 02 / 03` are reserved for real sequence or navigation meaning.
+unsupported objective claims, `click here`, all eyebrows, internal placeholders, overlong headings,
+and multi-block Hero support copy fail validation. Formulaic copy, generic CTA labels, and
+collision-prone generated names remain contextual review signals rather than an AI-authorship
+score. Real process numbers may appear inside How It Works content, but not as a decorative
+page-wide `01 / 02 / 03` label system.
 
 The Page phase writes actual concise copy before implementation. It must use the approved brand
 system and must not choose replacement colors, fonts, or sources.
+
+New Page-phase outputs must map every section to Hero, About, Feature, How It Works, Social Proof,
+Stats, FAQ, CTA, Pricing, Contact, or Footer and select the exact human-authored beta cases they
+apply. A custom-named section such as Showcase may reuse the compatible Feature family. Unknown,
+cross-family, missing, duplicated, and directly repeated compositions fail the Page phase before
+Build. Build treats the family, cases, layout direction, and responsive transformations as hard
+composition requirements; Review compares visible geometry against the same decisions. Older
+version-one artifacts without these additive fields remain readable.
+
+The package also carries 132 generated and visually inspected direction references across all 11
+layout families. A deterministic brief-and-brand seed selects one compact geometry cue per family
+for the Page prompt. The cues are optional, never override the brief, brand, accessibility, copy,
+responsive, or case rules, and never copy the reference identity. Only generated WebP variants are
+stored; the source screenshots are excluded. Provider turns receive the distilled cues rather than
+132 binary attachments, keeping the phase provider-neutral and the prompt bounded.
 
 ### Current `assets.json`
 
@@ -362,8 +388,17 @@ Each asset has:
 - source reference and optional license;
 - optional workspace-relative destination.
 
-Ready assets require a real source and destination. Existing assets require a source. Absolute
-destinations and parent-directory escapes are rejected. Duplicate IDs are rejected.
+Ready assets require a real source and destination. Ready external assets also require recorded
+reuse terms. Existing assets require a source. Absolute destinations and parent-directory escapes
+are rejected. Duplicate IDs are rejected.
+
+The Asset phase is an acquisition step rather than a wish list. It keeps every Page asset and
+component ID, reuses suitable project or user files first, then invokes available image generation,
+then falls back to available image search with verified source and reuse terms. A generated or
+downloaded file must be saved inside the project before it is marked ready. When the selected provider
+cannot perform generation or licensed search, the need remains explicitly unresolved. Abstract
+SVGs, fake dashboards, sonar graphics, line-grid ornaments, empty cards, and generic geometric
+filler do not satisfy an image-led layout case.
 
 ### Build result
 
@@ -373,8 +408,20 @@ instructed to inspect and reuse the project's real framework, package manager, d
 dependencies, entry points, scripts, and existing user changes. It must not scaffold a parallel
 application.
 
+Build and visual Review share a pass-blocking quality floor: headings target one or two lines and
+never exceed three, display sizes are bounded by viewport class, the Hero has one support block,
+typography stays within the approved two families, and internal notes never appear on the page.
+Cards group coherent features, people, plans, proof, actions, or media through one base language
+and at most one emphasized variant; they may not become empty equal-column boxes or unrelated
+experiments. The brand accent must reach meaningful actions and states rather than surviving only
+in tiny labels. Hairline grids, repeated separator systems, colored card rails, ornamental SVGs,
+unstyled controls, overflow, clipping, and footer overlap require repair. Representative interface
+or operational data may make a one-shot page feel complete, but Build returns it in a
+`Verify before publishing:` summary that the final Harness message surfaces after Preview instead
+of adding a disclaimer to the website.
+
 The provider is currently responsible for running the project's relevant checks through its
-available tools. Harness validates the final report shape but does not independently prove that
+available tools. TasteCode validates the final report shape but does not independently prove that
 every reported command ran. This distinction matters for future verification work.
 
 ### Preview plan
@@ -407,7 +454,7 @@ The latest visual review contains:
 - a bounded repair instruction.
 
 A passing review cannot contain findings. A repair verdict must contain at least one finding in
-practice, and Harness stops after at most two Repair attempts. The final artifact is the latest
+practice, and TasteCode stops after at most two Repair attempts. The final artifact is the latest
 review, not a history of every review iteration.
 
 This phase deliberately makes only claims supported by screenshots and attached DOM audits. It
@@ -417,7 +464,7 @@ evidence outside the visual-review artifact.
 
 ## Runtime state and recovery
 
-The server is the sole Design Mode orchestrator. It persists `DesignFlow` in the normal Harness
+The server is the sole Design Mode orchestrator. It persists `DesignFlow` in the normal TasteCode
 database instead of writing `.taste/run.json`.
 
 Persisted flow state includes:
@@ -436,7 +483,7 @@ Persisted flow state includes:
 - repair attempt;
 - final completion text when waiting to finish.
 
-On thread restoration, Harness:
+On thread restoration, TasteCode:
 
 1. parses and rejects corrupt stored flow state;
 2. reconstructs unresolved structured questions from `user_input.requested` and
@@ -446,7 +493,7 @@ On thread restoration, Harness:
 5. otherwise rebuilds the next phase prompt from validated workspace artifacts;
 6. fails visibly and releases the queue if a required artifact was removed.
 
-The current phase prompts are internal provider turns. Harness creates a synthetic `tool_call`
+The current phase prompts are internal provider turns. TasteCode creates a synthetic `tool_call`
 item such as `design:brand`, suppresses internal assistant JSON deltas, parses the completed
 assistant message, and only then advances. The visible activity labels are:
 
@@ -466,7 +513,7 @@ release per-thread flow guards; queued prompts should then drain normally.
 
 ## Provider and capability behavior
 
-The architecture is provider-neutral: Design Mode uses `AgentSession.sendTurn`, persisted Harness
+The architecture is provider-neutral: Design Mode uses `AgentSession.sendTurn`, persisted TasteCode
 state, normal domain events, and declared capabilities. No shared phase branches on a provider
 name.
 
@@ -484,7 +531,7 @@ The current product surface is provider-neutral for briefing but capability-gate
 | Direct API runtime | Available         | Skipped                   | Workspace tools exist, but image attachments are not implemented.              |
 | ACP                | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
-Harness-owned Design questions need only an ordinary text turn and do not depend on an adapter's
+TasteCode-owned Design questions need only an ordinary text turn and do not depend on an adapter's
 provider-originated structured-input capability. Provider-originated questions still use the
 adapter's declared `userInput` support.
 
@@ -500,7 +547,7 @@ of done.
 ## Direct API workspace tools
 
 OpenAI, Anthropic, and compatible model endpoints do not provide a complete coding-agent runtime.
-Harness supplies its own bounded workspace tools so Design phases can still use the shared session
+TasteCode supplies its own bounded workspace tools so Design phases can still use the shared session
 model.
 
 The current tool layer can list files, read text files with content hashes, perform guarded writes,
@@ -545,8 +592,10 @@ separate hidden BrowserWindow remains the authority for exact review screenshots
 
 The Electron main process validates the request, denies permission checks and requests, denies new
 windows, confines navigation and redirects to the preview origin, and verifies the final URL. It
-waits, within a 30-second deadline, for bounded animation settlement, fonts, image load and decode,
-and two final animation frames. It captures each requested size, writes private temporary PNGs,
+scrolls through the document to activate lazy content, then waits, within a 30-second deadline, for
+bounded animation settlement, fonts, image load and decode, and two final animation frames. It
+audits interaction targets across the whole document and captures a whole-page image for each
+requested viewport, bounded to 12,000 CSS pixels in height. It writes private temporary PNGs,
 destroys the window, clears its session storage and HTTP cache, removes failed captures, and sweeps
 capture directories older than one day. Cleanup finishes before the next serialized capture starts.
 
@@ -558,13 +607,12 @@ Current preview risks that still need explicit work:
   approval surface;
 - when several desktop clients are connected, the coordinator uses the first capable socket and the
   capture request has no thread owner, so a concurrent run can open in the wrong visible workspace;
-- captures cover the requested viewport from the top of the page, not a durable full-page iteration;
 - screenshot files are temporary evidence, not a durable iteration history.
 
 ## OriginKit
 
 OriginKit is currently an optional instruction inside the Asset phase, not a required runtime
-dependency and not a dedicated Harness integration.
+dependency and not a dedicated TasteCode integration.
 
 When an OriginKit MCP server is already available to the selected provider and a specific component
 need would materially benefit, the prompt allows one focused catalog search and one fitting fetch.
@@ -575,10 +623,10 @@ available for local implementation.
 Before stronger OriginKit support ships, decide:
 
 - the official MCP server identity and authentication flow;
-- rate-limit behavior and whether Harness should cache inventory;
+- rate-limit behavior and whether TasteCode should cache inventory;
 - the exact component import and provenance format;
 - how licensing metadata reaches `assets.json`;
-- whether component retrieval remains provider tool use or becomes a Harness-owned project tool.
+- whether component retrieval remains provider tool use or becomes a TasteCode-owned project tool.
 
 OriginKit must never become the foundation for shared Design Mode behavior. Existing dependencies
 and local implementation remain the fallback.
@@ -619,19 +667,22 @@ them.
 ### Page gaps
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
-responsive behavior, interactions, and acceptance criteria. Per-section motion roles remain
-implicit. Add them only after the Motion rules prove that Build and Review need persisted values.
+selected beta layout cases, responsive behavior, interactions, acceptance criteria, and one
+purposeful motion decision per section. The current catalog combines the human-reviewed website
+section cases with 132 generated direction variants. It still needs scored evidence from varied
+real builds to show which cues improve results and which should be retired.
 
 ### Asset gaps
 
-Asset requirements are currently free-form strings. Add typed section, purpose, aspect ratio,
-composition, dimensions, output path, source, and usage fields where they prevent bad generation,
-wrong cropping, or lost provenance.
+Asset acquisition currently depends on tools exposed by the selected provider. A provider-neutral
+Harness search and generation tool does not exist yet. Requirements remain free-form strings; add
+typed section, purpose, aspect ratio, composition, dimensions, output path, source, and usage fields
+only where they prevent bad generation, wrong cropping, or lost provenance.
 
 ### Token and verification gaps
 
 There is no separate token artifact. Genuine brand decisions may live in `brand.json`, while
-generated CSS variables remain project output. Harness still needs independent verification of the
+generated CSS variables remain project output. TasteCode still needs independent verification of the
 production build, important interactions, overflow, contrast, and reduced motion; Review currently
 relies primarily on provider-reported checks and screenshots.
 
@@ -650,8 +701,10 @@ relies primarily on provider-reported checks and screenshots.
 ### Missing internal judgment and tool work
 
 1. Finish compact Brand, Page, Asset, Build, and Review rules inside `packages/design-agent`.
-2. Build and test deterministic type, spacing, gradient, asset, and objective QA tools.
-3. Finish layout, component, imagery, and motion judgment with real reference cases.
+2. Build and test deterministic type, spacing, asset, and objective QA tools; keep the existing
+   palette and gradient helpers narrow and evidence-backed.
+3. Test the beta layout and direction catalogs on varied real briefs, retire weak cues, then finish
+   component, imagery, and motion judgment.
 4. Add provider-independent fixtures proving every phase output parses into the same artifacts.
 5. Define artifact migration before changing persisted schema versions.
 
@@ -693,7 +746,7 @@ judgment rules, and UI design.
 - version parsers and fixtures;
 - keep `brief.json` factual, `brand.json` decisional, `page.json` compositional, and
   `assets.json` provenance-focused;
-- do not create `.taste/run.json` while Harness already persists run state.
+- do not create `.taste/run.json` while TasteCode already persists run state.
 
 ### 4. Strengthen the internal judgment layer
 
@@ -705,7 +758,8 @@ judgment rules, and UI design.
 
 ### 5. Raise visual quality with evidence
 
-- build the palette, type, spacing, gradient, and taste-check tools;
+- build the type, spacing, asset, and taste-check tools around the existing palette and gradient
+  helpers;
 - test them on several deliberately different briefs;
 - add reference and anti-reference evidence;
 - add the direction gallery before full implementation when multiple directions are plausible;
@@ -719,7 +773,7 @@ judgment rules, and UI design.
 - reference board;
 - asset production and provenance UX;
 - final cross-provider and Windows/macOS smoke matrix;
-- Personal Harness landing-page proof run and human design approval.
+- TasteCode landing-page proof run and human design approval.
 
 ## Human decisions still required
 
@@ -764,7 +818,7 @@ navigation and settle behavior, ACP image prompt blocks, and adapter capability 
 
 ## Rules for future implementation
 
-- Preserve the existing Harness architecture. Do not build a second workflow engine beside the
+- Preserve the existing TasteCode architecture. Do not build a second workflow engine beside the
   orchestrator.
 - Keep shared behavior provider-neutral and capability-driven.
 - Keep provider-specific checks inside adapters.
@@ -798,7 +852,7 @@ M4 is complete only when:
 - restart, cancel, panic, failure, and queue behavior are proven;
 - Windows and macOS smoke runs pass;
 - the direction gallery, token editor, reference board, and asset workflow are usable;
-- Personal Harness's own landing page passes the automated rubric and human design review.
+- TasteCode's own landing page passes the automated rubric and human design review.
 
 Until then, the current system should be described as an implemented provider-neutral Design Mode
 skeleton with capability-gated visual review, not as a finished cross-provider Design Mode.

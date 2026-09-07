@@ -1,15 +1,30 @@
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_CONSECUTIVE_FAILURES, restartDelayMs, ServerSupervisor } from './server-supervisor.js'
+import {
+  MAX_CONSECUTIVE_FAILURES,
+  restartDelayMs,
+  ServerSupervisor,
+  type SupervisedServerProcess,
+} from './server-supervisor.js'
 
-class FakeChild extends EventEmitter {
-  readonly stdout = new PassThrough()
-  readonly stderr = new PassThrough()
-  killed = false
-  kill(): boolean {
-    this.killed = true
+class FakeChild extends ChildProcess {
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+  wasKilled = false
+  override kill(): boolean {
+    this.wasKilled = true
     return true
+  }
+}
+
+function supervised(child: FakeChild): SupervisedServerProcess {
+  return {
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: () => child.kill(),
+    onError: (listener) => child.on('error', (error) => listener(error)),
+    onExit: (listener) => child.on('exit', listener),
   }
 }
 
@@ -37,11 +52,11 @@ describe('ServerSupervisor', () => {
       env: {},
       onLog: (line) => logs.push(line),
       onGaveUp: gaveUp,
-      spawnFn: (() => {
+      spawnFn: () => {
         const child = new FakeChild()
         children.push(child)
         return child
-      }) as never,
+      },
     })
     return { sup, children, logs, gaveUp }
   }
@@ -97,7 +112,7 @@ describe('ServerSupervisor', () => {
     const again = supervisor()
     again.sup.start()
     again.sup.stop()
-    expect(again.children[0]!.killed).toBe(true)
+    expect(again.children[0]!.wasKilled).toBe(true)
     again.children[0]!.emit('exit', null, 'SIGTERM')
     vi.advanceTimersByTime(60_000)
     expect(again.children).toHaveLength(1)
@@ -124,5 +139,27 @@ describe('ServerSupervisor', () => {
     sup.start()
     children[0]!.stdout.write('listening on 4311\npartial')
     expect(logs).toContain('listening on 4311')
+  })
+
+  it('supervises an Electron utility-process launcher', () => {
+    const children: FakeChild[] = []
+    const logs: string[] = []
+    const launch = vi.fn(() => {
+      const child = new FakeChild()
+      children.push(child)
+      return supervised(child)
+    })
+    const sup = new ServerSupervisor({ launch, onLog: (line) => logs.push(line) })
+
+    sup.start()
+    children[0]!.stdout.write('listening on 4311\n')
+    expect(logs).toContain('listening on 4311')
+
+    children[0]!.emit('exit', 1, null)
+    vi.advanceTimersByTime(500)
+    expect(launch).toHaveBeenCalledTimes(2)
+
+    sup.stop()
+    expect(children[1]!.wasKilled).toBe(true)
   })
 })

@@ -45,28 +45,31 @@ beforeEach(() => {
     options?: ElementCreationOptions,
   ) => {
     if (tagName !== 'webview') return originalCreateElement(tagName, options)
-    const view = originalCreateElement('div') as unknown as FakeBrowserGuest
+    const element = originalCreateElement('div')
     let url = 'about:blank'
     let title = ''
     let loading = false
-    view.canGoBack = vi.fn(() => false)
-    view.canGoForward = vi.fn(() => false)
-    view.getTitle = vi.fn(() => title)
-    view.getURL = vi.fn(() => url)
-    view.goBack = vi.fn()
-    view.goForward = vi.fn()
-    view.isLoading = vi.fn(() => loading)
-    view.loadURL = vi.fn(async (nextUrl: string) => {
+    const loadURL = vi.fn(async (nextUrl: string) => {
       loading = true
-      view.dispatchEvent(new Event('did-start-loading'))
+      element.dispatchEvent(new Event('did-start-loading'))
       url = nextUrl
       title = 'Example'
       loading = false
-      dispatchGuestEvent(view, 'did-navigate', { url })
-      view.dispatchEvent(new Event('did-stop-loading'))
+      dispatchGuestEvent(element, 'did-navigate', { url })
+      element.dispatchEvent(new Event('did-stop-loading'))
     })
-    view.reload = vi.fn()
-    view.stop = vi.fn()
+    const view: FakeBrowserGuest = Object.assign(element, {
+      canGoBack: vi.fn(() => false),
+      canGoForward: vi.fn(() => false),
+      getTitle: vi.fn(() => title),
+      getURL: vi.fn(() => url),
+      goBack: vi.fn(),
+      goForward: vi.fn(),
+      isLoading: vi.fn(() => loading),
+      loadURL,
+      reload: vi.fn(),
+      stop: vi.fn(),
+    })
     guests.push(view)
     return view
   }) as typeof document.createElement)

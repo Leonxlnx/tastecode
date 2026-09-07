@@ -1,12 +1,12 @@
 # Credits
 
-Personal Harness is built by [Leonxlnx](https://github.com/Leonxlnx) and
+TasteCode is built by [Leonxlnx](https://github.com/Leonxlnx) and
 [Blueemi](https://github.com/Blueemi).
 
 ## Product and interaction references
 
-These projects informed product research or specific interaction decisions. Personal
-Harness is not a fork of them.
+These projects informed product research or specific interaction decisions. TasteCode is
+not a fork of them.
 
 - [OpenAI Codex](https://github.com/openai/codex) — the `Thread -> Turn -> Item` domain
   model and the app-server integration surface. Types under
@@ -24,8 +24,8 @@ does not imply endorsement or affiliation.
 ## Open-source building blocks
 
 The interface and runtime rely on projects including React, Electron, Streamdown, Shiki,
-TanStack Virtual, xterm.js, Lucide, Geist, node-pty, Zod, and ws. Visual details also use
-Border Beam and Thinking Orbs by Jakub Antalik.
+TanStack Virtual, xterm.js, Tabler Icons, Geist, node-pty, Zod, and ws. Visual details also use
+Border Beam-inspired CSS and Thinking Orbs by Jakub Antalik.
 
 Provider marks are reproduced only to identify their corresponding services. OpenAI,
 Anthropic, Cursor, OpenCode, OpenRouter, Google Gemini, and Qwen paths come from

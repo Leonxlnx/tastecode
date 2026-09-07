@@ -13,7 +13,11 @@ import type {
   UsageHistoryRange,
   UsageHistoryTotals,
 } from '@harness/contracts'
-import { CalendarDays, CircleAlert, RefreshCw } from 'lucide-react'
+import {
+  IconAlertCircle as CircleAlert,
+  IconCalendarMonth as CalendarDays,
+  IconRefresh as RefreshCw,
+} from '@tabler/icons-react'
 import { providerPresentation } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'

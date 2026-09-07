@@ -1,9 +1,11 @@
 import { useRef } from 'react'
-import { Search, X } from 'lucide-react'
+import { IconSearch as Search, IconX as X } from '@tabler/icons-react'
+import '../styles/model-search.css'
 
 export function ModelSearchField(props: {
   value: string
   label: string
+  placeholder?: string
   className?: string
   autoFocus?: boolean
   onChange: (value: string) => void
@@ -18,7 +20,7 @@ export function ModelSearchField(props: {
         ref={input}
         type="search"
         value={props.value}
-        placeholder="Search models"
+        placeholder={props.placeholder ?? 'Search models'}
         aria-label={props.label}
         autoComplete="off"
         autoCapitalize="none"

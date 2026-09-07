@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import { z } from 'zod'
 
 const run = promisify(execFile)
 
@@ -72,10 +73,8 @@ export async function switchWorkspaceBranch(path: string, branch: string): Promi
       timeout: 10_000,
     })
   } catch (error) {
-    const stderr =
-      error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string'
-        ? error.stderr.trim()
-        : ''
+    const parsed = z.object({ stderr: z.string() }).safeParse(error)
+    const stderr = parsed.success ? parsed.data.stderr.trim() : ''
     throw new Error(stderr || `could not switch to ${branch}`)
   }
 

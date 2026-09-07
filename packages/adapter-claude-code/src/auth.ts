@@ -1,8 +1,24 @@
 import type { Account } from '@harness/contracts'
 import { killTree, runCli, spawnCli } from '@harness/proc'
+import { z } from 'zod'
 
-export async function claudeAccount(): Promise<Account> {
-  const result = await runCli('claude', ['auth', 'status'])
+const ClaudeAccountSchema = z.object({
+  loggedIn: z.boolean(),
+  email: z.string().optional(),
+  subscriptionType: z.string().optional(),
+})
+
+export type ClaudeAccountOptions = {
+  run?: typeof runCli
+}
+
+export type ClaudeLogin = {
+  loginId: string
+  cancel: () => void
+}
+
+export async function claudeAccount(options: ClaudeAccountOptions = {}): Promise<Account> {
+  const result = await (options.run ?? runCli)('claude', ['auth', 'status'])
   try {
     return parseClaudeAccount(result.stdout)
   } catch (cause) {
@@ -12,19 +28,21 @@ export async function claudeAccount(): Promise<Account> {
 }
 
 export function parseClaudeAccount(output: string): Account {
-  const value = JSON.parse(output) as Record<string, unknown>
-  if (typeof value.loggedIn !== 'boolean')
+  const result = ClaudeAccountSchema.safeParse(JSON.parse(output))
+  if (!result.success) {
     throw new Error('Claude Code returned invalid auth status')
+  }
+  const value = result.data
   return {
     signedIn: value.loggedIn,
-    ...(typeof value.email === 'string' ? { email: value.email } : {}),
-    ...(typeof value.subscriptionType === 'string' ? { plan: value.subscriptionType } : {}),
+    ...(value.email ? { email: value.email } : {}),
+    ...(value.subscriptionType ? { plan: value.subscriptionType } : {}),
   }
 }
 
 export function startClaudeLogin(
   onComplete: (result: { loginId: string; success: boolean; error: string | null }) => void,
-): { loginId: string; cancel: () => void } {
+): ClaudeLogin {
   const loginId = crypto.randomUUID()
   const child = spawnCli('claude', ['auth', 'login'])
   let settled = false

@@ -1,6 +1,20 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { IndeterminateRequestError, Transport } from './transport.js'
+import { z } from 'zod'
+import {
+  IndeterminateRequestError,
+  parseIncomingFrame,
+  parseResponseFrame,
+  Transport,
+} from './transport.js'
+import {
+  parseChannelData,
+  parseMethodResult,
+  parseProjectsListResult,
+} from './transport-validation.js'
+import { parseProvidersListResult } from './transport-startup-validation.js'
+
+const RequestFrameSchema = z.object({ id: z.string() })
 
 /**
  * The client half of the wire protocol had zero coverage — and its edges are
@@ -52,7 +66,230 @@ afterEach(() => {
 const userFrames = (socket: FakeSocket): string[] =>
   socket.sent.filter((frame) => !frame.includes('client.capabilities'))
 
+const completedThreadEvent = (turnId: string) => ({
+  threadId: 'thread-1',
+  event: {
+    type: 'turn.completed' as const,
+    turnId,
+    status: 'completed' as const,
+    error: null,
+  },
+})
+
 describe('Transport', () => {
+  it('rejects malformed push envelopes before dispatch', () => {
+    expect(parseIncomingFrame('{')).toBeUndefined()
+    expect(
+      parseIncomingFrame(JSON.stringify({ channel: 'thread.event', data: {} })),
+    ).toBeUndefined()
+    expect(
+      parseIncomingFrame(JSON.stringify({ channel: 'thread.event', sequence: '1', data: {} })),
+    ).toBeUndefined()
+  })
+
+  it('validates streamed thread deltas without keeping unknown wire fields', () => {
+    expect(
+      parseChannelData('thread.event', {
+        threadId: 'thread-1',
+        seq: 4,
+        ignored: true,
+        event: {
+          type: 'item.delta',
+          turnId: 'turn-1',
+          itemId: 'item-1',
+          textDelta: 'next',
+          ignored: true,
+        },
+      }),
+    ).toEqual({
+      threadId: 'thread-1',
+      seq: 4,
+      event: {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        textDelta: 'next',
+      },
+    })
+    expect(() =>
+      parseChannelData('thread.event', {
+        threadId: 'thread-1',
+        event: { type: 'item.delta', turnId: 'turn-1', itemId: 'item-1' },
+      }),
+    ).toThrow()
+  })
+
+  it('reads successful response envelopes without keeping unknown wire fields', () => {
+    expect(parseResponseFrame({ id: '1', result: { ok: true }, ignored: true })).toEqual({
+      id: '1',
+      result: { ok: true },
+    })
+    expect(parseResponseFrame({ id: 1, result: {} })).toBeUndefined()
+    expect(parseResponseFrame({ id: '1' })).toBeUndefined()
+  })
+
+  it('reads canonical and legacy error envelopes without loading Zod', () => {
+    expect(parseResponseFrame({ id: '1', error: {} })).toEqual({ id: '1', error: {} })
+    expect(
+      parseResponseFrame({
+        id: '2',
+        error: { code: 'internal', message: '', detail: '', ignored: true },
+      }),
+    ).toEqual({ id: '2', error: { message: '', detail: '' } })
+    expect(parseResponseFrame({ id: '3', error: { message: '' } })).toBeUndefined()
+    expect(parseResponseFrame({ id: '4', error: { detail: 1 } })).toBeUndefined()
+  })
+
+  it('validates terminal output without keeping unknown wire fields', () => {
+    expect(
+      parseChannelData('terminal.output', {
+        terminalId: 'terminal-1',
+        data: 'output',
+        ignored: true,
+      }),
+    ).toEqual({ terminalId: 'terminal-1', data: 'output' })
+    expect(() => parseChannelData('terminal.output', { terminalId: '', data: 'output' })).toThrow()
+  })
+
+  it('validates a project list in place and rejects invalid nested rows', () => {
+    const result = {
+      projects: [
+        {
+          path: '/project',
+          name: 'Project',
+          pinned: false,
+          createdAt: 1,
+          sessions: [
+            {
+              id: 'thread-1',
+              title: 'Thread',
+              provider: 'codex',
+              createdAt: 2,
+              running: false,
+              pinned: true,
+              status: 'ready',
+              unread: true,
+              lifecycle: { state: 'active', keepActive: false, wokeAt: 3 },
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(parseProjectsListResult(result)).toBe(result)
+    expect(parseMethodResult('projects.list', result)).toBe(result)
+    expect(
+      parseProjectsListResult({
+        ...result,
+        projects: [
+          {
+            ...result.projects[0],
+            sessions: [{ ...result.projects[0]!.sessions[0], provider: 'unknown' }],
+          },
+        ],
+      }),
+    ).toBeUndefined()
+    expect(() =>
+      parseMethodResult('projects.list', {
+        ...result,
+        projects: [
+          {
+            ...result.projects[0],
+            sessions: [
+              {
+                ...result.projects[0]!.sessions[0],
+                lifecycle: { state: 'snoozed', snoozedAt: 3, wakeAt: -1 },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it('validates the startup provider list without loading the full contract graph', () => {
+    const result = {
+      providers: [
+        {
+          id: 'codex' as const,
+          displayName: 'Codex',
+          installed: true,
+          version: '1.2.3',
+          auth: 'authenticated' as const,
+          capabilities: {
+            steer: true,
+            fork: true,
+            interrupt: true,
+            reasoningItems: true,
+            approvals: true,
+            userInput: true,
+            autoReview: true,
+            images: true,
+          },
+          setup: {
+            installUrl: 'https://example.com/install',
+            installCommand: 'npm install codex',
+            login: 'provider' as const,
+          },
+        },
+      ],
+    }
+
+    expect(parseProvidersListResult(result)).toBe(result)
+    expect(parseMethodResult('providers.list', result)).toBe(result)
+    for (const loginOpensBrowser of [true, false, undefined]) {
+      const candidate = {
+        providers: [
+          {
+            ...result.providers[0],
+            setup: { ...result.providers[0]!.setup, loginOpensBrowser },
+          },
+        ],
+      }
+      expect(parseProvidersListResult(candidate)).toBe(candidate)
+    }
+    for (const loginOpensBrowser of ['false', null]) {
+      expect(
+        parseProvidersListResult({
+          providers: [
+            {
+              ...result.providers[0],
+              setup: { ...result.providers[0]!.setup, loginOpensBrowser },
+            },
+          ],
+        }),
+      ).toBeUndefined()
+    }
+    expect(
+      parseProvidersListResult({
+        providers: [{ ...result.providers[0], capabilities: { steer: true } }],
+      }),
+    ).toBeUndefined()
+    expect(
+      parseProvidersListResult({
+        providers: [
+          { ...result.providers[0], setup: { installUrl: 'not a url', login: 'provider' } },
+        ],
+      }),
+    ).toBeUndefined()
+  })
+
+  it('keeps cold-start retries connecting and caps their delay', () => {
+    const transport = new Transport('ws://test')
+    transport.connect()
+    FakeSocket.instances[0]!.close()
+
+    expect(transport.state).toBe('connecting')
+    vi.advanceTimersByTime(0)
+    FakeSocket.instances[1]!.close()
+    vi.advanceTimersByTime(99)
+    expect(FakeSocket.instances).toHaveLength(2)
+
+    vi.advanceTimersByTime(1)
+    expect(FakeSocket.instances).toHaveLength(3)
+    expect(transport.state).toBe('connecting')
+  })
+
   it('rejects in-flight requests when the socket drops instead of hanging', async () => {
     const transport = new Transport('ws://test')
     transport.connect()
@@ -101,11 +338,11 @@ describe('Transport', () => {
     second.open()
     expect(userFrames(second)).toHaveLength(1)
 
-    const frame = JSON.parse(userFrames(second)[0]!) as { id: string }
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(second)[0]!))
     second.onmessage?.({
       data: JSON.stringify({
         id: frame.id,
-        result: { serverVersion: 'test', protocolVersion: 1, platform: 'test' },
+        result: { serverVersion: 'test', protocolVersion: 1, platform: 'darwin' },
       }),
     })
     await expect(queued).resolves.toMatchObject({ serverVersion: 'test' })
@@ -165,11 +402,11 @@ describe('Transport', () => {
     socket.open()
 
     const checking = transport.ensureHealthy(500)
-    const frame = JSON.parse(userFrames(socket)[0]!) as { id: string }
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
     socket.onmessage?.({
       data: JSON.stringify({
         id: frame.id,
-        result: { serverVersion: 'test', protocolVersion: 1, platform: 'test' },
+        result: { serverVersion: 'test', protocolVersion: 1, platform: 'darwin' },
       }),
     })
     await checking
@@ -218,13 +455,13 @@ describe('Transport', () => {
     socket.open()
 
     const pending = transport.request('system.info', {})
-    const frame = JSON.parse(userFrames(socket)[0]!) as { id: string }
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
     socket.onmessage?.({ data: JSON.stringify({ id: frame.id, error: {} }) })
 
     await expect(pending).rejects.toThrow('The server reported an error.')
   })
 
-  it('applies a push sequence only once', () => {
+  it('applies a push sequence only once', async () => {
     const transport = new Transport('ws://test')
     const listener = vi.fn()
     transport.on('thread.event', listener)
@@ -235,12 +472,12 @@ describe('Transport', () => {
     const frame = JSON.stringify({
       channel: 'thread.event',
       sequence: 1,
-      data: { threadId: 'thread-1', seq: 1, event: { type: 'turn.started', turnId: 'turn-1' } },
+      data: { ...completedThreadEvent('turn-1'), seq: 1 },
     })
     socket.onmessage?.({ data: frame })
     socket.onmessage?.({ data: frame })
 
-    expect(listener).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1))
   })
 
   it('reports a forward sequence gap so the owner can resync', () => {
@@ -270,7 +507,11 @@ describe('Transport', () => {
     const first = FakeSocket.instances[0]!
     first.open()
     first.onmessage?.({
-      data: JSON.stringify({ channel: 'thread.event', sequence: 1, data: { source: 'first' } }),
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 1,
+        data: completedThreadEvent('first'),
+      }),
     })
 
     const checking = transport.ensureHealthy(1)
@@ -281,14 +522,22 @@ describe('Transport', () => {
     second.open()
 
     first.onmessage?.({
-      data: JSON.stringify({ channel: 'thread.event', sequence: 2, data: { source: 'stale' } }),
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 2,
+        data: completedThreadEvent('stale'),
+      }),
     })
     second.onmessage?.({
-      data: JSON.stringify({ channel: 'thread.event', sequence: 1, data: { source: 'second' } }),
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 1,
+        data: completedThreadEvent('second'),
+      }),
     })
 
-    expect(listener).toHaveBeenCalledTimes(2)
-    expect(listener).not.toHaveBeenCalledWith({ source: 'stale' })
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2))
+    expect(listener).not.toHaveBeenCalledWith(completedThreadEvent('stale'))
   })
 
   it('starts push sequence tracking fresh on each connection', () => {

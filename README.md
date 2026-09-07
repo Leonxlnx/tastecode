@@ -1,85 +1,81 @@
-# Personal Harness
+<img src="apps/desktop/assets/tastecode-icon.png" alt="TasteCode" width="96" />
 
-> Working title. A beautiful, adaptive control panel for AI coding agents.
-> Windows-first, cross-platform, built around a design agent with real taste.
+# TasteCode
 
-**Status: M0 complete.** Runs, drives a real Codex session, and is nowhere near finished.
-See the [roadmap](./docs/ROADMAP.md).
+> A local desktop workspace for AI coding agents, with Design Mode built in.
 
----
+**Status: public beta (`0.1.0-beta.1`).** TasteCode currently supports Windows x64 and
+macOS Apple Silicon. Expect beta rough edges and report them through
+[GitHub Issues](https://github.com/Leonxlnx/tastecode/issues).
 
-## What this is
+## What TasteCode does
 
-Every good agent client is locked to one vendor. The Claude app runs Claude, the Codex app
-runs Codex, Cursor runs Cursor — and none of them will ever run the others. The moment you
-use two, you are back to three windows with three histories and nothing shared.
+TasteCode puts multiple coding agents in one desktop app while keeping orchestration,
+project state, terminal access, diffs, checkpoints, and history local to your machine.
 
-Personal Harness is the layer above them. One window. Every agent. Every subscription you
-already pay for, plus your own API keys. Threads that stay instant at 500 messages. Diffs
-you actually want to read. And a design agent that produces work you would ship.
+The public beta ships with:
 
-## Running it
+- Codex
+- Claude Code
+- Grok
+- provider-aware models, permissions, and session controls
+- project and session search, rename, and pinning
+- terminal, browser preview, attachments, git context, and readable diffs
+- Design Mode for inspecting and editing web interfaces
 
-Needs Node 22+, pnpm, and at least one agent CLI on your PATH. Today that means
-[Codex](https://developers.openai.com/codex); others land in M2.
+Provider capabilities differ. TasteCode hides or degrades unavailable controls instead of
+pretending every provider supports the same features.
 
-```bash
+## Download
+
+Download the latest beta from [tastecode.dev](https://tastecode.dev).
+
+Beta builds may be unsigned. Verify the published filename and SHA-256 checksum before
+installing. Windows SmartScreen or macOS Gatekeeper may show an additional warning for
+unsigned builds.
+
+## Requirements
+
+- Windows 10/11 x64 or macOS on Apple Silicon
+- at least one supported provider CLI installed and signed in
+- Git for project checkpoints and worktree features
+
+For local development, install Node 24 LTS and pnpm, then run:
+
+```text
 pnpm install
 pnpm dev
 ```
 
-That starts the core server, the renderer and the desktop shell together. Sign in from
-inside the app — it opens the vendor's own page in your browser.
+## Local-first security model
 
-## What works today
+The local server owns state and orchestration. Provider processes run on your machine,
+credentials stay with the provider or operating-system credential store, and the renderer
+does not receive raw credentials. See [SECURITY.md](./SECURITY.md) and
+[rules/security.md](./rules/security.md).
 
-Codex sessions with streaming output · real browser sign-in and plan detection · live
-model and reasoning-effort lists from the provider · permission modes (ask / auto / full)
-· file attachments · git branch and diff in the prompt bar · project and session rename,
-pin and search.
+## Documentation
 
-## Docs
+| Document                                        | Purpose                                      |
+| ----------------------------------------------- | -------------------------------------------- |
+| [Architecture](./docs/ARCHITECTURE.md)          | System shape and decisions                   |
+| [Providers](./docs/PROVIDERS.md)                | Integration model and provider matrix        |
+| [Design Agent](./docs/DESIGN-AGENT.md)          | Design Mode behavior and acceptance criteria |
+| [UI handoff](./docs/UI-HANDOFF.md)              | UI invariants and open work                  |
+| [Roadmap](./docs/ROADMAP.md)                    | Product milestones                           |
+| [Credits](./CREDITS.md)                         | Contributors and project references          |
+| [Third-party notices](./THIRD_PARTY_NOTICES.md) | Dependency and attribution audit             |
+| [Licensing](./docs/LICENSING.md)                | License status and release obligations       |
 
-|                                        |                                        |
-| -------------------------------------- | -------------------------------------- |
-| [VISION](./docs/VISION.md)             | What we're building and why            |
-| [FEATURES](./docs/FEATURES.md)         | Every feature, as a list               |
-| [ROADMAP](./docs/ROADMAP.md)           | M0–M7 and the open questions           |
-| [ARCHITECTURE](./docs/ARCHITECTURE.md) | How it's built, and what we rejected   |
-| [PROVIDERS](./docs/PROVIDERS.md)       | Agent and direct API integration plan  |
-| [DESIGN-AGENT](./docs/DESIGN-AGENT.md) | The differentiator _(written at M4)_   |
-| [UI-HANDOFF](./docs/UI-HANDOFF.md)     | Chat surface: invariants and open work |
-| [CREDITS](./CREDITS.md)                | Contributors and project references    |
-| [LICENSING](./docs/LICENSING.md)       | License status and release checklist   |
+## Contributing
 
-## Layout
+Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request. Keep changes small,
+cross-platform, and covered by the repository checks. Product discussion and bug reports
+belong in [GitHub Issues](https://github.com/Leonxlnx/tastecode/issues).
 
-```
-apps/
-  desktop    Electron shell + the one narrow native bridge
-  web        The interface
-  server     Core server: orchestration, adapters, git
-packages/
-  contracts  Wire protocol. Single source of truth for every client
-  adapter-*  One package per agent. Codex today
-```
-
-## Rules
-
-Read these before your first commit.
-
-|                                       |                                                  |
-| ------------------------------------- | ------------------------------------------------ |
-| [rules/git](./rules/git.md)           | Branches, commits, PRs, CI                       |
-| [rules/code](./rules/code.md)         | Cross-platform, style, decisions                 |
-| [rules/security](./rules/security.md) | ⚠️ Credentials — the one that gets people banned |
-
-## Team
-
-Two people. One Windows developer, one macOS developer. Every decision assumes both
-platforms are first-class and that nobody has to leave their OS to review a change.
+Questions and beta feedback: [hello@tasteskill.dev](mailto:hello@tasteskill.dev).
 
 ## License
 
-Undecided while private. Apache-2.0 proposed — see
-[LICENSING](./docs/LICENSING.md). Intended to be open sourced.
+Licensed under the [Apache License 2.0](./LICENSE). Third-party components remain under
+their respective licenses.

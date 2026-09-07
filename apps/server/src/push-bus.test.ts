@@ -1,23 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { WebSocket } from 'ws'
-import { PushBus } from './push-bus.js'
+import { z } from 'zod'
+import { PushBus, type PushSocket } from './push-bus.js'
 
 /**
  * The push path had no tests at all, and its failure mode is the worst kind:
  * a client that stops receiving without either side noticing.
  */
 
-type FakeSocket = WebSocket & {
+type FakeSocket = PushSocket & {
   sent: string[]
   terminated: number
   failNextSend: boolean
 }
 
 function socket(): FakeSocket {
-  const fake = {
+  const fake: FakeSocket = {
     OPEN: 1,
     readyState: 1,
-    sent: [] as string[],
+    sent: [],
     terminated: 0,
     failNextSend: false,
     send(payload: string, callback?: (error?: Error) => void) {
@@ -33,11 +33,12 @@ function socket(): FakeSocket {
       fake.terminated += 1
     },
   }
-  return fake as unknown as FakeSocket
+  return fake
 }
 
+const SequencedFrameSchema = z.object({ sequence: z.number() })
 const sequences = (client: FakeSocket): number[] =>
-  client.sent.map((frame) => (JSON.parse(frame) as { sequence: number }).sequence)
+  client.sent.map((frame) => SequencedFrameSchema.parse(JSON.parse(frame)).sequence)
 
 describe('PushBus', () => {
   it('numbers every connection from one, independently', () => {
@@ -48,10 +49,85 @@ describe('PushBus', () => {
     bus.broadcast('skills.changed', { provider: 'codex', projectPath: 'C:\\repo' })
     bus.add(second)
     bus.broadcast('skills.changed', { provider: 'codex', projectPath: 'C:\\repo' })
+    bus.remove(second)
+    bus.broadcast('skills.changed', { provider: 'codex', projectPath: 'C:\\repo' })
 
     // A gap in these is how a client knows it missed something.
+    expect(sequences(first)).toEqual([1, 2, 3])
+    expect(sequences(second)).toEqual([1])
+  })
+
+  it('does not restart a live connection sequence when it is added twice', () => {
+    const bus = new PushBus()
+    const client = socket()
+    bus.add(client)
+    bus.broadcast('skills.changed', { provider: 'codex', projectPath: 'C:\\repo' })
+    bus.add(client)
+    bus.broadcast('skills.changed', { provider: 'codex', projectPath: 'C:\\repo' })
+
+    expect(sequences(client)).toEqual([1, 2])
+  })
+
+  it('keeps clients that advance together on the same frame sequence', () => {
+    const bus = new PushBus()
+    const first = socket()
+    const second = socket()
+    bus.add(first)
+    bus.add(second)
+
+    bus.broadcastRecordedEvent(
+      'thread.event',
+      'thread-1',
+      JSON.stringify({ type: 'turn.completed', turnId: 'turn-1' }),
+      7,
+    )
+
+    expect(first.sent).toEqual(second.sent)
+    expect(sequences(first)).toEqual([1])
+    expect(sequences(second)).toEqual([1])
+  })
+
+  it('keeps a late joiner on its own recorded-event sequence', () => {
+    const bus = new PushBus()
+    const first = socket()
+    const second = socket()
+    bus.add(first)
+
+    bus.broadcastRecordedEvent(
+      'thread.event',
+      'thread-1',
+      JSON.stringify({ type: 'turn.completed', turnId: 'turn-1' }),
+      7,
+    )
+
+    bus.add(second)
+    bus.broadcastRecordedEvent(
+      'thread.event',
+      'thread-1',
+      JSON.stringify({ type: 'turn.completed', turnId: 'turn-2' }),
+      8,
+    )
+
     expect(sequences(first)).toEqual([1, 2])
     expect(sequences(second)).toEqual([1])
+    expect(JSON.parse(first.sent[1] ?? '')).toEqual({
+      channel: 'thread.event',
+      sequence: 2,
+      data: {
+        threadId: 'thread-1',
+        event: { type: 'turn.completed', turnId: 'turn-2' },
+        seq: 8,
+      },
+    })
+    expect(JSON.parse(second.sent[0] ?? '')).toEqual({
+      channel: 'thread.event',
+      sequence: 1,
+      data: {
+        threadId: 'thread-1',
+        event: { type: 'turn.completed', turnId: 'turn-2' },
+        seq: 8,
+      },
+    })
   })
 
   it('broadcasts provider-neutral usage changes without provider-specific payloads', () => {
@@ -66,6 +142,43 @@ describe('PushBus', () => {
       sequence: 1,
       data: { provider: 'codex' },
     })
+  })
+
+  it('reuses stored event JSON without changing the push frame', () => {
+    const bus = new PushBus()
+    const client = socket()
+    const event = {
+      type: 'item.delta' as const,
+      turnId: 'turn-1',
+      itemId: 'item-1',
+      textDelta: 'quote " and newline\n',
+    }
+    bus.add(client)
+
+    bus.broadcastRecordedEvent('thread.event', 'thread-1', JSON.stringify(event), 42)
+
+    expect(JSON.parse(client.sent[0] ?? '')).toEqual({
+      channel: 'thread.event',
+      sequence: 1,
+      data: { threadId: 'thread-1', event, seq: 42 },
+    })
+  })
+
+  it('refreshes the recorded thread framing when streams alternate', () => {
+    const bus = new PushBus()
+    const client = socket()
+    const event = JSON.stringify({ type: 'turn.completed', turnId: 'turn-1' })
+    bus.add(client)
+
+    bus.broadcastRecordedEvent('thread.event', 'thread-1', event, 1)
+    bus.broadcastRecordedEvent('sideChat.event', 'side"thread', event, 2)
+    bus.broadcastRecordedEvent('thread.event', 'thread-1', event, 3)
+
+    expect(client.sent.map((frame) => JSON.parse(frame).data.threadId)).toEqual([
+      'thread-1',
+      'side"thread',
+      'thread-1',
+    ])
   })
 
   it('closes a connection whose write failed instead of silently muting it', () => {

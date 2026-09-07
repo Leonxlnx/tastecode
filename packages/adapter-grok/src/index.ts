@@ -7,6 +7,7 @@ export {
   grokCommand,
   grokDisplayName,
   grokTurnArgs,
+  type GrokNativeSession,
   parseGrokAccount,
   parseGrokModels,
   signOutGrok,

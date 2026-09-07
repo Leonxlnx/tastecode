@@ -108,6 +108,32 @@ describe('profile settings', () => {
     })
   })
 
+  it('keeps polling through consecutive scan failures and recovers afterwards', async () => {
+    let call = 0
+    const request = vi.fn(async () => {
+      call += 1
+      if (call === 1) {
+        const result = historyResult()
+        result.scan = { status: 'scanning', filesProcessed: 1, filesTotal: 7 }
+        return result
+      }
+      if (call <= 3) throw new Error(`Temporary history failure ${call}`)
+      return historyResult()
+    })
+    const transport = { request } as unknown as Transport
+
+    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+
+    expect(await screen.findByText(/Indexing local activity/)).toBeTruthy()
+    // Two back-to-back failures while the scan is still running must not
+    // strand the poll loop: the fourth request goes out and clears the error.
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(4), { timeout: 2_600 })
+    await waitFor(() => {
+      expect(screen.queryByText(/Indexing local activity/)).toBeNull()
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('edits the local display name and validates profile photos', async () => {
     const onIdentityChange = vi.fn()
     const transport = {
@@ -173,9 +199,11 @@ describe('profile settings', () => {
   it('ignores an image read that finishes after the profile closes', async () => {
     let finishRead: (value: ArrayBuffer) => void = () => {}
     const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
-    vi.spyOn(file, 'slice').mockReturnValue({
-      arrayBuffer: () => new Promise((resolve) => (finishRead = resolve)),
-    } as Blob)
+    const slicedFile = new Blob()
+    vi.spyOn(slicedFile, 'arrayBuffer').mockImplementation(
+      () => new Promise((resolve) => (finishRead = resolve)),
+    )
+    vi.spyOn(file, 'slice').mockReturnValue(slicedFile)
     const onIdentityChange = vi.fn()
     const view = render(
       <ProfileSettings

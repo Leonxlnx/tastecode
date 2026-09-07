@@ -1,6 +1,5 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { createServer } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -17,6 +16,12 @@ import {
 const workspaces: string[] = []
 const previews: RunningPreview[] = []
 
+function serverPort(server: Server): number {
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('missing test port')
+  return address.port
+}
+
 afterEach(async () => {
   await Promise.all(previews.splice(0).map((preview) => preview.stop()))
   for (const workspace of workspaces.splice(0)) {
@@ -31,18 +36,17 @@ describe('design preview runner', () => {
     const marker = path.join(workspace, 'spawned.txt')
     const occupied = createServer((_request, response) => response.end('unrelated preview'))
     await listen(occupied)
-    const address = occupied.address()
-    if (!address || typeof address === 'string') throw new Error('missing test port')
+    const port = serverPort(occupied)
     writeFileSync(
       path.join(workspace, 'preview.mjs'),
-      `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${address.port}, '127.0.0.1')\n`,
+      `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${port}, '127.0.0.1')\n`,
     )
     const plan = parsePreviewPlan({
       version: 1,
       command: 'node',
       args: ['preview.mjs'],
       cwd: '.',
-      url: `http://127.0.0.1:${address.port}`,
+      url: `http://127.0.0.1:${port}`,
       viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
     })
 
@@ -57,7 +61,8 @@ describe('design preview runner', () => {
       await close(occupied)
     }
     expect(failure).toBeInstanceOf(Error)
-    expect((failure as Error).message).toContain(`preview port ${address.port} is already in use`)
+    if (!(failure instanceof Error)) throw new Error('expected preview failure')
+    expect(failure.message).toContain(`preview port ${port} is already in use`)
     expect(existsSync(marker)).toBe(false)
   })
 
@@ -84,7 +89,7 @@ describe('design preview runner', () => {
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
 
-  it('serves an exact-file static project with a Harness-owned response', async () => {
+  it('serves an exact-file static project with a TasteCode-owned response', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     const port = await freePort()
@@ -164,7 +169,7 @@ describe('design preview runner', () => {
   it('turns a child spawn error into a readiness failure', async () => {
     const child = Object.assign(new EventEmitter(), {
       exitCode: null,
-    }) as ChildProcessWithoutNullStreams
+    })
     const childFailure = watchPreviewChild(child)
     const waiting = waitForPreview(child, 'http://127.0.0.1:1', 5_000, () => '', childFailure)
 
@@ -370,9 +375,8 @@ function freePort(): Promise<number> {
     const server = createServer()
     server.on('error', reject)
     server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') return reject(new Error('missing test port'))
-      server.close((error) => (error ? reject(error) : resolve(address.port)))
+      const port = serverPort(server)
+      server.close((error) => (error ? reject(error) : resolve(port)))
     })
   })
 }

@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { record, string, stringsAllowEmpty } from './parse.js'
 
 export interface ExplicitBriefAnswer {
   question: string
@@ -45,29 +46,16 @@ const STRING_ARRAY_FIELDS = [
 ] as const
 
 function parseDesignBrief(value: unknown): DesignBrief {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('design brief must be an object')
-  }
-  const record = value as Record<string, unknown>
+  const brief = record(value, 'design brief')
   for (const field of STRING_FIELDS) {
-    if (typeof record[field] !== 'string' || record[field].trim() === '') {
-      throw new Error(`design brief field ${field} must be a non-empty string`)
-    }
+    string(brief[field], `design brief field ${field}`)
   }
   for (const field of STRING_ARRAY_FIELDS) {
-    if (!Array.isArray(record[field]) || !record[field].every((item) => typeof item === 'string')) {
-      throw new Error(`design brief field ${field} must be a string array`)
-    }
+    stringsAllowEmpty(brief[field], `design brief field ${field}`)
   }
   if (
-    !Array.isArray(record.explicitAnswers) ||
-    !record.explicitAnswers.every(
-      (item) =>
-        typeof item === 'object' &&
-        item !== null &&
-        typeof (item as Record<string, unknown>).question === 'string' &&
-        typeof (item as Record<string, unknown>).answer === 'string',
-    )
+    !Array.isArray(brief.explicitAnswers) ||
+    !brief.explicitAnswers.every(isExplicitBriefAnswer)
   ) {
     throw new Error('design brief field explicitAnswers must contain question and answer strings')
   }
@@ -75,25 +63,36 @@ function parseDesignBrief(value: unknown): DesignBrief {
   // cast kept arbitrary model-authored extra keys, which were persisted and
   // re-serialized verbatim into the Build agent's instruction block.
   return {
-    originalRequest: record['originalRequest'] as string,
-    subject: record['subject'] as string,
-    pageType: record['pageType'] as string,
-    scope: record['scope'] as string,
-    primaryGoal: record['primaryGoal'] as string,
-    audience: record['audience'] as string,
-    offer: record['offer'] as string,
-    primaryAction: record['primaryAction'] as string,
-    creativeControl: record['creativeControl'] as string,
-    requiredContent: record['requiredContent'] as string[],
-    constraints: record['constraints'] as string[],
-    brandInputs: record['brandInputs'] as string[],
-    assumptions: record['assumptions'] as string[],
-    unresolved: record['unresolved'] as string[],
-    explicitAnswers: (record['explicitAnswers'] as ExplicitBriefAnswer[]).map((item) => ({
+    originalRequest: string(brief.originalRequest, 'design brief field originalRequest'),
+    subject: string(brief.subject, 'design brief field subject'),
+    pageType: string(brief.pageType, 'design brief field pageType'),
+    scope: string(brief.scope, 'design brief field scope'),
+    primaryGoal: string(brief.primaryGoal, 'design brief field primaryGoal'),
+    audience: string(brief.audience, 'design brief field audience'),
+    offer: string(brief.offer, 'design brief field offer'),
+    primaryAction: string(brief.primaryAction, 'design brief field primaryAction'),
+    creativeControl: string(brief.creativeControl, 'design brief field creativeControl'),
+    requiredContent: stringsAllowEmpty(brief.requiredContent, 'design brief field requiredContent'),
+    constraints: stringsAllowEmpty(brief.constraints, 'design brief field constraints'),
+    brandInputs: stringsAllowEmpty(brief.brandInputs, 'design brief field brandInputs'),
+    assumptions: stringsAllowEmpty(brief.assumptions, 'design brief field assumptions'),
+    unresolved: stringsAllowEmpty(brief.unresolved, 'design brief field unresolved'),
+    explicitAnswers: brief.explicitAnswers.map((item) => ({
       question: item.question,
       answer: item.answer,
     })),
   }
+}
+
+function isExplicitBriefAnswer(value: unknown): value is ExplicitBriefAnswer {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'question' in value &&
+    typeof value.question === 'string' &&
+    'answer' in value &&
+    typeof value.answer === 'string'
+  )
 }
 
 function briefPath(workspacePath: string): string {

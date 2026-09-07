@@ -9,7 +9,14 @@ import type {
   Model,
   Thread,
 } from '@harness/contracts'
-import { killTree, readNdjson, spawnCli } from '@harness/proc'
+import {
+  JsonRpcValueSchema,
+  killTree,
+  readNdjson,
+  spawnCli,
+  type JsonRpcValue,
+} from '@harness/proc'
+import { z } from 'zod'
 
 export const PI_CAPABILITIES: Capabilities = {
   steer: true,
@@ -40,49 +47,73 @@ type PiStartOptions = {
 
 type PiTurnOptions = Pick<PiStartOptions, 'model' | 'effort'>
 
-type PiResponse = {
-  id?: string
-  type: 'response'
-  command: string
-  success: boolean
-  data?: unknown
-  error?: string
-}
+const PiResponseSchema = z.object({
+  id: z.string().optional(),
+  type: z.literal('response'),
+  command: z.string(),
+  success: z.boolean(),
+  data: JsonRpcValueSchema.optional(),
+  error: z.string().optional(),
+})
 
-type PiModel = {
-  provider?: string
-  id?: string
-  name?: string
-  contextWindow?: number
-  reasoning?: boolean
-}
+const PiModelSchema = z.object({
+  provider: z.string().optional(),
+  id: z.string().optional(),
+  name: z.string().optional(),
+  contextWindow: z.number().optional(),
+  reasoning: z.boolean().optional(),
+})
 
-type PiMessage = {
-  role?: string
-  stopReason?: string
-  errorMessage?: string
-  usage?: {
-    input?: number
-    output?: number
-    cacheRead?: number
-    reasoning?: number
-    totalTokens?: number
-    cost?: { total?: number }
-  }
-}
+const PiMessageSchema = z.object({
+  role: z.string().optional(),
+  stopReason: z.string().optional(),
+  errorMessage: z.string().optional(),
+  usage: z
+    .object({
+      input: z.number().optional(),
+      output: z.number().optional(),
+      cacheRead: z.number().optional(),
+      reasoning: z.number().optional(),
+      totalTokens: z.number().optional(),
+      cost: z.object({ total: z.number().optional() }).optional(),
+    })
+    .optional(),
+})
 
-type PiEvent = {
-  type?: string
-  willRetry?: boolean
-  assistantMessageEvent?: { type?: string; delta?: string }
-  message?: PiMessage
-  toolCallId?: string
-  toolName?: string
-  args?: unknown
-  result?: unknown
-  partialResult?: unknown
-  isError?: boolean
-}
+const PiEventSchema = z.object({
+  type: z.string().optional(),
+  willRetry: z.boolean().optional(),
+  assistantMessageEvent: z
+    .object({ type: z.string().optional(), delta: z.string().optional() })
+    .optional(),
+  message: PiMessageSchema.optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+  args: JsonRpcValueSchema.optional(),
+  result: JsonRpcValueSchema.optional(),
+  partialResult: JsonRpcValueSchema.optional(),
+  isError: z.boolean().optional(),
+})
+
+const ExtensionUiRequestSchema = z.object({
+  type: z.literal('extension_ui_request'),
+  id: z.string().optional(),
+})
+
+const PiStateSchema = z.object({
+  sessionId: z.string().optional(),
+  model: PiModelSchema.optional(),
+  thinkingLevel: z.string().optional(),
+})
+const PiAvailableModelsSchema = z.object({ models: z.array(PiModelSchema).optional() })
+const PiThinkingLevelsSchema = z.object({ levels: z.array(z.string()).optional() })
+const ToolResultSchema = z.object({
+  content: z.array(z.object({ text: z.string().optional() })).optional(),
+})
+
+type PiResponse = z.infer<typeof PiResponseSchema>
+type PiMessage = z.infer<typeof PiMessageSchema>
+type PiEvent = z.infer<typeof PiEventSchema>
 
 type OpenItem = { item: Item; text: string }
 
@@ -106,7 +137,11 @@ export class PiAdapter extends EventEmitter<Events> {
   #requestCounter = 0
   #pending = new Map<
     string,
-    { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
+    {
+      resolve: (value: JsonRpcValue | undefined) => void
+      reject: (error: Error) => void
+      timer: NodeJS.Timeout
+    }
   >()
   #items = new Map<string, OpenItem>()
   #turnFailed = false
@@ -141,7 +176,7 @@ export class PiAdapter extends EventEmitter<Events> {
     this.#model = options.model
     this.#effort = options.effort
     await this.#startProcess(workspacePath)
-    const state = await this.#request<{ sessionId?: string }>('get_state')
+    const state = await this.#requestParsed('get_state', {}, PiStateSchema)
     await this.#applyModelOptions()
     const sessionId = state.sessionId || crypto.randomUUID()
     this.#threadId = `pi-${sessionId}`
@@ -202,8 +237,8 @@ export class PiAdapter extends EventEmitter<Events> {
   async interrupt(): Promise<void> {
     if (!this.#activeTurnId) return
     this.#interrupting = true
-    await this.#request('abort').catch((error: unknown) => {
-      this.#failTurn(error instanceof Error ? error.message : String(error))
+    await this.#request('abort').catch((cause) => {
+      this.#failTurn(cause instanceof Error ? cause.message : String(cause))
     })
   }
 
@@ -217,8 +252,8 @@ export class PiAdapter extends EventEmitter<Events> {
       true,
     )
     const [available, state] = await Promise.all([
-      this.#request<{ models?: PiModel[] }>('get_available_models'),
-      this.#request<{ model?: PiModel; thinkingLevel?: string }>('get_state'),
+      this.#requestParsed('get_available_models', {}, PiAvailableModelsSchema),
+      this.#requestParsed('get_state', {}, PiStateSchema),
     ])
     const selected = state.model
     const models: Model[] = []
@@ -229,12 +264,12 @@ export class PiAdapter extends EventEmitter<Events> {
         if (model.reasoning) {
           try {
             await this.#request('set_model', { provider: model.provider, modelId: model.id })
-            const thinking = await this.#request<{ levels?: string[] }>(
+            const thinking = await this.#requestParsed(
               'get_available_thinking_levels',
+              {},
+              PiThinkingLevelsSchema,
             )
-            reasoningEfforts = Array.isArray(thinking.levels)
-              ? thinking.levels.filter((level): level is string => typeof level === 'string')
-              : []
+            reasoningEfforts = thinking.levels ?? []
           } catch (error) {
             this.emit(
               'log',
@@ -303,7 +338,7 @@ export class PiAdapter extends EventEmitter<Events> {
     child.on('error', (error) => {
       if (this.#child === child) this.#processFailed(error.message)
     })
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (this.#child !== child) return
       this.#child = undefined
       if (!this.#intentionalStop) {
@@ -312,20 +347,19 @@ export class PiAdapter extends EventEmitter<Events> {
     })
   }
 
-  #request<T = unknown>(type: string, fields: Record<string, unknown> = {}): Promise<T> {
+  #request(
+    type: string,
+    fields: Record<string, JsonRpcValue> = {},
+  ): Promise<JsonRpcValue | undefined> {
     const child = this.#child
     if (!child) return Promise.reject(new Error(`${this.#displayName} is not running`))
     const id = `harness-${++this.#requestCounter}`
-    return new Promise<T>((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.#pending.delete(id)
         reject(new Error(`${this.#displayName} did not answer ${type}`))
       }, 20_000)
-      this.#pending.set(id, {
-        resolve: (value) => resolve(value as T),
-        reject,
-        timer,
-      })
+      this.#pending.set(id, { resolve, reject, timer })
       child.stdin.write(`${JSON.stringify({ id, type, ...fields })}\n`, (error) => {
         if (!error) return
         const pending = this.#pending.get(id)
@@ -337,26 +371,41 @@ export class PiAdapter extends EventEmitter<Events> {
     })
   }
 
-  #onValue(value: unknown): void {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return
-    const record = value as Record<string, unknown>
-    if (record.type === 'response') {
-      this.#onResponse(record as PiResponse)
+  #requestParsed<Result>(
+    type: string,
+    fields: Record<string, JsonRpcValue>,
+    result: z.ZodType<Result>,
+  ): Promise<Result> {
+    return this.#request(type, fields).then((value) => result.parse(value))
+  }
+
+  #onValue(value: JsonRpcValue): void {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return
+    if (value['type'] === 'response') {
+      const response = PiResponseSchema.safeParse(value)
+      if (response.success) this.#onResponse(response.data)
       return
     }
-    if (record.type === 'extension_ui_request') {
+    if (value['type'] === 'extension_ui_request') {
+      const request = ExtensionUiRequestSchema.safeParse(value)
+      if (!request.success) return
       this.emit(
         'log',
         `${this.#displayName} requested extension UI that this custom integration cannot answer`,
       )
-      if (typeof record.id === 'string' && this.#child) {
+      if (request.data.id && this.#child) {
         this.#child.stdin.write(
-          `${JSON.stringify({ type: 'extension_ui_response', id: record.id, cancelled: true })}\n`,
+          `${JSON.stringify({
+            type: 'extension_ui_response',
+            id: request.data.id,
+            cancelled: true,
+          })}\n`,
         )
       }
       return
     }
-    this.#onEvent(record as PiEvent)
+    const event = PiEventSchema.safeParse(value)
+    if (event.success) this.#onEvent(event.data)
   }
 
   #onResponse(response: PiResponse): void {
@@ -444,9 +493,12 @@ export class PiAdapter extends EventEmitter<Events> {
     })
   }
 
-  #startTool(toolCallId: string, name: string, args: unknown): void {
+  #startTool(toolCallId: string, name: string, args: JsonRpcValue | undefined): void {
     const turnId = this.#activeTurnId!
-    const details = object(args)
+    const details =
+      typeof args === 'object' && args !== null && !Array.isArray(args) ? args : undefined
+    const commandText = typeof details?.['command'] === 'string' ? details['command'] : undefined
+    const filePath = typeof details?.['path'] === 'string' ? details['path'] : undefined
     const itemType =
       name === 'bash'
         ? 'command'
@@ -459,11 +511,15 @@ export class PiAdapter extends EventEmitter<Events> {
       type: itemType,
       status: 'started',
       text: name,
-      ...(itemType === 'command' && typeof details.command === 'string'
-        ? { command: details.command }
+      ...(itemType === 'command' && commandText
+        ? {
+            command: commandText,
+          }
         : {}),
-      ...(itemType === 'file_change' && typeof details.path === 'string'
-        ? { path: details.path }
+      ...(itemType === 'file_change' && filePath
+        ? {
+            path: filePath,
+          }
         : {}),
       createdAt: Date.now(),
     }
@@ -483,7 +539,7 @@ export class PiAdapter extends EventEmitter<Events> {
     })
   }
 
-  #completeTool(toolCallId: string, result: unknown, failed: boolean): void {
+  #completeTool(toolCallId: string, result: JsonRpcValue | undefined, failed: boolean): void {
     const key = `tool:${toolCallId}`
     const open = this.#items.get(key)
     if (!open) return
@@ -491,7 +547,11 @@ export class PiAdapter extends EventEmitter<Events> {
     const text = open.text || resultText(result) || open.item.text
     this.emit('event', {
       type: 'item.completed',
-      item: { ...open.item, status: failed ? 'failed' : 'completed', ...(text ? { text } : {}) },
+      item: {
+        ...open.item,
+        status: failed ? 'failed' : 'completed',
+        ...(text ? { text } : {}),
+      },
     })
   }
 
@@ -501,6 +561,7 @@ export class PiAdapter extends EventEmitter<Events> {
     const input = number(usage.input)
     const cached = number(usage.cacheRead)
     const output = number(usage.output)
+    const cost = usage.cost?.total
     this.emit('event', {
       type: 'usage.updated',
       usage: {
@@ -510,9 +571,7 @@ export class PiAdapter extends EventEmitter<Events> {
         reasoningTokens: number(usage.reasoning),
         totalTokens: number(usage.totalTokens) || input + cached + output,
         inputIncludesCached: false,
-        ...(typeof usage.cost?.total === 'number' && usage.cost.total >= 0
-          ? { costUsd: usage.cost.total }
-          : {}),
+        ...(cost !== undefined && cost >= 0 ? { costUsd: cost } : {}),
       },
     })
   }
@@ -534,7 +593,7 @@ export class PiAdapter extends EventEmitter<Events> {
   #finishTurn(): void {
     const turnId = this.#activeTurnId
     if (!turnId) return
-    for (const key of [...this.#items.keys()]) this.#completeItem(key)
+    for (const key of this.#items.keys()) this.#completeItem(key)
     if (this.#pendingError) {
       this.#turnFailed = true
       this.emit('event', {
@@ -574,23 +633,15 @@ export class PiAdapter extends EventEmitter<Events> {
   }
 }
 
-function object(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-function resultText(value: unknown): string {
+function resultText(value: JsonRpcValue | undefined): string {
   if (typeof value === 'string') return value
-  const record = object(value)
-  const content = Array.isArray(record.content) ? record.content : []
-  return content
-    .map((entry) => object(entry))
-    .map((entry) => (typeof entry.text === 'string' ? entry.text : ''))
+  const result = ToolResultSchema.safeParse(value)
+  return (result.success ? (result.data.content ?? []) : [])
+    .map((entry) => entry.text ?? '')
     .filter(Boolean)
     .join('\n')
 }
 
-function number(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+function number(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) ? value : 0
 }

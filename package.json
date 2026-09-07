@@ -1,5 +1,5 @@
 {
-  "name": "personal-harness",
+  "name": "tastecode",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.8.0",
@@ -11,13 +11,18 @@
     "harness": "tsc -b apps/server && node apps/server/dist/cli.js",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
-    "lint": "prettier --check .",
+    "test": "node --test tools/scripts/release-licenses.test.js && pnpm -r test",
+    "licenses:verify": "node tools/scripts/release-licenses.js",
+    "licenses:report": "node tools/scripts/release-licenses.js --output release/license-metadata.json",
+    "lint": "oxlint . && prettier --check .",
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
     "@types/node": "^26.1.1",
+    "oxlint": "1.78.0",
     "prettier": "^3.9.6",
+    "tslib": "2.8.1",
     "tsx": "^4.23.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"

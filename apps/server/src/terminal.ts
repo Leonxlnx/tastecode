@@ -1,10 +1,21 @@
 import { randomUUID } from 'node:crypto'
-import { spawn, type IPty } from 'node-pty'
+import { createRequire } from 'node:module'
+import type { IPty, spawn as NodePtySpawn } from 'node-pty'
+import { desktopPath } from '@harness/proc/desktop-path'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
-type SpawnPty = typeof spawn
+type SpawnPty = typeof NodePtySpawn
+
+const require = createRequire(import.meta.url)
+let loadedSpawn: SpawnPty | undefined
+
+/** Keep the native PTY binding out of idle startup; terminals are optional. */
+const spawnPty: SpawnPty = (file, args, options) => {
+  loadedSpawn ??= (require('node-pty') as { spawn: SpawnPty }).spawn
+  return loadedSpawn(file, args, options)
+}
 
 type TerminalEntry = {
   threadId: string
@@ -12,6 +23,32 @@ type TerminalEntry = {
   output: { dispose(): void }
   outputBuffer: TerminalOutputBuffer
   exited: Promise<void>
+}
+
+/** One short output clock for every active terminal owned by a manager. */
+export class TerminalOutputScheduler {
+  #pending = new Set<TerminalOutputBuffer>()
+  #timer: ReturnType<typeof setTimeout> | undefined
+
+  constructor(private readonly delayMs = DEFAULT_OUTPUT_BATCH_DELAY_MS) {}
+
+  schedule(buffer: TerminalOutputBuffer): void {
+    this.#pending.add(buffer)
+    this.#timer ??= setTimeout(() => this.#flushWindow(), this.delayMs)
+  }
+
+  cancel(buffer: TerminalOutputBuffer): void {
+    if (!this.#pending.delete(buffer) || this.#pending.size > 0) return
+    if (this.#timer !== undefined) clearTimeout(this.#timer)
+    this.#timer = undefined
+  }
+
+  #flushWindow(): void {
+    this.#timer = undefined
+    const pending = this.#pending
+    this.#pending = new Set()
+    for (const buffer of pending) buffer.flush()
+  }
 }
 
 /**
@@ -23,7 +60,8 @@ type TerminalEntry = {
  * latency bounded.
  */
 export class TerminalOutputBuffer {
-  #chunks: string[] = []
+  #firstChunk = ''
+  #chunks: string[] | undefined
   #length = 0
   #timer: ReturnType<typeof setTimeout> | undefined
   #disposed = false
@@ -32,33 +70,43 @@ export class TerminalOutputBuffer {
     private readonly emit: (data: string) => void,
     private readonly delayMs = DEFAULT_OUTPUT_BATCH_DELAY_MS,
     private readonly maximumSize = DEFAULT_OUTPUT_BATCH_SIZE,
+    private readonly scheduler?: TerminalOutputScheduler,
   ) {}
 
   push(data: string): void {
     if (this.#disposed || data.length === 0) return
-    this.#chunks.push(data)
+    const isFirstChunk = this.#length === 0
+    if (isFirstChunk) this.#firstChunk = data
+    else (this.#chunks ??= [this.#firstChunk]).push(data)
     this.#length += data.length
     if (this.#length >= this.maximumSize) {
       this.flush()
       return
     }
-    this.#timer ??= setTimeout(() => this.flush(), this.delayMs)
+    if (isFirstChunk) {
+      if (this.scheduler) this.scheduler.schedule(this)
+      else this.#timer ??= setTimeout(() => this.flush(), this.delayMs)
+    }
   }
 
   flush(): void {
+    this.scheduler?.cancel(this)
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = undefined
     if (this.#length === 0 || this.#disposed) return
-    const data = this.#chunks.join('')
-    this.#chunks = []
+    const data = this.#chunks === undefined ? this.#firstChunk : this.#chunks.join('')
+    this.#firstChunk = ''
+    this.#chunks = undefined
     this.#length = 0
     this.emit(data)
   }
 
   dispose(): void {
+    this.scheduler?.cancel(this)
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = undefined
-    this.#chunks = []
+    this.#firstChunk = ''
+    this.#chunks = undefined
     this.#length = 0
     this.#disposed = true
   }
@@ -75,6 +123,7 @@ export class TerminalManager {
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
   #closeTimeoutMs: number
+  readonly #outputScheduler = new TerminalOutputScheduler()
 
   constructor(
     handlers: {
@@ -85,7 +134,7 @@ export class TerminalManager {
   ) {
     this.#onOutput = handlers.onOutput
     this.#onExit = handlers.onExit
-    this.#spawnPty = options.spawnPty ?? spawn
+    this.#spawnPty = options.spawnPty ?? spawnPty
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
@@ -124,7 +173,12 @@ export class TerminalManager {
       cwd,
       env: terminalEnvironment(),
     })
-    const outputBuffer = new TerminalOutputBuffer((data) => this.#onOutput(terminalId, data))
+    const outputBuffer = new TerminalOutputBuffer(
+      (data) => this.#onOutput(terminalId, data),
+      DEFAULT_OUTPUT_BATCH_DELAY_MS,
+      DEFAULT_OUTPUT_BATCH_SIZE,
+      this.#outputScheduler,
+    )
     const output = process.onData((data) => outputBuffer.push(data))
     let resolveExited: () => void = () => {}
     const exited = new Promise<void>((resolve) => {
@@ -219,7 +273,7 @@ export class TerminalManager {
   async #drainAll(): Promise<void> {
     const waits = new Set<Promise<void>>(this.#closingById.values())
     for (const closingThread of this.#closingThreads.values()) waits.add(closingThread)
-    for (const terminalId of [...this.#byId.keys()]) {
+    for (const terminalId of this.#byId.keys()) {
       try {
         waits.add(this.close(terminalId))
       } catch (error) {
@@ -277,8 +331,9 @@ export function terminalEnvironment(
 ): NodeJS.ProcessEnv {
   return {
     ...environment,
+    PATH: desktopPath(environment.PATH ?? '', { env: environment }),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'Harness',
+    TERM_PROGRAM: 'TasteCode',
   }
 }

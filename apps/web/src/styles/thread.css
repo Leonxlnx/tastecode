@@ -1,0 +1,1502 @@
+/* ---------- thread ---------- */
+
+/* The overlay anchor: find bar and jump button position against this, not
+   the scroller, so they stay put while the transcript scrolls. */
+.thread-shell {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+
+.thread {
+  overflow-y: auto;
+  /* TanStack already preserves the active viewport while virtual rows resize.
+     Native scroll anchoring would apply a second correction to the changing runway. */
+  overflow-anchor: none;
+  min-height: 0;
+  padding: 16px 0 4px;
+  font-size: var(--t-lg);
+  /* The chat column is centred, and a classic scrollbar takes layout width:
+     without a reserved gutter the whole column shifted sideways the first
+     time a session grew past one screen, reflowing every wrapped line.
+     both-edges keeps the centring exact. */
+  scrollbar-gutter: stable both-edges;
+}
+
+.thread__col {
+  width: 100%;
+  max-width: calc(var(--chat-w) + 48px);
+  margin: 0 auto;
+  padding: 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* The working rail's full footprint: the 30px summary line plus the gap to
+     the response below it. The rail itself is absolutely positioned so it can
+     stay mounted for the whole turn; is-rail-anchor and .thread__rail-spacer
+     reserve exactly this much space for it to overlay. */
+  --working-rail-h: 42px;
+}
+
+/* Holds the full scroll height while only the visible rows exist. */
+.thread__runway {
+  position: relative;
+  width: 100%;
+}
+
+.thread__row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  /* Gap cannot apply to absolutely positioned rows, so the spacing that the
+     column provides elsewhere lives on the row itself. */
+  padding-bottom: 12px;
+}
+
+/* Keep one turn's narration and work status visually connected. The normal
+   turn gap is too large between two rows that describe the same live step. */
+.thread__row.is-compact-to-next {
+  padding-bottom: 4px;
+}
+
+.thread__row.is-suppressed {
+  height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+/* The working rail overlays this padding; see --working-rail-h. */
+.thread__row.is-rail-anchor {
+  padding-top: var(--working-rail-h);
+}
+
+/* One mount for the whole turn, positioned like a row rather than rendered as
+   one — a rail inside the virtualized row unmounts (and restarts the orb)
+   when the anchor row changes tree position or leaves the overscan window. */
+.thread__rail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+/* Holds the rail's space in the column while no response row exists yet. */
+.thread__rail-spacer {
+  flex: none;
+  height: var(--working-rail-h);
+}
+
+.thread__row.is-entering > :is(.reply, .aux, .activity, .turn-error) {
+  animation: thread-item-in 280ms var(--ease-out) both;
+}
+
+.thread__row.is-entering > .said {
+  transform-origin: right bottom;
+  animation: thread-message-in 300ms var(--ease-out) both;
+}
+
+@keyframes thread-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+
+@keyframes thread-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+.jump {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 5px 12px;
+  /* Same chrome as the composer's Design button: shared tokens keep the two
+     optically identical across themes. */
+  background: var(--composer-action-bg);
+  border: 1px solid var(--composer-action-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--composer-action-shadow);
+  color: color-mix(in srgb, var(--text) 55%, var(--text-2));
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-md);
+  /* Its own keyframes, not menu-in: that one animates transform from a value
+     with no translateX, so this button visibly slid in from the left edge
+     every time it appeared — which is on every scroll-up during a stream. */
+  animation: jump-in var(--dur-slow) var(--ease-out);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.jump svg {
+  flex: none;
+}
+
+@keyframes jump-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px) scale(0.97);
+  }
+}
+
+.jump:hover {
+  background: var(--composer-action-bg-hover);
+  border-color: var(--composer-action-border-hover);
+  box-shadow: var(--composer-action-shadow-hover);
+}
+
+.aux__code {
+  color: var(--error);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  flex: none;
+}
+
+.aux__time {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.said {
+  position: relative;
+  align-self: flex-end;
+  width: fit-content;
+  max-width: 88%;
+  margin-left: auto;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  padding: 7px 11px;
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+/* The prompt row always owns the action strip's height, so revealing it never
+   changes a measured virtual row. The transparent tail also lets a pointer
+   enter from just below a short bubble. */
+.thread__row:has(> .said) {
+  padding-bottom: 27px;
+}
+
+.said::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  top: 100%;
+  right: 0;
+  width: max(100%, 76px);
+  height: 25px;
+}
+
+/* Padding, not offset, bridges bubble and buttons: with a gap between them
+   the pointer left .said on the way down and the actions vanished mid-reach. */
+.said__actions {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  right: 0;
+  padding-top: 1px;
+  gap: 2px;
+  justify-content: flex-end;
+  margin: 0;
+}
+
+.response-actions.said__actions button {
+  width: 24px;
+  height: 24px;
+}
+
+.said:focus-within > .said__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .said:hover > .said__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.said__text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.said__attachments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 148px));
+  gap: 5px;
+  max-width: 301px;
+  margin: -2px -6px 7px;
+}
+
+.said__attachments:has(> :only-child) {
+  grid-template-columns: minmax(0, 301px);
+}
+
+.said__attachments .viewed-image-preview--message {
+  width: 100%;
+  margin: 0;
+}
+
+.said__attachments .viewed-image-preview__open,
+.said__attachments .viewed-image-preview--message:is(.is-loading, .is-unavailable) {
+  height: 118px;
+}
+
+.said__attachments > :only-child .viewed-image-preview__open,
+.said__attachments > .viewed-image-preview--message:is(.is-loading, .is-unavailable):only-child {
+  height: 178px;
+}
+
+.viewed-image-preview__placeholder {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--chrome-inset-shadow);
+  color: var(--text-3);
+}
+
+.viewed-image-preview--message:is(.is-loading, .is-unavailable) {
+  display: block;
+}
+
+.viewed-image-preview--message.is-loading {
+  opacity: 0.68;
+}
+
+.viewed-image-preview__unavailable-copy {
+  display: block;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Completed work folds into the same quiet narrative Codex uses: commentary
+   and edit milestones remain readable, while raw operational noise stays out. */
+.thread__row > :is(.activity, .aux) {
+  position: relative;
+  margin-block: 4px;
+}
+
+.activity__summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  margin-left: -3.5px;
+  padding: 0 2px 4px;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-md);
+  letter-spacing: -0.012em;
+  list-style: none;
+  text-align: left;
+  user-select: none;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+/* Only the summaries that actually open respond to hover. */
+.activity:not(.activity--working) > .activity__summary:hover {
+  color: var(--text-2);
+}
+
+.activity__glyph {
+  display: grid;
+  flex: none;
+  width: 18px;
+  place-items: center;
+}
+
+.activity__glyph svg,
+.activity__chevron {
+  width: 15px;
+  height: 15px;
+}
+
+.activity__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity__message {
+  color: var(--response-text);
+  font-size: inherit;
+  line-height: 1.52;
+}
+
+.activity--live .activity__label {
+  flex: 1 1 0;
+  background: linear-gradient(100deg, var(--text-2) 20%, var(--text) 48%, var(--text-2) 76%);
+  background-clip: text;
+  background-size: 220% 100%;
+  color: transparent;
+  animation: activity-label-shine 2.4s linear infinite;
+}
+
+@keyframes activity-label-shine {
+  to {
+    background-position: -220% 0;
+  }
+}
+
+.activity__chevron {
+  flex: none;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    rotate var(--dur-fast) var(--ease-out);
+}
+
+.activity[data-expanded='true'] > .activity__summary .activity__chevron {
+  transform: rotate(90deg);
+}
+
+.activity--live .activity__summary {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-2);
+}
+
+/* Commit the expanded height in one layout pass. Animating the grid track made
+   ResizeObserver remeasure the virtual row throughout the transition. */
+.activity__reveal {
+  display: none;
+}
+
+.activity__reveal[data-open='true'] {
+  display: block;
+}
+
+.activity__reveal[data-open='closing'] {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  right: 0;
+  left: 0;
+  display: block;
+  background: var(--bg);
+  pointer-events: none;
+  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
+}
+
+.activity__reveal[data-open='true'] > .activity__reveal-clip {
+  animation: disclosure-reveal-in var(--dur-fast) var(--ease-out);
+}
+
+.activity__reveal-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@keyframes disclosure-reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes disclosure-reveal-out {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* Closing details leave flow once, then the virtualizer moves the measured
+   rows with compositor-only transforms while the old details fade above them. */
+.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+
+.thread__row:has(> :is(.activity, .aux) [data-open='closing']) {
+  z-index: 1;
+}
+
+.activity--working {
+  /* No margin below: the rail is absolutely positioned, so the gap to the
+     response is part of --working-rail-h instead. */
+  animation: activity-in 260ms var(--ease-out) both;
+}
+
+.activity--working .activity__summary {
+  min-width: 0;
+  cursor: default;
+  font-variant-numeric: tabular-nums;
+}
+
+.activity__working-orb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.activity__working-label-swap {
+  display: grid;
+  flex: 1 1 0;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.activity__working-status,
+.activity__working-status-previous {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.activity__working-label,
+.activity__working-label-previous {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity__working-status.is-entering {
+  animation: activity-label-in 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.activity__working-status-previous {
+  animation: activity-label-out 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* Dimmer than the label beside it — --text-4 was never defined, so this
+   declaration was dropped and the elapsed time read at full label weight. */
+.activity__working-time {
+  flex: none;
+  color: color-mix(in srgb, var(--text-3) 72%, transparent);
+}
+
+.activity__working-time::before {
+  content: '·';
+  margin-right: 6px;
+}
+
+.activity.is-settling {
+  animation: activity-settle-in 360ms var(--ease-out) both;
+}
+
+@keyframes activity-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@keyframes activity-label-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+@keyframes activity-label-out {
+  to {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes activity-settle-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread__row.is-entering > :is(.reply, .aux, .activity),
+  .thread__row.is-entering > .said,
+  .activity--working,
+  .activity__working-status,
+  .activity__working-status-previous,
+  .activity.is-settling {
+    animation: none;
+  }
+
+  .activity__working-status-previous {
+    display: none;
+  }
+
+  .activity--live .activity__label {
+    animation: none;
+    background: none;
+    color: var(--text-2);
+  }
+
+  .activity__reveal[data-open='true'] > .activity__reveal-clip,
+  .aux__reveal[data-open='true'] > .aux__reveal-clip {
+    animation: none;
+  }
+
+  .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
+    transition: none;
+  }
+}
+
+.activity__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.activity__file-change {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 24px;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
+  letter-spacing: -0.012em;
+}
+
+.activity__file-change svg {
+  flex: none;
+}
+
+.activity__item-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity__detail {
+  max-height: 180px;
+  overflow: auto;
+  margin: 5px 0 0 21px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  white-space: pre-wrap;
+}
+
+.viewed-image-preview {
+  width: min(320px, calc(100% - 21px));
+  margin: 7px 0 2px 21px;
+}
+
+.viewed-image-preview__open {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 180px;
+  padding: 0;
+  overflow: hidden;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--chrome-inset-shadow);
+  cursor: zoom-in;
+}
+
+.viewed-image-preview__open:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.viewed-image-preview__open img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.viewed-image-preview__name {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reply > .activity {
+  display: block;
+  margin-bottom: 8px;
+}
+
+/* ---------- collapsed rows ---------- */
+
+.aux__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  margin-left: -3.5px;
+  padding: 0 2px 4px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--t-md);
+  letter-spacing: -0.012em;
+  text-align: left;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.aux__row:hover {
+  color: var(--text-2);
+}
+
+.aux__glyph {
+  display: grid;
+  flex: none;
+  width: 18px;
+  place-items: center;
+}
+
+.aux__glyph svg {
+  width: 15px;
+  height: 15px;
+}
+
+.aux__label {
+  flex: 1 1 0;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aux__out {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow: auto;
+  margin: 8px 0 2px;
+  padding: 9px 11px;
+  background: var(--surface);
+  border-radius: var(--r-lg);
+}
+
+.reasoning-summary {
+  max-width: 72ch;
+  color: var(--text-3);
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+.aux--reasoning .reasoning-summary {
+  max-height: 300px;
+  overflow: auto;
+  margin: 8px 0 2px 24px;
+}
+
+.reasoning-summary > .md > :last-child {
+  margin-bottom: 0;
+}
+
+/* Match the completion rail: one virtual-row resize, then compositor-only motion. */
+.aux__reveal {
+  display: none;
+}
+
+.aux__reveal[data-open='true'] {
+  display: block;
+}
+
+.aux__reveal[data-open='closing'] {
+  position: absolute;
+  z-index: 1;
+  top: 100%;
+  right: 0;
+  left: 0;
+  display: block;
+  background: var(--bg);
+  pointer-events: none;
+  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
+}
+
+.aux__reveal[data-open='true'] > .aux__reveal-clip {
+  animation: disclosure-reveal-in var(--dur-fast) var(--ease-out);
+}
+
+.aux__reveal-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.aux--live .aux__row {
+  color: var(--text-2);
+}
+
+.aux--live .aux__glyph {
+  color: var(--text-3);
+}
+
+.aux--live .aux__glyph svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.7;
+}
+
+.aux--live .aux__time {
+  display: none;
+}
+
+.aux--live .aux__out {
+  margin-left: 32px;
+}
+
+/* A thread-level failure is a statement, not a collapsible row: the alert
+   and the reason, in the same quiet red the rest of the app uses. */
+.turn-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--error);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  padding: 1px 0;
+}
+
+.turn-error__glyph {
+  flex: none;
+  margin-top: 3px;
+}
+
+.turn-error__text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.live-status {
+  padding: 1px 0 4px;
+  color: var(--text-3);
+  font-size: var(--t-lg);
+}
+
+.reply > .response-actions {
+  position: static;
+  padding-top: 2px;
+  margin: 0;
+  margin-left: -6.5px;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.response-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.response-actions button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.response-actions button:hover,
+.response-actions button:focus-visible {
+  background: var(--surface);
+  color: var(--text-2);
+}
+
+.response-actions svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.7;
+}
+
+.copy-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.response-actions .copy-action.is-failed button,
+.copy-action__error {
+  color: var(--error);
+}
+
+.copy-action__error {
+  white-space: nowrap;
+}
+
+/* ---------- plan ---------- */
+
+.plan {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 9px 12px;
+}
+
+.plan__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.plan__head::-webkit-details-marker {
+  display: none;
+}
+
+.plan__title {
+  font-weight: 540;
+}
+
+.plan__count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.plan__list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.planstep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+
+.planstep__mark {
+  flex: none;
+  width: 10px;
+  display: grid;
+  place-items: center;
+}
+
+.planstep.is-running {
+  color: var(--text);
+}
+
+.planstep.is-done {
+  color: var(--text-3);
+}
+
+.planstep.is-done .planstep__text {
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+
+/* ---------- approval ---------- */
+
+/* Deliberately the loudest surface in the thread. It is the only thing here
+   that authorises arbitrary execution, and it blocks the agent until answered. */
+.approval {
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  padding: 12px 14px;
+}
+
+.approval__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.approval__head svg {
+  color: var(--text-2);
+  flex: none;
+}
+
+.approval__title {
+  font-weight: 560;
+}
+
+/* The exact command, never a paraphrase — this is what gets authorised. */
+.approval__command {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  margin: 0 0 8px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.approval__path {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  margin: 0 0 8px;
+  word-break: break-all;
+}
+
+.approval__meta {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  margin: 0 0 8px;
+}
+
+.approval__cwd {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+/* Quoted, because it is the agent's justification and not our claim. */
+.approval__reason {
+  background: var(--surface-2);
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.6;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+}
+
+.approval__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.approval__spacer {
+  flex: 1;
+}
+
+.approval__secondary-action {
+  width: 140px;
+  min-height: 34px;
+  padding: 5px 12px;
+  background: var(--composer-action-bg);
+  border: 1px solid var(--composer-action-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--composer-action-shadow);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.approval__secondary-action:is(:hover, :focus-visible) {
+  background: var(--composer-action-bg-hover);
+  border-color: var(--composer-action-border-hover);
+  box-shadow: var(--composer-action-shadow-hover);
+  color: var(--text);
+}
+
+.approval--review .approval__head {
+  margin-bottom: 6px;
+}
+
+.approval-review__risk {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  margin-left: auto;
+}
+
+.approval-review__description,
+.approval-review__rationale {
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.approval-review__description {
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+
+.approval-review__rationale {
+  color: var(--text-2);
+  margin-top: 6px;
+}
+
+/* ---------- diff ---------- */
+
+.thread__runway + .diff {
+  margin-top: -8px;
+}
+
+.thread__col > .diff {
+  margin-bottom: 16px;
+}
+
+.diff {
+  background: color-mix(in srgb, var(--surface) 55%, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.diff__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 6px 9px;
+}
+
+.diff__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+}
+
+.diff__copy {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.diff__title {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 550;
+}
+
+.diff__stat {
+  display: flex;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.diff__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+
+.diff__review {
+  flex: none;
+  min-height: 28px;
+  padding: 0 9px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.diff__review:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.diff__review:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.diff__review:disabled:hover {
+  background: transparent;
+  color: var(--text-2);
+}
+
+.diff__review:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: 1px;
+}
+
+.diff__undo-error {
+  margin: 0;
+  padding: 0 10px 7px 41px;
+  color: var(--error);
+  font-size: var(--t-xs);
+}
+
+.diff__file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 2px 10px 7px;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.diff__file {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  min-width: 0;
+  font-size: var(--t-sm);
+}
+
+.diff__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff__directory {
+  color: var(--text-3);
+}
+
+.diff__file-stat {
+  display: flex;
+  flex: none;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.diff__more {
+  min-height: 24px;
+}
+
+.diff__more button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+}
+
+.diff__more button:hover {
+  color: var(--text);
+}
+
+.diff__more svg {
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    rotate var(--dur-fast) var(--ease-out);
+}
+
+.diff__more svg.is-open {
+  transform: rotate(180deg);
+}
+
+.diff__body {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  margin: 0;
+  max-height: 400px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.dline {
+  display: block;
+  padding: 0 6px;
+  margin: 0 -6px;
+}
+
+/* Tinted rows rather than bare coloured text: at a glance you read the shape
+   of the change, not individual characters. */
+.dline--add {
+  background: color-mix(in oklab, var(--success) 13%, transparent);
+  color: var(--success);
+}
+
+.dline--del {
+  background: color-mix(in oklab, var(--error) 13%, transparent);
+  color: var(--error);
+}
+
+.dline--hunk {
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+.dline--meta {
+  color: var(--text-3);
+}
+
+.dline--ctx {
+  color: var(--text-2);
+}
+
+.diff-review {
+  max-height: 520px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.diff-review__toolbar,
+.diff-file__head,
+.diff-hunk__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 14px;
+}
+
+.diff-review__toolbar {
+  min-height: 42px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.diff-review__status {
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.diff-file {
+  border-top: 1px solid var(--line);
+}
+
+.diff-file__head {
+  min-height: 54px;
+}
+
+.diff-file__head strong {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file__head span {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.diff-decisions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.diff-decisions .is-selected {
+  border-color: color-mix(in oklab, var(--success) 45%, var(--line));
+  background: color-mix(in oklab, var(--success) 12%, transparent);
+  color: var(--success);
+  opacity: 1;
+}
+
+.diff-decisions .is-reject {
+  border-color: color-mix(in oklab, var(--error) 45%, var(--line));
+  background: color-mix(in oklab, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+.diff-hunk {
+  border-top: 1px solid var(--line);
+}
+
+.diff-hunk.is-reviewed {
+  box-shadow: inset 3px 0 var(--line-strong);
+}
+
+.diff-hunk__head {
+  min-height: 42px;
+  background: var(--surface-2);
+}
+
+.diff-hunk__head code {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 38px 38px minmax(0, 1fr);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 22px;
+}
+
+.diff-line > span {
+  padding-right: 8px;
+  color: var(--text-3);
+  text-align: right;
+  user-select: none;
+}
+
+.diff-line code {
+  overflow-x: auto;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line code i {
+  display: inline-block;
+  width: 16px;
+  font-style: normal;
+  user-select: none;
+}
+
+.diff-line.is-addition {
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+}
+
+.diff-line.is-deletion {
+  background: color-mix(in oklab, var(--error) 10%, transparent);
+}
+
+.diff-line mark {
+  color: inherit;
+}
+
+.diff-line mark.is-new {
+  background: color-mix(in oklab, var(--success) 28%, transparent);
+}
+
+.diff-line mark.is-old {
+  background: color-mix(in oklab, var(--error) 28%, transparent);
+}
+
+/* ---------- find in thread ---------- */
+
+.find {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-flyout);
+}
+
+.find input {
+  width: 170px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  outline: none;
+}
+
+.find input::placeholder {
+  color: var(--text-3);
+}
+
+.find__count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  min-width: 34px;
+  text-align: right;
+}

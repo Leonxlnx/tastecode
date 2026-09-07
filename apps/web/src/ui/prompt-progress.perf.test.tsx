@@ -18,38 +18,18 @@ vi.mock('@tanstack/react-virtual', () => ({
         key: getItemKey(index),
         start: index * 72,
         end: (index + 1) * 72,
-        size: 72,
-        lane: 0,
       }
     })
     return {
       getVirtualItems: () => rows,
       getTotalSize: () => count * 72,
-      getOffsetForIndex: (index: number) => [index * 72],
-      getScrollElement: () => null,
+      getOffsetForIndex: (index: number) => [index * 72, 'start'],
       scrollToIndex: () => undefined,
       measureElement: () => undefined,
-      measurementsCache: rows,
+      measurementsCache: Array.from({ length: count }, (_, index) => ({ start: index * 72 })),
     }
   },
 }))
-
-vi.mock('thinking-orbs', () => ({ ThinkingOrb: () => <span aria-label="Working…" /> }))
-vi.mock('./highlighter.js', () => {
-  const plugin = {
-    type: 'code-highlighter',
-    name: 'prompt-progress-highlighter',
-    getSupportedLanguages: () => [],
-    getThemes: () => [],
-    supportsLanguage: () => true,
-    highlight: () => ({ tokens: [] }),
-  }
-  return {
-    onHighlighterChange: () => () => undefined,
-    shikiPlugin: plugin,
-    plainCodePlugin: plugin,
-  }
-})
 
 import { PROMPT_PROGRESS_SCENARIOS, runPromptProgress } from './prompt-progress.fixture.js'
 import { threadItems } from '../thread-store.js'
@@ -64,16 +44,10 @@ describe('prompt progress lifecycle', () => {
     expect(run.startedPrompt).toBe(run.optimisticPrompt)
     expect(run.deltaPrompt).toBe(run.optimisticPrompt)
     expect(run.canonicalRail).toBe(run.optimisticRail)
-    expect(run.startedRail).toBe(run.optimisticRail)
-    expect(run.deltaRail).toBe(run.optimisticRail)
-    expect(run.rendered.container.querySelectorAll('.activity--working')).toHaveLength(1)
-    expect(run.rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Working',
-    )
+    expect(run.deltaReply).toBe(run.startedReply)
+    expect(run.rendered.container.querySelectorAll('.activity--working')).toHaveLength(0)
     expect(threadItems(run.finalState).at(-1)?.text).toHaveLength(scenario.liveCharacters)
-    expect(run.rendered.container.querySelector('.reply.is-streaming')?.textContent).toHaveLength(
-      scenario.liveCharacters,
-    )
+    expect(run.deltaReply.textContent).toHaveLength(scenario.liveCharacters)
 
     run.rendered.unmount()
   })

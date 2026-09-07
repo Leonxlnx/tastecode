@@ -7,6 +7,14 @@ export {
 export { parseBrandSystem, readBrandSystem, writeBrandSystem, type BrandSystem } from './brand.js'
 export { designBrandPrompt, parseBrandPhaseOutput } from './brand-phase.js'
 export {
+  generateGradientSet,
+  gradientSetForBrand,
+  GRADIENT_PURPOSES,
+  type GradientPurpose,
+  type GradientRecipe,
+  type GradientSet,
+} from './gradients.js'
+export {
   auditPalette,
   generatePalette,
   paletteColorRecords,
@@ -26,13 +34,23 @@ export {
 } from './palette.js'
 export {
   parsePageBlueprint,
+  PAGE_MOTION_PURPOSES,
+  PAGE_MOTION_TRIGGERS,
   readPageBlueprint,
   writePageBlueprint,
   type PageBlueprint,
   type PageLink,
+  type PageMotionPurpose,
   type PageNavigationDesign,
+  type PageMotionTrigger,
+  type PageSectionMotion,
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
+export {
+  REFERENCE_DIRECTIONS,
+  selectReferenceDirectionDeck,
+  type ReferenceDirection,
+} from './reference-directions.js'
 export {
   assertPageCopy,
   lintPageCopy,
@@ -94,6 +112,7 @@ export {
   designBriefingContinuation,
   designBriefingPrompt,
   designPhaseCorrectionPrompt,
+  isDesignBriefAttachment,
   parseBriefingOutput,
   type BriefingOutput,
   type BriefingQuestion,

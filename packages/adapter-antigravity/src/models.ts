@@ -30,18 +30,18 @@ const EFFORT_SUFFIXES = ['minimal', 'xhigh', 'none', 'high', 'medium', 'low', 'm
 const EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 /** How the vendor spells its slugs, spelled for humans. */
-const NAME_WORDS: Record<string, string> = {
-  gemini: 'Gemini',
-  claude: 'Claude',
-  gpt: 'GPT',
-  oss: 'OSS',
-  flash: 'Flash',
-  pro: 'Pro',
-  sonnet: 'Sonnet',
-  opus: 'Opus',
-  haiku: 'Haiku',
-  thinking: 'Thinking',
-}
+const NAME_WORDS = [
+  ['gemini', 'Gemini'],
+  ['claude', 'Claude'],
+  ['gpt', 'GPT'],
+  ['oss', 'OSS'],
+  ['flash', 'Flash'],
+  ['pro', 'Pro'],
+  ['sonnet', 'Sonnet'],
+  ['opus', 'Opus'],
+  ['haiku', 'Haiku'],
+  ['thinking', 'Thinking'],
+] as const
 
 function classify(id: string): Variant {
   let rest = id
@@ -88,15 +88,20 @@ export function antigravityDisplayName(stem: string): string {
       out.push(token)
       continue
     }
-    out.push(NAME_WORDS[token] ?? token.charAt(0).toUpperCase() + token.slice(1))
+    out.push(
+      NAME_WORDS.find(([wireName]) => wireName === token)?.[1] ??
+        token.charAt(0).toUpperCase() + token.slice(1),
+    )
   }
   return out.join(' ').replace(/^GPT OSS\b/, 'GPT-OSS')
 }
 
-export function collapseAntigravityModels(slugs: string[]): {
+export type CollapsedAntigravityModels = {
   models: Model[]
   index: AntigravityModelIndex
-} {
+}
+
+export function collapseAntigravityModels(slugs: string[]): CollapsedAntigravityModels {
   type Group = { stem: string; variants: Variant[] }
   const groups: Group[] = []
   for (const slug of slugs) {
@@ -130,13 +135,19 @@ export function collapseAntigravityModels(slugs: string[]): {
       displayName: antigravityDisplayName(group.stem),
       // A lone variant with a baked-in effort keeps the honest note; there is
       // no slider to carry the word instead.
-      ...(soleEffort ? { description: `Fixed at ${soleEffort} effort` } : {}),
+      ...(soleEffort
+        ? {
+            description: `Fixed at ${soleEffort} effort`,
+          }
+        : {}),
       isDefault: group.variants.some((v) => v.id === defaultSlug),
       reasoningEfforts: hasEffortChoice
         ? [...new Set(efforts)].sort((a, b) => effortRank(a) - effortRank(b))
         : [],
       ...(hasEffortChoice && entry.defaultEffort
-        ? { defaultReasoningEffort: entry.defaultEffort }
+        ? {
+            defaultReasoningEffort: entry.defaultEffort,
+          }
         : {}),
       serviceTiers: [],
     })

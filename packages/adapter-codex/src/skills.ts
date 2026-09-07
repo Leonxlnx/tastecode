@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { Skill, SkillCapabilities, SkillDiscoveryError } from '@harness/contracts'
-import type { SkillsListResponse } from './generated/v2/SkillsListResponse.js'
+import type { ParsedSkillsListResponse } from './schemas.js'
 
 export const CODEX_SKILL_CAPABILITIES: SkillCapabilities = {
   inventory: true,
@@ -14,7 +14,7 @@ export type SkillInventory = {
 }
 
 export function mapSkillList(
-  response: SkillsListResponse,
+  response: ParsedSkillsListResponse,
   cwd: string,
   configuredMcpIds?: ReadonlySet<string>,
 ): SkillInventory {
@@ -40,8 +40,12 @@ export function mapSkillList(
       return {
         id: skillPath,
         name: skill.name,
-        ...(skill.interface?.displayName ? { displayName: skill.interface.displayName } : {}),
-        description: skill.description,
+        ...(skill.interface?.displayName
+          ? {
+              displayName: skill.interface?.displayName,
+            }
+          : {}),
+        description: skill.description ?? '',
         source: { type: 'folder' as const, path: path.dirname(skillPath) },
         scope: skill.scope === 'repo' ? 'project' : skill.scope,
         enabled: skill.enabled,

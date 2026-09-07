@@ -2,11 +2,18 @@ import path from 'node:path'
 
 export const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
 
-export function pastedFile(payload: unknown): { bytes: Buffer; name: string } {
-  if (!payload || typeof payload !== 'object') throw new Error('Invalid pasted file')
+export type PastedFile = { bytes: Buffer; name: string }
 
+export function pastedFile(payload: unknown): PastedFile {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    throw new Error('Invalid pasted file metadata')
+  }
   const candidate = payload as { name?: unknown; type?: unknown; bytes?: unknown }
-  if (typeof candidate.name !== 'string' || typeof candidate.type !== 'string') {
+  if (
+    typeof candidate.name !== 'string' ||
+    typeof candidate.type !== 'string' ||
+    !(candidate.bytes instanceof ArrayBuffer || ArrayBuffer.isView(candidate.bytes))
+  ) {
     throw new Error('Invalid pasted file metadata')
   }
 
@@ -61,6 +68,7 @@ function safeFileName(name: string): string {
   const leaf = path.basename(name.replaceAll('\\', '/'))
   const cleaned = leaf
     .normalize('NFC')
+    // oxlint-disable-next-line no-control-regex -- File names must reject control bytes.
     .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, '-')
     .replace(/^\.+/, '')
     .trim()

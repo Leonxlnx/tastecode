@@ -8,7 +8,7 @@ import { SessionSearchHost, type SessionSearchHandle } from './SessionSearchHost
 const PROJECTS = [
   {
     path: 'D:\\repo',
-    name: 'Harness',
+    name: 'TasteCode',
     sessions: [
       {
         id: 'thread-1',
@@ -57,7 +57,7 @@ describe('SessionSearchHost focus restoration', () => {
     opener.focus()
     fireEvent.click(opener)
     const input = await screen.findByRole('combobox', { name: 'Search every chat' })
-    expect(document.activeElement).toBe(input)
+    await waitFor(() => expect(document.activeElement).toBe(input))
 
     close(input)
 
@@ -127,7 +127,7 @@ describe('SessionSearchHost focus restoration', () => {
   })
 
   it('falls back when the invoking control unmounts after selection', async () => {
-    function Harness() {
+    function TasteCode() {
       const search = useRef<SessionSearchHandle>(null)
       const [showOpener, setShowOpener] = useState(true)
       return (
@@ -147,7 +147,7 @@ describe('SessionSearchHost focus restoration', () => {
         </>
       )
     }
-    render(<Harness />)
+    render(<TasteCode />)
     const opener = screen.getByRole('button', { name: 'Temporary opener' })
     opener.focus()
     fireEvent.click(opener)

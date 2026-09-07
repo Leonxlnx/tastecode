@@ -7,23 +7,35 @@ import type {
   ApprovalMode,
   Capabilities,
   DomainEvent,
+  McpConfigValue,
+  McpServerConfig,
   Model,
+  ProviderId,
   Thread,
 } from '@harness/contracts'
-import { spawnCli, StdioJsonRpc } from '@harness/proc'
+import {
+  spawnCli,
+  StdioJsonRpc,
+  type JsonRpcRequestOptions,
+  type JsonRpcValue,
+  type ParsedJsonRpcRequestOptions,
+  type ServerRequestHandler,
+} from '@harness/proc'
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { Streamer } from './events.js'
 import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
+  InitializeResultSchema,
+  NewSessionResultSchema,
+  PromptResultSchema,
+  RequestPermissionParamsSchema,
+  SessionNotificationSchema,
   type InitializeResult,
-  type NewSessionResult,
   type PermissionOptionKind,
   type PromptResult,
   type ContentBlock,
-  type RequestPermissionParams,
-  type SessionNotification,
 } from './protocol.js'
 
 /**
@@ -56,6 +68,86 @@ export type AcpLaunchOptions = {
   command: string
   args?: string[]
   spawn?: typeof spawnCli
+  provider?: ProviderId
+  mcpServers?: AcpMcpServer[]
+}
+
+export interface AcpRpc {
+  onStderr(handler: (text: string) => void): void
+  onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void
+  onServerRequest(handler: ServerRequestHandler): void
+  request(
+    method: string,
+    params?: unknown,
+    options?: JsonRpcRequestOptions,
+  ): Promise<JsonRpcValue | undefined>
+  request<Result>(
+    method: string,
+    params: unknown,
+    options: ParsedJsonRpcRequestOptions<Result>,
+  ): Promise<Result>
+  notify(method: string, params?: unknown): void
+  dispose(): void
+}
+
+export type AcpMcpServer =
+  | {
+      name: string
+      command: string
+      args: string[]
+      env: Array<{ name: string; value: string }>
+    }
+  | {
+      type: 'http'
+      name: string
+      url: string
+      headers: Array<{ name: string; value: string }>
+    }
+
+/** Translate TasteCode's credential-safe config into the ACP session shape. */
+export function prepareAcpMcpServers(
+  servers: McpServerConfig[],
+  credentials: Record<string, string>,
+): AcpMcpServer[] {
+  const result: AcpMcpServer[] = []
+  for (const server of servers) {
+    if (!server.enabled) continue
+    const transport = server.transport
+    if (transport.type === 'stdio') {
+      if (transport.cwd) {
+        throw new Error(`MCP server "${server.id}" cannot use a custom cwd through ACP`)
+      }
+      result.push({
+        name: server.id,
+        command: transport.command,
+        args: transport.args ?? [],
+        env: Object.entries(transport.environment ?? {}).map(([name, value]) => ({
+          name,
+          value: resolveMcpValue(value, credentials),
+        })),
+      })
+      continue
+    }
+    result.push({
+      type: 'http',
+      name: server.id,
+      url: transport.url,
+      headers: Object.entries(transport.headers ?? {}).map(([name, value]) => ({
+        name,
+        value: resolveMcpValue(value, credentials),
+      })),
+    })
+  }
+  return result
+}
+
+function resolveMcpValue(value: McpConfigValue, credentials: Record<string, string>): string {
+  if (value.source === 'literal') return value.value
+  const credential = credentials[value.credentialRef]
+  if (credential === undefined) {
+    throw new Error(`MCP credential "${value.credentialRef}" is unavailable`)
+  }
+  return credential
 }
 
 type AcpLaunchSpec = Pick<
@@ -63,13 +155,13 @@ type AcpLaunchSpec = Pick<
   'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
 >
 
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-}
+const IMAGE_MIME_TYPES = new Map([
+  ['.gif', 'image/gif'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.png', 'image/png'],
+  ['.webp', 'image/webp'],
+])
 
 export function acpPromptContent(
   text: string,
@@ -80,7 +172,7 @@ export function acpPromptContent(
   return [
     { type: 'text', text },
     ...attachments.map((file) => {
-      const mimeType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+      const mimeType = IMAGE_MIME_TYPES.get(path.extname(file).toLowerCase())
       if (!mimeType) throw new Error(`ACP image type is not supported: ${path.extname(file)}`)
       return {
         type: 'image',
@@ -95,7 +187,9 @@ export function acpPromptContent(
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #spec: AcpLaunchSpec
   readonly #spawn: typeof spawnCli
-  #rpc: StdioJsonRpc | undefined
+  readonly #provider: ProviderId
+  readonly #mcpServers: AcpMcpServer[]
+  #rpc: AcpRpc | undefined
   #initialize: InitializeResult | undefined
   #sessionId: string | undefined
   #model: string | undefined
@@ -113,13 +207,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
    * held here rather than answered eagerly — replying early would be answering
    * on the user's behalf, which is the one thing an approval must never do.
    */
-  #pendingApprovals = new Map<string, (result: unknown) => void>()
+  #pendingApprovals = new Map<string, (result: JsonRpcValue) => void>()
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
 
   constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
     this.#spawn = launch?.spawn ?? spawnCli
+    this.#provider = launch?.provider ?? 'acp'
+    this.#mcpServers = launch?.mcpServers ?? []
     if (launch) {
       this.#spec = {
         id: agentId,
@@ -155,19 +251,26 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
-      .request<NewSessionResult>('session/new', { cwd: workspacePath, mcpServers: [] })
-      .catch((error: unknown) => {
+      .request(
+        'session/new',
+        {
+          cwd: workspacePath,
+          mcpServers: this.#mcpServers,
+        },
+        { result: NewSessionResultSchema },
+      )
+      .catch((cause) => {
         // Agents report an expired or missing login as a bare protocol error.
         // Passing that through gives the user two words and no way forward, so
         // it becomes the one instruction that actually fixes it.
-        const message = error instanceof Error ? error.message : String(error)
+        const message = cause instanceof Error ? cause.message : String(cause)
         if (/auth/i.test(message)) {
           throw new Error(
             `${this.#spec.name} is not signed in. Run \`${this.#spec.command}\` once in a ` +
               `terminal and sign in there — we deliberately never handle its credentials.`,
           )
         }
-        throw error
+        throw cause
       })
     if (!session.sessionId) throw new Error(`${this.#spec.name} started no session`)
     this.#sessionId = session.sessionId
@@ -175,7 +278,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     return {
       id: `acp-${this.#spec.id}-${session.sessionId}`,
-      provider: 'acp',
+      provider: this.#provider,
       workspacePath,
       createdAt: Date.now(),
     }
@@ -196,12 +299,16 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
-    await rpc.request('session/load', { sessionId, cwd: workspacePath, mcpServers: [] })
+    await rpc.request('session/load', {
+      sessionId,
+      cwd: workspacePath,
+      mcpServers: this.#mcpServers,
+    })
     this.#sessionId = sessionId
     await this.#selectSessionModel(options.model)
     return {
       id: `acp-${this.#spec.id}-${sessionId}`,
-      provider: 'acp',
+      provider: this.#provider,
       workspacePath,
       createdAt: Date.now(),
     }
@@ -235,16 +342,20 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // and the caller needs the turn id now to route them.
     this.#instructionsPending = false
     void rpc
-      .request<PromptResult>('session/prompt', {
-        sessionId: this.#sessionId,
-        prompt: promptContent,
-      })
+      .request(
+        'session/prompt',
+        {
+          sessionId: this.#sessionId,
+          prompt: promptContent,
+        },
+        { result: PromptResultSchema },
+      )
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
-      .catch((error: unknown) => {
+      .catch((cause) => {
         this.emit('event', {
           type: 'thread.error',
           threadId,
-          message: error instanceof Error ? error.message : String(error),
+          message: cause instanceof Error ? cause.message : String(cause),
         })
         this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
       })
@@ -295,12 +406,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }> {
     await this.#connect(workspacePath, undefined)
     const initialize = this.#initialize
+    const protocolVersion = initialize?.protocolVersion
+    const agentName = initialize?.agentInfo?.name
+    const agentVersion = initialize?.agentInfo?.version
     return {
-      ...(initialize?.protocolVersion === undefined
-        ? {}
-        : { protocolVersion: initialize.protocolVersion }),
-      ...(initialize?.agentInfo?.name ? { agentName: initialize.agentInfo.name } : {}),
-      ...(initialize?.agentInfo?.version ? { agentVersion: initialize.agentInfo.version } : {}),
+      ...(protocolVersion !== null && protocolVersion !== undefined ? { protocolVersion } : {}),
+      ...(agentName ? { agentName } : {}),
+      ...(agentVersion ? { agentVersion } : {}),
     }
   }
 
@@ -314,7 +426,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#pendingApprovals.clear()
   }
 
-  async #connect(workspacePath: string, model: string | undefined): Promise<StdioJsonRpc> {
+  async #connect(workspacePath: string, model: string | undefined): Promise<AcpRpc> {
     const args =
       model && this.#spec.modelArg
         ? [...this.#spec.args, this.#spec.modelArg, model]
@@ -322,17 +434,23 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
     this.#rpc?.dispose()
-    const child = this.#spawn(this.#spec.command, args, { cwd: workspacePath })
-    const rpc = new StdioJsonRpc(child, this.#spec.name)
+    const rpc = new StdioJsonRpc(
+      this.#spawn(this.#spec.command, args, { cwd: workspacePath }),
+      this.#spec.name,
+    )
     this.#rpc = rpc
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
     rpc.onNotification((method, params) => this.#onNotification(method, params))
     rpc.onServerRequest((method, params, respond) => this.#onRequest(method, params, respond))
-    const init = await rpc.request<InitializeResult>('initialize', {
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-      clientInfo: { name: 'personal-harness', version: '0.0.0' },
-    })
+    const init = await rpc.request(
+      'initialize',
+      {
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+        clientInfo: { name: 'tastecode', version: '0.0.0' },
+      },
+      { result: InitializeResultSchema },
+    )
     this.#initialize = init
     if (init.protocolVersion !== undefined && init.protocolVersion !== PROTOCOL_VERSION) {
       this.emit(
@@ -372,9 +490,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#approval = approval ?? 'ask'
   }
 
-  #onNotification(method: string, params: unknown): void {
+  #onNotification(method: string, params: JsonRpcValue | undefined): void {
     if (method !== 'session/update') return
-    const update = (params as SessionNotification | undefined)?.update
+    const notification = SessionNotificationSchema.safeParse(params)
+    if (!notification.success) return
+    const update = notification.data.update
     if (!update) return
 
     if (update.sessionUpdate === 'usage_update') {
@@ -397,7 +517,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     }
   }
 
-  #onRequest(method: string, params: unknown, respond: (result: unknown) => void): void {
+  #onRequest(
+    method: string,
+    params: JsonRpcValue | undefined,
+    respond: (result: JsonRpcValue) => void,
+  ): void {
     if (method !== 'session/request_permission') {
       // We declared no filesystem capability, so fs/* should never arrive. If
       // one does, refusing is better than silently reading a file.
@@ -406,7 +530,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       return
     }
 
-    const request = params as RequestPermissionParams
+    const parsed = RequestPermissionParamsSchema.safeParse(params)
+    if (!parsed.success) {
+      this.emit('log', `invalid permission request from ${this.#spec.name}`)
+      respond(null)
+      return
+    }
+    const request = parsed.data
     const call = request.toolCall ?? {}
     const id = call.toolCallId ?? `approval-${Date.now()}`
     const options = request.options ?? []
@@ -484,7 +614,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // Anything still waiting is now unanswerable — the turn it belonged to is
     // over. The agent is still blocked on its request, so it must hear
     // "cancelled", not silence; the UI must hear "resolved".
-    for (const [id, respond] of [...this.#pendingApprovals]) {
+    for (const [id, respond] of this.#pendingApprovals) {
       respond({ outcome: { outcome: 'cancelled' } })
       this.emit('event', { type: 'approval.resolved', id })
     }

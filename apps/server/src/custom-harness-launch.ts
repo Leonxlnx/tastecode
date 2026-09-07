@@ -3,7 +3,10 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
-import { killTree, spawnCli } from '@harness/proc'
+import { spawnCli } from '@harness/proc/cli'
+import { desktopPath } from '@harness/proc/desktop-path'
+import { killTree } from '@harness/proc/kill'
+import { z } from 'zod'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
 
@@ -78,7 +81,8 @@ export function runCustomHarness(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
+      if (result instanceof Error) reject(result)
+      else resolve(result)
     }
     const timer = setTimeout(() => {
       killTree(child)
@@ -93,7 +97,9 @@ export function runCustomHarness(
       if (stderr.length < 16_000) stderr += chunk
     })
     child.on('error', (error) => finish(actionableLaunchError(harness, error)))
-    child.on('exit', (code) => {
+    // `exit` can fire before inherited stdout/stderr pipes have drained. Waiting
+    // for `close` preserves the final protocol bytes emitted during shutdown.
+    child.on('close', (code) => {
       if (code === 0 || code === null) {
         finish({ code, stdout })
         return
@@ -117,7 +123,8 @@ export function customHarnessRun(harness: CustomHarness, fallbackWorkspacePath?:
 
 export function actionableLaunchError(harness: CustomHarness, cause: unknown): Error {
   const error = cause instanceof Error ? cause : new Error(String(cause))
-  const code = (error as NodeJS.ErrnoException).code
+  const parsed = z.object({ code: z.string().optional() }).safeParse(error)
+  const code = parsed.success ? parsed.data.code : undefined
   if (code === 'ENOENT') {
     return new Error(
       `${harness.displayName} executable was not found. Shell aliases and functions are unavailable; use an absolute path or an executable shim on PATH.`,
@@ -139,42 +146,11 @@ function launchEnvironment(
   const suppliedPath = adapterEnvironment.PATH ?? custom.PATH ?? process.env.PATH ?? ''
   return {
     ...merged,
-    PATH: augmentedPath(suppliedPath),
+    PATH: desktopPath(suppliedPath, { env: merged }),
     // A wrapper can boot from its own directory without losing the project it
     // should operate on. Native protocols also receive the workspace normally.
     HARNESS_WORKSPACE_PATH: workspacePath,
   }
-}
-
-function augmentedPath(current: string): string {
-  const home = os.homedir()
-  const conventional =
-    process.platform === 'win32'
-      ? [
-          process.env['APPDATA'] ? path.join(process.env['APPDATA'], 'npm') : undefined,
-          process.env['LOCALAPPDATA']
-            ? path.join(process.env['LOCALAPPDATA'], 'Microsoft', 'WindowsApps')
-            : undefined,
-          path.join(home, '.local', 'bin'),
-          path.join(home, 'bin'),
-        ]
-      : [
-          path.join(home, '.local', 'bin'),
-          path.join(home, 'bin'),
-          path.join(home, '.cargo', 'bin'),
-          '/opt/homebrew/bin',
-          '/usr/local/bin',
-        ]
-  const seen = new Set<string>()
-  const entries = [...current.split(path.delimiter), ...conventional]
-    .filter((entry): entry is string => Boolean(entry))
-    .filter((entry) => {
-      const key = process.platform === 'win32' ? entry.toLowerCase() : entry
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-  return entries.join(path.delimiter)
 }
 
 function resolveExecutable(command: string, cwd: string, environment: NodeJS.ProcessEnv): string {
@@ -194,7 +170,7 @@ function resolveExecutable(command: string, cwd: string, environment: NodeJS.Pro
     }
   }
   throw new Error(
-    `Executable "${command}" was not found in Harness's PATH. Shell aliases and functions are unavailable; use an absolute path or an executable shim.`,
+    `Executable "${command}" was not found in TasteCode's PATH. Shell aliases and functions are unavailable; use an absolute path or an executable shim.`,
   )
 }
 

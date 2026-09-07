@@ -1,6 +1,7 @@
 import { constants } from 'node:fs'
 import { access, cp, lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 
 const WINDOWS_RESERVED = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
 
@@ -87,7 +88,8 @@ export async function installLocalSkill(projectPath: string, folderPath: string)
   try {
     await mkdir(destination)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+    const parsed = z.object({ code: z.string().optional() }).safeParse(error)
+    if (parsed.success && parsed.data.code === 'EEXIST') {
       throw new Error(`project skill "${name}" already exists`)
     }
     throw error

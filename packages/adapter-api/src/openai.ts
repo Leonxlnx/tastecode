@@ -1,8 +1,13 @@
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
+import {
+  type JsonObject,
+  jsonNumber as number,
+  jsonObject as object,
+  parseJsonValue,
+  jsonString as string,
+} from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiToolCall, ApiTransport } from './runtime.js'
 import { httpError, serverSentEvents } from './sse.js'
-
-type JsonObject = Record<string, unknown>
 
 export type OpenAiOptions = {
   apiKey: string
@@ -65,7 +70,7 @@ export function createOpenAiResponsesTransport(options: OpenAiOptions): ApiTrans
           call: {
             id: callId,
             name,
-            input: JSON.parse(string(event.arguments)),
+            input: parseJsonValue(string(event.arguments)),
           },
         } satisfies ApiStreamEvent
       } else if (type === 'response.completed') {
@@ -104,7 +109,7 @@ export async function listOpenAiModels(
     headers: { authorization: `Bearer ${apiKey}` },
   })
   if (!response.ok) throw new Error(`OpenAI model listing failed with HTTP ${response.status}`)
-  const body = object(await response.json())
+  const body = object(parseJsonValue(await response.text()))
   return Array.isArray(body.data)
     ? body.data
         .map(object)
@@ -168,16 +173,4 @@ function endpointFor(baseUrl = 'https://api.openai.com/v1', path: string): URL {
 function requiredKey(value: string): string {
   if (!value.trim()) throw new Error('OpenAI API key is required')
   return value
-}
-
-function object(value: unknown): JsonObject {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
-}
-
-function string(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function number(value: unknown): number {
-  return typeof value === 'number' ? value : 0
 }

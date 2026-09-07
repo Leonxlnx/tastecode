@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, FileDiff } from 'lucide-react'
+import { IconChevronDown as ChevronDown, IconFilePencil as FilePenLine } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import { DiffReview } from './DiffReview.js'
 
@@ -16,62 +16,108 @@ import { DiffReview } from './DiffReview.js'
 
 type Line = { text: string; kind: 'add' | 'del' | 'meta' | 'hunk' | 'ctx' }
 type FileEntry = { path: string; added: number; removed: number }
+type ParsedDiff = {
+  lines: Line[]
+  added: number
+  removed: number
+  files: number
+  fileEntries: FileEntry[]
+}
 
 export function Diff({
   diff,
   threadId,
   transport,
+  onUndo,
 }: {
   diff: string | undefined
   threadId?: string | undefined
   transport?: Transport | undefined
+  onUndo?: (() => Promise<void>) | undefined
 }) {
   const parsed = useMemo(() => (diff ? parseDiff(diff) : null), [diff])
   const [reviewing, setReviewing] = useState(false)
   const [showAllFiles, setShowAllFiles] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+  const [undoError, setUndoError] = useState<string>()
+  const [undone, setUndone] = useState(false)
 
   useEffect(() => {
     setReviewing(false)
     setShowAllFiles(false)
+    setUndoing(false)
+    setUndoError(undefined)
+    setUndone(false)
   }, [diff])
 
-  if (!parsed || parsed.lines.length === 0) return null
+  if (!parsed || parsed.lines.length === 0 || undone) return null
   const visibleFiles = showAllFiles ? parsed.fileEntries : parsed.fileEntries.slice(0, 3)
   const hiddenFiles = parsed.fileEntries.length - visibleFiles.length
 
+  const undo = async () => {
+    if (!onUndo || undoing) return
+    setUndoing(true)
+    setUndoError(undefined)
+    try {
+      await onUndo()
+      setUndone(true)
+    } catch (cause) {
+      setUndoError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setUndoing(false)
+    }
+  }
+
   return (
-    <section className={`diff ${reviewing ? 'is-reviewing' : ''}`} aria-label="Edited files">
+    <section
+      className={`diff ${reviewing ? 'is-reviewing' : ''}`}
+      aria-label="Edited files"
+      aria-busy={undoing}
+    >
       <div className="diff__head">
         <span className="diff__icon" aria-hidden>
-          <FileDiff size={16} strokeWidth={2} />
+          <FilePenLine size={15} strokeWidth={1.8} />
         </span>
         <span className="diff__copy">
           <span className="diff__title">
             Edited {parsed.files} file{parsed.files === 1 ? '' : 's'}
           </span>
-          <span className="diff__stat">
-            <span className="stat stat--add">+{parsed.added}</span>
-            <span className="stat stat--del">−{parsed.removed}</span>
-          </span>
+          <ChangeStats added={parsed.added} removed={parsed.removed} className="diff__stat" />
         </span>
-        <button
-          type="button"
-          className="diff__review"
-          aria-expanded={reviewing}
-          onClick={() => setReviewing((current) => !current)}
-        >
-          {reviewing ? 'Close' : 'Review'}
-        </button>
+        <div className="diff__actions">
+          {onUndo ? (
+            <button
+              type="button"
+              className="diff__review"
+              disabled={undoing}
+              onClick={() => void undo()}
+            >
+              {undoing ? 'Undoing…' : 'Undo'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="diff__review"
+            aria-expanded={reviewing}
+            disabled={undoing}
+            onClick={() => setReviewing((current) => !current)}
+          >
+            {reviewing ? 'Close' : 'Review'}
+          </button>
+        </div>
       </div>
+
+      {undoError ? (
+        <p className="diff__undo-error" role="alert">
+          {undoError}
+        </p>
+      ) : null}
 
       <ul className="diff__file-list">
         {visibleFiles.map((file, index) => (
           <li className="diff__file" key={`${file.path}:${index}`}>
             <FilePath path={file.path} />
-            <span className="diff__file-stat">
-              <span className="stat stat--add">+{file.added}</span>
-              <span className="stat stat--del">−{file.removed}</span>
-            </span>
+            <ChangeStats added={file.added} removed={file.removed} className="diff__file-stat" />
           </li>
         ))}
         {parsed.fileEntries.length > 3 ? (
@@ -101,6 +147,25 @@ export function Diff({
   )
 }
 
+function ChangeStats({
+  added,
+  removed,
+  className,
+}: {
+  added: number
+  removed: number
+  className: string
+}) {
+  if (added === 0 && removed === 0) return null
+
+  return (
+    <span className={className}>
+      {added > 0 ? <span className="stat stat--add">+{added}</span> : null}
+      {removed > 0 ? <span className="stat stat--del">−{removed}</span> : null}
+    </span>
+  )
+}
+
 function FilePath({ path }: { path: string }) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   const directory = separator >= 0 ? path.slice(0, separator + 1) : ''
@@ -114,13 +179,7 @@ function FilePath({ path }: { path: string }) {
   )
 }
 
-export function parseDiff(diff: string): {
-  lines: Line[]
-  added: number
-  removed: number
-  files: number
-  fileEntries: FileEntry[]
-} {
+export function parseDiff(diff: string): ParsedDiff {
   const lines: Line[] = []
   const fileEntries: FileEntry[] = []
   let added = 0

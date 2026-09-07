@@ -1,4 +1,6 @@
-export type ServerSentEvent = Record<string, unknown>
+import { isJsonObject, parseJsonValue, type JsonObject, type JsonValue } from './json.js'
+
+export type ServerSentEvent = JsonObject
 
 export async function* serverSentEvents(
   body: ReadableStream<Uint8Array>,
@@ -25,15 +27,13 @@ export async function* serverSentEvents(
         if (data && data !== '[DONE]') {
           // Keepalives and vendor extensions send non-JSON data lines; one of
           // those aborting the whole stream mid-turn is worse than skipping it.
-          let value: unknown
+          let value: JsonValue
           try {
-            value = JSON.parse(data)
+            value = parseJsonValue(data)
           } catch {
             continue
           }
-          if (value && typeof value === 'object' && !Array.isArray(value)) {
-            yield value as ServerSentEvent
-          }
+          if (isJsonObject(value)) yield value
         }
       }
       if (done) break

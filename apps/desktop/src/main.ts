@@ -1,46 +1,85 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import {
   app,
   BrowserWindow,
   clipboard,
+  crashReporter,
   dialog,
   ipcMain,
   Menu,
   nativeImage,
   nativeTheme,
+  protocol,
+  screen,
   session,
   shell,
   systemPreferences,
   Tray,
+  utilityProcess,
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
+import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import { applyDesktopPath, desktopPath } from '@harness/proc/desktop-path'
 import {
-  PreviewDomAuditSchema,
-  PreviewCaptureRequestSchema,
-  type PreviewCaptureRequest,
-  type PreviewCaptureResult,
-} from '@harness/contracts'
+  ATTACHMENT_PREVIEW_SCHEME,
+  attachmentByteRange,
+  attachmentPreviewFromUrl,
+  pickedAttachment,
+} from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import {
+  createAppUpdateController,
+  type AppUpdateController,
+  type AppUpdateState,
+} from './app-updater.js'
+import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
+import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
-import { allowsMicrophoneRequest } from './media-permissions.js'
+import { LocalDiagnostics } from './local-diagnostics.js'
+import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
+import {
+  parseNativeMenuShortcuts,
+  type NativeMenuAction,
+  type NativeMenuShortcuts,
+} from './menu-contract.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
 import { clearPreviewSession } from './preview-session.js'
-import { PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
-import { ServerSupervisor } from './server-supervisor.js'
+import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
+import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
+import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
+import {
+  loadMainWindowState,
+  persistMainWindowState,
+  restoreMainWindowState,
+  saveMainWindowState,
+  type MainWindowStatePersistence,
+} from './window-state.js'
 import { windowThemeOptions, windowThemeSource } from './window-theme.js'
-import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './zoom-shortcuts.js'
+import {
+  DEFAULT_ZOOM_FACTOR,
+  isZoomAction,
+  nextZoomFactor,
+  type ZoomAction,
+  zoomShortcut,
+} from './zoom-shortcuts.js'
+import { viewedImagePath } from './viewed-image-path.js'
+
+applyDesktopPath()
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -51,6 +90,31 @@ import { isZoomAction, nextZoomFactor, type ZoomAction, zoomShortcut } from './z
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url))
+const require = createRequire(import.meta.url)
+const productIconPath = path.join(here, '../assets/tastecode-app-icon.png')
+const nativeAppName = 'Taste Code'
+// Performance runs must never read or rewrite the user's real window and
+// Chromium state. Keep the override opt-in so normal installs stay on the
+// long-standing TasteCode path.
+const productDataPath = process.env['HARNESS_DESKTOP_DATA_DIR']
+  ? path.resolve(process.env['HARNESS_DESKTOP_DATA_DIR'])
+  : path.join(app.getPath('appData'), 'TasteCode')
+const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
+const defaultMainWindowSize = { width: 1180, height: 820 }
+const minimumMainWindowSize = { width: 720, height: 520 }
+const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
+const startupSettledMetricsDelayMs = startupSettleDelay(process.env['HARNESS_STARTUP_SETTLE_MS'])
+
+function logStartupMilestone(name: string): void {
+  if (!Number.isFinite(startupStartedAt) || startupStartedAt <= 0) return
+  console.log(`[startup] ${name} ${Date.now() - startupStartedAt}ms`)
+}
+
+logStartupMilestone('main-module')
+
+// Keep the existing storage location while the OS-facing product name gains a space.
+app.setPath('userData', productDataPath)
+app.setPath('sessionData', productDataPath)
 
 function isWebUrl(value: string): boolean {
   try {
@@ -68,18 +132,56 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+let startupWindowReady = false
+let startupServerReady = Boolean(devServer)
+let startupRendererReady = false
+let startupHydratedReady = false
+let startupCatalogReady = false
+let startupExitScheduled = false
+
+function finishStartupBenchmarkIfReady(): void {
+  if (
+    process.env['HARNESS_STARTUP_EXIT_AFTER_READY'] !== '1' ||
+    !startupWindowReady ||
+    !startupServerReady ||
+    !startupRendererReady ||
+    !startupHydratedReady ||
+    !startupCatalogReady ||
+    startupExitScheduled
+  ) {
+    return
+  }
+  startupExitScheduled = true
+  if (startupSettledMetricsDelayMs === undefined) {
+    setImmediate(() => app.quit())
+    return
+  }
+
+  // The first read establishes the CPU and wakeup interval. Electron reports
+  // both values since the previous read; memory is sampled at the end.
+  app.getAppMetrics()
+  setTimeout(() => {
+    console.log(`[startup] settled ${JSON.stringify(summarizeAppMetrics(app.getAppMetrics()))}`)
+    app.quit()
+  }, startupSettledMetricsDelayMs)
+}
+
+const attachmentPreviewSecret = randomBytes(32)
+const attachmentThumbnailCache = new Map<string, Promise<Buffer | undefined>>()
+const MAX_ATTACHMENT_THUMBNAILS = 64
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
-const MAX_PASTED_IMAGE_BYTES = 25 * 1024 * 1024
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
 // intermittent all-black window. Verified over CDP: DOM complete, renderer
 // healthy, compositor off. The watchdog below covers whatever this misses.
 if (process.platform === 'win32') {
+  app.setAppUserModelId('dev.tastecode.desktop')
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 }
+app.setName(nativeAppName)
 // Diagnostics for the field: software rendering and a DevTools port, both
 // opt-in via environment so a broken machine can be inspected.
 if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration()
@@ -92,10 +194,58 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+let diagnostics: LocalDiagnostics | undefined
+let appUpdater: AppUpdateController | undefined
+let mainWindowStatePersistence: MainWindowStatePersistence | undefined
+
+if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
+  ipcMain.on('harness:startupPreloadReady', (_event, elapsed: unknown) => {
+    if (typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0) {
+      console.log(`[startup] preload-ready ${Math.round(elapsed)}ms`)
+    }
+  })
+  ipcMain.on('harness:startupRendererMilestone', (_event, name: unknown) => {
+    if (
+      name !== 'module-loaded' &&
+      name !== 'react-commit' &&
+      name !== 'first-frame' &&
+      name !== 'projects-requested' &&
+      name !== 'projects-frame-parsed' &&
+      name !== 'projects-validated' &&
+      name !== 'projects-received' &&
+      name !== 'projects-reconciled' &&
+      name !== 'projects-ready' &&
+      name !== 'catalog-ready'
+    ) {
+      return
+    }
+    logStartupMilestone(name)
+    if (name === 'first-frame') {
+      startupRendererReady = true
+      finishStartupBenchmarkIfReady()
+    }
+    if (name === 'projects-ready') {
+      startupHydratedReady = true
+      finishStartupBenchmarkIfReady()
+    }
+    if (name === 'catalog-ready') {
+      startupCatalogReady = true
+      finishStartupBenchmarkIfReady()
+    }
+  })
+}
+let nativeMenuShortcuts: NativeMenuShortcuts = {}
 const macOSHaptics = new MacOSHaptics()
 
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: ATTACHMENT_PREVIEW_SCHEME,
+    privileges: { standard: true, secure: true, stream: true },
+  },
+])
+
 if (!ownsSingleInstance) {
-  console.error('[desktop] another Harness instance owns the single-instance lock')
+  console.error(`[desktop] another ${nativeAppName} instance owns the single-instance lock`)
   app.quit()
 }
 
@@ -105,30 +255,72 @@ if (!ownsSingleInstance) {
  * permanent "Reconnecting…". In dev, dev.js runs the server with a watcher and
  * signals that through HARNESS_DEV_SERVER.
  *
- * The child is this same Electron binary in Node mode — the one runtime an
- * installed app is guaranteed to carry, with the Node version the server was
- * built against.
+ * Packaged builds use Electron's Node utility process so the service stays
+ * isolated without paying for a second full app executable launch. The legacy
+ * Node-mode child remains available as a field fallback.
  */
 function startOwnedServer(): void {
   if (devServer || serverSupervisor) return
-  const serverEntry = path.join(here, '../../server/dist/main.js')
-  serverSupervisor = new ServerSupervisor({
-    command: process.execPath,
-    args: [serverEntry],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    onLog: (line) => console.log('[server]', line),
+  const serverEntry = app.isPackaged
+    ? require.resolve('@harness/server')
+    : path.join(here, '../../server/dist/main.js')
+  const supervisorCallbacks = {
+    onLog: (line: string) => {
+      console.log('[server]', line)
+      if (!startupServerReady && line.startsWith('[server] listening on ')) {
+        startupServerReady = true
+        logStartupMilestone('server-ready')
+        finishStartupBenchmarkIfReady()
+      }
+    },
     onGaveUp: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         void dialog.showMessageBox(mainWindow, {
           type: 'error',
-          title: 'Harness',
+          title: nativeAppName,
           message: 'The core server keeps crashing.',
           detail: 'Restart the app. If this keeps happening, reinstall it.',
         })
       }
     },
-  })
+  }
+  serverSupervisor =
+    process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
+      ? new ServerSupervisor({
+          command: process.execPath,
+          args: [serverEntry],
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          ...supervisorCallbacks,
+        })
+      : new ServerSupervisor({
+          launch: () => launchUtilityServer(serverEntry),
+          ...supervisorCallbacks,
+        })
   serverSupervisor.start()
+  logStartupMilestone('server-spawned')
+}
+
+function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
+  const child = utilityProcess.fork(serverEntry, [], {
+    env: { ...process.env },
+    serviceName: 'Taste Code Core Server',
+    stdio: 'pipe',
+  })
+  return {
+    get stdout() {
+      return child.stdout
+    },
+    get stderr() {
+      return child.stderr
+    },
+    kill: () => child.kill(),
+    onError: (listener) => {
+      child.on('error', (type, location) => listener(new Error(`${type} at ${location}`)))
+    },
+    onExit: (listener) => {
+      child.on('exit', (code) => listener(code, null))
+    },
+  }
 }
 
 function createWindow(): void {
@@ -138,11 +330,20 @@ function createWindow(): void {
   }
 
   const initialTheme = windowThemeOptions('dark')
+  const savedWindowState = loadMainWindowState(mainWindowStatePath)
+  const restoredWindowState = restoreMainWindowState(
+    savedWindowState,
+    savedWindowState ? screen.getDisplayMatching(savedWindowState.bounds).workArea : undefined,
+    defaultMainWindowSize,
+    minimumMainWindowSize,
+  )
   const window = new BrowserWindow({
-    width: 1180,
-    height: 820,
-    minWidth: 720,
-    minHeight: 520,
+    icon: productIconPath,
+    title: nativeAppName,
+    ...restoredWindowState.bounds,
+    ...(restoredWindowState.fullScreen ? { fullscreen: true } : {}),
+    minWidth: minimumMainWindowSize.width,
+    minHeight: minimumMainWindowSize.height,
     focusable: true,
     movable: true,
     skipTaskbar: false,
@@ -152,7 +353,11 @@ function createWindow(): void {
     // the sidebar column, which is where the material shows through. CSS
     // backdrop-filter cannot do this — inside the page there is nothing
     // behind the sidebar to blur.
-    ...(process.platform === 'win32' ? { backgroundMaterial: 'acrylic' as const } : {}),
+    ...(process.platform === 'win32'
+      ? {
+          backgroundMaterial: 'acrylic' as const,
+        }
+      : {}),
     ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
@@ -179,10 +384,28 @@ function createWindow(): void {
     },
   })
   mainWindow = window
+  window.webContents.once('did-finish-load', () =>
+    window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
+  )
   configureEmbeddedBrowser(window.webContents)
   restoreMainWindowPresence(process.platform, app, window)
+  const windowStatePersistence = persistMainWindowState(
+    window,
+    restoredWindowState,
+    (state) => saveMainWindowState(mainWindowStatePath, state),
+    (error) => console.warn('[desktop] failed to save main window state', error),
+  )
+  mainWindowStatePersistence = windowStatePersistence
   const stopWatchdog = startVisibilityWatchdog(window, (line) => console.warn('[desktop]', line))
   window.on('closed', stopWatchdog)
+  window.on('closed', () => {
+    windowStatePersistence.stop()
+    if (mainWindowStatePersistence === windowStatePersistence) {
+      mainWindowStatePersistence = undefined
+    }
+  })
+
+  if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
   window.on('close', (event) => {
     if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
@@ -196,6 +419,7 @@ function createWindow(): void {
   window.on('show', () => restoreMainWindowPresence(process.platform, app, window))
   window.on('unresponsive', () => {
     console.error('[desktop] main window renderer became unresponsive')
+    void diagnostics?.record('renderer', 'Main window became unresponsive')
   })
   window.on('responsive', () => {
     console.info('[desktop] main window renderer recovered')
@@ -204,10 +428,20 @@ function createWindow(): void {
     console.error(
       `[desktop] main window renderer exited: ${details.reason} (code ${details.exitCode})`,
     )
+    void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
   })
 
   // Avoid the white flash before React paints.
-  window.once('ready-to-show', showMainWindow)
+  window.once('ready-to-show', () => {
+    logStartupMilestone('ready-to-show')
+    startupWindowReady = true
+    if (process.env['HARNESS_STARTUP_EXIT_AFTER_READY'] === '1') {
+      if (startupSettledMetricsDelayMs !== undefined) window.showInactive()
+      finishStartupBenchmarkIfReady()
+      return
+    }
+    showMainWindow()
+  })
 
   // Nothing in this app should ever open a second window, and any external
   // link belongs in the user's browser, not in a chromeless Electron window.
@@ -240,14 +474,18 @@ function createWindow(): void {
   // flight, the app must still quit/reset — transient windows don't get a vote.
   window.on('closed', () => {
     if (appWindows().length === 0) {
-      for (const capture of [...captureWindows]) capture.destroy()
+      for (const capture of captureWindows) capture.destroy()
     }
   })
 
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(path.join(here, '../../web/dist/index.html'))
+    void window.loadFile(
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'web', 'index.html')
+        : path.join(here, '../../web/dist/index.html'),
+    )
   }
 }
 
@@ -269,25 +507,49 @@ function showMainWindow(): void {
 
 function createBackgroundTray(): void {
   if (process.platform === 'darwin' || tray) return
-  const svg = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">',
-    '<rect width="32" height="32" rx="8" fill="#111113"/>',
-    '<path fill="#fff" d="M8 8h4v6h8V8h4v16h-4v-6h-8v6H8z"/>',
-    '</svg>',
-  ].join('')
-  const icon = nativeImage
-    .createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
-    .resize({ width: 20, height: 20 })
+  const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
   tray = new Tray(icon)
-  tray.setToolTip('Harness')
+  tray.setToolTip(nativeAppName)
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Open Harness', click: showMainWindow },
+      { label: `Open ${nativeAppName}`, click: showMainWindow },
       { type: 'separator' },
-      { label: 'Quit Harness', click: () => app.quit() },
+      { label: `Quit ${nativeAppName}`, click: () => app.quit() },
     ]),
   )
   tray.on('click', showMainWindow)
+}
+
+function installApplicationMenu(): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate(
+      createApplicationMenuTemplate({
+        appName: nativeAppName,
+        isMacOS: process.platform === 'darwin',
+        isDevelopment: !app.isPackaged,
+        shortcuts: nativeMenuShortcuts,
+        onAction: sendNativeMenuAction,
+        onZoom: (action) => {
+          const window = mainWindow
+          if (window && !window.isDestroyed()) applyZoom(window, action)
+        },
+        onOpenDiagnostics: () => void openDiagnosticsDirectory(),
+      }),
+    ),
+  )
+}
+
+function sendNativeMenuAction(action: NativeMenuAction): void {
+  const window = mainWindow
+  if (!window || window.isDestroyed()) {
+    createWindow()
+    mainWindow?.webContents.once('did-finish-load', () =>
+      mainWindow?.webContents.send('harness:menuAction', action),
+    )
+    return
+  }
+  showMainWindow()
+  window.webContents.send('harness:menuAction', action)
 }
 
 ipcMain.handle('harness:setZoom', (event, action: unknown) => {
@@ -298,12 +560,62 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   applyZoom(window, action)
 })
 
+ipcMain.handle('harness:getDiagnosticsEnabled', (event) => {
+  requireOwnRenderer(event.sender)
+  return diagnostics?.isEnabled() ?? false
+})
+
+ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (typeof enabled !== 'boolean') throw new Error('Invalid diagnostics preference')
+  return diagnostics?.setEnabled(enabled) ?? false
+})
+
+ipcMain.handle('harness:openDiagnostics', async (event) => {
+  requireOwnRenderer(event.sender)
+  return openDiagnosticsDirectory()
+})
+
+ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
+  if (!isOwnRenderer(event.sender)) return
+  const shortcuts = parseNativeMenuShortcuts(value)
+  if (!shortcuts) return
+  nativeMenuShortcuts = shortcuts
+  installApplicationMenu()
+})
+
+ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
+  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
+  void diagnostics?.record('renderer', value)
+})
+
+ipcMain.handle('harness:getUpdateState', (event): AppUpdateState => {
+  requireOwnRenderer(event.sender)
+  return (
+    appUpdater?.state() ?? {
+      status: 'unsupported',
+      currentVersion: app.getVersion(),
+    }
+  )
+})
+
+ipcMain.handle('harness:checkForUpdates', (event) => {
+  requireOwnRenderer(event.sender)
+  return appUpdater?.check()
+})
+
+ipcMain.handle('harness:installUpdate', (event) => {
+  requireOwnRenderer(event.sender)
+  return appUpdater?.install() ?? false
+})
+
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   requireOwnRenderer(event.sender)
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for theme change')
   nativeTheme.themeSource = windowThemeSource(preference)
-  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  const theme =
+    preference === 'codex' ? 'codex' : nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   const options = windowThemeOptions(theme)
   // Repainting an opaque background would sit on top of the acrylic/vibrancy
   // material and kill the sidebar glass; on those platforms the material owns
@@ -333,6 +645,7 @@ ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
 
 ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
   if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
+  const { PreviewCaptureRequestSchema } = await import('@harness/contracts')
   const parsed = PreviewCaptureRequestSchema.safeParse(value)
   if (!parsed.success) throw new Error('Invalid preview capture request')
   return capturePreview(parsed.data)
@@ -349,10 +662,17 @@ function applyZoom(window: BrowserWindow, action: ZoomAction): void {
   window.webContents.send('harness:zoomChanged', factor)
 }
 
+async function openDiagnosticsDirectory(): Promise<boolean> {
+  if (!diagnostics) return false
+  await mkdir(diagnostics.directory, { recursive: true, mode: 0o700 })
+  return (await shell.openPath(diagnostics.directory)) === ''
+}
+
 async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
+  const { PreviewDomAuditSchema } = await import('@harness/contracts')
   const directory = path.join(
     app.getPath('temp'),
-    'Personal Harness',
+    'TasteCode',
     'preview-captures',
     request.requestId,
   )
@@ -422,10 +742,25 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
         ]),
       )
       const destination = path.join(directory, `${key}.png`)
-      await writeFile(destination, (await preview.webContents.capturePage()).toPNG(), {
-        flag: 'wx',
-        mode: 0o600,
-      })
+      const pageHeight = await Promise.race([
+        preview.webContents.executeJavaScript(PREVIEW_PAGE_HEIGHT_SCRIPT),
+        deadline,
+      ])
+      await writeFile(
+        destination,
+        (
+          await preview.webContents.capturePage({
+            x: 0,
+            y: 0,
+            width: viewport.width,
+            height: Number(pageHeight),
+          })
+        ).toPNG(),
+        {
+          flag: 'wx',
+          mode: 0o600,
+        },
+      )
       screenshots.push({ path: destination, ...viewport, domAudit })
     }
     return { status: 'completed', requestId: request.requestId, screenshots }
@@ -452,7 +787,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
 /** Screenshot directories older than a day have no consumer left — the design
  *  flow reads them within seconds of the capture. */
 async function sweepStaleCaptures(): Promise<void> {
-  const root = path.join(app.getPath('temp'), 'Personal Harness', 'preview-captures')
+  const root = path.join(app.getPath('temp'), 'TasteCode', 'preview-captures')
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000
   try {
     for (const entry of await readdir(root)) {
@@ -466,8 +801,9 @@ async function sweepStaleCaptures(): Promise<void> {
 }
 
 /**
- * Native pickers. The renderer can ask for a path but never reads the disk
- * itself — the user's own selection is the only way a path enters the app.
+ * Native path intake. The renderer can ask for a path but never reads the disk
+ * itself — the user's own picker or operating-system drop is the only way a
+ * path enters the app.
  */
 ipcMain.handle('harness:pickFolder', async (event) => {
   requireOwnRenderer(event.sender)
@@ -476,6 +812,20 @@ ipcMain.handle('harness:pickFolder', async (event) => {
     title: 'Choose a project folder',
   })
   return result.canceled ? undefined : result.filePaths[0]
+})
+
+let droppedFolderPathsSchema: Promise<{ parse(value: unknown): string[] }> | undefined
+
+function parseDroppedFolderPaths(value: unknown): Promise<string[]> {
+  droppedFolderPathsSchema ??= import('zod').then(({ z }) =>
+    z.array(z.string().min(1).max(32_768)).max(MAX_DROPPED_PROJECT_PATHS),
+  )
+  return droppedFolderPathsSchema.then((schema) => schema.parse(value))
+}
+
+ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  return droppedFolderPaths(await parseDroppedFolderPaths(value))
 })
 
 ipcMain.handle('harness:pickSkillFolder', async (event) => {
@@ -493,7 +843,20 @@ ipcMain.handle('harness:pickFiles', async (event) => {
     properties: ['openFile', 'multiSelections'],
     title: 'Attach files',
   })
-  return result.canceled ? [] : result.filePaths
+  return result.canceled
+    ? []
+    : result.filePaths.map((filePath) => pickedAttachment(filePath, attachmentPreviewSecret))
+})
+
+ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) => {
+  requireOwnRenderer(event.sender)
+  const filePath = await viewedImagePath(
+    reference,
+    path.join(app.getPath('temp'), 'TasteCode', 'pasted-files'),
+  )
+  if (!filePath) return undefined
+  const attachment = pickedAttachment(filePath, attachmentPreviewSecret)
+  return attachment.mediaType ? attachment : undefined
 })
 
 ipcMain.handle('harness:revealPath', (event, value: unknown) => {
@@ -509,19 +872,22 @@ ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootV
 ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
   const file = pastedFile(payload)
-  const directory = path.join(app.getPath('temp'), 'Personal Harness', 'pasted-files')
+  const directory = path.join(app.getPath('temp'), 'TasteCode', 'pasted-files')
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const destination = path.join(directory, `${randomUUID()}-${file.name}`)
   await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
-  return destination
+  return pickedAttachment(destination, attachmentPreviewSecret)
 })
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
   app.on('before-quit', () => {
     appIsQuitting = true
+    mainWindowStatePersistence?.saveAndStop()
   })
   app.on('will-quit', () => {
+    appUpdater?.dispose()
+    appUpdater = undefined
     macOSHaptics.stop()
     serverSupervisor?.stop()
     serverSupervisor = undefined
@@ -529,11 +895,41 @@ if (ownsSingleInstance) {
     tray = undefined
   })
 
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    logStartupMilestone('app-ready')
+    const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
+    diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
+      app.setPath('crashDumps', diagnosticsDirectory)
+      crashReporter.start({
+        productName: nativeAppName,
+        companyName: 'TasteCode',
+        submitURL: 'https://tastecode.dev/crash-reports-disabled',
+        uploadToServer: false,
+        compress: true,
+      })
+    })
+    process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
+    process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
+    await diagnostics.initialize()
+    logStartupMilestone('diagnostics-ready')
+
+    appUpdater = createAppUpdateController({
+      loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
+      currentVersion: app.getVersion(),
+      enabled: app.isPackaged && !devServer,
+    })
+    appUpdater.subscribe((state) => {
+      const window = mainWindow
+      if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
+    })
+    appUpdater.start()
     startOwnedServer()
-    configureMediaPermissions()
+    configureAttachmentPreviews()
+    configureRendererPermissions()
     void sweepStaleCaptures()
     createWindow()
+    logStartupMilestone('window-created')
+    installApplicationMenu()
     createBackgroundTray()
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
@@ -547,22 +943,139 @@ if (ownsSingleInstance) {
   })
 }
 
-/** Allow this app's own renderer to request audio, never video or another origin. */
-function configureMediaPermissions(): void {
+/** Stream only files that came from the native picker. The signed URL keeps a
+ * compromised renderer from turning the preview surface into a filesystem API. */
+function configureAttachmentPreviews(): void {
+  protocol.handle(ATTACHMENT_PREVIEW_SCHEME, async (request) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return new Response(null, { status: 405, headers: { Allow: 'GET, HEAD' } })
+    }
+
+    const preview = attachmentPreviewFromUrl(request.url, attachmentPreviewSecret)
+    if (!preview) return new Response(null, { status: 404 })
+
+    try {
+      const info = await stat(preview.path)
+      if (!info.isFile()) return new Response(null, { status: 404 })
+
+      if (preview.variant === 'thumbnail') {
+        const thumbnail = await attachmentThumbnail(
+          preview.path,
+          `${info.size}:${info.mtimeMs}`,
+          preview.mediaType,
+        )
+        if (!thumbnail) return new Response(null, { status: 404 })
+        const headers = {
+          'Cache-Control': 'no-store',
+          'Content-Length': String(thumbnail.byteLength),
+          'Content-Type': 'image/png',
+          'X-Content-Type-Options': 'nosniff',
+        }
+        return new Response(request.method === 'HEAD' ? null : Uint8Array.from(thumbnail), {
+          status: 200,
+          headers,
+        })
+      }
+
+      const range = attachmentByteRange(request.headers.get('range'), info.size)
+      if (range === 'invalid') {
+        return new Response(null, {
+          status: 416,
+          headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes */${info.size}` },
+        })
+      }
+
+      const start = range?.start ?? 0
+      const end = range?.end ?? Math.max(0, info.size - 1)
+      const headers = new Headers({
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-store',
+        'Content-Length': String(info.size === 0 ? 0 : end - start + 1),
+        'Content-Type': preview.mimeType,
+        'X-Content-Type-Options': 'nosniff',
+      })
+      if (range) headers.set('Content-Range', `bytes ${start}-${end}/${info.size}`)
+      const status = range ? 206 : 200
+      if (request.method === 'HEAD' || info.size === 0) {
+        return new Response(null, { status, headers })
+      }
+
+      const stream = createReadStream(preview.path, { start, end })
+      request.signal.addEventListener('abort', () => stream.destroy(), { once: true })
+      return new Response(Readable.toWeb(stream), { status, headers })
+    } catch {
+      return new Response(null, { status: 404 })
+    }
+  })
+}
+
+function attachmentThumbnail(
+  filePath: string,
+  fingerprint: string,
+  mediaType: 'image' | 'video',
+): Promise<Buffer | undefined> {
+  const cacheKey = `${filePath}\0${fingerprint}`
+  const cached = attachmentThumbnailCache.get(cacheKey)
+  if (cached) return cached
+
+  const pending = createAttachmentThumbnail(filePath, mediaType)
+  attachmentThumbnailCache.set(cacheKey, pending)
+  if (attachmentThumbnailCache.size > MAX_ATTACHMENT_THUMBNAILS) {
+    const oldest = attachmentThumbnailCache.keys().next().value
+    if (oldest) attachmentThumbnailCache.delete(oldest)
+  }
+  void pending.then((thumbnail) => {
+    if (!thumbnail && attachmentThumbnailCache.get(cacheKey) === pending) {
+      attachmentThumbnailCache.delete(cacheKey)
+    }
+  })
+  return pending
+}
+
+async function createAttachmentThumbnail(
+  filePath: string,
+  mediaType: 'image' | 'video',
+): Promise<Buffer | undefined> {
+  try {
+    const thumbnail = await nativeImage.createThumbnailFromPath(filePath, {
+      width: 256,
+      height: 256,
+    })
+    if (!thumbnail.isEmpty()) {
+      const bytes = thumbnail.toPNG()
+      if (bytes.byteLength > 0) return bytes
+    }
+  } catch {
+    // Linux has no native thumbnail provider. Raster images still have a safe
+    // decoder fallback; videos use the renderer's lightweight media tile.
+  }
+
+  if (mediaType !== 'image') return undefined
+  const image = nativeImage.createFromPath(filePath)
+  if (image.isEmpty()) return undefined
+  const size = image.getSize()
+  const scale = Math.min(1, 256 / Math.max(size.width, size.height))
+  const thumbnail = image.resize({ width: Math.max(1, Math.round(size.width * scale)) })
+  const bytes = thumbnail.toPNG()
+  return bytes.byteLength > 0 ? bytes : undefined
+}
+
+/** Allow this app's own renderer to request audio and enumerate installed fonts. */
+function configureRendererPermissions(): void {
   // Chromium's synchronous check path (navigator.permissions.query, device
   // enumeration) never consults the request handler below and defaults to
   // permissive, so it needs its own answer.
   session.defaultSession.setPermissionCheckHandler(
     (webContents, permission) =>
-      permission === 'media' && webContents !== null && isOwnRenderer(webContents),
+      isOwnRendererPermission(permission) && webContents !== null && isOwnRenderer(webContents),
   )
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
-      if (
-        permission !== 'media' ||
-        !isOwnRenderer(webContents) ||
-        !allowsMicrophoneRequest(details)
-      ) {
+      if (permission !== 'media') {
+        callback(isOwnRendererPermission(permission) && isOwnRenderer(webContents))
+        return
+      }
+      if (!isOwnRenderer(webContents) || !allowsMicrophoneRequest(details)) {
         callback(false)
         return
       }

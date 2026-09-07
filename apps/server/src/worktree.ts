@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { z } from 'zod'
 
 const run = promisify(execFile)
 
@@ -155,7 +156,8 @@ async function gitOrThrow(cwd: string, args: string[]): Promise<string | Error> 
     const { stdout } = await run('git', args, { cwd, windowsHide: true, timeout: 30000 })
     return stdout.trim()
   } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr
+    const parsed = z.object({ stderr: z.string().optional() }).safeParse(error)
+    const stderr = parsed.success ? parsed.data.stderr : undefined
     return new Error(stderr?.trim() || (error instanceof Error ? error.message : String(error)))
   }
 }

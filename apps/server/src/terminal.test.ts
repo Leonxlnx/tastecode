@@ -8,6 +8,7 @@ import {
   terminalEnvironment,
   TerminalManager,
   TerminalOutputBuffer,
+  TerminalOutputScheduler,
 } from './terminal.js'
 
 describe('TerminalManager', () => {
@@ -20,13 +21,15 @@ describe('TerminalManager', () => {
   })
 
   it('advertises true color without dropping the native process environment', () => {
-    expect(terminalEnvironment({ PATH: '/system/bin', CUSTOM: 'kept' })).toEqual({
-      PATH: '/system/bin',
-      CUSTOM: 'kept',
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      TERM_PROGRAM: 'Harness',
-    })
+    const environment = terminalEnvironment({ PATH: '/system/bin', CUSTOM: 'kept' })
+    expect(environment.CUSTOM).toBe('kept')
+    expect(environment.TERM).toBe('xterm-256color')
+    expect(environment.COLORTERM).toBe('truecolor')
+    expect(environment.TERM_PROGRAM).toBe('TasteCode')
+    expect(environment.PATH?.split(path.delimiter)[0]).toBe('/system/bin')
+    expect(environment.PATH?.split(path.delimiter)).toContain(
+      path.join(os.homedir(), '.local', 'bin'),
+    )
   })
 
   it('batches high-volume PTY output without changing its byte order', () => {
@@ -64,6 +67,37 @@ describe('TerminalManager', () => {
       pty.emitData('last line')
       pty.emitExit(0)
       expect(events).toEqual(['output:prompt', 'output:last line', 'exit:0'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares one short output timer across many active terminals', async () => {
+    vi.useFakeTimers()
+    try {
+      const emitted: string[] = []
+      const scheduler = new TerminalOutputScheduler(4)
+      const buffers = Array.from(
+        { length: 1_000 },
+        (_, index) =>
+          new TerminalOutputBuffer(
+            (data) => emitted.push(`${index}:${data}`),
+            4,
+            64 * 1024,
+            scheduler,
+          ),
+      )
+
+      for (const buffer of buffers) {
+        buffer.push('x')
+        buffer.push('y')
+      }
+      expect(vi.getTimerCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(4)
+      expect(emitted).toHaveLength(1_000)
+      expect(emitted[0]).toBe('0:xy')
+      expect(emitted[999]).toBe('999:xy')
+      expect(vi.getTimerCount()).toBe(0)
     } finally {
       vi.useRealTimers()
     }
@@ -132,6 +166,8 @@ describe('TerminalManager', () => {
 
   it('runs one real PTY in the session checkout and reports its exit', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-'))
+    const previousDisableAutoUpdate = process.env['DISABLE_AUTO_UPDATE']
+    process.env['DISABLE_AUTO_UPDATE'] = 'true'
     let output = ''
     let sawCwd: () => void = () => {}
     let finished: (result: { terminalId: string; exitCode: number | null }) => void = () => {}
@@ -159,6 +195,8 @@ describe('TerminalManager', () => {
       await expect(within(exited)).resolves.toEqual({ terminalId, exitCode: 0 })
       expect(() => manager.write(terminalId, 'after exit')).toThrow(/no such terminal/i)
     } finally {
+      if (previousDisableAutoUpdate === undefined) delete process.env['DISABLE_AUTO_UPDATE']
+      else process.env['DISABLE_AUTO_UPDATE'] = previousDisableAutoUpdate
       await manager.closeAll()
       removeTemporaryDirectory(cwd)
     }

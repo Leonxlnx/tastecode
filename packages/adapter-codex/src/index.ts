@@ -5,10 +5,11 @@ export {
   type StartOptions,
 } from './adapter.js'
 export {
-  CodexVoiceTranscriber,
+  OpenAiVoiceTranscriber,
+  OPENAI_TRANSCRIPTION_MODEL,
+  OPENAI_TRANSCRIPTION_URL,
   VoiceTranscriptionError,
   validateVoiceClip,
-  type VoiceCapability,
   type VoiceTranscriptionInput,
 } from './voice.js'
 /** Codex signals ingress saturation with this code. It is worth retrying. */

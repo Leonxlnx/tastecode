@@ -1,24 +1,33 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import {
-  FileDiff,
-  FolderOpen,
-  Globe2,
-  Maximize2,
-  MessageCirclePlus,
-  Minimize2,
-  Plus,
-  SquareTerminal,
-  X,
-  type LucideIcon,
-} from 'lucide-react'
-import { PreviewCaptureRequestSchema } from '@harness/contracts'
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type PointerEvent,
+  type TransitionEvent,
+} from 'react'
 import {
-  appHapticsEnabled,
-  performAppHaptic,
-  prepareAppHaptics,
-  ResizeHaptics,
-} from '../../haptics.js'
+  IconFileDiff as FileDiff,
+  IconFolderOpen as FolderOpen,
+  IconWorld as Globe2,
+  IconMaximize as Maximize2,
+  IconMessageCirclePlus as MessageCirclePlus,
+  IconMinimize as Minimize2,
+  IconPlus as Plus,
+  IconTerminal2 as SquareTerminal,
+  IconX as X,
+  type TablerIcon,
+} from '@tabler/icons-react'
+import { prepareAppHaptics } from '../../haptics.js'
+import { installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
+import { IconMorph } from '../IconMorph.js'
+import { beginPanelResize } from '../panel-resize.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -33,6 +42,9 @@ const WorkspaceReview = lazy(() =>
 const WorkspaceTerminal = lazy(() =>
   import('./WorkspaceTerminal.js').then((module) => ({ default: module.WorkspaceTerminal })),
 )
+const AttachedProviderTerminal = lazy(() =>
+  import('../InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
+)
 const WorkspaceBrowser = lazy(() =>
   import('./WorkspaceBrowser.js').then((module) => ({ default: module.WorkspaceBrowser })),
 )
@@ -43,14 +55,30 @@ const WorkspaceSideChat = lazy(() =>
   import('./WorkspaceSideChat.js').then((module) => ({ default: module.WorkspaceSideChat })),
 )
 
+export type WorkspaceProviderLoginRequest = {
+  id: number
+  title: string
+  installKey: string
+  showCodeInput?: boolean
+}
+
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
 
-type WorkspaceTab = { id: string; kind: WorkspaceTool }
+type WorkspaceTab =
+  | { id: string; kind: WorkspaceTool }
+  | {
+      id: string
+      kind: 'provider-login'
+      requestId: number
+      title: string
+      installKey: string
+      showCodeInput: boolean
+    }
 
 const TOOLS: Array<{
   kind: WorkspaceTool
   title: string
-  Icon: LucideIcon
+  Icon: TablerIcon
 }> = [
   {
     kind: 'review',
@@ -82,8 +110,9 @@ const TOOLS: Array<{
 const MIN_PANEL_WIDTH = 360
 const MIN_CHAT_WIDTH = 360
 const DESIGN_PREVIEW_TAB_ID = 'design-preview'
+const WORKSPACE_PANEL_CLOSE_FALLBACK_MS = 340
 
-export function WorkspacePanel(props: {
+function WorkspacePanelComponent(props: {
   open: boolean
   expanded: boolean
   width: number
@@ -102,6 +131,11 @@ export function WorkspacePanel(props: {
   onClosed?: () => void
   onExpandedChange: (expanded: boolean) => void
   onWidthChange: (width: number) => void
+  terminalToggleRequest?: number | undefined
+  providerLogin?: WorkspaceProviderLoginRequest | undefined
+  onProviderLoginClose?: ((id: number) => void) | undefined
+  externalToolRequest?: { request: number; kind: WorkspaceTool } | undefined
+  designPreviewRequest?: BrowserNavigationRequest | undefined
 }) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
   const [activeId, setActiveId] = useState<string>()
@@ -109,12 +143,25 @@ export function WorkspacePanel(props: {
   const [addOpen, setAddOpen] = useState(false)
   const addWrap = useRef<HTMLDivElement>(null)
   const resizeCleanup = useRef<() => void>(() => {})
+  const openRef = useRef(props.open)
   const tabsRef = useRef(tabs)
+  const activeIdRef = useRef(activeId)
   const onClose = useRef(props.onClose)
+  const onClosed = useRef(props.onClosed)
+  const onProviderLoginClose = useRef(props.onProviderLoginClose)
+  const closeCompletionPending = useRef(false)
   const clearAfterClose = useRef(false)
+  const providerLoginTabId = useRef<string | undefined>(undefined)
+  const handledTerminalToggleRequest = useRef(0)
+  const handledExternalToolRequest = useRef(0)
+  const handledDesignPreviewRequest = useRef<string | undefined>(undefined)
   const nextTabId = useRef(1)
+  openRef.current = props.open
   tabsRef.current = tabs
+  activeIdRef.current = activeId
   onClose.current = props.onClose
+  onClosed.current = props.onClosed
+  onProviderLoginClose.current = props.onProviderLoginClose
 
   const openTool = useCallback(
     (kind: WorkspaceTool) => {
@@ -132,6 +179,33 @@ export function WorkspacePanel(props: {
     },
     [props.onOpen],
   )
+
+  useEffect(() => {
+    const request = props.terminalToggleRequest ?? 0
+    if (request === 0 || request === handledTerminalToggleRequest.current) return
+    handledTerminalToggleRequest.current = request
+
+    const terminal = [...tabsRef.current].reverse().find((tab) => tab.kind === 'terminal')
+    if (props.open && terminal && terminal.id === activeIdRef.current) {
+      onClose.current()
+      return
+    }
+    if (!terminal) {
+      openTool('terminal')
+      return
+    }
+
+    clearAfterClose.current = false
+    props.onOpen()
+    setActiveId(terminal.id)
+  }, [openTool, props.onOpen, props.open, props.terminalToggleRequest])
+
+  useEffect(() => {
+    const request = props.externalToolRequest
+    if (!request || request.request === handledExternalToolRequest.current) return
+    handledExternalToolRequest.current = request.request
+    openTool(request.kind)
+  }, [openTool, props.externalToolRequest])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -160,23 +234,60 @@ export function WorkspacePanel(props: {
     openTool('side-chat')
   }, [openTool, props.sideChatPromptRequest])
 
-  useEffect(
-    () =>
-      props.transport.on('preview.captureRequested', (value) => {
-        const request = PreviewCaptureRequestSchema.safeParse(value)
-        if (!request.success) return
-        clearAfterClose.current = false
-        props.onOpen()
-        setTabs((current) =>
-          current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
-            ? current
-            : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
-        )
-        setActiveId(DESIGN_PREVIEW_TAB_ID)
-        setDesignPreview({ requestId: request.data.requestId, url: request.data.url })
-      }),
-    [props.onOpen, props.transport],
-  )
+  useEffect(() => {
+    const request = props.providerLogin
+    const previousId = providerLoginTabId.current
+    if (!request) {
+      if (!previousId) return
+      const next = tabsRef.current.filter((tab) => tab.id !== previousId)
+      tabsRef.current = next
+      setTabs(next)
+      setActiveId((current) => (current === previousId ? next.at(-1)?.id : current))
+      providerLoginTabId.current = undefined
+      return
+    }
+
+    const id = `provider-login-${request.id}`
+    clearAfterClose.current = false
+    props.onOpen()
+    const next = [
+      ...tabsRef.current.filter((tab) => tab.kind !== 'provider-login'),
+      {
+        id,
+        kind: 'provider-login',
+        requestId: request.id,
+        title: request.title,
+        installKey: request.installKey,
+        showCodeInput: request.showCodeInput !== false,
+      } as const,
+    ]
+    tabsRef.current = next
+    setTabs(next)
+    setActiveId(id)
+    setAddOpen(false)
+    providerLoginTabId.current = id
+  }, [
+    props.onOpen,
+    props.providerLogin?.id,
+    props.providerLogin?.installKey,
+    props.providerLogin?.showCodeInput,
+    props.providerLogin?.title,
+  ])
+
+  useEffect(() => {
+    const request = props.designPreviewRequest
+    if (!request || handledDesignPreviewRequest.current === request.requestId) return
+    handledDesignPreviewRequest.current = request.requestId
+    clearAfterClose.current = false
+    props.onOpen()
+    setTabs((current) =>
+      current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
+        ? current
+        : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
+    )
+    setActiveId(DESIGN_PREVIEW_TAB_ID)
+    setDesignPreview(request)
+  }, [props.designPreviewRequest, props.onOpen])
 
   useEffect(() => {
     if (!addOpen) return
@@ -203,17 +314,55 @@ export function WorkspacePanel(props: {
     [],
   )
 
+  const completeClose = useCallback(() => {
+    if (openRef.current || !closeCompletionPending.current) return
+    closeCompletionPending.current = false
+    onClosed.current?.()
+    if (!clearAfterClose.current) return
+    clearAfterClose.current = false
+    tabsRef.current = []
+    setTabs([])
+    setActiveId(undefined)
+  }, [])
+
   useEffect(() => {
-    if (!props.open && globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
-      props.onClosed?.()
+    if (props.open) {
+      closeCompletionPending.current = false
+      return
     }
-  }, [props.open, props.onClosed])
+    closeCompletionPending.current = true
+    if (globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      completeClose()
+      return
+    }
+    const timeout = globalThis.setTimeout(completeClose, WORKSPACE_PANEL_CLOSE_FALLBACK_MS)
+    return () => globalThis.clearTimeout(timeout)
+  }, [completeClose, props.open])
+
+  const finishCloseTransition = useCallback(
+    (event: TransitionEvent<HTMLElement>) => {
+      if (event.target !== event.currentTarget || event.propertyName !== 'transform') return
+      completeClose()
+    },
+    [completeClose],
+  )
 
   const closeTab = useCallback((id: string) => {
     const current = tabsRef.current
     const index = current.findIndex((tab) => tab.id === id)
     if (index < 0) return
+    const closing = current[index]!
     const next = current.filter((tab) => tab.id !== id)
+    if (closing.kind === 'provider-login') {
+      tabsRef.current = next
+      setTabs(next)
+      setActiveId((currentActive) =>
+        currentActive === id ? (next[index]?.id ?? next[index - 1]?.id) : currentActive,
+      )
+      providerLoginTabId.current = undefined
+      onProviderLoginClose.current?.(closing.requestId)
+      return
+    }
     if (next.length === 0) {
       clearAfterClose.current = true
       onClose.current()
@@ -232,49 +381,24 @@ export function WorkspacePanel(props: {
     prepareAppHaptics()
     event.currentTarget.setPointerCapture(event.pointerId)
     resizeCleanup.current()
-    const startX = event.clientX
-    const startWidth = props.width
-    const layoutWidth =
-      event.currentTarget.closest<HTMLElement>('.workspace-layout')?.clientWidth ||
-      window.innerWidth
-    const maximum = Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH)
-    const haptics = appHapticsEnabled()
-      ? new ResizeHaptics({
-          startValue: startWidth,
-          startTime: event.timeStamp,
-          minValue: MIN_PANEL_WIDTH,
-          maxValue: maximum,
-        })
-      : undefined
-    let currentWidth = startWidth
-    let active = true
-    const move = (next: globalThis.PointerEvent) => {
-      const rawWidth = startWidth + startX - next.clientX
-      const nextWidth = Math.min(maximum, Math.max(MIN_PANEL_WIDTH, rawWidth))
-      const feedback = haptics?.sample({
-        rawValue: rawWidth,
-        value: nextWidth,
-        tracking: nextWidth !== currentWidth,
-        time: next.timeStamp,
-      })
-      currentWidth = nextWidth
-      props.onWidthChange(nextWidth)
-      if (feedback) performAppHaptic(feedback)
-    }
-    const cleanup = () => {
-      if (!active) return
-      active = false
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', cleanup)
-      window.removeEventListener('pointercancel', cleanup)
-      window.removeEventListener('blur', cleanup)
-      resizeCleanup.current = () => {}
-    }
-    resizeCleanup.current = cleanup
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', cleanup, { once: true })
-    window.addEventListener('pointercancel', cleanup, { once: true })
-    window.addEventListener('blur', cleanup, { once: true })
+    const layout = event.currentTarget.closest<HTMLElement>('.workspace-layout')
+    const layoutWidth = layout?.clientWidth || window.innerWidth
+    const previousTransition = layout?.style.transition
+    if (layout) layout.style.transition = 'none'
+    resizeCleanup.current = beginPanelResize(event, {
+      axis: 'clientX',
+      initialSize: props.width,
+      minSize: MIN_PANEL_WIDTH,
+      maxSize: Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH),
+      style: layout?.style,
+      property: '--workspace-panel-w',
+      onFinish: (size, commit) => {
+        resizeCleanup.current = () => {}
+        if (commit) props.onWidthChange(size)
+        else layout?.style.setProperty('--workspace-panel-w', `${props.width}px`)
+        if (layout) layout.style.transition = previousTransition ?? ''
+      },
+    })
   }
 
   return (
@@ -283,20 +407,8 @@ export function WorkspacePanel(props: {
       aria-label="Workspace tools"
       aria-hidden={!props.open}
       inert={props.open ? undefined : true}
-      onTransitionEnd={(event) => {
-        if (
-          event.target !== event.currentTarget ||
-          event.propertyName !== 'transform' ||
-          props.open
-        )
-          return
-        props.onClosed?.()
-        if (!clearAfterClose.current) return
-        clearAfterClose.current = false
-        tabsRef.current = []
-        setTabs([])
-        setActiveId(undefined)
-      }}
+      onTransitionEnd={finishCloseTransition}
+      onTransitionCancel={finishCloseTransition}
     >
       <div
         className="workspace-panel__resize"
@@ -313,7 +425,7 @@ export function WorkspacePanel(props: {
       <header className="workspace-panel__chrome">
         <div className="workspace-panel__tabs" role="tablist" aria-label="Workspace tabs">
           {tabs.map((tab) => {
-            const tool = toolFor(tab.kind)
+            const tool = toolFor(tab)
             const Icon = tool.Icon
             return (
               <div
@@ -375,11 +487,10 @@ export function WorkspacePanel(props: {
             aria-pressed={props.expanded}
             onClick={() => props.onExpandedChange(!props.expanded)}
           >
-            {props.expanded ? (
-              <Minimize2 size={14} aria-hidden />
-            ) : (
+            <IconMorph active={props.expanded ? 1 : 0}>
               <Maximize2 size={14} aria-hidden />
-            )}
+              <Minimize2 size={14} aria-hidden />
+            </IconMorph>
           </button>
         </div>
       </header>
@@ -395,7 +506,7 @@ export function WorkspacePanel(props: {
             >
               <Suspense fallback={<WorkspaceLoading />}>
                 <WorkspaceToolSurface
-                  kind={tab.kind}
+                  tab={tab}
                   active={
                     props.open && props.nativeSurfacesVisible && !addOpen && activeId === tab.id
                   }
@@ -422,8 +533,11 @@ export function WorkspacePanel(props: {
   )
 }
 
+/** Keep the closed host subscribed without reconciling its full shell on unrelated app updates. */
+export const WorkspacePanel = memo(WorkspacePanelComponent)
+
 function WorkspaceToolSurface(props: {
-  kind: WorkspaceTool
+  tab: WorkspaceTab
   active: boolean
   transport: Transport
   threadId?: string | undefined
@@ -437,7 +551,22 @@ function WorkspaceToolSurface(props: {
   browserNavigation?: BrowserNavigationRequest | undefined
   onClose: () => void
 }) {
-  if (props.kind === 'review') {
+  if (props.tab.kind === 'provider-login') {
+    return (
+      <div className="workspace-provider-login">
+        <AttachedProviderTerminal
+          transport={props.transport}
+          installKey={props.tab.installKey}
+          ariaLabel={`${props.tab.title} terminal`}
+          profile="workspace"
+        />
+        {props.tab.showCodeInput ? (
+          <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
+        ) : null}
+      </div>
+    )
+  }
+  if (props.tab.kind === 'review') {
     return (
       <WorkspaceReview
         transport={props.transport}
@@ -448,7 +577,7 @@ function WorkspaceToolSurface(props: {
       />
     )
   }
-  if (props.kind === 'terminal') {
+  if (props.tab.kind === 'terminal') {
     return (
       <WorkspaceTerminal
         active={props.active}
@@ -460,10 +589,10 @@ function WorkspaceToolSurface(props: {
       />
     )
   }
-  if (props.kind === 'browser') {
+  if (props.tab.kind === 'browser') {
     return <WorkspaceBrowser active={props.active} navigation={props.browserNavigation} />
   }
-  if (props.kind === 'files') {
+  if (props.tab.kind === 'files') {
     return (
       <WorkspaceFiles
         transport={props.transport}
@@ -486,6 +615,58 @@ function WorkspaceToolSurface(props: {
   )
 }
 
+function ProviderLoginCodeInput(props: { transport: Transport; installKey: string }) {
+  const login = useSyncExternalStore(subscribeInstalls, () => installState(props.installKey))
+  const [code, setCode] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string>()
+
+  if (login?.phase !== 'running') return null
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const submittedCode = code
+    const value = submittedCode.trim()
+    if (!value || sending) return
+    const terminalId = login.terminalId
+    setSending(true)
+    setError(undefined)
+    void props.transport
+      .request('terminal.input', { terminalId, data: `${value}\r` })
+      .then(() =>
+        setCode((current) =>
+          current === submittedCode && installState(props.installKey)?.terminalId === terminalId
+            ? ''
+            : current,
+        ),
+      )
+      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setSending(false))
+  }
+
+  return (
+    <form className="workspace-provider-login__code" onSubmit={submit}>
+      <label className="visually-hidden" htmlFor={`${props.installKey}-code`}>
+        Login code
+      </label>
+      <input
+        id={`${props.installKey}-code`}
+        type="text"
+        autoComplete="one-time-code"
+        spellCheck={false}
+        maxLength={2_048}
+        placeholder="Paste code here if prompted"
+        value={code}
+        onChange={(event) => setCode(event.currentTarget.value)}
+      />
+      <button type="submit" disabled={!code.trim() || sending}>
+        {sending ? 'Submitting…' : 'Submit code'}
+      </button>
+      {error ? <span role="alert">{error}</span> : null}
+    </form>
+  )
+}
+
 function WorkspaceSelector({ onOpen }: { onOpen: (kind: WorkspaceTool) => void }) {
   return (
     <div className="workspace-selector">
@@ -494,7 +675,7 @@ function WorkspaceSelector({ onOpen }: { onOpen: (kind: WorkspaceTool) => void }
           const Icon = tool.Icon
           return (
             <button type="button" key={tool.kind} onClick={() => onOpen(tool.kind)}>
-              <Icon size={18} aria-hidden />
+              <Icon size={16} aria-hidden />
               <span>{tool.title}</span>
             </button>
           )
@@ -518,6 +699,7 @@ function WorkspaceLoading() {
   return <div className="workspace-panel__loading" aria-label="Loading workspace tool" />
 }
 
-function toolFor(kind: WorkspaceTool): (typeof TOOLS)[number] {
-  return TOOLS.find((tool) => tool.kind === kind) ?? TOOLS[0]!
+function toolFor(tab: WorkspaceTab): Pick<(typeof TOOLS)[number], 'title' | 'Icon'> {
+  if (tab.kind === 'provider-login') return { title: tab.title, Icon: SquareTerminal }
+  return TOOLS.find((tool) => tool.kind === tab.kind) ?? TOOLS[0]!
 }

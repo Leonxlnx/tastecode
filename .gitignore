@@ -8,10 +8,8 @@ dist-electron/
 out/
 build/
 release/
-*.tsbuildinfo
-
-# Rust (if/when we add native sidecars)
 target/
+*.tsbuildinfo
 
 # Environment & secrets — NEVER commit
 .env

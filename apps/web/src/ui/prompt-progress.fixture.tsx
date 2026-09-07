@@ -1,5 +1,5 @@
-import type { Item } from '@harness/contracts'
-import { render, type RenderResult } from '@testing-library/react'
+import { act, render, type RenderResult } from '@testing-library/react'
+import { ThreadFrameStore } from '../thread-frame-store.js'
 import {
   beginOptimisticTurn,
   emptyThread,
@@ -36,21 +36,10 @@ const LIVE_DELTAS = new Map(
   ]),
 )
 
-function view(state: ThreadState) {
+function view(frameStore: ThreadFrameStore) {
   return (
     <Thread
-      items={state.items}
-      liveItems={state.liveItems}
-      itemVersion={state.itemVersion}
-      liveStart={state.liveStart}
-      running={state.running}
-      activeTurn={state.activeTurn}
-      turnTiming={state.turnTiming}
-      plan={state.plan}
-      diff={state.diff}
-      approvals={state.approvals}
-      userInputs={state.userInputs}
-      reviews={Object.values(state.reviews)}
+      frameStore={frameStore}
       onDecide={() => undefined}
       onAnswerUserInput={() => undefined}
     />
@@ -71,9 +60,9 @@ export type PromptProgressRun = {
   canonicalPrompt: Element
   canonicalRail: Element
   startedPrompt: Element
-  startedRail: Element
+  startedReply: Element
   deltaPrompt: Element
-  deltaRail: Element
+  deltaReply: Element
   finalState: ThreadState
 }
 
@@ -85,7 +74,8 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     SUBMISSION_ID,
     CREATED_AT,
   )
-  const rendered = render(view(state))
+  const store = new ThreadFrameStore(state)
+  const rendered = render(view(store))
   const optimisticPrompt = promptNode(rendered)
   const optimisticRail = oneWorkingRail(rendered)
 
@@ -110,7 +100,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
       createdAt: CREATED_AT + 1,
     },
   })
-  rendered.rerender(view(state))
+  act(() => store.publish(state))
   const canonicalPrompt = promptNode(rendered)
   const canonicalRail = oneWorkingRail(rendered)
 
@@ -126,9 +116,9 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
       createdAt: CREATED_AT + 2,
     },
   })
-  rendered.rerender(view(state))
+  act(() => store.publish(state))
   const startedPrompt = promptNode(rendered)
-  const startedRail = oneWorkingRail(rendered)
+  const startedReply = streamingReply(rendered)
 
   const textDeltas = LIVE_DELTAS.get(scenario.liveCharacters)
   if (!textDeltas) throw new Error(`Missing ${scenario.liveCharacters}-character live fixture`)
@@ -141,7 +131,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     },
     { type: 'item.delta', turnId: TURN_ID, itemId: ANSWER_ID, textDelta: textDeltas[1] },
   ])
-  rendered.rerender(view(state))
+  act(() => store.publish(state))
   const deltaPrompt = promptNode(rendered)
 
   return {
@@ -151,9 +141,9 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     canonicalPrompt,
     canonicalRail,
     startedPrompt,
-    startedRail,
+    startedReply,
     deltaPrompt,
-    deltaRail: oneWorkingRail(rendered),
+    deltaReply: streamingReply(rendered),
     finalState: state,
   }
 }
@@ -169,6 +159,10 @@ function oneWorkingRail(rendered: RenderResult): Element {
   const rails = rendered.container.querySelectorAll('.activity--working')
   if (rails.length !== 1) throw new Error(`Expected one Working rail, received ${rails.length}`)
   return rails[0]!
+}
+
+function streamingReply(rendered: RenderResult): Element {
+  return required(rendered.container.querySelector('.reply.is-streaming'), 'streaming reply')
 }
 
 function required<T>(value: T | null | undefined, label: string): T {

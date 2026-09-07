@@ -1,12 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const fake = vi.hoisted(() => ({
-  calls: [] as Array<{ method: string; params: unknown }>,
-  spawns: [] as Array<{ command: string; args: string[]; options: unknown }>,
+type GrokTestState = {
+  calls: Array<{ method: string; params: unknown }>
+  spawns: Array<{ command: string; args: string[]; options: unknown }>
+  disposed: number
+  billing: unknown
+  error: Error | undefined
+  hangs: Set<string>
+}
+
+const fake = vi.hoisted<GrokTestState>(() => ({
+  calls: [],
+  spawns: [],
   disposed: 0,
-  billing: {} as unknown,
-  error: undefined as Error | undefined,
-  hangs: new Set<string>(),
+  billing: {},
+  error: undefined,
+  hangs: new Set(),
 }))
 
 vi.mock('node:child_process', () => ({
@@ -16,7 +25,8 @@ vi.mock('node:child_process', () => ({
   }),
 }))
 
-vi.mock('@harness/proc', () => ({
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
   killTree: vi.fn(),
   readNdjson: vi.fn(),
   StdioJsonRpc: class {
@@ -82,14 +92,27 @@ describe('mapGrokBilling', () => {
     ])
   })
 
-  it('does not present an absent percentage as zero usage', () => {
+  it('treats an omitted proto3 percentage as zero for the current period', () => {
     const rows = mapGrokBilling({
       config: {
-        currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY' },
+        currentPeriod: {
+          type: 'USAGE_PERIOD_TYPE_WEEKLY',
+          start: '2026-08-09T21:53:38.208691+00:00',
+          end: '2026-08-16T21:53:38.208691+00:00',
+        },
+        onDemandCap: { val: 0 },
+        onDemandUsed: { val: 0 },
         prepaidBalance: {},
+        isUnifiedBillingUser: true,
       },
     })
-    expect(rows).toEqual([{ label: 'Weekly', usedPercent: 0, valueLabel: 'Usage not reported' }])
+    expect(rows).toEqual([
+      {
+        label: 'Weekly',
+        usedPercent: 0,
+        resetsAt: Date.parse('2026-08-16T21:53:38.208691+00:00'),
+      },
+    ])
   })
 
   it('falls back to the provider documented legacy monthly amounts', () => {

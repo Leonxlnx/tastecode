@@ -58,23 +58,6 @@ const GENERIC_CTAS = new Set([
   'join the revolution',
 ])
 
-const GENERIC_EYEBROWS = new Set([
-  'about',
-  'overview',
-  'features',
-  'services',
-  'solutions',
-  'benefits',
-  'why us',
-  'what we do',
-  'our work',
-  'introducing',
-  'discover',
-  'welcome',
-  'experience',
-  'innovation',
-])
-
 const SATURATED_NAMES = new Set([
   'apex',
   'beacon',
@@ -97,8 +80,15 @@ const SATURATED_NAMES = new Set([
   'vector',
 ])
 
-const SEQUENCE_SIGNAL =
-  /\b(?:step|phase|stage|process|sequence|timeline|chapter|part|lesson|method|how it works)\b/iu
+const PLACEHOLDER_PATTERNS = [
+  /\b(?:to be supplied|awaiting approval|none supplied|live data required|property data required|operating dates required)\b/iu,
+  /\b(?:sample data|test data|model data|simulated data|not a live sensor|not connected)\b/iu,
+  /\b(?:local preview|nothing leaves this page|do not publish|before launch|still needed)\b/iu,
+  /\bthis prototype\b/iu,
+]
+
+const MAX_HEADING_WORDS = 12
+const MAX_HEADING_CHARACTERS = 72
 
 export function lintPageCopy(page: PageBlueprint): CopyLintFinding[] {
   const surfaces = collectCopy(page)
@@ -106,6 +96,9 @@ export function lintPageCopy(page: PageBlueprint): CopyLintFinding[] {
     ...lintEmDashes(surfaces),
     ...lintClaims(surfaces),
     ...lintCliches(surfaces),
+    ...lintPlaceholders(surfaces),
+    ...lintHeadings(page),
+    ...lintHeroCopyStack(page),
     ...lintCallsToAction(page),
     ...lintEyebrows(page),
     ...lintProductName(page),
@@ -136,15 +129,6 @@ function collectCopy(page: PageBlueprint): CopySurface[] {
       evidence: pageEvidence,
     })),
     ...page.sections.flatMap((section, sectionIndex) => [
-      ...(section.copy.eyebrow
-        ? [
-            {
-              path: `sections[${sectionIndex}].copy.eyebrow`,
-              text: section.copy.eyebrow,
-              evidence: section.evidence,
-            },
-          ]
-        : []),
       {
         path: `sections[${sectionIndex}].copy.heading`,
         text: section.copy.heading,
@@ -205,6 +189,52 @@ function lintCliches(surfaces: CopySurface[]): CopyLintFinding[] {
   })
 }
 
+function lintPlaceholders(surfaces: CopySurface[]): CopyLintFinding[] {
+  return surfaces
+    .filter(({ text }) => PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(text)))
+    .map((surface) =>
+      finding(
+        'copy/internal-placeholder',
+        'error',
+        surface,
+        'Replace internal status or prototype copy with finished user-facing content.',
+      ),
+    )
+}
+
+function lintHeadings(page: PageBlueprint): CopyLintFinding[] {
+  return page.sections.flatMap((section, index) => {
+    const heading = section.copy.heading.trim()
+    const wordCount = heading.split(/\s+/u).length
+    if (wordCount <= MAX_HEADING_WORDS && heading.length <= MAX_HEADING_CHARACTERS) return []
+    return [
+      {
+        rule: 'copy/heading-length',
+        severity: 'error' as const,
+        path: `sections[${index}].copy.heading`,
+        excerpt: heading,
+        message: `Keep headings within ${MAX_HEADING_WORDS} words and ${MAX_HEADING_CHARACTERS} characters so they fit one or two lines; three lines is a rare visual exception.`,
+      },
+    ]
+  })
+}
+
+function lintHeroCopyStack(page: PageBlueprint): CopyLintFinding[] {
+  return page.sections.flatMap((section, index) =>
+    section.layoutFamily === 'hero' && section.copy.body.length > 1
+      ? [
+          {
+            rule: 'copy/hero-body-stack',
+            severity: 'error' as const,
+            path: `sections[${index}].copy.body`,
+            excerpt: `${section.copy.body.length} supporting blocks`,
+            message: 'Use at most one concise supporting block in the Hero.',
+          },
+        ]
+      : [],
+  )
+}
+
 function lintCallsToAction(page: PageBlueprint): CopyLintFinding[] {
   const actions = page.sections.flatMap((section, sectionIndex) =>
     section.copy.callsToAction.map((action, actionIndex) => ({
@@ -247,55 +277,20 @@ function lintCallsToAction(page: PageBlueprint): CopyLintFinding[] {
 }
 
 function lintEyebrows(page: PageBlueprint): CopyLintFinding[] {
-  const eyebrows = page.sections.flatMap((section, index) =>
-    section.copy.eyebrow ? [{ section, index, text: section.copy.eyebrow }] : [],
-  )
-  const findings = eyebrows.flatMap(({ index, text }) => {
-    const normalized = normalize(text)
-    const path = `sections[${index}].copy.eyebrow`
-    const result: CopyLintFinding[] = []
-    if (
-      GENERIC_EYEBROWS.has(normalized) ||
-      (text === text.toUpperCase() && /[A-Z]{2}/u.test(text))
-    ) {
-      result.push({
+  return page.sections.flatMap((section, index) => {
+    if (!('eyebrow' in section.copy) || typeof section.copy.eyebrow !== 'string') return []
+    const eyebrow = section.copy.eyebrow.trim()
+    if (!eyebrow) return []
+    return [
+      {
         rule: 'copy/decorative-eyebrow',
-        severity: 'warning',
-        path,
-        excerpt: text,
-        message:
-          'Omit the eyebrow unless it adds real taxonomy, status, provenance, or orientation.',
-      })
-    }
-    return result
+        severity: 'error' as const,
+        path: `sections[${index}].copy.eyebrow`,
+        excerpt: eyebrow,
+        message: 'Remove the eyebrow and express necessary context in the heading or body.',
+      },
+    ]
   })
-  if (eyebrows.length >= 3 && eyebrows.length * 2 >= page.sections.length) {
-    findings.push({
-      rule: 'copy/eyebrow-overuse',
-      severity: 'warning',
-      path: 'sections',
-      excerpt: `${eyebrows.length} of ${page.sections.length} sections`,
-      message: 'Reserve eyebrows for the rare sections that need extra orientation.',
-    })
-  }
-
-  const numbered = eyebrows.filter(({ text }) => /^0?(\d{1,2})(?:[.:/-])?$/u.test(text))
-  const values = numbered.map(({ text }) => Number(/\d+/u.exec(text)?.[0])).sort((a, b) => a - b)
-  const consecutive =
-    values.length >= 3 && values.every((value, index) => !index || value === values[index - 1]! + 1)
-  const hasSequenceMeaning = numbered.every(({ section }) =>
-    SEQUENCE_SIGNAL.test(`${section.purpose} ${section.userQuestion} ${section.copy.heading}`),
-  )
-  if (consecutive && !hasSequenceMeaning) {
-    findings.push({
-      rule: 'copy/decorative-numbering',
-      severity: 'warning',
-      path: 'sections',
-      excerpt: numbered.map(({ text }) => text).join(' / '),
-      message: 'Use section numbers only when they encode a real sequence or stable reference.',
-    })
-  }
-  return findings
 }
 
 function lintProductName(page: PageBlueprint): CopyLintFinding[] {

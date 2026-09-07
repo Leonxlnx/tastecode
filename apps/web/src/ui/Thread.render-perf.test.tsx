@@ -2,6 +2,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
+import { ThreadFrameStore } from '../thread-frame-store.js'
+import { emptyThread } from '../thread-store.js'
 
 const markdownRender = vi.hoisted(() => vi.fn())
 const orbRender = vi.hoisted(() => vi.fn())
@@ -95,18 +97,18 @@ function view(
 ) {
   return (
     <Thread
-      items={items}
-      liveItems={identity.liveItems}
-      itemVersion={identity.itemVersion}
-      running={running}
-      activeTurn={running ? { id: 'turn-2', startedAt: 0 } : undefined}
+      frameStore={
+        new ThreadFrameStore({
+          ...emptyThread,
+          items,
+          liveItems: identity.liveItems ?? emptyThread.liveItems,
+          itemVersion: identity.itemVersion ?? 0,
+          running,
+          activeTurn: running ? { id: 'turn-2', startedAt: 0 } : undefined,
+        })
+      }
       threadId={identity.threadId}
       revealRequest={identity.revealRequest}
-      plan={[]}
-      diff={undefined}
-      approvals={[]}
-      userInputs={[]}
-      reviews={[]}
       checkpoints={[]}
       onDecide={onDecide}
       onAnswerUserInput={onAnswerUserInput}
@@ -216,7 +218,7 @@ describe('streamed thread renders', () => {
     })
   })
 
-  it('does not reconcile the working animation for streamed text updates', () => {
+  it('does not add a duplicate working animation beside a streamed answer', () => {
     const items: Item[] = [
       message({ id: 'user-1', turnId: 'turn-2', role: 'user', text: 'Question' }),
       message({ id: 'answer-1', turnId: 'turn-2', status: 'started', text: 'Hel' }),
@@ -226,22 +228,170 @@ describe('streamed thread renders', () => {
 
     rendered.rerender(view([...items.slice(0, -1), { ...items.at(-1)!, text: 'Hello' }]))
 
-    expect(initialRenders).toBe(1)
+    expect(initialRenders).toBe(0)
     expect(orbRender).toHaveBeenCalledTimes(initialRenders)
   })
 
-  it('uses the stable rail as the only live status and clears completed activity', () => {
+  it('keeps one live activity stack while commands change, then settles it at a boundary', () => {
     const user = message({
       id: 'user-1',
       turnId: 'turn-2',
       role: 'user',
       text: 'Run the checks',
     })
-    const opening = message({
-      id: 'opening-1',
+    const firstCommand = message({
+      id: 'command-1',
       turnId: 'turn-2',
+      type: 'command',
+      role: undefined,
       status: 'started',
-      text: 'I will run the checks.',
+      command: 'pnpm test',
+    })
+    const rendered = render(view([user, firstCommand]))
+    const stack = rendered.container.querySelector('.activity')
+
+    expect(rendered.getByRole('button', { name: 'Running pnpm test' })).toBeTruthy()
+    expect(rendered.container.querySelector('[data-index="1"]')?.className).not.toContain(
+      'is-suppressed',
+    )
+
+    const blankReasoning = message({
+      id: 'reasoning-empty',
+      turnId: 'turn-2',
+      type: 'reasoning',
+      role: undefined,
+      status: 'completed',
+      text: '',
+    })
+    rendered.rerender(view([user, { ...firstCommand, status: 'completed' }, blankReasoning]))
+
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
+    expect(rendered.getByRole('button', { name: 'Ran pnpm test' })).toBeTruthy()
+    expect(rendered.queryByText('Thinking')).toBeNull()
+
+    const secondCommand = message({
+      id: 'command-2',
+      turnId: 'turn-2',
+      type: 'command',
+      role: undefined,
+      status: 'started',
+      command: 'git status --short',
+    })
+    rendered.rerender(
+      view([user, { ...firstCommand, status: 'completed' }, blankReasoning, secondCommand]),
+    )
+
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
+    expect(rendered.getByRole('button', { name: 'Running git status --short' })).toBeTruthy()
+    expect(rendered.container.querySelectorAll('.activity')).toHaveLength(1)
+    expect(rendered.container.querySelector('[data-index="3"]')?.className).toContain(
+      'is-suppressed',
+    )
+
+    const reasoning = message({
+      id: 'reasoning-1',
+      turnId: 'turn-2',
+      type: 'reasoning',
+      role: undefined,
+      status: 'started',
+      text: 'Reviewing command results',
+    })
+    rendered.rerender(
+      view([
+        user,
+        { ...firstCommand, status: 'completed' },
+        blankReasoning,
+        { ...secondCommand, status: 'completed' },
+        reasoning,
+      ]),
+    )
+
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
+    expect(rendered.getByRole('button', { name: 'Ran commands' })).toBeTruthy()
+    const thinking = rendered.getByRole('button', { name: 'Thinking' })
+    expect(thinking.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    )
+    expect(rendered.container.querySelector('.activity--working')).toBeNull()
+  })
+
+  it('does not wake a hidden document to update a live reasoning label', () => {
+    vi.useFakeTimers({ now: 1_500 })
+    let documentVisible = false
+    const visibility = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockImplementation(() => (documentVisible ? 'visible' : 'hidden'))
+    try {
+      const reasoning = message({
+        id: 'reasoning-live',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: 'Reviewing the result',
+        createdAt: 1_000,
+      })
+      const rendered = render(view([reasoning]))
+
+      expect(rendered.getByRole('button', { name: 'Thinking' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(0)
+      act(() => vi.advanceTimersByTime(4_500))
+      expect(rendered.getByRole('button', { name: 'Thinking' })).toBeTruthy()
+
+      documentVisible = true
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      expect(rendered.getByRole('button', { name: 'Thought for 5s' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(1)
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(rendered.getByRole('button', { name: 'Thought for 6s' })).toBeTruthy()
+
+      documentVisible = false
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+
+  it('updates hour-long reasoning labels only when the shown minute changes', () => {
+    vi.useFakeTimers({ now: 3_601_000 })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      const reasoning = message({
+        id: 'reasoning-long',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: 'Still working',
+        createdAt: 1_000,
+      })
+      const rendered = render(view([reasoning]))
+
+      expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(1)
+      act(() => vi.advanceTimersByTime(59_999))
+      expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
+      act(() => vi.advanceTimersByTime(1))
+      expect(rendered.getByRole('button', { name: 'Thought for 1h 1m' })).toBeTruthy()
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+
+  it('keeps live narration close to the activity row that follows it', () => {
+    const user = message({
+      id: 'user-1',
+      turnId: 'turn-2',
+      role: 'user',
+      text: 'Run the checks',
+    })
+    const narration = message({
+      id: 'commentary-1',
+      turnId: 'turn-2',
+      role: 'assistant',
+      phase: 'commentary',
+      text: 'I found the cause.',
     })
     const command = message({
       id: 'command-1',
@@ -251,51 +401,70 @@ describe('streamed thread renders', () => {
       status: 'started',
       command: 'pnpm test',
     })
-    const rendered = render(view([user, opening]))
+
+    const rendered = render(view([user, narration, command]))
+
+    expect(rendered.container.querySelector('[data-index="1"]')?.className).toContain(
+      'is-compact-to-next',
+    )
+    expect(rendered.container.querySelector('[data-index="0"]')?.className).not.toContain(
+      'is-compact-to-next',
+    )
+  })
+
+  it('crossfades working labels without remounting the rail', () => {
+    vi.useFakeTimers()
+    const user = message({
+      id: 'user-1',
+      turnId: 'turn-2',
+      role: 'user',
+      text: 'Run the checks',
+    })
+    const completedPhase = message({
+      id: 'phase-1',
+      turnId: 'turn-2',
+      type: 'tool_call',
+      role: undefined,
+      text: 'design:brief',
+    })
+    const rendered = render(view([user, completedPhase]))
     const rail = rendered.container.querySelector('.activity--working')
 
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Working',
-    )
-    rendered.rerender(view([user, opening, command]))
-
-    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Running a command',
-    )
-    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
-    expect(rendered.container.querySelector('[data-index="2"]')?.className).toContain(
-      'is-suppressed',
-    )
-    expect(rendered.container.querySelector('[data-index="2"]')?.className).not.toContain(
-      'is-live-activity',
-    )
-
-    rendered.rerender(view([user, opening, { ...command, text: 'Tests passed.' }]))
-    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
-    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
-
-    const narration = message({
-      id: 'answer-1',
-      turnId: 'turn-2',
-      status: 'started',
-      text: 'The checks passed.',
-    })
     rendered.rerender(
-      view([user, opening, { ...command, status: 'completed', text: 'Tests passed.' }, narration]),
+      view([
+        user,
+        completedPhase,
+        message({
+          id: 'search-1',
+          turnId: 'turn-2',
+          type: 'tool_call',
+          role: undefined,
+          status: 'started',
+          text: 'search files',
+        }),
+      ]),
     )
 
     expect(rendered.container.querySelector('.activity--working')).toBe(rail)
     expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
+      'Searching',
+    )
+    expect(rendered.container.querySelector('.activity__working-label-previous')?.textContent).toBe(
       'Working',
     )
-    expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
-    expect(rendered.container.querySelector('[data-index="2"]')?.className).toContain(
-      'is-suppressed',
-    )
-    expect(rendered.queryByRole('button', { name: 'Ran a command' })).toBeNull()
-    expect(rendered.queryByRole('button', { name: 'pnpm test' })).toBeNull()
-    expect(markdownRender).toHaveBeenLastCalledWith({ text: narration.text, streaming: true })
+    const previousTime = rendered.container.querySelector(
+      '.activity__working-status-previous .activity__working-time',
+    )?.textContent
+    const currentTime = rendered.container.querySelector(
+      '.activity__working-status .activity__working-time',
+    )?.textContent
+    expect(previousTime).toBeTruthy()
+    expect(currentTime).toBe(previousTime)
+
+    act(() => vi.advanceTimersByTime(480))
+
+    expect(rendered.container.querySelector('.activity__working-label-previous')).toBeNull()
+    vi.useRealTimers()
   })
 
   it('does not restart the entry animation timer for streamed text updates', () => {

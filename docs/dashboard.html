@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Personal Harness Release Roadmap</title>
+    <title>TasteCode Release Roadmap</title>
     <style>
       :root {
         --bg: #0e0e0e;
@@ -283,14 +283,14 @@
   <body>
     <div class="topbar">
       <div class="topbar-inner">
-        <h1>Personal Harness</h1>
+        <h1>TasteCode</h1>
         <nav>
           <a href="#scope">Scope</a>
           <a href="#ready">Checklist</a>
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-14 nightly · main 0d68713c</span>
+        <span class="meta">2026-09-07 nightly · main 797db3c6</span>
       </div>
     </div>
 
@@ -311,7 +311,7 @@
           <div class="kpi">
             <b>Ready</b>
             <span>core app</span>
-            <small>thread, review, sessions, git, settings</small>
+            <small>thread, review, sessions, git, settings, TasteCode identity</small>
           </div>
           <div class="kpi">
             <b>1</b>
@@ -319,9 +319,9 @@
             <small>design</small>
           </div>
           <div class="kpi">
-            <b>8</b>
+            <b>6</b>
             <span>items open before release</span>
-            <small>two of them are human decisions</small>
+            <small>design acceptance, distribution, and launch proof</small>
           </div>
         </div>
       </section>
@@ -334,15 +334,15 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">30</span></header>
+            <header>Ready <span class="count">32</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
                 <span
                   >Codex plan
                   <span class="d"
-                    >OAuth, live models, effort, steer, approvals, limits, voice with explicit local
-                    discard</span
+                    >OAuth, live models, effort, steer, approvals, limits, and voice through an
+                    explicit OpenAI API connection with local discard</span
                   >
                 </span>
               </li>
@@ -351,8 +351,9 @@
                 <span
                   >Claude Code plan
                   <span class="d"
-                    >models with effort per the docs, resume, permission modes, pasted and selected
-                    image input, selected file references</span
+                    >Agent SDK session over the installed CLI, complete versioned models, steer,
+                    resume, approvals, structured questions, pasted and selected image input,
+                    selected file references, and structured subscription limits</span
                   >
                 </span>
               </li>
@@ -361,11 +362,14 @@
                 <span
                   >Grok plan
                   <span class="d"
-                    >streaming, reasoning, effort, resume, sign in and out; explicit Stop reaches
-                    one interrupted terminal state and restores sending; provider-owned billing
-                    source with honest unavailable and error states; successful sign-in captures the
-                    provider-confirmed email without manual entry; pasted and selected images plus
-                    selected file resources reach the CLI through ACP prompt blocks</span
+                    >streaming, reasoning, effort, restart-safe resume through a separately
+                    persisted native session id or Grok's ACP load path, sign in and out; explicit
+                    Stop reaches one interrupted terminal state and restores sending; provider-owned
+                    billing source with honest unavailable and error states; successful sign-in
+                    captures the provider-confirmed email without manual entry; pasted and selected
+                    images plus selected file resources reach the CLI through ACP prompt blocks;
+                    project MCP servers selected in Settings join MCP-enabled sessions through
+                    Grok's ACP handshake</span
                   >
                 </span>
               </li>
@@ -392,8 +396,8 @@
                 <span
                   >Review and safety
                   <span class="d"
-                    >per-hunk diff review, approvals, validated checkpoints, modal keyboard
-                    isolation, modes</span
+                    >per-hunk diff review, exact edit-block undo, approvals, validated checkpoints,
+                    modal keyboard isolation, modes</span
                   >
                 </span>
               </li>
@@ -505,9 +509,9 @@
                     names and marks stay consistent; flat and rail pickers share search; Settings
                     keeps the short catalog lists search-free while every model and its switch
                     remain picker inclusion; the flat list is the first-run layout, current Codex
-                    and Claude families are prioritized, Grok 4.5 remains discoverable, provider
-                    readiness stays silent during new-chat source changes, and saved custom ids
-                    remain usable while their management UI is parked</span
+                    and exact Claude defaults are prioritized, Grok 4.5 and 4.6 remain discoverable,
+                    provider readiness stays silent during new-chat source changes, and saved custom
+                    ids remain usable while their management UI is parked</span
                   >
                 </span>
               </li>
@@ -567,9 +571,10 @@
                 <span
                   >Narration and tool lifecycles
                   <span class="d"
-                    >adapter activity stays unique and chronological; narration splits work into
-                    distinct timers, commands stay summarized until opened, and fixed action rows do
-                    not resize the chat on hover</span
+                    >adapter activity stays unique and ordered; each completed model reply has one
+                    full-turn Worked summary while the live timer restarts after assistant updates;
+                    commands stay summarized until opened, and fixed action rows do not resize the
+                    chat on hover</span
                   >
                 </span>
               </li>
@@ -578,19 +583,21 @@
                 <span
                   >Search, menus, and focus
                   <span class="d"
-                    >compact 520 px cross-chat search with flat project and agent filters, stable
-                    result identity, keyboard-complete menus, trapped focus, and deterministic focus
-                    restoration across task changes</span
+                    >Readable command and search rows, a guided search empty state, responsive
+                    filters, stable result identity, keyboard-complete menus, trapped focus, and
+                    deterministic focus restoration across task changes</span
                   >
                 </span>
               </li>
               <li>
                 <i class="tick">✓</i>
                 <span
-                  >Claude Code item identity
+                  >Provider stream lifecycles
                   <span class="d"
-                    >reused message IDs keep narration and tool blocks unique, chronological, and
-                    deterministic on replay</span
+                    >Claude Code, Grok, and direct API sessions settle every partial message,
+                    reasoning block, and tool before the turn terminal; streamed text survives
+                    failures, stops, process exits, replacements, and closes without a permanently
+                    live row</span
                   >
                 </span>
               </li>
@@ -610,7 +617,8 @@
                   >Bounded live Markdown parser foundation
                   <span class="d"
                     >append operations scan only the delta, bound parser state, and retain exact
-                    source for the full completion render</span
+                    source for the full completion render; patched Mermaid and DOMPurify releases
+                    leave the production dependency audit clear</span
                   >
                 </span>
               </li>
@@ -627,8 +635,12 @@
               <li>
                 <i class="tick">✓</i>
                 <span
-                  >Guided sign-in
-                  <span class="d">browser opens itself, code chip, no raw terminal</span>
+                  >Expanded setup terminal
+                  <span class="d"
+                    >provider installs and sign-ins plus GitHub CLI install and login open the same
+                    live workspace terminal card; browser handoff, the code chip, and the
+                    one-time-code field stay scoped to the active setup terminal</span
+                  >
                 </span>
               </li>
               <li>
@@ -638,14 +650,17 @@
                   <span class="d"
                     >General, Profile, and Appearance lead the navigation; local display name and
                     validated avatar stay on this device; provider actions share a fixed right edge
-                    and empty action slots no longer double signed-in row height;
-                    background-prefetched limits open from the lifted account menu without a fresh
-                    request; clear dividers separate provider groups, while loading, unavailable,
-                    successful-empty, and failure states preserve usable values through Retry; roomy
-                    Data and Debug rows; app-level failures use a compact bottom-right notice
-                    without an accent rail; short-window scrolling, contained keyboard focus, and a
-                    scoped confirmation before resetting renderer preferences preserve projects,
-                    files, history, and credentials;
+                    and empty action slots no longer double signed-in row height; clear labels and
+                    notes use 48 px base rows and 56 px provider rows; background-prefetched limits
+                    open from the lifted account menu without a fresh request; clear dividers
+                    separate provider groups, while loading, unavailable, successful-empty, and
+                    failure states preserve usable values through Retry; roomy Data and Debug rows;
+                    app-level failures use a compact bottom-right notice without an accent rail;
+                    short-window scrolling, contained keyboard focus, and a scoped confirmation
+                    before resetting renderer preferences preserve projects, files, history, and
+                    credentials; legacy history and configuration move into TasteCode paths without
+                    overwriting existing TasteCode data; About and update checks point at the
+                    renamed <code>Leonxlnx/tastecode</code> repository;
                     <a href="./screenshots/provider-density-after.png">compact provider</a>,
                     <a href="./screenshots/model-settings-no-search.png">model settings</a>,
                     <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
@@ -660,8 +675,9 @@
                 <span
                   >Appearance
                   <span class="d"
-                    >themes, fonts, accents, backdrops, and flat translucency previews for the
-                    frosted sidebar</span
+                    >large theme previews, a live code sample, and one compact editor for fonts,
+                    accents, backdrops, and frosted-sidebar translucency; shared flat controls,
+                    compact cards, and reversible popup motion keep the app consistent</span
                   >
                 </span>
               </li>
@@ -699,7 +715,33 @@
                     optimistic user row plus one stable Working and Stop surface before the next
                     paint, while the reopened 1,513-event Desktop trace captured the same stable
                     state at +87 ms without a reload flash, duplicate status, timer restart, or
-                    limit-induced layout shift</span
+                    limit-induced layout shift. Fresh opens now receive a state-equivalent compact
+                    replay: the real 6,495-event trace fell from 18.81 MB and 466 ms to 1.85 MB and
+                    109 ms, while reconnect tails remain exact</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >Packaged release client
+                  <span class="d"
+                    >NSIS packaging produces the installer, blockmap, and beta metadata; the About
+                    surface checks, downloads, and installs updates from the TasteCode feed. Public
+                    feed publication, signing, and version-to-version proof remain release
+                    tasks</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >First-run and private diagnostics
+                  <span class="d"
+                    >the empty desktop guides users to one project and the three beta providers;
+                    bounded local logs can be revealed or copied only by the user after keyed and
+                    standalone credential shapes, private keys, emails, project paths, and
+                    cross-platform home paths are scrubbed</span
                   >
                 </span>
               </li>
@@ -721,9 +763,25 @@
                     package-manager previews stay in the selected workspace, and build reports must
                     match the exact changed-file set; rendered preview audits require exactly one h1
                     and mobile interaction targets of at least 44 by 44 CSS pixels before visual
-                    review can pass; serialized hidden capture remains the review authority, waits
-                    for bounded animation, font, and image settlement, confines navigation and
-                    redirects to the preview origin, and verifies the final URL; negotiated ACP
+                    review can pass; every new page section records one of the human-authored beta
+                    layout families and exact case IDs, invalid or adjacent duplicate compositions
+                    fail before Build, and Build plus Review must preserve the selected geometry;
+                    132 generated-only direction references deterministically contribute one bounded
+                    geometry cue per family, while brand palettes supply optional dependency-free
+                    card, section, and page gradient recipes; each section records a purposeful
+                    motion trigger, timing, easing, and reduced-motion equivalent instead of
+                    inheriting one generic reveal; page validation rejects eyebrows, internal
+                    placeholders, overlong headings, and redundant Hero support copy; Brand limits
+                    typography to two approved families, while Page, Asset, Build, and Review
+                    require coherent card systems, meaningful brand-accent use, and real image
+                    acquisition when provider tools are available; they block ornamental SVG filler,
+                    divider-grid templates, colored card rails, unstyled controls, overflow, and
+                    headings beyond three lines; representative content stays out of page
+                    disclaimers and reaches the final Harness response as a publishing verification
+                    note; serialized hidden capture remains the review authority, scrolls through
+                    lazy content, audits the whole document, captures a bounded whole-page image per
+                    viewport, waits for animation, font, and image settlement, confines navigation
+                    and redirects to the preview origin, and verifies the final URL; negotiated ACP
                     image prompts receive the screenshots, and shared browser storage and cache are
                     cleared before the next capture; successful previews remain reachable until
                     their owning thread closes or starts a replacement, and a completed queued
@@ -735,49 +793,54 @@
           </div>
 
           <div class="lane l-todo">
-            <header>To do before beta <span class="count">8</span></header>
+            <header>To do before beta <span class="count">6</span></header>
             <ul>
               <li>
                 <i class="tick"></i>
                 <span
-                  >Product name and domain
-                  <span class="d">human decision, blocks everything visual</span>
+                  >Design Mode acceptance
+                  <span class="d"
+                    >ship-quality TasteCode landing page and provider/platform matrix</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick"></i>
                 <span
-                  >Windows code signing <span class="d">human decision, weeks of lead time</span>
+                  >Signing and notarization
+                  <span class="d">Windows SmartScreen trust and packaged macOS proof</span>
                 </span>
               </li>
               <li>
                 <i class="tick"></i>
-                <span>Installer <span class="d">NSIS, no SmartScreen warning</span></span>
-              </li>
-              <li>
-                <i class="tick"></i>
-                <span>Auto-update with rollback</span>
-              </li>
-              <li>
-                <i class="tick"></i>
-                <span>Crash reporting, opt in</span>
-              </li>
-              <li>
-                <i class="tick"></i>
                 <span
-                  >Clean-VM install test
-                  <span class="d">fresh Windows to first agent answer in under five minutes</span>
+                  >Publish and prove updates
+                  <span class="d"
+                    >real feed, old-to-new install, relaunch, and rollback decision</span
+                  >
                 </span>
               </li>
               <li>
                 <i class="tick"></i>
-                <span>Landing page and docs</span>
+                <span
+                  >Crash intake decision
+                  <span class="d">manual private export or explicit opt-in remote reporting</span>
+                </span>
               </li>
               <li>
                 <i class="tick"></i>
                 <span
-                  >Onboarding hardening
-                  <span class="d">first-run flow covers exactly the three beta plans</span>
+                  >Clean packaged smoke matrix
+                  <span class="d">fresh Windows and macOS to first real provider answer</span>
+                </span>
+              </li>
+              <li>
+                <i class="tick"></i>
+                <span
+                  >Launch site and legal posture
+                  <span class="d"
+                    >downloads, support, privacy/terms, and source license decision</span
+                  >
                 </span>
               </li>
             </ul>

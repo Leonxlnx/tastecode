@@ -1,12 +1,8 @@
-import type {
-  ApprovalRequest,
-  ApprovalReview,
-  DomainEvent,
-  Item,
-  PlanStep,
-  Usage,
-  UserInputRequest,
-} from '@harness/contracts'
+import type { DomainEvent, Item, Usage } from '@harness/contracts'
+import { EMPTY_LIVE_ITEMS, type LiveItemUpdate, type ThreadState } from './thread-state.js'
+
+export { emptyThread } from './thread-state.js'
+export type { LiveItemUpdate, ThreadState } from './thread-state.js'
 
 /**
  * Folds the domain event stream into what the UI renders.
@@ -15,51 +11,117 @@ import type {
  * currently streaming changes identity, so everything above it can be memoised
  * hard once virtualisation lands.
  */
-export type ThreadState = {
-  items: Item[]
-  liveItems: ReadonlyMap<number, LiveItemUpdate>
-  itemVersion: number
-  liveStart: number
-  running: boolean
-  /** The live turn whose elapsed time and activity the UI is presenting. */
-  activeTurn: { id: string; startedAt: number } | undefined
-  /** Durable server-owned lifecycle boundaries used by live and replayed elapsed labels. */
-  turnTiming: Readonly<Record<string, { startedAt?: number; completedAt?: number }>>
-  /** The agent's plan for the current turn. Replaced wholesale when it changes. */
-  plan: PlanStep[]
-  usage?: Usage
-  /** Everything the current turn changed, as one unified diff. */
-  diff?: string | undefined
-  /** Permission requests still waiting on an answer. */
-  approvals: ApprovalRequest[]
-  /** Structured questions still blocking the current agent turn. */
-  userInputs: UserInputRequest[]
-  /** Automatic approval reviews, upserted by their stable provider id. */
-  reviews: Record<string, ApprovalReview>
-}
-
-const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
-
-export const emptyThread: ThreadState = {
-  items: [],
-  liveItems: EMPTY_LIVE_ITEMS,
-  itemVersion: 0,
-  liveStart: 0,
-  running: false,
-  activeTurn: undefined,
-  turnTiming: {},
-  plan: [],
-  approvals: [],
-  userInputs: [],
-  reviews: {},
-}
+const itemIndexes = new WeakMap<readonly Item[], Map<string, number>>()
+const itemIndexOwners = new WeakMap<Map<string, number>, readonly Item[]>()
+const LIVE_ITEM_OVERLAY_MIN_SIZE = 64
+const LIVE_ITEM_OVERLAY_MAX_DEPTH = 16
+const liveItemTransitions = new WeakMap<
+  ReadonlyMap<number, LiveItemUpdate>,
+  { previous: ReadonlyMap<number, LiveItemUpdate>; indices: readonly number[] }
+>()
 
 export type ItemDeltaEvent = Extract<DomainEvent, { type: 'item.delta' }>
 
-export type LiveItemUpdate = {
-  item: Item
-  version: number
-  textUpdate: { kind: 'append'; text: string }
+/**
+ * Keeps large live-item snapshots immutable without copying every unchanged
+ * entry for each rendered provider frame. Iteration is uncommon and
+ * materializes the bounded chain once; indexed row reads stay bounded.
+ */
+class LiveItemOverlay implements ReadonlyMap<number, LiveItemUpdate> {
+  readonly size: number
+  readonly depth: number
+
+  constructor(
+    private readonly previous: ReadonlyMap<number, LiveItemUpdate>,
+    private readonly updates: ReadonlyMap<number, LiveItemUpdate>,
+  ) {
+    let added = 0
+    for (const index of updates.keys()) {
+      if (!previous.has(index)) added += 1
+    }
+    this.size = previous.size + added
+    this.depth = previous instanceof LiveItemOverlay ? previous.depth + 1 : 1
+  }
+
+  get(index: number): LiveItemUpdate | undefined {
+    return this.updates.get(index) ?? this.previous.get(index)
+  }
+
+  has(index: number): boolean {
+    return this.updates.has(index) || this.previous.has(index)
+  }
+
+  materialize(): Map<number, LiveItemUpdate> {
+    const items = new Map<number, LiveItemUpdate>()
+    this.materializeInto(items)
+    return items
+  }
+
+  private materializeInto(items: Map<number, LiveItemUpdate>): void {
+    if (this.previous instanceof LiveItemOverlay) this.previous.materializeInto(items)
+    else for (const [index, update] of this.previous) items.set(index, update)
+    for (const [index, update] of this.updates) items.set(index, update)
+  }
+
+  entries(): MapIterator<[number, LiveItemUpdate]> {
+    return this.materialize().entries()
+  }
+
+  keys(): MapIterator<number> {
+    return this.materialize().keys()
+  }
+
+  values(): MapIterator<LiveItemUpdate> {
+    return this.materialize().values()
+  }
+
+  forEach(
+    callback: (
+      value: LiveItemUpdate,
+      key: number,
+      map: ReadonlyMap<number, LiveItemUpdate>,
+    ) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [index, update] of this) callback.call(thisArg, update, index, this)
+  }
+
+  [Symbol.iterator](): MapIterator<[number, LiveItemUpdate]> {
+    return this.entries()
+  }
+}
+
+function applyLiveItemUpdates(
+  previous: ReadonlyMap<number, LiveItemUpdate>,
+  updates: ReadonlyMap<number, LiveItemUpdate>,
+): ReadonlyMap<number, LiveItemUpdate> {
+  let next: ReadonlyMap<number, LiveItemUpdate>
+  if (previous.size === 0) {
+    next = updates
+  } else if (previous.size < LIVE_ITEM_OVERLAY_MIN_SIZE) {
+    const copied = new Map(previous)
+    for (const [index, update] of updates) copied.set(index, update)
+    next = copied
+  } else if (previous instanceof LiveItemOverlay && previous.depth >= LIVE_ITEM_OVERLAY_MAX_DEPTH) {
+    const materialized = previous.materialize()
+    for (const [index, update] of updates) materialized.set(index, update)
+    next = materialized
+  } else {
+    next = new LiveItemOverlay(previous, updates)
+  }
+  if (next.size >= LIVE_ITEM_OVERLAY_MIN_SIZE) {
+    liveItemTransitions.set(next, { previous, indices: [...updates.keys()] })
+  }
+  return next
+}
+
+/** Exact live rows changed by one sequential reducer transition, when known. */
+export function changedLiveItemIndices(
+  previous: ReadonlyMap<number, LiveItemUpdate>,
+  next: ReadonlyMap<number, LiveItemUpdate>,
+): readonly number[] | undefined {
+  const transition = liveItemTransitions.get(next)
+  return transition?.previous === previous ? transition.indices : undefined
 }
 
 export function threadItemAt(
@@ -70,11 +132,67 @@ export function threadItemAt(
   return liveItems.get(index)?.item ?? items[index]
 }
 
+/** Read one transcript row without scanning the full history. */
+export function threadItemById(state: ThreadState, itemId: string): Item | undefined {
+  const index = itemIndex(state.items, itemId)
+  return index < 0 ? undefined : threadItemAt(state.items, state.liveItems, index)
+}
+
 function materializeItems(state: ThreadState): Item[] {
   if (state.liveItems.size === 0) return state.items
+  return copyMaterializedItems(state)
+}
+
+function copyMaterializedItems(state: ThreadState): Item[] {
   const items = state.items.slice()
   for (const [index, update] of state.liveItems) items[index] = update.item
+  retainItemIndex(state.items, items)
   return items
+}
+
+function buildItemIndex(items: readonly Item[]): Map<string, number> {
+  const index = new Map<string, number>()
+  for (let position = 0; position < items.length; position += 1) {
+    const id = items[position]?.id
+    if (id !== undefined && !index.has(id)) index.set(id, position)
+  }
+  itemIndexes.set(items, index)
+  itemIndexOwners.set(index, items)
+  return index
+}
+
+function itemIndex(items: readonly Item[], itemId: string): number {
+  let index = itemIndexes.get(items)
+  if (!index) return buildItemIndex(items).get(itemId) ?? -1
+  const position = index.get(itemId)
+  if (position === undefined) return -1
+  if (items[position]?.id === itemId) return position
+
+  // A stale branch can share an internal index with a newer immutable array.
+  // Rebuild that rare branch once instead of returning its sibling's row.
+  index = buildItemIndex(items)
+  return index.get(itemId) ?? -1
+}
+
+/** Release a derived lookup table while its transcript is inactive. */
+export function releaseThreadItemIndex(items: readonly Item[]): void {
+  itemIndexes.delete(items)
+}
+
+function retainItemIndex(source: readonly Item[], target: readonly Item[]): void {
+  const index = itemIndexes.get(source)
+  if (!index) return
+  itemIndexes.set(target, index)
+  itemIndexOwners.set(index, target)
+}
+
+function recordAppendedItem(items: readonly Item[], item: Item): void {
+  let index = itemIndexes.get(items)
+  if (!index) return
+  if (itemIndexOwners.get(index) !== items) index = buildItemIndex(items)
+  if (!index.has(item.id)) index.set(item.id, items.length - 1)
+  itemIndexes.set(items, index)
+  itemIndexOwners.set(index, items)
 }
 
 export function threadItems(state: ThreadState): Item[] {
@@ -154,6 +272,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
         },
         plan: [],
         diff: undefined,
+        diffTurnId: undefined,
       }
     }
 
@@ -190,7 +309,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return { ...state, usage: withoutIncompatibleContextWindow(event.usage) }
 
     case 'diff.updated':
-      return { ...state, diff: event.diff }
+      return { ...state, diff: event.diff, diffTurnId: event.turnId }
 
     case 'approval.requested':
       // Codex is blocked waiting on this. Queued rather than replacing, since
@@ -211,43 +330,58 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return { ...state, reviews: { ...state.reviews, [event.review.id]: event.review } }
 
     case 'item.started': {
-      state = settleLiveItems(state)
       // An early delta or exact optimistic submission may already own this id;
       // fill it in rather than inferring identity from repeated prompt text.
-      const existingIndex = state.items.findIndex((item) => item.id === event.item.id)
-      if (existingIndex < 0) return { ...state, items: [...state.items, event.item] }
-      const existing = state.items[existingIndex]
-      const optimistic = existing?.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
+      const existingIndex = itemIndex(state.items, event.item.id)
+      const existing = threadItemAt(state.items, state.liveItems, existingIndex)
+      if (existingIndex < 0) {
+        const items = copyMaterializedItems(state)
+        items.push(event.item)
+        recordAppendedItem(items, event.item)
+        return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
+      }
+      if (!existing) return state
+      const optimistic = existing.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
       // Completion is terminal. A buffered or retried start may arrive after
       // restored history and must never resurrect finished canonical work.
-      if (!optimistic && existing?.status !== 'started') return state
-      const items = state.items.slice()
+      if (!optimistic && existing.status !== 'started') return settleLiveItems(state)
+      const items = copyMaterializedItems(state)
       items[existingIndex] = {
         ...event.item,
-        ...(event.item.text || !existing?.text ? {} : { text: existing.text }),
+        ...(!event.item.text && existing.text ? { text: existing.text } : {}),
       }
-      return { ...state, items }
+      return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
     }
 
     case 'item.delta':
       return reduceDeltas(state, [event])
 
     case 'item.completed': {
-      state = settleLiveItems(state)
-      if (event.item.text === LEGACY_DESIGN_APPROVAL_WARNING) return state
-      const index = state.items.findIndex((i) => i.id === event.item.id)
-      if (index === -1) return { ...state, items: [...state.items, event.item] }
-      const items = state.items.slice()
+      if (event.item.text === LEGACY_DESIGN_APPROVAL_WARNING) return settleLiveItems(state)
+      const index = itemIndex(state.items, event.item.id)
+      const items = copyMaterializedItems(state)
+      if (index === -1) {
+        items.push(event.item)
+        recordAppendedItem(items, event.item)
+        return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
+      }
       // Keep streamed text when the completed payload carries none, so a
       // finished message never blanks out what the user just watched arrive.
-      const streamed = items[index]?.text
-      items[index] = { ...event.item, ...(event.item.text ? {} : { text: streamed }) }
-      return { ...state, items }
+      const streamed = threadItemAt(state.items, state.liveItems, index)?.text
+      items[index] = {
+        ...event.item,
+        ...(!event.item.text ? { text: streamed } : {}),
+      }
+      return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
     }
 
-    case 'thread.error':
-      state = settleLiveItems(state)
-      return settleThreadError(state, [...state.items, createThreadErrorItem(event.message)])
+    case 'thread.error': {
+      const items = copyMaterializedItems(state)
+      const error = createThreadErrorItem(event.message)
+      items.push(error)
+      recordAppendedItem(items, error)
+      return settleThreadError({ ...state, liveItems: EMPTY_LIVE_ITEMS }, items)
+    }
 
     default:
       return state
@@ -280,52 +414,86 @@ function withoutIncompatibleContextWindow(usage: Usage): Usage {
 export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): ThreadState {
   if (deltas.length === 0) return state
 
-  const chunksByItem = new Map<string, { chunks: string[]; turnId: string }>()
+  const first = deltas[0]!
+  let singleItemText = first.textDelta
+  let singleItem = true
+  for (let index = 1; index < deltas.length; index += 1) {
+    const event = deltas[index]!
+    if (event.itemId !== first.itemId || event.turnId !== first.turnId) {
+      singleItem = false
+      break
+    }
+    singleItemText += event.textDelta
+  }
+  if (singleItem) {
+    return reduceSingleItemDeltas(state, first.itemId, first.turnId, singleItemText)
+  }
+
+  const chunksByItem = new Map<string, { chunks: string[]; itemId: string; turnId: string }>()
   for (const event of deltas) {
-    const entry = chunksByItem.get(event.itemId)
+    const key = JSON.stringify([event.itemId, event.turnId])
+    const entry = chunksByItem.get(key)
     if (entry) entry.chunks.push(event.textDelta)
-    else chunksByItem.set(event.itemId, { chunks: [event.textDelta], turnId: event.turnId })
+    else {
+      chunksByItem.set(key, {
+        chunks: [event.textDelta],
+        itemId: event.itemId,
+        turnId: event.turnId,
+      })
+    }
   }
 
   let items = state.items
-  let liveItems = new Map(state.liveItems)
+  let liveItems: ReadonlyMap<number, LiveItemUpdate> = state.liveItems
+  let liveItemUpdates: Map<number, LiveItemUpdate> | undefined
+  let writableItems = false
   let liveStart = state.liveStart
   let changed = false
-  for (const [itemId, { chunks, turnId }] of chunksByItem) {
-    const last = items.length - 1
-    let index = last >= liveStart && threadItemAt(items, liveItems, last)?.id === itemId ? last : -1
-    for (let candidate = last - 1; index < 0 && candidate >= liveStart; candidate -= 1) {
-      if (threadItemAt(items, liveItems, candidate)?.id === itemId) index = candidate
-    }
+  for (const { chunks, itemId, turnId } of chunksByItem.values()) {
+    const index = liveItemIndex(items, liveItems, liveStart, itemId)
     const textDelta = chunks.length === 1 ? chunks[0]! : chunks.join('')
     if (index < 0) {
       if (state.activeTurn && turnId !== state.activeTurn.id) continue
+      if (liveItemUpdates) {
+        liveItems = applyLiveItemUpdates(liveItems, liveItemUpdates)
+        liveItemUpdates = undefined
+      }
       if (liveItems.size > 0) {
-        const materialized = items.slice()
-        for (const [liveIndex, update] of liveItems) materialized[liveIndex] = update.item
-        items = materialized
-        liveItems = new Map()
+        if (!writableItems) {
+          const materialized = items.slice()
+          retainItemIndex(items, materialized)
+          items = materialized
+          writableItems = true
+        }
+        for (const [liveIndex, update] of liveItems) items[liveIndex] = update.item
+        liveItems = EMPTY_LIVE_ITEMS
       }
       if (!state.running) liveStart = items.length
-      items = [
-        ...items,
-        {
-          id: itemId,
-          turnId: state.activeTurn?.id ?? '',
-          type: 'message',
-          status: 'started',
-          role: 'assistant',
-          text: textDelta,
-          createdAt: Date.now(),
-        },
-      ]
+      if (!writableItems) {
+        const copied = items.slice()
+        retainItemIndex(items, copied)
+        items = copied
+        writableItems = true
+      }
+      const item: Item = {
+        id: itemId,
+        turnId: state.activeTurn?.id ?? '',
+        type: 'message',
+        status: 'started',
+        role: 'assistant',
+        text: textDelta,
+        createdAt: Date.now(),
+      }
+      items.push(item)
+      recordAppendedItem(items, item)
       changed = true
       continue
     }
 
-    const existing = threadItemAt(items, liveItems, index)
+    const existing = liveItemUpdates?.get(index)?.item ?? threadItemAt(items, liveItems, index)
     if (existing?.status === 'started') {
-      liveItems.set(index, {
+      liveItemUpdates ??= new Map()
+      liveItemUpdates.set(index, {
         item: { ...existing, text: (existing.text ?? '') + textDelta },
         version: state.itemVersion + 1,
         textUpdate: { kind: 'append', text: textDelta },
@@ -333,6 +501,8 @@ export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): Thre
       changed = true
     }
   }
+
+  if (liveItemUpdates) liveItems = applyLiveItemUpdates(liveItems, liveItemUpdates)
 
   return changed
     ? {
@@ -343,6 +513,79 @@ export function reduceDeltas(state: ThreadState, deltas: ItemDeltaEvent[]): Thre
         itemVersion: state.itemVersion + 1,
       }
     : state
+}
+
+function reduceSingleItemDeltas(
+  state: ThreadState,
+  itemId: string,
+  turnId: string,
+  textDelta: string,
+): ThreadState {
+  const index = liveItemIndex(state.items, state.liveItems, state.liveStart, itemId)
+
+  if (index < 0) {
+    if (state.activeTurn && turnId !== state.activeTurn.id) return state
+    const items = copyMaterializedItems(state)
+    const liveStart = state.running ? state.liveStart : items.length
+    const item: Item = {
+      id: itemId,
+      turnId: state.activeTurn?.id ?? '',
+      type: 'message',
+      status: 'started',
+      role: 'assistant',
+      text: textDelta,
+      createdAt: Date.now(),
+    }
+    items.push(item)
+    recordAppendedItem(items, item)
+    return {
+      ...state,
+      items,
+      liveItems: EMPTY_LIVE_ITEMS,
+      liveStart,
+      itemVersion: state.itemVersion + 1,
+    }
+  }
+
+  const existing = threadItemAt(state.items, state.liveItems, index)
+  if (existing?.status !== 'started') return state
+  const update = {
+    item: { ...existing, text: (existing.text ?? '') + textDelta },
+    version: state.itemVersion + 1,
+    textUpdate: { kind: 'append' as const, text: textDelta },
+  }
+  let liveItems: ReadonlyMap<number, LiveItemUpdate>
+  if (state.liveItems.size < LIVE_ITEM_OVERLAY_MIN_SIZE) {
+    const copied = new Map(state.liveItems)
+    copied.set(index, update)
+    liveItems = copied
+  } else {
+    liveItems = applyLiveItemUpdates(state.liveItems, new Map([[index, update]]))
+  }
+  return { ...state, liveItems, itemVersion: state.itemVersion + 1 }
+}
+
+function liveItemIndex(
+  items: readonly Item[],
+  liveItems: ReadonlyMap<number, LiveItemUpdate>,
+  liveStart: number,
+  itemId: string,
+): number {
+  const last = items.length - 1
+  if (last >= liveStart && threadItemAt(items, liveItems, last)?.id === itemId) return last
+
+  const cachedIndex = itemIndexes.get(items)?.get(itemId)
+  if (
+    cachedIndex !== undefined &&
+    cachedIndex >= liveStart &&
+    threadItemAt(items, liveItems, cachedIndex)?.id === itemId
+  ) {
+    return cachedIndex
+  }
+  for (let candidate = last - 1; candidate >= liveStart; candidate -= 1) {
+    if (threadItemAt(items, liveItems, candidate)?.id === itemId) return candidate
+  }
+  return -1
 }
 
 /**
@@ -378,11 +621,12 @@ class ReplayItems {
     }
 
     const existing = this.items[existingIndex]
-    const optimistic = existing?.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
-    if (!optimistic && existing?.status !== 'started') return
+    if (!existing) return
+    const optimistic = existing.id.startsWith(OPTIMISTIC_PREFIX) && existing.turnId === ''
+    if (!optimistic && existing.status !== 'started') return
     this.items[existingIndex] = {
       ...item,
-      ...(item.text || !existing?.text ? {} : { text: existing.text }),
+      ...(!item.text && existing.text ? { text: existing.text } : {}),
     }
   }
 
@@ -395,37 +639,41 @@ class ReplayItems {
     }
 
     const streamed = this.items[existingIndex]?.text
-    this.items[existingIndex] = { ...item, ...(item.text ? {} : { text: streamed }) }
+    this.items[existingIndex] = {
+      ...item,
+      ...(!item.text ? { text: streamed } : {}),
+    }
   }
 
-  appendDeltas(deltas: ItemDeltaEvent[], activeTurnId: string | undefined): void {
-    const chunksByItem = new Map<string, string[]>()
-    for (const event of deltas) {
-      const chunks = chunksByItem.get(event.itemId)
-      if (chunks) chunks.push(event.textDelta)
-      else chunksByItem.set(event.itemId, [event.textDelta])
+  retainIndex(): void {
+    itemIndexes.set(this.items, this.#indexById)
+    itemIndexOwners.set(this.#indexById, this.items)
+  }
+
+  appendDelta(
+    itemId: string,
+    turnId: string,
+    textDelta: string,
+    activeTurnId: string | undefined,
+  ): void {
+    const index = this.#indexById.get(itemId)
+    if (index === undefined) {
+      if (activeTurnId && turnId !== activeTurnId) return
+      this.append({
+        id: itemId,
+        turnId: activeTurnId ?? '',
+        type: 'message',
+        status: 'started',
+        role: 'assistant',
+        text: textDelta,
+        createdAt: Date.now(),
+      })
+      return
     }
 
-    for (const [itemId, chunks] of chunksByItem) {
-      const textDelta = chunks.length === 1 ? chunks[0]! : chunks.join('')
-      const index = this.#indexById.get(itemId)
-      if (index === undefined) {
-        this.append({
-          id: itemId,
-          turnId: activeTurnId ?? '',
-          type: 'message',
-          status: 'started',
-          role: 'assistant',
-          text: textDelta,
-          createdAt: Date.now(),
-        })
-        continue
-      }
-
-      const existing = this.items[index]
-      if (existing?.status === 'started') {
-        this.items[index] = { ...existing, text: (existing.text ?? '') + textDelta }
-      }
+    const existing = this.items[index]
+    if (existing?.status === 'started') {
+      this.items[index] = { ...existing, text: (existing.text ?? '') + textDelta }
     }
   }
 }
@@ -442,48 +690,161 @@ export function reduceEventLog(
   afterSeq?: number,
 ): ThreadState {
   let next = settleLiveItems(state)
-  let deltas: ItemDeltaEvent[] = []
+  let ownsNext = next !== state
+  let deltaItemId: string | undefined
+  let deltaTurnId: string | undefined
+  let deltaText = ''
+  let deltaChunksByItem:
+    Map<string, { chunks: string[]; itemId: string; turnId: string }> | undefined
   let replayItems: ReplayItems | undefined
+  let replayTurnTiming: Record<string, { startedAt?: number; completedAt?: number }> | undefined
+
+  // Replayed state is private until this function returns. Claim one shallow
+  // copy lazily, then update its top-level fields instead of allocating a new
+  // ThreadState for every stored lifecycle boundary. Empty and skipped logs
+  // still preserve the caller's exact state identity.
+  const mutableState = () => {
+    if (!ownsNext) {
+      next = { ...next }
+      ownsNext = true
+    }
+    return next
+  }
 
   const mutableItems = () => {
     if (!replayItems) {
       replayItems = new ReplayItems(next.items)
-      next = { ...next, items: replayItems.items }
+      mutableState().items = replayItems.items
     }
     return replayItems
   }
 
   const flushDeltas = () => {
-    if (deltas.length === 0) return
-    mutableItems().appendDeltas(deltas, next.activeTurn?.id)
-    deltas = []
+    if (deltaItemId === undefined && !deltaChunksByItem) return
+    const items = mutableItems()
+    const activeTurnId = next.activeTurn?.id
+    if (deltaItemId !== undefined) {
+      items.appendDelta(deltaItemId, deltaTurnId!, deltaText, activeTurnId)
+      deltaItemId = undefined
+      deltaTurnId = undefined
+      deltaText = ''
+      return
+    }
+    for (const { chunks, itemId, turnId } of deltaChunksByItem!.values()) {
+      items.appendDelta(
+        itemId,
+        turnId,
+        chunks.length === 1 ? chunks[0]! : chunks.join(''),
+        activeTurnId,
+      )
+    }
+    deltaChunksByItem = undefined
+  }
+
+  const mutableTurnTiming = () => {
+    if (!replayTurnTiming) {
+      replayTurnTiming = { ...next.turnTiming }
+      mutableState().turnTiming = replayTurnTiming
+    }
+    return replayTurnTiming
   }
 
   for (const entry of entries) {
     if (afterSeq !== undefined && entry.seq !== undefined && entry.seq <= afterSeq) continue
-    if (entry.event.type === 'item.delta') {
-      deltas.push(entry.event)
+    const event = entry.event
+    if (event.type === 'item.delta') {
+      // The stored wire normally has one contiguous delta run per item. Fold
+      // that run while reading it instead of retaining every event and walking
+      // the same range again at the next lifecycle boundary. Rare interleaved
+      // output switches to grouped chunks so concatenation stays linear.
+      if (deltaChunksByItem) {
+        const key = JSON.stringify([event.itemId, event.turnId])
+        const entry = deltaChunksByItem.get(key)
+        if (entry) entry.chunks.push(event.textDelta)
+        else {
+          deltaChunksByItem.set(key, {
+            chunks: [event.textDelta],
+            itemId: event.itemId,
+            turnId: event.turnId,
+          })
+        }
+      } else if (deltaItemId === undefined) {
+        deltaItemId = event.itemId
+        deltaTurnId = event.turnId
+        deltaText = event.textDelta
+      } else if (event.itemId === deltaItemId && event.turnId === deltaTurnId) {
+        deltaText += event.textDelta
+      } else {
+        const firstKey = JSON.stringify([deltaItemId, deltaTurnId])
+        const eventKey = JSON.stringify([event.itemId, event.turnId])
+        deltaChunksByItem = new Map([
+          [firstKey, { chunks: [deltaText], itemId: deltaItemId, turnId: deltaTurnId! }],
+          [eventKey, { chunks: [event.textDelta], itemId: event.itemId, turnId: event.turnId }],
+        ])
+        deltaItemId = undefined
+        deltaTurnId = undefined
+        deltaText = ''
+      }
       continue
     }
     flushDeltas()
-    if (entry.event.type === 'item.started') {
-      mutableItems().start(entry.event.item)
+    if (event.type === 'item.started') {
+      mutableItems().start(event.item)
       continue
     }
-    if (entry.event.type === 'item.completed') {
-      mutableItems().complete(entry.event.item)
+    if (event.type === 'item.completed') {
+      if (event.item.text === LEGACY_DESIGN_APPROVAL_WARNING) continue
+      mutableItems().complete(event.item)
       continue
     }
-    if (entry.event.type === 'thread.error') {
+    if (event.type === 'thread.error') {
       const items = mutableItems()
-      items.append(createThreadErrorItem(entry.event.message))
+      items.append(createThreadErrorItem(event.message))
       next = settleThreadError(next, items.items)
+      ownsNext = true
+      continue
+    }
+    if (event.type === 'turn.started') {
+      const timing = mutableTurnTiming()
+      const previous = timing[event.turn.id]
+      const startedAt = previous?.startedAt ?? event.turn.createdAt
+      timing[event.turn.id] = { ...previous, startedAt }
+      const mutable = mutableState()
+      mutable.running = true
+      mutable.liveStart = mutable.items.length
+      mutable.activeTurn = { id: event.turn.id, startedAt }
+      mutable.turnTiming = timing
+      mutable.plan = []
+      mutable.diff = undefined
+      mutable.diffTurnId = undefined
+      continue
+    }
+    if (event.type === 'turn.completed') {
+      let timing = next.turnTiming
+      if (event.completedAt !== undefined) {
+        const mutable = mutableTurnTiming()
+        const previous = mutable[event.turnId]
+        mutable[event.turnId] = {
+          ...previous,
+          completedAt: previous?.completedAt ?? event.completedAt,
+        }
+        timing = mutable
+      }
+      const mutable = mutableState()
+      mutable.running = false
+      mutable.liveStart = mutable.items.length
+      mutable.activeTurn = undefined
+      mutable.approvals = []
+      mutable.turnTiming = timing
       continue
     }
 
-    next = reduce(next, entry.event)
+    const reduced = reduce(next, event)
+    if (reduced !== next) ownsNext = true
+    next = reduced
   }
   flushDeltas()
+  replayItems?.retainIndex()
   return next
 }
 
@@ -498,8 +859,23 @@ export function activeTurnIsSearching(
   turnId: string | undefined,
   liveItems: ReadonlyMap<number, LiveItemUpdate> = EMPTY_LIVE_ITEMS,
   liveStart = 0,
+  activityIndices?: readonly number[],
 ): boolean {
   if (!turnId) return false
+
+  if (activityIndices) {
+    for (const index of activityIndices) {
+      const item = threadItemAt(items, liveItems, index)
+      if (
+        item?.type === 'tool_call' &&
+        item.status === 'started' &&
+        `${item.text ?? ''} ${item.command ?? ''}`.toLowerCase().includes('search')
+      ) {
+        return true
+      }
+    }
+    return false
+  }
 
   for (let index = items.length - 1; index >= liveStart; index -= 1) {
     const item = threadItemAt(items, liveItems, index)
@@ -525,28 +901,57 @@ export function activeTurnIsSearching(
   return false
 }
 
+/**
+ * Index the few live activity rows once per structural transcript update.
+ * Text deltas keep the item array stable, so per-frame status labels can read
+ * this short list instead of walking a tool-heavy turn from its answer tail.
+ */
+export function activeTurnActivityIndices(
+  items: readonly Item[],
+  turnId: string | undefined,
+  liveStart = 0,
+): number[] {
+  if (!turnId) return []
+  const indices: number[] = []
+  for (let index = items.length - 1; index >= liveStart; index -= 1) {
+    const item = items[index]
+    if (!item) continue
+    if (item.turnId !== turnId) {
+      if (item.turnId === '') continue
+      break
+    }
+    if (item.status === 'started' && item.type !== 'message' && item.type !== 'error') {
+      indices.push(index)
+    }
+  }
+  return indices
+}
+
 /** Local echo, so the user's own message appears the instant they hit send. */
 export function appendUserMessage(
   state: ThreadState,
   text: string,
   id = createOptimisticMessageId(),
   createdAt = Date.now(),
+  attachments: string[] = [],
 ): ThreadState {
-  state = settleLiveItems(state)
+  const item: Item = {
+    id,
+    turnId: '',
+    type: 'message',
+    role: 'user',
+    status: 'completed',
+    text,
+    ...(attachments.length > 0 ? { attachments } : {}),
+    createdAt,
+  }
+  const items = copyMaterializedItems(state)
+  items.push(item)
+  recordAppendedItem(items, item)
   return {
     ...state,
-    items: [
-      ...state.items,
-      {
-        id,
-        turnId: '',
-        type: 'message',
-        role: 'user',
-        status: 'completed',
-        text,
-        createdAt,
-      },
-    ],
+    items,
+    liveItems: EMPTY_LIVE_ITEMS,
   }
 }
 
@@ -556,9 +961,10 @@ export function beginOptimisticTurn(
   text: string,
   itemId = createOptimisticMessageId(),
   createdAt = Date.now(),
+  attachments: string[] = [],
 ): ThreadState {
   return {
-    ...appendUserMessage(state, text, itemId, createdAt),
+    ...appendUserMessage(state, text, itemId, createdAt, attachments),
     running: true,
     activeTurn: { id: localId('local-turn:'), startedAt: createdAt },
     plan: [],
@@ -568,10 +974,10 @@ export function beginOptimisticTurn(
 
 /** A prompt that the server queued belongs on the shelf, not in the transcript yet. */
 export function removeOptimisticMessage(state: ThreadState, itemId: string): ThreadState {
-  state = settleLiveItems(state)
-  const index = state.items.findIndex((item) => item.id === itemId && item.turnId === '')
-  if (index < 0) return state
-  const items = state.items.slice()
+  const index = itemIndex(state.items, itemId)
+  if (index < 0 || state.items[index]?.turnId !== '') return settleLiveItems(state)
+  const items = copyMaterializedItems(state)
   items.splice(index, 1)
-  return { ...state, items }
+  itemIndexes.delete(items)
+  return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
 }

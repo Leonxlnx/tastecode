@@ -1,14 +1,29 @@
-import type { Session, WebContents } from 'electron'
+import type { Event, Session, WebContents, WebPreferences } from 'electron'
 
 const BROWSER_PARTITION = 'persist:harness-browser'
 const configuredSessions = new WeakSet<Session>()
+
+export interface EmbeddedBrowserOwner {
+  on(
+    event: 'will-attach-webview',
+    listener: (
+      event: Event,
+      webPreferences: WebPreferences,
+      params: Record<string, string>,
+    ) => void,
+  ): unknown
+  on(
+    event: 'did-attach-webview',
+    listener: (event: Event, webContents: WebContents) => void,
+  ): unknown
+}
 
 /**
  * Configure renderer-owned <webview> guests before any remote content is
  * attached. The page lives in Chromium's guest process, while the UI remains a
  * normal DOM element that follows the sidebar's layout without native overlays.
  */
-export function configureEmbeddedBrowser(owner: WebContents): void {
+export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
   owner.on('will-attach-webview', (event, webPreferences, params) => {
     delete webPreferences.preload
     webPreferences.allowRunningInsecureContent = false
@@ -33,7 +48,7 @@ export function configureEmbeddedBrowser(owner: WebContents): void {
 
     guest.setWindowOpenHandler(({ url }) => {
       if (isBrowserGuestUrl(url)) {
-        void guest.loadURL(url).catch((error: unknown) => {
+        void guest.loadURL(url).catch((error) => {
           console.warn('[browser] failed to open guest link', error)
         })
       }
@@ -56,9 +71,9 @@ export function browserGuestUrl(value: unknown): string {
   return value
 }
 
-export function isBrowserGuestUrl(value: unknown, allowBlank = false): value is string {
-  if (allowBlank && value === 'about:blank') return true
+function isBrowserGuestUrl(value: unknown, allowBlank = false): value is string {
   if (typeof value !== 'string') return false
+  if (allowBlank && value === 'about:blank') return true
   try {
     const url = new URL(value)
     return url.protocol === 'https:' || url.protocol === 'http:'
@@ -71,7 +86,7 @@ export function isBrowserGuestUrl(value: unknown, allowBlank = false): value is 
 export function browserUserAgent(value: string): string {
   return value
     .replace(/\sElectron\/[\w.-]+/gi, '')
-    .replace(/\s(?:PersonalHarness|@harness\/desktop)\/[\w.-]+/gi, '')
+    .replace(/\s(?:TasteCode|PersonalHarness|@harness\/desktop)\/[\w.-]+/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
 }

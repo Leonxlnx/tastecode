@@ -1,12 +1,61 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { array, integer, list, member, record, string, strings } from './parse.js'
 
 export interface PageLink {
   label: string
   target: string
 }
 
+export const PAGE_LAYOUT_FAMILIES = [
+  'hero',
+  'about',
+  'feature',
+  'how_it_works',
+  'social_proof',
+  'stats',
+  'faq',
+  'cta',
+  'pricing',
+  'contact',
+  'footer',
+] as const
+
+export type PageLayoutFamily = (typeof PAGE_LAYOUT_FAMILIES)[number]
+
+export const PAGE_MOTION_PURPOSES = [
+  'none',
+  'feedback',
+  'state_change',
+  'spatial_continuity',
+  'explanation',
+  'status',
+] as const
+export type PageMotionPurpose = (typeof PAGE_MOTION_PURPOSES)[number]
+
+export const PAGE_MOTION_TRIGGERS = [
+  'none',
+  'load',
+  'scroll_enter',
+  'scroll_progress',
+  'hover',
+  'press',
+  'drag',
+  'state_change',
+] as const
+export type PageMotionTrigger = (typeof PAGE_MOTION_TRIGGERS)[number]
+
+export interface PageSectionMotion {
+  purpose: PageMotionPurpose
+  trigger: PageMotionTrigger
+  behavior: string
+  durationMs: number
+  easing: string
+  reducedMotion: string
+}
+
 export interface PageNavigationDesign {
+  layoutCase?: string
   layout: string
   behavior: string[]
   transformation: {
@@ -40,18 +89,20 @@ export interface PageBlueprint {
   navigationDesign?: PageNavigationDesign
   sections: Array<{
     id: string
+    layoutFamily?: PageLayoutFamily
+    layoutCases?: string[]
     purpose: string
     userQuestion: string
     stage: 'orient' | 'qualify' | 'evaluate' | 'prove' | 'explain' | 'de_risk' | 'act' | 'continue'
     dependencies: string[]
     evidence: string[]
     copy: {
-      eyebrow?: string
       heading: string
       body: string[]
       callsToAction: PageLink[]
     }
     layout: string
+    motion?: PageSectionMotion
     componentNeeds: string[]
     assetNeeds: string[]
     transformation: {
@@ -77,8 +128,25 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
   const sections = array(blueprint.sections, 'sections').map((value, index) => {
     const section = record(value, `sections[${index}]`)
     const copy = record(section.copy, `sections[${index}].copy`)
+    if (copy.eyebrow !== undefined) {
+      throw new Error(`sections[${index}].copy.eyebrow is forbidden`)
+    }
     return {
       id: string(section.id, `sections[${index}].id`),
+      ...(!(section.layoutFamily === undefined)
+        ? {
+            layoutFamily: member(
+              section.layoutFamily,
+              PAGE_LAYOUT_FAMILIES,
+              `sections[${index}].layoutFamily`,
+            ),
+          }
+        : {}),
+      ...(!(section.layoutCases === undefined)
+        ? {
+            layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`),
+          }
+        : {}),
       purpose: string(section.purpose, `sections[${index}].purpose`),
       userQuestion:
         section.userQuestion === undefined
@@ -110,12 +178,16 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
           ? []
           : strings(section.evidence, `sections[${index}].evidence`),
       copy: {
-        ...optionalString(copy.eyebrow, `sections[${index}].copy.eyebrow`),
         heading: string(copy.heading, `sections[${index}].copy.heading`),
         body: strings(copy.body, `sections[${index}].copy.body`),
         callsToAction: links(copy.callsToAction, `sections[${index}].copy.callsToAction`),
       },
       layout: string(section.layout, `sections[${index}].layout`),
+      ...(!(section.motion === undefined)
+        ? {
+            motion: parseMotion(section.motion, index),
+          }
+        : {}),
       componentNeeds: strings(section.componentNeeds, `sections[${index}].componentNeeds`),
       assetNeeds: strings(section.assetNeeds, `sections[${index}].assetNeeds`),
       transformation:
@@ -184,9 +256,11 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
           rhythm: 'Preserve the recorded section order.',
         },
     navigation: links(blueprint.navigation, 'navigation'),
-    ...(blueprint.navigationDesign === undefined
-      ? {}
-      : { navigationDesign: parseNavigationDesign(blueprint.navigationDesign) }),
+    ...(!(blueprint.navigationDesign === undefined)
+      ? {
+          navigationDesign: parseNavigationDesign(blueprint.navigationDesign),
+        }
+      : {}),
     sections,
     responsive: strings(blueprint.responsive, 'responsive'),
     interactions: strings(blueprint.interactions, 'interactions'),
@@ -198,6 +272,11 @@ function parseNavigationDesign(value: unknown): PageNavigationDesign {
   const navigation = record(value, 'navigationDesign')
   const responsive = record(navigation.transformation, 'navigationDesign.transformation')
   return {
+    ...(!(navigation.layoutCase === undefined)
+      ? {
+          layoutCase: string(navigation.layoutCase, 'navigationDesign.layoutCase'),
+        }
+      : {}),
     layout: string(navigation.layout, 'navigationDesign.layout'),
     behavior: strings(navigation.behavior, 'navigationDesign.behavior'),
     transformation: {
@@ -220,6 +299,27 @@ function transformation(
   }
 }
 
+function parseMotion(value: unknown, index: number): PageSectionMotion {
+  const motion = record(value, `sections[${index}].motion`)
+  const purpose = member(motion.purpose, PAGE_MOTION_PURPOSES, `sections[${index}].motion.purpose`)
+  const trigger = member(motion.trigger, PAGE_MOTION_TRIGGERS, `sections[${index}].motion.trigger`)
+  const durationMs = integer(motion.durationMs, `sections[${index}].motion.durationMs`, 0, 1200)
+  if (purpose === 'none' && (trigger !== 'none' || durationMs !== 0)) {
+    throw new Error(`sections[${index}].motion none must use trigger none and durationMs 0`)
+  }
+  if (purpose !== 'none' && (trigger === 'none' || durationMs < 80)) {
+    throw new Error(`sections[${index}].motion requires a trigger and 80-1200ms duration`)
+  }
+  return {
+    purpose,
+    trigger,
+    behavior: string(motion.behavior, `sections[${index}].motion.behavior`),
+    durationMs,
+    easing: string(motion.easing, `sections[${index}].motion.easing`),
+    reducedMotion: string(motion.reducedMotion, `sections[${index}].motion.reducedMotion`),
+  }
+}
+
 export function readPageBlueprint(workspacePath: string): PageBlueprint {
   return parsePageBlueprint(JSON.parse(readFileSync(pagePath(workspacePath), 'utf8')))
 }
@@ -237,8 +337,7 @@ function pagePath(workspacePath: string): string {
 }
 
 function links(value: unknown, field: string): PageLink[] {
-  if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
-  return value.map((value, index) => {
+  return list(value, field).map((value, index) => {
     const link = record(value, `${field}[${index}]`)
     return {
       label: string(link.label, `${field}[${index}].label`),
@@ -247,47 +346,8 @@ function links(value: unknown, field: string): PageLink[] {
   })
 }
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${field} must be a non-empty array`)
-  }
-  return value
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
 function route(value: unknown): string {
   const result = string(value, 'page.route')
   if (!result.startsWith('/')) throw new Error('page.route must start with /')
   return result
-}
-
-function optionalString(value: unknown, field: string): { eyebrow?: string } {
-  return value === undefined ? {} : { eyebrow: string(value, field) }
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
 }

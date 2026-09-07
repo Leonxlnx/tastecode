@@ -1,3 +1,4 @@
+import { optionalRecord } from './parse.js'
 export const PALETTE_ROLES = [
   'canvas',
   'surface',
@@ -83,7 +84,6 @@ export type PaletteBuildResult =
   | { status: 'blocked'; issues: PaletteIssue[]; partial?: ColorSystem }
 
 const THEME_NAMES = ['light', 'dark'] as const
-const ROLE_SET = new Set<string>(PALETTE_ROLES)
 const HEX = /^#(?:[\da-f]{3}|[\da-f]{6})$/iu
 
 const CONTRAST_PAIRS: Array<{
@@ -155,6 +155,26 @@ interface ParsedRequest {
   locked: Partial<Record<PaletteThemeName, Partial<Record<PaletteRole, string>>>>
 }
 
+interface PaletteAudit {
+  pass: boolean
+  checks: PaletteContrastCheck[]
+}
+
+interface ThemeBuildResult {
+  theme: PaletteTheme
+  issues: PaletteIssue[]
+}
+
+interface PaletteRepairCandidate {
+  role: PaletteRole
+  color: string
+}
+
+interface PaletteScore {
+  failures: number
+  shortfall: number
+}
+
 export function generatePalette(input: unknown): PaletteBuildResult {
   const parsed = parseRequest(input)
   if ('issues' in parsed) return { status: 'blocked', issues: parsed.issues }
@@ -184,10 +204,7 @@ export function generatePalette(input: unknown): PaletteBuildResult {
   return issues.length ? { status: 'blocked', issues, partial: value } : { status: 'ready', value }
 }
 
-export function auditPalette(roles: PaletteRoles): {
-  pass: boolean
-  checks: PaletteContrastCheck[]
-} {
+export function auditPalette(roles: PaletteRoles): PaletteAudit {
   const checks = CONTRAST_PAIRS.map(({ foreground, background, minimum }) => {
     const ratio = contrast(roles[foreground], roles[background])
     return {
@@ -228,7 +245,9 @@ export function paletteColorRecords(system: ColorSystem): Array<{
 }
 
 function parseRequest(input: unknown): { value: ParsedRequest } | { issues: PaletteIssue[] } {
-  if (!isRecord(input) || !isRecord(input.themes)) {
+  const request = optionalRecord(input)
+  const requestThemes = optionalRecord(request?.themes)
+  if (!request || !requestThemes) {
     return {
       issues: [{ code: 'invalid-request', message: 'palette themes must be an object' }],
     }
@@ -237,16 +256,17 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
   const themes: ParsedRequest['themes'] = {}
   const locked: ParsedRequest['locked'] = {}
 
-  for (const name of Object.keys(input.themes)) {
-    if (!THEME_NAMES.includes(name as PaletteThemeName)) {
+  for (const name of Object.keys(requestThemes)) {
+    if (!isThemeName(name)) {
       issues.push({ code: 'invalid-request', message: `${name} is not a palette theme` })
     }
   }
 
   for (const name of THEME_NAMES) {
-    const raw = input.themes[name]
+    const raw = requestThemes[name]
     if (raw === undefined) continue
-    if (!isRecord(raw)) {
+    const direction = optionalRecord(raw)
+    if (!direction) {
       issues.push({
         code: 'missing-theme-direction',
         message: `${name} theme direction must be an object`,
@@ -254,9 +274,10 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
       })
       continue
     }
-    const accentSeed = normalizeHex(raw.accentSeed)
-    const neutralSeed = raw.neutralSeed === undefined ? undefined : normalizeHex(raw.neutralSeed)
-    if (!accentSeed || (raw.neutralSeed !== undefined && !neutralSeed)) {
+    const accentSeed = normalizeHex(direction.accentSeed)
+    const neutralSeed =
+      direction.neutralSeed === undefined ? undefined : normalizeHex(direction.neutralSeed)
+    if (!accentSeed || (direction.neutralSeed !== undefined && !neutralSeed)) {
       issues.push({
         code: 'invalid-color',
         message: `${name} theme seeds must be opaque sRGB hex colors`,
@@ -264,7 +285,7 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
       })
       continue
     }
-    if (raw.surfaceContrast !== 'quiet' && raw.surfaceContrast !== 'defined') {
+    if (direction.surfaceContrast !== 'quiet' && direction.surfaceContrast !== 'defined') {
       issues.push({
         code: 'invalid-request',
         message: `${name} surfaceContrast must be quiet or defined`,
@@ -275,7 +296,7 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
     themes[name] = {
       accentSeed,
       ...(neutralSeed ? { neutralSeed } : {}),
-      surfaceContrast: raw.surfaceContrast,
+      surfaceContrast: direction.surfaceContrast,
     }
   }
 
@@ -286,17 +307,18 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
     })
   }
 
-  if (input.locked !== undefined) {
-    if (!isRecord(input.locked)) {
+  if (request.locked !== undefined) {
+    const requestLocked = optionalRecord(request.locked)
+    if (!requestLocked) {
       issues.push({ code: 'invalid-request', message: 'palette locked roles must be an object' })
     } else {
-      for (const name of Object.keys(input.locked)) {
-        if (!THEME_NAMES.includes(name as PaletteThemeName)) {
+      for (const name of Object.keys(requestLocked)) {
+        if (!isThemeName(name)) {
           issues.push({ code: 'invalid-request', message: `${name} is not a palette theme` })
         }
       }
       for (const name of THEME_NAMES) {
-        const raw = input.locked[name]
+        const raw = requestLocked[name]
         if (raw === undefined) continue
         if (!themes[name]) {
           issues.push({
@@ -306,7 +328,8 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
           })
           continue
         }
-        if (!isRecord(raw)) {
+        const roleValues = optionalRecord(raw)
+        if (!roleValues) {
           issues.push({
             code: 'invalid-request',
             message: `${name} locked roles must be an object`,
@@ -315,8 +338,8 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
           continue
         }
         const themeLocks: Partial<Record<PaletteRole, string>> = {}
-        for (const [role, value] of Object.entries(raw)) {
-          if (!ROLE_SET.has(role)) {
+        for (const [role, value] of Object.entries(roleValues)) {
+          if (!isPaletteRole(role)) {
             issues.push({
               code: 'unknown-role',
               message: `${role} is not a palette role`,
@@ -330,11 +353,11 @@ function parseRequest(input: unknown): { value: ParsedRequest } | { issues: Pale
               code: 'invalid-color',
               message: `${name}.${role} must be an opaque sRGB hex color`,
               theme: name,
-              roles: [role as PaletteRole],
+              roles: [role],
             })
             continue
           }
-          themeLocks[role as PaletteRole] = color
+          themeLocks[role] = color
         }
         locked[name] = themeLocks
       }
@@ -348,7 +371,7 @@ function buildTheme(
   name: PaletteThemeName,
   direction: PaletteThemeDirection,
   locked: Partial<Record<PaletteRole, string>>,
-): { theme: PaletteTheme; issues: PaletteIssue[] } {
+): ThemeBuildResult {
   const effectiveAccent = locked.accent ?? direction.accentSeed
   const accent = toOklch(effectiveAccent)
   const neutral = toOklch(direction.neutralSeed ?? direction.accentSeed)
@@ -357,7 +380,7 @@ function buildTheme(
   const neutralColor = (l: number, c: number) => fromOklch({ l, c: Math.min(neutral.c, c), h: hue })
   const accentColor = (l: number, c = accent.c) => fromOklch({ l, c, h: accent.h })
 
-  const roles: PaletteRoles = {
+  const roles = {
     canvas: neutralColor(target.canvas, 0.025),
     surface: neutralColor(target.surface, 0.018),
     surfaceAlt: neutralColor(target.surfaceAlt[direction.surfaceContrast], 0.025),
@@ -370,7 +393,7 @@ function buildTheme(
     onAccent: '#FFFFFF',
     accentText: accentColor(name === 'light' ? 0.38 : 0.72, Math.min(accent.c, 0.16)),
     focusRing: accentColor(name === 'light' ? 0.48 : 0.7, Math.min(accent.c, 0.18)),
-  }
+  } satisfies PaletteRoles
 
   Object.assign(roles, locked)
   const lockedRoles = PALETTE_ROLES.filter((role) => locked[role] !== undefined)
@@ -437,7 +460,7 @@ function bestRepair(
   roles: PaletteRoles,
   checks: PaletteContrastCheck[],
   locked: Set<PaletteRole>,
-): { role: PaletteRole; color: string } | undefined {
+): PaletteRepairCandidate | undefined {
   const current = score(checks)
   let best:
     | { role: PaletteRole; color: string; failures: number; shortfall: number; distance: number }
@@ -476,7 +499,7 @@ function bestRepair(
   return best && { role: best.role, color: best.color }
 }
 
-function score(checks: PaletteContrastCheck[]): { failures: number; shortfall: number } {
+function score(checks: PaletteContrastCheck[]): PaletteScore {
   const failed = checks.filter(({ pass }) => !pass)
   return {
     failures: failed.length,
@@ -587,15 +610,20 @@ function rgb(value: string): number[] {
 
 function normalizeHex(value: unknown): string | undefined {
   if (typeof value !== 'string' || !HEX.test(value)) return undefined
+  const hex = value
   const full =
-    value.length === 4
-      ? `#${[...value.slice(1)].map((character) => character.repeat(2)).join('')}`
-      : value
+    hex.length === 4
+      ? `#${Array.from(hex.slice(1), (character) => character.repeat(2)).join('')}`
+      : hex
   return full.toUpperCase()
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+function isThemeName(value: string): value is PaletteThemeName {
+  return THEME_NAMES.some((name) => name === value)
+}
+
+function isPaletteRole(value: string): value is PaletteRole {
+  return PALETTE_ROLES.some((role) => role === value)
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -1,4 +1,10 @@
-import { FileDiff, FolderOpen, Globe2, MessageCirclePlus, SquareTerminal } from 'lucide-react'
+import {
+  IconFileDiff as FileDiff,
+  IconFolderOpen as FolderOpen,
+  IconWorld as Globe2,
+  IconMessageCirclePlus as MessageCirclePlus,
+  IconTerminal2 as SquareTerminal,
+} from '@tabler/icons-react'
 
 const ICONS = {
   review: FileDiff,

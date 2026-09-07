@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAnthropicMessagesTransport, listAnthropicModels } from './anthropic.js'
+import { jsonObject, parseJsonValue, type JsonObject, type JsonValue } from './json.js'
 import { ApiAgentSession, type ApiStreamEvent } from './runtime.js'
+import { testServerBaseUrl, writeJsonResponse } from './test-server.js'
 
 const TEXT = readFileSync(new URL('./fixtures/anthropic-text.sse', import.meta.url), 'utf8')
 const TOOL = readFileSync(new URL('./fixtures/anthropic-tool.sse', import.meta.url), 'utf8')
@@ -97,7 +99,7 @@ describe('Anthropic Messages transport', () => {
   it('discovers every model page without a hardcoded catalog', async () => {
     const { baseUrl } = await serve([], undefined, (request, response) => {
       const second = request.url?.includes('after_id=claude-b')
-      json(
+      writeJsonResponse(
         response,
         second
           ? { data: [{ id: 'claude-c', display_name: 'Claude C' }], has_more: false }
@@ -125,11 +127,9 @@ describe('Anthropic Messages transport', () => {
     servers.push(server)
     server.listen(0, '127.0.0.1')
     await once(server, 'listening')
-    const address = server.address()
-    if (!address || typeof address === 'string') throw new Error('test server did not bind')
     const transport = createAnthropicMessagesTransport({
       apiKey: secret,
-      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      baseUrl: testServerBaseUrl(server),
     })
 
     const request = transport({
@@ -152,34 +152,27 @@ describe('Anthropic Messages transport', () => {
 
 async function serve(
   streams: string[],
-  models?: unknown,
+  models?: JsonValue,
   onModels?: (request: IncomingMessage, response: ServerResponse) => void,
-): Promise<{ baseUrl: string; requests: Record<string, unknown>[] }> {
-  const requests: Record<string, unknown>[] = []
+): Promise<{ baseUrl: string; requests: JsonObject[] }> {
+  const requests: JsonObject[] = []
   let stream = 0
   const server = createServer(async (request, response) => {
     if (request.url?.startsWith('/v1/models')) {
-      return onModels ? onModels(request, response) : json(response, models)
+      return onModels ? onModels(request, response) : writeJsonResponse(response, models)
     }
-    requests.push(JSON.parse(await body(request)))
+    requests.push(jsonObject(parseJsonValue(await body(request))))
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.end(streams[stream++])
   })
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('test server did not bind')
-  return { baseUrl: `http://127.0.0.1:${address.port}/v1`, requests }
+  return { baseUrl: testServerBaseUrl(server), requests }
 }
 
 async function body(request: IncomingMessage): Promise<string> {
   let value = ''
   for await (const chunk of request) value += chunk
   return value
-}
-
-function json(response: ServerResponse, value: unknown): void {
-  response.writeHead(200, { 'content-type': 'application/json' })
-  response.end(JSON.stringify(value))
 }

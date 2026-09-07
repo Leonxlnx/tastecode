@@ -1,7 +1,10 @@
 import type { DiffDecision, DiffFile, DiffHunk, DiffLine, SessionDiff } from '@harness/contracts'
 import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
+import { realpath } from 'node:fs/promises'
+import path from 'node:path'
 import { promisify } from 'node:util'
+import { z } from 'zod'
 import { takeSnapshot } from './checkpoint.js'
 import type { Store } from './store.js'
 
@@ -48,7 +51,7 @@ export async function reviewDiffHunk(
   const hunk = file?.hunks.find((entry) => entry.value.id === hunkId)
   if (!file || !hunk) throw new Error('diff hunk not found')
 
-  if (decision === 'reject') await applyReverse(repoPath, hunk.patch)
+  if (decision === 'reject') await reverseUnifiedDiff(repoPath, hunk.patch)
   store.setDiffDecision(threadId, hunkTarget(hunkId), decision)
   return readSessionDiff(repoPath, threadId, store)
 }
@@ -65,7 +68,7 @@ export async function reviewDiffFile(
   const file = diff.files.find((entry) => entry.value.path === filePath)
   if (!file) throw new Error('diff file not found')
 
-  if (decision === 'reject') await applyReverse(repoPath, file.patch)
+  if (decision === 'reject') await reverseUnifiedDiff(repoPath, file.patch)
   store.setDiffDecision(threadId, fileTarget(file.targetId), decision)
   return readSessionDiff(repoPath, threadId, store)
 }
@@ -233,7 +236,34 @@ function parseHunks(filePath: string, patch: string, renamed: boolean): ParsedHu
   })
 }
 
-async function applyReverse(repoPath: string, patch: string): Promise<void> {
+/** Reverse one provider or Git-generated patch without touching unrelated work. */
+export async function reverseUnifiedDiff(repoPath: string, patch: string): Promise<void> {
+  const roots = new Set([gitPath(path.resolve(repoPath)), gitPath(await realpath(repoPath))])
+  let insideContent = false
+  const relative = patch
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('diff --git ')) {
+        insideContent = false
+        return relativePatchPath(line, roots)
+      }
+      if (line.startsWith('@@ ') || line === 'GIT binary patch') insideContent = true
+      if (insideContent) return line
+      if (
+        line.startsWith('--- ') ||
+        line.startsWith('+++ ') ||
+        line.startsWith('rename from ') ||
+        line.startsWith('rename to ') ||
+        line.startsWith('copy from ') ||
+        line.startsWith('copy to ') ||
+        line.startsWith('Binary files ')
+      ) {
+        return relativePatchPath(line, roots)
+      }
+      return line
+    })
+    .join('\n')
+
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
       'git',
@@ -252,8 +282,21 @@ async function applyReverse(repoPath: string, patch: string): Promise<void> {
       if (code === 0) resolve()
       else reject(new Error(stderr.trim() || 'could not apply diff decision'))
     })
-    child.stdin.end(patch)
+    child.stdin.end(relative)
   })
+}
+
+function gitPath(value: string): string {
+  const normalized = value.replaceAll('\\', '/')
+  return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized
+}
+
+function relativePatchPath(line: string, roots: ReadonlySet<string>): string {
+  for (const root of roots) {
+    if (root === '/' || /^[A-Za-z]:$/.test(root)) continue
+    line = line.replaceAll(`${root}/`, '')
+  }
+  return line
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -268,7 +311,8 @@ async function git(cwd: string, args: string[]): Promise<string> {
     })
     return stdout
   } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr
+    const parsed = z.object({ stderr: z.string().optional() }).safeParse(error)
+    const stderr = parsed.success ? parsed.data.stderr : undefined
     throw new Error(stderr?.trim() || (error instanceof Error ? error.message : String(error)))
   }
 }

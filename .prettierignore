@@ -5,7 +5,24 @@ out/
 build/
 coverage/
 node_modules/
-.claude/worktrees/
+target/
+.agent/
+.agents/
+.claude/
+.codex/
+.continue/
+.cursor/
+.gemini/
+.harness/
+.opencode/
+.osaku/
+.pi/
+.roo/
+.windsurf/
+tools/oxlint/anti-slop/
+
+# Icon Composer owns this bundle's JSON layout.
+apps/desktop/assets/*.icon/
 
 # Vendor protocol bindings. Produced by `codex app-server generate-ts`;
 # reformatting them would make every regeneration a noisy diff.

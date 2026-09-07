@@ -8,39 +8,20 @@ import {
   useState,
 } from 'react'
 import type { McpServer, ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { Box, Server } from 'lucide-react'
+import { IconBox as Box, IconServer as Server } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import '../styles/composer-resource-picker.css'
+import {
+  COMPOSER_RESOURCE_LIST_ID,
+  type ComposerResource,
+  type ComposerResourcePickerHandle,
+  type ComposerResourceTrigger,
+} from './composer-resource.js'
+
+export type { ComposerResource } from './composer-resource.js'
 
 type SkillsInventory = ResultOf<'skills.list'>
 type McpInventory = ResultOf<'mcp.list'>
-
-export type ComposerResourceKind = 'skill' | 'mcp'
-
-export type ComposerResource = {
-  key: string
-  kind: ComposerResourceKind
-  id: string
-  name: string
-  description: string
-  scope: string
-  token: string
-  available: boolean
-  unavailableReason?: string | undefined
-}
-
-export type ComposerResourceTrigger = {
-  marker: '/' | '$' | '@'
-  query: string
-  start: number
-  end: number
-}
-
-export type ComposerResourcePickerHandle = {
-  move: (direction: 1 | -1) => boolean
-  selectActive: () => boolean
-}
-
-export const COMPOSER_RESOURCE_LIST_ID = 'composer-resource-list'
 
 export const ComposerResourcePicker = forwardRef<
   ComposerResourcePickerHandle,
@@ -139,14 +120,7 @@ export const ComposerResourcePicker = forwardRef<
   }, [open, contextKey, props.transport, props.provider, props.projectPath, revision])
 
   const resources = useMemo(
-    () => [
-      ...(skills?.capabilities.inventory
-        ? skills.skills.filter((skill) => skill.scope === 'project').map(skillResource)
-        : []),
-      ...(mcp?.capabilities.inventory
-        ? mcp.servers.filter((server) => server.scope === 'project').map(mcpResource)
-        : []),
-    ],
+    () => [...(skills?.skills ?? []).map(skillResource), ...(mcp?.servers ?? []).map(mcpResource)],
     [skills, mcp],
   )
   const query = props.trigger?.query.trim().toLocaleLowerCase() ?? ''
@@ -222,7 +196,10 @@ export const ComposerResourcePicker = forwardRef<
     <div
       className="composer-resource-picker"
       onMouseDown={(event) => {
-        if ((event.target as Element).closest('.composer-resource-picker__option')) {
+        if (
+          event.target instanceof Element &&
+          event.target.closest('.composer-resource-picker__option')
+        ) {
           event.preventDefault()
         }
       }}
@@ -246,9 +223,7 @@ export const ComposerResourcePicker = forwardRef<
               className={`composer-resource-picker__option${selected ? ' is-active' : ''}${resource.available ? '' : ' is-unavailable'}`}
               data-index={index}
               key={resource.key}
-              onMouseEnter={() => {
-                if (resource.available) setActiveIndex(index)
-              }}
+              onMouseEnter={() => setActiveIndex(index)}
               onClick={() => {
                 if (resource.available) props.onSelect(resource)
               }}
@@ -294,9 +269,9 @@ function skillResource(skill: Skill): ComposerResource {
 function mcpResource(server: McpServer): ComposerResource {
   const unavailableReason = !server.enabled
     ? 'Disabled'
-    : server.auth.status === 'sign_in_required'
+    : server.auth?.status === 'sign_in_required'
       ? 'Sign in required'
-      : server.startup.state === 'failed'
+      : server.startup?.state === 'failed'
         ? server.startup.message
         : undefined
   return {

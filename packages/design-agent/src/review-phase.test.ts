@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  designReviewPrompt,
   designRepairPrompt,
   enforceDomAuditFindings,
   parseRepairPhaseOutput,
@@ -36,6 +37,25 @@ const review = {
 }
 
 describe('review and repair phases', () => {
+  it('treats the visual anti-slop floor as pass-blocking', () => {
+    // SAFETY: This prompt test checks fixed instructions; the function only serializes these artifact values.
+    const prompt = designReviewPrompt(
+      {} as Parameters<typeof designReviewPrompt>[0],
+      {} as Parameters<typeof designReviewPrompt>[1],
+      {} as Parameters<typeof designReviewPrompt>[2],
+      [],
+    )
+    expect(prompt).toContain('Any heading occupies more than three visual lines')
+    expect(prompt).toContain('uppercase monospace micro-heading')
+    expect(prompt).toContain('cards merely box prose')
+    expect(prompt).toContain('approved brand accent appears only in tiny labels')
+    expect(prompt).toContain('unstyled browser default')
+    expect(prompt).toContain('footer content overlaps')
+    expect(prompt).toContain('visibly stretched, cropped, cut off, or oversized')
+    expect(prompt).toContain('repeatedly uses split heading-and-description introductions')
+    expect(prompt).toContain("each section's recorded motion decision")
+  })
+
   it('persists the validated final review artifact', () => {
     workspace = mkdtempSync(path.join(os.tmpdir(), 'taste-review-'))
     const result = {
@@ -96,26 +116,26 @@ describe('review and repair phases', () => {
     expect(result.verdict).toBe('repair')
     expect(result.findings.map(({ id }) => id)).toEqual([
       'document_h1_count',
-      'mobile_interactive_target_size',
+      'interactive_target_size',
     ])
   })
 
-  it('preserves model findings and ignores target sizes outside mobile viewports', () => {
-    expect(
-      enforceDomAuditFindings(review, [
-        {
-          path: 'desktop.png',
-          width: 1440,
-          height: 1000,
-          domAudit: {
-            h1Count: 1,
-            interactiveTargetViolations: [
-              { selector: '#utility', label: 'Utility', width: 20, height: 20 },
-            ],
-          },
+  it('enforces target sizes outside mobile viewports', () => {
+    const result = enforceDomAuditFindings(review, [
+      {
+        path: 'desktop.png',
+        width: 1440,
+        height: 1000,
+        domAudit: {
+          h1Count: 1,
+          interactiveTargetViolations: [
+            { selector: '#utility', label: 'Utility', width: 20, height: 20 },
+          ],
         },
-      ]),
-    ).toEqual(review)
+      },
+    ])
+    expect(result.verdict).toBe('repair')
+    expect(result.findings.at(-1)).toMatchObject({ id: 'interactive_target_size' })
   })
 
   it('keeps older review findings readable with conservative evidence metadata', () => {

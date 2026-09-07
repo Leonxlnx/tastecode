@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { array, fontWeights, list, member, record, string, strings } from './parse.js'
 
 export interface BrandSystem {
   version: 1
@@ -68,6 +69,21 @@ export function parseBrandSystem(value: unknown): BrandSystem {
   const imageDirection = record(brand.imageDirection, 'imageDirection')
   const motionDirection = record(brand.motionDirection, 'motionDirection')
   const voice = record(brand.voice, 'voice')
+  const typefaces = array(brand.typefaces, 'typefaces').map((value, index) => {
+    const typeface = record(value, `typefaces[${index}]`)
+    return {
+      family: string(typeface.family, `typefaces[${index}].family`),
+      source: string(typeface.source, `typefaces[${index}].source`),
+      roles: strings(typeface.roles, `typefaces[${index}].roles`),
+      weights: fontWeights(typeface.weights, `typefaces[${index}].weights`),
+    }
+  })
+  if (typefaces.length > 2) throw new Error('brand system must use at most two typeface families')
+  for (const { family } of typefaces) {
+    if (/^(?:archivo|ibm plex mono)(?:\s|$)/iu.test(family.trim())) {
+      throw new Error(`brand system typeface ${family} is not allowed`)
+    }
+  }
 
   return {
     version: 1,
@@ -145,15 +161,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
         usage: string(color.usage, `colorPalette[${index}].usage`),
       }
     }),
-    typefaces: array(brand.typefaces, 'typefaces').map((value, index) => {
-      const typeface = record(value, `typefaces[${index}]`)
-      return {
-        family: string(typeface.family, `typefaces[${index}].family`),
-        source: string(typeface.source, `typefaces[${index}].source`),
-        roles: strings(typeface.roles, `typefaces[${index}].roles`),
-        weights: weights(typeface.weights, `typefaces[${index}].weights`),
-      }
-    }),
+    typefaces,
     interfaceDirection: string(brand.interfaceDirection, 'interfaceDirection'),
     imageDirection: {
       summary: string(imageDirection.summary, 'imageDirection.summary'),
@@ -163,7 +171,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
     },
     motionDirection: {
       summary: string(motionDirection.summary, 'motionDirection.summary'),
-      principles: strings(motionDirection.principles, 'motionDirection.principles'),
+      principles: motionPrinciples(motionDirection.principles),
       avoid: strings(motionDirection.avoid, 'motionDirection.avoid'),
     },
     voice: {
@@ -171,6 +179,31 @@ export function parseBrandSystem(value: unknown): BrandSystem {
       avoid: strings(voice.avoid, 'voice.avoid'),
     },
   }
+}
+
+function motionPrinciples(value: unknown): string[] {
+  const field = 'motionDirection.principles'
+  if (typeof value === 'string') return [string(value, field)]
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be a string array or an array of flat string objects`)
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry === 'string') return string(entry, `${field}[${index}]`)
+    const details = Object.entries(record(entry, `${field}[${index}]`))
+    if (details.length === 0) {
+      throw new Error(`${field}[${index}] must contain at least one string field`)
+    }
+    return details
+      .map(([name, detail]) => {
+        const label = name
+          .replace(/([a-z\d])([A-Z])/gu, '$1 $2')
+          .replace(/[_-]+/gu, ' ')
+          .toLowerCase()
+        return `${label}: ${string(detail, `${field}[${index}].${name}`)}`
+      })
+      .join('; ')
+  })
 }
 
 function parseSignatureDevice(value: unknown): BrandSystem['creativeDirection']['signatureDevice'] {
@@ -200,57 +233,4 @@ export function writeBrandSystem(workspacePath: string, value: unknown): BrandSy
 
 function brandPath(workspacePath: string): string {
   return path.join(workspacePath, '.taste', 'brand.json')
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${field} must be a non-empty array`)
-  }
-  return value
-}
-
-function list(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value)) throw new Error(`${field} must be an array`)
-  return value
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
-function weights(value: unknown, field: string): number[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${field} must contain font weights between 1 and 1000`)
-  }
-  const normalized = value.map((item) =>
-    typeof item === 'string' && /^\d{1,4}$/.test(item) ? Number(item) : item,
-  )
-  if (!normalized.every((item) => Number.isInteger(item) && item >= 1 && item <= 1000)) {
-    throw new Error(`${field} must contain font weights between 1 and 1000`)
-  }
-  return normalized as number[]
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
 }
