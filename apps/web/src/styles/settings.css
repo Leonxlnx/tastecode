@@ -1330,6 +1330,16 @@
     transform var(--dur-fast) var(--ease-out);
 }
 
+.row-issue__bubble--fixed {
+  position: fixed;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  max-width: calc(100vw - 16px);
+  opacity: 1;
+  transform: none;
+}
+
 .row-issue:focus-within .row-issue__bubble {
   opacity: 1;
   pointer-events: auto;

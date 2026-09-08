@@ -166,6 +166,23 @@ describe('settings viewport layout', () => {
 })
 
 describe('about status grammar', () => {
+  it('renders update errors outside the clipped settings card', async () => {
+    const update = deferred<ResultOf<'system.updateCheck'>>()
+    const transport = new TestTransport((method) => {
+      if (method === 'system.updateCheck') return update.promise
+      throw new Error(`unexpected ${method}`)
+    })
+    renderSettings({ initialSection: 'about', transport })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await act(async () => update.resolve({ error: 'Update check failed' }))
+    fireEvent.focus(screen.getByRole('button', { name: 'Problem: Update check failed' }))
+
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.parentElement).toBe(document.body)
+    expect(tooltip.className).toContain('row-issue__bubble--fixed')
+  })
+
   it.each([
     [
       'ready',
