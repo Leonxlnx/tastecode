@@ -25,7 +25,7 @@ const model = (id: string, reasoningEfforts: string[] = [], isDefault = false): 
 })
 
 describe('background model resolution', () => {
-  it('prefers Luna medium for a ChatGPT-authenticated Codex source', () => {
+  it('prefers Luna low for a ChatGPT-authenticated Codex source', () => {
     const sources: AvailableBackgroundModelSource[] = [
       {
         id: 'codex',
@@ -40,13 +40,47 @@ describe('background model resolution', () => {
         provider: 'claude-code',
         models: [model('claude-haiku-4-5', ['low'])],
       },
+      {
+        id: 'grok',
+        displayName: 'Grok',
+        provider: 'grok',
+        models: [model('grok-4.6', ['low', 'high'])],
+      },
     ]
 
     expect(resolveBackgroundModel({ mode: 'automatic' }, sources)).toEqual({
       provider: 'codex',
       model: 'gpt-5.6-luna',
-      effort: 'medium',
+      effort: 'low',
       sourceName: 'Codex',
+      automatic: true,
+    })
+  })
+
+  it('prefers Grok 4.6 at low without a Codex subscription', () => {
+    const sources: AvailableBackgroundModelSource[] = [
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        provider: 'claude-code',
+        models: [model('claude-haiku-4-5', ['minimal', 'low'])],
+      },
+      {
+        id: 'grok',
+        displayName: 'Grok',
+        provider: 'grok',
+        models: [
+          model('grok-4.5', ['low', 'medium', 'high'], true),
+          model('grok-4.6', ['low', 'medium', 'high', 'xhigh']),
+        ],
+      },
+    ]
+
+    expect(resolveBackgroundModel({ mode: 'automatic' }, sources)).toEqual({
+      provider: 'grok',
+      model: 'grok-4.6',
+      effort: 'low',
+      sourceName: 'Grok',
       automatic: true,
     })
   })
@@ -131,7 +165,7 @@ describe('background completion', () => {
         selection: {
           provider: 'codex',
           model: 'gpt-5.6-luna',
-          effort: 'medium',
+          effort: 'low',
           sourceName: 'Codex',
           automatic: true,
         },
@@ -140,7 +174,7 @@ describe('background completion', () => {
     ).resolves.toBe('Generated title')
     expect(startOptions).toMatchObject({
       model: 'gpt-5.6-luna',
-      effort: 'medium',
+      effort: 'low',
       approval: 'ask',
       ephemeral: true,
     })

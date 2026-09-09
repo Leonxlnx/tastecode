@@ -26,6 +26,13 @@
       "source": "https://github.com/fontsource/font-files"
     },
     {
+      "name": "@fontsource-variable/inter",
+      "use": "Inter variable font",
+      "license": "OFL-1.1",
+      "metadataLicenses": ["OFL-1.1"],
+      "source": "https://github.com/fontsource/font-files"
+    },
+    {
       "name": "@fontsource-variable/jetbrains-mono",
       "use": "JetBrains Mono variable font",
       "license": "OFL-1.1",
@@ -54,6 +61,13 @@
       "license": "Apache-2.0",
       "metadataLicenses": ["Apache-2.0"],
       "source": "https://github.com/pierrecomputer/pierre"
+    },
+    {
+      "name": "@tabler/icons-react",
+      "use": "Interface icons",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/tabler/tabler-icons"
     },
     {
       "name": "@tanstack/react-virtual",
@@ -98,13 +112,6 @@
       "source": "https://github.com/xtermjs/xterm.js"
     },
     {
-      "name": "border-beam",
-      "use": "Animated border effect",
-      "license": "MIT",
-      "metadataLicenses": ["MIT"],
-      "source": "https://github.com/Jakubantalik/border-beam"
-    },
-    {
       "name": "electron",
       "use": "Desktop runtime",
       "license": "MIT",
@@ -117,13 +124,6 @@
       "license": "MIT",
       "metadataLicenses": ["MIT"],
       "source": "https://github.com/electron-userland/electron-builder"
-    },
-    {
-      "name": "lucide-react",
-      "use": "Interface icons",
-      "license": "ISC AND MIT",
-      "metadataLicenses": ["ISC"],
-      "source": "https://github.com/lucide-icons/lucide"
     },
     {
       "name": "micromark",
@@ -202,6 +202,20 @@
       "version": "0.3.232",
       "license": "LicenseRef-Anthropic-Commercial-Terms",
       "metadataLicenses": ["SEE LICENSE IN LICENSE.md"]
+    },
+    {
+      "name": "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+      "version": "0.3.232",
+      "license": "LicenseRef-Anthropic-Commercial-Terms",
+      "metadataLicenses": ["SEE LICENSE IN LICENSE.md"]
+    },
+    {
+      "name": "@napi-rs/keyring-darwin-arm64",
+      "version": "1.3.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/napi-keyring-darwin-arm64-1.3.0-MIT.txt",
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
     },
     {
       "name": "@napi-rs/keyring-win32-x64-msvc",

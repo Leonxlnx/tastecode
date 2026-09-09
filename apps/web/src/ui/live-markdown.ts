@@ -1,5 +1,7 @@
-export const LIVE_MARKDOWN_LEAF_LIMIT = 256
-export const LIVE_MARKDOWN_CARRY_LIMIT = 64
+const LIVE_MARKDOWN_LEAF_LIMIT = 256
+const LIVE_MARKDOWN_CARRY_LIMIT = 64
+export const LIVE_MARKDOWN_SOURCE_CHUNK_LIMIT = 256
+export const LIVE_MARKDOWN_BULK_TEXT_MIN = 8 * 1024
 
 type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 
@@ -18,6 +20,7 @@ export type LiveMarkdownOperation =
   | { type: 'reset' }
   | { type: 'node.open'; node: LiveMarkdownNode; language?: string }
   | { type: 'node.close'; node: LiveMarkdownNode }
+  | { type: 'leaf.bulk'; text: string }
   | { type: 'leaf.open'; id: number }
   | { type: 'leaf.append'; id: number; text: string }
   | { type: 'leaf.close'; id: number }
@@ -29,6 +32,7 @@ export type LiveMarkdownUpdate = {
   sourceLength: number
   mutableLeafCharacters: number
   carryCharacters: number
+  bufferedSourceChunks: number
 }
 
 const HEADING_NODES = [
@@ -39,9 +43,12 @@ const HEADING_NODES = [
   'heading-5',
   'heading-6',
 ] as const
+const FLOW_SPECIAL_CHARACTER = /[\n`*_]/g
+const INLINE_CODE_SPECIAL_CHARACTER = /[\n`]/g
 
 export class LiveMarkdownParser {
-  private source: string[] = []
+  private sourceSegments: string[] = []
+  private sourceChunks: string[] = []
   private sourceLength = 0
   private operations: LiveMarkdownOperation[] = []
   private block: LiveMarkdownNode | undefined
@@ -59,9 +66,32 @@ export class LiveMarkdownParser {
   append(delta: string): LiveMarkdownUpdate {
     if (this.completed) throw new Error('Cannot append after Markdown completion')
     this.operations = []
-    this.source.push(delta)
+    if (delta) {
+      this.sourceChunks.push(delta)
+      if (this.sourceChunks.length >= LIVE_MARKDOWN_SOURCE_CHUNK_LIMIT) {
+        this.sourceSegments.push(this.sourceChunks.join(''))
+        this.sourceChunks = []
+      }
+    }
     this.sourceLength += delta.length
-    for (let index = 0; index < delta.length; index += 1) this.consume(delta[index]!)
+    this.consumeText(delta)
+    return this.update('append', delta.length)
+  }
+
+  /** Keeps large non-animated runs off the small-delta parser's monomorphic path. */
+  appendLarge(delta: string): LiveMarkdownUpdate {
+    if (delta.length < LIVE_MARKDOWN_BULK_TEXT_MIN) return this.append(delta)
+    if (this.completed) throw new Error('Cannot append after Markdown completion')
+    this.operations = []
+    if (delta) {
+      this.sourceChunks.push(delta)
+      if (this.sourceChunks.length >= LIVE_MARKDOWN_SOURCE_CHUNK_LIMIT) {
+        this.sourceSegments.push(this.sourceChunks.join(''))
+        this.sourceChunks = []
+      }
+    }
+    this.sourceLength += delta.length
+    this.consumeLargeText(delta)
     return this.update('append', delta.length)
   }
 
@@ -69,16 +99,35 @@ export class LiveMarkdownParser {
     if (this.completed) throw new Error('Cannot replace after Markdown completion')
     this.resetState()
     this.operations = [{ type: 'reset' }]
-    this.source = [text]
+    if (text) this.sourceSegments = [text]
     this.sourceLength = text.length
-    for (let index = 0; index < text.length; index += 1) this.consume(text[index]!)
+    this.consumeText(text)
+    return this.update('replace', text.length)
+  }
+
+  /** See appendLarge: normal token frames must not pay for bulk-run dispatch. */
+  replaceLarge(text: string): LiveMarkdownUpdate {
+    if (text.length < LIVE_MARKDOWN_BULK_TEXT_MIN) return this.replace(text)
+    if (this.completed) throw new Error('Cannot replace after Markdown completion')
+    this.resetState()
+    this.operations = [{ type: 'reset' }]
+    if (text) this.sourceSegments = [text]
+    this.sourceLength = text.length
+    this.consumeLargeText(text)
     return this.update('replace', text.length)
   }
 
   complete() {
     this.completed = true
+    if (this.sourceChunks.length > 0) {
+      this.sourceSegments.push(this.sourceChunks.join(''))
+      this.sourceChunks = []
+    }
+    const source =
+      this.sourceSegments.length === 1 ? this.sourceSegments[0]! : this.sourceSegments.join('')
+    this.sourceSegments = source ? [source] : []
     return {
-      source: this.source.join(''),
+      source,
       sourceLength: this.sourceLength,
       totalScannedCharacters: this.totalScanned,
     }
@@ -93,11 +142,13 @@ export class LiveMarkdownParser {
       sourceLength: this.sourceLength,
       mutableLeafCharacters: this.leafLength,
       carryCharacters: this.prefix.length + Number(this.pendingStar),
+      bufferedSourceChunks: this.sourceChunks.length,
     }
   }
 
   private resetState(): void {
-    this.source = []
+    this.sourceSegments = []
+    this.sourceChunks = []
     this.sourceLength = 0
     this.block = undefined
     this.inline = []
@@ -110,6 +161,80 @@ export class LiveMarkdownParser {
     this.leafLength = 0
     this.totalScanned = 0
     this.completed = false
+  }
+
+  private consumeText(text: string): void {
+    if (text.length < 8) {
+      for (let index = 0; index < text.length; index += 1) this.consume(text[index]!)
+      return
+    }
+
+    let index = 0
+    while (index < text.length) {
+      if (this.mode === 'code' && !this.atLineStart) {
+        const end = text.indexOf('\n', index)
+        if (end < 0) {
+          this.write(index === 0 ? text : text.slice(index))
+          return
+        }
+        if (end > index) this.write(text.slice(index, end))
+        this.consume('\n')
+        index = end + 1
+        continue
+      }
+
+      if (this.mode === 'flow' && !this.atLineStart && !this.pendingStar) {
+        const inlineCode = this.inline.at(-1) === 'inline-code'
+        let end = index
+        while (end < text.length) {
+          const code = text.charCodeAt(end)
+          if (code === 10 || code === 96 || (!inlineCode && (code === 42 || code === 95))) break
+          end += 1
+        }
+        if (end > index) {
+          this.write(index === 0 && end === text.length ? text : text.slice(index, end))
+          index = end
+          continue
+        }
+      }
+
+      this.consume(text[index]!)
+      index += 1
+    }
+  }
+
+  private consumeLargeText(text: string): void {
+    let index = 0
+    while (index < text.length) {
+      if (this.mode === 'code' && !this.atLineStart) {
+        const end = text.indexOf('\n', index)
+        if (end < 0) {
+          this.writeLarge(index === 0 ? text : text.slice(index))
+          return
+        }
+        if (end > index) this.writeLarge(text.slice(index, end))
+        this.consume('\n')
+        index = end + 1
+        continue
+      }
+
+      if (this.mode === 'flow' && !this.atLineStart && !this.pendingStar) {
+        const special =
+          this.inline.at(-1) === 'inline-code'
+            ? INLINE_CODE_SPECIAL_CHARACTER
+            : FLOW_SPECIAL_CHARACTER
+        special.lastIndex = index
+        const end = special.exec(text)?.index ?? text.length
+        if (end > index) {
+          this.writeLarge(index === 0 && end === text.length ? text : text.slice(index, end))
+          index = end
+          continue
+        }
+      }
+
+      this.consume(text[index]!)
+      index += 1
+    }
   }
 
   private consume(character: string): void {
@@ -309,6 +434,41 @@ export class LiveMarkdownParser {
       else this.operations.push({ type: 'leaf.append', id: this.leafId, text: next })
       this.leafLength += next.length
       remaining = remaining.slice(next.length)
+      if (this.leafLength === LIVE_MARKDOWN_LEAF_LIMIT) this.sealLeaf()
+    }
+  }
+
+  private writeLarge(text: string): void {
+    if (text.length < LIVE_MARKDOWN_BULK_TEXT_MIN) {
+      this.write(text)
+      return
+    }
+    this.ensureParagraph()
+    let offset = 0
+    while (offset < text.length) {
+      const remaining = text.length - offset
+      if (this.leafLength === 0 && remaining >= LIVE_MARKDOWN_BULK_TEXT_MIN) {
+        const bulkLength = remaining - (remaining % LIVE_MARKDOWN_LEAF_LIMIT)
+        this.operations.push({
+          type: 'leaf.bulk',
+          text:
+            offset === 0 && bulkLength === text.length
+              ? text
+              : text.slice(offset, offset + bulkLength),
+        })
+        this.leafId += bulkLength / LIVE_MARKDOWN_LEAF_LIMIT
+        offset += bulkLength
+        continue
+      }
+      if (this.leafLength === 0) this.operations.push({ type: 'leaf.open', id: this.leafId })
+      const nextLength = Math.min(remaining, LIVE_MARKDOWN_LEAF_LIMIT - this.leafLength)
+      const next =
+        offset === 0 && nextLength === text.length ? text : text.slice(offset, offset + nextLength)
+      const last = this.operations.at(-1)
+      if (last?.type === 'leaf.append' && last.id === this.leafId) last.text += next
+      else this.operations.push({ type: 'leaf.append', id: this.leafId, text: next })
+      this.leafLength += next.length
+      offset += next.length
       if (this.leafLength === LIVE_MARKDOWN_LEAF_LIMIT) this.sealLeaf()
     }
   }

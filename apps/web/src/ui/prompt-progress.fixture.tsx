@@ -1,4 +1,5 @@
-import { render, type RenderResult } from '@testing-library/react'
+import { act, render, type RenderResult } from '@testing-library/react'
+import { ThreadFrameStore } from '../thread-frame-store.js'
 import {
   beginOptimisticTurn,
   emptyThread,
@@ -35,21 +36,10 @@ const LIVE_DELTAS = new Map(
   ]),
 )
 
-function view(state: ThreadState) {
+function view(frameStore: ThreadFrameStore) {
   return (
     <Thread
-      items={state.items}
-      liveItems={state.liveItems}
-      itemVersion={state.itemVersion}
-      liveStart={state.liveStart}
-      running={state.running}
-      activeTurn={state.activeTurn}
-      turnTiming={state.turnTiming}
-      plan={state.plan}
-      diff={state.diff}
-      approvals={state.approvals}
-      userInputs={state.userInputs}
-      reviews={Object.values(state.reviews)}
+      frameStore={frameStore}
       onDecide={() => undefined}
       onAnswerUserInput={() => undefined}
     />
@@ -84,7 +74,8 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     SUBMISSION_ID,
     CREATED_AT,
   )
-  const rendered = render(view(state))
+  const store = new ThreadFrameStore(state)
+  const rendered = render(view(store))
   const optimisticPrompt = promptNode(rendered)
   const optimisticRail = oneWorkingRail(rendered)
 
@@ -109,7 +100,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
       createdAt: CREATED_AT + 1,
     },
   })
-  rendered.rerender(view(state))
+  act(() => store.publish(state))
   const canonicalPrompt = promptNode(rendered)
   const canonicalRail = oneWorkingRail(rendered)
 
@@ -125,7 +116,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
       createdAt: CREATED_AT + 2,
     },
   })
-  rendered.rerender(view(state))
+  act(() => store.publish(state))
   const startedPrompt = promptNode(rendered)
   const startedReply = streamingReply(rendered)
 
@@ -140,7 +131,7 @@ export function runPromptProgress(scenario: PromptProgressScenario): PromptProgr
     },
     { type: 'item.delta', turnId: TURN_ID, itemId: ANSWER_ID, textDelta: textDeltas[1] },
   ])
-  rendered.rerender(view(state))
+  act(() => store.publish(state))
   const deltaPrompt = promptNode(rendered)
 
   return {

@@ -3,7 +3,7 @@ import path from 'node:path'
 
 export const ATTACHMENT_PREVIEW_SCHEME = 'tastecode-attachment'
 
-export type AttachmentMediaType = 'image' | 'video'
+type AttachmentMediaType = 'image' | 'video'
 
 export type PickedAttachment = {
   path: string

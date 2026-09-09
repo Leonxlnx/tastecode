@@ -81,6 +81,7 @@ describe('brand phase', () => {
     expect(prompt).toContain('spacing rhythm, content widths, section density')
     expect(prompt).toContain("project's established icon system")
     expect(prompt).toContain('Make motionDirection operational')
+    expect(prompt).toContain('Return each motionDirection.principles entry as one string')
     expect(prompt).toContain('Ban universal fade-up choreography')
     expect(prompt).toContain('Never choose IBM Plex Mono, Archivo')
     expect(prompt).toContain('colored left-edge accent rails')
@@ -91,6 +92,30 @@ describe('brand phase', () => {
 
   it('parses fenced provider output through the brand validator', () => {
     expect(parseBrandPhaseOutput(`\`\`\`json\n${JSON.stringify(brand)}\n\`\`\``)).toEqual(brand)
+  })
+
+  it('normalizes structured motion principles into the persisted string format', () => {
+    const parsed = parseBrandPhaseOutput(
+      JSON.stringify({
+        ...brand,
+        motionDirection: {
+          ...brand.motionDirection,
+          principles: [
+            {
+              purpose: 'Confirm navigation state changes',
+              trigger: 'A route becomes active',
+              affectedRelationship: 'The active link and destination view',
+              timingRange: '160-220ms',
+              easingCharacter: 'Strong ease-out',
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(parsed.motionDirection.principles).toEqual([
+      'purpose: Confirm navigation state changes; trigger: A route becomes active; affected relationship: The active link and destination view; timing range: 160-220ms; easing character: Strong ease-out',
+    ])
   })
 
   it('turns a compact palette recipe into verified semantic color records', () => {

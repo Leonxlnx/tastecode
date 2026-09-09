@@ -44,6 +44,19 @@ afterEach(() => {
 })
 
 describe('createWorktree', () => {
+  it('starts from a named branch without switching the shared checkout', async () => {
+    git(repo, 'branch', 'chosen')
+    writeFileSync(path.join(repo, 'file.txt'), 'main advanced\n')
+    git(repo, 'commit', '-am', 'advance main')
+    const before = git(repo, 'rev-parse', 'HEAD')
+    const worktree = await createWorktree(repo, 'thread-from-chosen', root, 'chosen')
+    expect(git(worktree.path, 'show', 'HEAD:file.txt')).toBe('original\n')
+    expect(git(repo, 'branch', '--show-current').trim()).toBe('main')
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(before)
+    await expect(createWorktree(repo, 'thread-invalid-ref', root, '--orphan')).rejects.toThrow(
+      /unknown local branch/,
+    )
+  })
   it('gives the session a checkout of its own on its own branch', async () => {
     const worktree = await createWorktree(repo, 'codex-aaaa-bbbb-cccc', root)
 

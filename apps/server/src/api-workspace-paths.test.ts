@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -10,6 +10,30 @@ import {
 } from './api-workspace-paths.js'
 
 describe('direct API workspace path policy', () => {
+  it('blocks cloud credentials and hidden credential directories through aliases', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-api-policy-'))
+    for (const directory of ['.aws', '.ssh', '.git']) mkdirSync(path.join(workspace, directory))
+    writeFileSync(path.join(workspace, '.aws', 'credentials'), 'synthetic canary')
+    writeFileSync(path.join(workspace, '.ssh', 'id_ecdsa'), 'synthetic canary')
+    symlinkSync(path.join(workspace, '.git'), path.join(workspace, 'public-folder'), 'junction')
+    for (const file of ['.aws/credentials', '.ssh/id_ecdsa']) {
+      expect(() => existingWorkspacePath(workspace, file, false)).toThrow(/credential/)
+    }
+    expect(() => existingWorkspacePath(workspace, '.aws', true)).toThrow(/credential/)
+    expect(() => writableWorkspacePath(workspace, 'public-folder/hooks/pre-commit')).toThrow(
+      /credential/,
+    )
+  })
+
+  it('resolves a permitted alias to the path used for review and writes', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-api-alias-'))
+    mkdirSync(path.join(workspace, 'source'))
+    symlinkSync(path.join(workspace, 'source'), path.join(workspace, 'alias'), 'junction')
+    expect(writableWorkspacePath(workspace, 'alias/nested/new.txt')).toBe(
+      path.join(realpathSync(workspace), 'source', 'nested', 'new.txt'),
+    )
+    expect(isSecretWorkspaceName('tsconfig.json')).toBe(false)
+  })
   it('keeps reads and writes inside the real workspace', () => {
     const workspace = mkdtempSync(path.join(tmpdir(), 'harness-api-paths-'))
     const outside = mkdtempSync(path.join(tmpdir(), 'harness-api-outside-'))
@@ -31,7 +55,7 @@ describe('direct API workspace path policy', () => {
     const workspace = mkdtempSync(path.join(tmpdir(), 'harness-api-paths-'))
     mkdirSync(path.join(workspace, 'src'))
     expect(writableWorkspacePath(workspace, 'src/components/Card.tsx')).toBe(
-      path.join(workspace, 'src', 'components', 'Card.tsx'),
+      path.join(realpathSync(workspace), 'src', 'components', 'Card.tsx'),
     )
   })
 

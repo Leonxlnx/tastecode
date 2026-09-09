@@ -10,6 +10,11 @@ export async function runHeadlessCli(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  if (args[0] === 'history') {
+    const { runHistoryCli } = await import('./history-cli.js')
+    await runHistoryCli(args.slice(1), env)
+    return
+  }
   const options = parseCliOptions(args, env)
   if (options.command === 'help') {
     process.stdout.write(helpText())
@@ -81,9 +86,11 @@ function helpText(): string {
 
 Usage:
   harness serve [--port <port>]
+  harness history --help
 
 Commands:
   serve  Run the core server without Electron or the web renderer.
+  history  Measure, export, or explicitly clean saved task history.
 
 Environment:
   HARNESS_PORT          Local control port (default: ${DEFAULT_PORT})
