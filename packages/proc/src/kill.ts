@@ -350,7 +350,7 @@ function linuxPtySessionMembers(owner: LinuxProcessIdentity): LinuxProcessIdenti
   // already handles that normal /proc race without losing the whole scan.
   for (const entry of readdirSync('/proc')) {
     if (!/^\d+$/.test(entry)) continue
-    const identity = readLinuxProcessIdentity(Number(entry))
+    const identity = readOwnedLinuxProcessIdentity(Number(entry), owner.uid)
     if (
       identity &&
       identity.pid !== owner.pid &&
@@ -365,7 +365,31 @@ function linuxPtySessionMembers(owner: LinuxProcessIdentity): LinuxProcessIdenti
   return members
 }
 
-function readLinuxProcessIdentity(pid: number): LinuxProcessIdentity | undefined {
+function readOwnedLinuxProcessIdentity(
+  pid: number,
+  ownerUid: number,
+): LinuxProcessIdentity | undefined {
+  let uid
+  try {
+    uid = statSync(`/proc/${pid}`).uid
+  } catch (error) {
+    const code = errorCode(error)
+    // A vanished or inaccessible directory cannot be one of our same-UID
+    // descendants on supported Linux /proc policies. Filter it before reading
+    // stat so an unrelated protected process cannot abort the owned scan.
+    if (code === 'ENOENT' || code === 'ESRCH' || code === 'EACCES' || code === 'EPERM') {
+      return undefined
+    }
+    throw error
+  }
+  if (uid !== ownerUid) return undefined
+  return readLinuxProcessIdentity(pid, uid)
+}
+
+function readLinuxProcessIdentity(
+  pid: number,
+  knownUid?: number,
+): LinuxProcessIdentity | undefined {
   if (!validProcessGroupId(pid)) return undefined
   try {
     const raw = readFileSync(`/proc/${pid}/stat`, 'utf8')
@@ -394,7 +418,7 @@ function readLinuxProcessIdentity(pid: number): LinuxProcessIdentity | undefined
       groupId,
       sessionId,
       startTime,
-      uid: statSync(`/proc/${pid}`).uid,
+      uid: knownUid ?? statSync(`/proc/${pid}`).uid,
     }
   } catch (error) {
     const code = errorCode(error)

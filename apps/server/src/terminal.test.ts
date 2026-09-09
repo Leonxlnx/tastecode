@@ -141,6 +141,55 @@ describe('TerminalManager', () => {
     await expect(retry).resolves.toBeUndefined()
   })
 
+  it('retries failed cleanup after a PTY has exited', async () => {
+    const first = controlledPty()
+    const second = controlledPty()
+    const ptys = [first, second]
+    const cleanupExitedPty = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('session cleanup failed'))
+      .mockResolvedValue(undefined)
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => ptys.shift()!, cleanupExitedPty },
+    )
+    const terminalId = manager.open('thread-retry', os.tmpdir(), 80, 24)
+
+    first.emitExit(0)
+    await vi.waitFor(() => expect(cleanupExitedPty).toHaveBeenCalledOnce())
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    expect(() => manager.open('thread-retry', os.tmpdir(), 80, 24)).toThrow(/cleanup is pending/i)
+
+    await expect(manager.close(terminalId)).resolves.toBeUndefined()
+    expect(cleanupExitedPty).toHaveBeenCalledTimes(2)
+    const replacement = manager.open('thread-retry', os.tmpdir(), 80, 24)
+    expect(replacement).not.toBe(terminalId)
+    second.emitExit(0)
+    await manager.closeAll()
+  })
+
+  it('retries server-wide shutdown after cleanup fails', async () => {
+    const pty = controlledPty()
+    const terminatePty = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('session cleanup failed'))
+      .mockResolvedValue(undefined)
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => pty, terminatePty },
+    )
+    manager.open('thread-shutdown-retry', os.tmpdir(), 80, 24)
+
+    const failed = manager.closeAll()
+    await expect(failed).rejects.toThrow(/terminal shutdown failed/i)
+
+    const retry = manager.closeAll()
+    expect(retry).not.toBe(failed)
+    pty.emitExit(0)
+    await expect(retry).resolves.toBeUndefined()
+    expect(terminatePty).toHaveBeenCalledTimes(2)
+  })
+
   it('does not resolve close before owned session cleanup finishes', async () => {
     const pty = controlledPty()
     let rejectTermination: (error: Error) => void = () => {}

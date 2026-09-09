@@ -134,6 +134,7 @@ export class TerminalManager {
   #closingById = new Map<string, Promise<void>>()
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
+  #isClosing = false
   #onOutput: (terminalId: string, data: string) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
@@ -180,12 +181,15 @@ export class TerminalManager {
   }
 
   #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
-    if (this.#closingAll) throw new Error('terminal manager is closing')
+    if (this.#isClosing) throw new Error('terminal manager is closing')
     if (this.#closingThreads.has(key)) throw new Error(`terminal is closing: ${key}`)
 
     const currentId = this.#byThread.get(key)
     if (currentId) {
       if (this.#closingById.has(currentId)) throw new Error(`terminal is closing: ${key}`)
+      if (this.#byId.get(currentId)?.hasExited) {
+        throw new Error(`terminal cleanup is pending: ${key}`)
+      }
       this.resize(currentId, columns, rows)
       return currentId
     }
@@ -246,16 +250,14 @@ export class TerminalManager {
     const termination = entry.hasExited
       ? this.#cleanupExitedPty(entry.process)
       : this.#terminatePty(entry.process)
-    const stopOutput = termination.then(() => {
+    const closing = termination.then(() => {
       // node-pty flushes buffered output after kill(); once termination is
       // accepted, the client no longer needs those late chunks. A rejected
       // termination keeps the stream attached so the same PTY can be retried.
       entry.output.dispose()
       entry.outputBuffer.dispose()
+      return this.#boundedExit(terminalId, entry.exited)
     })
-    const closing = Promise.all([this.#boundedExit(terminalId, entry.exited), stopOutput]).then(
-      () => undefined,
-    )
     this.#closingById.set(terminalId, closing)
     // A timeout is a failed close, not evidence that the native process is
     // gone. Keep that generation tracked until its real exit arrives so a
@@ -270,10 +272,9 @@ export class TerminalManager {
         this.#forgetClosing(terminalId, closing)
       },
       () => {
-        // If the ownership anchor is still alive, a later close can retry.
-        // Once it exits, retain the failed close as a tombstone so no new PTY
-        // can reuse the thread while descendants may still exist.
-        if (!entry.hasExited) this.#forgetClosing(terminalId, closing)
+        // The entry remains the thread's tombstone, but the rejected promise
+        // must not be: a later close can retry cleanup of the same generation.
+        this.#forgetClosing(terminalId, closing)
       },
     )
     return closing
@@ -294,8 +295,13 @@ export class TerminalManager {
 
   closeAll(): Promise<void> {
     if (this.#closingAll) return this.#closingAll
-    this.#closingAll = this.#drainAll()
-    return this.#closingAll
+    this.#isClosing = true
+    const closing = this.#drainAll()
+    this.#closingAll = closing
+    void closing.catch(() => {
+      if (this.#closingAll === closing) this.#closingAll = undefined
+    })
+    return closing
   }
 
   async #drainThread(threadId: string): Promise<void> {
@@ -338,8 +344,7 @@ export class TerminalManager {
     try {
       await this.close(terminalId)
     } catch {
-      // A failed natural-exit cleanup remains tracked as a tombstone so a
-      // later terminal cannot reuse the thread while descendants may exist.
+      // The entry remains tracked; explicit or server-wide close can retry.
     }
   }
 
