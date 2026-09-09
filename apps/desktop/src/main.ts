@@ -20,7 +20,6 @@ import {
   session,
   shell,
   systemPreferences,
-  utilityProcess,
   type Event as ElectronEvent,
   type OpenDialogOptions,
   type OpenDialogReturnValue,
@@ -63,7 +62,7 @@ import { projectFilePath } from './project-file-path.js'
 import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
 import { clearPreviewSession } from './preview-session.js'
 import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
-import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
+import { ServerSupervisor } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -254,9 +253,8 @@ if (!ownsSingleInstance) {
  * permanent "Reconnecting…". In dev, dev.js runs the server with a watcher and
  * signals that through HARNESS_DEV_SERVER.
  *
- * Packaged builds use Electron's Node utility process so the service stays
- * isolated without paying for a second full app executable launch. The legacy
- * Node-mode child remains available as a field fallback.
+ * The server runs as an owned Node-mode child. IPC requests graceful async
+ * cleanup on every platform; the supervisor escalates only when it hangs.
  */
 function startOwnedServer(): void {
   if (devServer || serverSupervisor) return
@@ -283,43 +281,14 @@ function startOwnedServer(): void {
       }
     },
   }
-  serverSupervisor =
-    process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
-      ? new ServerSupervisor({
-          command: process.execPath,
-          args: [serverEntry],
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
-          ...supervisorCallbacks,
-        })
-      : new ServerSupervisor({
-          launch: () => launchUtilityServer(serverEntry),
-          ...supervisorCallbacks,
-        })
+  serverSupervisor = new ServerSupervisor({
+    command: process.execPath,
+    args: [serverEntry],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+    ...supervisorCallbacks,
+  })
   serverSupervisor.start()
   logStartupMilestone('server-spawned')
-}
-
-function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
-  const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env },
-    serviceName: 'Taste Code Core Server',
-    stdio: 'pipe',
-  })
-  return {
-    get stdout() {
-      return child.stdout
-    },
-    get stderr() {
-      return child.stderr
-    },
-    kill: () => child.kill(),
-    onError: (listener) => {
-      child.on('error', (type, location) => listener(new Error(`${type} at ${location}`)))
-    },
-    onExit: (listener) => {
-      child.on('exit', (code) => listener(code, null))
-    },
-  }
 }
 
 function createWindow(): void {

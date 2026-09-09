@@ -1,12 +1,8 @@
 import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
+import { OWNED_PROCESS_SHUTDOWN_MESSAGE } from '@harness/proc'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  MAX_CONSECUTIVE_FAILURES,
-  restartDelayMs,
-  ServerSupervisor,
-  type SupervisedServerProcess,
-} from './server-supervisor.js'
+import { MAX_CONSECUTIVE_FAILURES, restartDelayMs, ServerSupervisor } from './server-supervisor.js'
 
 class FakeChild extends ChildProcess {
   override stdout = new PassThrough()
@@ -15,16 +11,6 @@ class FakeChild extends ChildProcess {
   override kill(): boolean {
     this.wasKilled = true
     return true
-  }
-}
-
-function supervised(child: FakeChild): SupervisedServerProcess {
-  return {
-    stdout: child.stdout,
-    stderr: child.stderr,
-    kill: () => child.kill(),
-    onError: (listener) => child.on('error', (error) => listener(error)),
-    onExit: (listener) => child.on('exit', listener),
   }
 }
 
@@ -113,9 +99,9 @@ describe('ServerSupervisor', () => {
     again.sup.start()
     const stopping = again.sup.stop()
     expect(stopping).toBeInstanceOf(Promise)
-    await stopping
     expect(again.children[0]!.wasKilled).toBe(true)
-    again.children[0]!.emit('exit', null, 'SIGTERM')
+    again.children[0]!.emit('exit', 0, null)
+    await stopping
     vi.advanceTimersByTime(60_000)
     expect(again.children).toHaveLength(1)
   })
@@ -143,41 +129,8 @@ describe('ServerSupervisor', () => {
     expect(logs).toContain('listening on 4311')
   })
 
-  it('supervises an Electron utility-process launcher', async () => {
-    const children: FakeChild[] = []
-    const logs: string[] = []
-    const launch = vi.fn(() => {
-      const child = new FakeChild()
-      children.push(child)
-      return supervised(child)
-    })
-    const sup = new ServerSupervisor({ launch, onLog: (line) => logs.push(line) })
-
-    sup.start()
-    children[0]!.stdout.write('listening on 4311\n')
-    expect(logs).toContain('listening on 4311')
-
-    children[0]!.emit('exit', 1, null)
-    vi.advanceTimersByTime(500)
-    expect(launch).toHaveBeenCalledTimes(2)
-
-    const stopping = sup.stop()
-    expect(children[1]!.wasKilled).toBe(true)
-    children[1]!.emit('exit', null, 'SIGTERM')
-    await stopping
-    vi.advanceTimersByTime(60_000)
-    expect(launch).toHaveBeenCalledTimes(2)
-  })
-
-  it('stop stays pending until the utility process exits', async () => {
-    const children: FakeChild[] = []
-    const launch = vi.fn(() => {
-      const child = new FakeChild()
-      children.push(child)
-      return supervised(child)
-    })
-    const sup = new ServerSupervisor({ launch, onLog: () => {} })
-
+  it('stop stays pending until the server confirms a clean exit', async () => {
+    const { sup, children } = supervisor()
     sup.start()
     let settled = false
     const stopping = sup.stop().then(() => {
@@ -190,36 +143,65 @@ describe('ServerSupervisor', () => {
     vi.advanceTimersByTime(1_000)
     expect(settled).toBe(false)
 
-    children[0]!.emit('exit', null, 'SIGTERM')
+    children[0]!.emit('exit', 0, null)
     await stopping
     expect(settled).toBe(true)
 
     // Restart stays suppressed after the late exit.
     vi.advanceTimersByTime(60_000)
-    expect(launch).toHaveBeenCalledTimes(1)
+    expect(children).toHaveLength(1)
   })
 
-  it('stop does not wait forever for a hung utility process', async () => {
-    const children: FakeChild[] = []
-    const launch = vi.fn(() => {
-      const child = new FakeChild()
-      children.push(child)
-      return supervised(child)
+  it('does not report successful shutdown when the server never exits', async () => {
+    const { sup } = supervisor()
+    sup.start()
+
+    const stopped = sup.stop()
+    const rejected = expect(stopped).rejects.toThrow(/did not exit/i)
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    await rejected
+  })
+
+  it('reports a failed server cleanup', async () => {
+    const { sup, children } = supervisor()
+    sup.start()
+
+    const stopped = sup.stop()
+    children[0]!.emit('exit', 1, null)
+
+    await expect(stopped).rejects.toThrow(/code 1/i)
+  })
+
+  it('waits for real child cleanup requested over IPC', async () => {
+    vi.useRealTimers()
+    const logs: string[] = []
+    let ready: (() => void) | undefined
+    const listening = new Promise<void>((resolve) => {
+      ready = resolve
     })
-    const sup = new ServerSupervisor({ launch, onLog: () => {} })
+    const sup = new ServerSupervisor({
+      command: process.execPath,
+      args: [
+        '-e',
+        `process.on('message', message => {
+          if (message !== ${JSON.stringify(OWNED_PROCESS_SHUTDOWN_MESSAGE)}) return
+          process.stdout.write('cleanup complete\\n')
+          process.exit(0)
+        })
+        process.stdout.write('ready\\n')`,
+      ],
+      env: process.env,
+      onLog: (line) => {
+        logs.push(line)
+        if (line === 'ready') ready?.()
+      },
+    })
 
     sup.start()
-    let settled = false
-    const stopping = sup.stop().then(() => {
-      settled = true
-    })
-    expect(children[0]!.wasKilled).toBe(true)
-    expect(settled).toBe(false)
+    await listening
+    await sup.stop()
 
-    // No exit ever arrives: the bounded wait still lets stop() resolve.
-    vi.advanceTimersByTime(60_000)
-    await stopping
-    expect(settled).toBe(true)
-    expect(launch).toHaveBeenCalledTimes(1)
+    expect(logs).toContain('cleanup complete')
   })
 })

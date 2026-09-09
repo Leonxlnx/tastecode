@@ -5,6 +5,7 @@ export type { DesktopPathOptions } from './desktop-path.js'
 export {
   cleanupExitedPtySession,
   killTree,
+  OWNED_PROCESS_SHUTDOWN_MESSAGE,
   ownProcessTree,
   ownPtySession,
   ownedProcessSpawnOptions,
