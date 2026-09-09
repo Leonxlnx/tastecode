@@ -653,6 +653,11 @@ export function startServer(
         return {}
       }
 
+      case 'providers.watch': {
+        const p = parseParams(method, params)
+        return orchestrator.watchProvider(p.provider, p.projectPath, p.targets)
+      }
+
       case 'terminal.resize': {
         const p = parseParams(method, params)
         orchestrator.resizeTerminal(p.terminalId, p.columns, p.rows)

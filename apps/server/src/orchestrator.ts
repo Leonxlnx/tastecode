@@ -1,4 +1,3 @@
-import type { CodexAdapter } from '@harness/adapter-codex'
 import type {
   BriefingQuestion,
   PreviewPlan,
@@ -22,6 +21,8 @@ import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { changedSince, restoreSnapshot, takeSnapshot } from './checkpoint.js'
+import { ProviderControls } from './provider-controls.js'
+import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
@@ -50,7 +51,6 @@ import type {
   PanicStopResult,
   ParamsOf,
   ProviderId,
-  ProviderLimit,
   ProviderLimitSource,
   QueuedTurn,
   SessionDiff,
@@ -132,11 +132,6 @@ function designAgent(): DesignAgentModule {
 
 export type LifecycleScheduleHint = 'later' | number | undefined
 
-const loadAcpAdapter = retryableLazy(() => import('@harness/adapter-acp'))
-const loadClaudeAdapter = retryableLazy(() => import('@harness/adapter-claude-code'))
-const loadCodexAdapter = retryableLazy(() => import('@harness/adapter-codex'))
-const loadCursorAdapter = retryableLazy(() => import('@harness/adapter-cursor'))
-const loadGrokAdapter = retryableLazy(() => import('@harness/adapter-grok'))
 const loadDesignPreview = retryableLazy(() => import('./design-preview-runner.js'))
 
 type UserSubmission = {
@@ -149,7 +144,6 @@ type UserSubmission = {
 type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
-type AdapterLimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 type AttachedThreadRuntime = {
   thread: Thread
   session: AgentSession
@@ -479,8 +473,6 @@ export class Orchestrator {
         viewports: Array<{ width: number; height: number }>,
       ) => Promise<ReviewScreenshot[] | undefined>)
     | undefined
-  #watchedSkillProjects = new Set<string>()
-  #watchedMcpProjects = new Set<string>()
   #inboxProjections = new Map<string, InboxProjection>()
   #inboxProjectionsLoaded = false
   #staleInboxProjectionThreads = new Set<string>()
@@ -506,7 +498,7 @@ export class Orchestrator {
   #runtimeForInjected: boolean
   #maxIdleThreadRuntimes: number
   #idleThreadRuntimeMs: number
-  #controlIdleMs: number
+  #controls: ProviderControls
 
   constructor(
     store: Store,
@@ -595,119 +587,26 @@ export class Orchestrator {
       0,
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
-    this.#controlIdleMs = Math.max(0, Math.floor(handlers.controlIdleMs ?? 5_000))
+    this.#controls = new ProviderControls({
+      listModels: (provider, agent) => this.#runtimeFor(provider, this.#onLog).listModels(agent),
+      onLog: (_provider, line) => this.#onLog(line),
+      onLogin: this.#onLogin,
+      onUsageChanged: this.#onUsageChanged,
+      onMcpChanged: this.#onMcpChanged,
+      onSkillsChanged: this.#onSkillsChanged,
+      onAuthChanged: () => this.#invalidateBackgroundSources(),
+      ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
+    })
   }
-
-  /**
-   * One shared adapter for everything that is not a thread. Startup model and
-   * account reads release it after a short idle window; OAuth and watched
-   * settings pin it because their notifications arrive on the same connection.
-   */
-  #control: CodexAdapter | undefined
-  #controlStarting: Promise<CodexAdapter> | undefined
-  #controlIdleTimer: ReturnType<typeof setTimeout> | undefined
-  #controlUsers = 0
-  #controlPinned = false
-  #providerLogins = new Map<ProviderId, { loginId: string; cancel: () => void }>()
   #voiceRequests = new Map<string, AbortController>()
 
-  async #controlAdapter(): Promise<CodexAdapter> {
-    this.#clearControlIdleTimer()
-    if (this.#control) return this.#control
-    if (this.#controlStarting) return this.#controlStarting
-    const starting = (async () => {
-      const { CodexAdapter } = await loadCodexAdapter()
-      const adapter = new CodexAdapter()
-      adapter.on('log', (line) => this.#onLog(line))
-      adapter.on('login', (result) => {
-        if (result.loginId !== null) {
-          this.#controlPinned = false
-          this.#scheduleControlIdleDisposal()
-        }
-        if (result.success) this.#invalidateBackgroundSources()
-        this.#onLogin('codex', result)
-      })
-      adapter.onUsageChanged(() => {
-        if (this.#control === adapter) this.#onUsageChanged('codex')
-      })
-      adapter.on('skillsChanged', () => {
-        for (const projectPath of this.#watchedSkillProjects) {
-          this.#onSkillsChanged('codex', projectPath)
-        }
-      })
-      adapter.on('mcpChanged', () => {
-        for (const projectPath of this.#watchedMcpProjects) {
-          this.#onMcpChanged('codex', projectPath)
-        }
-      })
-      try {
-        await adapter.start()
-        this.#control = adapter
-        return adapter
-      } catch (error) {
-        adapter.dispose()
-        throw error
-      }
-    })()
-    this.#controlStarting = starting
-    try {
-      return await starting
-    } finally {
-      if (this.#controlStarting === starting) this.#controlStarting = undefined
-    }
-  }
-
-  async #withTransientControl<T>(operation: (adapter: CodexAdapter) => Promise<T>): Promise<T> {
-    this.#controlUsers += 1
-    try {
-      return await operation(await this.#controlAdapter())
-    } finally {
-      this.#controlUsers = Math.max(0, this.#controlUsers - 1)
-      this.#scheduleControlIdleDisposal()
-    }
-  }
-
-  #clearControlIdleTimer(): void {
-    clearTimeout(this.#controlIdleTimer)
-    this.#controlIdleTimer = undefined
-  }
-
-  #scheduleControlIdleDisposal(): void {
-    this.#clearControlIdleTimer()
-    if (
-      !this.#control ||
-      this.#controlUsers > 0 ||
-      this.#controlPinned ||
-      this.#watchedSkillProjects.size > 0 ||
-      this.#watchedMcpProjects.size > 0
-    ) {
-      return
-    }
-    this.#controlIdleTimer = setTimeout(() => {
-      this.#controlIdleTimer = undefined
-      if (
-        this.#controlUsers > 0 ||
-        this.#controlPinned ||
-        this.#watchedSkillProjects.size > 0 ||
-        this.#watchedMcpProjects.size > 0
-      ) {
-        return
-      }
-      const control = this.#control
-      this.#control = undefined
-      control?.dispose()
-    }, this.#controlIdleMs)
+  watchProvider(provider: ProviderId, projectPath: string, targets: Array<'skills' | 'mcp'>) {
+    return this.#controls.forProvider(provider).watch(projectPath, targets)
   }
 
   async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    // Concurrent Codex reads share one control process, then release it once
-    // the startup catalog is warm. Everything else asks its own runtime.
-    if (provider === 'codex' && !agent) {
-      return this.#withTransientControl((adapter) => adapter.listModels())
-    }
-    // The injected seam, not the module function — otherwise tests spawn the
-    // real vendor CLIs just to draw a model list.
-    return this.#runtimeFor(provider, this.#onLog).listModels(agent)
+    const control = this.#controls.forProvider(provider)
+    return control.listModels ? control.listModels(agent) : []
   }
 
   listModelConnections() {
@@ -953,45 +852,27 @@ export class Orchestrator {
     provider: ProviderId,
     projectPath: string,
   ): Promise<{ capabilities: McpCapabilities; servers: McpServer[] }> {
-    if (provider === 'opencode' || provider === 'grok') {
-      // No vendor inventory over this surface, but the TasteCode-managed
-      // project servers are real: each adapter receives them when it starts.
-      return {
-        capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES,
-        servers: this.#mcpConfig.list(provider, projectPath).map((config): McpServer => {
-          const common = {
-            id: config.id,
-            scope: 'project' as const,
-            enabled: config.enabled,
-            auth: { status: 'not_required' as const },
-            startup: { state: 'stopped' as const },
-            tools: [],
-            resources: [],
-            resourceTemplates: [],
-          }
-          if (!config.enabled) return common
-          return {
-            ...common,
-            transport: config.transport,
-            ...(config.displayName ? { displayName: config.displayName } : {}),
-          }
-        }),
-      }
-    }
-    if (provider !== 'codex') {
+    const control = this.#controls.forProvider(provider)
+    if (!control.capabilities.managedMcp && !control.listMcpServers) {
       return { capabilities: UNSUPPORTED_MCP_CAPABILITIES, servers: [] }
     }
-    this.#watchedMcpProjects.add(projectPath)
+    this.watchProvider(provider, projectPath, ['mcp'])
     const active = this.#findProjectRuntime(
       provider,
       projectPath,
       ({ session }) => session.listMcpServers !== undefined,
     )
-    const inherited = active?.[1].session.listMcpServers
-      ? await this.#withThreadRuntimeOperation(active[0], () =>
-          active[1].session.listMcpServers!(active[1].thread.id),
+    const inventory = control.listMcpServers
+      ? await control.listMcpServers(
+          active?.[1].session.listMcpServers
+            ? () =>
+                this.#withThreadRuntimeOperation(active[0], () =>
+                  active[1].session.listMcpServers!(active[1].thread.id),
+                )
+            : undefined,
         )
-      : await (await this.#controlAdapter()).listMcpServers()
+      : { capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES, servers: [] }
+    const inherited = inventory.servers
     const servers = new Map(inherited.map((server) => [server.id, server]))
     for (const config of this.#mcpConfig.list(provider, projectPath)) {
       const current = servers.get(config.id)
@@ -1021,8 +902,7 @@ export class Orchestrator {
             }),
       })
     }
-    const { CODEX_MCP_CAPABILITIES } = await loadCodexAdapter()
-    return { capabilities: CODEX_MCP_CAPABILITIES, servers: [...servers.values()] }
+    return { capabilities: inventory.capabilities, servers: [...servers.values()] }
   }
 
   async listSkills(
@@ -1034,14 +914,12 @@ export class Orchestrator {
     errors: SkillDiscoveryError[]
   }> {
     const local = await listLocalSkills(projectPath)
-    if (provider !== 'codex') {
-      return { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
-    }
-    this.#watchedSkillProjects.add(projectPath)
-    const vendor = await (await this.#controlAdapter()).listSkills(projectPath)
-    const { CODEX_SKILL_CAPABILITIES } = await loadCodexAdapter()
+    const control = this.#controls.forProvider(provider)
+    if (!control.listSkills) return { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
+    this.watchProvider(provider, projectPath, ['skills'])
+    const vendor = await control.listSkills(projectPath)
     return {
-      capabilities: CODEX_SKILL_CAPABILITIES,
+      capabilities: vendor.capabilities,
       skills: mergeSkills(vendor.skills, local.skills),
       errors: [...vendor.errors, ...local.errors],
     }
@@ -1053,11 +931,11 @@ export class Orchestrator {
     skillId: string,
     enabled: boolean,
   ): Promise<boolean> {
-    if (provider !== 'codex') {
+    const control = this.#controls.forProvider(provider)
+    if (!control.setSkillEnabled)
       throw new Error(`provider "${provider}" cannot configure skills yet`)
-    }
-    this.#watchedSkillProjects.add(projectPath)
-    return (await this.#controlAdapter()).setSkillEnabled(skillId, enabled)
+    this.watchProvider(provider, projectPath, ['skills'])
+    return control.setSkillEnabled(projectPath, skillId, enabled)
   }
 
   async installSkillFromFolder(
@@ -1065,14 +943,15 @@ export class Orchestrator {
     projectPath: string,
     folderPath: string,
   ): Promise<Skill> {
-    if (provider !== 'codex') {
+    const control = this.#controls.forProvider(provider)
+    if (!control.capabilities.skillsInstall || !control.listSkills) {
       throw new Error(`provider "${provider}" cannot install skills yet`)
     }
 
     const destination = await installLocalSkill(projectPath, folderPath)
     try {
-      this.#watchedSkillProjects.add(projectPath)
-      const inventory = await (await this.#controlAdapter()).listSkills(projectPath)
+      this.watchProvider(provider, projectPath, ['skills'])
+      const inventory = await control.listSkills(projectPath)
       const installed = inventory.skills.find(
         (skill) =>
           skill.source.type === 'folder' &&
@@ -1083,7 +962,7 @@ export class Orchestrator {
       const discoveryError = inventory.errors.find((error) =>
         path.resolve(error.path).startsWith(`${path.resolve(destination)}${path.sep}`),
       )
-      throw new Error(discoveryError?.message ?? 'Codex did not discover the installed skill')
+      throw new Error(discoveryError?.message ?? 'Provider did not discover the installed skill')
     } catch (error) {
       await rm(destination, { recursive: true, force: true })
       throw error
@@ -1107,12 +986,12 @@ export class Orchestrator {
 
   async reloadMcpServers(provider: ProviderId, projectPath: string): Promise<void> {
     this.#requireMcpManagement(provider)
-    if (provider !== 'codex') {
+    if (!PROVIDER_CAPABILITIES[provider].inheritedMcp) {
       throw new Error(`provider "${provider}" applies MCP changes to new sessions`)
     }
     const active = this.#findProjectRuntime(provider, projectPath)
     if (!active?.[1].session.reloadMcpServers) {
-      throw new Error('start a Codex session for this project before reloading MCP servers')
+      throw new Error('start a compatible session for this project before reloading MCP servers')
     }
     const options = this.#mcpRuntimeOptions(provider, projectPath)
     await this.#withThreadRuntimeOperation(active[0], () =>
@@ -1132,7 +1011,9 @@ export class Orchestrator {
     this.#requireMcpManagement(provider)
     const active = this.#findProjectRuntime(provider, projectPath)
     if (!active?.[1].session.startMcpOAuth) {
-      throw new Error('start a Codex session for this project before signing in to an MCP server')
+      throw new Error(
+        'start a compatible session for this project before signing in to an MCP server',
+      )
     }
     const [threadId, entry] = active
     this.#mcpOAuthThreads.add(threadId)
@@ -1167,12 +1048,12 @@ export class Orchestrator {
   }
 
   #requireMcpManagement(provider: ProviderId): void {
-    if (provider !== 'codex' && provider !== 'grok' && provider !== 'opencode')
+    if (!PROVIDER_CAPABILITIES[provider].managedMcp)
       throw new Error(`provider "${provider}" cannot manage MCP servers yet`)
   }
 
   #mcpRuntimeOptions(provider: ProviderId, projectPath: string): StartOptions {
-    if (provider !== 'codex' && provider !== 'grok' && provider !== 'opencode') return {}
+    if (!PROVIDER_CAPABILITIES[provider].managedMcp) return {}
     const mcpServers = this.#mcpConfig.list(provider, projectPath)
     const mcpCredentials: Record<string, string> = {}
     for (const server of mcpServers) {
@@ -1191,126 +1072,40 @@ export class Orchestrator {
   }
 
   async account(provider: ProviderId, agent?: string): Promise<Account> {
-    if (provider === 'codex') {
-      return this.#withTransientControl((adapter) => adapter.account())
-    }
-    if (provider === 'claude-code') return (await loadClaudeAdapter()).claudeAccount()
-    if (provider === 'cursor') return (await loadCursorAdapter()).cursorAccount()
-    if (provider === 'grok') return (await loadGrokAdapter()).grokAccount()
-    if (provider === 'acp' && agent) return (await loadAcpAdapter()).acpAccount(agent)
-    return { signedIn: false }
+    return this.#controls.forProvider(provider).account(agent)
   }
 
   async consumeRateLimitReset(
     provider: ProviderId,
     idempotencyKey: string,
   ): Promise<{ outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' }> {
-    if (provider !== 'codex') {
-      throw new Error(`provider "${provider}" cannot consume a rate-limit reset`)
-    }
-    const { CodexAdapter } = await loadCodexAdapter()
-    const adapter = new CodexAdapter()
-    adapter.on('log', (line) => this.#onLog(line))
-    try {
-      await adapter.start()
-      const outcome = await adapter.consumeRateLimitReset(idempotencyKey)
-      this.#onUsageChanged(provider)
-      return { outcome }
-    } finally {
-      adapter.dispose()
-    }
+    const consume = this.#controls.forProvider(provider).consumeRateLimitReset
+    if (!consume) throw new Error(`provider "${provider}" cannot consume a rate-limit reset`)
+    return consume(idempotencyKey)
   }
 
   async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
-    const readers = new Map<ProviderId, () => Promise<AdapterLimitSource>>([
-      [
-        'codex',
-        async () => {
-          const { CodexAdapter } = await loadCodexAdapter()
-          const adapter = new CodexAdapter()
-          adapter.on('log', (line) => this.#onLog(line))
-          try {
-            await adapter.start()
-            return await adapter.rateLimitSource()
-          } finally {
-            adapter.dispose()
-          }
-        },
-      ],
-      ['claude-code', async () => (await loadClaudeAdapter()).claudeLimitSource()],
-      ['grok', async () => (await loadGrokAdapter()).grokLimitSource()],
-    ])
-    const source = await (readers.get(provider)?.() ?? Promise.resolve({ status: 'unavailable' }))
-    return source.status === 'ready'
-      ? { provider, status: 'ready', limits: source.limits }
-      : { provider, status: 'unavailable' }
+    return this.#controls.forProvider(provider).usageLimitSource()
   }
 
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
-    if (provider === 'codex') {
-      this.#controlPinned = true
-      try {
-        return await this.#withTransientControl((adapter) => adapter.startLogin())
-      } catch (error) {
-        this.#controlPinned = false
-        this.#scheduleControlIdleDisposal()
-        throw error
-      }
-    }
-    const start =
-      provider === 'claude-code'
-        ? (await loadClaudeAdapter()).startClaudeLogin
-        : provider === 'cursor'
-          ? (await loadCursorAdapter()).startCursorLogin
-          : undefined
+    const start = this.#controls.forProvider(provider).startLogin
     if (!start) throw new Error(`provider "${provider}" cannot sign in yet`)
-    this.#providerLogins.get(provider)?.cancel()
-    const login = start((result) => {
-      if (this.#providerLogins.get(provider)?.loginId === result.loginId) {
-        this.#providerLogins.delete(provider)
-      }
-      if (result.success) this.#invalidateBackgroundSources()
-      this.#onLogin(provider, result)
-    })
-    this.#providerLogins.set(provider, login)
-    return { loginId: login.loginId }
+    return start()
   }
 
   async cancelLogin(provider: ProviderId, loginId: string): Promise<void> {
-    if (provider === 'codex') {
-      try {
-        await this.#withTransientControl((adapter) => adapter.cancelLogin(loginId))
-      } finally {
-        this.#controlPinned = false
-        this.#scheduleControlIdleDisposal()
-      }
-      return
-    }
-    const login = this.#providerLogins.get(provider)
-    if (login?.loginId !== loginId) return
-    login.cancel()
-    this.#providerLogins.delete(provider)
+    await this.#controls.forProvider(provider).cancelLogin?.(loginId)
   }
 
   async useApiKey(provider: ProviderId, apiKey: string): Promise<Account> {
-    if (provider !== 'codex') throw new Error(`provider "${provider}" cannot sign in yet`)
-    const account = await this.#withTransientControl((adapter) => adapter.useApiKey(apiKey))
-    this.#controlPinned = false
-    this.#scheduleControlIdleDisposal()
-    this.#invalidateBackgroundSources()
-    return account
+    const use = this.#controls.forProvider(provider).useApiKey
+    if (!use) throw new Error(`provider "${provider}" cannot sign in yet`)
+    return use(apiKey)
   }
 
   async signOut(provider: ProviderId, agent?: string): Promise<void> {
-    if (provider === 'codex') {
-      await this.#withTransientControl((adapter) => adapter.signOut())
-      this.#controlPinned = false
-      this.#scheduleControlIdleDisposal()
-    } else if (provider === 'claude-code') await (await loadClaudeAdapter()).signOutClaude()
-    else if (provider === 'cursor') await (await loadCursorAdapter()).signOutCursor()
-    else if (provider === 'grok') await (await loadGrokAdapter()).signOutGrok()
-    else if (provider === 'acp' && agent) await (await loadAcpAdapter()).acpSignOut(agent)
-    this.#invalidateBackgroundSources()
+    await this.#controls.forProvider(provider).signOut(agent)
   }
 
   async voiceStatus(provider: ProviderId): Promise<{
@@ -2849,7 +2644,9 @@ export class Orchestrator {
   }
 
   async disposeAll(): Promise<void> {
+    const controlStopped = this.#controls.disposeAll()
     const terminalsClosed = this.#terminals.closeAll()
+    const stopped = Promise.allSettled([terminalsClosed, controlStopped])
     const previewsStopped = [...this.#designPreviews.keys()].map((threadId) =>
       this.#stopDesignPreview(threadId),
     )
@@ -2899,19 +2696,16 @@ export class Orchestrator {
     this.#backgroundSourcesCache = undefined
     this.#backgroundSourcesStarting = undefined
     this.#backgroundSourcesRevision += 1
-    this.#clearControlIdleTimer()
-    this.#controlUsers = 0
-    this.#controlPinned = false
-    void this.#controlStarting?.then(
-      (adapter) => adapter.dispose(),
-      () => undefined,
-    )
-    this.#controlStarting = undefined
-    this.#control?.dispose()
-    this.#control = undefined
     await Promise.allSettled([...this.#designPreviewTasks.values(), ...previewsStopped])
     await Promise.allSettled(this.#stoppingDesignPreviews.values())
-    await terminalsClosed
+    const failures = (await stopped).filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    )
+    if (failures.length)
+      throw new AggregateError(
+        failures.map((result) => result.reason),
+        'Some app processes could not be stopped',
+      )
   }
 
   #get(threadId: string) {
@@ -3836,9 +3630,7 @@ export class Orchestrator {
     void this.#terminals
       .closeThread(projectTerminalKey(projectPath))
       .catch((error) => this.#onLog(`[terminal] project close failed: ${errorMessage(error)}`))
-    this.#watchedSkillProjects.delete(projectPath)
-    this.#watchedMcpProjects.delete(projectPath)
-    this.#scheduleControlIdleDisposal()
+    this.#controls.forgetProject(projectPath)
   }
 
   #completeDesignActivity(
