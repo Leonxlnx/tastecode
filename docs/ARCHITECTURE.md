@@ -108,11 +108,12 @@ Linux delivery is proved in layers:
 5. AppImage and deb release candidates built from the same tested commit, with license bundle,
    checksums, artifact inventory, and clean-machine evidence.
 
-AppImage is the portable beta channel and may use the application updater only when runtime
-package detection proves the process is an AppImage. A deb install is package-owned: until a
-signed APT repository exists, the app may notify but must not silently replace installed files.
-Updater enablement is therefore a package policy injected into the shared updater state machine,
-not a platform-wide Linux boolean.
+AppImage is the portable beta channel, but Linux v1 updates are manual. The About surface links
+packaged Linux users to GitHub Releases without loading `electron-updater`; deb installs remain
+package-owned. Automatic AppImage replacement requires a qualified old-to-new shutdown and relaunch
+handoff, and deb updates require a signed APT repository. Windows and macOS retain their existing
+application-owned updater path. Updater behavior is a package policy injected into the shared
+updater state machine rather than scattered platform checks.
 
 The unpacked artifact and native proof come before AppImage/deb configuration. A package that
 draws a window but cannot open a PTY, use the credential store, or stop descendants is not a

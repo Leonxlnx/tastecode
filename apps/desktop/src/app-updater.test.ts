@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { appOwnsUpdates, createAppUpdateController } from './app-updater.js'
+import { appUpdateMode, createAppUpdateController } from './app-updater.js'
 
 function fakeUpdater() {
   const emitter = new EventEmitter()
@@ -20,161 +20,19 @@ const info = { version: '0.1.0-beta.2' }
 afterEach(() => vi.useRealTimers())
 
 describe('app update controller', () => {
-  it('allows app-owned updates only for packaged AppImage, Windows, and macOS builds', () => {
+  it('installs updates only for packaged Windows and macOS builds', () => {
+    expect(appUpdateMode({ platform: 'linux', packaged: true })).toBe('manual')
+    expect(appUpdateMode({ platform: 'win32', packaged: true })).toBe('install')
+    expect(appUpdateMode({ platform: 'darwin', packaged: true })).toBe('install')
+    expect(appUpdateMode({ platform: 'freebsd', packaged: true })).toBe('unsupported')
+    expect(appUpdateMode({ platform: 'linux', packaged: false })).toBe('unsupported')
     expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/tmp/TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
-      }),
-    ).toBe(true)
-    expect(appOwnsUpdates({ platform: 'linux', packaged: true })).toBe(false)
-    expect(appOwnsUpdates({ platform: 'win32', packaged: true })).toBe(true)
-    expect(appOwnsUpdates({ platform: 'darwin', packaged: true })).toBe(true)
-    expect(appOwnsUpdates({ platform: 'linux', packaged: false, appImagePath: '/tmp/app' })).toBe(
-      false,
-    )
-    expect(
-      appOwnsUpdates({
+      appUpdateMode({
         platform: 'win32',
         packaged: true,
-        developmentServer: 'http://localhost:5173',
+        developmentServer: 'http://127.0.0.1:5173',
       }),
-    ).toBe(false)
-  })
-
-  it('owns updates when the executable is inside its own AppImage mount', () => {
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
-      }),
-    ).toBe(true)
-  })
-
-  it('refuses updates when APPIMAGE is inherited but the executable is unpacked', () => {
-    // Child unpacked binary keeps T3's APPIMAGE but runs outside T3's APPDIR.
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/T3-Code.AppImage',
-        appDirPath: '/tmp/.mount_T3CodeXYZ999',
-        executablePath: '/home/user/taste-code/release/linux-unpacked/tastecode',
-      }),
-    ).toBe(false)
-  })
-
-  it('refuses Linux updates without both APPIMAGE and its own APPDIR proof', () => {
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/TasteCode.AppImage',
-      }),
-    ).toBe(false)
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
-      }),
-    ).toBe(false)
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-      }),
-    ).toBe(false)
-  })
-
-  it('refuses Linux updates on a sibling-prefix path trick', () => {
-    // String prefix is not containment.
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCode',
-        executablePath: '/tmp/.mount_TasteCode-evil/tastecode',
-      }),
-    ).toBe(false)
-  })
-
-  it('owns updates for a nested executable inside its own AppImage mount', () => {
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-        executablePath: '/tmp/.mount_TasteCoABC123/usr/bin/tastecode',
-      }),
-    ).toBe(true)
-  })
-
-  it('refuses Linux updates on traversal and equality tricks', () => {
-    // `..` escapes the mount even though the string contains the APPDIR prefix.
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-        executablePath: '/tmp/.mount_TasteCoABC123/../evil/tastecode',
-      }),
-    ).toBe(false)
-    // The mount directory itself is not an executable inside it.
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/opt/TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-        executablePath: '/tmp/.mount_TasteCoABC123',
-      }),
-    ).toBe(false)
-  })
-
-  it('refuses Linux updates for a relative or extracted APPIMAGE', () => {
-    // A relative APPIMAGE proves nothing about the running mount.
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: 'TasteCode.AppImage',
-        appDirPath: '/tmp/.mount_TasteCoABC123',
-        executablePath: '/tmp/.mount_TasteCoABC123/tastecode',
-      }),
-    ).toBe(false)
-    // An extracted squashfs-root keeps the image inside APPDIR, unlike a
-    // real Type-2 mount where the image file lives outside it.
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/tmp/squashfs-root/TasteCode.AppImage',
-        appDirPath: '/tmp/squashfs-root',
-        executablePath: '/tmp/squashfs-root/tastecode',
-      }),
-    ).toBe(false)
-    expect(
-      appOwnsUpdates({
-        platform: 'linux',
-        packaged: true,
-        appImagePath: '/tmp/squashfs-root',
-        appDirPath: '/tmp/squashfs-root',
-        executablePath: '/tmp/squashfs-root/tastecode',
-      }),
-    ).toBe(false)
+    ).toBe('unsupported')
   })
 
   it('downloads an available beta once and installs only after it is ready', async () => {
@@ -183,7 +41,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
     controller.subscribe((state) => states.push(state.status))
 
@@ -209,7 +67,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.1',
-      enabled: false,
+      mode: 'unsupported',
     })
 
     await expect(controller.check()).resolves.toMatchObject({ status: 'unsupported' })
@@ -219,13 +77,30 @@ describe('app update controller', () => {
     expect(updater.listenerCount('error')).toBe(0)
   })
 
+  it('keeps packaged Linux updates manual without loading the updater', async () => {
+    const loadUpdater = vi.fn()
+    const controller = createAppUpdateController({
+      loadUpdater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'manual',
+    })
+
+    controller.start()
+    await expect(controller.check()).resolves.toEqual({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.1',
+    })
+    expect(controller.install()).toBe(false)
+    expect(loadUpdater).not.toHaveBeenCalled()
+  })
+
   it('checks automatically after startup', async () => {
     vi.useFakeTimers()
     const updater = fakeUpdater()
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     controller.start()
@@ -242,7 +117,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     controller.start()
@@ -261,7 +136,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     const first = controller.check()
@@ -278,7 +153,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     await expect(controller.check()).resolves.toEqual({
@@ -297,7 +172,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     await expect(controller.check()).resolves.toMatchObject({ status: 'error' })

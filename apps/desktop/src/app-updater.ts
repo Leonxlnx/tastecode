@@ -1,4 +1,3 @@
-import { posix as posixPath } from 'node:path'
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
 
 export type UpdateClient = Pick<
@@ -14,7 +13,8 @@ export type UpdateClient = Pick<
 >
 
 export type AppUpdateState = {
-  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
+  status:
+    'unsupported' | 'manual' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
   version?: string
   progress?: number
@@ -23,71 +23,23 @@ export type AppUpdateState = {
 
 type Timer = ReturnType<typeof setTimeout>
 
-export function appOwnsUpdates(options: {
+export type AppUpdateMode = 'unsupported' | 'manual' | 'install'
+
+export function appUpdateMode(options: {
   platform: NodeJS.Platform
   packaged: boolean
   developmentServer?: string | undefined
-  appImagePath?: string | undefined
-  appDirPath?: string | undefined
-  executablePath?: string | undefined
-}): boolean {
-  if (!options.packaged || options.developmentServer) return false
-  if (options.platform === 'linux') {
-    // An unpacked binary (or deb) can inherit APPIMAGE from a parent AppImage
-    // process (e.g. T3 Code launching linux-unpacked/tastecode). Owning
-    // updates then points electron-updater at a foreign release feed. Only the
-    // running AppImage itself — executable inside its own APPDIR with an
-    // external APPIMAGE — owns them.
-    if (!options.appImagePath || !options.appDirPath || !options.executablePath) return false
-    return isOwnAppImageMount(options.appImagePath, options.appDirPath, options.executablePath)
-  }
-  return options.platform === 'win32' || options.platform === 'darwin'
-}
-
-// Linux-only containment uses POSIX semantics so POSIX fixtures agree with
-// production no matter which OS runs the tests. No realpath: string-level
-// containment is enough to decide updater ownership.
-function isOwnAppImageMount(
-  appImagePath: string,
-  appDirPath: string,
-  executablePath: string,
-): boolean {
-  if (
-    !posixPath.isAbsolute(appImagePath) ||
-    !posixPath.isAbsolute(appDirPath) ||
-    !posixPath.isAbsolute(executablePath)
-  ) {
-    return false
-  }
-  if (!isStrictlyInsidePosixDir(appDirPath, executablePath)) return false
-  // An extracted squashfs-root keeps APPIMAGE inside (or equal to) APPDIR. A
-  // real Type-2 mount keeps the image file outside the mount point.
-  if (!isOutsidePosixDir(appDirPath, appImagePath)) return false
-  return true
-}
-
-// Strict containment, not a string prefix: equality is not containment, `..`
-// escapes are outside, and sibling prefixes such as `/mount/App-evil` never
-// match `/mount/App`.
-function isStrictlyInsidePosixDir(dirPath: string, candidatePath: string): boolean {
-  const relative = posixPath.relative(dirPath, candidatePath)
-  if (relative === '' || relative === '..' || relative.startsWith('../')) return false
-  if (posixPath.isAbsolute(relative)) return false
-  return true
-}
-
-function isOutsidePosixDir(dirPath: string, candidatePath: string): boolean {
-  const relative = posixPath.relative(dirPath, candidatePath)
-  if (relative === '') return false
-  if (relative === '..' || relative.startsWith('../')) return true
-  if (posixPath.isAbsolute(relative)) return true
-  return false
+}): AppUpdateMode {
+  if (!options.packaged || options.developmentServer) return 'unsupported'
+  if (options.platform === 'linux') return 'manual'
+  if (options.platform === 'win32' || options.platform === 'darwin') return 'install'
+  return 'unsupported'
 }
 
 export function createAppUpdateController(
   options: {
     currentVersion: string
-    enabled: boolean
+    mode: AppUpdateMode
     setTimeoutFn?: typeof setTimeout
     clearTimeoutFn?: typeof clearTimeout
   } & (
@@ -105,7 +57,7 @@ export function createAppUpdateController(
   let updater = options.updater
   let updaterConfigured = false
   let state: AppUpdateState = {
-    status: options.enabled ? 'idle' : 'unsupported',
+    status: options.mode === 'install' ? 'idle' : options.mode,
     currentVersion: options.currentVersion,
   }
 
@@ -156,7 +108,7 @@ export function createAppUpdateController(
 
   // Outside a packaged build the controller stays inert: touching the updater
   // would attach listeners and flip flags on a client nobody will ever check.
-  if (options.enabled && updater) configureUpdater(updater)
+  if (options.mode === 'install' && updater) configureUpdater(updater)
 
   const loadUpdater = (): Promise<UpdateClient> => {
     if (updater) return Promise.resolve(updater)
@@ -171,7 +123,7 @@ export function createAppUpdateController(
   }
 
   const check = (): Promise<AppUpdateState> => {
-    if (!options.enabled) return Promise.resolve(state)
+    if (options.mode !== 'install') return Promise.resolve(state)
     if (checking) return checking
     checking = loadUpdater()
       .then((client) => client.checkForUpdates())
@@ -201,7 +153,7 @@ export function createAppUpdateController(
       return () => listeners.delete(listener)
     },
     start: () => {
-      if (!options.enabled || timer) return
+      if (options.mode !== 'install' || timer) return
       timer = setTimeoutFn(() => {
         timer = undefined
         void check()
