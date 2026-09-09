@@ -233,7 +233,7 @@ export function startServer(
     try {
       const result = await route(socket, method, params)
       if (socket.readyState === socket.OPEN) {
-        socket.send(serializeSuccessResponse(id, result))
+        push.reply(socket, serializeSuccessResponse(id, result))
         if (method === 'projects.list') reportStartupMilestone('server-projects-sent')
       }
     } catch (error) {
@@ -943,7 +943,8 @@ export function startServer(
     detail?: string,
   ): void {
     if (socket.readyState !== socket.OPEN) return
-    socket.send(
+    push.reply(
+      socket,
       JSON.stringify({
         id,
         error: { code, message, ...(detail ? { detail } : {}) },

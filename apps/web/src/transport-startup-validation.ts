@@ -1,4 +1,24 @@
-import type { MethodName, ProviderSetup, ResultOf } from '@harness/contracts'
+import type {
+  Capabilities,
+  MethodName,
+  ProviderId,
+  ProviderSetup,
+  ProviderStatus,
+  ResultOf,
+  ThreadInboxStatus,
+  ThreadLifecycle,
+} from '@harness/contracts'
+import {
+  arrayOf,
+  enumValidator,
+  isBoolean,
+  isFiniteNumber,
+  isNonnegativeInteger,
+  isRecord,
+  isString,
+  objectValidator,
+  optional,
+} from './fast-validation.js'
 
 /** Parse startup-critical replies without waiting for the full contract chunk. */
 export function parseStartupMethodResult<M extends MethodName>(
@@ -10,172 +30,125 @@ export function parseStartupMethodResult<M extends MethodName>(
   return undefined
 }
 
+const isProviderId = enumValidator<ProviderId>({
+  codex: true,
+  'claude-code': true,
+  grok: true,
+  cursor: true,
+  opencode: true,
+  antigravity: true,
+  pi: true,
+  acp: true,
+  api: true,
+})
+const isInboxStatus = enumValidator<ThreadInboxStatus>({
+  starting: true,
+  working: true,
+  queued: true,
+  approval: true,
+  input: true,
+  failed: true,
+  ready: true,
+  idle: true,
+})
+const isActive = objectValidator<Extract<ThreadLifecycle, { state: 'active' }>>({
+  state: (value) => value === 'active',
+  keepActive: isBoolean,
+  wokeAt: optional(isNonnegativeInteger),
+})
+const isSettled = objectValidator<Extract<ThreadLifecycle, { state: 'settled' }>>({
+  state: (value) => value === 'settled',
+  settledAt: isNonnegativeInteger,
+  reason: enumValidator<Extract<ThreadLifecycle, { state: 'settled' }>['reason']>({
+    manual: true,
+    inactivity: true,
+    change_request: true,
+  }),
+})
+const isSnoozed = objectValidator<Extract<ThreadLifecycle, { state: 'snoozed' }>>({
+  state: (value) => value === 'snoozed',
+  snoozedAt: isNonnegativeInteger,
+  wakeAt: isNonnegativeInteger,
+})
+const lifecycleValidators = {
+  active: isActive,
+  settled: isSettled,
+  snoozed: isSnoozed,
+} satisfies Record<ThreadLifecycle['state'], (value: unknown) => boolean>
+const isLifecycle = (value: unknown): boolean => {
+  if (
+    !isRecord(value) ||
+    typeof value['state'] !== 'string' ||
+    !Object.hasOwn(lifecycleValidators, value['state'])
+  )
+    return false
+  return lifecycleValidators[value['state'] as ThreadLifecycle['state']](value)
+}
+
+const isCapabilities = objectValidator<Capabilities>({
+  steer: isBoolean,
+  fork: isBoolean,
+  interrupt: isBoolean,
+  reasoningItems: isBoolean,
+  approvals: isBoolean,
+  userInput: optional(isBoolean),
+  autoReview: optional(isBoolean),
+  images: isBoolean,
+})
+const isSetup = objectValidator<ProviderSetup>({
+  installUrl: isUrl,
+  installCommand: optional(isString),
+  login: enumValidator<ProviderSetup['login']>({ app: true, provider: true }),
+  loginOpensBrowser: optional(isBoolean),
+})
+const isProvider = objectValidator<ProviderStatus>({
+  id: isProviderId,
+  displayName: isString,
+  installed: isBoolean,
+  version: optional(isString),
+  auth: enumValidator<ProviderStatus['auth']>({
+    authenticated: true,
+    unauthenticated: true,
+    unknown: true,
+  }),
+  capabilities: optional(isCapabilities),
+  setup: optional(isSetup),
+  problem: optional(isString),
+})
+type Project = ResultOf<'projects.list'>['projects'][number]
+const isSession = objectValidator<Project['sessions'][number]>({
+  id: isString,
+  title: isString,
+  provider: isProviderId,
+  agent: optional(isString),
+  createdAt: isFiniteNumber,
+  running: isBoolean,
+  pinned: optional(isBoolean),
+  status: optional(isInboxStatus),
+  unread: optional(isBoolean),
+  lifecycle: optional(isLifecycle),
+  closedAt: optional(isFiniteNumber),
+  worktreeBranch: optional(isString),
+})
+const isProject = objectValidator<Project>({
+  path: isString,
+  name: isString,
+  pinned: isBoolean,
+  createdAt: isFiniteNumber,
+  sessions: arrayOf(isSession),
+})
+const isProjectsList = objectValidator<ResultOf<'projects.list'>>({ projects: arrayOf(isProject) })
+const isProvidersList = objectValidator<ResultOf<'providers.list'>>({
+  providers: arrayOf(isProvider),
+})
+
 /** Validate the largest common response without making a second 10,000-row object graph. */
 export function parseProjectsListResult(value: unknown): ResultOf<'projects.list'> | undefined {
-  if (!isRecord(value) || !Array.isArray(value['projects'])) return undefined
-  for (const project of value['projects']) {
-    if (
-      !isRecord(project) ||
-      typeof project['path'] !== 'string' ||
-      typeof project['name'] !== 'string' ||
-      typeof project['pinned'] !== 'boolean' ||
-      !isFiniteNumber(project['createdAt']) ||
-      !Array.isArray(project['sessions'])
-    ) {
-      return undefined
-    }
-    for (const session of project['sessions']) {
-      if (
-        !isRecord(session) ||
-        typeof session['id'] !== 'string' ||
-        typeof session['title'] !== 'string' ||
-        !isProviderId(session['provider']) ||
-        !isOptionalString(session['agent']) ||
-        !isFiniteNumber(session['createdAt']) ||
-        typeof session['running'] !== 'boolean' ||
-        !isOptionalBoolean(session['pinned']) ||
-        !isOptionalInboxStatus(session['status']) ||
-        !isOptionalBoolean(session['unread']) ||
-        !isOptionalLifecycle(session['lifecycle']) ||
-        !isOptionalFiniteNumber(session['closedAt']) ||
-        !isOptionalString(session['worktreeBranch'])
-      ) {
-        return undefined
-      }
-    }
-  }
-  return value as ResultOf<'projects.list'>
+  return isProjectsList(value) ? value : undefined
 }
-
 export function parseProvidersListResult(value: unknown): ResultOf<'providers.list'> | undefined {
-  if (!isRecord(value) || !Array.isArray(value['providers'])) return undefined
-  for (const provider of value['providers']) {
-    if (
-      !isRecord(provider) ||
-      !isProviderId(provider['id']) ||
-      typeof provider['displayName'] !== 'string' ||
-      typeof provider['installed'] !== 'boolean' ||
-      !isOptionalString(provider['version']) ||
-      (provider['auth'] !== 'authenticated' &&
-        provider['auth'] !== 'unauthenticated' &&
-        provider['auth'] !== 'unknown') ||
-      !isOptionalCapabilities(provider['capabilities']) ||
-      !isOptionalProviderSetup(provider['setup']) ||
-      !isOptionalString(provider['problem'])
-    ) {
-      return undefined
-    }
-  }
-  return value as ResultOf<'providers.list'>
+  return isProvidersList(value) ? value : undefined
 }
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value)
-}
-
-function isOptionalFiniteNumber(value: unknown): value is number | undefined {
-  return value === undefined || isFiniteNumber(value)
-}
-
-function isOptionalString(value: unknown): value is string | undefined {
-  return value === undefined || typeof value === 'string'
-}
-
-function isOptionalBoolean(value: unknown): value is boolean | undefined {
-  return value === undefined || typeof value === 'boolean'
-}
-
-function isProviderId(value: unknown): boolean {
-  return (
-    value === 'codex' ||
-    value === 'claude-code' ||
-    value === 'grok' ||
-    value === 'cursor' ||
-    value === 'opencode' ||
-    value === 'antigravity' ||
-    value === 'pi' ||
-    value === 'acp' ||
-    value === 'api'
-  )
-}
-
-function isOptionalInboxStatus(value: unknown): boolean {
-  return (
-    value === undefined ||
-    value === 'starting' ||
-    value === 'working' ||
-    value === 'queued' ||
-    value === 'approval' ||
-    value === 'input' ||
-    value === 'failed' ||
-    value === 'ready' ||
-    value === 'idle'
-  )
-}
-
-function isOptionalLifecycle(value: unknown): boolean {
-  if (value === undefined) return true
-  if (!isRecord(value)) return false
-  if (value['state'] === 'active') {
-    return (
-      typeof value['keepActive'] === 'boolean' &&
-      (value['wokeAt'] === undefined || isNonnegativeInteger(value['wokeAt']))
-    )
-  }
-  if (value['state'] === 'settled') {
-    return (
-      isNonnegativeInteger(value['settledAt']) &&
-      (value['reason'] === 'manual' ||
-        value['reason'] === 'inactivity' ||
-        value['reason'] === 'change_request')
-    )
-  }
-  return (
-    value['state'] === 'snoozed' &&
-    isNonnegativeInteger(value['snoozedAt']) &&
-    isNonnegativeInteger(value['wakeAt'])
-  )
-}
-
-function isOptionalCapabilities(value: unknown): boolean {
-  if (value === undefined) return true
-  return (
-    isRecord(value) &&
-    typeof value['steer'] === 'boolean' &&
-    typeof value['fork'] === 'boolean' &&
-    typeof value['interrupt'] === 'boolean' &&
-    typeof value['reasoningItems'] === 'boolean' &&
-    typeof value['approvals'] === 'boolean' &&
-    isOptionalBoolean(value['userInput']) &&
-    isOptionalBoolean(value['autoReview']) &&
-    typeof value['images'] === 'boolean'
-  )
-}
-
-const providerSetupFieldValidators = {
-  installUrl: isUrl,
-  installCommand: isOptionalString,
-  login: (value: unknown) => value === 'app' || value === 'provider',
-  loginOpensBrowser: isOptionalBoolean,
-} satisfies {
-  [Field in keyof ProviderSetup]-?: (value: unknown) => boolean
-}
-
-function isOptionalProviderSetup(value: unknown): boolean {
-  if (value === undefined) return true
-  return (
-    isRecord(value) &&
-    providerSetupFieldValidators.installUrl(value['installUrl']) &&
-    providerSetupFieldValidators.installCommand(value['installCommand']) &&
-    providerSetupFieldValidators.login(value['login']) &&
-    providerSetupFieldValidators.loginOpensBrowser(value['loginOpensBrowser'])
-  )
-}
-
 function isUrl(value: unknown): boolean {
   if (typeof value !== 'string') return false
   try {
@@ -184,8 +157,4 @@ function isUrl(value: unknown): boolean {
   } catch {
     return false
   }
-}
-
-function isNonnegativeInteger(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
