@@ -37,7 +37,7 @@ import {
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import { tryCreateBackgroundTray } from './background-tray.js'
 import {
-  appOwnsUpdates,
+  appUpdateMode,
   createAppUpdateController,
   type AppUpdateController,
   type AppUpdateState,
@@ -918,13 +918,10 @@ if (ownsSingleInstance) {
     appUpdater = createAppUpdateController({
       loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
       currentVersion: app.getVersion(),
-      enabled: appOwnsUpdates({
+      mode: appUpdateMode({
         platform: process.platform,
         packaged: app.isPackaged,
         developmentServer: devServer,
-        appImagePath: process.env['APPIMAGE'],
-        appDirPath: process.env['APPDIR'],
-        executablePath: process.execPath,
       }),
     })
     appUpdater.subscribe((state) => {
