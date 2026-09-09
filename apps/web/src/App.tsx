@@ -50,27 +50,16 @@ import {
   beginOptimisticTurn,
   createOptimisticMessageId,
   emptyThread,
-  reduce,
-  reduceEventLog,
   removeOptimisticMessage,
   type ThreadState,
 } from './thread-store.js'
-import { ThreadFrameStore } from './thread-frame-store.js'
 import {
-  appendBackgroundThreadDelta,
-  appendThreadDelta,
-  drainPendingThreadDeltas,
-  shouldDrainBackgroundDeltas,
-  shouldRetainThreadTranscript,
-  type PendingThreadDeltaBatch,
-} from './thread-delta-buffer.js'
-import {
-  compactInactiveRunningThreadState,
-  completePendingQueueRead,
-  pruneInactiveQueueMetadata,
-  pruneInactiveThreadStates,
-  touchThreadState,
-} from './thread-state-cache.js'
+  ThreadController,
+  removePendingSubmission,
+  type PendingSubmission,
+  type RecoverableDraft,
+} from './thread-controller.js'
+
 import {
   hasWorkspaceStartForPath,
   indexQueueItemIdsForChecks,
@@ -139,10 +128,7 @@ import { parseSideChatCommand } from './side-chat-command.js'
 import {
   composerDraftKey,
   isEmptyComposerDraft,
-  moveComposerDraft,
   NEW_CHAT_DRAFT_KEY,
-  readComposerDraft,
-  upsertComposerDraft,
   type ComposerDraft,
 } from './composer-drafts.js'
 import type { ComposerResource } from './ui/ComposerResourcePicker.js'
@@ -238,7 +224,6 @@ const RAIL_WIDTH_KEY = 'harness.rail.width'
 const DEFAULT_RAIL_WIDTH = 256
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
 const NOTICE_AUTO_DISMISS_MS = 5_000
-const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 type BottomTerminalPhase = 'closed' | 'opening' | 'open' | 'closing'
 type TerminalPaneModule = typeof import('./ui/TerminalPane.js')
@@ -321,17 +306,6 @@ type CustomModel = {
   provider: ProviderId
   modelId: string
   displayName: string
-}
-
-type RecoverableDraft = { text: string; attachments: string[] }
-type PendingSubmission = RecoverableDraft & {
-  id: string
-  createdAt: number
-  kind: 'turn' | 'queue' | 'steer'
-  accepted: boolean
-  indeterminate: boolean
-  optimisticTurn?: NonNullable<ThreadState['activeTurn']>
-  precedingTurnId?: string
 }
 
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
@@ -466,17 +440,6 @@ function modelSource(choice: ModelChoice): string {
   })
 }
 
-function latestSequence(
-  entries: ReadonlyArray<{ seq: number | undefined }>,
-  initial: number,
-): number {
-  let latest = initial
-  for (const entry of entries) {
-    if (entry.seq !== undefined) latest = Math.max(latest, entry.seq)
-  }
-  return latest
-}
-
 export function App() {
   const transport = useMemo(() => new Transport(SERVER_BASE_URL), [])
   // StrictMode replays effect cleanup against this same memoized instance.
@@ -559,45 +522,28 @@ export function App() {
     setOnboardingDismissed(true)
   }, [projects, projectsStatus, onboardingDismissed])
   const [offline, setOffline] = useState(false)
-  const [activeId, setActiveId] = useState<string | undefined>()
-  const [activePath, setActivePath] = useState<string | undefined>()
-  const threadFrameStore = useMemo(() => new ThreadFrameStore(emptyThread), [])
-  const [thread, setThreadState] = useState<ThreadState>(emptyThread)
-  const setThread = useCallback(
-    (next: ThreadState) => {
-      threadFrameStore.publish(next)
-      setThreadState(next)
+  const [threadController] = useState(() => new ThreadController(transport))
+  const [activeId, setActiveIdState] = useState<string | undefined>()
+  const setActiveId = useCallback(
+    (id: string | undefined) => {
+      threadController.activate(id)
+      setActiveIdState(id)
     },
+    [threadController],
+  )
+  const [activePath, setActivePath] = useState<string | undefined>()
+  const threadFrameStore = threadController.frames
+  const thread = useSyncExternalStore(
+    threadFrameStore.subscribeStructure,
+    threadFrameStore.getStructureSnapshot,
+  )
+  const setThread = useCallback(
+    (next: ThreadState) => threadFrameStore.publish(next),
     [threadFrameStore],
   )
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
-  // Every live session keeps reducing events while it is off screen. A ref is
-  // intentional: streamed deltas for a background session should not rerender
-  // the active thread, while selecting it still gets the latest state at once.
-  const threadStates = useRef(new Map<string, ThreadState>())
-  /** Highest durable event already reduced into each complete thread cache. */
-  const durableSequences = useRef(new Map<string, number>())
-  const pendingSubmissions = useRef(new Map<string, Map<string, PendingSubmission>>())
-  const composerDrafts = useRef(new Map<string, ComposerDraft>())
-  const composerDraftOwner = useRef(NEW_CHAT_DRAFT_KEY)
   const composerDraftKeyRef = useRef(NEW_CHAT_DRAFT_KEY)
   const injectedDraftTransition = useRef(false)
-  /** Live events parked while a history fetch for the thread is in flight. */
-  const historyBuffers = useRef(
-    new Map<string, Set<Array<{ seq: number | undefined; event: DomainEvent }>>>(),
-  )
-  const historyOwners = useRef(
-    new Map<string, Array<{ seq: number | undefined; event: DomainEvent }>>(),
-  )
-  const pendingThreadDeltas = useRef(new Map<string, PendingThreadDeltaBatch>())
-  const flushPendingThreadDeltas = useRef<((threadId: string) => ThreadState) | undefined>(
-    undefined,
-  )
-  const backgroundDeltaCharacters = useRef(new Map<string, number>())
-  const queueStates = useRef(new Map<string, { items: QueuedTurn[]; canSteer: boolean }>())
-  const localQueueRevisions = useRef(new Map<string, number>())
-  const serverQueueRevisions = useRef(new Map<string, number>())
-  const pendingQueueReads = useRef(new Map<string, number>())
   const pendingSession = useRef<
     | {
         id: string
@@ -1063,13 +1009,9 @@ export function App() {
   }, [])
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
-      const current = composerDrafts.current.get(threadId)
-      const draft = upsertComposerDraft(composerDrafts.current, threadId, {
-        text: current ? `${current.text}\n\n${rejected.text}` : rejected.text,
-        attachments: [...new Set([...(current?.attachments ?? []), ...rejected.attachments])],
-      })
+      const draft = threadController.recoverDraft(threadId, rejected)
       if (threadId === activeIdRef.current) {
-        composerDraftOwner.current = threadId
+        threadController.draftOwner = threadId
         publishComposerDraft(draft)
       }
     },
@@ -1077,9 +1019,9 @@ export function App() {
   )
   const restoreComposerDraft = useCallback(
     (key: string) => {
-      composerDraftOwner.current = key
+      threadController.draftOwner = key
       composerDraftKeyRef.current = key
-      publishComposerDraft(readComposerDraft(composerDrafts.current, key))
+      publishComposerDraft(threadController.draft(key))
     },
     [publishComposerDraft],
   )
@@ -1092,12 +1034,12 @@ export function App() {
     const key = composerDraftKey(activeId)
     if (injectedDraftTransition.current) {
       injectedDraftTransition.current = false
-      composerDraftOwner.current = key
+      threadController.draftOwner = key
       composerDraftKeyRef.current = key
       return
     }
     if (composerDraftKeyRef.current === key) {
-      composerDraftOwner.current = key
+      threadController.draftOwner = key
       return
     }
     restoreComposerDraft(key)
@@ -1105,17 +1047,17 @@ export function App() {
   useEffect(() => {
     if (surface !== 'chat') return
     const key = composerDraftKey(activeIdRef.current)
-    if (isEmptyComposerDraft(readComposerDraft(composerDrafts.current, key))) return
+    if (isEmptyComposerDraft(threadController.draft(key))) return
     restoreComposerDraft(key)
   }, [surface, restoreComposerDraft])
   const updateComposerDraftText = useCallback((text: string) => {
-    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { text })
+    threadController.editDraft(threadController.draftOwner, { text })
   }, [])
   const updateComposerDraftAttachments = useCallback((attachments: string[]) => {
-    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { attachments })
+    threadController.editDraft(threadController.draftOwner, { attachments })
   }, [])
   const updateComposerDraftResources = useCallback((resources: ComposerResource[]) => {
-    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { resources })
+    threadController.editDraft(threadController.draftOwner, { resources })
   }, [])
   const projectsRef = useRef(projects)
   projectsRef.current = projects
@@ -1136,52 +1078,37 @@ export function App() {
     refreshedRevision: -1,
     refreshedPath: undefined,
   })
-  const isThreadCacheProtected = useCallback((threadId: string) => {
-    const probe = workspaceIdleProbe.current
-    const state = threadStates.current.get(threadId)
-    return (
-      pendingSubmissions.current.has(threadId) ||
-      pendingThreadDeltas.current.has(threadId) ||
-      historyBuffers.current.has(threadId) ||
-      historyOwners.current.has(threadId) ||
-      (queueStates.current.get(threadId)?.items.length ?? 0) > 0 ||
-      (probe.pendingStarts.get(threadId)?.tokens.length ?? 0) > 0 ||
-      probe.submissionStarts.countForThread(threadId) > 0 ||
-      probe.queuedStarts.countForThread(threadId) > 0 ||
-      probe.queueActions.countForThread(threadId) > 0 ||
-      probe.unknownQueues.has(threadId) ||
-      (state?.approvals.length ?? 0) > 0 ||
-      (state?.userInputs.length ?? 0) > 0
-    )
-  }, [])
-  const pruneThreadStateCache = useCallback(() => {
-    for (const threadId of pendingThreadDeltas.current.keys()) {
-      if (threadId !== activeIdRef.current) flushPendingThreadDeltas.current?.(threadId)
-    }
-    pruneInactiveThreadStates(threadStates.current, durableSequences.current, {
-      activeId: activeIdRef.current,
-      isProtected: isThreadCacheProtected,
-      isPartial: (threadId) => !durableSequences.current.has(threadId),
-      onCompact: (threadId) => backgroundDeltaCharacters.current.delete(threadId),
-    })
-  }, [isThreadCacheProtected])
-  const pruneQueueMetadata = useCallback(() => {
-    pruneInactiveQueueMetadata(
-      queueStates.current,
-      localQueueRevisions.current,
-      serverQueueRevisions.current,
-      pendingQueueReads.current,
-      { activeId: activeIdRef.current, isProtected: isThreadCacheProtected },
-    )
-  }, [isThreadCacheProtected])
-  const beginQueueRead = useCallback((threadId: string) => {
-    pendingQueueReads.current.set(threadId, (pendingQueueReads.current.get(threadId) ?? 0) + 1)
-  }, [])
-  const finishQueueRead = useCallback(
+  const isThreadCacheProtected = useCallback(
     (threadId: string) => {
-      if (completePendingQueueRead(pendingQueueReads.current, threadId)) pruneQueueMetadata()
+      const probe = workspaceIdleProbe.current
+      return (
+        threadController.isProtected(threadId) ||
+        (probe.pendingStarts.get(threadId)?.tokens.length ?? 0) > 0 ||
+        probe.submissionStarts.countForThread(threadId) > 0 ||
+        probe.queuedStarts.countForThread(threadId) > 0 ||
+        probe.queueActions.countForThread(threadId) > 0 ||
+        probe.unknownQueues.has(threadId)
+      )
     },
-    [pruneQueueMetadata],
+    [threadController],
+  )
+  const pruneThreadStateCache = useCallback(
+    () => threadController.prune(isThreadCacheProtected),
+    [threadController, isThreadCacheProtected],
+  )
+  const pruneQueueMetadata = useCallback(
+    () => threadController.pruneQueues(isThreadCacheProtected),
+    [threadController, isThreadCacheProtected],
+  )
+  const beginQueueRead = useCallback(
+    (id: string) => threadController.beginQueueRead(id),
+    [threadController],
+  )
+  const finishQueueRead = useCallback(
+    (id: string) => {
+      if (threadController.finishQueueRead(id)) pruneQueueMetadata()
+    },
+    [threadController, pruneQueueMetadata],
   )
   useEffect(pruneThreadStateCache, [activeId, pruneThreadStateCache])
   useEffect(pruneQueueMetadata, [activeId, pruneQueueMetadata])
@@ -1227,7 +1154,7 @@ export function App() {
               const pending = hasWorkspaceStartForPath(probe.pendingStarts.values(), path)
               const activity = workspaceProjectActivity(
                 project.sessions,
-                queueStates.current,
+                threadController.queues,
                 probe.unknownQueues,
                 probe.queueActions.values(),
               )
@@ -1275,11 +1202,10 @@ export function App() {
   // prettier-ignore
   const releaseDirectStart = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, queued = new Set([...probe.queuedStarts.entriesForThread(threadId)].map(([, owner]) => owner.token)), token = probe.pendingStarts.get(threadId)?.tokens.find((candidate) => !queued.has(candidate)); if (token === undefined) return; for (const [id, start] of probe.submissionStarts.entriesForThread(threadId)) if (start.token === token) probe.submissionStarts.delete(id); releaseWorkspaceStart(threadId, token) }, [releaseWorkspaceStart])
   // prettier-ignore
-  const clearWorkspaceThread = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); queueStates.current.delete(threadId); pendingSubmissions.current.delete(threadId); threadStates.current.delete(threadId); durableSequences.current.delete(threadId); pendingThreadDeltas.current.delete(threadId); backgroundDeltaCharacters.current.delete(threadId); historyOwners.current.delete(threadId); historyBuffers.current.delete(threadId); localQueueRevisions.current.delete(threadId); serverQueueRevisions.current.delete(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
+  const clearWorkspaceThread = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
   /** Refetch after an outage. Held in a ref because the transport effect is
    *  set up before the fetchers it needs are declared. */
   const resync = useRef<(retry?: boolean) => void>(() => {})
-  const resyncRevision = useRef(0)
   const flushPendingLifecyclePushes = useRef<(() => void) | undefined>(undefined)
   const sidebarSettingsRef = useRef(sidebarSettings)
   sidebarSettingsRef.current = sidebarSettings
@@ -1293,36 +1219,9 @@ export function App() {
   }, [])
   const settleQueuedSubmissions = useCallback(
     (threadId: string, items: QueuedTurn[], snapshot?: ThreadState) => {
-      const pending = pendingSubmissions.current.get(threadId)
-      if (!pending) return
-      const queuedIds = indexQueueItemIdsForChecks(items, pending.size * 2)
-      const isQueued = (id: string) => queuedIds?.has(id) ?? items.some((item) => item.id === id)
-      let next = threadStates.current.get(threadId) ?? emptyThread
-      const rejected: PendingSubmission[] = []
-      for (const submission of pending.values()) {
-        const durable = next.items.some((item) => item.id === submission.id && item.turnId !== '')
-        if (durable || isQueued(submission.id)) {
-          pending.delete(submission.id)
-          if (isQueued(submission.id) && submission.kind !== 'queue') {
-            next = removePendingSubmission(next, submission)
-          }
-        } else if (
-          submission.indeterminate &&
-          !submission.accepted &&
-          snapshot !== undefined &&
-          (!snapshot.running ||
-            (submission.kind !== 'turn' &&
-              snapshot.activeTurn?.id !== undefined &&
-              snapshot.activeTurn.id === submission.precedingTurnId))
-        ) {
-          pending.delete(submission.id)
-          next = removePendingSubmission(next, submission)
-          rejected.push(submission)
-        }
-      }
-      if (pending.size === 0) pendingSubmissions.current.delete(threadId)
-      threadStates.current.set(threadId, next)
-      if (threadId === activeIdRef.current) setThread(next)
+      const rejected = threadController.settleSubmissions(threadId, items, snapshot)
+      if (threadId === activeIdRef.current)
+        setThread(threadController.snapshot(threadId) ?? emptyThread)
       for (const submission of rejected) restoreRejectedDraft(threadId, submission)
     },
     [restoreRejectedDraft],
@@ -1342,7 +1241,6 @@ export function App() {
     // once per token. A non-delta first flushes its thread synchronously, which
     // preserves event order and keeps approvals, boundaries, and completions
     // immediate.
-    let liveFlush: number | undefined
     let lifecycleFlush: number | undefined
     let lifecycleFallback: number | undefined
     const pendingLifecycles = new Map<string, Project['sessions'][number]['lifecycle']>()
@@ -1362,118 +1260,10 @@ export function App() {
       )
     }
     flushPendingLifecyclePushes.current = flushLifecyclePushes
-    const partialThreadIds = {
-      has: (threadId: string) => !durableSequences.current.has(threadId),
-    }
-    const applyPendingDeltas = (threadId: string) => {
-      const pending = pendingThreadDeltas.current.get(threadId)
-      const current = threadStates.current.get(threadId) ?? emptyThread
-      if (!pending || pending.events.length === 0) return current
-      const next = drainPendingThreadDeltas(
-        threadStates.current,
-        pendingThreadDeltas.current,
-        durableSequences.current,
-        threadId,
-      )
-      let applied = next
-      if (threadId !== activeIdRef.current) {
-        const deltaCharacters =
-          (backgroundDeltaCharacters.current.get(threadId) ?? 0) + pending.textLength
-        if (deltaCharacters >= BACKGROUND_COMPACTION_CHECK_CHARACTERS) {
-          const compacted = compactInactiveRunningThreadState(
-            threadStates.current,
-            durableSequences.current,
-            threadId,
-            {
-              activeId: activeIdRef.current,
-              protected: isThreadCacheProtected(threadId),
-            },
-          )
-          if (compacted) {
-            backgroundDeltaCharacters.current.delete(threadId)
-            applied = threadStates.current.get(threadId) ?? next
-          } else
-            backgroundDeltaCharacters.current.set(
-              threadId,
-              deltaCharacters % BACKGROUND_COMPACTION_CHECK_CHARACTERS,
-            )
-        } else {
-          backgroundDeltaCharacters.current.set(threadId, deltaCharacters)
-        }
-      }
-      return applied
-    }
-    flushPendingThreadDeltas.current = applyPendingDeltas
-    const flushLive = () => {
-      liveFlush = undefined
-      const id = activeIdRef.current
-      if (id) {
-        const next = applyPendingDeltas(id)
-        threadFrameStore.publish(next)
-        // A compatibility delta can create a missing row. Keep App's
-        // structural snapshot current in that rare case; normal text-only
-        // frames stay inside the transcript store and do not rerender App.
-        if (threadFrameStore.getStructureSnapshot() === next) setThreadState(next)
-      }
-    }
-    const offEvents = transport.on('thread.event', ({ threadId, event, seq }) => {
-      const durableSequence = durableSequences.current.get(threadId)
-      const pendingDeltas = pendingThreadDeltas.current.get(threadId)
-      const pendingSequence = pendingDeltas?.sequence
-      if (
-        seq !== undefined &&
-        durableSequence !== undefined &&
-        seq <= Math.max(durableSequence, pendingSequence ?? durableSequence)
-      ) {
-        return
-      }
-      // Compatibility pushes without a durable position cannot safely extend
-      // a cursor. Keep rendering them, then force the next recovery to reload.
-      if (seq === undefined) {
-        durableSequences.current.delete(threadId)
-      }
-      // While a history load is in flight, the fetched state will replace the
-      // cache — record the event so it can be replayed on top. Non-deltas
-      // apply immediately below; deltas join the same frame batch as rendering.
-      const buffers = historyBuffers.current.get(threadId)
-      if (buffers) {
-        for (const buffer of buffers) buffer.push({ seq, event })
-      }
-      if (event.type === 'item.delta') {
-        if (!shouldRetainThreadTranscript(threadId, activeIdRef.current, partialThreadIds)) {
-          pendingThreadDeltas.current.delete(threadId)
-          return
-        }
-        const active = threadId === activeIdRef.current
-        const sequence = seq !== undefined && durableSequence !== undefined ? seq : undefined
-        const nextDeltas = active
-          ? appendThreadDelta(pendingDeltas, event, sequence)
-          : appendBackgroundThreadDelta(pendingDeltas, event, sequence)
-        pendingThreadDeltas.current.set(threadId, nextDeltas)
-        if (active) liveFlush ??= requestAnimationFrame(flushLive)
-        else if (shouldDrainBackgroundDeltas(nextDeltas)) applyPendingDeltas(threadId)
-        return
-      }
-
-      const next = reduce(applyPendingDeltas(threadId), event)
-      threadStates.current.set(threadId, next)
-      if (seq !== undefined && durableSequence !== undefined) {
-        durableSequences.current.set(threadId, Math.max(durableSequence, seq))
-      }
-      if (
-        (event.type === 'item.started' || event.type === 'item.completed') &&
-        event.item.role === 'user'
-      ) {
-        deletePendingSubmission(pendingSubmissions.current, threadId, event.item.id)
-      }
-
-      if (threadId === activeIdRef.current) {
-        if (liveFlush !== undefined && !pendingThreadDeltas.current.has(threadId)) {
-          cancelAnimationFrame(liveFlush)
-          liveFlush = undefined
-        }
-        setThread(next)
-      }
+    const offEvents = transport.on('thread.event', (data) => {
+      const { threadId, event } = data
+      const next = threadController.receive(data, isThreadCacheProtected)
+      if (!next) return
       if (threadId === activeIdRef.current && endsDesignBriefing(event)) setDesignMode(false)
       if (
         event.type === 'turn.started' ||
@@ -1483,22 +1273,14 @@ export function App() {
         // prettier-ignore
         const projectPath = findSession(projectsRef.current, threadId)?.project.path ?? (threadId === activeIdRef.current ? activePathRef.current : undefined)
         if (event.type === 'turn.started') {
-          backgroundDeltaCharacters.current.delete(threadId)
+          threadController.resetBackground(threadId)
           if (threadId !== activeIdRef.current) {
-            compactInactiveRunningThreadState(
-              threadStates.current,
-              durableSequences.current,
-              threadId,
-              {
-                activeId: activeIdRef.current,
-                protected: isThreadCacheProtected(threadId),
-              },
-            )
+            threadController.compact(threadId, isThreadCacheProtected(threadId))
           }
           const probe = workspaceIdleProbe.current
           probe.unknownQueues.delete(threadId)
           // prettier-ignore
-          const queued = [...probe.queuedStarts.entriesForThread(threadId)].find(([id]) => probe.claimedStarts.has(id) || !queueStates.current.get(threadId)?.items.some((item) => item.id === id))?.[0]
+          const queued = [...probe.queuedStarts.entriesForThread(threadId)].find(([id]) => probe.claimedStarts.has(id) || !threadController.queue(threadId)?.items.some((item) => item.id === id))?.[0]
           if (queued) releaseQueuedStart(queued)
           else releaseDirectStart(threadId)
           invalidateWorkspaceIdleProbe(projectPath)
@@ -1537,12 +1319,12 @@ export function App() {
         }
       }
       if (event.type === 'turn.completed' || event.type === 'thread.error') {
-        backgroundDeltaCharacters.current.delete(threadId)
+        threadController.resetBackground(threadId)
         pruneThreadStateCache()
       }
     })
     const offQueue = transport.on('thread.queue', ({ threadId, items, canSteer }) => {
-      const previousItems = queueStates.current.get(threadId)?.items ?? []
+      const previousItems = threadController.queue(threadId)?.items ?? []
       const probe = workspaceIdleProbe.current
       const ownedChecks =
         probe.queuedStarts.countForThread(threadId) + probe.queueActions.countForThread(threadId)
@@ -1555,11 +1337,7 @@ export function App() {
       else probe.unknownQueues.delete(threadId)
       // prettier-ignore
       { for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { if (currentHas(id)) probe.claimedStarts.delete(id); else if (previousHas(id) && !probe.queueActions.has(id)) probe.claimedStarts.add(id) }; for (const [id, action] of probe.queueActions.entriesForThread(threadId)) if (action.pending === 0 && currentHas(id) && !previousHas(id)) probe.queueActions.delete(id) }
-      serverQueueRevisions.current.set(
-        threadId,
-        (serverQueueRevisions.current.get(threadId) ?? 0) + 1,
-      )
-      queueStates.current.set(threadId, { items, canSteer })
+      threadController.setQueue(threadId, { items, canSteer }, 'server')
       settleQueuedSubmissions(threadId, items)
       const projectPath = findSession(projectsRef.current, threadId)?.project.path
       if (items.length === 0 && probe.blockedPath === projectPath)
@@ -1616,7 +1394,7 @@ export function App() {
           state === 'open' &&
           (missedPushes ||
             workspaceIdleProbe.current.pendingStarts.size > 0 ||
-            queueStates.current.size > 0 ||
+            threadController.queues.size > 0 ||
             workspaceIdleProbe.current.unknownQueues.size > 0)
         ) {
           missedPushes = false
@@ -1626,22 +1404,18 @@ export function App() {
     })
     transport.connect()
     return () => {
-      if (liveFlush !== undefined) cancelAnimationFrame(liveFlush)
       if (lifecycleFlush !== undefined) cancelAnimationFrame(lifecycleFlush)
       if (lifecycleFallback !== undefined) window.clearTimeout(lifecycleFallback)
       if (flushPendingLifecyclePushes.current === flushLifecyclePushes) {
         flushPendingLifecyclePushes.current = undefined
       }
       pendingLifecycles.clear()
-      for (const threadId of pendingThreadDeltas.current.keys()) applyPendingDeltas(threadId)
-      if (flushPendingThreadDeltas.current === applyPendingDeltas) {
-        flushPendingThreadDeltas.current = undefined
-      }
+      threadController.suspend()
       window.clearTimeout(announce)
       const probe = workspaceIdleProbe.current
       probe.revision += 1
       probe.transportRevision += 1
-      resyncRevision.current += 1
+      threadController.beginRecovery()
       probe.inFlight = probe.pendingPath = probe.idlePath = probe.blockedPath = undefined
       offEvents()
       offQueue()
@@ -2146,78 +1920,25 @@ export function App() {
 
   const loadHistory = useCallback(
     async (threadId: string, afterSeq?: number) => {
-      if (afterSeq === undefined) durableSequences.current.delete(threadId)
-      // Live pushes landing during this round trip are buffered (see the
-      // thread.event handler) and re-applied on top of the fetched history —
-      // overwriting the cache blindly used to silently drop them.
-      const buffer: Array<{ seq: number | undefined; event: DomainEvent }> = []
-      const buffers = historyBuffers.current.get(threadId) ?? new Set()
-      buffers.add(buffer)
-      historyBuffers.current.set(threadId, buffers)
-      historyOwners.current.set(threadId, buffer)
-      const base =
-        afterSeq === undefined ? emptyThread : (threadStates.current.get(threadId) ?? emptyThread)
       try {
-        const { events, running } = await transport.request(
-          'thread.history',
-          afterSeq === undefined ? { threadId } : { threadId, afterSeq },
-        )
-        // A reconnect may have started a fresher request. The older response
-        // still owns its live-event buffer, but it must not replace newer
-        // durable history after resolving last.
-        if (historyOwners.current.get(threadId) !== buffer) return
-        const restored = reduceEventLog(base, events, afterSeq)
-        const lastSeq = events.at(-1)?.seq ?? afterSeq ?? 0
-        const authoritative = {
-          ...restored,
-          running,
-          activeTurn: running ? restored.activeTurn : undefined,
-        }
-        const live = reduceEventLog(authoritative, buffer, lastSeq)
-        if (buffer.some((entry) => entry.seq === undefined)) {
-          durableSequences.current.delete(threadId)
-        } else {
-          durableSequences.current.set(threadId, latestSequence(buffer, lastSeq))
-        }
-        const withLive = preservePendingSubmissions(live, pendingSubmissions.current, threadId)
-        // The buffered events above already include any deltas still waiting
-        // for a frame, so do not apply that pending batch a second time.
-        pendingThreadDeltas.current.delete(threadId)
-        threadStates.current.set(threadId, withLive)
-        if (activeIdRef.current === threadId) {
+        const loaded = await threadController.loadHistory(threadId, afterSeq)
+        if (loaded && activeIdRef.current === threadId) {
           setProjects((current) => updateSession(current, threadId, markSessionRead))
-          setThread(withLive)
         }
-        if (afterSeq === undefined) return live
-        // Queue settlement may use an active-turn id as rejection evidence.
-        // Only a boundary returned by this read (or its live buffer) is fresh
-        // authority; the cached prefix must not settle an indeterminate send.
-        const suffix = reduceEventLog(reduceEventLog(emptyThread, events), buffer, lastSeq)
-        const crossedTurnBoundary = [...events, ...buffer].some(
-          ({ event }) => event.type === 'turn.started' || event.type === 'turn.completed',
-        )
-        return {
-          ...live,
-          activeTurn: crossedTurnBoundary ? suffix.activeTurn : live.activeTurn,
-        }
+        return loaded?.authority
       } finally {
-        buffers.delete(buffer)
-        if (buffers.size === 0) historyBuffers.current.delete(threadId)
-        if (historyOwners.current.get(threadId) === buffer) {
-          historyOwners.current.delete(threadId)
-        }
         pruneThreadStateCache()
       }
     },
-    [transport, pruneThreadStateCache],
+    [threadController, pruneThreadStateCache],
   )
 
   resync.current = (retry = true) => {
-    const revision = ++resyncRevision.current
+    const revision = threadController.beginRecovery()
     workspaceIdleProbe.current.revision += 1
     const activeId = activeIdRef.current
     const path = activePathRef.current
-    const threadIds = new Set(pendingSubmissions.current.keys())
+    const threadIds = new Set(threadController.pendingThreadIds())
     // prettier-ignore
     const ownerPaths = new Map([...workspaceIdleProbe.current.pendingStarts].filter(([id]) => !id.startsWith('pending:')).map(([id, owner]) => [id, { path: owner.path, tokens: [...owner.tokens] }]))
     for (const id of ownerPaths.keys()) threadIds.add(id)
@@ -2227,75 +1948,57 @@ export function App() {
       [])
       if (
         !['failed', 'ready', 'idle'].includes(session.status) ||
-        (queueStates.current.get(session.id)?.items.length ?? 0) > 0 ||
+        (threadController.queue(session.id)?.items.length ?? 0) > 0 ||
         workspaceIdleProbe.current.unknownQueues.has(session.id)
       )
         threadIds.add(session.id)
     if (activeId && !activeId.startsWith('pending:')) threadIds.add(activeId)
-    // prettier-ignore
-    const resyncThread = (id: string, retry = true): Promise<{ id: string; thread: ThreadState; queue: QueuedTurn[] } | undefined> => {
-      const history = loadHistory(id, durableSequences.current.get(id)).catch(() => undefined)
-      beginQueueRead(id)
-      const localQueueRevision = localQueueRevisions.current.get(id) ?? 0
-      const serverQueueRevision = serverQueueRevisions.current.get(id) ?? 0
-      return transport
-        .request('thread.queue', { threadId: id })
-        .then(async (state) => {
-          const loaded = await history
-          if (
-            revision !== resyncRevision.current ||
-            (localQueueRevisions.current.get(id) ?? 0) !== localQueueRevision ||
-            (serverQueueRevisions.current.get(id) ?? 0) !== serverQueueRevision
-          ) {
-            if (revision !== resyncRevision.current) return
-            if (retry) return resyncThread(id, false)
-            workspaceIdleProbe.current.unknownQueues.add(id)
-            return
-          }
-          const probe = workspaceIdleProbe.current
-          const queuedStarts = [...probe.queuedStarts.entriesForThread(id)]
-          const previousItems = queueStates.current.get(id)?.items ?? []
-          const recoveredIds = indexQueueItemIdsForChecks(state.items, queuedStarts.length)
-          const previousIds = indexQueueItemIdsForChecks(previousItems, queuedStarts.length)
-          for (const [queuedId] of queuedStarts) {
-            const recovered =
-              recoveredIds?.has(queuedId) ?? state.items.some((item) => item.id === queuedId)
-            if (recovered) {
-              probe.claimedStarts.delete(queuedId)
-              continue
-            }
-            const previous =
-              previousIds?.has(queuedId) ?? previousItems.some((item) => item.id === queuedId)
-            if (previous) probe.claimedStarts.add(queuedId)
-          }
-          for (const item of state.items) {
-            const start = probe.submissionStarts.get(item.id)
-            if (start?.threadId === id) probe.queuedStarts.set(item.id, start)
-          }
-          queueStates.current.set(id, state)
-          if (activeIdRef.current === id) {
-            setQueuedTurns(state.items)
-            setCanSteerQueue(state.canSteer)
-          }
-          if (!loaded) {
-            workspaceIdleProbe.current.unknownQueues.add(id)
-            return
-          }
-          workspaceIdleProbe.current.unknownQueues.delete(id)
-          settleQueuedSubmissions(id, state.items, loaded)
-          return { id, thread: loaded, queue: state.items }
-        })
-        .catch(() => {
-          if (revision === resyncRevision.current) workspaceIdleProbe.current.unknownQueues.add(id)
-          return undefined
-        })
-        .finally(() => finishQueueRead(id))
+    const resyncThread = async (
+      id: string,
+    ): Promise<{ id: string; thread: ThreadState; queue: QueuedTurn[] } | undefined> => {
+      const recovered = await threadController.recoverThread(id, revision, isThreadCacheProtected)
+      if (!recovered) {
+        if (threadController.isCurrentRecovery(revision))
+          workspaceIdleProbe.current.unknownQueues.add(id)
+        return
+      }
+      const { history: loaded, state, previousItems } = recovered
+      const probe = workspaceIdleProbe.current
+      const queuedStarts = [...probe.queuedStarts.entriesForThread(id)]
+      const recoveredIds = indexQueueItemIdsForChecks(state.items, queuedStarts.length)
+      const previousIds = indexQueueItemIdsForChecks(previousItems, queuedStarts.length)
+      for (const [queuedId] of queuedStarts) {
+        const recovered =
+          recoveredIds?.has(queuedId) ?? state.items.some((item) => item.id === queuedId)
+        if (recovered) {
+          probe.claimedStarts.delete(queuedId)
+          continue
+        }
+        const previous =
+          previousIds?.has(queuedId) ?? previousItems.some((item) => item.id === queuedId)
+        if (previous) probe.claimedStarts.add(queuedId)
+      }
+      for (const item of state.items) {
+        const start = probe.submissionStarts.get(item.id)
+        if (start?.threadId === id) probe.queuedStarts.set(item.id, start)
+      }
+      if (activeIdRef.current === id) {
+        setQueuedTurns(state.items)
+        setCanSteerQueue(state.canSteer)
+      }
+      if (!loaded) {
+        workspaceIdleProbe.current.unknownQueues.add(id)
+        return
+      }
+      workspaceIdleProbe.current.unknownQueues.delete(id)
+      settleQueuedSubmissions(id, state.items, loaded)
+      return { id, thread: loaded, queue: state.items }
     }
     void Promise.all([
       refreshProjects().catch(() => undefined),
       ...[...threadIds].map((id) => resyncThread(id)),
     ]).then(([projects, ...threads]) => {
-      if (revision !== resyncRevision.current) return
+      if (!threadController.isCurrentRecovery(revision)) return
       const states = threads.filter((state) => state !== undefined)
       const probe = workspaceIdleProbe.current
       const project = projects?.find((candidate) => candidate.path === path)
@@ -2379,7 +2082,7 @@ export function App() {
       const activity = project
         ? workspaceProjectActivity(
             project.sessions,
-            queueStates.current,
+            threadController.queues,
             probe.unknownQueues,
             probe.queueActions.values(),
           )
@@ -2418,23 +2121,23 @@ export function App() {
       return
     }
 
-    const cached = queueStates.current.get(activeId)
+    const cached = threadController.queue(activeId)
     setQueuedTurns(cached?.items ?? [])
     setCanSteerQueue(cached?.canSteer ?? false)
     let cancelled = false
-    const localRevision = localQueueRevisions.current.get(activeId) ?? 0
-    const serverRevision = serverQueueRevisions.current.get(activeId) ?? 0
+    const localRevision = threadController.queueRevision(activeId, 'local')
+    const serverRevision = threadController.queueRevision(activeId, 'server')
     beginQueueRead(activeId)
     void transport
       .request('thread.queue', { threadId: activeId })
       .then((state) => {
         if (
           cancelled ||
-          (localQueueRevisions.current.get(activeId) ?? 0) !== localRevision ||
-          (serverQueueRevisions.current.get(activeId) ?? 0) !== serverRevision
+          threadController.queueRevision(activeId, 'local') !== localRevision ||
+          threadController.queueRevision(activeId, 'server') !== serverRevision
         )
           return
-        queueStates.current.set(activeId, state)
+        threadController.setQueue(activeId, state)
         settleQueuedSubmissions(activeId, state.items)
         if (activeIdRef.current !== activeId) return
         setQueuedTurns(state.items)
@@ -2759,10 +2462,10 @@ export function App() {
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(isolateSession ? { isolate: true } : {}),
         })
-        const provisional = threadStates.current.get(provisionalId) ?? emptyThread
-        threadStates.current.delete(provisionalId)
-        threadStates.current.set(threadId, provisional)
-        durableSequences.current.set(threadId, 0)
+        const provisional = threadController.snapshot(provisionalId) ?? emptyThread
+        threadController.discardSnapshot(provisionalId)
+        threadController.update(threadId, provisional)
+        threadController.setCursor(threadId, 0)
         const pendingStart = workspaceIdleProbe.current.pendingStarts.get(provisionalId)
         // prettier-ignore
         if (pendingStart) { workspaceIdleProbe.current.pendingStarts.delete(provisionalId); workspaceIdleProbe.current.pendingStarts.set(threadId, pendingStart) }
@@ -2804,8 +2507,8 @@ export function App() {
           ),
         )
         if (activeIdRef.current === provisionalId) {
-          moveComposerDraft(composerDrafts.current, provisionalId, threadId)
-          if (composerDraftOwner.current === provisionalId) composerDraftOwner.current = threadId
+          threadController.moveDraft(provisionalId, threadId)
+          if (threadController.draftOwner === provisionalId) threadController.draftOwner = threadId
           if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId
           activeIdRef.current = threadId
           setActiveId(threadId)
@@ -2821,7 +2524,7 @@ export function App() {
       } catch (error) {
         const path = releaseWorkspaceStart(provisionalId)
         if (path) refreshWorkspaceAfterCompletion(path)
-        threadStates.current.delete(provisionalId)
+        threadController.discardSnapshot(provisionalId)
         setProjects((current) =>
           current.map((project) => ({
             ...project,
@@ -2856,12 +2559,12 @@ export function App() {
     (projectPath: string, draft?: string) => {
       setSurface('chat')
       if (draft !== undefined) {
-        const next = upsertComposerDraft(composerDrafts.current, NEW_CHAT_DRAFT_KEY, {
+        const next = threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
           text: draft,
           attachments: [],
           resources: [],
         })
-        composerDraftOwner.current = NEW_CHAT_DRAFT_KEY
+        threadController.draftOwner = NEW_CHAT_DRAFT_KEY
         composerDraftKeyRef.current = NEW_CHAT_DRAFT_KEY
         injectedDraftTransition.current = activeIdRef.current !== undefined
         publishComposerDraft(next)
@@ -2872,7 +2575,7 @@ export function App() {
         .find((project) => project.path === projectPath)
         ?.sessions.filter((session) => session.title === 'New session')
       for (const session of untouched ?? []) {
-        threadStates.current.delete(session.id)
+        threadController.discardSnapshot(session.id)
       }
       setProjects((current) =>
         current.map((project) =>
@@ -2918,13 +2621,9 @@ export function App() {
 
   const updateQueue = useCallback(
     (threadId: string, update: (items: QueuedTurn[]) => QueuedTurn[]) => {
-      const current = queueStates.current.get(threadId) ?? { items: [], canSteer: false }
+      const current = threadController.queue(threadId) ?? { items: [], canSteer: false }
       const next = { ...current, items: update(current.items) }
-      localQueueRevisions.current.set(
-        threadId,
-        (localQueueRevisions.current.get(threadId) ?? 0) + 1,
-      )
-      queueStates.current.set(threadId, next)
+      threadController.setQueue(threadId, next, 'local')
       if (activeIdRef.current === threadId) setQueuedTurns(next.items)
     },
     [],
@@ -2948,8 +2647,8 @@ export function App() {
       // for the paragraph someone just typed.
       const restoreDraft = () => {
         const key = composerDraftKey(activeIdRef.current)
-        const next = upsertComposerDraft(composerDrafts.current, key, { text, attachments })
-        composerDraftOwner.current = key
+        const next = threadController.editDraft(key, { text, attachments })
+        threadController.draftOwner = key
         publishComposerDraft(next)
       }
       const sideChatCommand = parseSideChatCommand(text)
@@ -2959,7 +2658,7 @@ export function App() {
           setNotice('Start the main chat before opening a side chat.')
           return
         }
-        const parent = threadStates.current.get(activeId)
+        const parent = threadController.snapshot(activeId)
         if (!parent?.items.some((item) => item.type === 'message' && item.role === 'user')) {
           restoreDraft()
           setNotice('Send a message in the main chat before opening a side chat.')
@@ -3029,7 +2728,7 @@ export function App() {
         workspaceStartId = provisionalId
         workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
         optimisticTurnId = provisional.activeTurn?.id
-        threadStates.current.set(provisionalId, provisional)
+        threadController.update(provisionalId, provisional)
         setProjects((current) =>
           current.map((project) =>
             project.path === activePath
@@ -3068,10 +2767,10 @@ export function App() {
         if (pendingSession.current?.id === provisionalId) pendingSession.current = undefined
         if (!threadId) {
           setStoppingThreadId((current) => (current === provisionalId ? undefined : current))
-          const current = threadStates.current.get(provisionalId)
+          const current = threadController.snapshot(provisionalId)
           if (current !== undefined && current.activeTurn?.id === optimisticTurnId) {
             const next: ThreadState = { ...current, running: false, activeTurn: undefined }
-            threadStates.current.set(provisionalId, next)
+            threadController.update(provisionalId, next)
             if (activeIdRef.current === provisionalId) setThread(next)
           }
           releasePendingStart()
@@ -3086,13 +2785,13 @@ export function App() {
         const pending = pendingSession.current
         const targetId = pending.threadId ?? pending.id
         const provisional = appendUserMessage(
-          threadStates.current.get(targetId) ?? emptyThread,
+          threadController.snapshot(targetId) ?? emptyThread,
           text,
           optimisticItemId,
           optimisticCreatedAt,
           attachments,
         )
-        threadStates.current.set(targetId, provisional)
+        threadController.update(targetId, provisional)
         if (activeIdRef.current === targetId) setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
         threadId = await pending.promise
@@ -3108,7 +2807,7 @@ export function App() {
       setNotice(undefined)
       setUndoRestore(undefined)
 
-      const before = threadStates.current.get(threadId) ?? emptyThread
+      const before = threadController.snapshot(threadId) ?? emptyThread
       const wasRunning = before.running && !optimisticAdded
       const steering = submission === 'steer'
       const optimisticQueueId = wasRunning && !steering ? optimisticItemId : undefined
@@ -3121,7 +2820,7 @@ export function App() {
           attachments,
         )
         optimisticTurnId = next.activeTurn?.id
-        threadStates.current.set(threadId, next)
+        threadController.update(threadId, next)
         if (threadId === activeIdRef.current) {
           setThread(next)
           setThreadRevealRequest((request) => request + 1)
@@ -3134,7 +2833,7 @@ export function App() {
           optimisticCreatedAt,
           attachments,
         )
-        threadStates.current.set(threadId, next)
+        threadController.update(threadId, next)
         if (threadId === activeIdRef.current) setThread(next)
       }
       if (optimisticQueueId) {
@@ -3143,8 +2842,8 @@ export function App() {
           { id: optimisticQueueId, text, attachments, createdAt: Date.now() },
         ])
       }
-      const optimisticState = threadStates.current.get(threadId) ?? emptyThread
-      composerDrafts.current.delete(threadId)
+      const optimisticState = threadController.snapshot(threadId) ?? emptyThread
+      threadController.forgetDraft(threadId)
       const pendingOptimisticTurn = optimisticState.activeTurn
       const precedingTurn = wasRunning ? before.activeTurn : undefined
       const pendingSubmission: PendingSubmission = {
@@ -3164,7 +2863,7 @@ export function App() {
       if (pendingOptimisticTurn && pendingOptimisticTurn.id === optimisticTurnId) {
         pendingSubmission.optimisticTurn = pendingOptimisticTurn
       }
-      putPendingSubmission(pendingSubmissions.current, threadId, pendingSubmission)
+      threadController.submit(threadId, pendingSubmission)
       if (workspaceStartToken !== undefined)
         workspaceIdleProbe.current.submissionStarts.set(optimisticItemId, {
           threadId,
@@ -3223,11 +2922,13 @@ export function App() {
         if (interruptRequested) requestInterrupt(threadId)
         const result = await turnRequest
         turnAccepted = true
-        const current = threadStates.current.get(threadId) ?? emptyThread
-        const pending = pendingSubmissions.current.get(threadId)?.get(optimisticItemId)
-        if (pending) pending.accepted = true
+        const current = threadController.snapshot(threadId) ?? emptyThread
+        const pending = threadController.submission(threadId, optimisticItemId)
+        threadController.updateSubmission(threadId, optimisticItemId, { accepted: true })
         if (result.queued) {
-          if (pending) pending.kind = steering ? 'steer' : 'queue'
+          threadController.updateSubmission(threadId, optimisticItemId, {
+            kind: steering ? 'steer' : 'queue',
+          })
           if (workspaceStartToken !== undefined)
             workspaceIdleProbe.current.queuedStarts.set(result.queuedTurn.id, {
               threadId,
@@ -3262,32 +2963,31 @@ export function App() {
             })
             if (!wasRunning) {
               const reconciled = pending ? removePendingSubmission(current, pending) : current
-              threadStates.current.set(threadId, reconciled)
+              threadController.update(threadId, reconciled)
               if (threadId === activeIdRef.current) setThread(reconciled)
             }
-            deletePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
+            threadController.forgetSubmission(threadId, optimisticItemId)
           }
         } else if (!result.queued && wasRunning) {
-          if (pending) pending.kind = 'turn'
+          threadController.updateSubmission(threadId, optimisticItemId, { kind: 'turn' })
           if (optimisticQueueId) {
             updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
           }
         }
       } catch (error) {
         if (error instanceof IndeterminateRequestError) {
-          const pending = pendingSubmissions.current.get(threadId)?.get(optimisticItemId)
-          if (pending) pending.indeterminate = true
+          threadController.updateSubmission(threadId, optimisticItemId, { indeterminate: true })
           if (queuedActionId) settleQueueAction(queuedActionId, 'steer', true)
           return
         }
         if (queuedActionId) settleQueueAction(queuedActionId, 'steer')
-        deletePendingSubmission(pendingSubmissions.current, threadId, optimisticItemId)
+        threadController.forgetSubmission(threadId, optimisticItemId)
         if (optimisticQueueId) {
           updateQueue(threadId, (items) => items.filter((item) => item.id !== optimisticQueueId))
         }
         if (!turnAccepted) {
           releasePendingStart()
-          const current = threadStates.current.get(threadId)
+          const current = threadController.snapshot(threadId)
           if (current !== undefined) {
             // The server did not accept this prompt. Remove only its local
             // echo; a durable item already bound to a turn remains.
@@ -3295,15 +2995,15 @@ export function App() {
             if (current.activeTurn?.id === optimisticTurnId) {
               next = { ...next, running: false, activeTurn: undefined }
             }
-            threadStates.current.set(threadId, next)
+            threadController.update(threadId, next)
             if (threadId === activeIdRef.current) setThread(next)
           }
           restoreRejectedDraft(threadId, { text, attachments })
         } else if (steering) {
-          const current = threadStates.current.get(threadId)
+          const current = threadController.snapshot(threadId)
           if (current) {
             const next = removeOptimisticMessage(current, optimisticItemId)
-            threadStates.current.set(threadId, next)
+            threadController.update(threadId, next)
             if (threadId === activeIdRef.current) setThread(next)
           }
         }
@@ -3533,13 +3233,13 @@ export function App() {
       setThreadRevealRequest((request) => request + 1)
       setThreadEntryKey((key) => key + 1)
       setActivePath(found?.project.path)
-      backgroundDeltaCharacters.current.delete(id)
-      flushPendingThreadDeltas.current?.(id)
-      const cached = touchThreadState(threadStates.current, id)
+      threadController.resetBackground(id)
+      threadController.flush(id)
+      const cached = threadController.touch(id)
       if (cached) {
         setThread(cached)
         setProjects((current) => updateSession(current, id, markSessionRead))
-        if (pendingSubmissions.current.has(id)) {
+        if (threadController.hasPending(id)) {
           resync.current()
           return
         }
@@ -3549,7 +3249,7 @@ export function App() {
 
       setLoadingThreadId(id)
       try {
-        await loadHistory(id, cached ? durableSequences.current.get(id) : undefined)
+        await loadHistory(id, cached ? threadController.cursor(id) : undefined)
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
       } finally {
@@ -3615,7 +3315,7 @@ export function App() {
     [transport],
   )
   const editMessage = useCallback((text: string) => {
-    upsertComposerDraft(composerDrafts.current, composerDraftOwner.current, { text })
+    threadController.editDraft(threadController.draftOwner, { text })
     setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
     setComposerFocusRequest((request) => request + 1)
   }, [])
@@ -3645,8 +3345,7 @@ export function App() {
     if (!activeId || !rollbackInspection) return
     setRollbackRestoring(true)
     try {
-      durableSequences.current.delete(activeId)
-      historyOwners.current.delete(activeId)
+      threadController.invalidateHistory(activeId)
       const { undo } = await transport.request('thread.restore', {
         threadId: activeId,
         checkpointId: rollbackInspection.checkpoint.id,
@@ -3668,8 +3367,7 @@ export function App() {
   const reverseRestore = useCallback(async () => {
     if (!undoRestore) return
     try {
-      durableSequences.current.delete(undoRestore.threadId)
-      historyOwners.current.delete(undoRestore.threadId)
+      threadController.invalidateHistory(undoRestore.threadId)
       await transport.request('thread.undoRestore', {
         threadId: undoRestore.threadId,
         undo: undoRestore.token,
@@ -3688,17 +3386,15 @@ export function App() {
     async (id: string) => {
       await transport.request('thread.delete', { threadId: id })
       const projectPath = clearWorkspaceThread(id)
-      threadStates.current.delete(id)
-      durableSequences.current.delete(id)
-      pendingThreadDeltas.current.delete(id)
-      pendingSubmissions.current.delete(id)
+      threadController.discardSnapshot(id)
+      threadController.invalidateHistory(id)
       setProjects((current) => removeSession(current, id))
       if (activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
       }
-      composerDrafts.current.delete(id)
+      threadController.forgetDraft(id)
       refreshWorkspaceAfterCompletion(projectPath)
     },
     [transport, clearWorkspaceThread, refreshWorkspaceAfterCompletion],
@@ -5124,64 +4820,6 @@ function affectsSessionStatus(event: DomainEvent): boolean {
     event.type === 'approval.resolved' ||
     event.type === 'thread.error'
   )
-}
-
-function putPendingSubmission(
-  pending: Map<string, Map<string, PendingSubmission>>,
-  threadId: string,
-  submission: PendingSubmission,
-): void {
-  const thread = pending.get(threadId) ?? new Map()
-  thread.set(submission.id, submission)
-  pending.set(threadId, thread)
-}
-
-function deletePendingSubmission(
-  pending: Map<string, Map<string, PendingSubmission>>,
-  threadId: string,
-  submissionId: string,
-): void {
-  const thread = pending.get(threadId)
-  if (!thread) return
-  thread.delete(submissionId)
-  if (thread.size === 0) pending.delete(threadId)
-}
-
-function preservePendingSubmissions(
-  state: ThreadState,
-  pending: Map<string, Map<string, PendingSubmission>>,
-  threadId: string,
-): ThreadState {
-  const thread = pending.get(threadId)
-  if (!thread) return state
-  let next = state
-  for (const submission of thread.values()) {
-    const existing = next.items.find((item) => item.id === submission.id)
-    if (existing) {
-      if (existing.turnId !== '') thread.delete(submission.id)
-      continue
-    }
-    if (submission.kind === 'queue') continue
-    next = appendUserMessage(
-      next,
-      submission.text,
-      submission.id,
-      submission.createdAt,
-      submission.attachments,
-    )
-    if (!next.running && submission.optimisticTurn) {
-      next = { ...next, running: true, activeTurn: submission.optimisticTurn }
-    }
-  }
-  if (thread.size === 0) pending.delete(threadId)
-  return next
-}
-
-function removePendingSubmission(state: ThreadState, submission: PendingSubmission): ThreadState {
-  const next = removeOptimisticMessage(state, submission.id)
-  return submission.optimisticTurn && next.activeTurn?.id === submission.optimisticTurn.id
-    ? { ...next, running: false, activeTurn: undefined }
-    : next
 }
 
 function statusFor(
