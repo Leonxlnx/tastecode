@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { methods } from '@harness/contracts'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from '../../test-transport.js'
 
@@ -47,7 +47,9 @@ describe('WorkspaceFiles tree virtualization', () => {
 
     render(<WorkspaceFiles transport={transport} projectPath="/project" />)
 
-    expect(await screen.findAllByRole('button')).toHaveLength(50)
+    expect(
+      await within(screen.getByLabelText('Workspace file tree')).findAllByRole('button'),
+    ).toHaveLength(50)
     expect(virtualizerOptions).not.toHaveBeenCalled()
     expect(screen.getByTitle('src/nested-00049.ts')).toBeTruthy()
   })
@@ -64,7 +66,9 @@ describe('WorkspaceFiles tree virtualization', () => {
     await waitFor(() => {
       expect(virtualizerOptions.mock.lastCall?.[0]).toMatchObject({ count: 200 })
     })
-    expect(screen.getAllByRole('button')).toHaveLength(8)
+    expect(
+      within(screen.getByLabelText('Workspace file tree')).getAllByRole('button'),
+    ).toHaveLength(8)
     expect(screen.queryByTitle('src/nested-00199.ts')).toBeNull()
 
     fireEvent.change(screen.getByLabelText('Filter workspace files'), {
@@ -117,20 +121,28 @@ describe('WorkspaceFiles tree virtualization', () => {
     await waitFor(() => {
       expect(virtualizerOptions.mock.lastCall?.[0]).toMatchObject({ count: 1_001 })
     })
-    expect(screen.getAllByRole('button')).toHaveLength(8)
+    expect(
+      within(screen.getByLabelText('Workspace file tree')).getAllByRole('button'),
+    ).toHaveLength(8)
     expect(screen.queryByTitle('src/nested-00999.ts')).toBeNull()
 
     fireEvent.change(screen.getByLabelText('Filter workspace files'), {
       target: { value: '00999' },
     })
     expect(await screen.findByTitle('src/nested-00999.ts')).toBeTruthy()
-    expect(screen.getAllByRole('button')).toHaveLength(2)
+    expect(
+      within(screen.getByLabelText('Workspace file tree')).getAllByRole('button'),
+    ).toHaveLength(2)
 
     fireEvent.change(screen.getByLabelText('Filter workspace files'), { target: { value: '' } })
     await waitFor(() => expect(screen.queryByTitle('src/nested-00999.ts')).toBeNull())
 
     fireEvent.click(screen.getByTitle('src'))
-    await waitFor(() => expect(screen.getAllByRole('button')).toHaveLength(1))
+    await waitFor(() =>
+      expect(
+        within(screen.getByLabelText('Workspace file tree')).getAllByRole('button'),
+      ).toHaveLength(1),
+    )
     expect(screen.getByTitle('src').getAttribute('aria-expanded')).toBe('false')
 
     fireEvent.click(screen.getByTitle('src'))

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { methods } from '@harness/contracts'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { TestTransport } from '../../test-transport.js'
 import { WorkspaceFiles } from './WorkspaceFiles.js'
@@ -17,6 +17,51 @@ const file = (name: string, path = name) => ({
 afterEach(() => cleanup())
 
 describe('WorkspaceFiles', () => {
+  it('refreshes a reopened folder and ignores an older overlapping result', async () => {
+    const pending: Array<(value: unknown) => void> = []
+    const folder = { ...file('src'), kind: 'directory' as const }
+    const transport = new TestTransport((method, params) => {
+      if (method !== 'workspace.listDirectory') throw new Error('Unexpected request')
+      const request = methods[method].params.parse(params)
+      if (!request.directory) return { path: '', entries: [folder] }
+      return new Promise((resolve) => pending.push(resolve))
+    })
+    render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    const button = await screen.findByTitle('src')
+    fireEvent.click(button)
+    await act(async () => pending[0]!({ path: 'src', entries: [file('old.ts', 'src/old.ts')] }))
+    expect(screen.getByTitle('src/old.ts')).toBeTruthy()
+    fireEvent.click(button)
+    fireEvent.click(button)
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    await act(async () => pending[2]!({ path: 'src', entries: [file('new.ts', 'src/new.ts')] }))
+    await act(async () => pending[1]!({ path: 'src', entries: [file('stale.ts', 'src/stale.ts')] }))
+    expect(screen.getByTitle('src/new.ts')).toBeTruthy()
+    expect(screen.queryByTitle('src/old.ts')).toBeNull()
+    expect(screen.queryByTitle('src/stale.ts')).toBeNull()
+  })
+
+  it('coalesces completion and reconnect refreshes without reading on token deltas', async () => {
+    const transport = new TestTransport(() => ({ path: '', entries: [] }))
+    render(<WorkspaceFiles transport={transport} projectPath="/project" threadId="thread" />)
+    await waitFor(() => expect(transport.requests).toHaveLength(1))
+    act(() => {
+      for (let index = 0; index < 20; index += 1)
+        transport.emit('thread.event', {
+          threadId: 'thread',
+          event: { type: 'item.delta', turnId: 'turn', itemId: 'item', textDelta: 'text' },
+        })
+    })
+    expect(transport.requests).toHaveLength(1)
+    act(() => {
+      transport.emit('thread.event', {
+        threadId: 'thread',
+        event: { type: 'turn.completed', turnId: 'turn', status: 'completed' },
+      })
+      transport.emitState('open')
+    })
+    await waitFor(() => expect(transport.requests).toHaveLength(2))
+  })
   it('moves selection between file rows and clears it when the project changes', async () => {
     const entries = [file('one.ts'), file('two.ts')]
     const transport = new TestTransport((method, params) => {
