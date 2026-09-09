@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -15,6 +16,14 @@ import {
   sha256File,
 } from './linux-release-shared.js'
 import { verifyLinuxUpdaterMetadata } from './linux-updater-metadata.js'
+import {
+  assertWorktreeClean,
+  BUILD_PROVENANCE_FILE,
+  BUILD_PROVENANCE_SCHEMA_VERSION,
+  worktreePorcelainStatus,
+} from './build-provenance.js'
+
+export { assertWorktreeClean, worktreePorcelainStatus } from './build-provenance.js'
 
 const TAG = '[linux-release-evidence]'
 
@@ -55,17 +64,61 @@ function findRejected(
     .sort(compareAscii)
 }
 
-export function worktreePorcelainStatus(cwd, run = execFileSync) {
-  return run('git', ['status', '--porcelain'], { cwd, encoding: 'utf8' })
+export function assertArtifactProvenance(provenance, { artifact, version, commit }) {
+  if (
+    provenance?.schemaVersion !== BUILD_PROVENANCE_SCHEMA_VERSION ||
+    provenance?.version !== version ||
+    typeof provenance?.commit !== 'string' ||
+    provenance.commit.toLowerCase() !== commit.toLowerCase()
+  ) {
+    throw new Error(
+      `[linux-release-evidence] ${artifact} was not built from ${commit} at version ${version}; ` +
+        `rebuild both x64 targets with ${LINUX_DIST_COMMAND}`,
+    )
+  }
 }
 
-export function assertWorktreeClean(porcelain) {
-  if (porcelain.trim() !== '') {
-    const error = new Error(
-      '[linux-release-evidence] worktree is dirty; commit or stash changes before attesting HEAD',
+async function readArtifactProvenance(artifactPath, artifactName, desktopPackage) {
+  const extractionRoot = await mkdtemp(path.join(os.tmpdir(), 'tastecode-provenance-'))
+  try {
+    let provenancePath
+    if (artifactName.endsWith('.AppImage')) {
+      const executableName = desktopPackage.build?.linux?.executableName
+      if (!executableName) {
+        throw new Error('[linux-release-evidence] Linux executableName is required')
+      }
+      const resourcePath = path.posix.join(
+        'usr',
+        'lib',
+        executableName,
+        'resources',
+        BUILD_PROVENANCE_FILE,
+      )
+      execFileSync(artifactPath, ['--appimage-extract', resourcePath], {
+        cwd: extractionRoot,
+        stdio: 'ignore',
+      })
+      provenancePath = path.join(extractionRoot, 'squashfs-root', resourcePath)
+    } else if (artifactName.endsWith('.deb')) {
+      execFileSync('dpkg-deb', ['--extract', artifactPath, extractionRoot], { stdio: 'ignore' })
+      provenancePath = path.join(
+        extractionRoot,
+        'opt',
+        desktopPackage.productName,
+        'resources',
+        BUILD_PROVENANCE_FILE,
+      )
+    } else {
+      throw new Error(`[linux-release-evidence] unsupported artifact: ${artifactName}`)
+    }
+    return JSON.parse(await readFile(provenancePath, 'utf8'))
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `[linux-release-evidence] cannot verify embedded provenance in ${artifactName}: ${detail}`,
     )
-    error.code = 'LINUX_EVIDENCE_DIRTY_WORKTREE'
-    throw error
+  } finally {
+    await rm(extractionRoot, { recursive: true, force: true })
   }
 }
 
@@ -152,6 +205,7 @@ export async function collectLinuxReleaseEvidence(
     desktopPackage,
     inventoryName = defaultInventoryName,
     checksumsName = defaultChecksumsName,
+    readProvenance = readArtifactProvenance,
   } = options
   if (!version) throw new Error('[linux-release-evidence] version is required')
   if (!/^[0-9a-f]{40}$/i.test(commit ?? '')) {
@@ -212,17 +266,20 @@ export async function collectLinuxReleaseEvidence(
 
   const artifacts = []
   for (const name of expected) {
-    const fileStat = await stat(path.join(releaseDirectory, name))
+    const artifactPath = path.join(releaseDirectory, name)
+    const fileStat = await stat(artifactPath)
     if (!fileStat.isFile() || fileStat.size === 0) {
       throw new Error(
         `[linux-release-evidence] release candidate is empty: ${name} ` +
           `(rebuild with ${LINUX_DIST_COMMAND} and retry)`,
       )
     }
+    const provenance = await readProvenance(artifactPath, name, resolvedDesktop)
+    assertArtifactProvenance(provenance, { artifact: name, version, commit })
     artifacts.push({
       file: name,
       bytes: fileStat.size,
-      sha256: await sha256File(path.join(releaseDirectory, name)),
+      sha256: await sha256File(artifactPath),
     })
   }
   artifacts.sort((left, right) => compareAscii(left.file, right.file))
@@ -240,7 +297,13 @@ export async function collectLinuxReleaseEvidence(
   const inventory = {
     artifacts,
     commit: commit.toLowerCase(),
-    schemaVersion: 2,
+    payloadProvenance: {
+      artifacts: expected.toSorted(compareAscii),
+      commit: commit.toLowerCase(),
+      schemaVersion: BUILD_PROVENANCE_SCHEMA_VERSION,
+      version,
+    },
+    schemaVersion: 3,
     updaterMetadata,
     version,
   }
@@ -284,6 +347,7 @@ export async function writeLinuxReleaseEvidence(
     inventoryName = defaultInventoryName,
     checksumsName = defaultChecksumsName,
     desktopPackage,
+    readProvenance,
   } = {},
 ) {
   await removeStaleTempFiles(releaseDirectory, inventoryName)
@@ -291,7 +355,7 @@ export async function writeLinuxReleaseEvidence(
   const { inventory, checksumText } = await collectLinuxReleaseEvidence(
     releaseDirectory,
     { version, commit },
-    { desktopPackage, inventoryName, checksumsName },
+    { desktopPackage, inventoryName, checksumsName, readProvenance },
   )
   await mkdir(releaseDirectory, { recursive: true })
   const inventoryPath = path.join(releaseDirectory, inventoryName)
@@ -300,6 +364,7 @@ export async function writeLinuxReleaseEvidence(
   const ordered = {
     artifacts: inventory.artifacts,
     commit: inventory.commit,
+    payloadProvenance: inventory.payloadProvenance,
     schemaVersion: inventory.schemaVersion,
     updaterMetadata: inventory.updaterMetadata,
     version: inventory.version,

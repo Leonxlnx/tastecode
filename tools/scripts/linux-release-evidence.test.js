@@ -10,11 +10,13 @@ import yaml from 'js-yaml'
 
 import {
   assertConfiguredDebDependencies,
+  assertArtifactProvenance,
   assertWorktreeClean,
-  collectLinuxReleaseEvidence,
+  collectLinuxReleaseEvidence as collectLinuxReleaseEvidenceRaw,
   worktreePorcelainStatus,
-  writeLinuxReleaseEvidence,
+  writeLinuxReleaseEvidence as writeLinuxReleaseEvidenceRaw,
 } from './linux-release-evidence.js'
+import { createBuildProvenance } from './build-provenance.js'
 import { channelFileNameForVersion, expectedLinuxArtifactNames } from './linux-release-shared.js'
 
 const VERSION = '9.9.9-test.1'
@@ -25,6 +27,15 @@ const DEB = EXPECTED.find((name) => name.endsWith('.deb'))
 const CHANNEL = channelFileNameForVersion(VERSION, '[test]')
 const APP_PAYLOAD = `fake AppImage payload for ${VERSION}\n`
 const DEB_PAYLOAD = `fake deb payload for ${VERSION}\n`
+const readProvenance = async () => createBuildProvenance({ version: VERSION, commit: COMMIT })
+
+function collectLinuxReleaseEvidence(directory, attestation) {
+  return collectLinuxReleaseEvidenceRaw(directory, attestation, { readProvenance })
+}
+
+function writeLinuxReleaseEvidence(directory, options) {
+  return writeLinuxReleaseEvidenceRaw(directory, { ...options, readProvenance })
+}
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
 const b64 = (data) => createHash('sha512').update(data).digest('base64')
@@ -119,7 +130,7 @@ test('records verified metadata and stays deterministic', () =>
     })
     const channelText = await readFile(path.join(directory, CHANNEL), 'utf8')
     assert.equal(channelFile, CHANNEL)
-    assert.equal(inventory.schemaVersion, 2)
+    assert.equal(inventory.schemaVersion, 3)
     assert.deepEqual(inventory.artifacts, [
       { file: DEB, bytes: Buffer.byteLength(DEB_PAYLOAD), sha256: sha256(DEB_PAYLOAD) },
       { file: APP, bytes: binary.length, sha256: sha256(binary) },
@@ -129,6 +140,12 @@ test('records verified metadata and stays deterministic', () =>
       bytes: Buffer.byteLength(channelText, 'utf8'),
       sha256: sha256(channelText),
     })
+    assert.deepEqual(inventory.payloadProvenance, {
+      artifacts: [DEB, APP].sort(),
+      commit: COMMIT,
+      schemaVersion: 1,
+      version: VERSION,
+    })
     assert.ok(checksumText.endsWith(`${sha256(channelText)}  ${CHANNEL}\n`))
     const first = await writeLinuxReleaseEvidence(directory, { version: VERSION, commit: COMMIT })
     const firstInventory = await readFile(first.inventoryPath, 'utf8')
@@ -137,6 +154,7 @@ test('records verified metadata and stays deterministic', () =>
     assert.deepEqual(Object.keys(JSON.parse(firstInventory)), [
       'artifacts',
       'commit',
+      'payloadProvenance',
       'schemaVersion',
       'updaterMetadata',
       'version',
@@ -232,7 +250,7 @@ test('dirty worktrees stay fail-closed', async () => {
     assert.fail('expected refusal')
   } catch (error) {
     assert.match(error.message, /worktree is dirty/)
-    assert.equal(error.code, 'LINUX_EVIDENCE_DIRTY_WORKTREE')
+    assert.equal(error.code, 'BUILD_PROVENANCE_DIRTY_WORKTREE')
   }
   let git = true
   try {
@@ -257,4 +275,31 @@ test('dirty worktrees stay fail-closed', async () => {
   } finally {
     await rm(repo, { recursive: true, force: true })
   }
+})
+
+test('rejects artifacts built from another commit or version', () => {
+  assert.doesNotThrow(() =>
+    assertArtifactProvenance(createBuildProvenance({ version: VERSION, commit: COMMIT }), {
+      artifact: APP,
+      version: VERSION,
+      commit: COMMIT,
+    }),
+  )
+  assert.throws(
+    () =>
+      assertArtifactProvenance(
+        createBuildProvenance({ version: VERSION, commit: 'b'.repeat(40) }),
+        { artifact: APP, version: VERSION, commit: COMMIT },
+      ),
+    /was not built from/,
+  )
+  assert.throws(
+    () =>
+      assertArtifactProvenance(createBuildProvenance({ version: '9.9.8', commit: COMMIT }), {
+        artifact: DEB,
+        version: VERSION,
+        commit: COMMIT,
+      }),
+    /was not built from/,
+  )
 })
