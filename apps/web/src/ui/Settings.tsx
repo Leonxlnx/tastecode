@@ -114,6 +114,7 @@ import {
   type Shortcut,
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
+import { ProviderUpdateCheck, ProviderUpdateControl } from './ProviderUpdates.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -718,7 +719,7 @@ export function ProviderSettings(props: {
     }
   }
 
-  const renderProviderRow = (status: ProviderStatus) => {
+  const renderAccountRow = (status: ProviderStatus) => {
     const authState =
       authStates[status.id] ??
       (status.id === props.provider && props.account
@@ -828,9 +829,20 @@ export function ProviderSettings(props: {
   // and API-connection surfaces are parked, not deleted — see AGENTS.md.
   const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
   const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
+  const renderProviderRow = (status: ProviderStatus) => (
+    <div className="provider-settings__entry" key={status.id}>
+      {renderAccountRow(status)}
+      <ProviderUpdateControl
+        provider={status}
+        transport={props.transport}
+        onUpdated={props.onConnectionsChanged}
+      />
+    </div>
+  )
 
   return (
     <SettingsPanel title="Providers" groupClassName="settings__group--providers">
+      <ProviderUpdateCheck transport={props.transport} />
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}

@@ -2450,7 +2450,11 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
     await screen.findByRole('button', { name: 'Sign in' })
     await act(async () => finishInitial({ signedIn: true }))
-    expect(screen.getByRole('status').textContent).toContain('Provider setup required')
+    expect(
+      screen
+        .getAllByRole('status')
+        .some((status) => status.textContent?.includes('Provider setup required')),
+    ).toBe(true)
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 

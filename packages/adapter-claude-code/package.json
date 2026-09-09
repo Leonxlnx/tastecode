@@ -11,6 +11,10 @@
     "./capabilities": {
       "types": "./dist/capabilities.d.ts",
       "default": "./dist/capabilities.js"
+    },
+    "./updates": {
+      "types": "./dist/updates.d.ts",
+      "default": "./dist/updates.js"
     }
   },
   "main": "./dist/index.js",

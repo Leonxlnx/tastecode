@@ -77,6 +77,11 @@ export function startServer(
   }
   const push = new PushBus()
   const providerService = import('./providers.js')
+  let updatesService: Promise<import('./provider-updates.js').ProviderUpdateService> | undefined
+  const providerUpdates = () =>
+    (updatesService ??= import('./provider-updates.js').then(
+      ({ ProviderUpdateService }) => new ProviderUpdateService(),
+    ))
   void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
   const previewCapture = new PreviewCaptureCoordinator(
     (socket, request) => push.send(socket, 'preview.captureRequested', request),
@@ -331,6 +336,24 @@ export function startServer(
 
       case 'providers.list':
         return { providers: await (await providerService).detectProviders() }
+
+      case 'providers.updates':
+        return {
+          updates: await (await providerUpdates()).list(parseParams(method, params).refresh),
+        }
+
+      case 'providers.update': {
+        const p = parseParams(method, params)
+        const command = await (await providerUpdates()).commandFor(p.provider)
+        return {
+          terminalId: orchestrator.installProvider(
+            `update:${p.provider}`,
+            command,
+            p.columns,
+            p.rows,
+          ),
+        }
+      }
 
       case 'harnesses.list':
         return { harnesses: orchestrator.listCustomHarnesses() }
@@ -636,14 +659,14 @@ export function startServer(
         return {}
       }
 
-      case 'providers.watch': {
-        const p = parseParams(method, params)
-        return orchestrator.watchProvider(p.provider, p.projectPath, p.targets)
-      }
-
       case 'terminal.status': {
         const p = parseParams(method, params)
         return orchestrator.terminalStatus(p.terminalId)
+      }
+
+      case 'providers.watch': {
+        const p = parseParams(method, params)
+        return orchestrator.watchProvider(p.provider, p.projectPath, p.targets)
       }
 
       case 'terminal.resize': {

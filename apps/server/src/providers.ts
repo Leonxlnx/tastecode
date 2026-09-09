@@ -2,6 +2,10 @@ import { codexLoginStatus } from '@harness/adapter-codex/auth'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
+import { CODEX_UPDATES } from '@harness/adapter-codex/updates'
+import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
+import { GROK_UPDATES } from '@harness/adapter-grok/updates'
+import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc/cli'
 
@@ -25,6 +29,7 @@ type Probe = {
   command?: string
   capabilities?: ProviderStatus['capabilities']
   setup: ProviderSetup
+  updater?: CliUpdateSource
   supportedVersion?: string
   /** Interactive sign-in command, for providers whose login lives in their own CLI. */
   loginCommand?: string
@@ -35,6 +40,7 @@ type Probe = {
 const PROBES: Probe[] = [
   {
     id: 'codex',
+    updater: CODEX_UPDATES,
     displayName: 'Codex',
     command: 'codex',
     capabilities: CODEX_CAPABILITIES,
@@ -48,6 +54,7 @@ const PROBES: Probe[] = [
   },
   {
     id: 'claude-code',
+    updater: CLAUDE_UPDATES,
     displayName: 'Claude Code',
     command: 'claude',
     capabilities: CLAUDE_CAPABILITIES,
@@ -61,6 +68,7 @@ const PROBES: Probe[] = [
   },
   {
     id: 'grok',
+    updater: GROK_UPDATES,
     displayName: 'Grok',
     command: 'grok',
     capabilities: GROK_CAPABILITIES,
@@ -99,6 +107,14 @@ const REAL_SYSTEM: SystemProbe = {
   version: commandVersion,
   auth: (provider) =>
     provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+}
+
+export function providerUpdateSources() {
+  return PROBES.flatMap((entry) =>
+    entry.updater
+      ? [{ provider: entry.id, displayName: entry.displayName, updater: entry.updater }]
+      : [],
+  )
 }
 
 /**

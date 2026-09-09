@@ -3446,6 +3446,19 @@
   -webkit-line-clamp: 3;
 }
 
+.notice--provider-update {
+  color: var(--text-2);
+}
+
+.notice--provider-update > svg,
+.notice--provider-update > button {
+  flex-shrink: 0;
+}
+
+.notice--provider-update > button {
+  white-space: nowrap;
+}
+
 @media (max-width: 700px) {
   .shell {
     /* Match the grid row to the 44px touch titlebar so it cannot overlap the drawer. */
