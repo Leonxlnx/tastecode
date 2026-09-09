@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-04 e3269929</span>
+        <span class="meta">2026-09-09 main d6d34b15</span>
       </div>
     </div>
 
@@ -628,6 +628,19 @@
             <label
               ><input type="checkbox" /><span
                 >Auto-detect installed CLIs with version check and mismatch warning</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider update buttons and release notifications
+                <span class="d"
+                  >background checks for Codex, Claude Code, and Grok; current and available
+                  versions in Providers, trusted update commands with live terminal details and
+                  verified completion, setup guides for managed installs, and one dismissible toast
+                  per release</span
+                ></span
               ></label
             >
           </li>
@@ -1098,7 +1111,10 @@
             <label
               ><input type="checkbox" /><span
                 >Checkpoint every turn, reversible rollback with changed-file inspection
-                <span class="d">missing and cross-thread checkpoints fail closed</span></span
+                <span class="d"
+                  >Git refs protect saved states; shared-checkout guards wait for active and
+                  stopping agents; nested project restore stays in scope</span
+                ></span
               ></label
             >
           </li>
@@ -1118,6 +1134,17 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >History size report, NDJSON export, previewed cleanup with an archive, and database
+                space reclamation
+                <span class="d"
+                  >explicit local maintenance; active tasks and private checkouts remain</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -1190,7 +1217,8 @@
               ><input type="checkbox" /><span
                 >Git branch and diff stats detected live for the context chip
                 <span class="d"
-                  >agent turns refresh them only after the project becomes idle</span
+                  >agent turns refresh them only after the project becomes idle; new chats default
+                  to main and remember the last branch picked for each project</span
                 ></span
               ></label
             >

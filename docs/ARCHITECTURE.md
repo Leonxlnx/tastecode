@@ -315,8 +315,22 @@ overwriting an existing TasteCode file.
 
 Config is human-readable and hand-editable on purpose. It is never where secrets go.
 
-Needs deciding before v1: a retention policy. Unbounded event logs grow forever, and
-silently deleting a user's history is unacceptable.
+History retention is user controlled. The local `history` command reports storage size,
+exports records, previews eligible closed tasks, and archives them before explicit cleanup.
+Cleanup retains active tasks and private checkouts, then reclaims unused database pages.
+There is no automatic history expiry. See [History maintenance](./HISTORY.md).
+
+Checkpoint and undo commits have database-scoped Git refs. Worktree cleanup combines all
+retained commits by Git common directory before removing unused refs. Restore and branch
+switch guards instead use the canonical checkout directory: separate worktrees can work
+independently, while tasks sharing a checkout cannot restore files during another turn or
+while its process is still stopping. An isolated start receives its base ref directly.
+
+`ProviderControls` owns provider-specific account, login, usage, MCP and skill behavior.
+Shared orchestration reads declared capabilities and merges shared local configuration.
+Settings views renew 60-second notification leases; one read cannot hold a control process
+for the whole app lifetime. `ThreadController` owns web transcript, replay, queue, submission
+and draft state, while the frame store still batches streamed deltas for React.
 
 _Rejected:_ JSONL files (we'll _read_ Claude Code's, but no indexing/transactions/search) ·
 libsql/Turso (sync story we don't need yet) · SQLite in the renderer (source of truth in the
@@ -360,7 +374,7 @@ The rules that solve it:
    completed transcript leaves the cache and reloads from the local event log when selected, so
    one huge reply cannot consume idle memory.
 
-### Budgets — CI gates, not aspirations
+### Budgets — local release gates
 
 |                                         |                          |
 | --------------------------------------- | ------------------------ |
@@ -373,6 +387,10 @@ The rules that solve it:
 
 Build a 1,000-message fixture thread early, keep it in the repo, run every UI PR against it.
 **A PR that regresses a budget doesn't merge.**
+
+The [local Electron gate](./PERFORMANCE-CHECKS.md) measures real visible rows, repeated
+startup and stable idle memory. Reports also keep transient memory peaks. Hosted CI stays
+manual.
 
 ---
 
@@ -392,31 +410,32 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change                                                                            |
-| ---------- | --------------------------------------------------------------------------------- |
-| 2026-07-28 | Initial decisions.                                                                |
-| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.            |
-| 2026-08-02 | Added Codex-backed voice dictation.                                               |
-| 2026-08-03 | Added the provider-neutral direct API runtime decision.                           |
-| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.                 |
-| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.                |
-| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                            |
-| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests.           |
-| 2026-08-14 | Removed phone and remote-client support from active product scope.                |
-| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.                       |
-| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.                 |
-| 2026-08-18 | Moved voice transcription from ChatGPT session reuse to explicit OpenAI API auth. |
-| 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.            |
-| 2026-08-21 | Bounded completed resumable adapter runtimes with a hardware-scaled warm LRU.     |
-| 2026-08-21 | Made many-thread Inbox state sparse and status projection incremental.            |
-| 2026-08-21 | Materialized only current Inbox state instead of replaying every historic turn.   |
-| 2026-08-21 | Extended stale long-thread replay snapshots from only their new event tail.       |
-| 2026-08-21 | Added shared item, byte, and worker limits for background transcript caches.      |
-| 2026-08-21 | Bounded completed inactive transcript caches by retained string size.             |
-| 2026-08-21 | Deferred closed menu controllers and shared row context-menu listeners.           |
-| 2026-08-21 | Released one-shot Codex control processes after a short idle window.              |
-| 2026-08-21 | Expired resumable thread processes after a bounded warm idle window.              |
-| 2026-08-21 | Limited runtime-retention sweeps to safe resumable idle processes.                |
-| 2026-08-21 | Removed full provider-control startup from cached, signed-in launches.            |
-| 2026-08-21 | Indexed workspace review folders to bound large changed-file tree construction.   |
-| 2026-08-22 | Applied the desktop-safe PATH to provider detection, CLI spawns, and the PTY.     |
+| Date       | Change                                                                                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-07-28 | Initial decisions.                                                                                                                                                             |
+| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                                                                                                         |
+| 2026-08-02 | Added Codex-backed voice dictation.                                                                                                                                            |
+| 2026-08-03 | Added the provider-neutral direct API runtime decision.                                                                                                                        |
+| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.                                                                                                              |
+| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.                                                                                                             |
+| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                                                                                                                         |
+| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests.                                                                                                        |
+| 2026-08-14 | Removed phone and remote-client support from active product scope.                                                                                                             |
+| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.                                                                                                                    |
+| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.                                                                                                              |
+| 2026-08-18 | Moved voice transcription from ChatGPT session reuse to explicit OpenAI API auth.                                                                                              |
+| 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.                                                                                                         |
+| 2026-08-21 | Bounded completed resumable adapter runtimes with a hardware-scaled warm LRU.                                                                                                  |
+| 2026-08-21 | Made many-thread Inbox state sparse and status projection incremental.                                                                                                         |
+| 2026-08-21 | Materialized only current Inbox state instead of replaying every historic turn.                                                                                                |
+| 2026-08-21 | Extended stale long-thread replay snapshots from only their new event tail.                                                                                                    |
+| 2026-08-21 | Added shared item, byte, and worker limits for background transcript caches.                                                                                                   |
+| 2026-08-21 | Bounded completed inactive transcript caches by retained string size.                                                                                                          |
+| 2026-08-21 | Deferred closed menu controllers and shared row context-menu listeners.                                                                                                        |
+| 2026-08-21 | Released one-shot Codex control processes after a short idle window.                                                                                                           |
+| 2026-08-21 | Expired resumable thread processes after a bounded warm idle window.                                                                                                           |
+| 2026-08-21 | Limited runtime-retention sweeps to safe resumable idle processes.                                                                                                             |
+| 2026-08-21 | Removed full provider-control startup from cached, signed-in launches.                                                                                                         |
+| 2026-08-21 | Indexed workspace review folders to bound large changed-file tree construction.                                                                                                |
+| 2026-08-22 | Applied the desktop-safe PATH to provider detection, CLI spawns, and the PTY.                                                                                                  |
+| 2026-09-08 | Added checkpoint reachability and checkout guards, explicit history maintenance, provider controls, task-state ownership, bounded leases and local Electron performance gates. |
