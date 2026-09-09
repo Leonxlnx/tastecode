@@ -211,6 +211,50 @@ describe('design preview runner', () => {
     await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
   })
 
+  it.each([
+    '<img srcset="present.png, missing.png 2x">',
+    '<img srcset="present.png, missing.png">',
+    '<source srcset="data:image/png;base64,aGVsbG8= 1x, missing.png 2x">',
+    '<link rel="preload" as="image" href="missing.png">',
+    '<link rel="preload" as="image" href="present.png" imagesrcset="present.png 1x, missing.png 2x">',
+    '<svg><image href="missing.png" /></svg>',
+    '<svg><image xlink:href="missing.png" /></svg>',
+    '<base href="./assets/"><img src="missing.png">',
+  ])('rejects each missing markup resource: %s', async (html) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-markup-'))
+    workspaces.push(workspace)
+    writeFileSync(path.join(workspace, 'index.html'), html)
+    writeFileSync(path.join(workspace, 'present.png'), 'image')
+    const port = await freePort()
+    await expect(startDesignPreview(workspace, staticPreviewPlan(port))).rejects.toThrow(
+      'static preview resource is unavailable: missing.png',
+    )
+    const reservation = createServer()
+    await listen(reservation, port)
+    await close(reservation)
+  })
+
+  it('accepts valid mixed responsive candidates and ignores inactive template markup', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-markup-'))
+    workspaces.push(workspace)
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      [
+        '<base href="http://[invalid"><base href="/ignored/">',
+        '<img srcset="present.png, second.png 2x">',
+        '<img src="https://example.com/external.png">',
+        '<svg><image xlink:href="missing-overridden.png" href="present.png" /></svg>',
+        '<svg><image href="present.png" xlink:href="missing-overridden.png" /></svg>',
+        '<template><img src="not-yet-used.png"></template>',
+      ].join('\n'),
+    )
+    for (const file of ['present.png', 'second.png'])
+      writeFileSync(path.join(workspace, file), 'image')
+    const preview = await startDesignPreview(workspace, staticPreviewPlan(await freePort()))
+    previews.push(preview)
+    expect((await fetch(preview.url)).status).toBe(200)
+  })
+
   it('does not accept a concurrent preview serving the same port', async () => {
     const port = await freePort()
     const firstWorkspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-first-'))
