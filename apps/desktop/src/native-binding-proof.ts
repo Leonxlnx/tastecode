@@ -6,11 +6,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const PTY_MARKER = 'TASTECODE_NATIVE_PTY_OK'
 const CREDENTIAL_SERVICE = 'TasteCode Native Binding Proof'
 
-export interface Disposable {
+interface Disposable {
   dispose(): void
 }
 
-export interface PtyProcess {
+interface PtyProcess {
   onData(listener: (data: string) => void): Disposable
   onExit(listener: (event: { exitCode: number; signal?: number }) => void): Disposable
   resize(columns: number, rows: number): void
@@ -31,7 +31,7 @@ export interface PtyModule {
   ): PtyProcess
 }
 
-export interface KeyringEntry {
+interface KeyringEntry {
   getPassword(): string | null
   setPassword(value: string): void
   deletePassword(): void
@@ -98,7 +98,7 @@ export function assertPackagedNativeModules(
   }
 }
 
-export function loadPackagedNativeModules(): PackagedNativeModules {
+function loadPackagedNativeModules(): PackagedNativeModules {
   const desktopRequire = createRequire(import.meta.url)
   // These bindings belong to the packaged server workspace. Resolve from its
   // entry so pnpm's strict dependency layout is exercised exactly as it is by

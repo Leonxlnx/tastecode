@@ -50,18 +50,19 @@ export const InstallTerminal = memo(function InstallTerminal(props: {
     const sync = () => {
       const state = installState(props.installKey)
       if (!state) return
-      if (state.terminalId !== shownTerminalId || state.log.length < written) {
+      const end = state.logOffset + state.log.length
+      if (state.terminalId !== shownTerminalId || written < state.logOffset || written > end) {
         // A retry replaced the session, or the rolling log was trimmed:
         // replay from the start rather than appending nonsense.
         shownTerminalId = state.terminalId
-        written = 0
+        written = state.logOffset
         // reset(), not clear(): clear() keeps the cursor line, so the last
         // line of a failed install stayed pinned above the fresh retry.
         instance.reset()
       }
-      if (state.log.length > written) {
-        instance.write(state.log.slice(written))
-        written = state.log.length
+      if (end > written) {
+        instance.write(state.log.slice(written - state.logOffset))
+        written = end
       }
     }
 

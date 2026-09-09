@@ -118,7 +118,74 @@ afterEach(() => {
 })
 
 describe('TerminalPane', () => {
-  it('opens, streams, reconnects, copies, and closes one session terminal', async () => {
+  it('prepares an inactive renderer without opening a shell until activation', async () => {
+    const harness = fakeTransport()
+    const view = render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-idle"
+        height={260}
+        theme="dark"
+        active={false}
+        onClose={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(xterm.instances).toHaveLength(1))
+    expect(harness.request).not.toHaveBeenCalledWith('terminal.open', expect.anything())
+
+    view.rerender(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-idle"
+        height={260}
+        theme="dark"
+        active
+        onClose={vi.fn()}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        threadId: 'thread-idle',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+    await screen.findByText('Connected')
+
+    const instance = xterm.instances[0]!
+    act(() => harness.emit('terminal.output', { terminalId: 'terminal-1', data: 'visible' }))
+    expect(instance.write).toHaveBeenLastCalledWith('visible')
+
+    view.rerender(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-idle"
+        height={260}
+        theme="dark"
+        active={false}
+        onClose={vi.fn()}
+      />,
+    )
+    act(() => harness.emit('terminal.output', { terminalId: 'terminal-1', data: 'hidden' }))
+    expect(instance.write).not.toHaveBeenCalledWith('hidden')
+
+    view.rerender(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-idle"
+        height={260}
+        theme="dark"
+        active
+        onClose={vi.fn()}
+      />,
+    )
+    act(() => harness.emit('terminal.output', { terminalId: 'terminal-1', data: 'resumed' }))
+    expect(instance.write).toHaveBeenLastCalledWith('resumed')
+  })
+
+  it('opens, streams, reconnects, copies, and detaches one session terminal', async () => {
     const harness = fakeTransport()
     const copy = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'clipboard', {
@@ -175,24 +242,40 @@ describe('TerminalPane', () => {
       ).toHaveLength(initialOpenCount + 1),
     )
 
-    act(() => harness.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
-    expect(screen.getByText('Exited (0)')).toBeTruthy()
-    fireEvent.click(screen.getByTitle('Restart terminal'))
-    await waitFor(() =>
-      expect(
-        harness.request.mock.calls.filter(([method]) => method === 'terminal.open'),
-      ).toHaveLength(initialOpenCount + 2),
-    )
-    fireEvent.click(screen.getByTitle('Close terminal'))
+    fireEvent.click(screen.getByTitle('Hide terminal'))
     expect(onClose).toHaveBeenCalledOnce()
 
     view.unmount()
-    expect(harness.request).toHaveBeenCalledWith('terminal.close', {
-      terminalId: 'terminal-1',
-    })
     expect(
       harness.request.mock.calls.filter(([method]) => method === 'terminal.close'),
-    ).toHaveLength(1)
+    ).toHaveLength(0)
+  })
+
+  it('closes the inline pane when its shell exits', async () => {
+    const harness = fakeTransport()
+    const onClose = vi.fn()
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-exit"
+        height={260}
+        theme="dark"
+        onClose={onClose}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.open', {
+        threadId: 'thread-exit',
+        columns: 80,
+        rows: 24,
+      }),
+    )
+
+    act(() => harness.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 0 }))
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(screen.queryByText('Exited (0)')).toBeNull()
   })
 
   it('ends terminal resizing when the window loses focus', async () => {
@@ -356,6 +439,7 @@ describe('TerminalPane', () => {
         threadId="thread-workspace"
         theme="dark"
         mode="workspace"
+        onClose={vi.fn()}
       />,
     )
 
@@ -425,6 +509,7 @@ describe('TerminalPane', () => {
         projectPath="/workspace/current-project"
         theme="dark"
         mode="workspace"
+        onClose={vi.fn()}
       />,
     )
 

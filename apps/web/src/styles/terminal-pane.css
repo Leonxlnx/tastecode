@@ -1,0 +1,94 @@
+/* ---------- terminal ---------- */
+
+.terminal-pane {
+  position: relative;
+  display: flex;
+  min-height: 160px;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+.terminal-pane__resize {
+  position: absolute;
+  z-index: 1;
+  top: -3px;
+  left: 0;
+  width: 100%;
+  height: 7px;
+  cursor: ns-resize;
+}
+
+.terminal-pane__resize::after {
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 30px;
+  height: 1px;
+  background: var(--line-strong);
+  content: '';
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.terminal-pane__resize:hover::after {
+  opacity: 1;
+}
+
+.terminal-pane__header {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px 2px 14px;
+}
+
+.terminal-pane__title {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 520;
+}
+
+.terminal-pane__status {
+  max-width: min(360px, 50vw);
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-pane__status.is-open {
+  color: var(--success);
+}
+
+.terminal-pane__status.is-error {
+  color: var(--error);
+}
+
+.terminal-pane__actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+}
+
+.terminal-pane__viewport {
+  min-height: 0;
+  flex: 1;
+  padding: 0 12px 8px 14px;
+  user-select: text;
+}
+
+.terminal-pane__viewport .xterm {
+  height: 100%;
+}
+
+.terminal-pane__viewport .xterm .xterm-viewport {
+  overflow-x: hidden;
+  background-color: transparent;
+  scrollbar-color: var(--surface-3) transparent;
+}

@@ -1,37 +1,32 @@
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-const SECRET_DIRECTORY_NAMES = new Set([
-  '.aws',
-  '.azure',
-  '.docker',
-  '.git',
-  '.gnupg',
-  '.kube',
-  '.ssh',
-])
-const SECRET_FILE_NAMES = new Set([
-  '.boto',
-  '.git-credentials',
-  '.netrc',
+const SECRET_NAMES = new Set([
   '.npmrc',
   '.pypirc',
+  '.netrc',
   '_netrc',
-  'application_default_credentials.json',
+  '.boto',
+  '.git-credentials',
   'credentials.json',
   'credentials.tfrc.json',
-  'id_dsa',
-  'id_ecdsa',
-  'id_ecdsa_sk',
+  'application_default_credentials.json',
+  '.credentials.json',
+  'auth.json',
   'id_ed25519',
-  'id_ed25519_sk',
   'id_rsa',
+  'id_ecdsa',
+  'id_dsa',
+  'id_ecdsa_sk',
+  'id_ed25519_sk',
+  '.aws',
+  '.ssh',
+  '.azure',
+  '.kube',
+  '.gnupg',
+  '.docker',
+  'gcloud',
 ])
-const SECRET_PATH_COMPONENT_SEQUENCES = [
-  ['.config', 'gcloud'],
-  ['appdata', 'roaming', 'gcloud'],
-  ['library', 'application support', 'gcloud'],
-] as const
 
 export function existingWorkspacePath(
   workspace: string,
@@ -41,6 +36,8 @@ export function existingWorkspacePath(
   const target = contained(workspace, relativePath)
   const real = realpathSync(target)
   assertContained(realpathSync(workspace), real)
+  assertPublicWorkspaceFile(target)
+  assertPublicWorkspaceFile(real)
   const stats = statSync(real)
   if (directory ? !stats.isDirectory() : !stats.isFile()) {
     throw new Error(directory ? 'path must be a directory' : 'path must be a file')
@@ -51,11 +48,12 @@ export function existingWorkspacePath(
 export function writableWorkspacePath(workspace: string, relativePath: string): string {
   const target = contained(workspace, relativePath)
   const realWorkspace = realpathSync(workspace)
-  assertPublicWorkspacePath(target)
+  assertPublicWorkspaceFile(target)
   if (existsSync(target)) {
-    const realTarget = realpathSync(target)
-    assertContained(realWorkspace, realTarget)
-    assertPublicWorkspacePath(realTarget)
+    const real = realpathSync(target)
+    assertContained(realWorkspace, real)
+    assertPublicWorkspaceFile(real)
+    return real
   }
   let ancestor = path.dirname(target)
   while (!existsSync(ancestor)) {
@@ -66,53 +64,27 @@ export function writableWorkspacePath(workspace: string, relativePath: string): 
     if (parent === ancestor) throw new Error('workspace is unavailable')
     ancestor = parent
   }
-  const realAncestor = realpathSync(ancestor)
-  assertContained(realWorkspace, realAncestor)
-  assertPublicWorkspacePath(realAncestor)
-  return target
+  const real = path.resolve(realpathSync(ancestor), path.relative(ancestor, target))
+  assertContained(realWorkspace, real)
+  assertPublicWorkspaceFile(real)
+  return real
 }
 
-export function assertPublicWorkspacePath(target: string): void {
-  if (isSecretWorkspacePath(target)) {
+export function assertPublicWorkspaceFile(file: string): void {
+  if (file.split(path.sep).some(isSecretWorkspaceName)) {
     throw new Error('credential files are not available')
   }
 }
 
-/** Backward-compatible name for callers that accept files only. */
-export function assertPublicWorkspaceFile(file: string): void {
-  assertPublicWorkspacePath(file)
-}
-
-export function isSecretWorkspacePath(target: string): boolean {
-  const components = pathComponents(target)
-  if (components.some(isSecretWorkspaceName)) return true
-
-  return SECRET_PATH_COMPONENT_SEQUENCES.some((sequence) =>
-    components.some((_, index) =>
-      sequence.every((component, offset) => components[index + offset] === component),
-    ),
-  )
-}
-
 export function isSecretWorkspaceName(name: string): boolean {
-  const lower = name.normalize('NFC').toLowerCase()
+  const lower = name.toLowerCase()
   return (
-    SECRET_DIRECTORY_NAMES.has(lower) ||
+    lower === '.git' ||
     lower === '.env' ||
     lower.startsWith('.env.') ||
-    SECRET_FILE_NAMES.has(lower) ||
+    SECRET_NAMES.has(lower) ||
     /\.(?:key|p12|pem|pfx)$/.test(lower)
   )
-}
-
-function pathComponents(target: string): string[] {
-  // Parse both separators on every host so persisted Windows paths remain
-  // protected when inspected from macOS, and vice versa.
-  return target
-    .normalize('NFC')
-    .split(/[\\/]+/)
-    .filter(Boolean)
-    .map((component) => component.toLowerCase())
 }
 
 function contained(workspace: string, relativePath: string): string {

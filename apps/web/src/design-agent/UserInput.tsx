@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type WheelEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { UserInputRequest } from '@harness/contracts'
+import { IconLoader2 } from '@tabler/icons-react'
 import { IndeterminateRequestError } from '../transport.js'
 import './user-input.css'
 
@@ -30,7 +31,7 @@ export function UserInput(props: {
   if (submitting) {
     const status = (
       <div className="brief-input brief-input--status" role="status">
-        <span className="brief-input__spinner" aria-hidden="true" />
+        <IconLoader2 className="brief-input__spinner" size={14} aria-hidden />
         {submissionError === 'indeterminate'
           ? 'Checking whether answers were received…'
           : 'Submitting answers…'}

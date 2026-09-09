@@ -302,9 +302,12 @@ describe('PullRequestDetailPane metadata controls', () => {
       ),
     )
     expect(bob.getAttribute('aria-busy')).toBe('false')
-    expect(
-      screen.getByRole('button', { name: 'Request reviewers' }).querySelector('.is-spinning'),
-    ).toBeNull()
+    const loadingLayer = screen
+      .getByRole('button', { name: 'Request reviewers' })
+      .querySelector('.is-spinning')
+      ?.closest('.icon-morph__layer')
+    expect(loadingLayer).toBeTruthy()
+    expect(loadingLayer?.hasAttribute('data-active')).toBe(false)
 
     await waitFor(() => expect(detailRequests).toBe(2))
     expect(onChanged).toHaveBeenCalledTimes(1)

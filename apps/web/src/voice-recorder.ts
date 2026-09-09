@@ -1,21 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 
-export const VOICE_SAMPLE_RATE = 24_000
+export type { VoiceRecording } from './voice-capability.js'
+
+const VOICE_SAMPLE_RATE = 24_000
 export const MAX_RECORDING_MS = 120_000
 const BUFFER_SIZE = 4_096
 const MAX_WAVEFORM_LEVELS = 160
 const WAVEFORM_EMIT_INTERVAL_MS = 45
-
-export type VoiceRecording = {
-  audioBase64: string
-  mimeType: 'audio/wav'
-  sampleRateHz: 24_000
-  durationMs: number
-}
-
-export function canCaptureVoice(): boolean {
-  return navigator.mediaDevices !== undefined && 'AudioContext' in globalThis
-}
 
 type RecorderRuntime = {
   audioContext: AudioContext
@@ -27,10 +19,24 @@ type RecorderRuntime = {
   startedAt: number
 }
 
+type RecorderStart = {
+  cancelled: boolean
+  stream?: MediaStream
+  audioContext?: AudioContext
+}
+
+async function releaseStart(start: RecorderStart): Promise<void> {
+  const { stream, audioContext } = start
+  delete start.stream
+  delete start.audioContext
+  for (const track of stream?.getTracks() ?? []) track.stop()
+  await audioContext?.close().catch(() => undefined)
+}
+
 export function useVoiceRecorder() {
   const runtime = useRef<RecorderRuntime | null>(null)
   /** Set synchronously, before the permission prompt can be awaited twice. */
-  const starting = useRef(false)
+  const starting = useRef<RecorderStart | undefined>(undefined)
   const timer = useRef<number | undefined>(undefined)
   const levelsRef = useRef<number[]>([])
   const lastLevelEmitAt = useRef(0)
@@ -39,6 +45,10 @@ export function useVoiceRecorder() {
   const [levels, setLevels] = useState<number[]>([])
 
   const teardown = useCallback(async () => {
+    const pending = starting.current
+    starting.current = undefined
+    if (pending) pending.cancelled = true
+    const releasedStart = pending ? releaseStart(pending) : undefined
     const current = runtime.current
     runtime.current = null
     if (timer.current !== undefined) window.clearInterval(timer.current)
@@ -46,7 +56,10 @@ export function useVoiceRecorder() {
     setRecording(false)
     setDurationMs(0)
 
-    if (!current) return undefined
+    if (!current) {
+      await releasedStart
+      return undefined
+    }
     current.processor.onaudioprocess = null
     current.source.disconnect()
     current.processor.disconnect()
@@ -65,7 +78,8 @@ export function useVoiceRecorder() {
     if (!canCaptureVoice()) {
       throw new Error('Microphone recording is unavailable in this browser.')
     }
-    starting.current = true
+    const pending: RecorderStart = { cancelled: false }
+    starting.current = pending
 
     let stream: MediaStream | undefined
     let audioContext: AudioContext | undefined
@@ -76,8 +90,12 @@ export function useVoiceRecorder() {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       })
+      pending.stream = stream
+      if (pending.cancelled) throw new DOMException('Voice recording was cancelled.', 'AbortError')
       audioContext = new AudioContext()
+      pending.audioContext = audioContext
       await audioContext.resume()
+      if (pending.cancelled) throw new DOMException('Voice recording was cancelled.', 'AbortError')
       source = audioContext.createMediaStreamSource(stream)
       processor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1)
       silentGain = audioContext.createGain()
@@ -122,6 +140,8 @@ export function useVoiceRecorder() {
       processor.connect(silentGain)
       silentGain.connect(audioContext.destination)
       runtime.current = current
+      delete pending.stream
+      delete pending.audioContext
       levelsRef.current = []
       lastLevelEmitAt.current = 0
       setLevels([])
@@ -134,11 +154,10 @@ export function useVoiceRecorder() {
       processor?.disconnect()
       source?.disconnect()
       silentGain?.disconnect()
-      for (const track of stream?.getTracks() ?? []) track.stop()
-      await audioContext?.close().catch(() => undefined)
+      await releaseStart(pending)
       throw error
     } finally {
-      starting.current = false
+      if (starting.current === pending) starting.current = undefined
     }
   }, [])
 

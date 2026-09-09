@@ -1,6 +1,10 @@
 import vm from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
-import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
+import {
+  PREVIEW_PAGE_HEIGHT_SCRIPT,
+  PREVIEW_SETTLE_SCRIPT,
+  previewCaptureHeight,
+} from './preview-settle.js'
 
 describe('preview capture settling', () => {
   it('waits for decoded and pending images before the final paint frames', async () => {
@@ -54,4 +58,23 @@ describe('preview capture settling', () => {
       }),
     ).toBe(12_000)
   })
+
+  it('clamps a hostile page result again in trusted main-process code', () => {
+    const value = vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
+      document: { body: { scrollHeight: 800 }, documentElement: { scrollHeight: 800 } },
+      innerHeight: 844,
+      Math: { min: () => 100_000_000, max: Math.max },
+    })
+    expect(value).toBe(100_000_000)
+    expect(previewCaptureHeight(value, 844)).toBe(12_000)
+    expect(previewCaptureHeight(Number.MAX_VALUE, 844)).toBe(12_000)
+    expect(previewCaptureHeight(900.25, 844)).toBe(901)
+    expect(previewCaptureHeight(1, 844)).toBe(844)
+  })
+
+  it.each([NaN, Infinity, -Infinity, 0, -1, '1200', null, {}, undefined])(
+    'rejects an invalid measurement before native capture: %s',
+    (value) =>
+      expect(() => previewCaptureHeight(value, 844)).toThrow('Invalid preview page height'),
+  )
 })
