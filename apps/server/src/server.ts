@@ -1,5 +1,3 @@
-import os from 'node:os'
-import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -9,7 +7,8 @@ import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
-import { migrateProductFile } from './product-paths.js'
+import { storeLocation } from './data-location.js'
+import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import type { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
@@ -17,7 +16,7 @@ import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
-import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
+import { listWorkspaceBranches, readWorkspace } from './workspace.js'
 import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
@@ -39,37 +38,6 @@ function reportStartupMilestone(name: string): void {
 }
 
 /**
- * Where the database lives.
- *
- * Under the platform's own per-user data directory rather than beside the
- * binary, so an update or a reinstall does not take someone's history with it.
- * `HARNESS_DATA_DIR` overrides it, which is what the tests and a portable
- * install use.
- */
-function storeLocation(): string {
-  const override = process.env['HARNESS_DATA_DIR']
-  if (override) {
-    return migrateProductFile(
-      path.join(override, 'tastecode.db'),
-      path.join(override, 'harness.db'),
-    )
-  }
-
-  const home = os.homedir()
-  const base =
-    process.platform === 'win32'
-      ? (process.env['APPDATA'] ?? path.join(home, 'AppData', 'Roaming'))
-      : process.platform === 'darwin'
-        ? path.join(home, 'Library', 'Application Support')
-        : (process.env['XDG_DATA_HOME'] ?? path.join(home, '.local', 'share'))
-
-  return migrateProductFile(
-    path.join(base, 'TasteCode', 'tastecode.db'),
-    path.join(base, 'PersonalHarness', 'harness.db'),
-  )
-}
-
-/**
  * The local core server. Owns all state; clients are thin renderers.
  *
  * Every inbound payload is validated against the declared method schema before
@@ -87,7 +55,26 @@ export function startServer(
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
-  const wss = new WebSocketServer({ port, host })
+  const databasePath = storeLocation()
+  const releaseDataLease = acquireDataLease(databasePath)
+  let store: Store
+  try {
+    store = new Store(databasePath)
+  } catch (error) {
+    releaseDataLease()
+    throw error
+  }
+  let wss: WebSocketServer
+  try {
+    wss = new WebSocketServer({ port, host })
+  } catch (error) {
+    try {
+      store.close()
+    } finally {
+      releaseDataLease()
+    }
+    throw error
+  }
   const push = new PushBus()
   const providerService = import('./providers.js')
   void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
@@ -110,8 +97,6 @@ export function startServer(
     process.exit(1)
   })
 
-  const databasePath = storeLocation()
-  const store = new Store(databasePath)
   reportStartupMilestone('server-store-ready')
   store.recoverInterruptedThreads()
   reportStartupMilestone('server-recovery-ready')
@@ -158,6 +143,7 @@ export function startServer(
         : Promise.resolve(undefined),
   })
   reportStartupMilestone('server-orchestrator-ready')
+  const checkpointProtection = orchestrator.protectStoredCheckpoints()
   const projectList = createProjectListProjector({
     includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
   })
@@ -509,13 +495,7 @@ export function startServer(
 
       case 'workspace.switchBranch': {
         const p = parseParams(method, params)
-        const localSessionRunning = store
-          .threads(p.path)
-          .some((thread) => !thread.worktreePath && orchestrator.isRunning(thread.id))
-        if (localSessionRunning) {
-          throw new Error('stop local sessions in this project before switching branches')
-        }
-        return switchWorkspaceBranch(resolveWorkspacePath(p.path), p.branch)
+        return orchestrator.switchBranch(p.path, p.branch)
       }
 
       case 'workspace.diff': {
@@ -807,13 +787,14 @@ export function startServer(
 
       case 'sideChat.close': {
         const p = parseParams(method, params)
-        orchestrator.closeSideThread(p.threadId)
+        await orchestrator.closeSideThread(p.threadId)
         return {}
       }
 
       case 'thread.start': {
         const p = parseParams(method, params)
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
+          baseRef: p.baseRef,
           model: p.model,
           serviceTier: p.serviceTier,
           effort: p.effort,
@@ -980,9 +961,14 @@ export function startServer(
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
+        checkpointProtection,
         new Promise<void>((resolve) => wss.close(() => resolve())),
       ])
-      store.close()
+      try {
+        store.close()
+      } finally {
+        releaseDataLease()
+      }
       const errors = results
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
         .map((result) => result.reason)

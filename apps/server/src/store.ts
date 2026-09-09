@@ -1,5 +1,14 @@
-import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  rmSync,
+  statSync,
+  writeSync,
+} from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import {
@@ -23,6 +32,7 @@ import type {
 } from '@harness/contracts'
 import { z } from 'zod'
 import type { TurnOptions } from './adapters.js'
+import { canonicalDataPath } from './data-lease.js'
 import {
   affectsInboxProjection,
   applyInboxProjectionEvent,
@@ -368,6 +378,10 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS checkpoint_repositories (
+  path TEXT PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS restore_undos (
   token            TEXT PRIMARY KEY,
   thread_id        TEXT NOT NULL UNIQUE,
@@ -589,6 +603,8 @@ type CheckpointRow = {
   created_at: SqliteInteger
 }
 type RestoreUndoRow = {
+  thread_id: string
+  snapshot_commit: string
   checkpoint_seq: SqliteInteger
   events_json: string
   checkpoints_json: string
@@ -633,6 +649,8 @@ const SearchCursorSchema = z.object({
 })
 
 export class Store {
+  readonly checkpointNamespace: string
+  readonly location: string
   #db: DatabaseSync
   #insertEvent: StatementSync
   #insertSearchEntry: StatementSync
@@ -726,6 +744,12 @@ export class Store {
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
+    if (location !== ':memory:') location = canonicalDataPath(location)
+    this.location = location
+    this.checkpointNamespace = createHash('sha256')
+      .update(location === ':memory:' ? randomUUID() : path.resolve(location))
+      .digest('hex')
+      .slice(0, 32)
     if (location !== ':memory:') mkdirSync(path.dirname(location), { recursive: true })
     this.#db = new DatabaseSync(location)
     // Without WAL a reader blocks a writer, and we do both on every turn.
@@ -1662,6 +1686,119 @@ export class Store {
     } catch (error) {
       this.#db.exec('ROLLBACK')
       throw error
+    }
+  }
+
+  historyStorage() {
+    const count = (sql: string) => Number((this.#db.prepare(sql).get() as { count: number }).count)
+    const size = (file: string) =>
+      file !== ':memory:' && existsSync(file) ? statSync(file).size : 0
+    return {
+      databaseBytes: size(this.location),
+      walBytes: size(`${this.location}-wal`),
+      reclaimableBytes:
+        count('SELECT freelist_count AS count FROM pragma_freelist_count') *
+        count('SELECT page_size AS count FROM pragma_page_size'),
+      threads: count('SELECT count(*) AS count FROM threads'),
+      closedThreads: count('SELECT count(*) AS count FROM threads WHERE closed_at IS NOT NULL'),
+      events: count('SELECT count(*) AS count FROM events'),
+    }
+  }
+
+  exportHistory(destination: string): void {
+    this.#transaction(() => this.#writeHistoryArchive(destination))
+  }
+
+  /** No automatic retention: preview the exact eligible closed tasks before applying. */
+  historyCleanupCandidates(before: number): string[] {
+    if (!Number.isFinite(before) || before <= 0) throw new Error('cleanup requires a valid date')
+    return sqliteRows<{ id: string }>(
+      this.#db.prepare(
+        'SELECT id FROM threads WHERE closed_at < ? AND worktree_path IS NULL ORDER BY closed_at, id',
+      ),
+      before,
+    ).map((row) => row.id)
+  }
+
+  pruneHistory(before: number, archive: string): number {
+    let ids: string[] = []
+    this.#transaction(() => {
+      ids = this.historyCleanupCandidates(before)
+      // The archive is flushed to disk while the transaction still holds the
+      // selected state. A failed write cannot erase even one conversation.
+      this.#writeHistoryArchive(archive, ids)
+      for (const id of ids) {
+        this.#db.prepare('DELETE FROM session_search WHERE thread_id = ?').run(id)
+        for (const table of [
+          'events',
+          'checkpoints',
+          'restore_undos',
+          'diff_decisions',
+          'design_runs',
+        ]) {
+          this.#db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(id)
+        }
+        this.#db.prepare('DELETE FROM threads WHERE id = ?').run(id)
+      }
+    })
+    for (const id of ids) {
+      this.#ephemeralThreads.delete(id)
+      this.#deleteCachedReplaySnapshot(id)
+      this.#cacheThread(id, undefined)
+    }
+    this.#searchRevision += 1
+    this.#searchSnapshots.clear()
+    this.#queuedThreadIdsCache = undefined
+    this.#invalidateSidebarThreads()
+    return ids.length
+  }
+
+  reclaimHistorySpace(): void {
+    // Explicit maintenance only; VACUUM is never on the streaming path.
+    this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    this.#db.exec('VACUUM')
+    this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  }
+
+  #writeHistoryArchive(destination: string, ids?: readonly string[]): void {
+    const descriptor = openSync(destination, 'wx', 0o600)
+    let complete = false
+    try {
+      const write = (value: unknown) => {
+        const bytes = Buffer.from(`${JSON.stringify(value)}\n`)
+        let offset = 0
+        while (offset < bytes.length)
+          offset += writeSync(descriptor, bytes, offset, bytes.length - offset)
+      }
+      write({
+        format: 'tastecode-history',
+        version: 1,
+        exportedAt: Date.now(),
+        checkpointNamespace: this.checkpointNamespace,
+      })
+      const tables = [
+        'threads',
+        'events',
+        'checkpoints',
+        'restore_undos',
+        'diff_decisions',
+        'design_runs',
+      ] as const
+      for (const table of tables) {
+        const key = table === 'threads' ? 'id' : 'thread_id'
+        if (ids) {
+          const query = this.#db.prepare(`SELECT * FROM ${table} WHERE ${key} = ?`)
+          for (const id of ids) for (const row of query.iterate(id)) write({ table, row })
+        } else {
+          for (const row of this.#db.prepare(`SELECT * FROM ${table}`).iterate())
+            write({ table, row })
+        }
+      }
+      fsyncSync(descriptor)
+      complete = true
+    } finally {
+      closeSync(descriptor)
+      if (!complete) rmSync(destination, { force: true })
     }
   }
 
@@ -2697,6 +2834,52 @@ export class Store {
   }
 
   // ---- checkpoints -------------------------------------------------------
+
+  recordCheckpointRepository(repoPath: string): void {
+    this.#db.prepare('INSERT OR IGNORE INTO checkpoint_repositories(path) VALUES (?)').run(repoPath)
+  }
+
+  checkpointRepositories(): string[] {
+    return sqliteRows<{ path: string }>(
+      this.#db.prepare('SELECT path FROM checkpoint_repositories'),
+    ).map((row) => row.path)
+  }
+
+  /** Include the hidden conversation tail needed to undo a restore. */
+  checkpointReferences(): Array<{
+    threadId: string
+    projectPath: string
+    worktreePath?: string
+    commits: Set<string>
+  }> {
+    const result = new Map<
+      string,
+      { threadId: string; projectPath: string; worktreePath?: string; commits: Set<string> }
+    >()
+    const add = (threadId: string, commit: string) => {
+      const thread = this.thread(threadId)
+      if (!thread) return
+      let entry = result.get(threadId)
+      if (!entry) {
+        entry = {
+          threadId,
+          projectPath: thread.projectPath,
+          ...(thread.worktreePath ? { worktreePath: thread.worktreePath } : {}),
+          commits: new Set(),
+        }
+        result.set(threadId, entry)
+      }
+      entry.commits.add(commit)
+    }
+    for (const row of sqliteRows<CheckpointRow>(this.#db.prepare('SELECT * FROM checkpoints')))
+      add(row.thread_id, row.commit_sha)
+    for (const row of sqliteRows<RestoreUndoRow>(this.#db.prepare('SELECT * FROM restore_undos'))) {
+      add(row.thread_id, row.snapshot_commit)
+      for (const checkpoint of StoredCheckpointRowsSchema.parse(JSON.parse(row.checkpoints_json)))
+        add(row.thread_id, checkpoint.commit_sha)
+    }
+    return [...result.values()]
+  }
 
   addCheckpoint(entry: {
     threadId: string

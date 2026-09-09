@@ -5,7 +5,10 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   changedSince,
+  clearSnapshotRefs,
   NotARepositoryForCheckpoint,
+  retainCheckpoint,
+  retainCheckpoints,
   restoreSnapshot,
   takeSnapshot,
 } from './checkpoint.js'
@@ -93,9 +96,35 @@ describe('takeSnapshot', () => {
     await expect(takeSnapshot(plain)).rejects.toBeInstanceOf(NotARepositoryForCheckpoint)
     rmSync(plain, { recursive: true, force: true })
   })
+
+  it('keeps a snapshot reachable during Git garbage collection', async () => {
+    write('tracked.txt', 'saved before cleanup\n')
+    const snapshot = await takeSnapshot(repo)
+    git('gc', '--prune=now')
+    expect(git('show', `${snapshot.commit}:tracked.txt`)).toBe('saved before cleanup\n')
+    expect((await takeSnapshot(repo)).commit).toBe(snapshot.commit)
+  })
 })
 
 describe('restoreSnapshot', () => {
+  it('restores nested project files and removes new Unicode names without changing its sibling', async () => {
+    const nested = path.join(repo, 'project with spaces')
+    mkdirSync(nested)
+    writeFileSync(path.join(nested, 'app.txt'), 'before\n')
+    git('add', '.')
+    git('commit', '-m', 'nested project')
+    writeFileSync(path.join(nested, 'app.txt'), 'saved edit\n')
+    const snapshot = await takeSnapshot(nested)
+    write('tracked.txt', 'sibling must stay\n')
+    writeFileSync(path.join(nested, 'app.txt'), 'after\n')
+    writeFileSync(path.join(nested, '新 file.txt'), 'remove me\n')
+    const replaced = await restoreSnapshot(nested, snapshot.commit)
+    expect(readFileSync(path.join(nested, 'app.txt'), 'utf8')).toBe('saved edit\n')
+    expect(existsSync(path.join(nested, '新 file.txt'))).toBe(false)
+    expect(read('tracked.txt')).toBe('sibling must stay\n')
+    await restoreSnapshot(nested, replaced.commit)
+    expect(readFileSync(path.join(nested, '新 file.txt'), 'utf8')).toBe('remove me\n')
+  })
   it('puts a modified file back to what it held', async () => {
     const before = await takeSnapshot(repo)
     write('tracked.txt', 'the agent went the wrong way\n')
@@ -192,3 +221,37 @@ describe('changedSince', () => {
     expect(changed.sort()).toEqual(['added.txt', 'tracked.txt'])
   })
 })
+
+it('keeps legacy checkpoint batches after cache removal and Git garbage collection', async () => {
+  const tree = git('rev-parse', 'HEAD^{tree}').trim()
+  const commits = new Set(
+    Array.from({ length: 257 }, (_, index) =>
+      git('commit-tree', tree, '-m', `Legacy checkpoint ${index}`).trim(),
+    ),
+  )
+  const [first, second] = [...commits]
+  await retainCheckpoint(repo, 'legacy-data', first!)
+  // Repair a stale ref as well as creating the missing refs in multiple batches.
+  git('update-ref', `refs/harness/checkpoints/legacy-data/${second}`, first!)
+  await retainCheckpoints(repo, 'legacy-data', commits)
+  await clearSnapshotRefs(repo)
+  git('gc', '--prune=now')
+  const references = git(
+    'for-each-ref',
+    '--format=%(refname) %(objectname)',
+    'refs/harness/checkpoints/legacy-data/',
+  )
+    .trim()
+    .split('\n')
+  expect(new Set(references)).toEqual(
+    new Set(
+      [...commits].map((commit) => `refs/harness/checkpoints/legacy-data/${commit} ${commit}`),
+    ),
+  )
+  const objects = execFileSync('git', ['cat-file', '--batch-check=%(objecttype)'], {
+    cwd: repo,
+    input: [...commits].join('\n') + '\n',
+    windowsHide: true,
+  }).toString()
+  expect(objects.trim().split('\n')).toEqual(Array.from(commits, () => 'commit'))
+}, 20_000)
