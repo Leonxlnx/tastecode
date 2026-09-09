@@ -143,12 +143,16 @@ export function parseBriefingOutput(text: string): BriefingOutput {
 
 function question(value: unknown): BriefingQuestion {
   const questionRecord = record(value, 'briefing question')
+  const id = string(questionRecord.id, 'question id')
+  if (!/^[a-z][a-z0-9_]*$/.test(id) || ['constructor', 'prototype', '__proto__'].includes(id)) {
+    throw new Error('question id must be a stable snake_case identifier')
+  }
   const options = list(questionRecord.options, 'briefing question options')
   if (options.length === 0) {
     throw new Error('briefing question must contain options')
   }
   return {
-    id: string(questionRecord.id, 'question id'),
+    id,
     header: string(questionRecord.header, 'question header'),
     question: string(questionRecord.question, 'question'),
     allowOther: questionRecord.allowOther !== false,
