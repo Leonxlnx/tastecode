@@ -2,19 +2,21 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from '../../test-transport.js'
-import { WorkspaceTerminal, type WorkspaceTerminalPane } from './WorkspaceTerminal.js'
+import { WorkspaceTerminal } from './WorkspaceTerminal.js'
 
-const TestTerminalPane = ((props) => (
-  <button
-    type="button"
-    data-testid="terminal-pane"
-    data-thread-id={props.threadId}
-    data-project-path={props.projectPath}
-    onClick={props.onClose}
-  >
-    Terminal pane
-  </button>
-)) satisfies WorkspaceTerminalPane
+vi.mock('../TerminalPane.js', () => ({
+  TerminalPane: (props: { threadId?: string; projectPath?: string; onClose?: () => void }) => (
+    <button
+      type="button"
+      data-testid="terminal-pane"
+      data-thread-id={props.threadId}
+      data-project-path={props.projectPath}
+      onClick={props.onClose}
+    >
+      Terminal pane
+    </button>
+  ),
+}))
 
 afterEach(cleanup)
 
@@ -27,7 +29,6 @@ describe('WorkspaceTerminal', () => {
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={vi.fn()}
-        terminalPaneComponent={TestTerminalPane}
       />,
     )
 
@@ -46,7 +47,6 @@ describe('WorkspaceTerminal', () => {
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={vi.fn()}
-        terminalPaneComponent={TestTerminalPane}
       />,
     )
 
@@ -64,7 +64,6 @@ describe('WorkspaceTerminal', () => {
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={onClose}
-        terminalPaneComponent={TestTerminalPane}
       />,
     )
 

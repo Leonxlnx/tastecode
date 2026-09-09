@@ -7,17 +7,13 @@ import {
   type ParamsOf,
   type ResultOf,
 } from '@harness/contracts'
-import { z } from 'zod'
 import type { ConnectionState, Transport } from './transport.js'
 
-const TestBoundarySchema = z.unknown()
-
-export type TestBoundary = z.input<typeof TestBoundarySchema>
 export type TestRequestResolver = (
   method: MethodName,
-  params: TestBoundary,
-) => TestBoundary | Promise<TestBoundary>
-export type RecordedRequest = { method: MethodName; params: TestBoundary }
+  params: unknown,
+) => unknown | Promise<unknown>
+export type RecordedRequest = { method: MethodName; params: unknown }
 
 function unhandledRequest(method: MethodName): never {
   throw new Error(`Unhandled test request: ${method}`)
@@ -32,7 +28,7 @@ export class TestTransport implements Transport {
   #resolver: TestRequestResolver
   #stateListeners = new Set<(state: ConnectionState) => void>()
   #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
-  #channelListeners = new Map<string, Set<(data: TestBoundary) => void>>()
+  #channelListeners = new Map<string, Set<(data: unknown) => void>>()
 
   constructor(resolver: TestRequestResolver = unhandledRequest) {
     this.#resolver = resolver
@@ -67,7 +63,7 @@ export class TestTransport implements Transport {
       listeners = new Set()
       this.#channelListeners.set(channel, listeners)
     }
-    const dispatch = (value: TestBoundary) => {
+    const dispatch = (value: unknown) => {
       // SAFETY: The schema for this same channel validates the value before dispatch.
       listener(channels[channel].parse(value) as DataOf<C>)
     }

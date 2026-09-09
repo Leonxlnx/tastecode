@@ -1,7 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { z } from 'zod'
-import { type BoundaryValue, record, string, stringsAllowEmpty } from './parse.js'
+import { record, string, stringsAllowEmpty } from './parse.js'
 
 export interface ExplicitBriefAnswer {
   question: string
@@ -46,12 +45,7 @@ const STRING_ARRAY_FIELDS = [
   'unresolved',
 ] as const
 
-const ExplicitBriefAnswerSchema = z.object({
-  question: z.string(),
-  answer: z.string(),
-})
-
-function parseDesignBrief(value: BoundaryValue): DesignBrief {
+function parseDesignBrief(value: unknown): DesignBrief {
   const brief = record(value, 'design brief')
   for (const field of STRING_FIELDS) {
     string(brief[field], `design brief field ${field}`)
@@ -59,8 +53,10 @@ function parseDesignBrief(value: BoundaryValue): DesignBrief {
   for (const field of STRING_ARRAY_FIELDS) {
     stringsAllowEmpty(brief[field], `design brief field ${field}`)
   }
-  const explicitAnswers = z.array(ExplicitBriefAnswerSchema).safeParse(brief.explicitAnswers)
-  if (!explicitAnswers.success) {
+  if (
+    !Array.isArray(brief.explicitAnswers) ||
+    !brief.explicitAnswers.every(isExplicitBriefAnswer)
+  ) {
     throw new Error('design brief field explicitAnswers must contain question and answer strings')
   }
   // Rebuilt field-by-field like every other parser in this package: the raw
@@ -81,11 +77,22 @@ function parseDesignBrief(value: BoundaryValue): DesignBrief {
     brandInputs: stringsAllowEmpty(brief.brandInputs, 'design brief field brandInputs'),
     assumptions: stringsAllowEmpty(brief.assumptions, 'design brief field assumptions'),
     unresolved: stringsAllowEmpty(brief.unresolved, 'design brief field unresolved'),
-    explicitAnswers: explicitAnswers.data.map((item) => ({
+    explicitAnswers: brief.explicitAnswers.map((item) => ({
       question: item.question,
       answer: item.answer,
     })),
   }
+}
+
+function isExplicitBriefAnswer(value: unknown): value is ExplicitBriefAnswer {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'question' in value &&
+    typeof value.question === 'string' &&
+    'answer' in value &&
+    typeof value.answer === 'string'
+  )
 }
 
 function briefPath(workspacePath: string): string {
@@ -96,7 +103,7 @@ export function readDesignBrief(workspacePath: string): DesignBrief {
   return parseDesignBrief(JSON.parse(readFileSync(briefPath(workspacePath), 'utf8')))
 }
 
-export function writeDesignBrief(workspacePath: string, value: BoundaryValue): DesignBrief {
+export function writeDesignBrief(workspacePath: string, value: unknown): DesignBrief {
   const brief = parseDesignBrief(value)
   const outputPath = briefPath(workspacePath)
   mkdirSync(path.dirname(outputPath), { recursive: true })

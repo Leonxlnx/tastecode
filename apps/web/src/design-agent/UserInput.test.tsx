@@ -1,7 +1,6 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { requiredInstance } from '../test-dom.js'
 import { UserInput } from './UserInput.js'
 import { IndeterminateRequestError } from '../transport.js'
 
@@ -78,10 +77,9 @@ describe('briefing questions', () => {
     expect(screen.getByText('How should the page feel?')).toBeTruthy()
     expect(screen.getByText('Question 2 of 3')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Back' }))
-    expect(
-      requiredInstance(screen.getByRole('radio', { name: /Decide for me/ }), HTMLInputElement)
-        .checked,
-    ).toBe(true)
+    expect((screen.getByRole('radio', { name: /Decide for me/ }) as HTMLInputElement).checked).toBe(
+      true,
+    )
   })
 
   it('uses the wheel to move only after the current question is answered', () => {

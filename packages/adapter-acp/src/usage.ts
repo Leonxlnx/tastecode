@@ -1,6 +1,5 @@
 import type { Usage } from '@harness/contracts'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 export const AcpTurnTokenUsageSchema = z.object({
   totalTokens: z.number().nullable().optional(),
@@ -38,7 +37,7 @@ export function acpTurnUsage(
   const total = token(value.totalTokens) || input + output + cachedWrite
   if (total + cachedRead <= 0) return undefined
   return {
-    ...propertiesWhen(model, (model) => ({ model })),
+    ...(model ? { model } : {}),
     inputTokens: input,
     cachedInputTokens: cachedRead,
     outputTokens: output,
@@ -56,15 +55,15 @@ export function acpSessionUsage(value: AcpSessionUsageUpdate, model?: string): U
     value.cost?.currency?.toUpperCase() === 'USD' ? positive(value.cost.amount) : undefined
   if (used <= 0 && size <= 0 && amount === undefined) return undefined
   return {
-    ...propertiesWhen(model, (model) => ({ model })),
+    ...(model ? { model } : {}),
     inputTokens: 0,
     cachedInputTokens: 0,
     outputTokens: 0,
     reasoningTokens: 0,
     totalTokens: used,
     cumulative: true,
-    ...propertiesWhen(size > 0, () => ({ contextWindow: size })),
-    ...propertiesWhen(!(amount === undefined), () => ({ costUsd: amount })),
+    ...(size > 0 ? { contextWindow: size } : {}),
+    ...(!(amount === undefined) ? { costUsd: amount } : {}),
   }
 }
 

@@ -38,6 +38,9 @@ and resolving conflicts without rewriting published history. Do not un-park a pr
 - **Stay on the current branch unless the user explicitly asks otherwise.** Do not create a
   branch or worktree, or switch branches, as a routine setup step.
 - **Never open a PR unless the user explicitly asks for one.**
+- **Never include Rust-port or mobile-app branch changes in a PR unless the user
+  explicitly names that scope.** Broad requests such as “PR everything,” “ship all local
+  changes,” or “everything” do not authorize either branch; exclude them by default.
 - **Never push to `main`.** Branch, PR, merge. An agent may **merge its own PR without
   waiting** when the work is confidently finished: all four gates green locally, the flow
   exercised against the running app, and nothing in the PR touches `packages/contracts`,

@@ -6,7 +6,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
 import { Store } from './store.js'
-import { propertiesWhen } from './properties-when.js'
 
 let store: Store
 
@@ -27,6 +26,19 @@ const message = (text: string): DomainEvent => ({
   },
 })
 
+const userMessage = (id: string): DomainEvent => ({
+  type: 'item.completed',
+  item: {
+    id,
+    turnId: 't1',
+    type: 'message',
+    role: 'user',
+    status: 'completed',
+    text: 'hello',
+    createdAt: 0,
+  },
+})
+
 const usage = (totalTokens: number, costUsd?: number, cumulative = false): DomainEvent => ({
   type: 'usage.updated',
   usage: {
@@ -35,11 +47,8 @@ const usage = (totalTokens: number, costUsd?: number, cumulative = false): Domai
     outputTokens: 0,
     reasoningTokens: 0,
     totalTokens,
-    ...propertiesWhen(cumulative, () => ({ cumulative: true })),
-    ...propertiesWhen(
-      costUsd === undefined ? undefined : { costUsd },
-      (includedCost) => includedCost,
-    ),
+    ...(cumulative ? { cumulative: true } : {}),
+    ...(costUsd === undefined ? {} : { costUsd }),
   },
 })
 
@@ -89,6 +98,20 @@ describe('ephemeral Side chats', () => {
 
     expect(store.thread('side')).toMatchObject({ ephemeral: true, parentThreadId: 'main' })
     expect(store.threads('/repo').map((thread) => thread.id)).toEqual(['main'])
+    const sidebar = store.sidebarThreads()
+    expect(sidebar).toEqual([
+      expect.objectContaining({
+        id: 'main',
+        projectPath: '/repo',
+        lifecycle: { state: 'active', keepActive: false },
+      }),
+    ])
+    expect(sidebar[0]).not.toHaveProperty('providerSessionId')
+    expect(sidebar[0]).not.toHaveProperty('worktreePath')
+    expect(store.sidebarThreads()).toBe(sidebar)
+    store.renameThread('main', 'Renamed')
+    expect(store.sidebarThreads()).not.toBe(sidebar)
+    expect(store.sidebarThreads()[0]?.title).toBe('Renamed')
     expect(store.searchSessions({ query: 'private side answer' }).results).toEqual([])
   })
 
@@ -121,6 +144,161 @@ describe('ephemeral Side chats', () => {
   })
 })
 
+describe('sidebar thread snapshots', () => {
+  it('keeps earlier snapshots immutable across a batch and a mid-batch read', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'first', projectPath: '/repo', provider: 'codex', title: 'First' })
+    store.addThread({ id: 'second', projectPath: '/repo', provider: 'codex', title: 'Second' })
+    const initial = store.sidebarThreads()
+    let middle: ReturnType<Store['sidebarThreads']> | undefined
+
+    store.batchSidebarThreadUpdates(() => {
+      store.touchThread('first', true, 10)
+      middle = store.sidebarThreads()
+      store.touchThread('second', true, 20)
+    })
+    const final = store.sidebarThreads()
+    const unread = (threads: ReturnType<Store['sidebarThreads']>) =>
+      Object.fromEntries(threads.map((thread) => [thread.id, thread.unread]))
+
+    expect(unread(initial)).toEqual({ first: false, second: false })
+    expect(middle && unread(middle)).toEqual({ first: true, second: false })
+    expect(unread(final)).toEqual({ first: true, second: true })
+    expect(middle).not.toBe(initial)
+    expect(final).not.toBe(middle)
+  })
+
+  it('updates one cached row across every sidebar mutation', () => {
+    store.addProject('/repo')
+    store.addThread({
+      id: 'main',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Main',
+      createdAt: 1,
+      worktreePath: '/repo-worktree',
+      worktreeBranch: 'feature/work',
+    })
+    const initial = store.sidebarThreads()
+
+    store.renameThread('main', 'Renamed')
+    store.setThreadPinned('main', true)
+    store.touchThread('main', true, 10)
+    expect(initial[0]).toMatchObject({ title: 'Main', pinned: false, unread: false })
+    expect(store.sidebarThreads()).toEqual([
+      expect.objectContaining({
+        title: 'Renamed',
+        pinned: true,
+        unread: true,
+        worktreeBranch: 'feature/work',
+      }),
+    ])
+    expect(store.sidebarThreads()).not.toBe(initial)
+
+    store.markThreadRead('main')
+    expect(store.sidebarThreads()[0]?.unread).toBe(false)
+    store.snoozeThread('main', 30, 20)
+    expect(store.sidebarThreads()[0]?.lifecycle).toEqual({
+      state: 'snoozed',
+      snoozedAt: 20,
+      wakeAt: 30,
+    })
+    store.activateThread('main', 40)
+    store.setThreadKeepActive('main', true, 50)
+    expect(store.sidebarThreads()[0]?.lifecycle).toEqual({
+      state: 'active',
+      keepActive: true,
+      wokeAt: 40,
+    })
+    store.forgetWorktree('main')
+    expect(store.sidebarThreads()[0]).not.toHaveProperty('worktreeBranch')
+    store.closeThread('main')
+    expect(store.sidebarThreads()[0]?.closedAt).toBeTypeOf('number')
+
+    store.addThread({
+      id: 'second',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Second',
+      createdAt: 2,
+    })
+    expect(store.sidebarThreads().map((thread) => thread.id)).toEqual(['second', 'main'])
+    store.deleteThread('second')
+    expect(store.sidebarThreads().map((thread) => thread.id)).toEqual(['main'])
+  })
+})
+
+describe('retained thread metadata', () => {
+  it('stays exact across every thread mutation', () => {
+    store.addProject('/repo')
+    const added = store.addThread({
+      id: 'main',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Main',
+      createdAt: 1,
+      worktreePath: '/repo-worktree',
+      worktreeBranch: 'feature/work',
+    })
+
+    expect(store.thread('main')).toBe(added)
+    store.renameThread('main', 'Renamed')
+    store.setThreadPinned('main', true)
+    store.setProviderSessionId('main', 'provider-session')
+    store.touchThread('main', true, 10)
+    expect(store.thread('main')).toMatchObject({
+      title: 'Renamed',
+      pinned: true,
+      providerSessionId: 'provider-session',
+      unread: true,
+      lastActiveAt: 10,
+    })
+
+    store.markThreadRead('main')
+    store.settleThread('main', 'manual', 20)
+    expect(store.thread('main')).toMatchObject({
+      unread: false,
+      lifecycle: { state: 'settled', settledAt: 20, reason: 'manual' },
+    })
+
+    store.snoozeThread('main', 40, 30)
+    expect(store.thread('main')?.lifecycle).toEqual({
+      state: 'snoozed',
+      snoozedAt: 30,
+      wakeAt: 40,
+    })
+    store.activateThread('main', 50)
+    store.setThreadKeepActive('main', true, 60)
+    expect(store.thread('main')?.lifecycle).toEqual({
+      state: 'active',
+      keepActive: true,
+      wokeAt: 50,
+    })
+
+    store.forgetWorktree('main')
+    expect(store.thread('main')).not.toHaveProperty('worktreePath')
+    expect(store.thread('main')).not.toHaveProperty('worktreeBranch')
+    store.closeThread('main')
+    expect(store.thread('main')?.closedAt).toBeTypeOf('number')
+    store.deleteThread('main')
+    expect(store.thread('main')).toBeUndefined()
+  })
+
+  it('replaces a retained missing entry when that thread is added', () => {
+    store.addProject('/repo')
+    expect(store.thread('later')).toBeUndefined()
+
+    const added = store.addThread({
+      id: 'later',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Later',
+    })
+
+    expect(store.thread('later')).toBe(added)
+  })
+})
+
 describe('durable queued turns', () => {
   const queued = (id: string, text = 'Repeat this.') => ({
     id,
@@ -130,6 +308,26 @@ describe('durable queued turns', () => {
     attachments: [`C:\\private\\${id}.png`],
     options: { model: `model-${id}`, serviceTier: 'fast' },
     createdAt: Number(id.at(-1)?.charCodeAt(0)),
+  })
+
+  it('reuses queued thread ids and invalidates them across state changes', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
+    const empty = store.queuedThreadIds()
+    expect(store.queuedThreadIds()).toBe(empty)
+
+    store.enqueueQueuedTurn(queued('submission-a'))
+    const present = store.queuedThreadIds()
+    expect(present).not.toBe(empty)
+    expect([...present]).toEqual(['thread-1'])
+    expect(store.queuedThreadIds()).toBe(present)
+
+    expect(store.claimQueuedTurn('thread-1', 'submission-a', 'normal')).toBeDefined()
+    expect(store.queuedThreadIds()).toEqual(new Set())
+    expect(store.restoreQueuedTurn('thread-1', 'submission-a')).toBe(true)
+    expect(store.queuedThreadIds()).toEqual(new Set(['thread-1']))
+    expect(store.deleteQueuedTurn('thread-1', 'submission-a')).toBe(true)
+    expect(store.queuedThreadIds()).toEqual(new Set())
   })
 
   it('replays exact records and mutations in order after a restart', () => {
@@ -173,18 +371,22 @@ describe('durable queued turns', () => {
     store.addProject('/repo')
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'api', title: 'Queue' })
     store.enqueueQueuedTurn(queued('submission-1', 'Try this.'))
+    expect(store.queuedThreadIds()).toEqual(new Set(['thread-1']))
 
     expect(store.claimQueuedTurn('thread-1', 'submission-1', 'normal')).toMatchObject({
       id: 'submission-1',
       intent: 'normal',
     })
+    expect(store.queuedThreadIds()).toEqual(new Set())
     expect(store.deleteQueuedTurn('thread-1', 'submission-1')).toBe(false)
     expect(store.restoreQueuedTurn('thread-1', 'submission-1')).toBe(true)
+    expect(store.queuedThreadIds()).toEqual(new Set(['thread-1']))
     expect(store.completeQueuedTurn('thread-1', 'submission-1')).toBe(false)
     expect(store.queuedTurns('thread-1').map(({ id }) => id)).toEqual(['submission-1'])
 
     store.claimQueuedTurn('thread-1', 'submission-1', 'normal')
     store.completeQueuedTurn('thread-1', 'submission-1')
+    expect(store.queuedThreadIds()).toEqual(new Set())
     expect(store.queuedTurns('thread-1')).toEqual([])
     expect(store.hasQueuedSubmission('thread-1', 'submission-1')).toBe(false)
   })
@@ -196,11 +398,14 @@ describe('durable queued turns', () => {
       store.enqueueQueuedTurn({ ...queued(`${threadId}-submission`), threadId })
     }
 
+    expect(store.queuedThreadIds()).toEqual(new Set(['closed', 'deleted']))
+
     store.closeThread('closed')
     store.deleteThread('deleted')
 
     expect(store.queuedTurns('closed')).toEqual([])
     expect(store.queuedTurns('deleted')).toEqual([])
+    expect(store.queuedThreadIds()).toEqual(new Set())
   })
 })
 
@@ -292,6 +497,54 @@ describe('recovering interrupted turns', () => {
       restarted.close()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('backfills active recovery state for an existing event log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-index-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seedThread(seeded, 'thread-1')
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`DELETE FROM recovery_lifecycles; DELETE FROM recovery_errors`)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('recovery_lifecycles_v1')
+    raw.close()
+
+    const restarted = new Store(file)
+    try {
+      expect(restarted.recoverInterruptedThreads()).toEqual(['thread-1'])
+    } finally {
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('removes and restores active recovery state with a reversible transcript restore', () => {
+    store.addProject('/repo')
+    seedThread(store, 'thread-1')
+
+    const token = store.saveRestoreUndo('thread-1', 0, 'before-turn')
+    expect(store.recoverInterruptedThreads()).toEqual([])
+
+    store.applyRestoreUndo('thread-1', token)
+    expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+  })
+
+  it('exposes a retained start when transcript restore removes its terminal event', () => {
+    store.addProject('/repo')
+    seedThread(store, 'thread-1')
+    const startedSeq = store.lastSeq('thread-1')
+    store.append('thread-1', {
+      type: 'turn.completed',
+      turnId: 'thread-1-turn',
+      status: 'completed',
+    })
+
+    store.saveRestoreUndo('thread-1', startedSeq, 'before-completion')
+
+    expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
   })
 
   it('rolls back the whole recovery when one terminal event cannot be written', () => {
@@ -482,6 +735,24 @@ describe('projects', () => {
     expect(store.project('/repo')?.name).toBe('My thing')
   })
 
+  it('reuses unchanged project rows and invalidates them after mutations', () => {
+    store.addProject('/repo', 'Repo')
+    const initial = store.projects()
+    expect(store.projects()).toBe(initial)
+    expect(store.addProject('/repo', 'Ignored')).toEqual(initial[0])
+    expect(store.projects()).toBe(initial)
+
+    store.renameProject('/repo', 'Renamed')
+    expect(store.projects()).not.toBe(initial)
+    expect(store.projects()[0]?.name).toBe('Renamed')
+    store.setPinned('/repo', true)
+    expect(store.projects()[0]?.pinned).toBe(true)
+    store.addProject('/second', 'Second')
+    expect(store.projects().map((project) => project.path)).toEqual(['/repo', '/second'])
+    store.removeProject('/second')
+    expect(store.projects().map((project) => project.path)).toEqual(['/repo'])
+  })
+
   it('removes a project from the sidebar without deleting its chat history', () => {
     store.addProject('/repo')
     store.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'One' })
@@ -624,17 +895,139 @@ describe('threads', () => {
         mode: 'manual',
         target: { provider: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
       })
-      expect(reopened.dueSnoozedThreads(99)).toEqual([])
-      expect(reopened.dueSnoozedThreads(100).map((thread) => thread.id)).toEqual(['persisted'])
+      expect(reopened.dueSnoozedThreadIds(99)).toEqual([])
+      expect(reopened.dueSnoozedThreadIds(100)).toEqual(['persisted'])
     } finally {
       reopened.close()
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
+  it('touches active and snoozed threads without losing lifecycle state', () => {
+    store.addThread({ id: 'touched', projectPath: '/repo', provider: 'codex', title: 'Touched' })
+    store.setThreadKeepActive('touched', true, 10)
+
+    expect(store.touchThread('touched', true, 20)).toEqual({
+      state: 'active',
+      keepActive: true,
+    })
+    expect(store.thread('touched')).toMatchObject({ lastActiveAt: 20, unread: true })
+
+    store.snoozeThread('touched', 100, 30)
+    expect(store.touchThread('touched', false, 40)).toEqual({
+      state: 'active',
+      keepActive: false,
+      wokeAt: 40,
+    })
+    expect(store.thread('touched')).toMatchObject({ lastActiveAt: 40, unread: true })
+    expect(() => store.touchThread('missing', false, 50)).toThrow('thread not found')
+  })
+
+  it('lists compact inactive candidates with the same eligibility and order', () => {
+    store.addThread({
+      id: 'early',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Early',
+      createdAt: 10,
+    })
+    store.addThread({
+      id: 'late',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Late',
+      createdAt: 20,
+    })
+    store.addThread({ id: 'kept', projectPath: '/repo', provider: 'codex', title: 'Kept' })
+    store.addThread({ id: 'snoozed', projectPath: '/repo', provider: 'codex', title: 'Snoozed' })
+    store.addThread({ id: 'closed', projectPath: '/repo', provider: 'codex', title: 'Closed' })
+    store.touchThread('early', true, 10)
+    store.setThreadKeepActive('kept', true)
+    store.snoozeThread('snoozed', 100)
+    store.closeThread('closed')
+
+    expect(store.inactiveThreadCandidates(15)).toEqual([{ id: 'early', unread: true }])
+    expect(store.inactiveThreadCandidates(25)).toEqual([
+      { id: 'early', unread: true },
+      { id: 'late', unread: false },
+    ])
+  })
+
+  it('rolls back a failed lifecycle update batch and clears cached projections', () => {
+    store.addThread({
+      id: 'batched',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Batched',
+      createdAt: 10,
+    })
+    store.thread('batched')
+    store.sidebarThreads()
+
+    expect(() =>
+      store.batchLifecycleUpdates(() => {
+        store.settleInactiveThread('batched', 10, 20)
+        throw new Error('stop lifecycle batch')
+      }),
+    ).toThrow('stop lifecycle batch')
+
+    expect(store.thread('batched')?.lifecycle).toMatchObject({ state: 'active' })
+    expect(
+      store.sidebarThreads().find((thread) => thread.id === 'batched')?.lifecycle,
+    ).toMatchObject({
+      state: 'active',
+    })
+  })
+
+  it('finds the next real lifecycle deadline without scanning thread rows', () => {
+    store.updateSidebarSettings({ autoSettleDays: 3 })
+    store.addThread({
+      id: 'active-deadline',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Active',
+      createdAt: 1_000,
+    })
+    store.addThread({
+      id: 'snoozed-deadline',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Snoozed',
+      createdAt: 2_000,
+    })
+    store.snoozeThread('snoozed-deadline', 50_000, 3_000)
+
+    expect(store.nextLifecycleRefreshAt()).toBe(50_000)
+    store.activateThread('snoozed-deadline', 4_000)
+    expect(store.nextLifecycleRefreshAt()).toBe(1_000 + 3 * 24 * 60 * 60 * 1_000)
+    store.setThreadKeepActive('active-deadline', true, 5_000)
+    store.setThreadKeepActive('snoozed-deadline', true, 5_000)
+    expect(store.nextLifecycleRefreshAt()).toBeUndefined()
+  })
+
   it('starts new profiles with the classic sidebar and three-day settling', () => {
     expect(store.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: 3 })
     expect(store.backgroundModelPreference()).toEqual({ mode: 'automatic' })
+  })
+
+  it('retains immutable settings snapshots until an update replaces them', () => {
+    const sidebar = store.sidebarSettings()
+    expect(store.sidebarSettings()).toBe(sidebar)
+    const updatedSidebar = store.updateSidebarSettings({ mode: 'inbox' })
+    expect(updatedSidebar).not.toBe(sidebar)
+    expect(store.sidebarSettings()).toBe(updatedSidebar)
+    expect(Object.isFrozen(updatedSidebar)).toBe(true)
+
+    const automatic = store.backgroundModelPreference()
+    expect(store.backgroundModelPreference()).toBe(automatic)
+    const manual = store.updateBackgroundModelPreference({
+      mode: 'manual',
+      target: { provider: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+    })
+    expect(manual).not.toBe(automatic)
+    expect(store.backgroundModelPreference()).toBe(manual)
+    expect(Object.isFrozen(manual)).toBe(true)
+    expect(manual.mode === 'manual' && Object.isFrozen(manual.target)).toBe(true)
   })
 })
 
@@ -656,6 +1049,65 @@ describe('events', () => {
     expect(texts).toEqual(['one', 'two', 'three'])
   })
 
+  it('uses replay snapshots only at valid history boundaries', () => {
+    const snapshot = [{ seq: 1, event: message('cached') }]
+    store.append('t1', message('one'))
+    expect(store.saveReplaySnapshot('t1', 1, snapshot)).toBe(JSON.stringify(snapshot))
+
+    expect(store.replaySnapshotBase('t1')).toEqual({ seq: 1, entries: snapshot })
+    expect(store.tailReplaySnapshotForResponse('t1')?.entries).toBe(snapshot)
+
+    store.addCheckpoint({ threadId: 't1', seq: 1, commit: 'abc', label: 'One' })
+    store.append('t1', message('two'))
+    expect(store.tailReplaySnapshotForResponse('t1')).toBeUndefined()
+    expect(store.replaySnapshotBase('t1')).toEqual({ seq: 1, entries: snapshot })
+    const token = store.saveRestoreUndo('t1', 1, 'def')
+    expect(store.replaySnapshotBase('t1')).toBeUndefined()
+
+    store.saveReplaySnapshot('t1', 1, snapshot)
+    store.applyRestoreUndo('t1', token)
+    expect(store.replaySnapshotBase('t1')).toBeUndefined()
+  })
+
+  it('bounds parsed replay snapshots and retains the most recently used threads', () => {
+    const snapshots = new Map<string, Array<{ seq: number; event: DomainEvent }>>()
+    for (let index = 1; index <= 64; index += 1) {
+      const threadId = `t${index}`
+      if (index > 1) {
+        store.addThread({
+          id: threadId,
+          projectPath: '/repo',
+          provider: 'codex',
+          title: `Thread ${index}`,
+        })
+      }
+      const seq = store.append(threadId, message(`thread-${index}`))
+      const snapshot = [{ seq, event: message(`snapshot-${index}`) }]
+      snapshots.set(threadId, snapshot)
+      store.saveReplaySnapshot(threadId, seq, snapshot)
+    }
+
+    // Reading t1 makes it newer than t2 before the next snapshot arrives.
+    expect(store.tailReplaySnapshotForResponse('t1')?.entries).toBe(snapshots.get('t1'))
+    store.addThread({
+      id: 't65',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Thread 65',
+    })
+    const newestSeq = store.append('t65', message('thread-65'))
+    const newest = [{ seq: newestSeq, event: message('snapshot-65') }]
+    store.saveReplaySnapshot('t65', newestSeq, newest)
+
+    expect(store.tailReplaySnapshotForResponse('t1')?.entries).toBe(snapshots.get('t1'))
+    expect(store.tailReplaySnapshotForResponse('t65')?.entries).toBe(newest)
+    const restored = store.tailReplaySnapshotForResponse('t2')
+    expect(restored?.entries).toEqual(snapshots.get('t2'))
+    expect(restored?.entries).not.toBe(snapshots.get('t2'))
+    expect(restored?.serializedEntries).toBe(JSON.stringify(snapshots.get('t2')))
+    expect(store.tailReplaySnapshotForResponse('t2')).toEqual({ entries: restored?.entries })
+  })
+
   it('returns only what happened after a sequence number', () => {
     store.append('t1', message('one'))
     const seq = store.append('t1', message('two'))
@@ -668,6 +1120,149 @@ describe('events', () => {
     expect(event?.type === 'item.completed' ? event.item.text : undefined).toBe('three')
   })
 
+  it('indexes user submission ids and keeps restore exact', () => {
+    store.append('t1', message('assistant'))
+    store.append('t1', userMessage('submission-1'))
+
+    expect(store.hasUserSubmission('t1', 'i-assistant')).toBe(false)
+    expect(store.hasUserSubmission('t1', 'submission-1')).toBe(true)
+
+    const token = store.saveRestoreUndo('t1', 0, 'before-submission')
+    expect(store.hasUserSubmission('t1', 'submission-1')).toBe(false)
+    store.applyRestoreUndo('t1', token)
+    expect(store.hasUserSubmission('t1', 'submission-1')).toBe(true)
+  })
+
+  it('indexes the latest turn diff and keeps restore exact', () => {
+    const firstSeq = store.append('t1', {
+      type: 'diff.updated',
+      turnId: 'turn-1',
+      diff: 'first patch',
+    })
+    store.append('t1', { type: 'diff.updated', turnId: 'turn-1', diff: 'final patch' })
+    store.append('t1', { type: 'diff.updated', turnId: 'turn-2', diff: 'other patch' })
+
+    expect(store.turnDiff('t1', 'turn-1')).toBe('final patch')
+    expect(store.turnDiff('t1', 'turn-2')).toBe('other patch')
+    expect(store.turnDiff('t1', 'missing')).toBeUndefined()
+
+    const token = store.saveRestoreUndo('t1', firstSeq, 'before-final-patch')
+    expect(store.turnDiff('t1', 'turn-1')).toBe('first patch')
+    expect(store.turnDiff('t1', 'turn-2')).toBeUndefined()
+
+    store.applyRestoreUndo('t1', token)
+    expect(store.turnDiff('t1', 'turn-1')).toBe('final patch')
+    expect(store.turnDiff('t1', 'turn-2')).toBe('other patch')
+  })
+
+  it('backfills user submission ids for an existing event log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-submission-index-'))
+    const file = path.join(dir, 'submissions.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.append('one', userMessage('submission-1'))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`DELETE FROM user_submission_items`)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('user_submission_items_v1')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.hasUserSubmission('one', 'submission-1')).toBe(true)
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('backfills turn diffs for an existing event log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-turn-diff-index-'))
+    const file = path.join(dir, 'turn-diffs.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.append('one', { type: 'diff.updated', turnId: 'turn-1', diff: 'persisted patch' })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`DELETE FROM turn_diff_events`)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('turn_diff_events_v1')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.turnDiff('one', 'turn-1')).toBe('persisted patch')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rebuilds every missing derived index together from one existing event log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-derived-indexes-'))
+    const file = path.join(dir, 'derived.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.append('one', userMessage('submission-1'))
+    seeded.append('one', message('searchable needle'))
+    seeded.append('one', usage(7))
+    seeded.append('one', { type: 'diff.updated', turnId: 'turn-1', diff: 'persisted patch' })
+    seeded.append('one', {
+      type: 'turn.started',
+      turn: { id: 'open-turn', threadId: 'one', status: 'running', createdAt: 1 },
+    })
+    seeded.append('one', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 2 },
+    })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`
+      DELETE FROM session_search;
+      DELETE FROM usage_events;
+      DELETE FROM inbox_events;
+      DELETE FROM user_submission_items;
+      DELETE FROM turn_diff_events;
+      DELETE FROM recovery_lifecycles;
+      DELETE FROM recovery_errors;
+      DELETE FROM schema_migrations;
+    `)
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.searchSessions({ query: 'needle' }).results).toHaveLength(1)
+      expect(reopened.usageSummary('one', 0).session.totalTokens).toBe(7)
+      expect(reopened.inboxProjections().get('one')?.approvals).toEqual(new Set(['approval-1']))
+      expect(reopened.hasUserSubmission('one', 'submission-1')).toBe(true)
+      expect(reopened.turnDiff('one', 'turn-1')).toBe('persisted patch')
+      expect(reopened.recoverInterruptedThreads()).toEqual(['one'])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('persists a cross-thread event window with ordered sequence numbers', () => {
+    store.addThread({ id: 't2', projectPath: '/repo', provider: 'codex', title: 'Two' })
+    const sequences = store
+      .appendBatchWithSerializedEvents([
+        { threadId: 't1', event: message('one') },
+        { threadId: 't2', event: message('two') },
+      ])
+      .map(({ seq }) => seq)
+
+    expect(sequences).toHaveLength(2)
+    expect(sequences[1]).toBe((sequences[0] ?? 0) + 1)
+    expect(store.history('t1').map(({ event }) => event)).toEqual([message('one')])
+    expect(store.history('t2').map(({ event }) => event)).toEqual([message('two')])
+  })
+
   it('never hands one thread another thread events', () => {
     store.addThread({ id: 't2', projectPath: '/repo', provider: 'codex', title: 'Two' })
     store.append('t1', message('mine'))
@@ -675,6 +1270,140 @@ describe('events', () => {
 
     expect(store.history('t1')).toHaveLength(1)
     expect(store.history('t2')).toHaveLength(1)
+  })
+
+  it('builds exact inbox projections for every thread in bulk', () => {
+    store.addThread({ id: 't2', projectPath: '/repo', provider: 'codex', title: 'Two' })
+    store.addThread({ id: 't3', projectPath: '/repo', provider: 'codex', title: 'Three' })
+    store.append('t1', message('irrelevant transcript text'))
+    store.append('t1', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 1 },
+    })
+    store.append('t1', { type: 'approval.resolved', id: 'approval-1' })
+    store.append('t1', userInput('input-1', 'turn-1'))
+    store.append('t1', { type: 'thread.error', threadId: 't1', message: 'failed' })
+    store.append('t1', { type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+    store.append('t3', { type: 'turn.completed', turnId: 'turn-3', status: 'completed' })
+    store.append('t3', { type: 'thread.error', threadId: 't3', message: 'failed last' })
+    store.append('t3', {
+      type: 'approval.requested',
+      request: { id: 'approval-3', kind: 'command', createdAt: 3 },
+    })
+
+    const projections = store.inboxProjections()
+
+    expect(projections.size).toBe(2)
+    expect(projections.get('t1')).toEqual({
+      inputs: new Set(['input-1']),
+      last: 'idle',
+    })
+    expect(projections.get('t2')).toBeUndefined()
+    expect(projections.get('t3')).toEqual({
+      approvals: new Set(['approval-3']),
+      last: 'failed',
+    })
+  })
+
+  it('stores only current non-default inbox state after a long history', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-inbox-current-'))
+    const file = path.join(dir, 'inbox.db')
+    try {
+      const indexed = new Store(file)
+      try {
+        indexed.addProject('/repo')
+        indexed.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+        for (let index = 0; index < 100; index += 1) {
+          indexed.append('one', {
+            type: 'turn.completed',
+            turnId: `turn-${index}`,
+            status: 'completed',
+          })
+        }
+        indexed.append('one', { type: 'thread.error', threadId: 'one', message: 'old failure' })
+        indexed.append('one', {
+          type: 'turn.completed',
+          turnId: 'recovered',
+          status: 'completed',
+        })
+        const approval = {
+          type: 'approval.requested' as const,
+          request: { id: 'approval-1', kind: 'command' as const, createdAt: 1 },
+        }
+        indexed.append('one', approval)
+        indexed.append('one', approval)
+        indexed.append('one', userInput('input-1', 'turn-input'))
+        indexed.append('one', { type: 'user_input.resolved', id: 'input-1' })
+        indexed.append('one', { type: 'thread.error', threadId: 'one', message: 'current failure' })
+
+        expect(indexed.inboxProjections().get('one')).toEqual({
+          approvals: new Set(['approval-1']),
+          last: 'failed',
+        })
+      } finally {
+        indexed.close()
+      }
+
+      const raw = new DatabaseSync(file)
+      try {
+        const row = raw.prepare(`SELECT COUNT(*) AS count FROM inbox_events`).get() as {
+          count: number | bigint
+        }
+        expect(Number(row.count)).toBe(2)
+      } finally {
+        raw.close()
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('backfills the compact inbox index for an existing event log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-inbox-index-'))
+    const file = path.join(dir, 'inbox.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.append('one', message('irrelevant history'))
+    seeded.append('one', { type: 'thread.error', threadId: 'one', message: 'failed' })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`DELETE FROM inbox_events`)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('inbox_events_v2')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.inboxProjections().get('one')?.last).toBe('failed')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('removes and restores indexed inbox state with a reversible transcript restore', () => {
+    store.append('t1', {
+      type: 'turn.completed',
+      turnId: 'turn-1',
+      status: 'completed',
+    })
+    const keepSeq = store.append('t1', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 1 },
+    })
+    store.append('t1', { type: 'approval.resolved', id: 'approval-1' })
+    store.append('t1', { type: 'thread.error', threadId: 't1', message: 'temporary failure' })
+    expect(store.inboxProjections().get('t1')).toEqual({ last: 'failed' })
+
+    const token = store.saveRestoreUndo('t1', keepSeq, 'before-failure')
+    expect(store.inboxProjections().get('t1')).toEqual({
+      approvals: new Set(['approval-1']),
+      last: 'idle',
+    })
+
+    store.applyRestoreUndo('t1', token)
+    expect(store.inboxProjections().get('t1')).toEqual({ last: 'failed' })
   })
 
   it('reports zero for a thread that has produced nothing', () => {
@@ -756,7 +1485,7 @@ describe('cross-session search', () => {
     })
     const original = [...first.results, ...second.results]
     store.renameThread('t1', 'Renamed after the first search')
-    const repeated = store.searchSessions({ query: 'stableidentity shared' }).results
+    const repeated = store.searchSessions({ query: 'stableidentity' }).results
     const identityBySnippet = new Map(
       original.map((result) => [result.snippet.map((part) => part.text).join(''), result.resultId]),
     )
@@ -876,6 +1605,100 @@ describe('cross-session search', () => {
     ])
   })
 
+  it('reuses unchanged rankings and refreshes them after a searchable event', () => {
+    for (let index = 0; index < 3; index += 1) {
+      store.append('t1', message(`rankingcache old-${index}`))
+    }
+
+    const first = store.searchSessions({ query: 'rankingcache', limit: 1 })
+    const repeated = store.searchSessions({ query: 'rankingcache', limit: 1 })
+    expect(repeated.nextCursor).toBe(first.nextCursor)
+
+    store.append('t1', message('rankingcache newest'))
+    const fresh = store.searchSessions({ query: 'rankingcache', limit: 1 })
+    expect(fresh.nextCursor).not.toBe(first.nextCursor)
+    expect(fresh.results[0]?.snippet.map((part) => part.text).join('')).toBe('rankingcache newest')
+
+    const originalSecondPage = store.searchSessions({
+      query: 'rankingcache',
+      cursor: first.nextCursor!,
+      limit: 1,
+    })
+    expect(originalSecondPage.results[0]?.snippet.map((part) => part.text).join('')).toBe(
+      'rankingcache old-1',
+    )
+  })
+
+  it('keeps a cached ranking when a new searchable row cannot match it', () => {
+    for (let index = 0; index < 3; index += 1) {
+      store.append('t1', message(`stablecache result-${index}`))
+    }
+
+    const first = store.searchSessions({ query: 'stablecache', limit: 1 })
+    store.append('t1', message('unrelated searchable text'))
+    const repeated = store.searchSessions({ query: 'stablecache', limit: 1 })
+
+    expect(repeated).toEqual(first)
+  })
+
+  it('keeps filtered rankings when matching rows land outside their project or provider', () => {
+    store.addProject('/other', 'Other')
+    store.addThread({
+      id: 'outside-project',
+      projectPath: '/other',
+      provider: 'codex',
+      title: 'Other',
+    })
+    store.addThread({
+      id: 'outside-provider',
+      projectPath: '/repo',
+      provider: 'grok',
+      title: 'Grok',
+    })
+    for (let index = 0; index < 3; index += 1) {
+      store.append('t1', message(`filteredcache result-${index}`))
+    }
+
+    const options = {
+      query: 'filteredcache',
+      projectPath: '/repo',
+      provider: 'codex' as const,
+      limit: 1,
+    }
+    const first = store.searchSessions(options)
+
+    store.append('outside-project', message('filteredcache outside project'))
+    expect(store.searchSessions(options)).toEqual(first)
+
+    store.append('outside-provider', message('filteredcache outside provider'))
+    expect(store.searchSessions(options)).toEqual(first)
+
+    store.append('t1', message('filteredcache included newest'))
+    const fresh = store.searchSessions(options)
+    expect(fresh.nextCursor).not.toBe(first.nextCursor)
+    expect(fresh.results[0]?.snippet.map((part) => part.text).join('')).toBe(
+      'filteredcache included newest',
+    )
+  })
+
+  it('invalidates a cached ranking when ASCII punctuation separates a matching token', () => {
+    store.append('t1', message('bar old result'))
+    const first = store.searchSessions({ query: 'bar', limit: 1 })
+
+    store.append('t1', message('foo_bar newest result'))
+    const fresh = store.searchSessions({ query: 'bar', limit: 1 })
+
+    expect(fresh.nextCursor).not.toBe(first.nextCursor)
+    expect(
+      store.searchSessions({ query: 'bar' }).results.some((result) =>
+        result.snippet
+          .map((part) => part.text)
+          .join('')
+          .includes('foo_bar'),
+      ),
+    ).toBe(true)
+  })
+
   it('traverses more than 100 unchanged pages without gaps or repeats', () => {
     for (let index = 0; index < 205; index += 1) {
       store.append('t1', message(`longpagination result-${index}`))
@@ -888,7 +1711,7 @@ describe('cross-session search', () => {
       const page = store.searchSessions({
         query: 'longpagination',
         limit: 2,
-        ...propertiesWhen(cursor, (cursor) => ({ cursor })),
+        ...(cursor ? { cursor } : {}),
       })
       for (const result of page.results) {
         const text = result.snippet.map((part) => part.text).join('')
@@ -907,6 +1730,45 @@ describe('cross-session search', () => {
 
     expect(pages).toBe(103)
     expect(seen.size).toBe(205)
+  })
+
+  it('paginates row IDs above the uint32 range without truncating them', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-search-wide-rowid-'))
+    const file = path.join(dir, 'wide-rowid.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'Search' })
+    seeded.append('t1', message('sequence seed'))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.prepare(`UPDATE sqlite_sequence SET seq = ? WHERE name = 'events'`).run(0xffff_ffff)
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      for (let index = 0; index < 102; index += 1) {
+        reopened.append('t1', message(`wide row marker ${String(index).padStart(3, '0')}`))
+      }
+
+      const first = reopened.searchSessions({ query: 'wide row marker', limit: 1 })
+      const second = reopened.searchSessions({
+        query: 'wide row marker',
+        limit: 1,
+        cursor: first.nextCursor!,
+      })
+
+      expect(first.nextCursor).not.toBeNull()
+      expect(second.nextCursor).not.toBeNull()
+      expect(
+        [first.results[0], second.results[0]].map((result) =>
+          result?.snippet.map((part) => part.text).join(''),
+        ),
+      ).toEqual(['wide row marker 101', 'wide row marker 100'])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('binds continuation cursors to the original query and filters', () => {
@@ -948,6 +1810,40 @@ describe('cross-session search', () => {
       expect(() =>
         store.searchSessions({ query: 'expiring', cursor: first.nextCursor!, limit: 1 }),
       ).toThrow('expired')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bounds abandoned search snapshots and retains recently used cursors', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-08-11T10:00:00Z'))
+      const cursors: string[] = []
+      for (let index = 0; index < 8; index += 1) {
+        store.append('t1', message(`cacheterm${index} first`))
+        store.append('t1', message(`cacheterm${index} second`))
+        const page = store.searchSessions({ query: `cacheterm${index}`, limit: 1 })
+        expect(page.nextCursor).not.toBeNull()
+        cursors.push(page.nextCursor!)
+      }
+
+      // Touch the oldest snapshot while the clock is fixed. Recency must not
+      // depend on timestamp sort stability when several searches share a tick.
+      expect(
+        store.searchSessions({ query: 'cacheterm0', cursor: cursors[0], limit: 1 }).results,
+      ).toHaveLength(1)
+
+      store.append('t1', message('cacheterm8 first'))
+      store.append('t1', message('cacheterm8 second'))
+      expect(store.searchSessions({ query: 'cacheterm8', limit: 1 }).nextCursor).not.toBeNull()
+
+      expect(() =>
+        store.searchSessions({ query: 'cacheterm1', cursor: cursors[1], limit: 1 }),
+      ).toThrow('expired')
+      expect(
+        store.searchSessions({ query: 'cacheterm0', cursor: cursors[0], limit: 1 }).results,
+      ).toHaveLength(1)
     } finally {
       vi.useRealTimers()
     }
@@ -1015,6 +1911,17 @@ describe('cross-session search', () => {
     expect(snippet).toContainEqual({ text: 'regression', highlighted: true })
     expect(snippet.map((part) => part.text).join('')).not.toContain('<mark>')
   })
+
+  it('highlights prefix and diacritic-insensitive search matches', () => {
+    store.append('t1', message('Résumé performance report'))
+
+    const snippet = store.searchSessions({ query: 'resume perf' }).results[0]!.snippet
+
+    expect(snippet.filter((part) => part.highlighted).map((part) => part.text)).toEqual([
+      'Résumé',
+      'performance',
+    ])
+  })
 })
 
 describe('diff review decisions', () => {
@@ -1075,33 +1982,39 @@ describe('usage totals', () => {
     })
   })
 
-  it('exposes persisted usage metadata for the historical usage page', () => {
-    store.addProject('/repo')
-    store.addThread({ id: 'one', projectPath: '/repo', provider: 'api', title: 'One' })
-    store.append('one', {
-      type: 'usage.updated',
-      usage: {
-        inputTokens: 100,
-        cachedInputTokens: 40,
-        outputTokens: 20,
-        reasoningTokens: 5,
-        totalTokens: 120,
-        model: 'gpt-5.6-luna',
-        inputIncludesCached: true,
-      },
-    })
+  it('backfills the usage index for an existing event log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-usage-index-'))
+    const file = path.join(dir, 'usage.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.append('one', usage(75))
+    seeded.close()
 
-    expect(store.usageEvents()).toEqual([
-      expect.objectContaining({
-        threadId: 'one',
-        provider: 'api',
-        usage: expect.objectContaining({
-          model: 'gpt-5.6-luna',
-          inputTokens: 100,
-          inputIncludesCached: true,
-        }),
-      }),
-    ])
+    const raw = new DatabaseSync(file)
+    raw.exec(`DELETE FROM usage_events`)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('usage_events_v1')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.usageSummary('one', 0).session.totalTokens).toBe(75)
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('removes and restores indexed usage with a reversible transcript restore', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    store.append('one', usage(90))
+
+    const token = store.saveRestoreUndo('one', 0, 'before-usage')
+    expect(store.usageSummary('one', 0).session.totalTokens).toBe(0)
+
+    store.applyRestoreUndo('one', token)
+    expect(store.usageSummary('one', 0).session.totalTokens).toBe(90)
   })
 })
 

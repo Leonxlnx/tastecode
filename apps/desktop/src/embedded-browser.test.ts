@@ -1,4 +1,4 @@
-import type { WebContents } from 'electron'
+import type { Event, WebContents, WebPreferences } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 import { browserGuestUrl, browserUserAgent, configureEmbeddedBrowser } from './embedded-browser.js'
 
@@ -20,8 +20,7 @@ describe('embedded browser guest', () => {
 
   it('hardens guests before attachment and rejects privileged bootstrap URLs', () => {
     const owner = ownerHarness()
-    // SAFETY: The harness implements the only WebContents method used here: event registration.
-    configureEmbeddedBrowser(owner.contents as WebContents)
+    configureEmbeddedBrowser(owner.contents)
     const willAttach = owner.listener('will-attach-webview')
     const event = { preventDefault: vi.fn() }
     const preferences = {
@@ -48,8 +47,7 @@ describe('embedded browser guest', () => {
 
   it('denies permissions and keeps new-window links inside the guest', async () => {
     const owner = ownerHarness()
-    // SAFETY: The harness implements the only WebContents method used here: event registration.
-    configureEmbeddedBrowser(owner.contents as WebContents)
+    configureEmbeddedBrowser(owner.contents)
     const session = {
       setPermissionCheckHandler: vi.fn(),
       setPermissionRequestHandler: vi.fn(),
@@ -79,11 +77,24 @@ describe('embedded browser guest', () => {
 
 function ownerHarness() {
   const listeners = new Map<string, (...args: never[]) => void>()
+  function on(
+    event: 'will-attach-webview',
+    listener: (
+      event: Event,
+      webPreferences: WebPreferences,
+      params: Record<string, string>,
+    ) => void,
+  ): void
+  function on(
+    event: 'did-attach-webview',
+    listener: (event: Event, webContents: WebContents) => void,
+  ): void
+  function on(event: string, listener: (...args: never[]) => void): void {
+    listeners.set(event, listener)
+  }
   return {
     contents: {
-      on: vi.fn((event: string, listener: (...args: never[]) => void) => {
-        listeners.set(event, listener)
-      }),
+      on: vi.fn(on),
     },
     listener(event: string): (...args: any[]) => void {
       const listener = listeners.get(event)

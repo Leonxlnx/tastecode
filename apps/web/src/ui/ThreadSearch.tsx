@@ -1,7 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { Item } from '@harness/contracts'
-import { ChevronDown, ChevronUp, X } from 'lucide-react'
-import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
+import {
+  IconChevronDown as ChevronDown,
+  IconChevronUp as ChevronUp,
+  IconX as X,
+} from '@tabler/icons-react'
+import type { LiveItemUpdate } from '../thread-store.js'
+import type { ThreadFrameStore } from '../thread-frame-store.js'
+import { createThreadSearchIndexer, findThreadSearchHits } from '../thread-search-index.js'
 
 /**
  * Find within the open thread.
@@ -13,6 +19,7 @@ import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
 export function ThreadSearch(props: {
   items: Item[]
   liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
+  frameStore?: ThreadFrameStore | undefined
   threadId?: string | undefined
   onJump: (index: number) => void
   onClose: () => void
@@ -21,19 +28,27 @@ export function ThreadSearch(props: {
   const [cursor, setCursor] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const jumped = useRef(false)
-  const liveItems = useRef(props.liveItems)
-  liveItems.current = props.liveItems
+  const subscribeFrame = useCallback(
+    (listener: () => void) => props.frameStore?.subscribe(listener) ?? (() => undefined),
+    [props.frameStore],
+  )
+  const getFrameSnapshot = useCallback(() => props.frameStore?.getSnapshot(), [props.frameStore])
+  const frameSnapshot = useSyncExternalStore(subscribeFrame, getFrameSnapshot, getFrameSnapshot)
+  const items = frameSnapshot?.items ?? props.items
+  const liveItems = frameSnapshot?.liveItems ?? props.liveItems
 
   useEffect(() => {
     input.current?.focus()
   }, [])
 
   const term = query.trim().toLowerCase()
-  // Memoised: three toLowerCase passes over the whole thread per keystroke
-  // (and per render) is real work on long transcripts.
+  // Settled rows are immutable. Normalize them once when search opens instead
+  // of lowercasing the whole transcript again for every typed character.
+  const projectSearchIndex = useMemo(createThreadSearchIndexer, [props.threadId])
+  const searchIndex = projectSearchIndex(items)
   const hits = useMemo(
-    () => (term ? findHits(props.items, liveItems.current, term) : []),
-    [props.items, props.threadId, term],
+    () => (term ? findThreadSearchHits(searchIndex, liveItems, term) : []),
+    [liveItems, searchIndex, term],
   )
 
   const go = (next: number) => {
@@ -105,26 +120,3 @@ export function ThreadSearch(props: {
     </div>
   )
 }
-
-function findHits(
-  items: Item[],
-  liveItems: ReadonlyMap<number, LiveItemUpdate> | undefined,
-  term: string,
-): number[] {
-  const hits: number[] = []
-  const updates = liveItems ?? EMPTY_LIVE_ITEMS
-  for (let index = 0; index < items.length; index += 1) {
-    const item = threadItemAt(items, updates, index)
-    if (
-      item &&
-      (item.text?.toLowerCase().includes(term) ||
-        item.command?.toLowerCase().includes(term) ||
-        item.path?.toLowerCase().includes(term))
-    ) {
-      hits.push(index)
-    }
-  }
-  return hits
-}
-
-const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()

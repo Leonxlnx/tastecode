@@ -1,8 +1,12 @@
-import { StrictMode } from 'react'
+import { StrictMode, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
-import 'streamdown/styles.css'
 import { App } from './App.js'
-import { isDesktop, reportRendererError } from './bridge.js'
+import {
+  isDesktop,
+  isStartupBenchmark,
+  reportRendererError,
+  reportStartupMilestone,
+} from './bridge.js'
 import {
   applyAccentPreference,
   applyFontPreference,
@@ -14,7 +18,6 @@ import {
 } from './theme.js'
 import './styles/tokens.css'
 import './styles/app.css'
-import './styles/keybinds.css'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('missing #root')
@@ -30,8 +33,20 @@ document.documentElement.dataset['shell'] = isDesktop ? 'desktop' : 'web'
 window.addEventListener('error', (event) => reportRendererError(event.error ?? event.message))
 window.addEventListener('unhandledrejection', (event) => reportRendererError(event.reason))
 
+if (isStartupBenchmark) reportStartupMilestone('module-loaded')
+
+function StartupProbe() {
+  useLayoutEffect(() => {
+    reportStartupMilestone('react-commit')
+    const frame = window.requestAnimationFrame(() => reportStartupMilestone('first-frame'))
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
+  return null
+}
+
 createRoot(root).render(
   <StrictMode>
     <App />
+    {isStartupBenchmark ? <StartupProbe /> : null}
   </StrictMode>,
 )

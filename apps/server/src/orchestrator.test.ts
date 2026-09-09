@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process'
-import { EventEmitter } from 'node:events'
 import {
   existsSync,
   mkdirSync,
@@ -18,6 +17,7 @@ import type {
   Capabilities,
   DomainEvent,
   McpServer,
+  McpServerConfig,
   ProviderId,
   ThreadLifecycle,
 } from '@harness/contracts'
@@ -28,45 +28,41 @@ import {
   type StartOptions,
   type TurnOptions,
 } from './adapters.js'
-import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief, type PreviewPlan } from '@harness/design-agent'
+import { DESIGN_BRIEF_ATTACHMENT, writeDesignBrief } from '@harness/design-agent'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
 import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
-import { presentTurns } from '../../web/src/ui/turns.js'
-import { propertiesWhen } from './properties-when.js'
-import type { RunningPreview } from './design-preview-runner.js'
+import { projectThreadItems } from '../../web/src/ui/turns.js'
 
 /** Counts stops, so tests can prove the dev server does not outlive its flow. */
-type PreviewStopState = { count: number; barriers: Promise<void>[] }
-type PreviewStartState = { count: number; barriers: Promise<void>[]; failures: Error[] }
-type QueueNotificationFailure = { current?: Error | undefined }
-
-const previewStops: PreviewStopState = { count: 0, barriers: [] }
-const previewStarts: PreviewStartState = {
+const previewStops = vi.hoisted(() => ({ count: 0, barriers: [] as Promise<void>[] }))
+const previewStarts = vi.hoisted(() => ({
   count: 0,
-  barriers: [],
-  failures: [],
-}
+  barriers: [] as Promise<void>[],
+  failures: [] as unknown[],
+}))
 
-const fakeStartDesignPreview = vi.fn(
-  async (_workspace: string, plan: PreviewPlan): Promise<RunningPreview> => {
-    previewStarts.count += 1
-    await previewStarts.barriers.shift()
-    const failure = previewStarts.failures.shift()
-    if (failure) throw failure
-    return {
-      url: plan.url,
-      viewports: plan.viewports,
-      output: () => 'ready',
-      stop: async () => {
-        previewStops.count += 1
-        await previewStops.barriers.shift()
-      },
-    }
-  },
-)
+vi.mock('./design-preview-runner.js', () => ({
+  startDesignPreview: vi.fn(
+    async (_workspace: string, plan: { url: string; viewports: unknown[] }) => {
+      previewStarts.count += 1
+      await previewStarts.barriers.shift()
+      const failure = previewStarts.failures.shift()
+      if (failure) throw failure
+      return {
+        url: plan.url,
+        viewports: plan.viewports,
+        output: () => 'ready',
+        stop: async () => {
+          previewStops.count += 1
+          await previewStops.barriers.shift()
+        },
+      }
+    },
+  ),
+}))
 
 /**
  * What must stay true when several sessions run at once.
@@ -101,6 +97,18 @@ class FakeSession implements AgentSession {
   userInputs: Array<{ requestId: string; answers: Record<string, string[]> }> = []
   approvalModes: ApprovalMode[] = []
   mcpServers: McpServer[] = []
+  mcpReloads: Array<{
+    threadId: string
+    servers: McpServerConfig[]
+    credentials: Record<string, string>
+  }> = []
+  mcpOAuthStarts: Array<{ serverId: string; threadId: string }> = []
+  emitMcpOAuth: (result: {
+    serverId: string
+    loginId: string
+    success: boolean
+    error: string | null
+  }) => void = () => {}
   turnIds: string[] = []
   sendError: Error | undefined
   eventDuringSend: DomainEvent | undefined
@@ -112,7 +120,7 @@ class FakeSession implements AgentSession {
   /** Resolves the pending sendTurn, letting a test hold one open. */
   release: (() => void) | undefined
 
-  #events = new EventEmitter()
+  #listeners: Array<(event: DomainEvent) => void> = []
 
   constructor(readonly id: string) {}
 
@@ -147,6 +155,20 @@ class FakeSession implements AgentSession {
   async listMcpServers(): Promise<McpServer[]> {
     return this.mcpServers
   }
+  async reloadMcpServers(
+    threadId: string,
+    servers: McpServerConfig[],
+    credentials: Record<string, string>,
+  ): Promise<void> {
+    this.mcpReloads.push({ threadId, servers, credentials })
+  }
+  async startMcpOAuth(
+    serverId: string,
+    threadId: string,
+  ): Promise<{ loginId: string; authUrl: string }> {
+    this.mcpOAuthStarts.push({ serverId, threadId })
+    return { loginId: `login-${serverId}`, authUrl: `https://example.com/${serverId}` }
+  }
   respondToApproval(): void {}
   respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
     this.userInputs.push({ requestId, answers })
@@ -159,8 +181,10 @@ class FakeSession implements AgentSession {
   }
 
   on(_event: 'event' | 'log', listener: (value: never) => void): void {
-    this.#events.on(_event, listener)
-    this.emit = (event) => this.#events.emit('event', event)
+    this.#listeners.push(listener as (event: DomainEvent) => void)
+    this.emit = (event) => {
+      for (const l of this.#listeners) l(event)
+    }
   }
 
   onUsageChanged(listener: () => void): void {
@@ -170,17 +194,38 @@ class FakeSession implements AgentSession {
   onProviderSessionId(listener: (providerSessionId: string) => void): void {
     this.emitProviderSessionId = listener
   }
+
+  onMcpOAuth(listener: Parameters<NonNullable<AgentSession['onMcpOAuth']>>[0]): void {
+    this.emitMcpOAuth = listener
+  }
 }
 
-function harness(worktreeRoot?: string, store = new Store(':memory:')) {
+type QueueNotificationError = { current?: Error }
+type LifecycleHook = {
+  current?: (threadId: string, lifecycle: ThreadLifecycle) => void
+}
+
+function harness(
+  worktreeRoot?: string,
+  store = new Store(':memory:'),
+  maxIdleThreadRuntimes?: number,
+  idleThreadRuntimeMs?: number,
+) {
   const sessions: FakeSession[] = []
-  const received: Array<{ threadId: string; event: DomainEvent }> = []
+  const received: Array<{
+    threadId: string
+    event: DomainEvent
+    seq: number
+    serializedEvent?: string
+  }> = []
   const sideReceived: Array<{ threadId: string; event: DomainEvent }> = []
   const lifecycles: Array<{ threadId: string; lifecycle: ThreadLifecycle }> = []
+  const lifecycleScheduleChanges: Array<'later' | number | undefined> = []
   const logs: string[] = []
   const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
   const usageChanges: ProviderId[] = []
-  const queueNotificationError: QueueNotificationFailure = {}
+  const queueNotificationError: QueueNotificationError = {}
+  const lifecycleHook: LifecycleHook = {}
 
   /** Where each session was actually told to run. */
   const startedIn: string[] = []
@@ -206,7 +251,7 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
         thread: {
           id: `thread-${sessions.length}`,
           provider,
-          ...propertiesWhen(provider === 'api', () => ({ connectionId: 'test-connection' })),
+          ...(provider === 'api' ? { connectionId: 'test-connection' } : {}),
           workspacePath,
           createdAt: Date.now(),
         },
@@ -216,34 +261,46 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     async listModels() {
       return []
     },
-    ...propertiesWhen(provider === 'codex' || provider === 'grok', () => ({
-      async resume(threadId: string, workspacePath: string, options: StartOptions) {
-        resumedIds.push(threadId)
-        resumedIn.push(workspacePath)
-        resumedOptions.push(options)
-        const session = new FakeSession(`s${sessions.length + 1}`)
-        sessions.push(session)
-        return {
-          thread: {
-            id: threadId,
-            provider,
-            workspacePath,
-            createdAt: Date.now(),
+    ...(provider === 'codex' || provider === 'grok'
+      ? {
+          async resume(threadId: string, workspacePath: string, options: StartOptions) {
+            resumedIds.push(threadId)
+            resumedIn.push(workspacePath)
+            resumedOptions.push(options)
+            const session = new FakeSession(`s${sessions.length + 1}`)
+            sessions.push(session)
+            return {
+              thread: {
+                id: threadId,
+                provider,
+                workspacePath,
+                createdAt: Date.now(),
+              },
+              session,
+            }
           },
-          session,
         }
-      },
-    })),
+      : {}),
   })
 
   const orchestrator = new Orchestrator(store, {
-    onEvent: (threadId, event) => received.push({ threadId, event }),
+    onEvent: (threadId, event, seq, serializedEvent) =>
+      received.push({
+        threadId,
+        event,
+        seq,
+        ...(serializedEvent === undefined ? {} : { serializedEvent }),
+      }),
     onQueue: (threadId, state) => {
       queueChanges.push({ threadId, itemIds: state.items.map(({ id }) => id) })
       if (queueNotificationError.current) throw queueNotificationError.current
     },
     onSideEvent: (threadId, event) => sideReceived.push({ threadId, event }),
-    onLifecycle: (threadId, lifecycle) => lifecycles.push({ threadId, lifecycle }),
+    onLifecycle: (threadId, lifecycle) => {
+      lifecycles.push({ threadId, lifecycle })
+      lifecycleHook.current?.(threadId, lifecycle)
+    },
+    onLifecycleScheduleChanged: (hint) => lifecycleScheduleChanges.push(hint),
     onLog: (line) => logs.push(line),
     onLogin: () => {},
     onUsageChanged: (provider) => usageChanges.push(provider),
@@ -252,9 +309,10 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     ),
     readCredential: (reference) => `secret:${reference}`,
     capturePreview,
-    startDesignPreview: fakeStartDesignPreview,
     runtimeFor,
-    ...propertiesWhen(worktreeRoot, (worktreeRoot) => ({ worktreeRoot })),
+    ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
+    ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
+    ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
   return {
@@ -263,10 +321,12 @@ function harness(worktreeRoot?: string, store = new Store(':memory:')) {
     received,
     sideReceived,
     lifecycles,
+    lifecycleScheduleChanges,
     logs,
     queueChanges,
     usageChanges,
     queueNotificationError,
+    lifecycleHook,
     orchestrator,
     startedIn,
     startedOptions,
@@ -296,6 +356,354 @@ describe('provider usage changes', () => {
     session?.emitUsageChanged()
 
     expect(usageChanges).toEqual([])
+  })
+})
+
+describe('idle thread runtime retention', () => {
+  it('keeps only the most recent completed resumable runtimes warm', async () => {
+    const { orchestrator, sessions, received } = harness(undefined, new Store(':memory:'), 8)
+    const threads = await Promise.all(
+      Array.from({ length: 100 }, () => orchestrator.startThread('codex', process.cwd())),
+    )
+
+    for (let index = 0; index < threads.length; index += 1) {
+      sessions[index]?.emit({
+        type: 'turn.completed',
+        turnId: `turn-${index}`,
+        status: 'completed',
+      })
+    }
+
+    expect(sessions.filter((session) => session.disposed)).toHaveLength(92)
+    expect(threads.filter((thread) => orchestrator.isRunning(thread.id))).toEqual(threads.slice(-8))
+    const receivedBeforeLateEvent = received.length
+    sessions[0]?.emit(message('late disposed event'))
+    expect(received).toHaveLength(receivedBeforeLateEvent)
+    await orchestrator.disposeAll()
+  })
+
+  it('batches completion-burst pruning while another turn stays active', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const threads = await Promise.all(
+      Array.from({ length: 3 }, () => orchestrator.startThread('codex', process.cwd())),
+    )
+
+    for (let index = 0; index < threads.length; index += 1) {
+      sessions[index]?.emit(turnStarted(threads[index]!.id, `turn-${index}`))
+    }
+    sessions[0]?.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+    sessions[1]?.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    expect(sessions.filter((session) => session.disposed)).toHaveLength(0)
+    await Promise.resolve()
+    expect(sessions.filter((session) => session.disposed)).toHaveLength(1)
+    expect(orchestrator.isTurnRunning(threads[2]!.id)).toBe(true)
+
+    sessions[2]?.emit({ type: 'turn.completed', turnId: 'turn-2', status: 'completed' })
+    expect(sessions.filter((session) => session.disposed)).toHaveLength(2)
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps a recently viewed idle runtime ahead of an older one', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 2)
+    const threads = await Promise.all(
+      Array.from({ length: 3 }, () => orchestrator.startThread('codex', process.cwd())),
+    )
+
+    sessions[0]?.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+    sessions[1]?.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+    await orchestrator.history(threads[0]!.id)
+    sessions[2]?.emit({ type: 'turn.completed', turnId: 'turn-2', status: 'completed' })
+
+    expect(sessions.map((session) => session.disposed)).toEqual([false, true, false])
+    await orchestrator.disposeAll()
+  })
+
+  it('extends a viewed runtime through the existing earlier expiry timer', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+
+      await vi.advanceTimersByTimeAsync(500)
+      await orchestrator.history(thread.id)
+      expect(vi.getTimerCount()).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(500)
+      expect(sessions[0]?.disposed).toBe(false)
+      expect(vi.getTimerCount()).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(500)
+      expect(sessions[0]?.disposed).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases the retained warm runtimes after the shared idle window', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const threads = await Promise.all(
+        Array.from({ length: 100 }, () => orchestrator.startThread('codex', process.cwd())),
+      )
+      for (let index = 0; index < threads.length; index += 1) {
+        sessions[index]?.emit({
+          type: 'turn.completed',
+          turnId: `turn-${index}`,
+          status: 'completed',
+        })
+      }
+
+      expect(sessions.filter((session) => session.disposed)).toHaveLength(92)
+      expect(vi.getTimerCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(sessions.filter((session) => session.disposed)).toHaveLength(92)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sessions.every((session) => session.disposed)).toBe(true)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not schedule expiry before a resumable runtime has a safe resume point', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      await orchestrator.startThread('codex', process.cwd())
+
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(sessions[0]?.disposed).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('expires a runtime after its provider rejects the first turn', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]!.sendError = new Error('provider rejected the turn')
+
+      await expect(orchestrator.sendTurn(thread.id, 'Fail')).rejects.toThrow(
+        'provider rejected the turn',
+      )
+      expect(vi.getTimerCount()).toBe(1)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(sessions[0]?.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('expires a failed runtime that never reported turn completion', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]?.emit({
+        type: 'thread.error',
+        threadId: thread.id,
+        message: 'provider failed',
+      })
+
+      expect(sessions[0]?.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(sessions[0]?.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('expires a one-shot resumed runtime after its operation', async () => {
+    vi.useFakeTimers()
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'T' })
+    const { orchestrator, sessions, resumedIds } = harness(undefined, store, 8, 1_000)
+    try {
+      await orchestrator.setThreadApproval('thread-1', 'never')
+
+      expect(resumedIds).toEqual(['thread-1'])
+      expect(sessions[0]?.disposed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(sessions[0]?.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps running work alive past the idle window', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'first', status: 'completed' })
+      sessions[0]?.emit({
+        type: 'turn.started',
+        turn: {
+          id: 'working',
+          threadId: thread.id,
+          status: 'running',
+          createdAt: Date.now(),
+        },
+      })
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(sessions[0]?.disposed).toBe(false)
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'working', status: 'completed' })
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(sessions[0]?.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('releases an expired runtime when its last queued prompt is removed', async () => {
+    vi.useFakeTimers()
+    const store = new Store(':memory:')
+    const { orchestrator, sessions } = harness(undefined, store, 8, 1_000)
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]?.emit({
+        type: 'thread.error',
+        threadId: thread.id,
+        message: 'provider failed before the queued retry',
+      })
+      store.enqueueQueuedTurn({
+        id: 'queued',
+        threadId: thread.id,
+        text: 'Keep me warm.',
+        attachments: [],
+        options: {},
+        createdAt: Date.now(),
+      })
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(sessions[0]?.disposed).toBe(false)
+      orchestrator.deleteQueuedTurn(thread.id, 'queued')
+      expect(sessions[0]?.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('resumes an evicted runtime on the next submission', async () => {
+    const { orchestrator, sessions, resumedIds } = harness(undefined, new Store(':memory:'), 1)
+    const first = await orchestrator.startThread('codex', process.cwd())
+    const second = await orchestrator.startThread('codex', process.cwd())
+    sessions[0]?.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+    sessions[1]?.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+
+    expect(sessions[0]?.disposed).toBe(true)
+    await orchestrator.submitTurn(first.id, 'Resume me')
+
+    expect(resumedIds).toEqual([first.id])
+    expect(sessions[2]?.sent).toEqual(['Resume me'])
+    expect(orchestrator.isRunning(first.id)).toBe(true)
+    expect(orchestrator.isRunning(second.id)).toBe(false)
+    await orchestrator.disposeAll()
+  })
+
+  it('never evicts a running or open Side chat runtime', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 1, 1_000)
+    try {
+      const running = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 'finished-once', status: 'completed' })
+      sessions[0]?.emit({
+        type: 'turn.started',
+        turn: {
+          id: 'working-now',
+          threadId: running.id,
+          status: 'running',
+          createdAt: Date.now(),
+        },
+      })
+      const parent = await orchestrator.startThread('codex', process.cwd())
+      store.append(
+        parent.id,
+        userMessage('parent-prompt', 'Keep this side chat open.', 'parent-turn'),
+      )
+      const side = await orchestrator.startSideThread(parent.id)
+      sessions[2]?.emit({ type: 'turn.completed', turnId: 'side-finished', status: 'completed' })
+      const idle = await orchestrator.startThread('codex', process.cwd())
+      sessions[3]?.emit({ type: 'turn.completed', turnId: 'idle-finished', status: 'completed' })
+
+      expect(orchestrator.isRunning(running.id)).toBe(true)
+      expect(orchestrator.isRunning(side.id)).toBe(true)
+      expect(orchestrator.isRunning(idle.id)).toBe(true)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(orchestrator.isRunning(running.id)).toBe(true)
+      expect(orchestrator.isRunning(side.id)).toBe(true)
+      expect(orchestrator.isRunning(idle.id)).toBe(false)
+      expect(sessions[0]?.disposed).toBe(false)
+      expect(sessions[2]?.disposed).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('never evicts a runtime with a durable queued prompt', async () => {
+    const { orchestrator, sessions, store } = harness(undefined, new Store(':memory:'), 1)
+    const queued = await orchestrator.startThread('codex', process.cwd())
+    const olderIdle = await orchestrator.startThread('codex', process.cwd())
+    const recentIdle = await orchestrator.startThread('codex', process.cwd())
+    sessions[0]?.emit({ type: 'turn.completed', turnId: 'queued-finished', status: 'completed' })
+    store.enqueueQueuedTurn({
+      id: 'queued-prompt',
+      threadId: queued.id,
+      text: 'Keep this queued.',
+      attachments: [],
+      options: {},
+      createdAt: Date.now(),
+    })
+    sessions[1]?.emit({ type: 'turn.completed', turnId: 'older-finished', status: 'completed' })
+    sessions[2]?.emit({ type: 'turn.completed', turnId: 'recent-finished', status: 'completed' })
+
+    expect(orchestrator.isRunning(queued.id)).toBe(true)
+    expect(orchestrator.isRunning(olderIdle.id)).toBe(false)
+    expect(orchestrator.isRunning(recentIdle.id)).toBe(true)
+    await orchestrator.disposeAll()
+  })
+
+  it('does not evict sessions whose adapter cannot resume', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1, 1_000)
+    try {
+      const threads = await Promise.all(
+        Array.from({ length: 4 }, () => orchestrator.startThread('api', process.cwd())),
+      )
+
+      for (let index = 0; index < threads.length; index += 1) {
+        sessions[index]?.emit({
+          type: 'turn.completed',
+          turnId: `turn-${index}`,
+          status: 'completed',
+        })
+      }
+
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(sessions.every((session) => !session.disposed)).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -345,6 +753,37 @@ describe('structured user input', () => {
     expect(sessions[0]?.userInputs).toEqual([
       { requestId: 'brief-1', answers: { palette: ['Decide for me'] } },
     ])
+  })
+})
+
+describe('sidebar status revision', () => {
+  it('advances across starting, working, and completed turn state', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', process.cwd())
+    const session = sessions[0]!
+    session.release = () => {}
+    const initial = orchestrator.sidebarStatusRevision()
+
+    const submitting = orchestrator.submitTurn(thread.id, 'Run')
+    await vi.waitFor(() => expect(orchestrator.inboxStatus(thread.id)).toBe('starting'))
+    const starting = orchestrator.sidebarStatusRevision()
+    expect(starting).toBeGreaterThan(initial)
+    expect(orchestrator.sidebarStatusChangesSince(initial)).toEqual([thread.id])
+
+    await vi.waitFor(() => expect(session.sent).toEqual(['Run']))
+    session.release?.()
+    const submitted = await submitting
+    if (submitted.queued) throw new Error('expected an immediate turn')
+    session.emit(turnStarted(thread.id, submitted.turnId))
+    expect(orchestrator.inboxStatus(thread.id)).toBe('working')
+    const working = orchestrator.sidebarStatusRevision()
+    expect(working).toBeGreaterThan(starting)
+    expect(orchestrator.sidebarStatusChangesSince(starting)).toEqual([thread.id])
+
+    session.emit({ type: 'turn.completed', turnId: submitted.turnId, status: 'completed' })
+    expect(orchestrator.sidebarStatusRevision()).toBeGreaterThan(working)
+    expect(orchestrator.sidebarStatusChangesSince(working)).toEqual([thread.id])
+    await orchestrator.disposeAll()
   })
 })
 
@@ -442,6 +881,27 @@ describe('provider-neutral Side chat', () => {
       expect(store.thread(side.id)).toBeUndefined()
     },
   )
+
+  it('reuses the compact replay snapshot for a long parent boundary', async () => {
+    const { orchestrator, store } = harness()
+    const parent = await orchestrator.startThread('api', process.cwd())
+    store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+    for (let index = 0; index < 100; index += 1) {
+      store.append(parent.id, {
+        type: 'item.delta',
+        turnId: 'parent-turn',
+        itemId: 'parent-answer',
+        textDelta: 'x',
+      })
+    }
+    expect(store.tailReplaySnapshotForResponse(parent.id)).toBeUndefined()
+
+    const side = await orchestrator.startSideThread(parent.id)
+
+    expect(store.tailReplaySnapshotForResponse(parent.id)).toBeDefined()
+    orchestrator.closeSideThread(side.id)
+    await orchestrator.disposeAll()
+  })
 })
 
 describe('workspace paths', () => {
@@ -491,7 +951,9 @@ describe('durable turn timing', () => {
       expect(replayed.turnTiming['turn-replay']).toEqual({ startedAt: 1_000, completedAt: 8_000 })
       expect(
         [live, replayed].map(
-          (state) => presentTurns(state.items, state.turnTiming).get('turn-replay')?.elapsedMs,
+          (state) =>
+            projectThreadItems(state.items, state.turnTiming).presentations.get('turn-replay')
+              ?.elapsedMs,
         ),
       ).toEqual([7_000, 7_000])
     } finally {
@@ -667,7 +1129,8 @@ describe('durable turn timing', () => {
           (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
             event.type === 'turn.started',
         )
-      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 7_000, 9_000])
+      // A disposed session may not create a new history entry or timing anchor.
+      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 7_000])
     } finally {
       now.mockRestore()
       await orchestrator.disposeAll()
@@ -676,6 +1139,21 @@ describe('durable turn timing', () => {
 })
 
 describe('history replay', () => {
+  it('hands fresh compact replay JSON to the response path once', async () => {
+    const { orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    store.append(thread.id, message('Ready.', 'turn-1'))
+
+    const first = await orchestrator.historyForResponse(thread.id)
+    expect(first.serializedEvents).toBe(JSON.stringify(first.events))
+
+    const second = await orchestrator.historyForResponse(thread.id)
+    expect(second.events).toBe(first.events)
+    expect(second.serializedEvents).toBeUndefined()
+
+    await orchestrator.disposeAll()
+  })
+
   it('compacts a fresh replay without changing a reconnect tail', async () => {
     const { orchestrator, store } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
@@ -701,7 +1179,7 @@ describe('history replay', () => {
       itemId: reply.id,
       textDelta: 'world',
     })
-    store.append(thread.id, {
+    const snapshotSeq = store.append(thread.id, {
       type: 'item.completed',
       item: { ...reply, status: 'completed' },
     })
@@ -709,17 +1187,260 @@ describe('history replay', () => {
     expect(await orchestrator.history(thread.id, itemSeq)).toEqual(
       store.history(thread.id, itemSeq),
     )
+    const compacted = [
+      {
+        seq: snapshotSeq,
+        event: {
+          type: 'item.completed',
+          item: { ...reply, status: 'completed', text: 'Hello world' },
+        },
+      },
+    ]
+    expect(await orchestrator.history(thread.id)).toEqual(compacted)
+
+    const history = vi.spyOn(store, 'history')
+    expect(await orchestrator.history(thread.id)).toEqual(compacted)
+    expect(history).not.toHaveBeenCalled()
+
+    store.append(thread.id, { type: 'plan.updated', turnId: 'turn-1', steps: [] })
+    expect(await orchestrator.history(thread.id)).toHaveLength(2)
+    expect(history).toHaveBeenCalledWith(thread.id, snapshotSeq)
+
+    await orchestrator.disposeAll()
+  })
+
+  it('extends a running compact replay with only its newly completed tail', async () => {
+    const { orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const reply = {
+      id: 'reply',
+      turnId: 'turn-1',
+      type: 'message' as const,
+      role: 'assistant' as const,
+      status: 'started' as const,
+      text: '',
+      createdAt: 1,
+    }
+    store.append(thread.id, { type: 'item.started', item: reply })
+    const snapshotSeq = store.append(thread.id, {
+      type: 'item.delta',
+      turnId: reply.turnId,
+      itemId: reply.id,
+      textDelta: 'Hello',
+    })
+
     expect(await orchestrator.history(thread.id)).toEqual([
       {
-        seq: itemSeq,
+        seq: snapshotSeq,
+        event: { type: 'item.started', item: { ...reply, text: 'Hello' } },
+      },
+    ])
+
+    store.append(thread.id, {
+      type: 'item.delta',
+      turnId: reply.turnId,
+      itemId: reply.id,
+      textDelta: ' world',
+    })
+    const completedSeq = store.append(thread.id, {
+      type: 'item.completed',
+      item: { ...reply, status: 'completed' },
+    })
+    const history = vi.spyOn(store, 'history')
+
+    expect(await orchestrator.history(thread.id)).toEqual([
+      {
+        seq: completedSeq,
         event: {
           type: 'item.completed',
           item: { ...reply, status: 'completed', text: 'Hello world' },
         },
       },
     ])
+    expect(history).toHaveBeenCalledWith(thread.id, snapshotSeq)
 
     await orchestrator.disposeAll()
+  })
+})
+
+describe('streamed delta batching', () => {
+  it('persists concurrent threads in one shared ordered transaction', async () => {
+    vi.useFakeTimers()
+    const { orchestrator, sessions, store, received } = harness()
+    const appendBatch = vi.spyOn(store, 'appendBatchWithSerializedEvents')
+    try {
+      const first = await orchestrator.startThread('codex', '/repo')
+      const second = await orchestrator.startThread('codex', '/repo')
+      const firstReply = {
+        id: 'reply-first',
+        turnId: 'turn-first',
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'started' as const,
+        text: '',
+        createdAt: 1,
+      }
+      const secondReply = {
+        ...firstReply,
+        id: 'reply-second',
+        turnId: 'turn-second',
+      }
+
+      sessions[0]?.emit({ type: 'item.started', item: firstReply })
+      sessions[1]?.emit({ type: 'item.started', item: secondReply })
+      sessions[0]?.emit({
+        type: 'item.delta',
+        turnId: firstReply.turnId,
+        itemId: firstReply.id,
+        textDelta: 'A',
+      })
+      sessions[1]?.emit({
+        type: 'item.delta',
+        turnId: secondReply.turnId,
+        itemId: secondReply.id,
+        textDelta: 'B',
+      })
+      sessions[0]?.emit({
+        type: 'item.delta',
+        turnId: firstReply.turnId,
+        itemId: firstReply.id,
+        textDelta: 'C',
+      })
+
+      vi.advanceTimersByTime(4)
+
+      const firstDelta = store.history(first.id).at(-1)!
+      const secondDelta = store.history(second.id).at(-1)!
+      expect(appendBatch).toHaveBeenCalledOnce()
+      expect(firstDelta).toEqual({
+        seq: expect.any(Number),
+        event: {
+          type: 'item.delta',
+          turnId: firstReply.turnId,
+          itemId: firstReply.id,
+          textDelta: 'AC',
+        },
+      })
+      expect(secondDelta).toEqual({
+        seq: firstDelta.seq + 1,
+        event: {
+          type: 'item.delta',
+          turnId: secondReply.turnId,
+          itemId: secondReply.id,
+          textDelta: 'B',
+        },
+      })
+      expect(
+        received
+          .filter(({ event }) => event.type === 'item.delta')
+          .map(({ threadId, seq }) => [threadId, seq]),
+      ).toEqual([
+        [first.id, firstDelta.seq],
+        [second.id, secondDelta.seq],
+      ])
+      expect(
+        received
+          .filter(({ event }) => event.type === 'item.delta')
+          .map(({ event, serializedEvent }) => serializedEvent === JSON.stringify(event)),
+      ).toEqual([true, true])
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('persists and broadcasts adjacent text in one ordered event', async () => {
+    const { orchestrator, sessions, store, received } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const reply = {
+        id: 'reply-batched',
+        turnId: 'turn-batched',
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'started' as const,
+        text: '',
+        createdAt: 1,
+      }
+
+      sessions[0]?.emit({ type: 'item.started', item: reply })
+      sessions[0]?.emit({
+        type: 'item.delta',
+        turnId: reply.turnId,
+        itemId: reply.id,
+        textDelta: 'Hello ',
+      })
+      sessions[0]?.emit({
+        type: 'item.delta',
+        turnId: reply.turnId,
+        itemId: reply.id,
+        textDelta: 'world',
+      })
+
+      expect(store.history(thread.id).map(({ event }) => event.type)).toEqual(['item.started'])
+      sessions[0]?.emit({
+        type: 'item.completed',
+        item: { ...reply, status: 'completed', text: 'Hello world' },
+      })
+
+      expect(store.history(thread.id).map(({ event }) => event)).toEqual([
+        { type: 'item.started', item: reply },
+        {
+          type: 'item.delta',
+          turnId: reply.turnId,
+          itemId: reply.id,
+          textDelta: 'Hello world',
+        },
+        {
+          type: 'item.completed',
+          item: { ...reply, status: 'completed', text: 'Hello world' },
+        },
+      ])
+      expect(received.map(({ event }) => event)).toEqual(
+        store.history(thread.id).map(({ event }) => event),
+      )
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('flushes pending text into a reconnect history snapshot', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const itemSeq = store.append(thread.id, {
+        type: 'item.started',
+        item: {
+          id: 'reply-reconnect',
+          turnId: 'turn-reconnect',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          text: '',
+          createdAt: 1,
+        },
+      })
+      sessions[0]?.emit({
+        type: 'item.delta',
+        turnId: 'turn-reconnect',
+        itemId: 'reply-reconnect',
+        textDelta: 'visible on reconnect',
+      })
+
+      expect(await orchestrator.history(thread.id, itemSeq)).toEqual([
+        {
+          seq: itemSeq + 1,
+          event: {
+            type: 'item.delta',
+            turnId: 'turn-reconnect',
+            itemId: 'reply-reconnect',
+            textDelta: 'visible on reconnect',
+          },
+        },
+      ])
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 })
 
@@ -740,7 +1461,7 @@ describe('durable user submissions', () => {
       ] as const) {
         session.turnIds.push(turnId)
         await orchestrator.submitTurn(thread.id, 'Repeat this.', [], {}, submissionId)
-        expect(store.hasItem(thread.id, submissionId)).toBe(true)
+        expect(store.hasUserSubmission(thread.id, submissionId)).toBe(true)
         session.emit(turnStarted(thread.id, turnId))
         if (emitsUserEcho) {
           session.emit(userMessage(`provider-${submissionId}`, 'Repeat this.', turnId, 'started'))
@@ -783,7 +1504,9 @@ describe('durable user submissions', () => {
       session.eventDuringSend = turnStarted(thread.id, 'turn-in-flight')
       session.afterEventBarrier = new Promise<void>((resolve) => (release = resolve))
       submitting = orchestrator.submitTurn(thread.id, 'Accepted.', [], {}, 'submission-in-flight')
-      await vi.waitFor(() => expect(store.hasItem(thread.id, 'submission-in-flight')).toBe(true))
+      await vi.waitFor(() =>
+        expect(store.hasUserSubmission(thread.id, 'submission-in-flight')).toBe(true),
+      )
       expect(store.history(thread.id).map(({ event }) => event.type)).toEqual([
         'turn.started',
         'item.completed',
@@ -946,7 +1669,9 @@ describe('provider-neutral design briefing', () => {
         ),
       ).toHaveLength(1)
       expect(
-        presentTurns(reduceEventLog(emptyThread, history).items).get('design-turn')?.design,
+        projectThreadItems(reduceEventLog(emptyThread, history).items).presentations.get(
+          'design-turn',
+        )?.design,
       ).toBe(true)
       expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
       expect(
@@ -1123,7 +1848,7 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  async function previewRecoveryHarness(error?: Error) {
+  async function previewRecoveryHarness(error: unknown) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
     mkdirSync(taste)
@@ -1189,6 +1914,13 @@ describe('provider-neutral design briefing', () => {
             event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
         ),
       ).toBe(true),
+    )
+    const completion = result.received.find(
+      ({ event }) =>
+        event.type === 'item.completed' && event.item.text?.startsWith('Website built.'),
+    )?.event
+    expect(completion?.type === 'item.completed' ? completion.item.phase : undefined).toBe(
+      'final_answer',
     )
     return result
   }
@@ -1470,15 +2202,21 @@ describe('provider-neutral design briefing', () => {
           )
           .map(({ event }) =>
             event.type === 'item.completed' && event.item.type === 'message'
-              ? event.item.text
+              ? { text: event.item.text, phase: event.item.phase }
               : undefined,
           )
         expect(notes).toEqual([
-          'I have a few questions before designing — they are right below.',
-          'Got it, thanks.',
-          'Some answers need one more pass — please take another look below.',
-          'Got it, thanks.',
-          'Brief locked in. Starting the design.',
+          {
+            text: 'I have a few questions before designing — they are right below.',
+            phase: 'commentary',
+          },
+          { text: 'Got it, thanks.', phase: 'commentary' },
+          {
+            text: 'Some answers need one more pass — please take another look below.',
+            phase: 'commentary',
+          },
+          { text: 'Got it, thanks.', phase: 'commentary' },
+          { text: 'Brief locked in. Starting the design.', phase: 'commentary' },
         ])
 
         sessions[0]?.emit(
@@ -2662,6 +3400,103 @@ describe('MCP inventory', () => {
     })
   })
 
+  it('routes live MCP operations to the exact active project runtime', async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('codex', '/other')
+    const target = await orchestrator.startThread('codex', '/repo')
+    sessions[0]!.mcpServers = [
+      {
+        id: 'other-server',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'ready' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+    sessions[1]!.mcpServers = [
+      {
+        id: 'target-server',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'ready' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+
+    await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
+      servers: [{ id: 'target-server' }],
+    })
+    await orchestrator.reloadMcpServers('codex', '/repo')
+    await expect(orchestrator.startMcpOAuth('codex', '/repo', 'target-server')).resolves.toEqual({
+      loginId: 'login-target-server',
+      authUrl: 'https://example.com/target-server',
+    })
+
+    expect(sessions[0]!.mcpReloads).toEqual([])
+    expect(sessions[0]!.mcpOAuthStarts).toEqual([])
+    expect(sessions[1]!.mcpReloads).toEqual([{ threadId: target.id, servers: [], credentials: {} }])
+    expect(sessions[1]!.mcpOAuthStarts).toEqual([
+      { serverId: 'target-server', threadId: target.id },
+    ])
+    sessions[1]!.emitMcpOAuth({
+      serverId: 'target-server',
+      loginId: 'login-target-server',
+      success: true,
+      error: null,
+    })
+    await orchestrator.disposeAll()
+  })
+
+  it('removes an evicted runtime from the project MCP index', async () => {
+    const { orchestrator, sessions } = harness(undefined, new Store(':memory:'), 1)
+    const older = await orchestrator.startThread('codex', '/repo')
+    const recent = await orchestrator.startThread('codex', '/repo')
+    sessions[0]!.mcpServers = [
+      {
+        id: 'stale-server',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'ready' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+    sessions[1]!.mcpServers = [
+      {
+        id: 'live-server',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'ready' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'older-turn', status: 'completed' })
+    sessions[1]!.emit({ type: 'turn.completed', turnId: 'recent-turn', status: 'completed' })
+
+    expect(sessions[0]!.disposed).toBe(true)
+    expect(orchestrator.isRunning(older.id)).toBe(false)
+    expect(orchestrator.isRunning(recent.id)).toBe(true)
+    await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
+      servers: [{ id: 'live-server' }],
+    })
+    await orchestrator.reloadMcpServers('codex', '/repo')
+    expect(sessions[0]!.mcpReloads).toEqual([])
+    expect(sessions[1]!.mcpReloads).toEqual([{ threadId: recent.id, servers: [], credentials: {} }])
+    await orchestrator.disposeAll()
+  })
+
   it('applies project overrides and resolves only their credential references', async () => {
     const { orchestrator, startedOptions } = harness()
     orchestrator.addMcpServer('codex', '/repo', {
@@ -2718,14 +3553,43 @@ describe('MCP inventory', () => {
 })
 
 describe('skills inventory', () => {
-  it('capability-gates unsupported providers', async () => {
+  it('lists local Agent Skills when the provider has no vendor inventory', async () => {
     const { orchestrator } = harness()
+    const project = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-project-'))
+    const home = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-home-'))
+    const skillDir = path.join(home, '.agents', 'skills', 'animate')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: animate\ndescription: Build an animation from scratch\n---\n',
+    )
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
 
-    await expect(orchestrator.listSkills('claude-code', '/repo')).resolves.toEqual({
-      capabilities: { inventory: false, configure: false, install: false },
-      skills: [],
-      errors: [],
-    })
+    try {
+      await expect(orchestrator.listSkills('claude-code', project)).resolves.toEqual({
+        capabilities: { inventory: true, configure: false, install: false },
+        skills: [
+          {
+            id: path.join(skillDir, 'SKILL.md'),
+            name: 'animate',
+            description: 'Build an animation from scratch',
+            source: { type: 'folder', path: skillDir },
+            scope: 'user',
+            enabled: true,
+            dependencyErrors: [],
+          },
+        ],
+        errors: [],
+      })
+      await expect(orchestrator.listSkills('grok', project)).resolves.toMatchObject({
+        capabilities: { inventory: true },
+        skills: [expect.objectContaining({ name: 'animate', scope: 'user' })],
+      })
+    } finally {
+      homedir.mockRestore()
+      rmSync(project, { recursive: true, force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('rejects installation for unsupported providers before touching the folder', async () => {
@@ -2934,11 +3798,13 @@ describe('several sessions at once', () => {
     )
 
     const sending = orchestrator.submitTurn(thread.id, 'not after panic')
+    const cancelled = expect(sending).rejects.toThrow('turn cancelled by panic stop')
     await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
-    await orchestrator.panicStop()
+    const stopping = orchestrator.panicStop()
     release({ commit: 'checkpoint', clean: true })
 
-    await expect(sending).rejects.toThrow('turn cancelled by panic stop')
+    await cancelled
+    await stopping
     expect(sessions[0]!.sent).toEqual([])
   })
 
@@ -2970,6 +3836,57 @@ describe('several sessions at once', () => {
 })
 
 describe('sidebar inbox lifecycle', () => {
+  it('loads every persisted thread in bulk and advances the cached status', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    for (let index = 0; index < 3; index += 1) {
+      const threadId = `persisted-${index}`
+      store.addThread({
+        id: threadId,
+        projectPath: '/repo',
+        provider: 'codex',
+        title: `Persisted ${index}`,
+      })
+      for (let item = 0; item < 20; item += 1) {
+        store.append(threadId, message(`${threadId}-${item}`))
+      }
+      store.append(threadId, {
+        type: 'turn.completed',
+        turnId: `turn-${index}`,
+        status: 'completed',
+      })
+    }
+    const history = vi.spyOn(store, 'history')
+    const { orchestrator, sessions } = harness(undefined, store)
+
+    expect(orchestrator.inboxStatus('persisted-0')).toBe('idle')
+    expect(orchestrator.inboxStatus('persisted-1')).toBe('idle')
+    expect(orchestrator.inboxStatus('persisted-2')).toBe('idle')
+    expect(history).not.toHaveBeenCalled()
+
+    const submitted = await orchestrator.submitTurn('persisted-0', 'Continue.')
+    history.mockClear()
+    if (submitted.queued) throw new Error('expected an immediate turn')
+    sessions[0]!.emit({
+      type: 'turn.completed',
+      turnId: submitted.turnId,
+      status: 'completed',
+    })
+    sessions[0]!.emit({
+      type: 'approval.requested',
+      request: { id: 'approval-live', kind: 'command', createdAt: 1 },
+    })
+
+    expect(orchestrator.inboxStatus('persisted-0')).toBe('approval')
+    expect(history).not.toHaveBeenCalled()
+
+    sessions[0]!.emit({ type: 'approval.resolved', id: 'approval-live' })
+
+    expect(orchestrator.inboxStatus('persisted-0')).toBe('ready')
+    expect(history).not.toHaveBeenCalled()
+    await orchestrator.disposeAll()
+  })
+
   it('supports every manual transition and rejects hidden active work', async () => {
     const { orchestrator, sessions, store } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
@@ -3009,6 +3926,7 @@ describe('sidebar inbox lifecycle', () => {
     const now = Date.now()
 
     orchestrator.snoozeThread(wakes.id, now + 1_000)
+    store.touchThread(settles.id, true, now)
     orchestrator.setThreadKeepActive(kept.id, true)
     orchestrator.refreshLifecycle(now + 4 * 24 * 60 * 60 * 1_000)
 
@@ -3017,6 +3935,7 @@ describe('sidebar inbox lifecycle', () => {
       state: 'settled',
       reason: 'inactivity',
     })
+    expect(store.thread(settles.id)?.unread).toBe(true)
     expect(store.thread(kept.id)?.lifecycle).toMatchObject({ state: 'active', keepActive: true })
 
     orchestrator.settleThread(wakes.id)
@@ -3029,6 +3948,150 @@ describe('sidebar inbox lifecycle', () => {
       threadId: wakes.id,
       lifecycle: { state: 'active' },
     })
+  })
+
+  it('checks durable queued work without loading every thread queue', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'idle',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Idle',
+      createdAt: 0,
+    })
+    store.addThread({
+      id: 'queued',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Queued',
+      createdAt: 0,
+    })
+    store.enqueueQueuedTurn({
+      id: 'queued-turn',
+      threadId: 'queued',
+      text: 'Keep working.',
+      attachments: [],
+      options: {},
+      createdAt: 1,
+    })
+    const loadQueue = vi.spyOn(store, 'queuedTurns')
+    const { orchestrator } = harness(undefined, store)
+
+    orchestrator.refreshLifecycle(4 * 24 * 60 * 60 * 1_000)
+
+    expect(loadQueue).not.toHaveBeenCalled()
+    expect(store.thread('idle')?.lifecycle).toMatchObject({ state: 'settled' })
+    expect(store.thread('queued')?.lifecycle).toMatchObject({ state: 'active' })
+    await orchestrator.disposeAll()
+  })
+
+  it('rechecks inactivity when a lifecycle callback changes a later thread', async () => {
+    const { orchestrator, store, lifecycleHook } = harness()
+    const settles = await orchestrator.startThread('codex', '/repo')
+    const staysActive = await orchestrator.startThread('codex', '/repo')
+    const now = Date.now()
+
+    store.touchThread(settles.id, false, now)
+    store.touchThread(staysActive.id, false, now + 1)
+    lifecycleHook.current = (_threadId, lifecycle) => {
+      if (lifecycle.state !== 'settled' || lifecycle.reason !== 'inactivity') return
+      lifecycleHook.current = undefined
+      orchestrator.setThreadKeepActive(staysActive.id, true)
+    }
+
+    orchestrator.refreshLifecycle(now + 4 * 24 * 60 * 60 * 1_000)
+
+    expect(store.thread(settles.id)?.lifecycle).toMatchObject({
+      state: 'settled',
+      reason: 'inactivity',
+    })
+    expect(store.thread(staysActive.id)?.lifecycle).toMatchObject({
+      state: 'active',
+      keepActive: true,
+    })
+    await orchestrator.disposeAll()
+  })
+
+  it('rechecks a snooze deadline when a lifecycle callback changes a later thread', async () => {
+    const { orchestrator, store, lifecycleHook } = harness()
+    const wakes = await orchestrator.startThread('codex', '/repo')
+    const staysSnoozed = await orchestrator.startThread('codex', '/repo')
+    const now = Date.now()
+    const refreshAt = now + 2_000
+
+    orchestrator.snoozeThread(wakes.id, now + 1_000)
+    orchestrator.snoozeThread(staysSnoozed.id, now + 1_001)
+    lifecycleHook.current = (_threadId, lifecycle) => {
+      if (lifecycle.state !== 'active') return
+      lifecycleHook.current = undefined
+      store.snoozeThread(staysSnoozed.id, refreshAt + 60_000, refreshAt)
+    }
+
+    orchestrator.refreshLifecycle(refreshAt)
+
+    expect(store.thread(wakes.id)?.lifecycle).toMatchObject({ state: 'active' })
+    expect(store.thread(staysSnoozed.id)?.lifecycle).toEqual({
+      state: 'snoozed',
+      snoozedAt: refreshAt,
+      wakeAt: refreshAt + 60_000,
+    })
+    await orchestrator.disposeAll()
+  })
+
+  it('uses the later-only schedule path unless the clock moves backwards', async () => {
+    vi.useFakeTimers({ now: 10_000 })
+    const { orchestrator, sessions, lifecycleScheduleChanges } = harness()
+    try {
+      await orchestrator.startThread('codex', '/repo')
+      lifecycleScheduleChanges.length = 0
+
+      sessions[0]!.emit({
+        type: 'turn.completed',
+        turnId: 'turn-forward',
+        status: 'completed',
+      })
+      vi.setSystemTime(9_000)
+      sessions[0]!.emit({
+        type: 'turn.completed',
+        turnId: 'turn-backward',
+        status: 'completed',
+      })
+
+      expect(lifecycleScheduleChanges).toEqual(['later', undefined])
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports the exact deadline added by a new active thread', async () => {
+    vi.useFakeTimers({ now: 10_000 })
+    const { orchestrator, store, lifecycleScheduleChanges } = harness()
+    try {
+      const days = store.sidebarSettings().autoSettleDays
+      if (days === null) throw new Error('expected automatic settling to be enabled')
+
+      await orchestrator.startThread('codex', '/repo')
+
+      expect(lifecycleScheduleChanges).toEqual([10_000 + days * 24 * 60 * 60 * 1_000])
+    } finally {
+      await orchestrator.disposeAll()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not add a deadline when automatic settling is off', async () => {
+    const store = new Store(':memory:')
+    store.updateSidebarSettings({ autoSettleDays: null })
+    const { orchestrator, lifecycleScheduleChanges } = harness(undefined, store)
+    try {
+      await orchestrator.startThread('codex', '/repo')
+
+      expect(lifecycleScheduleChanges).toEqual(['later'])
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it('keeps archived state separate and honors the Off setting', async () => {
@@ -3046,6 +4109,35 @@ describe('sidebar inbox lifecycle', () => {
 })
 
 describe('queued turns', () => {
+  it('bounds empty queue reads while retaining the hottest entries', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    for (let index = 0; index < 256; index += 1) {
+      store.addThread({
+        id: `empty-${index}`,
+        projectPath: '/repo',
+        provider: 'codex',
+        title: `Empty ${index}`,
+      })
+    }
+    const loadQueue = vi.spyOn(store, 'queuedTurns')
+    const { orchestrator } = harness(undefined, store)
+    try {
+      for (let index = 0; index < 256; index += 1) {
+        expect(orchestrator.queue(`empty-${index}`).items).toEqual([])
+      }
+      expect(loadQueue).toHaveBeenCalledTimes(256)
+
+      expect(orchestrator.queue('empty-0').items).toEqual([])
+      expect(loadQueue).toHaveBeenCalledTimes(257)
+      expect(orchestrator.queue('empty-255').items).toEqual([])
+      expect(loadQueue).toHaveBeenCalledTimes(257)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it('restores exact mutations and drains in order after a server restart', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-orchestrator-queue-'))
     const file = path.join(dir, 'harness.db')
@@ -3134,7 +4226,7 @@ describe('queued turns', () => {
       expect(logs).toContain('queued turn ended after acceptance or cancellation'),
     )
     expect(store.queuedTurns(thread.id)).toEqual([])
-    expect(store.hasItem(thread.id, 'submission-accepted')).toBe(true)
+    expect(store.hasUserSubmission(thread.id, 'submission-accepted')).toBe(true)
   })
 
   it('does not revive a closed thread after a legacy queued send resolves', async () => {
@@ -3464,6 +4556,41 @@ describe('rolling a session back', () => {
     expect(checkpoints[0]?.label).toBe('change the file')
   })
 
+  it('refuses restore through another task while the shared checkout is busy', async () => {
+    const { orchestrator, sessions } = harness()
+    const first = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(first.id, 'save original')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const point = orchestrator.checkpoints(first.id)[0]!
+    const nested = path.join(repo, 'nested')
+    mkdirSync(nested)
+    const second = await orchestrator.startThread('codex', nested)
+    sessions[1]!.turnIds.push('busy-turn')
+    await orchestrator.sendTurn(second.id, 'working')
+    await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    sessions[1]!.emit(turnStarted(second.id, 'busy-turn'))
+    writeFileSync(path.join(repo, 'file.txt'), 'second task work\n')
+    await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    await expect(orchestrator.undoRestore(first.id, 'old-token')).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    await expect(orchestrator.undoTurnChanges(first.id, 'turn', 'patch')).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    await expect(orchestrator.switchBranch(repo, 'main')).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('second task work\n')
+    sessions[1]!.emit({ type: 'turn.completed', turnId: 'busy-turn', status: 'completed' })
+    await orchestrator.restoreCheckpoint(first.id, point.id)
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    await orchestrator.disposeAll()
+  })
+
   it('undoes only the patch from an edit block and keeps the conversation', async () => {
     const { orchestrator, sessions, store } = harness()
     const thread = await orchestrator.startThread('codex', repo)
@@ -3500,10 +4627,12 @@ describe('rolling a session back', () => {
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
     sessions[0]!.emit(message('did the first thing'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
     await orchestrator.sendTurn(thread.id, 'second task')
     writeFileSync(path.join(repo, 'file.txt'), 'the agent went the wrong way\n')
     sessions[0]!.emit(message('did the wrong thing'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
     const second = orchestrator.checkpoints(thread.id)[1]!
     await orchestrator.restoreCheckpoint(thread.id, second.id)
@@ -3524,6 +4653,7 @@ describe('rolling a session back', () => {
     await orchestrator.sendTurn(thread.id, 'a task')
     writeFileSync(path.join(repo, 'file.txt'), 'work the user might want\n')
     sessions[0]!.emit(message('work the user might want'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -3602,9 +4732,10 @@ describe('rolling a session back', () => {
   })
 
   it('refuses to undo a restore while a turn is still taking its checkpoint', async () => {
-    const { orchestrator } = harness()
+    const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -3630,6 +4761,7 @@ describe('rolling a session back', () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -3660,9 +4792,10 @@ describe('rolling a session back', () => {
   })
 
   it('refuses a second restore while the first restore is still in progress', async () => {
-    const { orchestrator } = harness()
+    const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
@@ -3684,7 +4817,7 @@ describe('rolling a session back', () => {
         'cannot restore while another restore is running',
       )
     } finally {
-      release({ commit: 'replaced', clean: false })
+      release({ commit: first.commit, clean: false })
       await restoring
     }
     expect(await history).toEqual([])
@@ -3694,6 +4827,7 @@ describe('rolling a session back', () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
@@ -3711,17 +4845,18 @@ describe('rolling a session back', () => {
       )
       expect(sessions[0]!.sent).toEqual(['first task'])
     } finally {
-      release({ commit: 'replaced', clean: false })
+      release({ commit: first.commit, clean: false })
       await restoring
     }
   })
 
   it('refuses restore and undo while a diff rejection is still in progress', async () => {
     const trees = path.join(path.dirname(repo), 'trees')
-    const { orchestrator, store } = harness(trees)
+    const { orchestrator, store, sessions } = harness(trees)
     const thread = await orchestrator.startThread('codex', repo, { isolate: true })
     const worktree = store.thread(thread.id)!.worktreePath!
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     writeFileSync(path.join(worktree, 'file.txt'), 'work to restore later\n')
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -3758,9 +4893,10 @@ describe('rolling a session back', () => {
   })
 
   it('refuses hunk and file rejection while a checkpoint restore is still in progress', async () => {
-    const { orchestrator } = harness()
+    const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
@@ -3779,7 +4915,7 @@ describe('rolling a session back', () => {
         orchestrator.reviewFile(thread.id, 'version', 'file.txt', 'reject'),
       ).rejects.toThrow('Refresh the diff and try again.')
     } finally {
-      release({ commit: 'replaced', clean: false })
+      release({ commit: first.commit, clean: false })
       await restoring
     }
   })
@@ -3808,6 +4944,42 @@ function text(entries: Array<{ event: DomainEvent }>): Array<string | undefined>
 }
 
 describe('overnight race pins', () => {
+  it('ignores late events after the task row was deleted', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.close(thread.id)
+    store.deleteThread(thread.id)
+    orchestrator.forgetDeletedThread(thread.id)
+    expect(() =>
+      sessions[0]!.emit({ type: 'thread.error', threadId: thread.id, message: 'late event' }),
+    ).not.toThrow()
+    expect(store.history(thread.id)).toEqual([])
+    await orchestrator.disposeAll()
+  })
+
+  it('waits for a pending provider start before panic reports success', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    session.release = () => {}
+    const sending = orchestrator.sendTurn(thread.id, 'pending model change')
+    const failed = expect(sending).rejects.toThrow(/panic stop/)
+    await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+    let stopped = false
+    const panic = orchestrator.panicStop().then((result) => {
+      stopped = true
+      return result
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    expect(session.interrupted).toBe(false)
+    session.release?.()
+    await failed
+    await expect(panic).resolves.toMatchObject({ sessions: [{ status: 'interrupted' }] })
+    expect(session.interrupted).toBe(true)
+    await orchestrator.disposeAll()
+  })
+
   it('disposes a resume that lands after the thread was closed', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')
@@ -3848,6 +5020,8 @@ describe('overnight race pins', () => {
     // provider "answer".
     await new Promise((resolve) => setTimeout(resolve, 0))
     orchestrator.close('thread-1')
+    store.deleteThread('thread-1')
+    orchestrator.forgetDeletedThread('thread-1')
     release()
 
     await expect(resuming).rejects.toThrow(/closed while resuming/)

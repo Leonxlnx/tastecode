@@ -1,6 +1,5 @@
 import {
   JsonRpcValueSchema,
-  type JsonRpcInput,
   type JsonRpcRequestOptions,
   type JsonRpcValue,
   type ParsedJsonRpcRequestOptions,
@@ -46,17 +45,17 @@ export class FakeCodexRpc implements CodexRpc {
 
   request(
     method: string,
-    params?: JsonRpcInput,
+    params?: unknown,
     options?: JsonRpcRequestOptions,
   ): Promise<JsonRpcValue | undefined>
   request<Result>(
     method: string,
-    params: JsonRpcInput,
+    params: unknown,
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
   request<Result>(
     method: string,
-    params: JsonRpcInput = {},
+    params: unknown = {},
     options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
   ): Promise<JsonRpcValue | undefined | Result> {
     const parsedParams = params === undefined ? undefined : JsonRpcValueSchema.parse(params)
@@ -67,7 +66,7 @@ export class FakeCodexRpc implements CodexRpc {
     return 'result' in options ? response.then((value) => options.result.parse(value)) : response
   }
 
-  notify(_method: string, _params?: JsonRpcInput): void {}
+  notify(_method: string, _params?: unknown): void {}
 
   dispose(): void {
     this.disposals += 1

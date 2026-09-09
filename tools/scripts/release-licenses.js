@@ -238,8 +238,8 @@ export async function verifyProjectLicense(repositoryRoot) {
 }
 
 async function installedPackage(repositoryRoot, fromDirectory, packageName) {
-  let cursor = path.resolve(fromDirectory)
-  const root = path.resolve(repositoryRoot)
+  let cursor = await realpath(fromDirectory)
+  const root = await realpath(repositoryRoot)
   const segments = packagePath(packageName)
 
   while (true) {

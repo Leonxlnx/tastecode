@@ -1,5 +1,4 @@
-import { propertiesWhen } from './properties-when.js'
-import { boundedInteger, type BoundaryValue, member, record, string } from './parse.js'
+import { boundedInteger, member, record, string } from './parse.js'
 export const DESIGN_PHASES = [
   'brief',
   'brand',
@@ -45,7 +44,7 @@ export function nextDesignPhase(completed: readonly DesignPhase[]): DesignRunPha
   return DESIGN_PHASES[completed.length] ?? 'complete'
 }
 
-export function parseDesignRunState(value: BoundaryValue): DesignRunState {
+export function parseDesignRunState(value: unknown): DesignRunState {
   const state = record(value, 'design run')
   if (state.version !== 1) throw new Error('design run version must be 1')
   if (!Array.isArray(state.completed)) throw new Error('design run completed must be an array')
@@ -81,7 +80,7 @@ export function parseDesignRunState(value: BoundaryValue): DesignRunState {
       preview: count(attempts.preview, 'design run attempts.preview'),
       review: count(attempts.review, 'design run attempts.review'),
     },
-    ...propertiesWhen(error, (error) => ({ error })),
+    ...(error ? { error } : {}),
   }
 }
 
@@ -96,7 +95,7 @@ function validateCompleted(completed: readonly DesignPhase[]): void {
   }
 }
 
-function optionalError(value: BoundaryValue): DesignRunState['error'] {
+function optionalError(value: unknown): DesignRunState['error'] {
   if (value === undefined) return undefined
   const error = record(value, 'design run error')
   return {
@@ -105,7 +104,7 @@ function optionalError(value: BoundaryValue): DesignRunState['error'] {
   }
 }
 
-function count(value: BoundaryValue, field: string): number {
+function count(value: unknown, field: string): number {
   const result = boundedInteger(value, 0, Number.MAX_SAFE_INTEGER)
   if (result === undefined) {
     throw new Error(`${field} must be a non-negative integer`)

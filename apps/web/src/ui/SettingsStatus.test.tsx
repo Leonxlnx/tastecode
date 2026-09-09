@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { CountBadge, SettingsMeta, StateLabel } from './SettingsStatus.js'
+import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 
 afterEach(cleanup)
 
@@ -29,15 +29,8 @@ describe('settings status grammar', () => {
     expect(container.querySelector('.state-label')?.getAttribute('role')).toBeNull()
   })
 
-  it('separates numeric counts and plain metadata from semantic states', () => {
-    const { container } = render(
-      <>
-        <CountBadge value="2/4" label="2 of 4 models visible" />
-        <SettingsMeta>Browser · pre-release</SettingsMeta>
-      </>,
-    )
-    expect(screen.getByLabelText('2 of 4 models visible').textContent).toBe('2/4')
-    expect(container.querySelector('.count-badge')).toBeTruthy()
+  it('separates plain metadata from semantic states', () => {
+    const { container } = render(<SettingsMeta>Browser · pre-release</SettingsMeta>)
     expect(container.querySelector('.settings-meta')?.textContent).toBe('Browser · pre-release')
     expect(container.querySelector('.state-label')).toBeNull()
   })

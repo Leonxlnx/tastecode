@@ -1,6 +1,9 @@
 import { useId, type ReactNode } from 'react'
 import type { ProviderStatus } from '@harness/contracts'
-import { CircleAlert, ExternalLink } from 'lucide-react'
+import {
+  IconAlertCircle as CircleAlert,
+  IconExternalLink as ExternalLink,
+} from '@tabler/icons-react'
 import { providerMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
 

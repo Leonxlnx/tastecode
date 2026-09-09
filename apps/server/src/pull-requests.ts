@@ -17,9 +17,9 @@ import type {
   PullRequestReviewThread,
   PullRequestReviewer,
 } from '@harness/contracts'
-import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { isInstalled, spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 const runFile = promisify(execFile)
 const LIST_TTL_MS = 30_000
@@ -35,6 +35,25 @@ const METADATA_OPTIONS_LIMIT = 1_000
 const FILES_PAGE_SIZE = 30
 const REVIEW_THREAD_LIMIT = 500
 const DEFAULT_OUTPUT_LIMIT = 32 * 1024 * 1024
+const DETAIL_CACHE_LIMIT = 16
+const FILES_CACHE_LIMIT = 12
+const METADATA_OPTIONS_CACHE_LIMIT = 8
+const REPOSITORY_CACHE_LIMIT = 64
+const REVIEW_THREADS_CACHE_LIMIT = 16
+const PULL_REQUEST_TEXT_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
+
+export type GitHubSetupAction = 'install' | 'login'
+
+/** Fixed server-owned commands keep PR setup interactive without exposing a shell RPC. */
+export function githubSetupCommand(
+  action: GitHubSetupAction,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (action === 'login') return 'gh auth login'
+  if (platform === 'darwin') return 'brew install gh'
+  if (platform === 'win32') return 'winget install --id GitHub.cli'
+  throw new Error('GitHub CLI installation is not scripted on this platform')
+}
 
 type GhRunOptions = {
   stdin?: string
@@ -47,6 +66,38 @@ export type GhRunner = (args: string[], options?: GhRunOptions) => Promise<strin
 type Cache<T> = {
   expiresAt: number
   value: T
+}
+
+function readCache<T>(cache: Map<string, Cache<T>>, key: string, now: number): T | undefined {
+  const entry = cache.get(key)
+  if (!entry) return undefined
+  if (entry.expiresAt <= now) {
+    cache.delete(key)
+    return undefined
+  }
+  // Map insertion order is the LRU order. A hit becomes the newest entry.
+  cache.delete(key)
+  cache.set(key, entry)
+  return entry.value
+}
+
+function writeCache<T>(
+  cache: Map<string, Cache<T>>,
+  key: string,
+  entry: Cache<T>,
+  limit: number,
+  now: number,
+): void {
+  cache.delete(key)
+  cache.set(key, entry)
+  for (const [cachedKey, cached] of cache) {
+    if (cached.expiresAt <= now) cache.delete(cachedKey)
+  }
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
 }
 
 type MetadataSource<T> = {
@@ -391,8 +442,8 @@ export class PullRequestService {
     refresh = false,
   ): Promise<PullRequestDetail> {
     const key = targetKey(repository, number)
-    const cached = this.#detailCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#detailCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#detailInFlight.get(key)
     if (existing) return existing
 
@@ -410,8 +461,8 @@ export class PullRequestService {
     refresh = false,
   ): Promise<PullRequestFilesResult> {
     const key = `${targetKey(repository, number)}:${page}`
-    const cached = this.#filesCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#filesCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#filesInFlight.get(key)
     if (existing) return existing
 
@@ -424,8 +475,8 @@ export class PullRequestService {
 
   async metadataOptions(repository: string, refresh = false): Promise<PullRequestMetadataOptions> {
     const key = repository.toLowerCase()
-    const cached = this.#metadataOptionsCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#metadataOptionsCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#metadataOptionsInFlight.get(key)
     if (existing) return existing
 
@@ -531,14 +582,8 @@ export class PullRequestService {
 
       case 'edit': {
         const input = {
-          ...propertiesWhen(
-            action.title === undefined ? undefined : { title: action.title },
-            (includedTitle) => includedTitle,
-          ),
-          ...propertiesWhen(
-            action.body === undefined ? undefined : { body: action.body },
-            (includedBody) => includedBody,
-          ),
+          ...(action.title === undefined ? {} : { title: action.title }),
+          ...(action.body === undefined ? {} : { body: action.body }),
         }
         if (Object.keys(input).length === 0) {
           throw new Error('Choose a title or description to update')
@@ -661,17 +706,21 @@ export class PullRequestService {
       labels: uniqueMetadataLabels(labelSource.items),
       milestones: uniqueMetadataMilestones(milestoneSource.items),
       baseBranches: uniqueStrings(branchSource.items.flatMap((branch) => branch.name ?? [])).sort(
-        compareText,
+        comparePullRequestText,
       ),
       unavailable,
       truncated: [reviewerSource, assigneeSource, labelSource, milestoneSource, branchSource].some(
         (source) => source.truncated,
       ),
     }
-    this.#metadataOptionsCache.set(repository.toLowerCase(), {
-      value,
-      expiresAt: this.#now() + METADATA_OPTIONS_TTL_MS,
-    })
+    const now = this.#now()
+    writeCache(
+      this.#metadataOptionsCache,
+      repository.toLowerCase(),
+      { value, expiresAt: now + METADATA_OPTIONS_TTL_MS },
+      METADATA_OPTIONS_CACHE_LIMIT,
+      now,
+    )
     return value
   }
 
@@ -742,7 +791,7 @@ export class PullRequestService {
         ...(existing ?? item),
         ...item,
         relationship,
-        ...propertiesWhen(localProjectPath, (localProjectPath) => ({ localProjectPath })),
+        ...(localProjectPath ? { localProjectPath } : {}),
       })
     }
     const items = [...combined.values()].sort(
@@ -800,36 +849,44 @@ export class PullRequestService {
         deletions: raw.deletions,
         comments: { totalCount: comments.length },
         repository: { nameWithOwner: repository },
-        ...propertiesWhen(!(raw.author === undefined), () => ({ author: raw.author })),
-        ...propertiesWhen(!(raw.headRefName === undefined), () => ({
-          headRefName: raw.headRefName,
-        })),
-        ...propertiesWhen(!(raw.baseRefName === undefined), () => ({
-          baseRefName: raw.baseRefName,
-        })),
-        ...propertiesWhen(!(raw.reviewDecision === undefined), () => ({
-          reviewDecision: raw.reviewDecision,
-        })),
-        ...propertiesWhen(!(raw.mergeStateStatus === undefined), () => ({
-          mergeStateStatus: raw.mergeStateStatus,
-        })),
+        ...(!(raw.author === undefined) ? { author: raw.author } : {}),
+        ...(!(raw.headRefName === undefined)
+          ? {
+              headRefName: raw.headRefName,
+            }
+          : {}),
+        ...(!(raw.baseRefName === undefined)
+          ? {
+              baseRefName: raw.baseRefName,
+            }
+          : {}),
+        ...(!(raw.reviewDecision === undefined)
+          ? {
+              reviewDecision: raw.reviewDecision,
+            }
+          : {}),
+        ...(!(raw.mergeStateStatus === undefined)
+          ? {
+              mergeStateStatus: raw.mergeStateStatus,
+            }
+          : {}),
       },
       relationship,
     )
 
     const detail: PullRequestDetail = {
       ...listItem,
-      ...propertiesWhen(localProjectPath, (localProjectPath) => ({ localProjectPath })),
+      ...(localProjectPath ? { localProjectPath } : {}),
       body: raw.body ?? '',
       createdAt: requiredString(raw.createdAt, 'createdAt'),
-      ...propertiesWhen(raw.closedAt, (includedValue) => ({ closedAt: includedValue })),
-      ...propertiesWhen(raw.mergedAt, (includedValue) => ({ mergedAt: includedValue })),
+      ...(raw.closedAt ? { closedAt: raw.closedAt } : {}),
+      ...(raw.mergedAt ? { mergedAt: raw.mergedAt } : {}),
       headRefOid: requiredString(raw.headRefOid, 'headRefOid'),
       baseRefOid: requiredString(raw.baseRefOid, 'baseRefOid'),
       changedFiles: raw.changedFiles ?? 0,
       mergeable: normalizeMergeable(raw.mergeable),
       maintainerCanModify: raw.maintainerCanModify === true,
-      ...(normalizeAutoMerge(raw.autoMergeRequest) ?? {}),
+      ...normalizeAutoMerge(raw.autoMergeRequest),
       reviewers,
       requestedReviewers,
       assignees: (raw.assignees ?? []).map(actor),
@@ -838,7 +895,7 @@ export class PullRequestService {
           ? [{ name: label.name, color: label.color! }]
           : [],
       ),
-      ...propertiesWhen(raw.milestone?.title, (includedValue) => ({ milestone: includedValue })),
+      ...(raw.milestone?.title ? { milestone: raw.milestone?.title } : {}),
       checks: (raw.statusCheckRollup ?? []).map(normalizeCheck),
       comments,
       reviews,
@@ -861,7 +918,14 @@ export class PullRequestService {
       },
     }
     const key = targetKey(repository, number)
-    this.#detailCache.set(key, { value: detail, expiresAt: this.#now() + DETAIL_TTL_MS })
+    const now = this.#now()
+    writeCache(
+      this.#detailCache,
+      key,
+      { value: detail, expiresAt: now + DETAIL_TTL_MS },
+      DETAIL_CACHE_LIMIT,
+      now,
+    )
     return detail
   }
 
@@ -877,10 +941,14 @@ export class PullRequestService {
     const raw = parseJson(output, 'pull-request files', z.array(RawFileSchema))
     const files = raw.map(normalizeFile)
     const value = { files, page, hasMore: files.length === FILES_PAGE_SIZE }
-    this.#filesCache.set(`${targetKey(repository, number)}:${page}`, {
-      value,
-      expiresAt: this.#now() + FILES_TTL_MS,
-    })
+    const now = this.#now()
+    writeCache(
+      this.#filesCache,
+      `${targetKey(repository, number)}:${page}`,
+      { value, expiresAt: now + FILES_TTL_MS },
+      FILES_CACHE_LIMIT,
+      now,
+    )
     return value
   }
 
@@ -1038,8 +1106,8 @@ export class PullRequestService {
 
   async #repository(repository: string, refresh: boolean): Promise<ParsedRawRepository> {
     const key = repository.toLowerCase()
-    const cached = this.#repositoryCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#repositoryCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#repositoryInFlight.get(key)
     if (existing) return existing
 
@@ -1047,10 +1115,14 @@ export class PullRequestService {
       .then((output) => parseJson(output, 'repository detail', RawRepositorySchema))
       .catch(() => ({}))
       .then((value) => {
-        this.#repositoryCache.set(key, {
-          value,
-          expiresAt: this.#now() + REPOSITORY_TTL_MS,
-        })
+        const now = this.#now()
+        writeCache(
+          this.#repositoryCache,
+          key,
+          { value, expiresAt: now + REPOSITORY_TTL_MS },
+          REPOSITORY_CACHE_LIMIT,
+          now,
+        )
         return value
       })
       .finally(() => {
@@ -1066,18 +1138,22 @@ export class PullRequestService {
     refresh: boolean,
   ): Promise<ReviewThreadsResult> {
     const key = targetKey(repository, number)
-    const cached = this.#reviewThreadsCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#reviewThreadsCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#reviewThreadsInFlight.get(key)
     if (existing) return existing
 
     const pending = this.#reviewThreads(repository, number)
       .catch(() => ({ threads: [], truncated: true }))
       .then((value) => {
-        this.#reviewThreadsCache.set(key, {
-          value,
-          expiresAt: this.#now() + REVIEW_THREADS_TTL_MS,
-        })
+        const now = this.#now()
+        writeCache(
+          this.#reviewThreadsCache,
+          key,
+          { value, expiresAt: now + REVIEW_THREADS_TTL_MS },
+          REVIEW_THREADS_CACHE_LIMIT,
+          now,
+        )
         return value
       })
       .finally(() => {
@@ -1156,18 +1232,12 @@ function applyActionToListItem(
     case 'edit':
       return {
         ...item,
-        ...propertiesWhen(
-          action.title === undefined ? undefined : { title: action.title },
-          (includedTitle) => includedTitle,
-        ),
+        ...(action.title === undefined ? {} : { title: action.title }),
       }
     case 'update_metadata':
       return {
         ...item,
-        ...propertiesWhen(
-          action.baseRefName === undefined ? undefined : { baseRefName: action.baseRefName },
-          (includedBase) => includedBase,
-        ),
+        ...(action.baseRefName === undefined ? {} : { baseRefName: action.baseRefName }),
       }
     case 'set_draft':
       return { ...item, state: 'OPEN', isDraft: action.draft }
@@ -1314,7 +1384,7 @@ function uniqueActors(values: ParsedRawActor[]): PullRequestMetadataOptions['rev
       })
     }
   }
-  return [...actors.values()].sort((left, right) => compareText(left.login, right.login))
+  return [...actors.values()].sort((left, right) => comparePullRequestText(left.login, right.login))
 }
 
 function uniqueMetadataLabels(
@@ -1331,13 +1401,15 @@ function uniqueMetadataLabels(
       labels.set(key, {
         name,
         color,
-        ...propertiesWhen(description, (includedDescription) => ({
-          description: includedDescription,
-        })),
+        ...(description
+          ? {
+              description: description,
+            }
+          : {}),
       })
     }
   }
-  return [...labels.values()].sort((left, right) => compareText(left.name, right.name))
+  return [...labels.values()].sort((left, right) => comparePullRequestText(left.name, right.name))
 }
 
 function uniqueMetadataMilestones(
@@ -1350,7 +1422,9 @@ function uniqueMetadataMilestones(
     if (!milestones.has(value.number!))
       milestones.set(value.number!, { number: value.number!, title })
   }
-  return [...milestones.values()].sort((left, right) => compareText(left.title, right.title))
+  return [...milestones.values()].sort((left, right) =>
+    comparePullRequestText(left.title, right.title),
+  )
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -1362,8 +1436,8 @@ function uniqueStrings(values: string[]): string[] {
   return [...unique.values()]
 }
 
-function compareText(left: string, right: string): number {
-  return left.localeCompare(right, undefined, { sensitivity: 'base' })
+export function comparePullRequestText(left: string, right: string): number {
+  return PULL_REQUEST_TEXT_COLLATOR.compare(left, right)
 }
 
 /** The only process boundary used by the feature; bodies always travel over stdin. */
@@ -1379,10 +1453,12 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       settled = true
       clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error('GitHub did not respond in time'))
     }, options.timeoutMs ?? 30_000)
 
@@ -1392,7 +1468,6 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > maxBytes) {
-        killTree(child)
         finish(new Error('GitHub response was too large to display safely'))
         return
       }
@@ -1402,7 +1477,6 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > maxBytes) {
-        killTree(child)
         finish(new Error('GitHub response was too large to display safely'))
         return
       }
@@ -1473,7 +1547,7 @@ function normalizeSearchItem(
       additions: 0,
       deletions: 0,
       comments: { totalCount: nonnegative(raw.commentsCount) },
-      ...propertiesWhen(!(raw.author === undefined), () => ({ author: raw.author })),
+      ...(!(raw.author === undefined) ? { author: raw.author } : {}),
       repository: {
         nameWithOwner: requiredString(raw.repository?.nameWithOwner, 'repository'),
       },
@@ -1503,10 +1577,12 @@ function normalizeListItem(
     commentsCount: nonnegative(raw.comments?.totalCount),
     headRefName: raw.headRefName ?? '',
     baseRefName: raw.baseRefName ?? '',
-    ...propertiesWhen(reviewDecision, (reviewDecision) => ({ reviewDecision })),
-    ...propertiesWhen(raw.mergeStateStatus, (includedValue) => ({
-      mergeStateStatus: includedValue,
-    })),
+    ...(reviewDecision ? { reviewDecision } : {}),
+    ...(raw.mergeStateStatus
+      ? {
+          mergeStateStatus: raw.mergeStateStatus,
+        }
+      : {}),
     relationship,
   }
 }
@@ -1518,11 +1594,11 @@ function normalizeComment(raw: ParsedRawComment, viewerLogin: string): PullReque
   const databaseId = raw.databaseId ?? (parsedDatabaseId || undefined)
   return {
     id: raw.id ?? `${author.login}:${raw.createdAt ?? ''}`,
-    ...propertiesWhen(databaseId, (databaseId) => ({ databaseId })),
+    ...(databaseId ? { databaseId } : {}),
     author,
     body: raw.body ?? '',
     createdAt: requiredString(raw.createdAt, 'comment.createdAt'),
-    ...propertiesWhen(raw.updatedAt, (includedValue) => ({ updatedAt: includedValue })),
+    ...(raw.updatedAt ? { updatedAt: raw.updatedAt } : {}),
     url,
     viewerDidAuthor: author.login.toLowerCase() === viewerLogin.toLowerCase(),
   }
@@ -1551,16 +1627,20 @@ function normalizeReviewThread(
   return {
     id: requiredString(raw.id, 'reviewThread.id'),
     path: requiredString(raw.path, 'reviewThread.path'),
-    ...propertiesWhen(raw.line, (includedValue) => ({ line: includedValue })),
-    ...propertiesWhen(raw.startLine, (includedValue) => ({ startLine: includedValue })),
-    ...propertiesWhen(raw.originalLine, (includedValue) => ({ originalLine: includedValue })),
-    ...propertiesWhen(raw.originalStartLine, (includedValue) => ({
-      originalStartLine: includedValue,
-    })),
-    ...propertiesWhen(diffSide, (includedDiffSide) => ({ diffSide: includedDiffSide })),
-    ...propertiesWhen(startDiffSide, (includedStartDiffSide) => ({
-      startDiffSide: includedStartDiffSide,
-    })),
+    ...(raw.line ? { line: raw.line } : {}),
+    ...(raw.startLine ? { startLine: raw.startLine } : {}),
+    ...(raw.originalLine ? { originalLine: raw.originalLine } : {}),
+    ...(raw.originalStartLine
+      ? {
+          originalStartLine: raw.originalStartLine,
+        }
+      : {}),
+    ...(diffSide ? { diffSide: diffSide } : {}),
+    ...(startDiffSide
+      ? {
+          startDiffSide: startDiffSide,
+        }
+      : {}),
     resolved: raw.isResolved === true,
     outdated: raw.isOutdated === true,
     comments: (raw.comments?.nodes ?? []).map((comment) => normalizeComment(comment, viewerLogin)),
@@ -1573,11 +1653,11 @@ function normalizeCheck(raw: ParsedRawCheck): PullRequestDetail['checks'][number
   const detailsUrl = checkRun ? raw.detailsUrl : raw.targetUrl
   return {
     name: name || 'Check',
-    ...propertiesWhen(raw.workflowName, (includedValue) => ({ workflowName: includedValue })),
+    ...(raw.workflowName ? { workflowName: raw.workflowName } : {}),
     state: checkState(raw),
-    ...propertiesWhen(detailsUrl && isUrl(detailsUrl), () => ({ detailsUrl })),
-    ...propertiesWhen(raw.startedAt, (includedValue) => ({ startedAt: includedValue })),
-    ...propertiesWhen(raw.completedAt, (includedValue) => ({ completedAt: includedValue })),
+    ...(detailsUrl && isUrl(detailsUrl) ? { detailsUrl } : {}),
+    ...(raw.startedAt ? { startedAt: raw.startedAt } : {}),
+    ...(raw.completedAt ? { completedAt: raw.completedAt } : {}),
   }
 }
 
@@ -1593,27 +1673,17 @@ function normalizeFile(raw: z.infer<typeof RawFileSchema>): PullRequestFile {
     status === 'unchanged'
       ? status
       : 'modified'
+  const blobUrl = raw.blob_url && isUrl(raw.blob_url) ? raw.blob_url : undefined
   return {
     sha: requiredString(raw.sha, 'file.sha'),
     path: requiredString(raw.filename, 'file.filename'),
-    ...propertiesWhen(
-      raw.previous_filename === undefined ? undefined : { previousPath: raw.previous_filename },
-      (includedPreviousPath) => includedPreviousPath,
-    ),
+    ...(raw.previous_filename === undefined ? {} : { previousPath: raw.previous_filename }),
     status: validStatus,
     additions: nonnegative(raw.additions),
     deletions: nonnegative(raw.deletions),
     changes: nonnegative(raw.changes),
-    ...propertiesWhen(
-      raw.patch === undefined ? undefined : { patch: raw.patch },
-      (includedPatch) => includedPatch,
-    ),
-    ...propertiesWhen(
-      raw.blob_url && isUrl(raw.blob_url) ? raw.blob_url : undefined,
-      (blobUrl) => ({
-        blobUrl,
-      }),
-    ),
+    ...(raw.patch === undefined ? {} : { patch: raw.patch }),
+    ...(blobUrl ? { blobUrl } : {}),
   }
 }
 
@@ -1654,8 +1724,8 @@ function normalizeAutoMerge(
   return {
     autoMerge: {
       mergeMethod,
-      ...propertiesWhen(raw.enabledAt, (includedValue) => ({ enabledAt: includedValue })),
-      ...propertiesWhen(raw.enabledBy, (includedValue) => ({ enabledBy: actor(includedValue) })),
+      ...(raw.enabledAt ? { enabledAt: raw.enabledAt } : {}),
+      ...(raw.enabledBy ? { enabledBy: actor(raw.enabledBy) } : {}),
     },
   }
 }

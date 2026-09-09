@@ -1,16 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import {
-  array,
-  type BoundaryValue,
-  integer,
-  list,
-  member,
-  record,
-  string,
-  strings,
-} from './parse.js'
-import { propertiesWhen } from './properties-when.js'
+import { array, integer, list, member, record, string, strings } from './parse.js'
 
 export interface PageLink {
   label: string
@@ -126,7 +116,7 @@ export interface PageBlueprint {
   acceptanceCriteria: string[]
 }
 
-export function parsePageBlueprint(value: BoundaryValue): PageBlueprint {
+export function parsePageBlueprint(value: unknown): PageBlueprint {
   const blueprint = record(value, 'page blueprint')
   if (blueprint.version !== 1) throw new Error('page blueprint version must be 1')
 
@@ -143,16 +133,20 @@ export function parsePageBlueprint(value: BoundaryValue): PageBlueprint {
     }
     return {
       id: string(section.id, `sections[${index}].id`),
-      ...propertiesWhen(!(section.layoutFamily === undefined), () => ({
-        layoutFamily: member(
-          section.layoutFamily,
-          PAGE_LAYOUT_FAMILIES,
-          `sections[${index}].layoutFamily`,
-        ),
-      })),
-      ...propertiesWhen(!(section.layoutCases === undefined), () => ({
-        layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`),
-      })),
+      ...(!(section.layoutFamily === undefined)
+        ? {
+            layoutFamily: member(
+              section.layoutFamily,
+              PAGE_LAYOUT_FAMILIES,
+              `sections[${index}].layoutFamily`,
+            ),
+          }
+        : {}),
+      ...(!(section.layoutCases === undefined)
+        ? {
+            layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`),
+          }
+        : {}),
       purpose: string(section.purpose, `sections[${index}].purpose`),
       userQuestion:
         section.userQuestion === undefined
@@ -189,9 +183,11 @@ export function parsePageBlueprint(value: BoundaryValue): PageBlueprint {
         callsToAction: links(copy.callsToAction, `sections[${index}].copy.callsToAction`),
       },
       layout: string(section.layout, `sections[${index}].layout`),
-      ...propertiesWhen(!(section.motion === undefined), () => ({
-        motion: parseMotion(section.motion, index),
-      })),
+      ...(!(section.motion === undefined)
+        ? {
+            motion: parseMotion(section.motion, index),
+          }
+        : {}),
       componentNeeds: strings(section.componentNeeds, `sections[${index}].componentNeeds`),
       assetNeeds: strings(section.assetNeeds, `sections[${index}].assetNeeds`),
       transformation:
@@ -260,9 +256,11 @@ export function parsePageBlueprint(value: BoundaryValue): PageBlueprint {
           rhythm: 'Preserve the recorded section order.',
         },
     navigation: links(blueprint.navigation, 'navigation'),
-    ...propertiesWhen(!(blueprint.navigationDesign === undefined), () => ({
-      navigationDesign: parseNavigationDesign(blueprint.navigationDesign),
-    })),
+    ...(!(blueprint.navigationDesign === undefined)
+      ? {
+          navigationDesign: parseNavigationDesign(blueprint.navigationDesign),
+        }
+      : {}),
     sections,
     responsive: strings(blueprint.responsive, 'responsive'),
     interactions: strings(blueprint.interactions, 'interactions'),
@@ -270,13 +268,15 @@ export function parsePageBlueprint(value: BoundaryValue): PageBlueprint {
   }
 }
 
-function parseNavigationDesign(value: BoundaryValue): PageNavigationDesign {
+function parseNavigationDesign(value: unknown): PageNavigationDesign {
   const navigation = record(value, 'navigationDesign')
   const responsive = record(navigation.transformation, 'navigationDesign.transformation')
   return {
-    ...propertiesWhen(!(navigation.layoutCase === undefined), () => ({
-      layoutCase: string(navigation.layoutCase, 'navigationDesign.layoutCase'),
-    })),
+    ...(!(navigation.layoutCase === undefined)
+      ? {
+          layoutCase: string(navigation.layoutCase, 'navigationDesign.layoutCase'),
+        }
+      : {}),
     layout: string(navigation.layout, 'navigationDesign.layout'),
     behavior: strings(navigation.behavior, 'navigationDesign.behavior'),
     transformation: {
@@ -288,7 +288,7 @@ function parseNavigationDesign(value: BoundaryValue): PageNavigationDesign {
 }
 
 function transformation(
-  value: BoundaryValue,
+  value: unknown,
   index: number,
 ): PageBlueprint['sections'][number]['transformation'] {
   const item = record(value, `sections[${index}].transformation`)
@@ -299,7 +299,7 @@ function transformation(
   }
 }
 
-function parseMotion(value: BoundaryValue, index: number): PageSectionMotion {
+function parseMotion(value: unknown, index: number): PageSectionMotion {
   const motion = record(value, `sections[${index}].motion`)
   const purpose = member(motion.purpose, PAGE_MOTION_PURPOSES, `sections[${index}].motion.purpose`)
   const trigger = member(motion.trigger, PAGE_MOTION_TRIGGERS, `sections[${index}].motion.trigger`)
@@ -324,7 +324,7 @@ export function readPageBlueprint(workspacePath: string): PageBlueprint {
   return parsePageBlueprint(JSON.parse(readFileSync(pagePath(workspacePath), 'utf8')))
 }
 
-export function writePageBlueprint(workspacePath: string, value: BoundaryValue): PageBlueprint {
+export function writePageBlueprint(workspacePath: string, value: unknown): PageBlueprint {
   const blueprint = parsePageBlueprint(value)
   const outputPath = pagePath(workspacePath)
   mkdirSync(path.dirname(outputPath), { recursive: true })
@@ -336,7 +336,7 @@ function pagePath(workspacePath: string): string {
   return path.join(workspacePath, '.taste', 'page.json')
 }
 
-function links(value: BoundaryValue, field: string): PageLink[] {
+function links(value: unknown, field: string): PageLink[] {
   return list(value, field).map((value, index) => {
     const link = record(value, `${field}[${index}]`)
     return {
@@ -346,7 +346,7 @@ function links(value: BoundaryValue, field: string): PageLink[] {
   })
 }
 
-function route(value: BoundaryValue): string {
+function route(value: unknown): string {
   const result = string(value, 'page.route')
   if (!result.startsWith('/')) throw new Error('page.route must start with /')
   return result

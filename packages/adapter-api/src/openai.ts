@@ -1,9 +1,9 @@
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
 import {
   type JsonObject,
-  JsonValueSchema,
   jsonNumber as number,
   jsonObject as object,
+  parseJsonValue,
   jsonString as string,
 } from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiToolCall, ApiTransport } from './runtime.js'
@@ -70,7 +70,7 @@ export function createOpenAiResponsesTransport(options: OpenAiOptions): ApiTrans
           call: {
             id: callId,
             name,
-            input: JsonValueSchema.parse(JSON.parse(string(event.arguments))),
+            input: parseJsonValue(string(event.arguments)),
           },
         } satisfies ApiStreamEvent
       } else if (type === 'response.completed') {
@@ -109,7 +109,7 @@ export async function listOpenAiModels(
     headers: { authorization: `Bearer ${apiKey}` },
   })
   if (!response.ok) throw new Error(`OpenAI model listing failed with HTTP ${response.status}`)
-  const body = object(await response.json())
+  const body = object(parseJsonValue(await response.text()))
   return Array.isArray(body.data)
     ? body.data
         .map(object)

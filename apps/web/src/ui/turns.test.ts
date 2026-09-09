@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Item } from '@harness/contracts'
-import { createThreadProjector, findTurns, neighbourTurn, presentTurns } from './turns.js'
+import {
+  activityGroupAt,
+  createThreadProjector,
+  neighbourTurn,
+  projectThreadItems,
+  type TurnActivityGroup,
+  type TurnTiming,
+} from './turns.js'
 
 const item = (id: string, turnId: string): Item => ({
   id,
@@ -10,9 +17,27 @@ const item = (id: string, turnId: string): Item => ({
   createdAt: 0,
 })
 
+const turnsOf = (items: Item[]) => projectThreadItems(items).turns
+const presentationsOf = (items: Item[], turnTiming?: TurnTiming) =>
+  projectThreadItems(items, turnTiming).presentations
+
 describe('turn boundaries', () => {
+  it('finds an activity range without scanning earlier groups', () => {
+    const groups: TurnActivityGroup[] = [
+      { items: [], firstIndex: 2, lastIndex: 4, elapsedMs: 0 },
+      { items: [], firstIndex: 8, lastIndex: 12, elapsedMs: 0 },
+      { items: [], firstIndex: 20, lastIndex: 20, elapsedMs: 0 },
+    ]
+
+    expect(activityGroupAt(groups, 3)).toBe(groups[0])
+    expect(activityGroupAt(groups, 10)).toBe(groups[1])
+    expect(activityGroupAt(groups, 20)).toBe(groups[2])
+    expect(activityGroupAt(groups, 7)).toBeUndefined()
+    expect(activityGroupAt(groups, 21)).toBeUndefined()
+  })
+
   it('groups consecutive items of the same turn', () => {
-    const turns = findTurns([
+    const turns = turnsOf([
       item('a', 't1'),
       item('b', 't1'),
       item('c', 't2'),
@@ -28,12 +53,12 @@ describe('turn boundaries', () => {
   it('gives an un-sent local echo its own boundary', () => {
     // It has no turn id yet but still visually starts a turn; folding it into
     // the previous one would make "previous turn" skip it.
-    const turns = findTurns([item('a', 't1'), item('local', ''), item('b', 't2')])
+    const turns = turnsOf([item('a', 't1'), item('local', ''), item('b', 't2')])
     expect(turns).toHaveLength(3)
   })
 
   it('walks to the neighbouring turn', () => {
-    const turns = findTurns([item('a', 't1'), item('b', 't1'), item('c', 't2'), item('d', 't3')])
+    const turns = turnsOf([item('a', 't1'), item('b', 't1'), item('c', 't2'), item('d', 't3')])
     expect(neighbourTurn(turns, 0, 'next')).toBe(2)
     expect(neighbourTurn(turns, 2, 'next')).toBe(3)
     expect(neighbourTurn(turns, 3, 'next')).toBeUndefined()
@@ -42,7 +67,7 @@ describe('turn boundaries', () => {
   })
 
   it('returns to the start of the turn you are inside before skipping past it', () => {
-    const turns = findTurns([item('a', 't1'), item('b', 't2'), item('c', 't2'), item('d', 't2')])
+    const turns = turnsOf([item('a', 't1'), item('b', 't2'), item('c', 't2'), item('d', 't2')])
     // Standing on the third item of t2, "previous" is the start of t2.
     expect(neighbourTurn(turns, 3, 'prev')).toBe(1)
   })
@@ -65,7 +90,7 @@ describe('turn boundaries', () => {
       { ...item('answer', 't1'), role: 'assistant', text: 'Done.', createdAt: 7_500 },
     ]
 
-    expect(presentTurns(items).get('t1')).toMatchObject({
+    expect(presentationsOf(items).get('t1')).toMatchObject({
       activityGroups: [{ items: [items[2]], firstIndex: 2 }],
       responseText: 'Done.',
       firstResponseIndex: 1,
@@ -81,7 +106,7 @@ describe('turn boundaries', () => {
       { ...item('answer', 't1'), role: 'assistant', text: 'Done.', createdAt: 38_000 },
     ]
 
-    expect(presentTurns(items, { t1: { startedAt: 1_000 } }).get('t1')?.elapsedMs).toBe(3_000)
+    expect(presentationsOf(items, { t1: { startedAt: 1_000 } }).get('t1')?.elapsedMs).toBe(3_000)
   })
 
   it('uses durable completion instead of the final item as the elapsed endpoint', () => {
@@ -91,7 +116,8 @@ describe('turn boundaries', () => {
     ]
 
     expect(
-      presentTurns(items, { t1: { startedAt: 1_000, completedAt: 32_000 } }).get('t1')?.elapsedMs,
+      presentationsOf(items, { t1: { startedAt: 1_000, completedAt: 32_000 } }).get('t1')
+        ?.elapsedMs,
     ).toBe(31_000)
   })
 
@@ -101,7 +127,7 @@ describe('turn boundaries', () => {
       { ...item('command', 't1'), type: 'command', status: 'started' },
     ]
 
-    expect(presentTurns(items).get('t1')?.complete).toBe(false)
+    expect(presentationsOf(items).get('t1')?.complete).toBe(false)
   })
 
   it('only compacts repeated settled reasoning when no answer exists', () => {
@@ -111,12 +137,12 @@ describe('turn boundaries', () => {
       status,
     })
 
-    expect(presentTurns([reasoning('one')]).get('t1')?.complete).toBe(false)
-    expect(presentTurns([reasoning('one'), reasoning('two', 'started')]).get('t1')?.complete).toBe(
-      false,
-    )
+    expect(presentationsOf([reasoning('one')]).get('t1')?.complete).toBe(false)
     expect(
-      presentTurns([
+      presentationsOf([reasoning('one'), reasoning('two', 'started')]).get('t1')?.complete,
+    ).toBe(false)
+    expect(
+      presentationsOf([
         reasoning('one'),
         { ...item('command', 't1'), type: 'command', command: 'pnpm test' },
       ]).get('t1')?.complete,
@@ -133,8 +159,8 @@ describe('turn boundaries', () => {
       { ...item('answer', 't1'), role: 'assistant', text: 'Fixed.' },
     ]
 
-    expect(presentTurns(items).get('t1')).toMatchObject({
-      activityGroups: [{ items: [items[2], items[4]], firstIndex: 2 }],
+    expect(presentationsOf(items).get('t1')).toMatchObject({
+      activityGroups: [{ items: [items[1], items[2], items[3], items[4]], firstIndex: 1 }],
       responseText: 'Fixed.',
       finalAnswerIndex: 5,
       complete: true,
@@ -153,7 +179,7 @@ describe('turn boundaries', () => {
       { ...item('answer', 't1'), role: 'assistant', text: 'Fixed.' },
     ]
 
-    expect(presentTurns(items).get('t1')?.activityGroups).toMatchObject([
+    expect(presentationsOf(items).get('t1')?.activityGroups).toMatchObject([
       {
         items: [items[1], items[3], items[5]],
         firstIndex: 1,
@@ -183,11 +209,12 @@ describe('turn boundaries', () => {
       },
     ]
 
-    const presentation = presentTurns(items, {
+    const presentation = presentationsOf(items, {
       t1: { startedAt: 1_000, completedAt: 14_000 },
     }).get('t1')
 
     expect(presentation?.activityGroups.map(({ elapsedMs }) => elapsedMs)).toEqual([13_000])
+    expect(presentation?.activityGroups[0]?.items).toEqual([items[2], items[3]])
     expect(presentation?.workStartedAt).toBe(13_000)
   })
 
@@ -208,7 +235,7 @@ describe('turn boundaries', () => {
       },
     ]
 
-    expect(presentTurns(items).get('t1')).toMatchObject({
+    expect(presentationsOf(items).get('t1')).toMatchObject({
       responseText: 'Fixed.',
       finalAnswerIndex: 1,
       complete: true,
@@ -231,15 +258,54 @@ describe('turn boundaries', () => {
       },
     ]
 
-    expect(presentTurns(legacy).get('t1')).toMatchObject({
+    expect(presentationsOf(legacy).get('t1')).toMatchObject({
       responseText: 'Fixed.',
       finalAnswerIndex: 2,
       complete: true,
     })
-    expect(presentTurns(commentaryOnly).get('t2')).toMatchObject({
+    expect(presentationsOf(commentaryOnly).get('t2')).toMatchObject({
       responseText: '',
       finalAnswerIndex: undefined,
       complete: false,
+    })
+  })
+
+  it('does not treat persisted Design progress notes as final answers', () => {
+    const items: Item[] = [
+      { ...item('user', 'brief-turn'), role: 'user', text: 'Design a site.' },
+      { ...item('design-activity-1', 'brief-turn'), type: 'tool_call', text: 'design:brief' },
+      {
+        ...item('design-note-first', 'brief-turn'),
+        role: 'assistant',
+        text: 'I have a few questions before designing.',
+      },
+      { ...item('design-activity-2', 'build-turn'), type: 'tool_call', text: 'design:build' },
+      {
+        ...item('design-note-second', 'build-turn'),
+        role: 'assistant',
+        text: 'Brief locked in. Starting the design.',
+      },
+      {
+        ...item('design-complete-old', 'complete-turn'),
+        role: 'assistant',
+        text: 'Website built. Preview ready.',
+      },
+    ]
+
+    expect(presentationsOf(items).get('brief-turn')).toMatchObject({
+      responseText: '',
+      finalAnswerIndex: undefined,
+      complete: false,
+    })
+    expect(presentationsOf(items).get('build-turn')).toMatchObject({
+      responseText: '',
+      finalAnswerIndex: undefined,
+      complete: false,
+    })
+    expect(presentationsOf(items).get('complete-turn')).toMatchObject({
+      responseText: 'Website built. Preview ready.',
+      finalAnswerIndex: 5,
+      complete: true,
     })
   })
 
@@ -255,7 +321,7 @@ describe('turn boundaries', () => {
       },
     ]
 
-    expect(presentTurns(items.map((entry) => ({ ...entry })))).toEqual(presentTurns(items))
+    expect(presentationsOf(items.map((entry) => ({ ...entry })))).toEqual(presentationsOf(items))
   })
 
   it('reuses transcript layout while only the live answer text changes', () => {
@@ -273,6 +339,17 @@ describe('turn boundaries', () => {
     const streamed = project([items[0]!, { ...items[1]!, text: 'Hello' }])
 
     expect(streamed).toBe(initial)
+  })
+
+  it('reuses an immutable transcript projection across session switches', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Answer' },
+    ]
+    const initial = createThreadProjector()(items)
+    const reopened = createThreadProjector()(items)
+
+    expect(reopened).toBe(initial)
   })
 
   it('rebuilds transcript layout when a streamed answer completes or history is replaced', () => {
@@ -293,5 +370,66 @@ describe('turn boundaries', () => {
     expect(completed).not.toBe(initial)
     expect(completed.presentations.get('t1')?.responseText).toBe('Hello.')
     expect(replaced).not.toBe(completed)
+  })
+
+  it('reprojects only the changed tail turn without changing its result', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      {
+        ...item('tool', 'active'),
+        type: 'tool_call',
+        status: 'started',
+        text: 'Reading files',
+      },
+    ]
+    const initial = project(items)
+    const appendedItems = [
+      ...items,
+      { ...item('answer', 'active'), role: 'assistant' as const, text: 'Done.' },
+    ]
+    const appended = project(appendedItems)
+    const completedItems = [
+      ...appendedItems.slice(0, -1),
+      { ...appendedItems.at(-1)!, status: 'completed' as const, text: 'Done.' },
+    ]
+    const completed = project(completedItems)
+
+    expect(appended).toEqual({
+      turns: turnsOf(appendedItems),
+      presentations: presentationsOf(appendedItems),
+    })
+    expect(completed).toEqual({
+      turns: turnsOf(completedItems),
+      presentations: presentationsOf(completedItems),
+    })
+    expect(appended.presentations.get('old')).toBe(initial.presentations.get('old'))
+    expect(completed.presentations.get('old')).toBe(initial.presentations.get('old'))
+  })
+
+  it('rebuilds presentations when durable timing changes', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('old-user', 'old'), role: 'user', text: 'Old question' },
+      { ...item('old-answer', 'old'), role: 'assistant', text: 'Old answer' },
+      { ...item('user', 'active'), role: 'user', text: 'New question' },
+      { ...item('answer', 'active'), role: 'assistant', text: 'New answer' },
+    ]
+    const initialTiming = { old: { startedAt: 0, completedAt: 10 }, active: { startedAt: 20 } }
+    const initial = project(items, initialTiming)
+    const completedTiming = {
+      ...initialTiming,
+      active: { startedAt: 20, completedAt: 50 },
+    }
+    const completed = project(items, completedTiming)
+
+    expect(completed).toEqual({
+      turns: turnsOf(items),
+      presentations: presentationsOf(items, completedTiming),
+    })
+    expect(completed).not.toBe(initial)
+    expect(completed.presentations.get('active')?.elapsedMs).toBe(30)
   })
 })

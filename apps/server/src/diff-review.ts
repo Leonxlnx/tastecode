@@ -6,8 +6,8 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
 import { takeSnapshot } from './checkpoint.js'
+import { canonicalCheckoutRoot } from './checkout-access.js'
 import type { Store } from './store.js'
-import { propertiesWhen } from './properties-when.js'
 
 const run = promisify(execFile)
 
@@ -90,9 +90,12 @@ async function parseDiff(
   threadId: string,
   store: DecisionReader,
 ): Promise<ParsedDiff> {
+  const root = canonicalCheckoutRoot(repoPath)
+  const scope = path.relative(root, await realpath(repoPath)) || '.'
   const snapshot = await takeSnapshot(repoPath)
+  repoPath = root
   const version = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
-  const files = await changedFiles(repoPath, snapshot.commit)
+  const files = await changedFiles(repoPath, snapshot.commit, scope)
   // Bounded fan-out: a formatter sweep can touch thousands of files, and one
   // git process per file all at once hits Windows process-creation limits.
   const parsed: ParsedFile[] = []
@@ -118,21 +121,21 @@ async function parseDiff(
       'HEAD',
       snapshot.commit,
       '--',
-      ...paths,
+      ...paths.map((file) => `:(top,literal)${file}`),
     ])
     const hunks = parseHunks(file.path, patch, file.status === 'renamed')
     const targetId = digest(`file\0${file.path}\0${patch}`)
     const fileDecision = store.diffDecision(threadId, fileTarget(targetId))
     const value: DiffFile = {
       path: file.path,
-      ...propertiesWhen(file.previousPath, (includedValue) => ({ previousPath: includedValue })),
+      ...(file.previousPath ? { previousPath: file.previousPath } : {}),
       status: file.status,
       binary: patch.includes('GIT binary patch') || patch.includes('Binary files '),
       hunks: hunks.map((hunk) => {
         const decision = store.diffDecision(threadId, hunkTarget(hunk.value.id))
-        return { ...hunk.value, ...propertiesWhen(decision, (decision) => ({ decision })) }
+        return { ...hunk.value, ...(decision ? { decision } : {}) }
       }),
-      ...propertiesWhen(fileDecision, (includedValue) => ({ decision: includedValue })),
+      ...(fileDecision ? { decision: fileDecision } : {}),
     }
     return { value, patch, targetId, hunks }
   }
@@ -146,6 +149,7 @@ async function parseDiff(
 async function changedFiles(
   repoPath: string,
   commit: string,
+  scope = '.',
 ): Promise<
   Array<{
     path: string
@@ -154,7 +158,16 @@ async function changedFiles(
   }>
 > {
   const fields = (
-    await git(repoPath, ['diff', '--name-status', '-z', '--find-renames', 'HEAD', commit])
+    await git(repoPath, [
+      'diff',
+      '--name-status',
+      '-z',
+      '--find-renames',
+      'HEAD',
+      commit,
+      '--',
+      ...(scope === '.' ? [] : [`:(top,literal)${scope}`]),
+    ])
   )
     .split('\0')
     .filter(Boolean)

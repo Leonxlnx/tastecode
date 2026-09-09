@@ -1,11 +1,10 @@
 import { EventEmitter } from 'node:events'
-import { createServer } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parsePreviewPlan } from '@harness/design-agent'
-import { z } from 'zod'
 import {
   assertRunsWorkspaceCode,
   startDesignPreview,
@@ -16,7 +15,12 @@ import {
 
 const workspaces: string[] = []
 const previews: RunningPreview[] = []
-const ServerAddressSchema = z.object({ port: z.number() })
+
+function serverPort(server: Server): number {
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('missing test port')
+  return address.port
+}
 
 afterEach(async () => {
   await Promise.all(previews.splice(0).map((preview) => preview.stop()))
@@ -32,17 +36,17 @@ describe('design preview runner', () => {
     const marker = path.join(workspace, 'spawned.txt')
     const occupied = createServer((_request, response) => response.end('unrelated preview'))
     await listen(occupied)
-    const address = ServerAddressSchema.parse(occupied.address())
+    const port = serverPort(occupied)
     writeFileSync(
       path.join(workspace, 'preview.mjs'),
-      `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${address.port}, '127.0.0.1')\n`,
+      `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${port}, '127.0.0.1')\n`,
     )
     const plan = parsePreviewPlan({
       version: 1,
       command: 'node',
       args: ['preview.mjs'],
       cwd: '.',
-      url: `http://127.0.0.1:${address.port}`,
+      url: `http://127.0.0.1:${port}`,
       viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
     })
 
@@ -58,7 +62,7 @@ describe('design preview runner', () => {
     }
     expect(failure).toBeInstanceOf(Error)
     if (!(failure instanceof Error)) throw new Error('expected preview failure')
-    expect(failure.message).toContain(`preview port ${address.port} is already in use`)
+    expect(failure.message).toContain(`preview port ${port} is already in use`)
     expect(existsSync(marker)).toBe(false)
   })
 
@@ -371,10 +375,8 @@ function freePort(): Promise<number> {
     const server = createServer()
     server.on('error', reject)
     server.listen(0, '127.0.0.1', () => {
-      const parsed = ServerAddressSchema.safeParse(server.address())
-      if (!parsed.success) return reject(new Error('missing test port'))
-      const address = parsed.data
-      server.close((error) => (error ? reject(error) : resolve(address.port)))
+      const port = serverPort(server)
+      server.close((error) => (error ? reject(error) : resolve(port)))
     })
   })
 }

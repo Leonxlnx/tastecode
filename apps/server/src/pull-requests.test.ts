@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GhRunner } from './pull-requests.js'
-import { githubRepositoryFromRemote, PullRequestService } from './pull-requests.js'
+import {
+  githubRepositoryFromRemote,
+  githubSetupCommand,
+  PullRequestService,
+} from './pull-requests.js'
 
 const authored = pullRequest({
   id: 'PR_authored',
@@ -27,6 +31,15 @@ const historicalDraft = pullRequest({
   updatedAt: '2026-08-10T11:00:00Z',
   state: 'CLOSED',
   isDraft: true,
+})
+
+describe('GitHub CLI setup commands', () => {
+  it('uses the official platform install command and fixed login command', () => {
+    expect(githubSetupCommand('install', 'darwin')).toBe('brew install gh')
+    expect(githubSetupCommand('install', 'win32')).toBe('winget install --id GitHub.cli')
+    expect(githubSetupCommand('login', 'linux')).toBe('gh auth login')
+    expect(() => githubSetupCommand('install', 'linux')).toThrow(/not scripted/)
+  })
 })
 
 describe('PullRequestService', () => {
@@ -287,6 +300,24 @@ describe('PullRequestService', () => {
     ])
     expect(commentCall.stdin).toBe(JSON.stringify({ body }))
     expect(commentCall.args).not.toContain(body)
+  })
+
+  it('bounds retained pull-request payloads by recent use', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[0] === 'api' && args[1]?.includes('/files?')) return '[]'
+      throw new Error(`Unexpected gh call: ${args.join(' ')}`)
+    })
+    const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
+
+    for (let number = 1; number <= 13; number += 1) {
+      await service.files('Blueemi/harness', number)
+    }
+    await service.files('Blueemi/harness', 13)
+    expect(run).toHaveBeenCalledTimes(13)
+
+    // The first large page is outside the 12-entry LRU window and reloads.
+    await service.files('Blueemi/harness', 1)
+    expect(run).toHaveBeenCalledTimes(14)
   })
 
   it('loads and caches repository metadata options while isolating unavailable sources', async () => {

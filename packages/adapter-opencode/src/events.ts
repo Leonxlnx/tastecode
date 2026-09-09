@@ -1,8 +1,7 @@
 import type { DomainEvent, Item, Usage } from '@harness/contracts'
-import { JsonRpcValueSchema, type JsonRpcInput, type JsonRpcValue } from '@harness/proc'
+import { JsonRpcValueSchema, type JsonRpcValue } from '@harness/proc'
 import type { Event, Part, ToolPart } from '@opencode-ai/sdk'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 /** OpenCode 2.0's `/api/event` stream. Its generated SDK is still changing,
  *  so this adapter follows the captured wire shape instead of importing a
@@ -102,7 +101,7 @@ export class OpenCodeEventMapper {
         id,
         turnId: this.#turnId,
         type,
-        ...propertiesWhen(type === 'message', () => ({ role: 'assistant' as const })),
+        ...(type === 'message' ? { role: 'assistant' as const } : {}),
         status: 'started',
         text: '',
         createdAt: Date.now(),
@@ -157,9 +156,9 @@ export class OpenCodeEventMapper {
       turnId: this.#turnId,
       type: kind,
       status: 'started',
-      ...propertiesWhen(kind === 'command', () => ({ command })),
-      ...propertiesWhen(kind === 'file_change' && path, () => ({ path })),
-      ...propertiesWhen(kind === 'tool_call', () => ({ text: current.name })),
+      ...(kind === 'command' ? { command } : {}),
+      ...(kind === 'file_change' && path ? { path } : {}),
+      ...(kind === 'tool_call' ? { text: current.name } : {}),
       createdAt: Date.now(),
     }
     const events: DomainEvent[] = []
@@ -175,7 +174,7 @@ export class OpenCodeEventMapper {
         item: {
           ...item,
           status,
-          ...propertiesWhen(kind === 'tool_call' && output, () => ({ text: output })),
+          ...(kind === 'tool_call' && output ? { text: output } : {}),
         },
       })
     }
@@ -202,7 +201,7 @@ export class OpenCodeEventMapper {
           id,
           turnId: this.#turnId,
           type: part.type === 'text' ? 'message' : 'reasoning',
-          ...propertiesWhen(part.type === 'text', () => ({ role: 'assistant' as const })),
+          ...(part.type === 'text' ? { role: 'assistant' as const } : {}),
           status: 'started',
           text: '',
           createdAt: part.time?.start ?? Date.now(),
@@ -244,9 +243,9 @@ export class OpenCodeEventMapper {
       turnId: this.#turnId,
       type: kind,
       status: 'started',
-      ...propertiesWhen(kind === 'command', () => ({ command })),
-      ...propertiesWhen(kind === 'file_change' && path, () => ({ path })),
-      ...propertiesWhen(kind === 'tool_call', () => ({ text: stateTitle(state) || part.tool })),
+      ...(kind === 'command' ? { command } : {}),
+      ...(kind === 'file_change' && path ? { path } : {}),
+      ...(kind === 'tool_call' ? { text: stateTitle(state) || part.tool } : {}),
       createdAt: 'time' in state ? state.time.start : Date.now(),
     }
     const events: DomainEvent[] = []
@@ -261,12 +260,16 @@ export class OpenCodeEventMapper {
         item: {
           ...item,
           status: state.status === 'error' ? 'failed' : 'completed',
-          ...propertiesWhen(kind === 'tool_call', () => ({
-            text: state.status === 'error' ? state.error : `${state.title}\n${state.output}`,
-          })),
-          ...propertiesWhen('time' in state && state.time.end, () => ({
-            durationMs: state.time.end - state.time.start,
-          })),
+          ...(kind === 'tool_call'
+            ? {
+                text: state.status === 'error' ? state.error : `${state.title}\n${state.output}`,
+              }
+            : {}),
+          ...('time' in state && state.time.end
+            ? {
+                durationMs: state.time.end - state.time.start,
+              }
+            : {}),
         },
       })
     }
@@ -286,7 +289,7 @@ function usage(
 ): DomainEvent {
   const output = tokens.output + tokens.reasoning
   const value: Usage = {
-    ...propertiesWhen(model, (model) => ({ model })),
+    ...(model ? { model } : {}),
     inputTokens: tokens.input,
     cachedInputTokens: tokens.cache.read,
     outputTokens: output,
@@ -308,7 +311,7 @@ function v2Usage(data: Record<string, JsonRpcValue>, model?: string): DomainEven
   return {
     type: 'usage.updated',
     usage: {
-      ...propertiesWhen(model, (model) => ({ model })),
+      ...(model ? { model } : {}),
       inputTokens: input,
       cachedInputTokens: number(cache['read']),
       outputTokens: normalizedOutput,
@@ -330,22 +333,22 @@ function stateTitle(state: ToolPart['state']): string {
   return 'title' in state ? (state.title ?? '') : ''
 }
 
-function string(value: JsonRpcInput): string {
+function string(value: unknown): string {
   const parsed = z.string().safeParse(value)
   return parsed.success ? parsed.data : ''
 }
 
-function number(value: JsonRpcInput): number {
+function number(value: unknown): number {
   const parsed = z.number().safeParse(value)
   return parsed.success && Number.isFinite(parsed.data) ? parsed.data : 0
 }
 
-function record(value: JsonRpcInput): Record<string, JsonRpcValue> {
+function record(value: unknown): Record<string, JsonRpcValue> {
   const parsed = OpenCodeDataSchema.safeParse(value)
   return parsed.success ? parsed.data : {}
 }
 
-function contentText(value: JsonRpcInput): string {
+function contentText(value: unknown): string {
   const parsed = z.array(OpenCodeDataSchema).safeParse(value)
   if (!parsed.success) return ''
   return parsed.data

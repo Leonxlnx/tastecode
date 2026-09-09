@@ -1,16 +1,29 @@
-import type { Session, WebContents } from 'electron'
-import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
+import type { Event, Session, WebContents, WebPreferences } from 'electron'
 
 const BROWSER_PARTITION = 'persist:harness-browser'
 const configuredSessions = new WeakSet<Session>()
+
+export interface EmbeddedBrowserOwner {
+  on(
+    event: 'will-attach-webview',
+    listener: (
+      event: Event,
+      webPreferences: WebPreferences,
+      params: Record<string, string>,
+    ) => void,
+  ): unknown
+  on(
+    event: 'did-attach-webview',
+    listener: (event: Event, webContents: WebContents) => void,
+  ): unknown
+}
 
 /**
  * Configure renderer-owned <webview> guests before any remote content is
  * attached. The page lives in Chromium's guest process, while the UI remains a
  * normal DOM element that follows the sidebar's layout without native overlays.
  */
-export function configureEmbeddedBrowser(owner: WebContents): void {
+export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
   owner.on('will-attach-webview', (event, webPreferences, params) => {
     delete webPreferences.preload
     webPreferences.allowRunningInsecureContent = false
@@ -51,20 +64,18 @@ export function configureEmbeddedBrowser(owner: WebContents): void {
   })
 }
 
-export function browserGuestUrl(value: BoundaryValue): string {
-  const parsed = z.string().safeParse(value)
-  if (!parsed.success || !isBrowserGuestUrl(parsed.data)) {
+export function browserGuestUrl(value: unknown): string {
+  if (typeof value !== 'string' || !isBrowserGuestUrl(value)) {
     throw new Error('Invalid browser URL')
   }
-  return parsed.data
+  return value
 }
 
-export function isBrowserGuestUrl(value: BoundaryValue, allowBlank = false): value is string {
-  const parsed = z.string().safeParse(value)
-  if (!parsed.success) return false
-  if (allowBlank && parsed.data === 'about:blank') return true
+function isBrowserGuestUrl(value: unknown, allowBlank = false): value is string {
+  if (typeof value !== 'string') return false
+  if (allowBlank && value === 'about:blank') return true
   try {
-    const url = new URL(parsed.data)
+    const url = new URL(value)
     return url.protocol === 'https:' || url.protocol === 'http:'
   } catch {
     return false

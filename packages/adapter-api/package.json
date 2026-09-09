@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
-    "zod": "4.4.3"
+    "@harness/proc": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

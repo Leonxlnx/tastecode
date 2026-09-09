@@ -2,61 +2,67 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render } from '@testing-library/react'
 import type { Item } from '@harness/contracts'
-import type { MarkdownProps } from './Markdown.js'
-import { propertiesWhen } from '../properties-when.js'
-import {
-  defaultThreadDependencies,
-  Thread,
-  type ThreadDependencies,
-  type ThreadThinkingOrbProps,
-  type ThreadVirtualizer,
-  type ThreadVirtualizerOptions,
-} from './Thread.js'
+import { ThreadFrameStore } from '../thread-frame-store.js'
+import { emptyThread } from '../thread-store.js'
 
-const markdownRender = vi.fn()
-const orbRender = vi.fn()
-const virtualizerOptions = vi.fn()
+const markdownRender = vi.hoisted(() => vi.fn())
+const orbRender = vi.hoisted(() => vi.fn())
+const virtualizerOptions = vi.hoisted(() => vi.fn())
 
-function useTestVirtualizer(options: ThreadVirtualizerOptions): ThreadVirtualizer {
-  virtualizerOptions(options)
-  const { count, getItemKey } = options
-  const rows = Array.from({ length: count }, (_, index) => ({
-    index,
-    key: getItemKey(index),
-    start: index * 72,
-    end: (index + 1) * 72,
-  }))
-  return {
-    getVirtualItems: () => rows,
-    getTotalSize: () => count * 72,
-    getOffsetForIndex: (index) => [index * 72, 'start'],
-    scrollToIndex: () => undefined,
-    measureElement: () => undefined,
-    measurementsCache: rows,
-  }
-}
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: (options: { count: number; getItemKey: (index: number) => string | number }) => {
+    virtualizerOptions(options)
+    const { count } = options
+    const rows = Array.from({ length: count }, (_, index) => ({
+      index,
+      key: index,
+      start: index * 72,
+      end: (index + 1) * 72,
+      size: 72,
+      lane: 0,
+    }))
+    return {
+      getVirtualItems: () => rows,
+      getTotalSize: () => count * 72,
+      getOffsetForIndex: (index: number) => [index * 72],
+      getScrollElement: () => null,
+      scrollToIndex: () => undefined,
+      measureElement: () => undefined,
+      measurementsCache: rows,
+    }
+  },
+}))
 
-function TestMarkdown({ text, streaming = false, liveUpdate, updateVersion }: MarkdownProps) {
-  markdownRender({
+vi.mock('./Markdown.js', () => ({
+  Markdown: ({
     text,
-    streaming,
-    ...propertiesWhen(liveUpdate, (update) => ({ liveUpdate: update })),
-    ...propertiesWhen(updateVersion !== undefined, () => ({ updateVersion })),
-  })
-  return <span>{text}</span>
-}
+    streaming = false,
+    liveUpdate,
+    updateVersion,
+  }: {
+    text: string
+    streaming?: boolean
+    liveUpdate?: { kind: 'append'; text: string }
+    updateVersion?: number
+  }) => {
+    markdownRender({
+      text,
+      streaming,
+      ...(liveUpdate ? { liveUpdate } : {}),
+      ...(updateVersion === undefined ? {} : { updateVersion }),
+    })
+    return <span>{text}</span>
+  },
+}))
 
-function TestThinkingOrb(props: ThreadThinkingOrbProps) {
-  orbRender(props)
-  return <canvas aria-label={props.state} />
-}
+vi.mock('thinking-orbs', () => ({
+  ThinkingOrb: (props: { state: string; size: number }) => {
+    orbRender(props)
+    return <canvas aria-label={props.state} />
+  },
+}))
 
-const dependencies: ThreadDependencies = {
-  ...defaultThreadDependencies,
-  useVirtualizer: useTestVirtualizer,
-  MarkdownComponent: TestMarkdown,
-  ThinkingOrbComponent: TestThinkingOrb,
-}
+import { Thread } from './Thread.js'
 
 const onDecide = () => undefined
 const onAnswerUserInput = () => undefined
@@ -87,30 +93,27 @@ function view(
       { item: Item; version: number; textUpdate: { kind: 'append'; text: string } }
     >
     itemVersion?: number
-    searching?: boolean
   } = {},
 ) {
   return (
     <Thread
-      items={items}
-      liveItems={identity.liveItems}
-      itemVersion={identity.itemVersion}
-      {...(identity.searching === undefined ? {} : { searching: identity.searching })}
-      running={running}
-      activeTurn={running ? { id: 'turn-2', startedAt: 0 } : undefined}
+      frameStore={
+        new ThreadFrameStore({
+          ...emptyThread,
+          items,
+          liveItems: identity.liveItems ?? emptyThread.liveItems,
+          itemVersion: identity.itemVersion ?? 0,
+          running,
+          activeTurn: running ? { id: 'turn-2', startedAt: 0 } : undefined,
+        })
+      }
       threadId={identity.threadId}
       revealRequest={identity.revealRequest}
-      plan={[]}
-      diff={undefined}
-      approvals={[]}
-      userInputs={[]}
-      reviews={[]}
       checkpoints={[]}
       onDecide={onDecide}
       onAnswerUserInput={onAnswerUserInput}
       onEditMessage={onEditMessage}
       onRevertCheckpoint={onRevertCheckpoint}
-      dependencies={dependencies}
     />
   )
 }
@@ -305,8 +308,75 @@ describe('streamed thread renders', () => {
 
     expect(rendered.container.querySelector('.activity')).toBe(stack)
     expect(rendered.getByRole('button', { name: 'Ran commands' })).toBeTruthy()
-    expect(rendered.getByText('Reviewing command results')).toBeTruthy()
+    const thinking = rendered.getByRole('button', { name: 'Thinking' })
+    expect(thinking.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    )
     expect(rendered.container.querySelector('.activity--working')).toBeNull()
+  })
+
+  it('does not wake a hidden document to update a live reasoning label', () => {
+    vi.useFakeTimers({ now: 1_500 })
+    let documentVisible = false
+    const visibility = vi
+      .spyOn(document, 'visibilityState', 'get')
+      .mockImplementation(() => (documentVisible ? 'visible' : 'hidden'))
+    try {
+      const reasoning = message({
+        id: 'reasoning-live',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: 'Reviewing the result',
+        createdAt: 1_000,
+      })
+      const rendered = render(view([reasoning]))
+
+      expect(rendered.getByRole('button', { name: 'Thinking' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(0)
+      act(() => vi.advanceTimersByTime(4_500))
+      expect(rendered.getByRole('button', { name: 'Thinking' })).toBeTruthy()
+
+      documentVisible = true
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      expect(rendered.getByRole('button', { name: 'Thought for 5s' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(1)
+      act(() => vi.advanceTimersByTime(1_000))
+      expect(rendered.getByRole('button', { name: 'Thought for 6s' })).toBeTruthy()
+
+      documentVisible = false
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      visibility.mockRestore()
+    }
+  })
+
+  it('updates hour-long reasoning labels only when the shown minute changes', () => {
+    vi.useFakeTimers({ now: 3_601_000 })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    try {
+      const reasoning = message({
+        id: 'reasoning-long',
+        turnId: 'turn-2',
+        type: 'reasoning',
+        role: undefined,
+        status: 'started',
+        text: 'Still working',
+        createdAt: 1_000,
+      })
+      const rendered = render(view([reasoning]))
+
+      expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
+      expect(vi.getTimerCount()).toBe(1)
+      act(() => vi.advanceTimersByTime(59_999))
+      expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
+      act(() => vi.advanceTimersByTime(1))
+      expect(rendered.getByRole('button', { name: 'Thought for 1h 1m' })).toBeTruthy()
+    } finally {
+      visibility.mockRestore()
+    }
   })
 
   it('keeps live narration close to the activity row that follows it', () => {
@@ -350,10 +420,30 @@ describe('streamed thread renders', () => {
       role: 'user',
       text: 'Run the checks',
     })
-    const rendered = render(view([user]))
+    const completedPhase = message({
+      id: 'phase-1',
+      turnId: 'turn-2',
+      type: 'tool_call',
+      role: undefined,
+      text: 'design:brief',
+    })
+    const rendered = render(view([user, completedPhase]))
     const rail = rendered.container.querySelector('.activity--working')
 
-    rendered.rerender(view([user], true, { searching: true }))
+    rendered.rerender(
+      view([
+        user,
+        completedPhase,
+        message({
+          id: 'search-1',
+          turnId: 'turn-2',
+          type: 'tool_call',
+          role: undefined,
+          status: 'started',
+          text: 'search files',
+        }),
+      ]),
+    )
 
     expect(rendered.container.querySelector('.activity--working')).toBe(rail)
     expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(

@@ -8,19 +8,9 @@ const request = {
 }
 
 afterEach(() => {
-  Reflect.deleteProperty(globalThis, 'harness')
+  delete (globalThis as { harness?: unknown }).harness
   vi.resetModules()
 })
-
-type TestHarness = { isDesktop: true }
-
-function installHarness<Harness extends TestHarness>(value: Harness): void {
-  Object.defineProperty(globalThis, 'harness', {
-    configurable: true,
-    writable: true,
-    value,
-  })
-}
 
 describe('preview capture bridge', () => {
   it('degrades when no native bridge exists', async () => {
@@ -33,7 +23,7 @@ describe('preview capture bridge', () => {
   it('delegates to the native bridge', async () => {
     const result = { status: 'completed' as const, requestId: request.requestId, screenshots: [] }
     const capturePreview = vi.fn().mockResolvedValue(result)
-    installHarness({ isDesktop: true, capturePreview })
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, capturePreview }
     const bridge = await import('./bridge.js')
 
     expect(bridge.canCapturePreview).toBe(true)
@@ -52,11 +42,11 @@ describe('attachment preview bridge', () => {
     }
     const pickFiles = vi.fn().mockResolvedValue([picked])
     const previewViewedImage = vi.fn()
-    installHarness({
+    ;(globalThis as { harness?: unknown }).harness = {
       isDesktop: true,
       pickFiles,
       previewViewedImage,
-    })
+    }
     const bridge = await import('./bridge.js')
 
     await expect(bridge.pickFiles()).resolves.toEqual([picked])
@@ -75,19 +65,75 @@ describe('attachment preview bridge', () => {
       .fn()
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(preview)
-    installHarness({ isDesktop: true, previewViewedImage })
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, previewViewedImage }
     const bridge = await import('./bridge.js')
 
     await expect(bridge.previewViewedImage(preview.path)).resolves.toEqual(preview)
     expect(previewViewedImage).toHaveBeenNthCalledWith(1, preview.path)
     expect(previewViewedImage).toHaveBeenNthCalledWith(2, preview.name)
   })
+
+  it('bounds old attachment metadata while keeping recent previews hot', async () => {
+    const bridgeModule = await import('./bridge.js')
+    const picked = Array.from(
+      { length: bridgeModule.MAX_CACHED_ATTACHMENT_PREVIEWS + 1 },
+      (_, index) => ({
+        path: `/work/reference-${index}.png`,
+        name: `reference-${index}.png`,
+        mediaType: 'image' as const,
+        previewUrl: `tastecode-attachment://preview/reference-${index}`,
+      }),
+    )
+    const pickFiles = vi.fn().mockResolvedValue(picked)
+    const previewViewedImage = vi.fn(async (reference: string) =>
+      picked.find((attachment) => attachment.path === reference),
+    )
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      pickFiles,
+      previewViewedImage,
+    }
+    vi.resetModules()
+    const bridge = await import('./bridge.js')
+
+    await bridge.pickFiles()
+    await expect(bridge.previewViewedImage(picked[0]!.path)).resolves.toEqual(picked[0])
+    await expect(bridge.previewViewedImage(picked.at(-1)!.path)).resolves.toEqual(picked.at(-1))
+    expect(previewViewedImage).toHaveBeenCalledOnce()
+    expect(previewViewedImage).toHaveBeenCalledWith(picked[0]!.path)
+  })
+})
+
+describe('dropped project folder bridge', () => {
+  it('delegates dropped files to the native folder validator', async () => {
+    const files = [new File([], 'first'), new File([], 'second')]
+    const droppedFolderPaths = vi.fn().mockResolvedValue(['/work/first', '/work/second'])
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      droppedFolderPaths,
+    }
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canDropProjectFolders).toBe(true)
+    await expect(bridge.droppedProjectFolderPaths(files)).resolves.toEqual([
+      '/work/first',
+      '/work/second',
+    ])
+    expect(droppedFolderPaths).toHaveBeenCalledWith(files)
+  })
+
+  it('ignores a drop when no desktop bridge exists', async () => {
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canDropProjectFolders).toBe(false)
+    await expect(bridge.droppedProjectFolderPaths([new File([], 'project')])).resolves.toEqual([])
+  })
 })
 
 describe('clipboard bridge', () => {
   it('delegates text writes to the native bridge', async () => {
     const writeClipboardText = vi.fn().mockResolvedValue(undefined)
-    installHarness({ isDesktop: true, writeClipboardText })
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, writeClipboardText }
     const bridge = await import('./bridge.js')
 
     await expect(bridge.writeClipboardText('copied text')).resolves.toBe(undefined)
@@ -99,11 +145,11 @@ describe('haptic bridge', () => {
   it('sends only the named native feedback pattern', async () => {
     const prepareHaptics = vi.fn()
     const performHaptic = vi.fn()
-    installHarness({
+    ;(globalThis as { harness?: unknown }).harness = {
       isDesktop: true,
       prepareHaptics,
       performHaptic,
-    })
+    }
     const bridge = await import('./bridge.js')
 
     bridge.prepareNativeHaptics()
@@ -117,7 +163,7 @@ describe('haptic bridge', () => {
 describe('external URL bridge', () => {
   it('delegates system-browser links to the desktop shell', async () => {
     const openExternal = vi.fn().mockResolvedValue(undefined)
-    installHarness({ isDesktop: true, openExternal })
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, openExternal }
     const bridge = await import('./bridge.js')
 
     await expect(bridge.openExternalUrl('https://example.com/')).resolves.toBeUndefined()
@@ -137,11 +183,11 @@ describe('local diagnostics bridge', () => {
   it('delegates the preference and redacted error source to the desktop', async () => {
     const setDiagnosticsEnabled = vi.fn().mockResolvedValue(true)
     const reportRendererError = vi.fn()
-    installHarness({
+    ;(globalThis as { harness?: unknown }).harness = {
       isDesktop: true,
       setDiagnosticsEnabled,
       reportRendererError,
-    })
+    }
     const bridge = await import('./bridge.js')
 
     await expect(bridge.setLocalDiagnosticsEnabled(true)).resolves.toBe(true)
@@ -169,11 +215,11 @@ describe('app update bridge', () => {
       listener(state)
       return () => undefined
     })
-    installHarness({
+    ;(globalThis as { harness?: unknown }).harness = {
       isDesktop: true,
       checkForUpdates,
       onUpdateState,
-    })
+    }
     const bridge = await import('./bridge.js')
     const listener = vi.fn()
 
@@ -181,5 +227,34 @@ describe('app update bridge', () => {
     bridge.onAppUpdateState(listener)
     expect(checkForUpdates).toHaveBeenCalledOnce()
     expect(listener).toHaveBeenCalledWith(state)
+  })
+})
+
+describe('native menu bridge', () => {
+  it('syncs shortcuts and forwards menu actions', async () => {
+    const setMenuShortcuts = vi.fn()
+    const onMenuAction = vi.fn((listener: (action: 'toggleSidebar') => void) => {
+      listener('toggleSidebar')
+      return () => undefined
+    })
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      setMenuShortcuts,
+      onMenuAction,
+    }
+    const bridge = await import('./bridge.js')
+    const shortcuts = (await import('./shortcuts.js')).createDefaultKeybindings()
+    const listener = vi.fn()
+
+    bridge.syncNativeMenuShortcuts(shortcuts)
+    bridge.onNativeMenuAction(listener)
+
+    expect(setMenuShortcuts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toggleSidebar: { key: 'b', primary: true },
+        toggleTerminal: { key: 'j', primary: true },
+      }),
+    )
+    expect(listener).toHaveBeenCalledWith('toggleSidebar')
   })
 })

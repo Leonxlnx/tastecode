@@ -13,7 +13,8 @@ import {
 import path from 'node:path'
 import type { ApiTool, ApiToolCall, ApiToolResult } from '@harness/adapter-api'
 import type { ApprovalMode, ApprovalRequest } from '@harness/contracts'
-import { killTree, spawnCli } from '@harness/proc'
+import { spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 import {
   assertPublicWorkspaceFile,
@@ -22,7 +23,6 @@ import {
   writableWorkspacePath,
 } from './api-workspace-paths.js'
 import { safeCommandEnvironment } from './safe-command-environment.js'
-import { propertiesWhen } from './properties-when.js'
 
 const MAX_READ_BYTES = 200_000
 const MAX_WRITE_BYTES = 1_000_000
@@ -43,7 +43,7 @@ const RunCommandInputSchema = z.object({
 })
 type RunCommandInput = z.infer<typeof RunCommandInputSchema>
 
-export const API_WORKSPACE_TOOLS: ApiTool[] = [
+const API_WORKSPACE_TOOLS: ApiTool[] = [
   {
     name: 'list_files',
     description: 'List one directory inside the active workspace. Secret files are omitted.',
@@ -108,18 +108,20 @@ export function createApiWorkspaceTools(workspacePath: string, approval: Approva
       if (currentApproval === 'full') return undefined
       if (call.name === 'write_file') {
         const input = WriteFileReviewInputSchema.parse(call.input)
+        const destination = writableWorkspacePath(workspace, input.path)
         return {
           kind: 'file_change',
-          path: displayPath(input.path),
+          path: displayPath(path.relative(workspace, destination)),
           reason: 'Modify a project file',
         }
       }
       if (call.name === 'run_command') {
         const input = RunCommandInputSchema.parse(call.input)
+        const directory = existingWorkspacePath(workspace, input.cwd, true)
         return {
           kind: 'command',
           command: commandLine(input),
-          cwd: displayPath(input.cwd),
+          cwd: displayPath(path.relative(workspace, directory) || '.'),
           reason: 'Run a project command',
         }
       }
@@ -143,6 +145,23 @@ async function executeWorkspaceTool(
       const directory = existingWorkspacePath(workspace, input.path, true)
       const entries = readdirSync(directory, { withFileTypes: true })
         .filter((entry) => !isSecretWorkspaceName(entry.name))
+        .filter((entry) => {
+          try {
+            // An innocent-looking alias must obey the target's policy as well.
+            const target = realpathSync(path.join(directory, entry.name))
+            const relative = path.relative(workspace, target)
+            if (
+              relative === '..' ||
+              relative.startsWith(`..${path.sep}`) ||
+              path.isAbsolute(relative)
+            )
+              return false
+            assertPublicWorkspaceFile(target)
+            return true
+          } catch {
+            return false
+          }
+        })
         .slice(0, 500)
         .map((entry) => `${entry.isDirectory() ? 'directory' : 'file'}\t${entry.name}`)
       return { content: entries.join('\n') || '(empty directory)' }
@@ -232,7 +251,10 @@ function runCommand(
       settled = true
       clearTimeout(timer)
       signal.removeEventListener('abort', abort)
-      result instanceof Error ? reject(result) : resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const append = (chunk: string) => {
       output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
@@ -241,11 +263,9 @@ function runCommand(
     // kill() ends the shim and leaves the real npm/node running — holding
     // locks in the worktree that later break its removal.
     const abort = () => {
-      killTree(child)
       finish(new DOMException('interrupted', 'AbortError'))
     }
     const timer = setTimeout(() => {
-      killTree(child)
       // Keep what the command printed. A timeout is exactly the case where
       // the agent most needs the output to work out what hung.
       finish({
@@ -265,7 +285,7 @@ function runCommand(
     child.on('close', (code) =>
       finish({
         content: JSON.stringify({ code, output }),
-        ...propertiesWhen(!(code === 0), () => ({ isError: true })),
+        ...(!(code === 0) ? { isError: true } : {}),
       }),
     )
     signal.addEventListener('abort', abort, { once: true })

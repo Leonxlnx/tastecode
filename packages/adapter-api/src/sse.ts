@@ -1,50 +1,20 @@
-import { JsonObjectSchema, type JsonObject, type JsonValue } from './json.js'
+import { readSseData } from '@harness/proc'
+import { isJsonObject, parseJsonValue, type JsonObject, type JsonValue } from './json.js'
 
 export type ServerSentEvent = JsonObject
 
 export async function* serverSentEvents(
   body: ReadableStream<Uint8Array>,
 ): AsyncGenerator<ServerSentEvent> {
-  const reader = body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      buffer += decoder.decode(value, { stream: !done })
-      const blocks = buffer.split(/\r?\n\r?\n/)
-      buffer = blocks.pop() ?? ''
-      if (done && buffer.trim()) {
-        blocks.push(buffer)
-        buffer = ''
-      }
-      for (const block of blocks) {
-        const data = block
-          .split(/\r?\n/)
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trimStart())
-          .join('\n')
-        if (data && data !== '[DONE]') {
-          // Keepalives and vendor extensions send non-JSON data lines; one of
-          // those aborting the whole stream mid-turn is worse than skipping it.
-          let value: JsonValue
-          try {
-            value = JSON.parse(data)
-          } catch {
-            continue
-          }
-          const event = JsonObjectSchema.safeParse(value)
-          if (event.success) yield event.data
-        }
-      }
-      if (done) break
+  for await (const data of readSseData(body)) {
+    if (!data || data === '[DONE]') continue
+    let value: JsonValue
+    try {
+      value = parseJsonValue(data)
+    } catch {
+      continue
     }
-  } finally {
-    // An early generator exit (throw, break in the consumer) must release the
-    // connection instead of leaking the socket. cancel(), not releaseLock():
-    // releasing the lock alone leaves the stream — and the fetch behind it —
-    // open until garbage collection.
-    await reader.cancel().catch(() => undefined)
+    if (isJsonObject(value)) yield value
   }
 }
 
@@ -59,9 +29,56 @@ export async function httpError(
   response: Response,
   redact: readonly string[] = [],
 ): Promise<string> {
-  const body = await response.text().catch(() => '')
-  const detail = redact
+  const { body, incomplete } = await readErrorBody(response)
+  let detail = redact
     .filter((secret) => secret.length > 0)
-    .reduce((text, secret) => text.replaceAll(secret, '[REDACTED]'), body.trim().slice(0, 400))
+    .toSorted((a, b) => b.length - a.length)
+    .reduce((text, secret) => text.replaceAll(secret, '[REDACTED]'), body)
+  if (incomplete) {
+    // The byte/time bound can split a credential. Hide any unfinished suffix
+    // before the final display limit can expose that prefix.
+    for (const secret of redact) {
+      for (let length = Math.min(secret.length - 1, detail.length); length > 0; length--) {
+        if (detail.endsWith(secret.slice(0, length))) {
+          detail = `${detail.slice(0, -length)}[REDACTED]`
+          break
+        }
+      }
+    }
+  }
+  detail = detail.trim().slice(0, 400)
   return `${vendor} request failed with HTTP ${response.status}${detail ? `: ${detail}` : ''}`
+}
+
+const MAX_ERROR_BODY_BYTES = 64 * 1024
+const ERROR_BODY_TIMEOUT_MS = 1_000
+
+async function readErrorBody(response: Response): Promise<{ body: string; incomplete: boolean }> {
+  if (!response.body) return { body: '', incomplete: false }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let body = ''
+  let bytes = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('error body timed out')), ERROR_BODY_TIMEOUT_MS)
+  })
+  try {
+    while (bytes < MAX_ERROR_BODY_BYTES) {
+      const { done, value } = await Promise.race([reader.read(), timeout])
+      if (done) return { body: body + decoder.decode(), incomplete: false }
+      const part = value.subarray(0, MAX_ERROR_BODY_BYTES - bytes)
+      bytes += part.byteLength
+      body += decoder.decode(part, { stream: true })
+    }
+  } catch {
+    // Public status remains useful when the body is stalled or broken.
+  } finally {
+    clearTimeout(timer)
+    // A custom response stream may never finish cancellation; do not let it
+    // keep an otherwise bounded error request alive.
+    void reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+  return { body, incomplete: true }
 }

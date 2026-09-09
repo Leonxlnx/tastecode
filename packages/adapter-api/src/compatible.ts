@@ -3,14 +3,13 @@ import {
   jsonArray as array,
   type JsonObject,
   type JsonValue,
-  JsonValueSchema,
   jsonNumber as number,
   jsonObject as object,
+  parseJsonValue,
   jsonString as string,
 } from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiToolCall, ApiTransport } from './runtime.js'
 import { httpError, serverSentEvents } from './sse.js'
-import { propertiesWhen } from './properties-when.js'
 
 export type CompatibleProvider = 'openrouter' | 'kimi' | 'zai' | 'custom'
 
@@ -58,8 +57,8 @@ export function createOpenAiCompatibleTransport(options: OpenAiCompatibleOptions
         messages: messages.map(toMessage),
         tools: tools.map(toTool),
         stream: true,
-        ...propertiesWhen(config.streamUsage, () => ({ stream_options: { include_usage: true } })),
-        ...propertiesWhen(config.toolStream, () => ({ tool_stream: true })),
+        ...(config.streamUsage ? { stream_options: { include_usage: true } } : {}),
+        ...(config.toolStream ? { tool_stream: true } : {}),
       }),
       signal,
     })
@@ -117,12 +116,12 @@ export function createOpenAiCompatibleTransport(options: OpenAiCompatibleOptions
     // the incomplete calls and let 'stop' report what happened.
     if (truncated) calls.clear()
 
-    for (const call of [...calls.values()]) {
+    for (const call of calls.values()) {
       if (!call.id || !call.name)
         throw new Error('OpenAI-compatible provider returned an invalid tool call')
       let input: JsonValue
       try {
-        input = JsonValueSchema.parse(JSON.parse(call.arguments))
+        input = parseJsonValue(call.arguments)
       } catch {
         throw new Error('OpenAI-compatible provider returned invalid tool arguments')
       }
@@ -151,7 +150,7 @@ export async function listOpenAiCompatibleModels(
   if (!response.ok) {
     throw new Error(`OpenAI-compatible model listing failed with HTTP ${response.status}`)
   }
-  const body = object(await response.json())
+  const body = object(parseJsonValue(await response.text()))
   return array(body.data)
     .map(object)
     .map((entry) => string(entry.id))
@@ -192,9 +191,11 @@ function toMessage(message: ApiMessage): JsonObject {
   return {
     role: 'assistant',
     content: message.content || null,
-    ...propertiesWhen(message.toolCalls.length, () => ({
-      tool_calls: message.toolCalls.map(toToolCall),
-    })),
+    ...(message.toolCalls.length
+      ? {
+          tool_calls: message.toolCalls.map(toToolCall),
+        }
+      : {}),
   }
 }
 

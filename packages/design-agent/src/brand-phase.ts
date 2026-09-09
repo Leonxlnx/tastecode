@@ -1,11 +1,11 @@
 import type { DesignBrief } from './brief.js'
 import { parseBrandSystem, type BrandSystem } from './brand.js'
 import { generatePalette, paletteColorRecords } from './palette.js'
-import { type BoundaryValue, record } from './parse.js'
+import { record } from './parse.js'
 
 const BRAND_PROTOCOL = `Return the final brand system as JSON only, without Markdown fences:
 
-{"version":1,"foundation":{"strategy":"preserve|extend|create","existingAssets":[],"assetActions":[{"asset":"...","action":"protect|preserve|evolve|retire|create","reason":"..."}],"lockedDecisions":[],"assumptions":[]},"creativeDirection":{"summary":"...","traits":[{"quality":"...","boundary":"not ..."}],"productiveTension":"...","signatureDevice":{"description":"...","status":"existing|candidate|validated","invariants":[]},"restraint":"...","avoid":[]},"paletteRecipe":{"themes":{"light":{"accentSeed":"#C1492E","neutralSeed":"#665A50","surfaceContrast":"quiet|defined"}},"locked":{"light":{"accent":"#C1492E"}}},"typefaces":[{"family":"...","source":"...","roles":[],"weights":[]}],"interfaceDirection":"...","imageDirection":{"summary":"...","subjects":[],"treatment":"...","avoid":[]},"motionDirection":{"summary":"...","principles":[],"avoid":[]},"voice":{"summary":"...","avoid":[]}}`
+{"version":1,"foundation":{"strategy":"preserve|extend|create","existingAssets":[],"assetActions":[{"asset":"...","action":"protect|preserve|evolve|retire|create","reason":"..."}],"lockedDecisions":[],"assumptions":[]},"creativeDirection":{"summary":"...","traits":[{"quality":"...","boundary":"not ..."}],"productiveTension":"...","signatureDevice":{"description":"...","status":"existing|candidate|validated","invariants":[]},"restraint":"...","avoid":[]},"paletteRecipe":{"themes":{"light":{"accentSeed":"#C1492E","neutralSeed":"#665A50","surfaceContrast":"quiet|defined"}},"locked":{"light":{"accent":"#C1492E"}}},"typefaces":[{"family":"...","source":"...","roles":[],"weights":[]}],"interfaceDirection":"...","imageDirection":{"summary":"...","subjects":[],"treatment":"...","avoid":[]},"motionDirection":{"summary":"...","principles":["Purpose and trigger; affected relationship; 160-220ms; strong ease-out"],"avoid":[]},"voice":{"summary":"...","avoid":[]}}`
 
 export function designBrandPrompt(brief: DesignBrief): string {
   return `You are running the Brand phase of TasteCode Design Mode.
@@ -24,7 +24,7 @@ Define an interface language that specifies the spacing rhythm, content widths, 
 
 For paletteRecipe, choose one evidence-based accent seed and one temperature-compatible neutral seed per required theme. Preserve explicit user or verified brand colors by assigning them under locked.light or locked.dark; never silently alter a locked value. The only valid locked role keys are canvas, surface, surfaceAlt, text, textMuted, divider, controlBorder, accent, accentHover, onAccent, accentText, and focusRing. Leave locked empty when no exact color is supplied. Do not invent descriptive role names. Do not map generic emotion labels to fixed hues. Prefer a restrained system such as one chromatic beacon, tinted neutral echo, material-derived anchor, image-host palette, or dark luminous direction when the brief supports it. Make the chosen accent visibly useful: plan it for the primary action, focus and selected states, and one recurring card, media, or section treatment. It must not survive only as a tiny icon or underline, and it must not turn every card into a different color. Avoid category-default navy-and-cyan AI, black-and-gold luxury, beige wellness, equal-saturation accents, automatic complementary colors, and decorative gradients without a concept. Generate light and dark independently; include dark only when the brief or product requires it, never by inverting light. The runtime derives semantic roles and validates opaque sRGB contrast. Treat 60/30/10 only as loose composition guidance: dominant surfaces, supporting structure, and a sparse accent, never as a pixel quota.
 
-Make motionDirection operational. Every principle must name a purpose, trigger, affected relationship, timing range, and easing character. Use motion for feedback, state change, spatial continuity, explanation, or status; reject motion that merely decorates. Favor direct responses around 100-300ms, transform and opacity, and strong ease-out curves such as cubic-bezier(0.23, 1, 0.32, 1). Reserve longer narrative movement for content that needs explanation, use spring behavior only for interruptible direct manipulation, and require a reduced-motion equivalent that preserves state and meaning. Ban universal fade-up choreography, transition: all, scale-from-zero entrances, perpetual floating, scroll-jacking, and hover-only information.
+Make motionDirection operational. Return each motionDirection.principles entry as one string, not an object. Every principle string must name a purpose, trigger, affected relationship, timing range, and easing character. Use motion for feedback, state change, spatial continuity, explanation, or status; reject motion that merely decorates. Favor direct responses around 100-300ms, transform and opacity, and strong ease-out curves such as cubic-bezier(0.23, 1, 0.32, 1). Reserve longer narrative movement for content that needs explanation, use spring behavior only for interruptible direct manipulation, and require a reduced-motion equivalent that preserves state and meaning. Ban universal fade-up choreography, transition: all, scale-from-zero entrances, perpetual floating, scroll-jacking, and hover-only information.
 
 You may inspect existing project brand files when they are relevant. Use an available design or brand skill when the session exposes one, but do not assume a particular provider, model, skill name, or private API. If no such skill is available, complete the same artifact from this prompt.
 
@@ -39,7 +39,7 @@ ${JSON.stringify(brief, null, 2)}
 
 export function parseBrandPhaseOutput(text: string): BrandSystem {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  const parsed: BoundaryValue = JSON.parse(fenced?.[1] ?? text)
+  const parsed: unknown = JSON.parse(fenced?.[1] ?? text)
   let value
   try {
     value = record(parsed, 'brand output')

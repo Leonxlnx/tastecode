@@ -1,7 +1,6 @@
 import type { DomainEvent, Item } from '@harness/contracts'
 import { JsonRpcValueSchema, type JsonRpcValue } from '@harness/proc'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 const JsonObjectSchema = z.record(z.string(), JsonRpcValueSchema)
 
@@ -135,9 +134,11 @@ export class CursorEventMapper {
           status: event.is_error ? 'failed' : 'completed',
           text: this.#message,
           createdAt: Date.now(),
-          ...propertiesWhen(!(event.duration_ms === undefined), () => ({
-            durationMs: event.duration_ms,
-          })),
+          ...(!(event.duration_ms === undefined)
+            ? {
+                durationMs: event.duration_ms,
+              }
+            : {}),
         },
       })
     }

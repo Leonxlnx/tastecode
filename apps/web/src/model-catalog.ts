@@ -2,12 +2,7 @@ import type { Model, ProviderId } from '@harness/contracts'
 import type { ProviderMark } from './provider-presentation.js'
 import { sourcePresentation } from './provider-presentation.js'
 
-export {
-  agentMark,
-  connectionMark,
-  providerDisplayName,
-  providerMark,
-} from './provider-presentation.js'
+export { agentMark, providerDisplayName, providerMark } from './provider-presentation.js'
 export type { ProviderMark } from './provider-presentation.js'
 
 export type ModelChoice = {
@@ -43,13 +38,27 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
   })
 }
 
-/** Curate the first-run picker without overriding a user's saved toggles.
- * Unknown models stay visible: vendors can add models at any time, so only
- * generations explicitly superseded in the current beta roster start hidden. */
+const DEFAULT_VISIBLE_MODELS = new Set([
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.3-codex-spark',
+  'claude-fable-5',
+  'fable',
+  'claude-opus-5',
+  'opus',
+  'claude-sonnet-5',
+  'sonnet',
+  'claude-haiku-4-5',
+  'haiku',
+  'claude-opus-4-8',
+  'grok-4.5',
+  'grok-4.6',
+])
+
+/** Curate the first-run picker without removing any model from Settings. */
 export function modelVisibleByDefault(model: Model): boolean {
-  const id = model.id.toLowerCase()
-  if (/^gpt-5\.(?:4|5)(?:$|-)/.test(id)) return false
-  return !['haiku', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6'].includes(id)
+  return DEFAULT_VISIBLE_MODELS.has(model.id.toLowerCase().replace(/\[1m\]$/, ''))
 }
 
 const REASONING_EFFORT_RANKS = new Map([
@@ -140,7 +149,7 @@ export function modelChoiceKey(source: string, modelId: string): string {
   return `${source}:${encodeURIComponent(modelId || 'automatic')}`
 }
 
-export function automaticModel(): Model {
+function automaticModel(): Model {
   return {
     id: '',
     // Only shown when a provider cannot enumerate its models at all — name
@@ -158,7 +167,7 @@ export function automaticModel(): Model {
  * provider's own source key: a custom id may already exist in the provider's
  * catalog, and the two must never share a choice key.
  */
-export function customModelSource(provider: ProviderId): string {
+function customModelSource(provider: ProviderId): string {
   return `custom:${provider}`
 }
 

@@ -1,7 +1,19 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { IndeterminateRequestError, Transport } from './transport.js'
+import {
+  IndeterminateRequestError,
+  parseIncomingFrame,
+  parseResponseFrame,
+  Transport,
+  TRANSPORT_LIMITS,
+} from './transport.js'
+import {
+  parseChannelData,
+  parseMethodResult,
+  parseProjectsListResult,
+} from './transport-validation.js'
+import { parseProvidersListResult } from './transport-startup-validation.js'
 
 const RequestFrameSchema = z.object({ id: z.string() })
 
@@ -17,6 +29,7 @@ class FakeSocket {
   static CONNECTING = 0
   readonly OPEN = 1
   readyState = 0
+  bufferedAmount = 0
   sent: string[] = []
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
@@ -66,6 +79,327 @@ const completedThreadEvent = (turnId: string) => ({
 })
 
 describe('Transport', () => {
+  it('bounds disconnected requests and expires them without sending on reconnect', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const pending = Array.from({ length: TRANSPORT_LIMITS.requests }, () =>
+      transport.request('projects.list', {}).catch((error: unknown) => error),
+    )
+    await expect(transport.request('projects.list', {})).rejects.toThrow('Too many requests')
+    await vi.advanceTimersByTimeAsync(TRANSPORT_LIMITS.requestTimeoutMs)
+    for (const error of await Promise.all(pending))
+      expect(error).toMatchObject({ message: expect.stringContaining('before it could be sent') })
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    expect(userFrames(socket)).toHaveLength(0)
+    transport.close()
+  })
+
+  it('marks a sent mutation as uncertain after its deadline and never repeats it', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const result = transport
+      .request('thread.rename', { threadId: 'thread', title: 'Saved?' })
+      .catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(TRANSPORT_LIMITS.requestTimeoutMs)
+    expect(await result).toBeInstanceOf(IndeterminateRequestError)
+    socket.close()
+    await vi.advanceTimersByTimeAsync(1)
+    const replacement = FakeSocket.instances.at(-1)!
+    expect(replacement).not.toBe(socket)
+    replacement.open()
+    expect(userFrames(replacement)).toHaveLength(0)
+    transport.close()
+  })
+
+  it('refuses a stalled socket before adding more buffered data', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    socket.bufferedAmount = TRANSPORT_LIMITS.bufferedBytes
+    await expect(
+      transport.request('thread.rename', { threadId: 'thread', title: 'name' }),
+    ).rejects.toThrow('connection is busy')
+    expect(userFrames(socket)).toHaveLength(0)
+    socket.bufferedAmount = 0
+    const pending = transport.request('projects.list', {}).catch(() => undefined)
+    expect(userFrames(socket)).toHaveLength(1)
+    transport.close()
+    await pending
+  })
+
+  it('bounds the retained bytes for requests waiting offline', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    const data = 'x'.repeat(34_952_536)
+    const first = transport
+      .request('attachments.saveImage', { mimeType: 'image/png', data })
+      .catch(() => undefined)
+    await expect(
+      transport.request('attachments.saveImage', { mimeType: 'image/png', data }),
+    ).rejects.toThrow('Too much data')
+    transport.close()
+    await first
+  })
+
+  it('drops a socket when push validation cannot keep up with its queue', () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.on('terminal.output', () => {})
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    for (let sequence = 1; sequence <= TRANSPORT_LIMITS.validationFrames + 1; sequence += 1) {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          channel: 'terminal.output',
+          sequence,
+          data: { terminalId: 'terminal', data: 'text' },
+        }),
+      })
+    }
+    expect(transport.state).toBe('reconnecting')
+    expect(socket.readyState).toBe(3)
+    transport.close()
+  })
+
+  it('bounds bytes retained while the push validator loads', () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.on('terminal.output', () => {})
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    socket.onmessage?.({
+      data: JSON.stringify({
+        channel: 'terminal.output',
+        sequence: 1,
+        data: { terminalId: 'terminal', data: 'x'.repeat(TRANSPORT_LIMITS.validationBytes / 2) },
+      }),
+    })
+    expect(transport.state).toBe('reconnecting')
+    transport.close()
+  })
+
+  it('bounds reply data awaiting validation and releases it when closed', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const calls = [0, 1].map(() =>
+      transport.request('thread.history', { threadId: 'thread' }).catch((error: unknown) => error),
+    )
+    const data = 'x'.repeat(34_952_536)
+    for (const frame of userFrames(socket)) {
+      const { id } = RequestFrameSchema.parse(JSON.parse(frame))
+      socket.onmessage?.({
+        data: JSON.stringify({ id, result: { events: [], running: false, ignored: data } }),
+      })
+    }
+    expect(transport.state).toBe('reconnecting')
+    transport.close()
+    for (const result of await Promise.all(calls)) {
+      expect(result).toBeInstanceOf(IndeterminateRequestError)
+    }
+  })
+
+  it('rejects malformed push envelopes before dispatch', () => {
+    expect(parseIncomingFrame('{')).toBeUndefined()
+    expect(
+      parseIncomingFrame(JSON.stringify({ channel: 'thread.event', data: {} })),
+    ).toBeUndefined()
+    expect(
+      parseIncomingFrame(JSON.stringify({ channel: 'thread.event', sequence: '1', data: {} })),
+    ).toBeUndefined()
+  })
+
+  it('validates streamed thread deltas without keeping unknown wire fields', () => {
+    expect(
+      parseChannelData('thread.event', {
+        threadId: 'thread-1',
+        seq: 4,
+        ignored: true,
+        event: {
+          type: 'item.delta',
+          turnId: 'turn-1',
+          itemId: 'item-1',
+          textDelta: 'next',
+          ignored: true,
+        },
+      }),
+    ).toEqual({
+      threadId: 'thread-1',
+      seq: 4,
+      event: {
+        type: 'item.delta',
+        turnId: 'turn-1',
+        itemId: 'item-1',
+        textDelta: 'next',
+      },
+    })
+    expect(() =>
+      parseChannelData('thread.event', {
+        threadId: 'thread-1',
+        event: { type: 'item.delta', turnId: 'turn-1', itemId: 'item-1' },
+      }),
+    ).toThrow()
+  })
+
+  it('reads successful response envelopes without keeping unknown wire fields', () => {
+    expect(parseResponseFrame({ id: '1', result: { ok: true }, ignored: true })).toEqual({
+      id: '1',
+      result: { ok: true },
+    })
+    expect(parseResponseFrame({ id: 1, result: {} })).toBeUndefined()
+    expect(parseResponseFrame({ id: '1' })).toBeUndefined()
+  })
+
+  it('reads canonical and legacy error envelopes without loading Zod', () => {
+    expect(parseResponseFrame({ id: '1', error: {} })).toEqual({ id: '1', error: {} })
+    expect(
+      parseResponseFrame({
+        id: '2',
+        error: { code: 'internal', message: '', detail: '', ignored: true },
+      }),
+    ).toEqual({ id: '2', error: { message: '', detail: '' } })
+    expect(parseResponseFrame({ id: '3', error: { message: '' } })).toBeUndefined()
+    expect(parseResponseFrame({ id: '4', error: { detail: 1 } })).toBeUndefined()
+  })
+
+  it('validates terminal output without keeping unknown wire fields', () => {
+    expect(
+      parseChannelData('terminal.output', {
+        terminalId: 'terminal-1',
+        data: 'output',
+        ignored: true,
+      }),
+    ).toEqual({ terminalId: 'terminal-1', data: 'output' })
+    expect(() => parseChannelData('terminal.output', { terminalId: '', data: 'output' })).toThrow()
+  })
+
+  it('validates a project list in place and rejects invalid nested rows', () => {
+    const result = {
+      projects: [
+        {
+          path: '/project',
+          name: 'Project',
+          pinned: false,
+          createdAt: 1,
+          sessions: [
+            {
+              id: 'thread-1',
+              title: 'Thread',
+              provider: 'codex',
+              createdAt: 2,
+              running: false,
+              pinned: true,
+              status: 'ready',
+              unread: true,
+              lifecycle: { state: 'active', keepActive: false, wokeAt: 3 },
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(parseProjectsListResult(result)).toBe(result)
+    expect(parseMethodResult('projects.list', result)).toBe(result)
+    expect(
+      parseProjectsListResult({
+        ...result,
+        projects: [
+          {
+            ...result.projects[0],
+            sessions: [{ ...result.projects[0]!.sessions[0], provider: 'unknown' }],
+          },
+        ],
+      }),
+    ).toBeUndefined()
+    expect(() =>
+      parseMethodResult('projects.list', {
+        ...result,
+        projects: [
+          {
+            ...result.projects[0],
+            sessions: [
+              {
+                ...result.projects[0]!.sessions[0],
+                lifecycle: { state: 'snoozed', snoozedAt: 3, wakeAt: -1 },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow()
+  })
+
+  it('validates the startup provider list without loading the full contract graph', () => {
+    const result = {
+      providers: [
+        {
+          id: 'codex' as const,
+          displayName: 'Codex',
+          installed: true,
+          version: '1.2.3',
+          auth: 'authenticated' as const,
+          capabilities: {
+            steer: true,
+            fork: true,
+            interrupt: true,
+            reasoningItems: true,
+            approvals: true,
+            userInput: true,
+            autoReview: true,
+            images: true,
+          },
+          setup: {
+            installUrl: 'https://example.com/install',
+            installCommand: 'npm install codex',
+            login: 'provider' as const,
+          },
+        },
+      ],
+    }
+
+    expect(parseProvidersListResult(result)).toBe(result)
+    expect(parseMethodResult('providers.list', result)).toBe(result)
+    for (const loginOpensBrowser of [true, false, undefined]) {
+      const candidate = {
+        providers: [
+          {
+            ...result.providers[0],
+            setup: { ...result.providers[0]!.setup, loginOpensBrowser },
+          },
+        ],
+      }
+      expect(parseProvidersListResult(candidate)).toBe(candidate)
+    }
+    for (const loginOpensBrowser of ['false', null]) {
+      expect(
+        parseProvidersListResult({
+          providers: [
+            {
+              ...result.providers[0],
+              setup: { ...result.providers[0]!.setup, loginOpensBrowser },
+            },
+          ],
+        }),
+      ).toBeUndefined()
+    }
+    expect(
+      parseProvidersListResult({
+        providers: [{ ...result.providers[0], capabilities: { steer: true } }],
+      }),
+    ).toBeUndefined()
+    expect(
+      parseProvidersListResult({
+        providers: [
+          { ...result.providers[0], setup: { installUrl: 'not a url', login: 'provider' } },
+        ],
+      }),
+    ).toBeUndefined()
+  })
+
   it('keeps cold-start retries connecting and caps their delay', () => {
     const transport = new Transport('ws://test')
     transport.connect()
@@ -202,10 +536,11 @@ describe('Transport', () => {
       }),
     })
     await checking
-    vi.runAllTimers()
+    vi.advanceTimersByTime(500)
 
     expect(FakeSocket.instances).toHaveLength(1)
     expect(transport.state).toBe('open')
+    transport.close()
   })
 
   it('backs off when a server accepts and immediately rejects the socket', () => {
@@ -253,7 +588,7 @@ describe('Transport', () => {
     await expect(pending).rejects.toThrow('The server reported an error.')
   })
 
-  it('applies a push sequence only once', () => {
+  it('applies a push sequence only once', async () => {
     const transport = new Transport('ws://test')
     const listener = vi.fn()
     transport.on('thread.event', listener)
@@ -269,7 +604,7 @@ describe('Transport', () => {
     socket.onmessage?.({ data: frame })
     socket.onmessage?.({ data: frame })
 
-    expect(listener).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(1))
   })
 
   it('reports a forward sequence gap so the owner can resync', () => {
@@ -328,7 +663,7 @@ describe('Transport', () => {
       }),
     })
 
-    expect(listener).toHaveBeenCalledTimes(2)
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledTimes(2))
     expect(listener).not.toHaveBeenCalledWith(completedThreadEvent('stale'))
   })
 
