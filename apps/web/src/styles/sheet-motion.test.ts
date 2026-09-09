@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const css = readFileSync(new URL('./popup-motion.css', import.meta.url), 'utf8')
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -12,16 +12,17 @@ function rule(selector: string): string {
 }
 
 describe('sheet motion', () => {
-  it('restores a centered sheet entry without reviving step-in', () => {
-    expect(rule('.sheet__panel')).toContain('animation: sheet-in 220ms var(--ease-out) both;')
-    expect(css).toContain('@keyframes sheet-in')
-    expect(css).toMatch(/@keyframes sheet-in \{[\s\S]*?translateY\(2px\) scale\(0\.97\);/s)
-    expect(css).not.toContain('animation: step-in')
+  it('gives sheets and pull-request dialogs the same short entrance', () => {
+    expect(rule('.sheet__panel,\n.pr-dialog')).toContain('transform 200ms var(--ease-out)')
+    expect(css).toMatch(
+      /@starting-style \{[\s\S]*?\.sheet__panel,[\s\S]*?translateY\(6px\) scale\(0\.97\);/s,
+    )
+    expect(css).not.toContain('@keyframes')
   })
 
-  it('swaps sheet motion to fade-in under reduced motion', () => {
+  it('removes dialog movement under reduced motion', () => {
     expect(css).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.sheet__scrim,[\s\S]*?\.sheet__panel \{[\s\S]*?animation: fade-in var\(--dur-fast\) var\(--ease-out\) both !important;/s,
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.sheet__panel,[\s\S]*?\.pr-dialog \{[\s\S]*?transform: none;[\s\S]*?transition: opacity 100ms var\(--ease-out\) !important;/s,
     )
   })
 })

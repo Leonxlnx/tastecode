@@ -62,6 +62,7 @@ describe('macOS integrated title bar', () => {
 
     const dragRegion = rule('.shell.is-macos .stagehead__drag-region')
     expect(dragRegion).toContain('position: absolute;')
+    expect(dragRegion).toContain('right: 116px;')
     expect(dragRegion).toContain('-webkit-app-region: drag;')
   })
 

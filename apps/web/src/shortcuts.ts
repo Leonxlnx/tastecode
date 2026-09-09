@@ -1,5 +1,3 @@
-import { z } from 'zod'
-
 export type Shortcut = {
   key: string
   primary?: boolean
@@ -219,17 +217,8 @@ export function shortcutFromKeyboardEvent(
 
 export function shortcutLabel(shortcut: Shortcut, macOS: boolean): string {
   const key = displayKey(shortcut.key)
-  if (macOS) {
-    return `${shortcut.primary ? '⌘' : ''}${shortcut.alt ? '⌥' : ''}${shortcut.shift ? '⇧' : ''}${key}`
-  }
-  return [
-    shortcut.primary ? 'Ctrl' : undefined,
-    shortcut.alt ? 'Alt' : undefined,
-    shortcut.shift ? 'Shift' : undefined,
-    key,
-  ]
-    .filter(Boolean)
-    .join('+')
+  const primary = shortcut.primary ? (macOS ? '⌘' : '⌃') : ''
+  return `${primary}${shortcut.alt ? '⌥' : ''}${shortcut.shift ? '⇧' : ''}${key}`
 }
 
 export function shortcutAria(shortcut: Shortcut | null | undefined): string | undefined {
@@ -275,9 +264,8 @@ export function readKeybindings(): Keybindings {
   if (!raw) return defaults
 
   try {
-    const parsed = StoredKeybindingsSchema.safeParse(JSON.parse(raw))
-    if (!parsed.success) return defaults
-    const saved = parsed.data.bindings
+    const saved = parseStoredKeybindings(JSON.parse(raw))
+    if (!saved) return defaults
     for (const definition of KEYBINDING_DEFINITIONS) {
       if (!Object.hasOwn(saved, definition.id)) continue
       const candidate = saved[definition.id]
@@ -355,17 +343,17 @@ function displayKey(key: string): string {
     case 'arrowright':
       return '→'
     case 'backspace':
-      return 'Backspace'
+      return '⌫'
     case 'delete':
-      return 'Delete'
+      return '⌦'
     case 'enter':
-      return 'Enter'
+      return '↵'
     case 'escape':
       return 'Esc'
     case 'space':
       return 'Space'
     case 'tab':
-      return 'Tab'
+      return '⇥'
     default:
       return key.length === 1 ? key.toUpperCase() : key.replace(/^f/, 'F')
   }
@@ -400,18 +388,52 @@ function ariaKey(key: string): string {
 
 const MODIFIER_KEYS = new Set(['alt', 'altgraph', 'control', 'meta', 'shift'])
 
-const ShortcutSchema = z
-  .object({
-    key: z.string().min(1).max(24),
-    primary: z.boolean().optional(),
-    shift: z.boolean().optional(),
-    alt: z.boolean().optional(),
-  })
-  .strict()
+function parseStoredKeybindings(value: unknown): Record<string, Shortcut | null> | undefined {
+  if (
+    !isRecord(value) ||
+    value['version'] !== 1 ||
+    !isRecord(value['bindings']) ||
+    Object.keys(value).some((key) => key !== 'version' && key !== 'bindings')
+  ) {
+    return undefined
+  }
 
-const StoredKeybindingsSchema = z
-  .object({
-    version: z.literal(1),
-    bindings: z.record(z.string(), ShortcutSchema.nullable()),
-  })
-  .strict()
+  const bindings: Record<string, Shortcut | null> = Object.create(null)
+  for (const [id, rawShortcut] of Object.entries(value['bindings'])) {
+    if (rawShortcut === null) {
+      bindings[id] = null
+      continue
+    }
+    const shortcut = parseStoredShortcut(rawShortcut)
+    if (!shortcut) return undefined
+    bindings[id] = shortcut
+  }
+  return bindings
+}
+
+function parseStoredShortcut(value: unknown): Shortcut | undefined {
+  if (
+    !isRecord(value) ||
+    Object.keys(value).some(
+      (key) => key !== 'key' && key !== 'primary' && key !== 'shift' && key !== 'alt',
+    )
+  ) {
+    return undefined
+  }
+  const key = value['key']
+  if (typeof key !== 'string' || key.length < 1 || key.length > 24) return undefined
+  for (const modifier of ['primary', 'shift', 'alt'] as const) {
+    const flag = value[modifier]
+    if (flag !== undefined && typeof flag !== 'boolean') return undefined
+  }
+  return {
+    key,
+    ...(value['primary'] === undefined ? {} : { primary: value['primary'] as boolean }),
+    ...(value['shift'] === undefined ? {} : { shift: value['shift'] as boolean }),
+    ...(value['alt'] === undefined ? {} : { alt: value['alt'] as boolean }),
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}

@@ -75,7 +75,9 @@ describe('beginInstall', () => {
     const target = { provider: 'acp' as const, agent: 'gemini' }
     await beginInstall(transport, target)
     await beginInstall(transport, target)
-    expect(transport.requests).toHaveLength(1)
+    expect(
+      transport.requests.filter((request) => request.method !== 'terminal.status'),
+    ).toHaveLength(1)
     expect(installState(installKey(target))?.phase).toBe('running')
   })
 
@@ -131,7 +133,9 @@ describe('beginLogin', () => {
     expect(loginKey(target)).not.toBe(installKey(target))
     expect(installState(installKey(target))?.phase).toBe('running')
     expect(installState(loginKey(target))?.phase).toBe('running')
-    expect(transport.requests).toHaveLength(2)
+    expect(
+      transport.requests.filter((request) => request.method !== 'terminal.status'),
+    ).toHaveLength(2)
   })
 
   it('reattaches instead of launching twice while a login is running', async () => {
@@ -139,7 +143,9 @@ describe('beginLogin', () => {
     const target = { provider: 'acp' as const, agent: 'kimi' }
     await beginLogin(transport, target, () => {})
     await beginLogin(transport, target, () => {})
-    expect(transport.requests).toHaveLength(1)
+    expect(
+      transport.requests.filter((request) => request.method !== 'terminal.status'),
+    ).toHaveLength(1)
   })
 
   it('opens the first auth URL the CLI prints, exactly once', async () => {

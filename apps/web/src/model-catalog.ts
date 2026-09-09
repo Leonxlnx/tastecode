@@ -2,12 +2,7 @@ import type { Model, ProviderId } from '@harness/contracts'
 import type { ProviderMark } from './provider-presentation.js'
 import { sourcePresentation } from './provider-presentation.js'
 
-export {
-  agentMark,
-  connectionMark,
-  providerDisplayName,
-  providerMark,
-} from './provider-presentation.js'
+export { agentMark, providerDisplayName, providerMark } from './provider-presentation.js'
 export type { ProviderMark } from './provider-presentation.js'
 
 export type ModelChoice = {
@@ -154,7 +149,7 @@ export function modelChoiceKey(source: string, modelId: string): string {
   return `${source}:${encodeURIComponent(modelId || 'automatic')}`
 }
 
-export function automaticModel(): Model {
+function automaticModel(): Model {
   return {
     id: '',
     // Only shown when a provider cannot enumerate its models at all — name
@@ -172,7 +167,7 @@ export function automaticModel(): Model {
  * provider's own source key: a custom id may already exist in the provider's
  * catalog, and the two must never share a choice key.
  */
-export function customModelSource(provider: ProviderId): string {
+function customModelSource(provider: ProviderId): string {
   return `custom:${provider}`
 }
 

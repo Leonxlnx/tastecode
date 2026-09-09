@@ -42,3 +42,13 @@ export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => Math.min(
   12000,
   Math.max(innerHeight, document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
 ))()`
+
+export const MAX_PREVIEW_HEIGHT = 12_000
+
+/** Page measurements cross a trust boundary before reaching native bitmap allocation. */
+export function previewCaptureHeight(value: unknown, viewportHeight: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error('Invalid preview page height')
+  }
+  return Math.min(MAX_PREVIEW_HEIGHT, Math.max(viewportHeight, Math.ceil(value)))
+}

@@ -1,8 +1,13 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
-import { CircleAlert, Gauge, RefreshCw } from 'lucide-react'
+import {
+  IconAlertCircle as CircleAlert,
+  IconGauge as Gauge,
+  IconRefresh as RefreshCw,
+} from '@tabler/icons-react'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
+import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
@@ -18,38 +23,78 @@ export function AccountLimits(props: {
   onRetry: (provider: ProviderId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
-  const headingId = useId()
-  const heading = useRef<HTMLHeadingElement>(null)
+  const detailsId = useId()
+  const summary = useRef<HTMLButtonElement>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [detailsMounted, setDetailsMounted] = useState(false)
   const visibleStates = props.states.filter((state) => limitSource(state)?.status !== 'unavailable')
+  const value = compactUsageValue(visibleStates)
 
-  useLayoutEffect(() => heading.current?.focus(), [])
+  useLayoutEffect(() => summary.current?.focus(), [])
 
   const retry = (provider: ProviderId) => {
-    heading.current?.focus()
+    summary.current?.focus()
     props.onRetry(provider)
+  }
+
+  const toggleDetails = () => {
+    if (!expanded) setDetailsMounted(true)
+    setExpanded(!expanded)
   }
 
   if (visibleStates.length === 0) return null
 
   return (
     <section
-      className="account-menu__usage"
-      aria-labelledby={headingId}
+      className={`account-menu__usage${expanded ? ' is-expanded' : ''}`}
+      aria-label="Plan limits"
       aria-busy={visibleStates.some((state) => state.status === 'loading')}
     >
-      <h2 ref={heading} className="account-menu__usage-head" id={headingId} tabIndex={-1}>
+      <button
+        ref={summary}
+        className="account-menu__usage-head"
+        type="button"
+        aria-label={`Usage, ${value}`}
+        aria-expanded={expanded}
+        aria-controls={expanded ? detailsId : undefined}
+        onClick={toggleDetails}
+      >
         <Gauge size={14} aria-hidden />
-        <span>Plan limits</span>
-      </h2>
+        <span>Usage</span>
+        <span className="account-menu__usage-value">{value}</span>
+      </button>
 
-      {visibleStates.map((state) => (
-        <LimitSource
-          key={state.provider}
-          state={state}
-          onRetry={() => retry(state.provider)}
-          onConsumeReset={props.onConsumeReset}
-        />
-      ))}
+      {detailsMounted ? (
+        <div
+          className="account-menu__usage-reveal"
+          id={detailsId}
+          data-open={expanded}
+          aria-hidden={!expanded}
+          inert={!expanded}
+          onTransitionEnd={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              event.propertyName === 'opacity' &&
+              !expanded
+            ) {
+              setDetailsMounted(false)
+            }
+          }}
+        >
+          <div className="account-menu__usage-reveal-clip">
+            <div className="account-menu__usage-details">
+              {visibleStates.map((state) => (
+                <LimitSource
+                  key={state.provider}
+                  state={state}
+                  onRetry={() => retry(state.provider)}
+                  onConsumeReset={props.onConsumeReset}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -212,7 +257,7 @@ function LimitRow(props: {
             </button>
           </span>
         ) : (
-          <span>{value}</span>
+          <span className="account-menu__limit-value">{value}</span>
         )}
       </div>
       {props.limit.valueLabel === undefined ? (
@@ -253,6 +298,23 @@ function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined
 
 function remaining(limit: Limit): number {
   return Math.min(100, Math.max(0, Math.round(100 - limit.usedPercent)))
+}
+
+function compactUsageValue(states: AccountLimitsState[]): string {
+  const limits = states.flatMap((state) => {
+    const source = limitSource(state)
+    return source?.status === 'ready' ? source.limits : []
+  })
+  const percentages = limits
+    .filter((limit) => limit.valueLabel === undefined)
+    .map((limit) => remaining(limit))
+
+  if (percentages.length > 0) return `${Math.min(...percentages)}% left`
+  const labelledValue = limits.find((limit) => limit.valueLabel !== undefined)?.valueLabel
+  if (labelledValue) return labelledValue
+  if (states.some((state) => state.status === 'loading')) return 'Checking…'
+  if (states.some((state) => state.status === 'error')) return 'Unavailable'
+  return 'View details'
 }
 
 /** A reset within the week reads as weekday and time; further out, as a date. */

@@ -1,29 +1,93 @@
+import type { ChannelName, DataOf, MethodName, ParamsOf, Push, ResultOf } from '@harness/contracts'
 import {
-  PreviewCaptureRequestSchema,
-  PushSchema,
-  ResponseSchema,
-  channels,
-  methods,
-  type ChannelName,
-  type DataOf,
-  type MethodName,
-  type ParamsOf,
-  type ResultOf,
-} from '@harness/contracts'
-import { z } from 'zod'
-import { canCapturePreview, capturePreview } from './bridge.js'
+  canCapturePreview,
+  cancelPreviewCapture,
+  capturePreview,
+  reportStartupMilestone,
+} from './bridge.js'
+import { parseStartupMethodResult } from './transport-startup-validation.js'
 
-const LegacyErrorResponseSchema = z.object({
-  id: z.string(),
-  error: z
-    .object({
-      message: z.string().min(1).optional(),
-      detail: z.string().min(1).optional(),
-    })
-    .passthrough(),
-})
+type WireError = { message?: string; detail?: string }
+type WireResponse = { id: string; result: unknown } | { id: string; error: WireError }
+type IncomingFrame = { kind: 'response'; data: WireResponse } | { kind: 'push'; data: Push }
+type TransportValidation = typeof import('./transport-validation.js')
 
-const WireResponseSchema = z.union([ResponseSchema, LegacyErrorResponseSchema])
+export function parseIncomingFrame(raw: string): IncomingFrame | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+
+  // Pushes dominate while an agent streams. Their `channel` key is disjoint
+  // from request responses, so do not make every delta fail response parsing
+  // before validating the schema it actually uses.
+  if (typeof value === 'object' && value !== null && 'channel' in value) {
+    const push = parsePushFrame(value)
+    return push ? { kind: 'push', data: push } : undefined
+  }
+  const response = parseResponseFrame(value)
+  return response ? { kind: 'response', data: response } : undefined
+}
+
+function parsePushFrame(value: object & Record<'channel', unknown>): Push | undefined {
+  const frame = value as Record<string, unknown>
+  if (
+    typeof frame['channel'] !== 'string' ||
+    typeof frame['sequence'] !== 'number' ||
+    !Number.isFinite(frame['sequence']) ||
+    !('data' in frame)
+  ) {
+    return undefined
+  }
+  return { channel: frame['channel'], sequence: frame['sequence'], data: frame['data'] }
+}
+
+export function parseResponseFrame(value: unknown): WireResponse | undefined {
+  if (!isRecord(value) || typeof value['id'] !== 'string') return undefined
+  if ('result' in value) return { id: value['id'], result: value['result'] }
+  const error = value['error']
+  if (!isRecord(error)) return undefined
+
+  const message = error['message']
+  const detail = error['detail']
+  const legacyError =
+    (message === undefined || (typeof message === 'string' && message.length > 0)) &&
+    (detail === undefined || (typeof detail === 'string' && detail.length > 0))
+  const canonicalError =
+    isWireErrorCode(error['code']) &&
+    typeof message === 'string' &&
+    (detail === undefined || typeof detail === 'string')
+  if (!legacyError && !canonicalError) return undefined
+
+  return {
+    id: value['id'],
+    error: {
+      ...(typeof message === 'string' ? { message } : {}),
+      ...(typeof detail === 'string' ? { detail } : {}),
+    },
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isWireErrorCode(value: unknown): boolean {
+  return (
+    value === 'bad_request' ||
+    value === 'forbidden' ||
+    value === 'not_found' ||
+    value === 'provider_unavailable' ||
+    value === 'stale_snapshot' ||
+    value === 'internal'
+  )
+}
+
+function asError(value: unknown): Error {
+  return value instanceof Error ? value : new Error('The server returned invalid data.')
+}
 
 /**
  * Client side of the wire protocol.
@@ -45,30 +109,38 @@ export interface Transport {
   request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>>
 }
 
-type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void }
-
-function parseChannelData<C extends ChannelName>(channel: C, value: unknown): DataOf<C> {
-  // SAFETY: The schema indexed by this same channel validates the value before it is returned.
-  return channels[channel].parse(value) as DataOf<C>
+type Pending = {
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+  sent: boolean
+  validating?: boolean
+  validationBytes?: number
 }
 
-function parseMethodResult<M extends MethodName>(method: M, value: unknown): ResultOf<M> {
-  // SAFETY: The result schema indexed by this same method validates the value before it is returned.
-  return methods[method].result.parse(value) as ResultOf<M>
-}
+export const TRANSPORT_LIMITS = {
+  requests: 512,
+  queuedBytes: 128 * 1024 * 1024,
+  bufferedBytes: 128 * 1024 * 1024,
+  validationFrames: 2_048,
+  validationBytes: 16 * 1024 * 1024,
+  responseValidationBytes: 128 * 1024 * 1024,
+  requestTimeoutMs: 120_000,
+} as const
 
 /** The server may have accepted a transmitted mutation before its reply was lost. */
 export class IndeterminateRequestError extends Error {
   override name = 'IndeterminateRequestError'
 }
 
-export class WebSocketTransport implements Transport {
+class WebSocketTransport implements Transport {
   #url: string
   #socket: WebSocket | undefined
   #pending = new Map<string, Pending>()
   /** Ids actually transmitted on the current socket — lost if it drops. */
   #inFlight = new Set<string>()
   #queue: Array<{ id: string | undefined; payload: string }> = []
+  #queuedBytes = 0
   #nextId = 1
   #lastSequence = 0
   #state: ConnectionState = 'closed'
@@ -77,6 +149,13 @@ export class WebSocketTransport implements Transport {
   #reconnectDelayMs = 0
   #hasOpened = false
   #healthCheck: Promise<void> | undefined
+  #validation: TransportValidation | undefined
+  #validationLoad: Promise<void> | undefined
+  #validationQueue: Array<{ source: WebSocket; channel: string; data: unknown }> = []
+  #responses = new Map<string, unknown>()
+  #validationBytes = 0
+  #responseValidationBytes = 0
+  #captures = new Set<string>()
 
   #stateListeners = new Set<(s: ConnectionState) => void>()
   #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
@@ -93,6 +172,10 @@ export class WebSocketTransport implements Transport {
   connect(): void {
     this.#closedByUs = false
     this.#clearReconnectTimer()
+    // React starts the transport from an effect, after the first screen can
+    // paint. Fetch the full protocol validators then instead of making their
+    // schemas and Zod block evaluation of the launch bundle.
+    this.#loadValidation()
     this.#open('connecting')
   }
 
@@ -100,15 +183,27 @@ export class WebSocketTransport implements Transport {
     this.#closedByUs = true
     this.#clearReconnectTimer()
     this.#socket?.close()
+    this.#cancelCaptures()
     // This instance is being discarded; nothing will ever flush the queue or
     // answer in-flight calls. A request left pending here kept its caller's
     // await hanging (and the composer stuck on Stop) until a reload.
     for (const pending of this.#pending.values()) {
-      pending.reject(new Error('Connection to the server was closed.'))
+      clearTimeout(pending.timer)
+      pending.reject(
+        pending.sent
+          ? new IndeterminateRequestError(
+              'Connection to the server was closed. The operation may have completed.',
+            )
+          : new Error('Connection to the server was closed.'),
+      )
     }
     this.#pending.clear()
     this.#inFlight.clear()
     this.#queue = []
+    this.#queuedBytes = 0
+    this.#validationQueue = []
+    this.#validationBytes = 0
+    this.#responseValidationBytes = 0
     this.#setState('closed')
   }
 
@@ -164,30 +259,110 @@ export class WebSocketTransport implements Transport {
       set = new Set()
       this.#channelListeners.set(channel, set)
     }
-    const dispatch = (data: unknown) => listener(parseChannelData(channel, data))
+    const dispatch = listener as (data: unknown) => void
     set.add(dispatch)
     return () => set.delete(dispatch)
   }
 
   request<M extends MethodName>(method: M, params: ParamsOf<M>): Promise<ResultOf<M>> {
+    if (this.#closedByUs) return Promise.reject(new Error('Connection to the server was closed.'))
+    if (this.#pending.size >= TRANSPORT_LIMITS.requests) {
+      return Promise.reject(
+        new Error('Too many requests are waiting for the server. Try again shortly.'),
+      )
+    }
     const id = String(this.#nextId++)
     const promise = new Promise<ResultOf<M>>((resolve, reject) => {
+      const finish = (result: ResultOf<M>) => {
+        if (!this.#pending.has(id)) return
+        this.#removePending(id)
+        resolve(result)
+      }
+      const fail = (error: Error) => {
+        this.#removePending(id)
+        reject(error)
+      }
       this.#pending.set(id, {
-        resolve: (value) => resolve(parseMethodResult(method, value)),
-        reject,
+        sent: false,
+        timer: setTimeout(() => {
+          const sent = this.#pending.get(id)?.sent
+          this.#removePending(id)
+          const message = sent
+            ? 'The server did not reply. The operation may have completed; refresh before trying again.'
+            : 'The request expired before it could be sent. Try again when connected.'
+          reject(sent ? new IndeterminateRequestError(message) : new Error(message))
+          if (sent && !this.#closedByUs) this.#restartSocket()
+        }, TRANSPORT_LIMITS.requestTimeoutMs),
+        resolve: (value) => {
+          if (method === 'projects.list') reportStartupMilestone('projects-frame-parsed')
+          const startupResult = parseStartupMethodResult(method, value)
+          if (startupResult !== undefined) {
+            if (method === 'projects.list') reportStartupMilestone('projects-validated')
+            finish(startupResult)
+            return
+          }
+          const validation = this.#validation
+          if (validation) {
+            try {
+              finish(validation.parseMethodResult(method, value))
+            } catch (error) {
+              fail(asError(error))
+            }
+            return
+          }
+          // Only this ID-indexed owner retains the raw reply. A callback per
+          // reply would keep it alive after timeout returned its byte budget.
+          this.#responses.set(id, value)
+          this.#loadValidation()
+        },
+        reject: fail,
       })
     })
-    this.#send(JSON.stringify({ id, method, params }), id)
+    try {
+      this.#send(JSON.stringify({ id, method, params }), id)
+    } catch (error) {
+      const pending = this.#pending.get(id)
+      this.#removePending(id)
+      pending?.reject(asError(error))
+    }
     return promise
+  }
+
+  #removePending(id: string): void {
+    const pending = this.#pending.get(id)
+    clearTimeout(pending?.timer)
+    this.#responseValidationBytes -= pending?.validationBytes ?? 0
+    this.#responses.delete(id)
+    this.#pending.delete(id)
+    this.#inFlight.delete(id)
+    const index = this.#queue.findIndex((entry) => entry.id === id)
+    if (index >= 0) {
+      const [entry] = this.#queue.splice(index, 1)
+      this.#queuedBytes -= entry!.payload.length * 2
+    }
   }
 
   #send(payload: string, id?: string): void {
     if (this.#socket?.readyState === WebSocket.OPEN) {
+      if (
+        (this.#socket.bufferedAmount ?? 0) + new TextEncoder().encode(payload).byteLength >
+        TRANSPORT_LIMITS.bufferedBytes
+      ) {
+        throw new Error('The connection is busy. Wait for it to recover before trying again.')
+      }
       this.#socket.send(payload)
-      if (id) this.#inFlight.add(id)
+      if (id) {
+        this.#inFlight.add(id)
+        const pending = this.#pending.get(id)
+        if (pending) pending.sent = true
+      }
       return
     }
+    if (this.#queuedBytes + payload.length * 2 > TRANSPORT_LIMITS.queuedBytes) {
+      throw new Error('Too much data is waiting for the server. Try again when connected.')
+    }
     this.#queue.push({ id, payload })
+    this.#queuedBytes += payload.length * 2
   }
 
   #open(state: ConnectionState): void {
@@ -207,9 +382,18 @@ export class WebSocketTransport implements Transport {
       // must not flush the queue into a connection whose replies are dropped.
       if (this.#socket !== socket) return
       this.#hasOpened = true
-      for (const entry of this.#queue.splice(0)) {
-        socket.send(entry.payload)
-        if (entry.id) this.#inFlight.add(entry.id)
+      const queued = this.#queue.splice(0)
+      this.#queuedBytes = 0
+      for (const entry of queued) {
+        try {
+          this.#send(entry.payload, entry.id)
+        } catch (error) {
+          if (entry.id) {
+            const pending = this.#pending.get(entry.id)
+            this.#removePending(entry.id)
+            pending?.reject(asError(error))
+          }
+        }
       }
       // State listeners may immediately issue resync reads. Announce the open
       // socket only after older queued mutations are on the wire, preserving
@@ -229,7 +413,7 @@ export class WebSocketTransport implements Transport {
       // briefly open before an auth close; resetting in onopen made that case
       // reconnect in a zero-delay loop forever.
       this.#reconnectDelayMs = 0
-      this.#receive(String(event.data))
+      this.#receive(String(event.data), socket)
     }
 
     socket.onclose = () => {
@@ -254,14 +438,21 @@ export class WebSocketTransport implements Transport {
   }
 
   #rejectInFlight(): void {
+    this.#cancelCaptures()
+    this.#validationQueue = []
+    this.#validationBytes = 0
     for (const id of this.#inFlight) {
       const call = this.#pending.get(id)
       if (call) {
-        this.#pending.delete(id)
         call.reject(new IndeterminateRequestError('Connection to the server was lost.'))
       }
     }
     this.#inFlight.clear()
+  }
+
+  #cancelCaptures(): void {
+    for (const id of this.#captures) void cancelPreviewCapture(id).catch(() => undefined)
+    this.#captures.clear()
   }
 
   #scheduleReconnect(immediate = false): void {
@@ -287,36 +478,39 @@ export class WebSocketTransport implements Transport {
     this.#reconnectTimer = undefined
   }
 
-  #receive(raw: string): void {
-    let value: unknown
-    try {
-      value = JSON.parse(raw)
-    } catch {
-      return
-    }
-
-    const response = WireResponseSchema.safeParse(value)
-    if (response.success) {
-      const message = response.data
+  #receive(raw: string, source: WebSocket): void {
+    const frame = parseIncomingFrame(raw)
+    if (!frame) return
+    if (frame.kind === 'response') {
+      const message = frame.data
       const call = this.#pending.get(message.id)
-      if (!call) return
-      this.#pending.delete(message.id)
-      this.#inFlight.delete(message.id)
+      if (!call || call.validating) return
+      call.validating = true
       if ('error' in message) {
         // A frame without a message must not surface as the literal string
         // "undefined" in the notice bar.
         const text = message.error.message || 'The server reported an error.'
         call.reject(new Error(message.error.detail ? `${text} (${message.error.detail})` : text))
       } else {
+        const bytes = raw.length * 2
+        if (this.#responseValidationBytes + bytes > TRANSPORT_LIMITS.responseValidationBytes) {
+          call.reject(
+            new IndeterminateRequestError(
+              'Too much server data is waiting to be checked. Refresh before trying again.',
+            ),
+          )
+          this.#restartSocket()
+          return
+        }
+        call.validationBytes = bytes
+        this.#responseValidationBytes += bytes
         call.resolve(message.result)
       }
       return
     }
 
-    const push = PushSchema.safeParse(value)
-    if (!push.success) return
-    const { channel, sequence } = push.data
-    const data = push.data.data
+    const { channel, sequence } = frame.data
+    const data = frame.data.data
 
     const expected = this.#lastSequence + 1
     if (this.#lastSequence !== 0 && sequence <= this.#lastSequence) {
@@ -331,18 +525,100 @@ export class WebSocketTransport implements Transport {
     }
     this.#lastSequence = sequence
 
+    const listeners = this.#channelListeners.get(channel)
+    const shouldCapture =
+      (channel === 'preview.captureRequested' || channel === 'preview.captureCancelled') &&
+      canCapturePreview
+    if (!shouldCapture && (!listeners || listeners.size === 0)) return
+
+    const validation = this.#validation
+    if (validation) {
+      this.#dispatchPush(validation, source, channel, data)
+      return
+    }
+    if (
+      this.#validationQueue.length >= TRANSPORT_LIMITS.validationFrames ||
+      this.#validationBytes + raw.length * 2 > TRANSPORT_LIMITS.validationBytes
+    ) {
+      this.#restartSocket()
+      return
+    }
+    this.#validationQueue.push({ source, channel, data })
+    this.#validationBytes += raw.length * 2
+    this.#loadValidation()
+  }
+
+  #dispatchPush(
+    validation: TransportValidation,
+    source: WebSocket,
+    channel: string,
+    data: unknown,
+  ): void {
+    // A validator chunk can finish loading after a health check replaced the
+    // socket. Do not let its queued frames leak into the new connection.
+    if (this.#socket !== source || this.#closedByUs) return
+
+    let parsedData: unknown
+    if (channel === 'preview.captureCancelled' && canCapturePreview) {
+      try {
+        const request = validation.parseChannelData('preview.captureCancelled', data)
+        this.#captures.delete(request.requestId)
+        void cancelPreviewCapture(request.requestId).catch(() => undefined)
+      } catch {
+        return
+      }
+    }
     if (channel === 'preview.captureRequested' && canCapturePreview) {
-      const request = PreviewCaptureRequestSchema.safeParse(data)
-      if (request.success) {
-        void capturePreview(request.data)
-          .then((result) => this.request('preview.captureResult', result))
+      const request = validation.parsePreviewCaptureRequest(data)
+      if (request) {
+        if (this.#captures.has(request.requestId)) return
+        this.#captures.add(request.requestId)
+        parsedData = request
+        void capturePreview(request)
+          .then((result) => {
+            if (this.#socket !== source || !this.#captures.delete(request.requestId)) return
+            return this.request('preview.captureResult', result)
+          })
           .catch(() => undefined)
+          .finally(() => this.#captures.delete(request.requestId))
       }
     }
 
-    for (const listener of this.#channelListeners.get(channel) ?? []) {
-      listener(data)
+    const listeners = this.#channelListeners.get(channel)
+    if (!listeners || listeners.size === 0) return
+    try {
+      parsedData ??= validation.parseChannelData(channel as ChannelName, data)
+    } catch {
+      return
     }
+    for (const listener of listeners) listener(parsedData)
+  }
+
+  #loadValidation(): void {
+    if (this.#validation || this.#validationLoad) return
+
+    this.#validationLoad = import('./transport-validation.js')
+      .then((validation) => {
+        this.#validation = validation
+        this.#validationLoad = undefined
+        const queued = this.#validationQueue.splice(0)
+        this.#validationBytes = 0
+        for (const push of queued) {
+          this.#dispatchPush(validation, push.source, push.channel, push.data)
+        }
+        // Timeout, disconnect and close remove entries from this map. The
+        // one loader continuation only parses replies that still have owners.
+        for (const [id, value] of this.#responses) {
+          this.#responses.delete(id)
+          this.#pending.get(id)?.resolve(value)
+        }
+      })
+      .catch((error: unknown) => {
+        this.#validationLoad = undefined
+        this.#validationQueue = []
+        this.#validationBytes = 0
+        for (const id of this.#responses.keys()) this.#pending.get(id)?.reject(asError(error))
+      })
   }
 
   #setState(state: ConnectionState): void {

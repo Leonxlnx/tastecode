@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
@@ -38,6 +38,18 @@ function limits(
   return <AccountLimits states={[state]} onRetry={onRetry} onConsumeReset={onConsumeReset} />
 }
 
+function openUsage() {
+  const trigger = screen.getByRole('button', { name: /^Usage,/ })
+  fireEvent.click(trigger)
+  return trigger
+}
+
+function dispatchTransitionEnd(element: Element, propertyName: string) {
+  const event = new Event('transitionend', { bubbles: true })
+  Object.defineProperty(event, 'propertyName', { configurable: true, value: propertyName })
+  element.dispatchEvent(event)
+}
+
 const resetLimit = {
   label: 'Rate limit resets',
   usedPercent: 0,
@@ -55,6 +67,70 @@ const resetState: AccountLimitsState = {
 }
 
 describe('account limits', () => {
+  it('keeps provider details behind one compact usage row', () => {
+    render(
+      <AccountLimits
+        states={[
+          {
+            status: 'ready',
+            provider: 'grok',
+            summary: summary([{ label: 'Weekly', usedPercent: 10 }]),
+          },
+          {
+            status: 'ready',
+            provider: 'codex',
+            summary: summary([{ label: 'Weekly', usedPercent: 12 }]),
+          },
+        ]}
+        onRetry={() => {}}
+      />,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Usage, 88% left' })
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('region', { name: 'Codex' })).toBeNull()
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('region', { name: 'Grok' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
+    const details = document.getElementById(trigger.getAttribute('aria-controls') ?? '')
+    expect(details?.getAttribute('data-open')).toBe('true')
+
+    fireEvent.click(trigger)
+    expect(details?.getAttribute('data-open')).toBe('false')
+    expect(details?.getAttribute('aria-hidden')).toBe('true')
+    expect(details?.hasAttribute('inert')).toBe(true)
+    expect(screen.queryByRole('region', { name: 'Codex' })).toBeNull()
+
+    act(() => dispatchTransitionEnd(details!, 'grid-template-rows'))
+    expect(details?.isConnected).toBe(true)
+
+    act(() => dispatchTransitionEnd(details!, 'opacity'))
+    expect(details?.isConnected).toBe(false)
+  })
+
+  it('reverses an unreveal without unmounting its details', () => {
+    render(
+      limits({
+        status: 'ready',
+        provider: 'codex',
+        summary: summary([{ label: 'Weekly', usedPercent: 30 }]),
+      }),
+    )
+
+    const trigger = openUsage()
+    const details = document.getElementById(trigger.getAttribute('aria-controls') ?? '')
+    fireEvent.click(trigger)
+    fireEvent.click(trigger)
+
+    expect(details?.getAttribute('data-open')).toBe('true')
+    act(() => dispatchTransitionEnd(details!, 'opacity'))
+    expect(details?.isConnected).toBe(true)
+    expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
+  })
+
   it('keeps ordered provider states and retries their source independently', () => {
     const onRetry = vi.fn()
     render(
@@ -93,6 +169,7 @@ describe('account limits', () => {
         onRetry={onRetry}
       />,
     )
+    openUsage()
 
     expect(
       screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent),
@@ -115,15 +192,17 @@ describe('account limits', () => {
     expect(within(cursor).getByRole('status').textContent).toContain('Last known values')
 
     const api = screen.getByRole('region', { name: 'API connection' })
-    expect(within(api).getByText('$8.24')).toBeTruthy()
+    const apiValue = within(api).getByText('$8.24')
+    expect(apiValue.classList.contains('account-menu__limit-value')).toBe(true)
     expect(within(api).getByRole('alert').textContent).toContain('Last known values')
   })
 
   it('distinguishes loading from an empty successful response', () => {
     const view = render(limits({ status: 'loading', provider: 'codex' }))
+    const trigger = openUsage()
     expect(screen.getByRole('status').textContent).toContain('Checking plan limits')
     expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
-    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
+    expect(document.activeElement).toBe(trigger)
     expect(screen.getByRole('region', { name: 'Plan limits' }).getAttribute('aria-busy')).toBe(
       'true',
     )
@@ -165,6 +244,7 @@ describe('account limits', () => {
       },
     }
     const view = render(limits(state))
+    openUsage()
 
     const codex = screen.getByRole('region', { name: 'Codex' })
     expect(within(codex).getByText('15% left')).toBeTruthy()
@@ -214,6 +294,7 @@ describe('account limits', () => {
         },
       }),
     )
+    openUsage()
 
     const epoch = screen.getByText('Epoch').closest('.account-menu__limit')
     const farFuture = screen.getByText('Far future').closest('.account-menu__limit')
@@ -236,8 +317,11 @@ describe('account limits', () => {
         onRetry,
       ),
     )
+    const trigger = openUsage()
 
-    expect(screen.getByText('58% left')).toBeTruthy()
+    expect(
+      within(screen.getByRole('region', { name: 'Claude Code' })).getByText('58% left'),
+    ).toBeTruthy()
     expect(screen.getByRole('alert').textContent).toContain('Last known values are still shown')
     expect(screen.getByRole('alert').textContent).toContain('Temporary connection failure')
     const retry = screen.getByRole('button', { name: 'Retry' })
@@ -245,7 +329,7 @@ describe('account limits', () => {
     expect(document.activeElement).toBe(retry)
     fireEvent.click(retry)
     expect(onRetry).toHaveBeenCalledOnce()
-    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
+    expect(document.activeElement).toBe(trigger)
 
     view.rerender(
       limits(
@@ -257,7 +341,7 @@ describe('account limits', () => {
         onRetry,
       ),
     )
-    expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Plan limits' }))
+    expect(document.activeElement).toBe(trigger)
   })
 
   it('hides Use on ordinary quota rows and does not consume on the first press', async () => {
@@ -280,6 +364,7 @@ describe('account limits', () => {
         onConsumeReset,
       ),
     )
+    openUsage()
 
     const weekly = screen.getByText('Weekly').closest('.account-menu__limit') as HTMLElement
     expect(within(weekly).queryByRole('button', { name: 'Use rate limit reset' })).toBeNull()
@@ -307,6 +392,7 @@ describe('account limits', () => {
     )
     onConsumeReset.mockRejectedValueOnce(new Error('Still failing'))
     render(limits(resetState, () => {}, onConsumeReset))
+    openUsage()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use rate limit reset' }))
     const confirm = screen.getByRole('button', { name: 'Confirm use rate limit reset' })
@@ -334,6 +420,7 @@ describe('account limits', () => {
   ] as const)('explains a %s consume outcome', async (outcome, message) => {
     const onConsumeReset = vi.fn(async () => ({ outcome }))
     render(limits(resetState, () => {}, onConsumeReset))
+    openUsage()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use rate limit reset' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm use rate limit reset' }))

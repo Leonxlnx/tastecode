@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useRef } from 'react'
-import { Pencil } from 'lucide-react'
+import { IconPencil as Pencil } from '@tabler/icons-react'
 import { Menu, MenuItem } from './Menu.js'
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -19,15 +19,17 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   }
 }
 
-function ContextMenuHarness() {
+function ContextMenuHarness(props: { targetName?: string; menuLabel?: string }) {
   const target = useRef<HTMLButtonElement>(null)
+  const targetName = props.targetName ?? 'Project row'
+  const menuLabel = props.menuLabel ?? 'Project options'
 
   return (
     <>
-      <button ref={target}>Project row</button>
+      <button ref={target}>{targetName}</button>
       <Menu
         drop="down"
-        label="Project options"
+        label={menuLabel}
         contextMenuTargetRef={target}
         trigger={() => <span>Open</span>}
       >
@@ -62,6 +64,191 @@ afterEach(() => {
 })
 
 describe('Menu', () => {
+  it('reuses a closing panel on rapid reopen without letting the old exit remove it', async () => {
+    render(
+      <Menu label="Options" trigger={() => <span>Open</span>}>
+        {(close) => <MenuItem title="Rename" icon={<Pencil size={14} />} onClick={close} />}
+      </Menu>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Options' })
+    fireEvent.click(trigger, { detail: 1 })
+    const menu = screen.getByRole('menu')
+    let finishExit: (() => void) | undefined
+    const finished = new Promise<void>((resolve) => {
+      finishExit = resolve
+    })
+    Object.defineProperty(menu, 'getAnimations', { value: () => [{ finished }] })
+    const bottom = menu.style.bottom
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(menu.isConnected).toBe(true)
+    expect(menu.hasAttribute('inert')).toBe(true)
+    expect(menu.style.bottom).toBe(bottom)
+    expect(document.activeElement).toBe(trigger)
+
+    fireEvent.click(trigger, { detail: 1 })
+    expect(screen.getByRole('menu')).toBe(menu)
+    expect(menu.hasAttribute('inert')).toBe(false)
+    await act(async () => finishExit?.())
+    expect(screen.getByRole('menu')).toBe(menu)
+
+    await act(async () => fireEvent.click(trigger, { detail: 1 }))
+    expect(menu.isConnected).toBe(false)
+  })
+
+  it('cleans up a closed panel even if the browser never finishes its animation', () => {
+    vi.useFakeTimers()
+    try {
+      render(
+        <Menu label="Options" trigger={() => <span>Open</span>}>
+          {(close) => <MenuItem title="Rename" icon={<Pencil size={14} />} onClick={close} />}
+        </Menu>,
+      )
+      const trigger = screen.getByRole('button', { name: 'Options' })
+      fireEvent.click(trigger, { detail: 1 })
+      const menu = screen.getByRole('menu')
+      Object.defineProperty(menu, 'getAnimations', {
+        value: () => [{ finished: new Promise<void>(() => {}) }],
+      })
+      fireEvent.click(trigger, { detail: 1 })
+      expect(menu.isConnected).toBe(true)
+      act(() => vi.advanceTimersByTime(250))
+      expect(menu.isConnected).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves full item text in native tooltips when compact menus truncate it', () => {
+    render(
+      <Menu label="Projects" trigger={() => <span>Open</span>}>
+        {() => (
+          <MenuItem
+            title="a-very-long-project-name"
+            detail="/workspace/a-very-long-project-name"
+            icon={<Pencil size={14} aria-hidden />}
+            onClick={() => undefined}
+          />
+        )}
+      </Menu>,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Projects' }))
+
+    expect(screen.getByTitle('a-very-long-project-name')).toBeTruthy()
+    expect(screen.getByTitle('/workspace/a-very-long-project-name')).toBeTruthy()
+  })
+
+  it('shares one delegated listener set across dormant context menus', () => {
+    const addEventListener = vi.spyOn(document, 'addEventListener')
+    render(
+      <>
+        <ContextMenuHarness targetName="First row" menuLabel="First options" />
+        <ContextMenuHarness targetName="Second row" menuLabel="Second options" />
+      </>,
+    )
+
+    for (const eventName of ['contextmenu', 'pointerdown', 'keydown']) {
+      expect(addEventListener.mock.calls.filter(([type]) => type === eventName)).toHaveLength(1)
+    }
+  })
+
+  it('opens a context-only menu without mounting a dormant trigger', () => {
+    const target = { current: null as HTMLButtonElement | null }
+    render(
+      <>
+        <button
+          ref={(element) => {
+            target.current = element
+          }}
+        >
+          Chat row
+        </button>
+        <Menu drop="down" label="Chat options" contextMenuTargetRef={target} contextMenuOnly>
+          {(close) => (
+            <MenuItem title="Rename" icon={<Pencil size={14} aria-hidden />} onClick={close} />
+          )}
+        </Menu>
+      </>,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Chat options' })).toBeNull()
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Chat row' }), {
+      clientX: 120,
+      clientY: 80,
+    })
+    expect(screen.getByRole('menu', { name: 'Chat options' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }))
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('warms enabled triggers on pointer and focus before the menu opens', () => {
+    const onTriggerIntent = vi.fn()
+    render(
+      <Menu label="Models" onTriggerIntent={onTriggerIntent} trigger={() => <span>Open</span>}>
+        {() => <div>Model list</div>}
+      </Menu>,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Models' })
+    fireEvent.pointerEnter(trigger)
+    fireEvent.focus(trigger)
+
+    expect(onTriggerIntent).toHaveBeenCalledTimes(2)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+
+  it('skips trigger warming for disabled and context-only menus', () => {
+    const disabledIntent = vi.fn()
+    const contextIntent = vi.fn()
+    const target = { current: null as HTMLButtonElement | null }
+
+    render(
+      <>
+        <Menu
+          label="Disabled models"
+          disabled
+          onTriggerIntent={disabledIntent}
+          trigger={() => <span>Open</span>}
+        >
+          {() => <div>Disabled</div>}
+        </Menu>
+        <button
+          ref={(element) => {
+            target.current = element
+          }}
+        >
+          Chat row
+        </button>
+        <Menu
+          drop="down"
+          label="Chat options"
+          onTriggerIntent={contextIntent}
+          contextMenuTargetRef={target}
+          contextMenuOnly
+        >
+          {(close) => (
+            <MenuItem title="Rename" icon={<Pencil size={14} aria-hidden />} onClick={close} />
+          )}
+        </Menu>
+      </>,
+    )
+
+    const disabled = screen.getByRole('button', { name: 'Disabled models' })
+    fireEvent.pointerEnter(disabled)
+    fireEvent.focus(disabled)
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Chat row' }), {
+      clientX: 120,
+      clientY: 80,
+    })
+
+    expect(disabledIntent).not.toHaveBeenCalled()
+    expect(contextIntent).not.toHaveBeenCalled()
+    expect(screen.getByRole('menu', { name: 'Chat options' })).toBeTruthy()
+  })
+
   it('escapes clipping containers and stays inside the viewport', () => {
     render(
       <div data-testid="clip">
@@ -123,7 +310,7 @@ describe('Menu', () => {
     expect(menu.style.left).toBe('139px')
   })
 
-  it('keeps a right-aligned panel fixed while its opening animation scales visual bounds', () => {
+  it('keeps a right-aligned panel fixed when visual and layout bounds differ', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 })
     vi.mocked(Element.prototype.getBoundingClientRect).mockImplementation(function (this: Element) {
       if (this.classList.contains('menutrigger')) return rect(350, 170, 70, 24)

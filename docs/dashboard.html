@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-08-23 main 6415744e</span>
+        <span class="meta">2026-09-09 main d6d34b15</span>
       </div>
     </div>
 
@@ -324,6 +324,15 @@
             <small>design acceptance, distribution, and launch proof</small>
           </div>
         </div>
+      </section>
+
+      <section id="audit-fixes">
+        <h2>Audit fixes delivered</h2>
+        <p class="sub">
+          All 19 audit findings and 9 prevention items are fixed on main. Local checks and macOS
+          runtime checks passed. Windows release checks remain required. See
+          <a href="./AUDIT-FIXES.md">the fixes and merged PRs</a>.
+        </p>
       </section>
 
       <section id="ready">
@@ -582,9 +591,9 @@
                 <span
                   >Search, menus, and focus
                   <span class="d"
-                    >compact 520 px cross-chat search with flat project and agent filters, stable
-                    result identity, keyboard-complete menus, trapped focus, and deterministic focus
-                    restoration across task changes</span
+                    >Readable command and search rows, a guided search empty state, responsive
+                    filters, stable result identity, keyboard-complete menus, trapped focus, and
+                    deterministic focus restoration across task changes</span
                   >
                 </span>
               </li>
@@ -634,10 +643,11 @@
               <li>
                 <i class="tick">✓</i>
                 <span
-                  >Guided sign-in
+                  >Expanded setup terminal
                   <span class="d"
-                    >browser opens itself, code chip, and a paste-ready one-time-code field writes
-                    only to the active provider login terminal</span
+                    >provider installs and sign-ins plus GitHub CLI install and login open the same
+                    live workspace terminal card; browser handoff, the code chip, and the
+                    one-time-code field stay scoped to the active setup terminal</span
                   >
                 </span>
               </li>
@@ -648,16 +658,17 @@
                   <span class="d"
                     >General, Profile, and Appearance lead the navigation; local display name and
                     validated avatar stay on this device; provider actions share a fixed right edge
-                    and empty action slots no longer double signed-in row height;
-                    background-prefetched limits open from the lifted account menu without a fresh
-                    request; clear dividers separate provider groups, while loading, unavailable,
-                    successful-empty, and failure states preserve usable values through Retry; roomy
-                    Data rows; app-level failures use a compact bottom-right notice without an
-                    accent rail; short-window scrolling, contained keyboard focus, and a scoped
-                    confirmation before resetting renderer preferences preserve projects, files,
-                    history, and credentials; legacy history and configuration move into TasteCode
-                    paths without overwriting existing TasteCode data; About and update checks point
-                    at the renamed <code>Leonxlnx/tastecode</code> repository;
+                    and empty action slots no longer double signed-in row height; clear labels and
+                    notes use 48 px base rows and 56 px provider rows; background-prefetched limits
+                    open from the lifted account menu without a fresh request; clear dividers
+                    separate provider groups, while loading, unavailable, successful-empty, and
+                    failure states preserve usable values through Retry; roomy Data rows; app-level
+                    failures use a compact bottom-right notice without an accent rail; short-window
+                    scrolling, contained keyboard focus, and a scoped confirmation before resetting
+                    renderer preferences preserve projects, files, history, and credentials; legacy
+                    history and configuration move into TasteCode paths without overwriting existing
+                    TasteCode data; About and update checks point at the renamed
+                    <code>Leonxlnx/tastecode</code> repository;
                     <a href="./screenshots/provider-density-after.png">compact provider</a>,
                     <a href="./screenshots/model-settings-no-search.png">model settings</a>,
                     <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
@@ -672,8 +683,9 @@
                 <span
                   >Appearance
                   <span class="d"
-                    >themes, fonts, accents, backdrops, and flat translucency previews for the
-                    frosted sidebar</span
+                    >large theme previews, a live code sample, and one compact editor for fonts,
+                    accents, backdrops, and frosted-sidebar translucency; shared flat controls,
+                    compact cards, and reversible popup motion keep the app consistent</span
                   >
                 </span>
               </li>

@@ -29,6 +29,7 @@ import {
 } from '@harness/proc'
 import { ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
+import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   mapMcpServerStatus,
   mapMcpStartupStatus,
@@ -82,6 +83,8 @@ import {
   type ToolRequestUserInputParams,
   type WarningNotification,
 } from './schemas.js'
+
+export { CODEX_CAPABILITIES } from './capabilities.js'
 
 /**
  * Tier 1 adapter: drives `codex app-server` over JSON-RPC.
@@ -157,17 +160,6 @@ function decodeBase64(value: string): string {
   }
 }
 
-export const CODEX_CAPABILITIES: Capabilities = {
-  steer: true,
-  fork: true,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: true,
-  userInput: true,
-  autoReview: true,
-  images: true,
-}
-
 export type StartOptions = {
   instructions?: string | undefined
   model?: string | undefined
@@ -195,7 +187,7 @@ export interface CodexRpc {
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
   notify(method: string, params?: unknown): void
-  dispose(): void
+  dispose(): void | Promise<void>
 }
 
 export type ProviderLimit = {
@@ -469,6 +461,7 @@ export type CodexAdapterEvents = {
 }
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
   #rpc: CodexRpc | undefined
   #started = false
@@ -526,6 +519,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       this.#spawn('codex', ['app-server', '--enable', 'default_mode_request_user_input'], {
         env: this.#mcpEnvironment,
       }),
+      'Codex',
+      {
+        onProtocolError: (error) => {
+          const turns = [...this.#activeTurns]
+          this.#activeTurns.clear()
+          for (const [threadId, turnId] of turns) {
+            this.emit('event', { type: 'thread.error', threadId, message: error.message })
+            this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+          }
+        },
+      },
     )
     this.#rpc = rpc
 
@@ -541,7 +545,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         { timeoutMs: CONTROL_READ_TIMEOUT_MS },
       )
     } catch (error) {
-      rpc.dispose()
+      await rpc.dispose()
       this.#rpc = undefined
       throw error
     }
@@ -1006,8 +1010,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     })
   }
 
-  dispose(): void {
-    this.#rpc?.dispose()
+  dispose(): Promise<void> {
+    const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#started = false
     this.#mcpStartup.clear()
@@ -1022,6 +1026,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#userInputs.clear()
     this.#mcpLogins.clear()
     this.removeAllListeners()
+    this.#processStop = stopped
+    return stopped
   }
 
   #call(method: string, params: object | undefined): Promise<JsonRpcValue | undefined> {

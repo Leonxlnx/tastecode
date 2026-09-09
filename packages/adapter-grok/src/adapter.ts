@@ -1,12 +1,22 @@
 import { EventEmitter } from 'node:events'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { JsonRpcValueSchema, killTree, readNdjson } from '@harness/proc'
+import type {
+  ApprovalMode,
+  AssistantPhase,
+  Capabilities,
+  DomainEvent,
+  Model,
+  Thread,
+} from '@harness/contracts'
+import { JsonRpcValueSchema, killTree, spawnOwned, readNdjson } from '@harness/proc'
 import { z } from 'zod'
+import { GROK_CAPABILITIES } from './capabilities.js'
+
+export { GROK_CAPABILITIES } from './capabilities.js'
 
 /**
  * Tier 3 adapter: drives xAI's Grok Build CLI (`grok`) in headless
@@ -47,17 +57,6 @@ import { z } from 'zod'
  */
 
 const SUPPORTED = '0.1'
-
-export const GROK_CAPABILITIES: Capabilities = {
-  // Print mode is one-shot: no steer, no fork, and permission prompts cannot
-  // be answered mid-turn — the launch mode decides them instead.
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: false,
-  images: true,
-}
 
 const IMAGE_MIME_TYPES = new Map<string, string>([
   ['.gif', 'image/gif'],
@@ -258,6 +257,7 @@ type SpawnFn = (
 ) => ChildProcessWithoutNullStreams
 
 export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: SpawnFn
   #workspacePath = ''
   #options: GrokStartOptions = {}
@@ -284,7 +284,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
 
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawn
+    this.#spawn = options.spawn ?? spawnOwned
   }
 
   get capabilities(): Capabilities {
@@ -391,7 +391,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     const args = grokTurnArgs(promptFile, this.#options, session)
 
     // A turn already in flight would be orphaned by the reassignment below.
-    if (this.#child) this.#stop(this.#child)
+    if (this.#child) await this.#stop(this.#child)
     let child: ChildProcessWithoutNullStreams
     try {
       child = this.#spawn(grokCommand(), args, {
@@ -450,9 +450,9 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         },
       })
     }
-    const finishItems = (status: 'completed' | 'failed') => {
+    const finishItems = (status: 'completed' | 'failed', messagePhase?: AssistantPhase) => {
       reasoning.complete(turnId, 'reasoning', this, status)
-      message.complete(turnId, 'message', this, status)
+      message.complete(turnId, 'message', this, status, messagePhase)
       for (const entry of tools.values()) completeTool(entry, status)
       tools.clear()
     }
@@ -468,7 +468,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         }
         const frame = parsed.data
         if (frame.type === 'thought' && frame.data !== undefined) {
-          message.complete(turnId, 'message', this)
+          message.complete(turnId, 'message', this, 'completed', 'commentary')
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           if (reasoning.push(frame.data, turnId, 'reasoning', this)) return
           return
@@ -480,7 +480,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         }
         if (frame.type === 'tool_call' && frame.toolCallId) {
           closeReasoning()
-          message.complete(turnId, 'message', this)
+          message.complete(turnId, 'message', this, 'completed', 'commentary')
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
           const name = frame.toolName ?? frame.title ?? 'tool'
           const itemType =
@@ -542,7 +542,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           if (terminal) return
           terminal = true
           if (this.#child === child) this.#announceProviderSessionId(frame.sessionId)
-          finishItems(frame.stopReason === 'end_turn' ? 'completed' : 'failed')
+          const status = frame.stopReason === 'end_turn' ? 'completed' : 'failed'
+          finishItems(status, status === 'completed' ? 'final_answer' : undefined)
           const usage = frame.usage
           if (usage) {
             const reasoningTokens = usage.reasoning_tokens ?? 0
@@ -582,64 +583,51 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         // usage snapshots and available_commands are noise between turns.
       },
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
+      {
+        onError: (error) => {
+          finishProcess(error.message)
+          void killTree(child)
+        },
+      },
     )
 
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
-    child.on('close', (code) => {
+    const finishProcess = (errorMessage: string) => {
       this.#cleanupPrompt(child)
       if (this.#child === child) this.#child = undefined
       if (terminal) return
       terminal = true
       const killReason = this.#killReasons.get(child)
-      if (killReason === 'interrupt') {
-        finishItems('failed')
-        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
-        return
+      if (!killReason) {
+        this.emit('event', { type: 'thread.error', threadId, message: errorMessage })
       }
-      if (killReason === 'silent') {
-        finishItems('failed')
-        return
-      }
-      // An exit without an end frame would otherwise look like a hang.
-      this.emit('event', {
-        type: 'thread.error',
-        threadId,
-        message: `grok exited with code ${code ?? 'unknown'} before reporting a result`,
-      })
       finishItems('failed')
-      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
-    })
+      if (killReason !== 'silent') {
+        this.emit('event', {
+          type: 'turn.completed',
+          turnId,
+          status: killReason === 'interrupt' ? 'interrupted' : 'failed',
+        })
+      }
+    }
+
+    // An exit without an end frame would otherwise look like a hang.
+    child.on('close', (code) =>
+      finishProcess(`grok exited with code ${code ?? 'unknown'} before reporting a result`),
+    )
 
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
-    child.on('error', (error) => {
-      this.#cleanupPrompt(child)
-      if (this.#child === child) this.#child = undefined
-      if (terminal) return
-      terminal = true
-      const killReason = this.#killReasons.get(child)
-      if (killReason === 'interrupt') {
-        finishItems('failed')
-        this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
-        return
-      }
-      if (killReason === 'silent') {
-        finishItems('failed')
-        return
-      }
-      this.emit('event', { type: 'thread.error', threadId, message: String(error) })
-      finishItems('failed')
-      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
-    })
+    child.on('error', (error) => finishProcess(String(error)))
 
     child.stdin.end()
     return turnId
   }
 
   async interrupt(): Promise<void> {
-    if (this.#child) this.#stop(this.#child, 'interrupt')
+    if (this.#child) await this.#stop(this.#child, 'interrupt')
   }
 
   /** `grok models` prints a default line plus an "Available models:" list. */
@@ -647,9 +635,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     return parseGrokModels(await this.#capture(['models']))
   }
 
-  dispose(): void {
-    if (this.#child) this.#stop(this.#child)
+  dispose(): Promise<void> {
+    const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
+    this.#processStop = stopped
+    return stopped
   }
 
   #announceProviderSessionId(id: string | undefined): void {
@@ -659,10 +649,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     this.emit('providerSessionId', id)
   }
 
-  #stop(child: ChildProcessWithoutNullStreams, reason: 'interrupt' | 'silent' = 'silent'): void {
+  #stop(
+    child: ChildProcessWithoutNullStreams,
+    reason: 'interrupt' | 'silent' = 'silent',
+  ): Promise<void> {
     if (reason === 'interrupt' || !this.#killReasons.has(child))
       this.#killReasons.set(child, reason)
-    killTree(child)
+    this.#processStop = killTree(child)
+    return this.#processStop
   }
 
   #cleanupPrompt(child: ChildProcessWithoutNullStreams): void {
@@ -693,11 +687,12 @@ function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promi
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error('grok did not answer in time'))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')
@@ -807,12 +802,12 @@ function readableGrokValue(value: unknown, depth = 0): string | undefined {
 export type GrokAccount = { signedIn: boolean }
 
 export async function grokAccount(): Promise<GrokAccount> {
-  return parseGrokAccount(await captureGrok(spawn, ['models']))
+  return parseGrokAccount(await captureGrok(spawnOwned, ['models']))
 }
 
 /** `grok logout` clears the CLI's own cached credentials. */
 export async function signOutGrok(): Promise<void> {
-  await captureGrok(spawn, ['logout'])
+  await captureGrok(spawnOwned, ['logout'])
 }
 
 /** One streamed text item (message or reasoning): started lazily on the
@@ -861,6 +856,7 @@ class StreamedItem {
     type: 'message' | 'reasoning',
     emitter: EventEmitter<GrokAdapterEvents>,
     status: 'completed' | 'failed' = 'completed',
+    phase?: AssistantPhase,
   ): void {
     if (!this.#started || this.#completed) return
     this.#completed = true
@@ -872,6 +868,7 @@ class StreamedItem {
         turnId,
         type,
         ...(type === 'message' ? { role: 'assistant' as const } : {}),
+        ...(type === 'message' && phase ? { phase } : {}),
         status,
         text: this.#text.trimEnd(),
         createdAt,

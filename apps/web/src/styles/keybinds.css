@@ -26,13 +26,12 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 36px;
-  margin-bottom: 24px;
-  padding: 0 11px;
-  background: var(--chrome-recessed);
+  min-height: 30px;
+  margin-bottom: 20px;
+  padding: 0 8px;
+  background: var(--bg);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
-  box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   transition:
     border-color var(--dur-fast) var(--ease-out),
@@ -76,22 +75,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  min-height: 64px;
-  padding: 9px 12px 9px 16px;
+  gap: 16px;
+  min-height: 48px;
+  padding: 6px 12px;
   transition: background var(--dur-fast) var(--ease-out);
 }
 
 .keybind-row:first-child {
-  border-radius: calc(var(--r-card) - 1px) calc(var(--r-card) - 1px) 0 0;
+  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
 }
 
 .keybind-row:last-child {
-  border-radius: 0 0 calc(var(--r-card) - 1px) calc(var(--r-card) - 1px);
+  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
 }
 
 .keybind-row:only-child {
-  border-radius: calc(var(--r-card) - 1px);
+  border-radius: calc(var(--r-lg) - 1px);
 }
 
 .keybind-row:hover,
@@ -135,7 +134,7 @@
 }
 
 .keybind-row__clear:is(:hover, :focus-visible) {
-  background: var(--chrome-raised);
+  background: var(--control-hover);
   border-color: var(--chrome-border);
   color: var(--text);
 }
@@ -143,14 +142,13 @@
 .keybind-recorder {
   display: inline-flex;
   min-width: 112px;
-  min-height: 32px;
+  min-height: 28px;
   align-items: center;
   justify-content: center;
-  padding: 5px 9px;
-  background: var(--chrome-raised);
+  padding: 3px 8px;
+  background: var(--control-hover);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
-  box-shadow: var(--chrome-shadow);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
@@ -159,8 +157,7 @@
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .keybind-recorder:is(:hover, :focus-visible) {
@@ -169,14 +166,9 @@
   color: var(--text);
 }
 
-.keybind-recorder:active {
-  box-shadow: var(--chrome-inset-shadow);
-  transform: translateY(1px);
-}
-
 .keybind-recorder[data-recording='true'] {
-  background: var(--composer-action-bg);
-  border-color: var(--composer-action-border);
+  background: var(--menu-hover);
+  border-color: var(--text-2);
   color: var(--text);
 }
 
@@ -186,6 +178,28 @@
   font-family: var(--font-mono);
   font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
+}
+
+.keybind-shortcut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  line-height: 1;
+}
+
+.keybind-shortcut__icon {
+  flex: none;
+  stroke-width: 1.8;
+}
+
+.keybind-shortcut__icon.is-delete {
+  transform: scaleX(-1);
+}
+
+.keybind-shortcut__key {
+  min-width: 0.65em;
+  text-align: center;
 }
 
 .keybind-row__message {
@@ -208,7 +222,7 @@
   padding: 2px 6px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   color: var(--text-3);
 }
 

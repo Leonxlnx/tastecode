@@ -144,6 +144,35 @@ describe('cross-session search', () => {
     expect(screen.getAllByRole('option', { name: /Fix regression/ })).toHaveLength(2)
   })
 
+  it('keeps hovered results and Enter activation in sync', async () => {
+    vi.useFakeTimers()
+    const request = vi.fn().mockResolvedValueOnce({ results: [RESULT], nextCursor: null })
+    const onSelect = vi.fn()
+    render(
+      <SessionSearch
+        transport={new TestTransport((method, params) => request(method, params))}
+        projects={PROJECTS}
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    )
+
+    const search = screen.getByLabelText('Search every chat')
+    fireEvent.change(search, { target: { value: 'regres' } })
+    await act(async () => {
+      vi.advanceTimersByTime(80)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const hovered = screen.getByRole('option', { name: /Fix regression/ })
+    fireEvent.mouseEnter(hovered)
+    fireEvent.keyDown(search, { key: 'Enter' })
+
+    expect(hovered.getAttribute('aria-selected')).toBe('true')
+    expect(onSelect).toHaveBeenCalledWith('thread-1', 'turn-2')
+  })
+
   it('shows pending state immediately and ignores a stale response', async () => {
     vi.useFakeTimers()
     let resolveFirst:
