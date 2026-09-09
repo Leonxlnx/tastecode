@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 
 export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'kill'>
 
+export const OWNED_PROCESS_SHUTDOWN_MESSAGE = 'harness:shutdown'
+
 const ownedUnixProcessGroups = new WeakMap<object, number>()
 const ownedLinuxPtySessions = new WeakMap<object, Promise<LinuxPtySessionOwnership>>()
 const PTY_SESSION_SETUP_TIMEOUT_MS = 250
