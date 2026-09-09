@@ -108,18 +108,20 @@ export function createApiWorkspaceTools(workspacePath: string, approval: Approva
       if (currentApproval === 'full') return undefined
       if (call.name === 'write_file') {
         const input = WriteFileReviewInputSchema.parse(call.input)
+        const destination = writableWorkspacePath(workspace, input.path)
         return {
           kind: 'file_change',
-          path: displayPath(input.path),
+          path: displayPath(path.relative(workspace, destination)),
           reason: 'Modify a project file',
         }
       }
       if (call.name === 'run_command') {
         const input = RunCommandInputSchema.parse(call.input)
+        const directory = existingWorkspacePath(workspace, input.cwd, true)
         return {
           kind: 'command',
           command: commandLine(input),
-          cwd: displayPath(input.cwd),
+          cwd: displayPath(path.relative(workspace, directory) || '.'),
           reason: 'Run a project command',
         }
       }
@@ -143,6 +145,23 @@ async function executeWorkspaceTool(
       const directory = existingWorkspacePath(workspace, input.path, true)
       const entries = readdirSync(directory, { withFileTypes: true })
         .filter((entry) => !isSecretWorkspaceName(entry.name))
+        .filter((entry) => {
+          try {
+            // An innocent-looking alias must obey the target's policy as well.
+            const target = realpathSync(path.join(directory, entry.name))
+            const relative = path.relative(workspace, target)
+            if (
+              relative === '..' ||
+              relative.startsWith(`..${path.sep}`) ||
+              path.isAbsolute(relative)
+            )
+              return false
+            assertPublicWorkspaceFile(target)
+            return true
+          } catch {
+            return false
+          }
+        })
         .slice(0, 500)
         .map((entry) => `${entry.isDirectory() ? 'directory' : 'file'}\t${entry.name}`)
       return { content: entries.join('\n') || '(empty directory)' }
@@ -232,8 +251,10 @@ function runCommand(
       settled = true
       clearTimeout(timer)
       signal.removeEventListener('abort', abort)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const append = (chunk: string) => {
       output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
@@ -242,11 +263,9 @@ function runCommand(
     // kill() ends the shim and leaves the real npm/node running — holding
     // locks in the worktree that later break its removal.
     const abort = () => {
-      killTree(child)
       finish(new DOMException('interrupted', 'AbortError'))
     }
     const timer = setTimeout(() => {
-      killTree(child)
       // Keep what the command printed. A timeout is exactly the case where
       // the agent most needs the output to work out what hung.
       finish({
