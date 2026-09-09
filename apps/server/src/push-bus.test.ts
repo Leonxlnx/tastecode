@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { PushBus, type PushSocket } from './push-bus.js'
+import { MAX_PUSH_BUFFER_BYTES, PushBus, type PushSocket } from './push-bus.js'
 
 /**
  * The push path had no tests at all, and its failure mode is the worst kind:
@@ -41,6 +41,42 @@ const sequences = (client: FakeSocket): number[] =>
   client.sent.map((frame) => SequencedFrameSchema.parse(JSON.parse(frame)).sequence)
 
 describe('PushBus', () => {
+  it('allows a large history reply on a healthy socket without moving the push sequence', () => {
+    const bus = new PushBus<FakeSocket>()
+    const client = socket()
+    bus.add(client)
+    const reply = JSON.stringify({
+      id: 1,
+      result: { history: 'x'.repeat(MAX_PUSH_BUFFER_BYTES + 1) },
+    })
+    bus.reply(client, reply)
+    expect(client.terminated).toBe(0)
+    expect(client.sent).toEqual([reply])
+    client.sent.length = 0
+    bus.broadcast('skills.changed', { provider: 'codex', projectPath: '/repo' })
+    expect(sequences(client)).toEqual([1])
+  })
+  it('drops a stalled client on every send path while healthy clients keep receiving', () => {
+    for (const kind of ['targeted', 'broadcast', 'recorded', 'reply'] as const) {
+      const bus = new PushBus<FakeSocket>()
+      const slow = socket()
+      Object.defineProperty(slow, 'bufferedAmount', { value: MAX_PUSH_BUFFER_BYTES })
+      const healthy = socket()
+      bus.add(slow)
+      if (kind === 'targeted')
+        bus.send(slow, 'skills.changed', { provider: 'codex', projectPath: '/repo' })
+      else if (kind === 'broadcast')
+        bus.broadcast('skills.changed', { provider: 'codex', projectPath: '/repo' })
+      else if (kind === 'reply') bus.reply(slow, '{"id":1,"result":{}}')
+      else bus.broadcastRecordedEvent('thread.event', 'task', '{}', 1)
+      expect(slow.terminated).toBe(1)
+      expect(slow.sent).toHaveLength(0)
+      bus.add(healthy)
+      bus.broadcast('skills.changed', { provider: 'codex', projectPath: '/repo' })
+      expect(healthy.sent).toHaveLength(1)
+      expect(slow.terminated).toBe(1)
+    }
+  })
   it('numbers every connection from one, independently', () => {
     const bus = new PushBus()
     const first = socket()

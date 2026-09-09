@@ -1129,7 +1129,8 @@ describe('durable turn timing', () => {
           (event): event is Extract<DomainEvent, { type: 'turn.started' }> =>
             event.type === 'turn.started',
         )
-      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 7_000, 9_000])
+      // A disposed session may not create a new history entry or timing anchor.
+      expect(starts.map(({ turn }) => turn.createdAt)).toEqual([2_000, 7_000])
     } finally {
       now.mockRestore()
       await orchestrator.disposeAll()
@@ -3794,11 +3795,13 @@ describe('several sessions at once', () => {
     )
 
     const sending = orchestrator.submitTurn(thread.id, 'not after panic')
+    const cancelled = expect(sending).rejects.toThrow('turn cancelled by panic stop')
     await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true))
-    await orchestrator.panicStop()
+    const stopping = orchestrator.panicStop()
     release({ commit: 'checkpoint', clean: true })
 
-    await expect(sending).rejects.toThrow('turn cancelled by panic stop')
+    await cancelled
+    await stopping
     expect(sessions[0]!.sent).toEqual([])
   })
 
@@ -4550,6 +4553,41 @@ describe('rolling a session back', () => {
     expect(checkpoints[0]?.label).toBe('change the file')
   })
 
+  it('refuses restore through another task while the shared checkout is busy', async () => {
+    const { orchestrator, sessions } = harness()
+    const first = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(first.id, 'save original')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const point = orchestrator.checkpoints(first.id)[0]!
+    const nested = path.join(repo, 'nested')
+    mkdirSync(nested)
+    const second = await orchestrator.startThread('codex', nested)
+    sessions[1]!.turnIds.push('busy-turn')
+    await orchestrator.sendTurn(second.id, 'working')
+    await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    sessions[1]!.emit(turnStarted(second.id, 'busy-turn'))
+    writeFileSync(path.join(repo, 'file.txt'), 'second task work\n')
+    await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    await expect(orchestrator.undoRestore(first.id, 'old-token')).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    await expect(orchestrator.undoTurnChanges(first.id, 'turn', 'patch')).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    await expect(orchestrator.switchBranch(repo, 'main')).rejects.toThrow(
+      /running turns in this checkout/,
+    )
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('second task work\n')
+    sessions[1]!.emit({ type: 'turn.completed', turnId: 'busy-turn', status: 'completed' })
+    await orchestrator.restoreCheckpoint(first.id, point.id)
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    await orchestrator.disposeAll()
+  })
+
   it('undoes only the patch from an edit block and keeps the conversation', async () => {
     const { orchestrator, sessions, store } = harness()
     const thread = await orchestrator.startThread('codex', repo)
@@ -4586,10 +4624,12 @@ describe('rolling a session back', () => {
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
     sessions[0]!.emit(message('did the first thing'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
     await orchestrator.sendTurn(thread.id, 'second task')
     writeFileSync(path.join(repo, 'file.txt'), 'the agent went the wrong way\n')
     sessions[0]!.emit(message('did the wrong thing'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
     const second = orchestrator.checkpoints(thread.id)[1]!
     await orchestrator.restoreCheckpoint(thread.id, second.id)
@@ -4610,6 +4650,7 @@ describe('rolling a session back', () => {
     await orchestrator.sendTurn(thread.id, 'a task')
     writeFileSync(path.join(repo, 'file.txt'), 'work the user might want\n')
     sessions[0]!.emit(message('work the user might want'))
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -4688,9 +4729,10 @@ describe('rolling a session back', () => {
   })
 
   it('refuses to undo a restore while a turn is still taking its checkpoint', async () => {
-    const { orchestrator } = harness()
+    const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -4716,6 +4758,7 @@ describe('rolling a session back', () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     writeFileSync(path.join(repo, 'file.txt'), 'work to restore later\n')
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -4746,9 +4789,10 @@ describe('rolling a session back', () => {
   })
 
   it('refuses a second restore while the first restore is still in progress', async () => {
-    const { orchestrator } = harness()
+    const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
@@ -4770,7 +4814,7 @@ describe('rolling a session back', () => {
         'cannot restore while another restore is running',
       )
     } finally {
-      release({ commit: 'replaced', clean: false })
+      release({ commit: first.commit, clean: false })
       await restoring
     }
     expect(await history).toEqual([])
@@ -4780,6 +4824,7 @@ describe('rolling a session back', () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
@@ -4797,17 +4842,18 @@ describe('rolling a session back', () => {
       )
       expect(sessions[0]!.sent).toEqual(['first task'])
     } finally {
-      release({ commit: 'replaced', clean: false })
+      release({ commit: first.commit, clean: false })
       await restoring
     }
   })
 
   it('refuses restore and undo while a diff rejection is still in progress', async () => {
     const trees = path.join(path.dirname(repo), 'trees')
-    const { orchestrator, store } = harness(trees)
+    const { orchestrator, store, sessions } = harness(trees)
     const thread = await orchestrator.startThread('codex', repo, { isolate: true })
     const worktree = store.thread(thread.id)!.worktreePath!
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     writeFileSync(path.join(worktree, 'file.txt'), 'work to restore later\n')
     const first = orchestrator.checkpoints(thread.id)[0]!
     const { undo } = await orchestrator.restoreCheckpoint(thread.id, first.id)
@@ -4844,9 +4890,10 @@ describe('rolling a session back', () => {
   })
 
   it('refuses hunk and file rejection while a checkpoint restore is still in progress', async () => {
-    const { orchestrator } = harness()
+    const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
     const first = orchestrator.checkpoints(thread.id)[0]!
 
     let release = (_value: checkpoint.Snapshot) => {}
@@ -4865,7 +4912,7 @@ describe('rolling a session back', () => {
         orchestrator.reviewFile(thread.id, 'version', 'file.txt', 'reject'),
       ).rejects.toThrow('Refresh the diff and try again.')
     } finally {
-      release({ commit: 'replaced', clean: false })
+      release({ commit: first.commit, clean: false })
       await restoring
     }
   })
@@ -4894,6 +4941,42 @@ function text(entries: Array<{ event: DomainEvent }>): Array<string | undefined>
 }
 
 describe('overnight race pins', () => {
+  it('ignores late events after the task row was deleted', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.close(thread.id)
+    store.deleteThread(thread.id)
+    orchestrator.forgetDeletedThread(thread.id)
+    expect(() =>
+      sessions[0]!.emit({ type: 'thread.error', threadId: thread.id, message: 'late event' }),
+    ).not.toThrow()
+    expect(store.history(thread.id)).toEqual([])
+    await orchestrator.disposeAll()
+  })
+
+  it('waits for a pending provider start before panic reports success', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const session = sessions[0]!
+    session.release = () => {}
+    const sending = orchestrator.sendTurn(thread.id, 'pending model change')
+    const failed = expect(sending).rejects.toThrow(/panic stop/)
+    await vi.waitFor(() => expect(session.sent).toHaveLength(1))
+    let stopped = false
+    const panic = orchestrator.panicStop().then((result) => {
+      stopped = true
+      return result
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    expect(session.interrupted).toBe(false)
+    session.release?.()
+    await failed
+    await expect(panic).resolves.toMatchObject({ sessions: [{ status: 'interrupted' }] })
+    expect(session.interrupted).toBe(true)
+    await orchestrator.disposeAll()
+  })
+
   it('disposes a resume that lands after the thread was closed', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')
@@ -4934,6 +5017,8 @@ describe('overnight race pins', () => {
     // provider "answer".
     await new Promise((resolve) => setTimeout(resolve, 0))
     orchestrator.close('thread-1')
+    store.deleteThread('thread-1')
+    orchestrator.forgetDeletedThread('thread-1')
     release()
 
     await expect(resuming).rejects.toThrow(/closed while resuming/)

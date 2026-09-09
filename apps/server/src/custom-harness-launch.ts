@@ -81,11 +81,12 @@ export function runCustomHarness(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error(`${harness.displayName} did not answer within ${timeoutMs / 1_000}s`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')

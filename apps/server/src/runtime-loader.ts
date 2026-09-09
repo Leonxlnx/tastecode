@@ -6,6 +6,7 @@ import type {
 } from '@harness/contracts'
 import type { AgentSession, ProviderRuntime, StartOptions, TurnOptions } from './adapters.js'
 import { retryableLazy } from './retryable-lazy.js'
+import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 
 type AdaptersModule = typeof import('./adapters.js')
 
@@ -34,17 +35,6 @@ function deferredRuntime(
   return deferred
 }
 
-const PROVIDER_RESUME_SUPPORT = {
-  acp: true,
-  antigravity: false,
-  'claude-code': true,
-  codex: true,
-  cursor: true,
-  grok: true,
-  opencode: true,
-  pi: false,
-} satisfies Record<Exclude<ProviderId, 'api'>, boolean>
-
 export function providerRuntime(
   provider: ProviderId,
   onLog: (line: string) => void,
@@ -53,7 +43,7 @@ export function providerRuntime(
   if (provider === 'api') {
     throw new Error(`provider "${provider}" is not implemented yet`)
   }
-  const supportsResume = PROVIDER_RESUME_SUPPORT[provider]
+  const supportsResume = PROVIDER_CAPABILITIES[provider].resume
   return deferredRuntime(
     async () => (await loadAdapters()).providerRuntime(provider, onLog, resolveHarness),
     supportsResume,

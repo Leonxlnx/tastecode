@@ -1647,6 +1647,7 @@ describe('web client', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'gpt-5.6-sol',
         effort: 'high',
@@ -2449,7 +2450,11 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
     await screen.findByRole('button', { name: 'Sign in' })
     await act(async () => finishInitial({ signedIn: true }))
-    expect(screen.getByRole('status').textContent).toContain('Provider setup required')
+    expect(
+      screen
+        .getAllByRole('status')
+        .some((status) => status.textContent?.includes('Provider setup required')),
+    ).toBe(true)
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
@@ -2729,6 +2734,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         isolate: true,
       })
@@ -2740,6 +2746,48 @@ describe('new chats', () => {
     )
     expect(await screen.findByText('harness/thread-1')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
+  })
+
+  it('selects an isolated base branch while a shared task runs without switching its checkout', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'shared-thread',
+            title: 'Shared work',
+            provider: 'codex',
+            createdAt: 0,
+            running: true,
+          },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.switchBranch'
+        ? Promise.reject(new Error('The shared checkout is busy'))
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(picker)
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'feature/shelf' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+    submitTurn('Work independently')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ baseRef: 'feature/shelf', isolate: true }),
+      ),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+    expect(screen.queryByText('The shared checkout is busy')).toBeNull()
   })
 
   it('switches the project checkout from the branch shelf before starting a chat', async () => {
@@ -2763,6 +2811,75 @@ describe('new chats', () => {
       )
     })
   })
+  it('remembers the selected branch after reopening the project', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const app = render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'feature/shelf' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+    app.unmount()
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Choose branch' }).textContent).toContain(
+        'feature/shelf',
+      ),
+    )
+    submitTurn('Use the saved branch')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith('workspace.switchBranch', {
+      path: '/work/project',
+      branch: 'feature/shelf',
+    })
+  })
+
+  it('passes main to atomic task start without switching the shared checkout first', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info'
+        ? Promise.resolve({ branch: 'feature/shelf', added: 0, removed: 0, dirtyFiles: 0 })
+        : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Choose branch' }).textContent).toContain('main'),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+    submitTurn('Start on main')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.start',
+      expect.objectContaining({ baseRef: 'main' }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+  })
+  it.each([
+    ['other project', 'harness.branch:/work/other', 'feature/shelf', 'main'],
+    ['deleted branch', 'harness.branch:/work/project', 'deleted', 'main'],
+    ['new choice', 'harness.branch:/work/project', 'feature/shelf', 'feature/shelf'],
+  ])('handles a saved branch for %s', async (_case, key, value, expected) => {
+    localStorage.setItem(key, value)
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect(picker.textContent).toContain(expected))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'main' }))
+    await waitFor(() => expect(localStorage.getItem('harness.branch:/work/project')).toBe('main'))
+  })
+
   it('starts workspace info and branch reads together', async () => {
     const request = transport.request.getMockImplementation()!
     let resolveInfo!: (value: ResultOf<'workspace.info'>) => void
@@ -3864,6 +3981,71 @@ describe('new chats', () => {
     expect(screen.getByText('Pinned')).toBeTruthy()
   })
 
+  it.each(['project rename', 'project pin', 'chat rename', 'chat pin'])(
+    'restores saved values and reports a refused %s',
+    async (operation) => {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'Project name',
+          pinned: false,
+          createdAt: 0,
+          sessions: [
+            {
+              id: 'saved-thread',
+              title: 'Saved title',
+              provider: 'codex',
+              createdAt: 0,
+              running: false,
+            },
+          ],
+        },
+      ]
+      const request = transport.request.getMockImplementation()!
+      const method =
+        operation === 'project rename'
+          ? 'projects.rename'
+          : operation === 'project pin'
+            ? 'projects.pin'
+            : operation === 'chat rename'
+              ? 'thread.rename'
+              : 'thread.pin'
+      transport.request.mockImplementation((name: string, params: unknown) =>
+        name === method ? Promise.reject(new Error('Save was refused')) : request(name, params),
+      )
+      render(<App />)
+      if (operation.startsWith('project')) {
+        fireEvent.contextMenu(await screen.findByRole('button', { name: 'Project name' }))
+        fireEvent.click(
+          await screen.findByRole('menuitem', {
+            name: operation.endsWith('pin') ? 'Pin to top' : 'Edit name',
+          }),
+        )
+      } else if (operation.endsWith('pin')) {
+        fireEvent.contextMenu(await screen.findByRole('button', { name: /^Saved title,/ }))
+        fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin chat' }))
+      } else fireEvent.click(await screen.findByRole('button', { name: 'Rename Saved title' }))
+      if (operation.endsWith('rename')) {
+        const input = screen.getByDisplayValue(
+          operation.startsWith('project') ? 'Project name' : 'Saved title',
+        )
+        fireEvent.change(input, { target: { value: 'Unsaved name' } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+      }
+      expect(await screen.findByText('Save was refused')).toBeTruthy()
+      await waitFor(() => {
+        expect(screen.queryByText('Unsaved name')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Project name' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: /^Saved title,/ })).toBeTruthy()
+      })
+      if (operation === 'chat pin') expect(screen.queryByText('Pinned')).toBeNull()
+      if (operation === 'project pin') {
+        fireEvent.contextMenu(screen.getByRole('button', { name: 'Project name' }))
+        expect(await screen.findByRole('menuitem', { name: 'Pin to top' })).toBeTruthy()
+      }
+    },
+  )
+
   it('shows changed files before restoring and offers undo afterwards', async () => {
     serverProjects = [
       {
@@ -4594,6 +4776,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'auto-review',
       })
     })
@@ -4720,6 +4903,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
       })
       expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
@@ -4789,6 +4973,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
@@ -4872,6 +5057,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'gpt-5.6-mini',
         effort: 'high',
@@ -5190,6 +5376,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'claude-code',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'opus',
         effort: 'high',

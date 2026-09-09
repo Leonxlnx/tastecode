@@ -6,6 +6,7 @@ import {
   parseIncomingFrame,
   parseResponseFrame,
   Transport,
+  TRANSPORT_LIMITS,
 } from './transport.js'
 import {
   parseChannelData,
@@ -28,6 +29,7 @@ class FakeSocket {
   static CONNECTING = 0
   readonly OPEN = 1
   readyState = 0
+  bufferedAmount = 0
   sent: string[] = []
   onopen: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
@@ -77,6 +79,130 @@ const completedThreadEvent = (turnId: string) => ({
 })
 
 describe('Transport', () => {
+  it('bounds disconnected requests and expires them without sending on reconnect', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const pending = Array.from({ length: TRANSPORT_LIMITS.requests }, () =>
+      transport.request('projects.list', {}).catch((error: unknown) => error),
+    )
+    await expect(transport.request('projects.list', {})).rejects.toThrow('Too many requests')
+    await vi.advanceTimersByTimeAsync(TRANSPORT_LIMITS.requestTimeoutMs)
+    for (const error of await Promise.all(pending))
+      expect(error).toMatchObject({ message: expect.stringContaining('before it could be sent') })
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    expect(userFrames(socket)).toHaveLength(0)
+    transport.close()
+  })
+
+  it('marks a sent mutation as uncertain after its deadline and never repeats it', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const result = transport
+      .request('thread.rename', { threadId: 'thread', title: 'Saved?' })
+      .catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(TRANSPORT_LIMITS.requestTimeoutMs)
+    expect(await result).toBeInstanceOf(IndeterminateRequestError)
+    socket.close()
+    await vi.advanceTimersByTimeAsync(1)
+    const replacement = FakeSocket.instances.at(-1)!
+    expect(replacement).not.toBe(socket)
+    replacement.open()
+    expect(userFrames(replacement)).toHaveLength(0)
+    transport.close()
+  })
+
+  it('refuses a stalled socket before adding more buffered data', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    socket.bufferedAmount = TRANSPORT_LIMITS.bufferedBytes
+    await expect(
+      transport.request('thread.rename', { threadId: 'thread', title: 'name' }),
+    ).rejects.toThrow('connection is busy')
+    expect(userFrames(socket)).toHaveLength(0)
+    socket.bufferedAmount = 0
+    const pending = transport.request('projects.list', {}).catch(() => undefined)
+    expect(userFrames(socket)).toHaveLength(1)
+    transport.close()
+    await pending
+  })
+
+  it('bounds the retained bytes for requests waiting offline', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    const data = 'x'.repeat(34_952_536)
+    const first = transport
+      .request('attachments.saveImage', { mimeType: 'image/png', data })
+      .catch(() => undefined)
+    await expect(
+      transport.request('attachments.saveImage', { mimeType: 'image/png', data }),
+    ).rejects.toThrow('Too much data')
+    transport.close()
+    await first
+  })
+
+  it('drops a socket when push validation cannot keep up with its queue', () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.on('terminal.output', () => {})
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    for (let sequence = 1; sequence <= TRANSPORT_LIMITS.validationFrames + 1; sequence += 1) {
+      socket.onmessage?.({
+        data: JSON.stringify({
+          channel: 'terminal.output',
+          sequence,
+          data: { terminalId: 'terminal', data: 'text' },
+        }),
+      })
+    }
+    expect(transport.state).toBe('reconnecting')
+    expect(socket.readyState).toBe(3)
+    transport.close()
+  })
+
+  it('bounds bytes retained while the push validator loads', () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.on('terminal.output', () => {})
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    socket.onmessage?.({
+      data: JSON.stringify({
+        channel: 'terminal.output',
+        sequence: 1,
+        data: { terminalId: 'terminal', data: 'x'.repeat(TRANSPORT_LIMITS.validationBytes / 2) },
+      }),
+    })
+    expect(transport.state).toBe('reconnecting')
+    transport.close()
+  })
+
+  it('bounds reply data awaiting validation and releases it when closed', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const calls = [0, 1].map(() =>
+      transport.request('thread.history', { threadId: 'thread' }).catch((error: unknown) => error),
+    )
+    const data = 'x'.repeat(34_952_536)
+    for (const frame of userFrames(socket)) {
+      const { id } = RequestFrameSchema.parse(JSON.parse(frame))
+      socket.onmessage?.({
+        data: JSON.stringify({ id, result: { events: [], running: false, ignored: data } }),
+      })
+    }
+    expect(transport.state).toBe('reconnecting')
+    transport.close()
+    for (const result of await Promise.all(calls)) {
+      expect(result).toBeInstanceOf(IndeterminateRequestError)
+    }
+  })
+
   it('rejects malformed push envelopes before dispatch', () => {
     expect(parseIncomingFrame('{')).toBeUndefined()
     expect(
@@ -410,10 +536,11 @@ describe('Transport', () => {
       }),
     })
     await checking
-    vi.runAllTimers()
+    vi.advanceTimersByTime(500)
 
     expect(FakeSocket.instances).toHaveLength(1)
     expect(transport.state).toBe('open')
+    transport.close()
   })
 
   it('backs off when a server accepts and immediately rejects the socket', () => {

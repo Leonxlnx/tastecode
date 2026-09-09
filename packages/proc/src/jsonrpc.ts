@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { z } from 'zod'
 import { killTree } from './kill.js'
+import { LineBuffer } from './frames.js'
 
 /**
  * Newline-delimited JSON-RPC 2.0 over a child process's stdio.
@@ -95,21 +96,29 @@ export class StdioJsonRpc {
    */
   #pending = new Map<JsonRpcId, PendingCall>()
   #nextId = 1
-  #buffer = ''
+  readonly #buffer: LineBuffer
   #disposed = false
+  #termination: Promise<void> | undefined
   #exited = false
   /** Why the transport is finished, so late callers get an answer not a hang. */
   #failure: Error | undefined
   #label: string
+  readonly #onProtocolError: ((error: Error) => void) | undefined
 
   #onNotification: (method: string, params: JsonRpcResult) => void = () => {}
   #onServerRequest: ServerRequestHandler = (_m, _p, respond) => respond(null)
   #onStderr: (text: string) => void = () => {}
 
   /** `label` names the process in errors, so a dead child says which one died. */
-  constructor(child: StdioJsonRpcProcess, label = 'agent') {
+  constructor(
+    child: StdioJsonRpcProcess,
+    label = 'agent',
+    options: { maxFrameBytes?: number; onProtocolError?: (error: Error) => void } = {},
+  ) {
     this.#child = child
     this.#label = label
+    this.#buffer = new LineBuffer(options.maxFrameBytes)
+    this.#onProtocolError = options.onProtocolError
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => this.#ingest(chunk))
     child.stderr.setEncoding('utf8')
@@ -178,11 +187,13 @@ export class StdioJsonRpc {
     this.#write({ jsonrpc: '2.0', method, params })
   }
 
-  dispose(): void {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    if (this.#disposed) return this.#termination ?? Promise.resolve()
     this.#disposed = true
     this.#failAll(new Error('transport disposed'))
-    killTree(this.#child)
+    this.#buffer.clear()
+    this.#termination = killTree(this.#child)
+    return this.#termination
   }
 
   #write(message: unknown): void {
@@ -191,12 +202,18 @@ export class StdioJsonRpc {
   }
 
   #ingest(chunk: string): void {
-    this.#buffer += chunk
-    let newline: number
-    while ((newline = this.#buffer.indexOf('\n')) >= 0) {
-      const line = this.#buffer.slice(0, newline).trim()
-      this.#buffer = this.#buffer.slice(newline + 1)
-      if (line) this.#handleLine(line)
+    if (this.#failure || this.#disposed) return
+    try {
+      this.#buffer.write(chunk, (line) => {
+        if (line.trim()) this.#handleLine(line.trim())
+      })
+    } catch (error) {
+      this.#failure = error instanceof Error ? error : new Error('Provider stream failed')
+      this.#buffer.clear()
+      this.#failAll(this.#failure)
+      this.#onStderr(this.#failure.message)
+      this.dispose()
+      this.#onProtocolError?.(this.#failure)
     }
   }
 

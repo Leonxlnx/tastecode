@@ -48,6 +48,8 @@ export const createClaudeUsageQuery: ClaudeUsageQueryFactory = (input) => query(
 export function claudeSdkSpawner(
   spawn: ClaudeSpawn = spawnCli,
   onStderr?: (chunk: string) => void,
+  onStop?: (stopped: Promise<void>) => void,
+  onSpawn?: (child: ReturnType<ClaudeSpawn>) => void,
 ) {
   return (options: SpawnOptions): SpawnedProcess => {
     const child = spawn(options.command, options.args, {
@@ -55,15 +57,42 @@ export function claudeSdkSpawner(
       env: options.env,
       replaceEnv: true,
     })
+    onSpawn?.(child)
 
-    const abort = () => killTree(child)
+    const stop = () => {
+      const stopped = killTree(child)
+      onStop?.(stopped)
+      return stopped
+    }
+    const abort = () => {
+      void stop()
+    }
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => onStderr?.(chunk))
     child.stderr.resume()
     if (options.signal.aborted) abort()
     else options.signal.addEventListener('abort', abort, { once: true })
     child.once('exit', () => options.signal.removeEventListener('abort', abort))
-    return child
+    return {
+      stdin: child.stdin,
+      stdout: child.stdout,
+      get killed() {
+        return child.killed
+      },
+      get exitCode() {
+        return child.exitCode
+      },
+      get signalCode() {
+        return child.signalCode
+      },
+      kill: () => {
+        void stop()
+        return true
+      },
+      on: child.on.bind(child),
+      once: child.once.bind(child),
+      off: child.off.bind(child),
+    }
   }
 }
 

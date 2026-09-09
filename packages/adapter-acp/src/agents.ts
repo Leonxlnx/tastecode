@@ -242,11 +242,12 @@ function captureCli(command: string, args: string[], timeoutMs = 5000): Promise<
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (error) reject(error)
-      else resolve(output)
+      void killTree(child).then(() => {
+        if (error) reject(error)
+        else resolve(output)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error(`${command} model discovery timed out`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')

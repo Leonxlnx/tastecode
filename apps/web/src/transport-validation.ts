@@ -4,11 +4,13 @@ import {
   methods,
   type ChannelName,
   type DataOf,
+  type DomainEvent,
   type MethodName,
   type PreviewCaptureRequest,
   type ResultOf,
 } from '@harness/contracts'
 import { parseStartupMethodResult } from './transport-startup-validation.js'
+import { isNonnegativeInteger } from './fast-validation.js'
 
 export { parseProjectsListResult } from './transport-startup-validation.js'
 
@@ -36,13 +38,39 @@ function parseTerminalOutputData(value: unknown): DataOf<'terminal.output'> | un
   if (
     typeof output['terminalId'] !== 'string' ||
     output['terminalId'].length === 0 ||
-    typeof output['data'] !== 'string'
+    typeof output['data'] !== 'string' ||
+    (output['outputOffset'] !== undefined && !isNonnegativeInteger(output['outputOffset']))
   ) {
     return undefined
   }
 
-  return { terminalId: output['terminalId'], data: output['data'] }
+  return {
+    terminalId: output['terminalId'],
+    data: output['data'],
+    ...(output['outputOffset'] === undefined ? {} : { outputOffset: output['outputOffset'] }),
+  }
 }
+
+// These field records are checked at compile time, including optional fields.
+// Keep explicit checks on the per-delta path; parity tests exercise each field.
+export const FAST_CHANNEL_FIELDS = {
+  terminal: { terminalId: true, data: true, outputOffset: true } satisfies Record<
+    keyof DataOf<'terminal.output'>,
+    true
+  >,
+  thread: { threadId: true, seq: true, event: true } satisfies Record<
+    keyof DataOf<'thread.event'>,
+    true
+  >,
+  sideChat: { threadId: true, seq: true, event: true } satisfies Record<
+    keyof DataOf<'sideChat.event'>,
+    true
+  >,
+  delta: { type: true, turnId: true, itemId: true, textDelta: true } satisfies Record<
+    keyof Extract<DomainEvent, { type: 'item.delta' }>,
+    true
+  >,
+} as const
 
 function parseThreadDeltaData(value: unknown): DataOf<'thread.event'> | undefined {
   if (typeof value !== 'object' || value === null) return undefined

@@ -358,7 +358,9 @@ function renderProviders(
   request: TestRequestResolver,
   account?: Account,
 ) {
-  const transport = new TestTransport(request)
+  const transport = new TestTransport((method, params) =>
+    method === 'providers.updates' ? { updates: [] } : request(method, params),
+  )
   render(
     <ProviderSettings
       provider="codex"

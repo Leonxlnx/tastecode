@@ -19,6 +19,10 @@
     "./kill": {
       "types": "./dist/kill.d.ts",
       "default": "./dist/kill.js"
+    },
+    "./updates": {
+      "types": "./dist/updates.d.ts",
+      "default": "./dist/updates.js"
     }
   },
   "main": "./dist/index.js",

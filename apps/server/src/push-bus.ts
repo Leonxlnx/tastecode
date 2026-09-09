@@ -1,7 +1,10 @@
 import type { WebSocket } from 'ws'
 import type { ChannelName, DataOf } from '@harness/contracts'
 
-export type PushSocket = Pick<WebSocket, 'OPEN' | 'readyState' | 'send' | 'terminate'>
+export type PushSocket = Pick<WebSocket, 'OPEN' | 'readyState' | 'send' | 'terminate'> &
+  Partial<Pick<WebSocket, 'bufferedAmount'>>
+export const MAX_PUSH_BUFFER_BYTES = 8 * 1024 * 1024
+export const MAX_REPLY_FRAME_BYTES = 128 * 1024 * 1024
 type PushSocketState = { sequence: number; onSend: (error?: Error) => void }
 type RecordedEventChannel = 'thread.event' | 'sideChat.event'
 
@@ -37,7 +40,10 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     const state: PushSocketState = {
       sequence: 0,
       onSend: (error) => {
-        if (error) socket.terminate()
+        if (error) {
+          this.remove(socket)
+          socket.terminate()
+        }
       },
     }
     this.#sockets.set(socket, state)
@@ -68,6 +74,13 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     this.#sendSerialized(socket, framePrefix(channel), dataJson)
   }
 
+  /** RPC results share the output budget without consuming push sequence numbers. */
+  reply(socket: Socket, frame: string): void {
+    const state = this.#sockets.get(socket)
+    if (socket.readyState === socket.OPEN && state)
+      this.#sendFrame(socket, state, frame, MAX_REPLY_FRAME_BYTES)
+  }
+
   #sendSerialized(socket: Socket, prefix: string, dataJson: string): void {
     if (socket.readyState !== socket.OPEN) return
     // Never re-register a socket we have already dropped: restarting its
@@ -75,21 +88,29 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     const state = this.#sockets.get(socket)
     if (state === undefined) return
     const sequence = ++state.sequence
-    try {
-      socket.send(`${prefix}${sequence},"data":${dataJson}}`, state.onSend)
-    } catch {
-      socket.terminate()
-    }
+    this.#sendFrame(socket, state, `${prefix}${sequence},"data":${dataJson}}`)
   }
 
-  #sendFrame(socket: Socket, state: PushSocketState, frame: string): void {
+  #sendFrame(
+    socket: Socket,
+    state: PushSocketState,
+    frame: string,
+    frameLimit = MAX_PUSH_BUFFER_BYTES,
+  ): void {
     // A failed write closes the connection rather than quietly unsubscribing
     // it. Dropping it from the map left the socket OPEN and silent: the
     // client's onclose never fired, its gap detector only fires on a frame it
     // does receive, and the thread simply froze with no warning.
     try {
+      const queued = socket.bufferedAmount ?? 0
+      if (queued >= MAX_PUSH_BUFFER_BYTES || queued + Buffer.byteLength(frame) > frameLimit) {
+        this.remove(socket)
+        socket.terminate()
+        return
+      }
       socket.send(frame, state.onSend)
     } catch {
+      this.remove(socket)
       socket.terminate()
     }
   }
@@ -104,11 +125,7 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
       if (onlySocket.readyState !== onlySocket.OPEN) return
       const sequence = ++onlyState.sequence
       const frame = `${framePrefix(channel)}${sequence},"data":${JSON.stringify(data)}}`
-      try {
-        onlySocket.send(frame, onlyState.onSend)
-      } catch {
-        onlySocket.terminate()
-      }
+      this.#sendFrame(onlySocket, onlyState, frame)
       return
     }
     if (this.#sockets.size === 0) return
@@ -153,11 +170,7 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     if (onlySocket !== undefined && onlyState !== undefined) {
       const sequence = ++onlyState.sequence
       const frame = `${framePrefix(channel)}${sequence},"data":{"threadId":${threadIdJson},"event":${serializedEvent},"seq":${seq}}}`
-      try {
-        onlySocket.send(frame, onlyState.onSend)
-      } catch {
-        onlySocket.terminate()
-      }
+      this.#sendFrame(onlySocket, onlyState, frame)
       return
     }
 

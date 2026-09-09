@@ -13,6 +13,7 @@ import {
   IconTrash as Trash2,
 } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import { useProviderWatch } from '../provider-watch.js'
 import { AppSelect } from './AppSelect.js'
 
 type Inventory = ResultOf<'mcp.list'>
@@ -88,6 +89,7 @@ function ProviderMcpSettings(props: {
   projectName: string | undefined
   providerPicker?: ReactNode
 }) {
+  useProviderWatch(props.transport, props.provider, props.projectPath, 'mcp')
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
   const [editor, setEditor] = useState<Editor>()
