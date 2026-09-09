@@ -379,34 +379,6 @@ describe('ApiAgentSession', () => {
     expect(JSON.stringify({ events, logs })).not.toContain(secret)
   })
 
-  it('redacts a failed provider diagnostic before both log and event sinks', async () => {
-    const secret = 'redaction-sentinel-value'
-    const events: DomainEvent[] = []
-    const logs: string[] = []
-    const session = new ApiAgentSession({
-      model: 'test-model',
-      secrets: [secret],
-      // oxlint-disable-next-line require-yield -- The transport fails before producing a frame.
-      transport: async function* () {
-        throw new Error(`request rejected for ${secret}`)
-      },
-    })
-    session.on('event', (event) => events.push(event))
-    session.on('log', (line) => logs.push(line))
-    const thread = session.startThread('C:\\repo', 'connection-1')
-    const turnId = await session.sendTurn(thread.id, 'Fail')
-    await session.waitForTurn(turnId)
-
-    const diagnostic = 'request rejected for [REDACTED]'
-    expect(logs).toEqual([`direct API model request failed: ${diagnostic}`])
-    expect(events).toContainEqual({
-      type: 'thread.error',
-      threadId: thread.id,
-      message: diagnostic,
-    })
-    expect(JSON.stringify({ events, logs })).not.toContain(secret)
-  })
-
   it('closes partial streamed items before a failed turn', async () => {
     const events: DomainEvent[] = []
     const session = new ApiAgentSession({

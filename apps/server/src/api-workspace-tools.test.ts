@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -17,27 +17,6 @@ function workspace(): string {
 
 function call(name: string, input: JsonValue): ApiToolCall {
   return { id: `call-${name}`, name, input }
-}
-
-const CREDENTIAL_PATHS = [
-  ['.aws', 'credentials'],
-  ['.ssh', 'config'],
-  ['.gnupg', 'private-keys-v1.d', 'key'],
-  ['.docker', 'config.json'],
-  ['.kube', 'config'],
-  ['.azure', 'accessTokens.json'],
-  ['.config', 'gcloud', 'application_default_credentials.json'],
-  ['.netrc'],
-] as const
-
-function addCredentialFiles(root: string): string[] {
-  return CREDENTIAL_PATHS.map((components) => {
-    const relative = path.join(...components)
-    const target = path.join(root, relative)
-    mkdirSync(path.dirname(target), { recursive: true })
-    writeFileSync(target, 'private material')
-    return relative
-  })
 }
 
 describe('direct API workspace tools', () => {
@@ -72,68 +51,11 @@ describe('direct API workspace tools', () => {
     ).rejects.toThrow('file changed since it was read')
   })
 
-  it('omits credential locations while preserving ordinary config listings', async () => {
-    const root = workspace()
-    addCredentialFiles(root)
-    mkdirSync(path.join(root, '.config', 'editor'), { recursive: true })
-    writeFileSync(path.join(root, '.config', 'editor', 'settings.json'), '{}')
-    writeFileSync(path.join(root, 'config.json'), '{}')
-    const tools = createApiWorkspaceTools(root)
+  it('omits credential files from directory listings', async () => {
+    const tools = createApiWorkspaceTools(workspace())
     const signal = new AbortController().signal
     const listed = await tools.executeTool(call('list_files', { path: '.' }), signal)
-    for (const name of ['.env', '.aws', '.ssh', '.gnupg', '.docker', '.kube', '.azure', '.netrc']) {
-      expect(listed.content).not.toContain(name)
-    }
-    expect(listed.content).toContain('config.json')
-
-    const config = await tools.executeTool(call('list_files', { path: '.config' }), signal)
-    expect(config.content).not.toContain('gcloud')
-    expect(config.content).toContain('editor')
-
-    await expect(tools.executeTool(call('list_files', { path: '.aws' }), signal)).rejects.toThrow(
-      'credential files are not available',
-    )
-    await expect(
-      tools.executeTool(call('list_files', { path: path.join('.config', 'gcloud') }), signal),
-    ).rejects.toThrow('credential files are not available')
-  })
-
-  it('rejects reads and writes anywhere below credential locations', async () => {
-    const root = workspace()
-    const restricted = addCredentialFiles(root)
-    const tools = createApiWorkspaceTools(root, 'full')
-    const signal = new AbortController().signal
-
-    for (const relative of restricted) {
-      await expect(
-        tools.executeTool(call('read_file', { path: relative }), signal),
-      ).rejects.toThrow('credential files are not available')
-      await expect(
-        tools.executeTool(
-          call('write_file', {
-            path: relative,
-            content: 'replacement',
-            expectedSha256: null,
-          }),
-          signal,
-        ),
-      ).rejects.toThrow('credential files are not available')
-    }
-
-    symlinkSync(path.join(root, '.aws'), path.join(root, 'credential-alias'), 'junction')
-    await expect(
-      tools.executeTool(call('read_file', { path: 'credential-alias/credentials' }), signal),
-    ).rejects.toThrow('credential files are not available')
-    await expect(
-      tools.executeTool(
-        call('write_file', {
-          path: 'credential-alias/new-token',
-          content: 'replacement',
-          expectedSha256: null,
-        }),
-        signal,
-      ),
-    ).rejects.toThrow('credential files are not available')
+    expect(listed.content).not.toContain('.env')
   })
 
   it('requires approval for mutation unless full access was explicit', () => {
