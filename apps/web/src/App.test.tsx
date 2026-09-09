@@ -1647,6 +1647,7 @@ describe('web client', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'gpt-5.6-sol',
         effort: 'high',
@@ -2729,6 +2730,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         isolate: true,
       })
@@ -2740,6 +2742,48 @@ describe('new chats', () => {
     )
     expect(await screen.findByText('harness/thread-1')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
+  })
+
+  it('selects an isolated base branch while a shared task runs without switching its checkout', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'shared-thread',
+            title: 'Shared work',
+            provider: 'codex',
+            createdAt: 0,
+            running: true,
+          },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.switchBranch'
+        ? Promise.reject(new Error('The shared checkout is busy'))
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(picker)
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'feature/shelf' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+    submitTurn('Work independently')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ baseRef: 'feature/shelf', isolate: true }),
+      ),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+    expect(screen.queryByText('The shared checkout is busy')).toBeNull()
   })
 
   it('switches the project checkout from the branch shelf before starting a chat', async () => {
@@ -2763,6 +2807,75 @@ describe('new chats', () => {
       )
     })
   })
+  it('remembers the selected branch after reopening the project', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const app = render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'feature/shelf' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+    app.unmount()
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Choose branch' }).textContent).toContain(
+        'feature/shelf',
+      ),
+    )
+    submitTurn('Use the saved branch')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith('workspace.switchBranch', {
+      path: '/work/project',
+      branch: 'feature/shelf',
+    })
+  })
+
+  it('passes main to atomic task start without switching the shared checkout first', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info'
+        ? Promise.resolve({ branch: 'feature/shelf', added: 0, removed: 0, dirtyFiles: 0 })
+        : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Choose branch' }).textContent).toContain('main'),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+    submitTurn('Start on main')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.start',
+      expect.objectContaining({ baseRef: 'main' }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+  })
+  it.each([
+    ['other project', 'harness.branch:/work/other', 'feature/shelf', 'main'],
+    ['deleted branch', 'harness.branch:/work/project', 'deleted', 'main'],
+    ['new choice', 'harness.branch:/work/project', 'feature/shelf', 'feature/shelf'],
+  ])('handles a saved branch for %s', async (_case, key, value, expected) => {
+    localStorage.setItem(key, value)
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect(picker.textContent).toContain(expected))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'main' }))
+    await waitFor(() => expect(localStorage.getItem('harness.branch:/work/project')).toBe('main'))
+  })
+
   it('starts workspace info and branch reads together', async () => {
     const request = transport.request.getMockImplementation()!
     let resolveInfo!: (value: ResultOf<'workspace.info'>) => void
@@ -4659,6 +4772,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'auto-review',
       })
     })
@@ -4785,6 +4899,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
       })
       expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
@@ -4854,6 +4969,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
@@ -4937,6 +5053,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'gpt-5.6-mini',
         effort: 'high',
@@ -5255,6 +5372,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'claude-code',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'ask',
         model: 'opus',
         effort: 'high',

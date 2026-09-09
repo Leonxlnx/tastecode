@@ -658,6 +658,7 @@ export function App() {
   const [railWidth, setRailWidth] = useState(readRailWidth)
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [branches, setBranches] = useState<string[]>([])
+  const projectBranches = useRef(new Map<string, string>())
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
   const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
@@ -1844,6 +1845,16 @@ export function App() {
       if (cancelled) return
       setWorkspace(info)
       setBranches(result?.branches ?? (info?.branch ? [info.branch] : []))
+      const available = result?.branches ?? (info?.branch ? [info.branch] : [])
+      const remembered =
+        projectBranches.current.get(activePath) ?? readSetting(`harness.branch:${activePath}`)
+      const branch =
+        remembered && available.includes(remembered)
+          ? remembered
+          : available.includes('main')
+            ? 'main'
+            : info?.branch
+      if (branch) projectBranches.current.set(activePath, branch)
     })
     return () => {
       cancelled = true
@@ -2442,11 +2453,25 @@ export function App() {
       setRollbackOpen(false)
       setActivePath(projectPath)
       try {
+        let branch = projectBranches.current.get(projectPath)
+        if (!branch) {
+          const { branches: available } = await transport.request('workspace.branches', {
+            path: projectPath,
+          })
+          const remembered = readSetting(`harness.branch:${projectPath}`)
+          branch =
+            remembered && available.includes(remembered)
+              ? remembered
+              : available.includes('main')
+                ? 'main'
+                : undefined
+        }
         const sessionApproval =
           approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
           workspacePath: projectPath,
+          ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
           ...(choice.agent ? { agent: choice.agent.id } : {}),
           ...(choice.connectionId
@@ -3161,17 +3186,22 @@ export function App() {
       if (!activePath || activeId) return
       setNotice(undefined)
       try {
-        const info = await transport.request('workspace.switchBranch', {
-          path: activePath,
-          branch,
-        })
-        setWorkspace(info)
+        const info = isolateSession
+          ? undefined
+          : await transport.request('workspace.switchBranch', {
+              path: activePath,
+              branch,
+            })
+        projectBranches.current.set(activePath, branch)
+        writeSetting(`harness.branch:${activePath}`, branch)
+        if (activePathRef.current !== activePath || activeIdRef.current) return
+        setWorkspace((current) => info ?? (current ? { ...current, branch } : current))
         setBranches((current) => [branch, ...current.filter((item) => item !== branch)])
       } catch (error) {
         setNotice(error instanceof Error ? error.message : String(error))
       }
     },
-    [transport, activePath, activeId],
+    [transport, activePath, activeId, isolateSession],
   )
 
   // Stable identities, so the memo around Composer is not defeated by a fresh
@@ -4493,7 +4523,14 @@ export function App() {
                       projects={projectChoices}
                       projectPath={activePath}
                       projectName={activeProject ? displayName(activeProject) : undefined}
-                      branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                      branch={
+                        (!activeId && activePath
+                          ? projectBranches.current.get(activePath)
+                          : undefined) ??
+                        active?.session.worktreeBranch ??
+                        workspace?.branch ??
+                        branches[0]
+                      }
                       branches={branches}
                       models={selectableModels}
                       modelsLoaded={modelsLoaded}
