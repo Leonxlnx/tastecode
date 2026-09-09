@@ -19,9 +19,9 @@
     "typecheck": "tsc -b",
     "start": "tsc -b && node scripts/build-main.js && node scripts/build-preload.js && node scripts/start.js",
     "test": "vitest run src --passWithNoTests",
-    "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
-    "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
-    "dist:linux:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --linux dir --x64",
+    "dist": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder",
+    "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder --dir",
+    "dist:linux:dir": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder --linux dir --x64",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
@@ -86,6 +86,10 @@
       {
         "from": "../../release/THIRD_PARTY_LICENSES.txt",
         "to": "THIRD_PARTY_LICENSES.txt"
+      },
+      {
+        "from": "../../release/build-provenance.json",
+        "to": "BUILD_PROVENANCE.json"
       }
     ],
     "directories": {
