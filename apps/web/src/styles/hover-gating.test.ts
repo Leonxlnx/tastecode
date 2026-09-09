@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest'
 
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
 const inboxCss = readFileSync(new URL('./inbox-sidebar.css', import.meta.url), 'utf8')
-const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
 const threadCss = readFileSync(new URL('./thread.css', import.meta.url), 'utf8')
 
 describe('hover gating', () => {
@@ -19,7 +18,6 @@ describe('hover gating', () => {
     expect((appCss.match(/\.proj__head:hover \.dots/g) ?? []).length).toBe(1)
     expect((appCss.match(/\.menutrigger:hover \.dots/g) ?? []).length).toBe(1)
     expect((inboxCss.match(/\.inbox-card:hover \.inbox-card__quick/g) ?? []).length).toBe(1)
-    expect((settingsCss.match(/\.row-issue:hover \.row-issue__bubble/g) ?? []).length).toBe(1)
     expect((threadCss.match(/\.said:hover > \.said__actions/g) ?? []).length).toBe(1)
     expect(appCss).not.toMatch(
       /\.sessrow:hover \.sess__actions,\s*\.sessrow:focus-within \.sess__actions/s,
@@ -49,12 +47,6 @@ describe('hover gating', () => {
     )
     expect(inboxCss).toMatch(
       /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.inbox-card:hover \.inbox-card__quick \{/s,
-    )
-    expect(settingsCss).toMatch(
-      /\.row-issue:focus-within \.row-issue__bubble \{[^}]*pointer-events: auto;/s,
-    )
-    expect(settingsCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.row-issue:hover \.row-issue__bubble \{/s,
     )
     expect(threadCss).toMatch(/\.said:focus-within > \.said__actions \{[^}]*pointer-events: auto;/s)
     expect(threadCss).toMatch(

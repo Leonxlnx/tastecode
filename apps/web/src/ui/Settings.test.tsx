@@ -166,23 +166,6 @@ describe('settings viewport layout', () => {
 })
 
 describe('about status grammar', () => {
-  it('renders update errors outside the clipped settings card', async () => {
-    const update = deferred<ResultOf<'system.updateCheck'>>()
-    const transport = new TestTransport((method) => {
-      if (method === 'system.updateCheck') return update.promise
-      throw new Error(`unexpected ${method}`)
-    })
-    renderSettings({ initialSection: 'about', transport })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
-    await act(async () => update.resolve({ error: 'Update check failed' }))
-    fireEvent.focus(screen.getByRole('button', { name: 'Problem: Update check failed' }))
-
-    const tooltip = await screen.findByRole('tooltip')
-    expect(tooltip.parentElement).toBe(document.body)
-    expect(tooltip.className).toContain('row-issue__bubble--fixed')
-  })
-
   it.each([
     [
       'ready',
@@ -393,7 +376,8 @@ describe('provider authentication states', () => {
     status.reject(new Error('Codex status unavailable'))
     expect((await screen.findByRole('alert')).textContent).toContain('Codex status unavailable')
     const issue = within(row).getByRole('button', { name: 'Problem details' })
-    expect(issue.getAttribute('aria-describedby')).toBe(within(row).getByRole('tooltip').id)
+    fireEvent.focus(issue)
+    expect(issue.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id)
     expect(within(row).queryByRole('button', { name: 'Sign in' })).toBeNull()
     fireEvent.click(action(row, 'Retry'))
     await waitFor(() =>
@@ -448,7 +432,8 @@ describe('provider authentication states', () => {
     expect(signOut.className).toContain('is-secondary')
     expect(signOut.className).toContain('is-danger')
     expect(signOut.className).not.toContain('is-quiet')
-    expect(within(claude).getByRole('tooltip').textContent).toBe('Claude Code should be updated')
+    fireEvent.focus(within(claude).getByRole('button', { name: 'Problem details' }))
+    expect(screen.getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
     expect(within(grok).queryByRole('button', { name: 'Problem details' })).toBeNull()
     const guide = within(grok).getByRole('link', { name: 'Open setup guide' })

@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { RowIssue } from './RowIssue.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
 import type {
@@ -30,7 +31,6 @@ import type {
 import { z } from 'zod'
 import {
   IconArrowLeft as ArrowLeft,
-  IconAlertCircle as CircleAlert,
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
   IconDatabase as Database,
@@ -1724,14 +1724,9 @@ function AboutSettings(props: { transport: Transport }) {
           <RowIssue
             message={nativeUpdate.error ?? 'Update check failed'}
             tip="Check your connection, then retry."
-            placement="below"
           />
         ) : result?.error ? (
-          <RowIssue
-            message={result.error}
-            tip="Check your network or GitHub access, then retry."
-            placement="below"
-          />
+          <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
         ) : null}
         {checking || nativeChecking ? <StateLabel state="checking" live /> : null}
         {!checking && !nativeChecking && nativeStatus ? (
@@ -2148,81 +2143,6 @@ function AccountEmail(props: { email: string }) {
       <span className="settings__email-clip">
         <span className="settings__email-value">{props.email}</span>
       </span>
-    </span>
-  )
-}
-
-/**
- * Errors never grow a second line: every row keeps one height, and problems
- * live behind a red dot whose bubble carries the message plus a tip. Hover
- * or focus opens it — it is a real button so keyboards reach it too.
- */
-function RowIssue(props: {
-  message: string
-  tip?: string | undefined
-  placement?: 'above' | 'below'
-}) {
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const tooltipId = useId()
-  const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState<
-    { right: number; top: number } | { right: number; bottom: number }
-  >()
-  const updatePosition = useCallback(() => {
-    const bounds = triggerRef.current?.getBoundingClientRect()
-    if (!bounds) return
-    const right = Math.max(8, window.innerWidth - bounds.right)
-    setPosition(
-      props.placement === 'below'
-        ? { right, top: bounds.bottom + 8 }
-        : { right, bottom: window.innerHeight - bounds.top + 8 },
-    )
-  }, [props.placement])
-
-  useEffect(() => {
-    if (!open) return
-    updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
-  }, [open, updatePosition])
-
-  return (
-    <span
-      className="row-issue"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => {
-        if (document.activeElement !== triggerRef.current) setOpen(false)
-      }}
-    >
-      <button
-        ref={triggerRef}
-        type="button"
-        className="row-issue__dot"
-        aria-label={'Problem: ' + props.message}
-        aria-describedby={open ? tooltipId : undefined}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-      >
-        <CircleAlert size={14} aria-hidden />
-      </button>
-      {open && position
-        ? createPortal(
-            <span
-              id={tooltipId}
-              role="tooltip"
-              className="row-issue__bubble row-issue__bubble--fixed"
-              style={position}
-            >
-              {props.message}
-              {props.tip ? <span className="row-issue__tip">{props.tip}</span> : null}
-            </span>,
-            document.body,
-          )
-        : null}
     </span>
   )
 }
