@@ -1855,6 +1855,7 @@
 
 .mcp-settings__header {
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 24px;
   margin-bottom: 24px;
 }
@@ -1866,7 +1867,8 @@
 }
 
 .mcp-settings__actions {
-  flex: none;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -2013,6 +2015,17 @@
 .mcp-editor small {
   color: var(--text-3);
   font-size: var(--t-xs);
+}
+
+.mcp-settings__scope-note {
+  margin: 0 0 14px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+
+.mcp-editor .mcp-settings__scope-note {
+  margin: 0;
 }
 
 .mcp-editor input,

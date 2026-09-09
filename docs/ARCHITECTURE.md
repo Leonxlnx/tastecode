@@ -260,6 +260,17 @@ servers in `session/new`. Sessions without a project server keep the captured st
 path. This preserves Grok's inherited user configuration without writing `~/.grok/config.toml`
 or a repository `.grok/config.toml` on the user's behalf.
 
+Claude Code receives enabled project definitions on both start and resume through the Agent
+SDK. Initial same-id loopback definitions suppress overridden inherited servers without exposing
+credentials. Before the session becomes ready, the SDK control channel replaces these definitions
+with the configured transports. Each server receives only its own credentials; secrets do not
+enter command arguments or the shared Claude process environment. Diagnostics are redacted.
+Other inherited servers remain available. The captured SDK cannot safely hide an inherited
+server without writing vendor settings. Claude's adapter therefore rejects disabled entries
+and unsupported per-server working directories before persistence or process startup. It
+does not advertise live inventory, reload, or OAuth controls. Removing a project definition
+still restores the inherited configuration on the next start or resume.
+
 _Rejected:_ repository-local MCP config (opening an untrusted checkout must not authorize
 command execution; revisit only with an explicit trust gate) · SQLite config (not
 human-readable or hand-editable) · writing project state into each vendor's global config

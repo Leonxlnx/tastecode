@@ -40,6 +40,7 @@ export const PROVIDER_CAPABILITIES = {
   'claude-code': {
     ...unsupported,
     resume: true,
+    managedMcp: true,
     nativeModels: true,
     account: true,
     login: true,

@@ -944,28 +944,30 @@ function claudeRuntime(
   return {
     async start(workspacePath, options) {
       const adapter = await adapterFor(options.agent, workspacePath)
-      const thread = await adapter.startThread(workspacePath, {
-        model: options.model,
-        effort: options.effort,
-        approval: options.approval,
-        instructions: options.instructions,
-        ephemeral: options.ephemeral,
-        mcpServers: options.mcpServers,
-        mcpCredentials: options.mcpCredentials,
-      })
-      return { thread, session: sessionFor(adapter) }
+      return startedSession(sessionFor(adapter), () =>
+        adapter.startThread(workspacePath, {
+          model: options.model,
+          effort: options.effort,
+          approval: options.approval,
+          instructions: options.instructions,
+          ephemeral: options.ephemeral,
+          mcpServers: options.mcpServers,
+          mcpCredentials: options.mcpCredentials,
+        }),
+      )
     },
     async resume(threadId, workspacePath, options) {
       const adapter = await adapterFor(options.agent, workspacePath)
-      const thread = await adapter.resumeThread(threadId, workspacePath, {
-        model: options.model,
-        effort: options.effort,
-        approval: options.approval,
-        instructions: options.instructions,
-        mcpServers: options.mcpServers,
-        mcpCredentials: options.mcpCredentials,
-      })
-      return { thread, session: sessionFor(adapter) }
+      return startedSession(sessionFor(adapter), () =>
+        adapter.resumeThread(threadId, workspacePath, {
+          model: options.model,
+          effort: options.effort,
+          approval: options.approval,
+          instructions: options.instructions,
+          mcpServers: options.mcpServers,
+          mcpCredentials: options.mcpCredentials,
+        }),
+      )
     },
     async listModels(agent) {
       const adapter = await adapterFor(agent)

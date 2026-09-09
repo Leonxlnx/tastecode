@@ -3361,15 +3361,47 @@ describe('persisted threads', () => {
 })
 
 describe('MCP inventory', () => {
-  it('reports unsupported providers without starting one', async () => {
+  it('validates Claude project MCP settings before saving additions or edits', async () => {
+    const { orchestrator, sessions } = harness()
+    const safe: McpServerConfig = {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    }
+    try {
+      expect(() =>
+        orchestrator.addMcpServer('claude-code', '/repo', { id: 'hidden', enabled: false }),
+      ).toThrow('cannot hide an inherited MCP server')
+      expect(() =>
+        orchestrator.addMcpServer('claude-code', '/repo', {
+          id: 'custom',
+          enabled: true,
+          transport: { type: 'stdio', command: 'node', args: [], cwd: '/another-project' },
+        }),
+      ).toThrow('custom working directory')
+      expect((await orchestrator.listMcpServers('claude-code', '/repo')).servers).toEqual([])
+      orchestrator.addMcpServer('claude-code', '/repo', safe)
+      const saved = await orchestrator.listMcpServers('claude-code', '/repo')
+      expect(saved.servers.map(({ id }) => id)).toEqual(['docs'])
+      expect(() =>
+        orchestrator.updateMcpServer('claude-code', '/repo', { id: 'docs', enabled: false }),
+      ).toThrow('cannot hide an inherited MCP server')
+      expect(await orchestrator.listMcpServers('claude-code', '/repo')).toEqual(saved)
+      expect(sessions).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('reports provider MCP capabilities without starting one', async () => {
     const { orchestrator } = harness()
 
-    await expect(orchestrator.listMcpServers('cursor', '/repo')).resolves.toEqual({
+    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
       capabilities: {
         inventory: false,
-        add: false,
-        update: false,
-        remove: false,
+        add: true,
+        update: true,
+        remove: true,
         reload: false,
         startOAuth: false,
         cancelOAuth: false,
@@ -3521,35 +3553,32 @@ describe('MCP inventory', () => {
     })
   })
 
-  it.each(['grok', 'claude-code'] as const)(
-    'manages %s project servers and passes them into new sessions',
-    async (provider) => {
-      const { orchestrator, startedOptions } = harness()
-      orchestrator.addMcpServer(provider, '/repo', {
-        id: 'test-tools',
-        enabled: true,
-        displayName: 'Test tools',
-        transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
-      })
+  it('manages Grok project servers and passes them into new sessions', async () => {
+    const { orchestrator, startedOptions } = harness()
+    orchestrator.addMcpServer('grok', '/repo', {
+      id: 'test-tools',
+      enabled: true,
+      displayName: 'Test tools',
+      transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
+    })
 
-      await expect(orchestrator.listMcpServers(provider, '/repo')).resolves.toMatchObject({
-        capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
-        servers: [
-          {
-            id: 'test-tools',
-            displayName: 'Test tools',
-            scope: 'project',
-            enabled: true,
-          },
-        ],
-      })
+    await expect(orchestrator.listMcpServers('grok', '/repo')).resolves.toMatchObject({
+      capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
+      servers: [
+        {
+          id: 'test-tools',
+          displayName: 'Test tools',
+          scope: 'project',
+          enabled: true,
+        },
+      ],
+    })
 
-      await orchestrator.startThread(provider, '/repo')
-      expect(startedOptions[0]).toMatchObject({
-        mcpServers: [{ id: 'test-tools', enabled: true }],
-      })
-    },
-  )
+    await orchestrator.startThread('grok', '/repo')
+    expect(startedOptions[0]).toMatchObject({
+      mcpServers: [{ id: 'test-tools', enabled: true }],
+    })
+  })
 })
 
 describe('skills inventory', () => {
