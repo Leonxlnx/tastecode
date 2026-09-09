@@ -83,17 +83,7 @@ async function readArtifactProvenance(artifactPath, artifactName, desktopPackage
   try {
     let provenancePath
     if (artifactName.endsWith('.AppImage')) {
-      const executableName = desktopPackage.build?.linux?.executableName
-      if (!executableName) {
-        throw new Error('[linux-release-evidence] Linux executableName is required')
-      }
-      const resourcePath = path.posix.join(
-        'usr',
-        'lib',
-        executableName,
-        'resources',
-        BUILD_PROVENANCE_FILE,
-      )
+      const resourcePath = path.posix.join('resources', BUILD_PROVENANCE_FILE)
       execFileSync(artifactPath, ['--appimage-extract', resourcePath], {
         cwd: extractionRoot,
         stdio: 'ignore',
