@@ -544,7 +544,7 @@ export class Orchestrator {
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
       voiceTranscriber?: VoiceTranscriber
-      onTerminalOutput?: (terminalId: string, data: string) => void
+      onTerminalOutput?: (terminalId: string, data: string, outputOffset: number) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
       /** Test override for the hardware-scaled warm idle runtime limit. */
@@ -2149,6 +2149,10 @@ export class Orchestrator {
     void this.#terminals
       .close(terminalId)
       .catch((error) => this.#onLog(`[terminal] close failed: ${errorMessage(error)}`))
+  }
+
+  terminalStatus(terminalId: string) {
+    return this.#terminals.status(terminalId)
   }
 
   #repoPath(threadId: string): string {

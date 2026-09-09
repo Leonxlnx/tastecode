@@ -134,7 +134,8 @@ export function startServer(
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
-    onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
+    onTerminalOutput: (terminalId, data, outputOffset) =>
+      push.broadcast('terminal.output', { terminalId, data, outputOffset }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
     capturePreview: (url, viewports) =>
@@ -636,6 +637,11 @@ export function startServer(
       case 'providers.watch': {
         const p = parseParams(method, params)
         return orchestrator.watchProvider(p.provider, p.projectPath, p.targets)
+      }
+
+      case 'terminal.status': {
+        const p = parseParams(method, params)
+        return orchestrator.terminalStatus(p.terminalId)
       }
 
       case 'terminal.resize': {
