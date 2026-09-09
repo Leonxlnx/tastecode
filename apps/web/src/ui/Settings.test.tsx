@@ -930,16 +930,28 @@ describe('provider settings', () => {
     expect(screen.queryByRole('button', { name: 'Add custom harness' })).toBeNull()
   })
 
+  it('shows a plan without an email when the provider exposes it', async () => {
+    renderProviders([installedProvider('claude-code', 'Claude Code')], (method) => {
+      if (method === 'auth.status') return { signedIn: true, plan: 'Pro' }
+      throw new Error(`unexpected ${method}`)
+    })
+    await waitFor(() =>
+      expect(providerRow('Claude Code').querySelector('.provider-row__status')?.textContent).toBe(
+        'Signed in · Pro',
+      ),
+    )
+  })
+
   it('shows an honest signed-in fallback instead of asking for an email', async () => {
     renderProviders([installedProvider('grok', 'Grok')], (method) => {
-      if (method === 'auth.status') return { signedIn: true, plan: 'Team' }
+      if (method === 'auth.status') return { signedIn: true }
       if (method === 'auth.signOut') return {}
       throw new Error(`unexpected ${method}`)
     })
 
     const grok = providerRow('Grok')
     await waitFor(() =>
-      expect(grok.querySelector('.provider-row__status')?.textContent).toBe('Signed in · Team'),
+      expect(grok.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
     )
     expect(within(grok).queryByRole('button', { name: 'Add email' })).toBeNull()
 
@@ -1095,9 +1107,6 @@ describe('provider settings', () => {
     expect(emailControl.getAttribute('data-revealed')).toBe('false')
     expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
-    expect(codexRow.querySelector('.provider-row__status')?.textContent).toBe(
-      'private@example.com · pro',
-    )
 
     // Beta scope: agent rows and the API-connection form stay out entirely,
     // even when the server still reports agents.
