@@ -21,7 +21,7 @@ import type {
   Thread,
   UserInputQuestion,
 } from '@harness/contracts'
-import { JsonRpcValueSchema, spawnCli } from '@harness/proc'
+import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
@@ -298,7 +298,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #query: ClaudeQueryRuntime | undefined
   #promptQueue: PromptQueue | undefined
   #queryGeneration = 0
-  #turnCounter = 0
+  #sessionGeneration = 0
+  #configuration: Promise<void> = Promise.resolve()
+  readonly #processes = new Set<ReturnType<ClaudeSpawn>>()
   #activeTurnId: string | undefined
   #interruptRequested = false
   #disposed = false
@@ -359,20 +361,32 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     attachments: string[] = [],
     options: ClaudeTurnOptions = {},
   ): Promise<string> {
+    return this.#configure(async () => this.#sendTurn(threadId, text, attachments, options))
+  }
+
+  async #sendTurn(
+    threadId: string,
+    text: string,
+    attachments: string[],
+    options: ClaudeTurnOptions,
+  ): Promise<string> {
     this.#assertThread(threadId)
     if (this.#activeTurnId) throw new Error('Claude already has a running turn')
 
     const previous = this.#options
     const next = applyClaudeTurnOptions(previous, options)
-    this.#options = next
     if (previous.effort !== next.effort) {
-      this.#restartSession()
+      this.#restartSession(next)
     } else if (previous.model !== next.model) {
-      await this.#requireQuery().setModel(next.model)
+      const query = this.#requireQuery()
+      await query.setModel(next.model)
+      if (query !== this.#query) throw new Error('Claude session changed during model selection')
     }
+    this.#assertThread(threadId)
+    this.#options = next
 
     const queue = this.#requirePromptQueue()
-    const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    const turnId = `${threadId}-turn-${crypto.randomUUID()}`
     queue.push(claudeUserMessage(text, attachments, this.#sessionId))
     this.#activeTurnId = turnId
     this.#interruptRequested = false
@@ -399,8 +413,29 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   async setApproval(approval: ApprovalMode): Promise<void> {
-    this.#options = { ...this.#options, approval }
-    if (this.#query) await this.#query.setPermissionMode(PERMISSION_MODE[approval])
+    return this.#configure(async () => {
+      this.#assertThread(this.#threadId)
+      const query = this.#requireQuery()
+      await query.setPermissionMode(PERMISSION_MODE[approval])
+      if (query !== this.#query)
+        throw new Error('Claude session changed during permission selection')
+      this.#assertThread(this.#threadId)
+      this.#options = { ...this.#options, approval }
+    })
+  }
+
+  #configure<T>(operation: () => Promise<T>): Promise<T> {
+    const generation = this.#sessionGeneration
+    const result = this.#configuration.then(() => {
+      if (generation !== this.#sessionGeneration) throw new Error('Claude session is closed')
+      return operation()
+    })
+    // A rejected transition must not prevent a retry or a later control call.
+    this.#configuration = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
   respondToApproval(approvalId: string, decision: ApprovalDecision): void {
@@ -485,9 +520,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
-  dispose(): void {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    if (this.#disposed)
+      return Promise.all([...this.#processes].map((child) => killTree(child))).then(() => undefined)
     this.#disposed = true
+    this.#sessionGeneration += 1
     this.#queryGeneration += 1
     this.#settlePending('Claude session closed.')
     this.#promptQueue?.close()
@@ -498,6 +535,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#activeTurnId = undefined
     this.#clearStreamingState()
     this.removeAllListeners()
+    return Promise.all([...this.#processes].map((child) => killTree(child))).then(() => undefined)
   }
 
   #openSession(
@@ -509,6 +547,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   ): void {
     if (this.#query || this.#promptQueue) throw new Error('Claude adapter already has a session')
     this.#disposed = false
+    this.#sessionGeneration += 1
     this.#threadId = threadId
     this.#sessionId = sessionId
     this.#workspacePath = workspacePath
@@ -517,30 +556,28 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#startQuery(resume ? sessionId : undefined)
   }
 
-  #startQuery(resume?: string): void {
+  #startQuery(resume?: string, options = this.#options): void {
     const promptQueue = new PromptQueue()
     const effort =
-      this.#options.effort === undefined
-        ? undefined
-        : ClaudeEffortSchema.parse(this.#options.effort)
+      options.effort === undefined ? undefined : ClaudeEffortSchema.parse(options.effort)
     const query = this.#createQuery({
       prompt: promptQueue,
       options: this.#queryOptions({
         cwd: this.#workspacePath,
-        ...(this.#options.model ? { model: this.#options.model } : {}),
+        ...(options.model ? { model: options.model } : {}),
         ...(effort ? { effort: effort } : {}),
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          ...(this.#options.instructions
+          ...(options.instructions
             ? {
-                append: this.#options.instructions,
+                append: options.instructions,
               }
             : {}),
         },
         settingSources: ['user', 'project', 'local'],
-        persistSession: !this.#options.ephemeral,
-        permissionMode: PERMISSION_MODE[this.#options.approval ?? 'ask'],
+        persistSession: !options.ephemeral,
+        permissionMode: PERMISSION_MODE[options.approval ?? 'ask'],
         allowDangerouslySkipPermissions: true,
         includePartialMessages: true,
         canUseTool: this.#canUseTool,
@@ -558,15 +595,28 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     return {
       pathToClaudeCodeExecutable: 'claude',
       env: { ...this.#environment },
-      spawnClaudeCodeProcess: claudeSdkSpawner(this.#spawn, (chunk) => {
-        const line = chunk.trimEnd()
-        if (line) this.emit('log', line)
-      }),
+      spawnClaudeCodeProcess: claudeSdkSpawner(
+        this.#spawn,
+        (chunk) => {
+          const line = chunk.trimEnd()
+          if (line) this.emit('log', line)
+        },
+        undefined,
+        (child) => {
+          this.#processes.add(child)
+          child.once('exit', () => {
+            void killTree(child).then(
+              () => this.#processes.delete(child),
+              () => undefined,
+            )
+          })
+        },
+      ),
       ...overrides,
     }
   }
 
-  #restartSession(): void {
+  #restartSession(options: ClaudeStartOptions): void {
     if (this.#activeTurnId) throw new Error('Claude effort cannot change during a running turn')
     this.#queryGeneration += 1
     this.#promptQueue?.close()
@@ -574,7 +624,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#promptQueue = undefined
     this.#query = undefined
     this.#clearStreamingState()
-    this.#startQuery(this.#sessionId)
+    this.#startQuery(this.#sessionId, options)
   }
 
   async #consume(query: ClaudeQueryRuntime, generation: number): Promise<void> {

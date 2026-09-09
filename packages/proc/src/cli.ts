@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { desktopPath } from './desktop-path.js'
-import { killTree } from './kill.js'
+import { killTree, spawnOwned } from './kill.js'
 
 /**
  * Spawn a CLI that may have been installed as an npm shim.
@@ -23,15 +23,15 @@ export function spawnCli(
   const spawnOptions = {
     ...(!(options.cwd === undefined) ? { cwd: options.cwd } : {}),
     env: childEnvironment(options),
-    stdio: ['pipe', 'pipe', 'pipe'] satisfies Array<'pipe'>,
+    stdio: ['pipe', 'pipe', 'pipe'] satisfies ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   }
 
   if (process.platform === 'win32') {
-    if (/\.(?:exe|com)$/i.test(command)) return spawn(command, args, spawnOptions)
-    return spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions)
+    if (/\.(?:exe|com)$/i.test(command)) return spawnOwned(command, args, spawnOptions)
+    return spawnOwned('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions)
   }
-  return spawn(command, args, spawnOptions)
+  return spawnOwned(command, args, spawnOptions)
 }
 
 /**
@@ -109,8 +109,10 @@ function spawnCommandVersion(command: string, timeoutMs: number): Promise<string
       if (settled) return
       settled = true
       clearTimeout(timer)
-      killTree(child)
-      resolve(value)
+      void killTree(child).then(
+        () => resolve(value),
+        () => resolve(undefined),
+      )
     }
 
     const timer = setTimeout(() => finish(undefined), timeoutMs)
@@ -165,11 +167,12 @@ export function runCli(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error(`${command} did not respond`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')
