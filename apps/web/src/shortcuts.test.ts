@@ -1,6 +1,5 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest'
-import { requiredValue } from './test-dom.js'
 import {
   createDefaultKeybindings,
   findKeybindingConflict,
@@ -29,10 +28,7 @@ describe('shortcuts', () => {
   })
 
   it('matches the primary modifier on macOS and Windows without stealing shifted variants', () => {
-    const commandPalette = requiredValue(
-      createDefaultKeybindings().commandPalette,
-      'default command palette keybind',
-    )
+    const commandPalette = createDefaultKeybindings().commandPalette!
     expect(
       matchesShortcut(new KeyboardEvent('keydown', { key: 'k', metaKey: true }), commandPalette),
     ).toBe(true)
@@ -48,12 +44,11 @@ describe('shortcuts', () => {
   })
 
   it('formats platform-native hints and recognizes every editable target', () => {
-    const newProject = requiredValue(
-      createDefaultKeybindings().newProject,
-      'default new project keybind',
-    )
+    const newProject = createDefaultKeybindings().newProject!
     expect(shortcutLabel(newProject, true)).toBe('⌘⇧O')
-    expect(shortcutLabel(newProject, false)).toBe('Ctrl+Shift+O')
+    expect(shortcutLabel(newProject, false)).toBe('⌃⇧O')
+    expect(shortcutLabel({ key: 'arrowdown', primary: true, alt: true }, false)).toBe('⌃⌥↓')
+    expect(shortcutLabel({ key: 'enter', primary: true }, false)).toBe('⌃↵')
     expect(isEditableTarget(document.createElement('textarea'))).toBe(true)
     expect(isEditableTarget(document.createElement('input'))).toBe(true)
 
@@ -103,5 +98,38 @@ describe('shortcuts', () => {
     expect(findKeybindingConflict(keybindings, 'newChat', { key: 'k', primary: true })?.label).toBe(
       'Command palette',
     )
+  })
+
+  it('rejects stored keybindings that do not match the strict format', () => {
+    const malformed = [
+      { version: 1, bindings: {}, extra: true },
+      { version: 1, bindings: { commandPalette: { key: 'g', primary: true, extra: true } } },
+      { version: 1, bindings: { commandPalette: { key: 'g', primary: 'yes' } } },
+      { version: 1, bindings: { commandPalette: { key: '' } } },
+      { version: 1, bindings: { commandPalette: { key: 'x'.repeat(25) } } },
+    ]
+
+    for (const stored of malformed) {
+      localStorage.setItem(KEYBINDING_STORAGE_KEY, JSON.stringify(stored))
+      expect(readKeybindings()).toEqual(createDefaultKeybindings())
+    }
+  })
+
+  it('ignores valid stored bindings for newer unknown actions', () => {
+    localStorage.setItem(
+      KEYBINDING_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        bindings: {
+          futureAction: { key: 'f8' },
+          commandPalette: { key: 'g', primary: true },
+        },
+      }),
+    )
+
+    expect(readKeybindings()).toMatchObject({
+      commandPalette: { key: 'g', primary: true },
+      settings: { key: ',', primary: true },
+    })
   })
 })

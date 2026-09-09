@@ -5,6 +5,30 @@ const socket = {}
 const viewports = [{ width: 1_440, height: 900 }]
 
 describe('preview capture coordinator', () => {
+  it('cancels timed-out desktop work before sending the next queued capture', async () => {
+    vi.useFakeTimers()
+    try {
+      const operations: string[] = []
+      const coordinator = new PreviewCaptureCoordinator<object>(
+        () => operations.push('send'),
+        10,
+        () => operations.push('cancel'),
+      )
+      coordinator.setCapability(socket, true)
+      const first = coordinator.capture('http://127.0.0.1:5101/', viewports)
+      const firstFailure = expect(first).rejects.toThrow(/timed out/)
+      const next = coordinator.capture('http://127.0.0.1:5102/', viewports)
+      const nextFailure = expect(next).rejects.toThrow(/disconnected/)
+      await vi.advanceTimersByTimeAsync(10)
+      await firstFailure
+      expect(operations).toEqual(['send', 'cancel', 'send'])
+      coordinator.remove(socket)
+      await nextFailure
+      expect(operations.at(-1)).toBe('cancel')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('round-trips a capture through a capable client', async () => {
     const send = vi.fn()
     const coordinator = new PreviewCaptureCoordinator<object>(send)

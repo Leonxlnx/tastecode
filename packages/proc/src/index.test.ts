@@ -1,21 +1,64 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
-import { killTree, readNdjson, runCli, spawnCli, StdioJsonRpc } from './index.js'
+import {
+  killTree,
+  commandVersion,
+  isInstalled,
+  readNdjson,
+  runCli,
+  spawnCli,
+  StdioJsonRpc,
+  type StdioJsonRpcProcess,
+} from './index.js'
+
+describe('command discovery', () => {
+  it.skipIf(process.platform === 'win32')(
+    'reads an exact version from an executable link without launching it',
+    async () => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-command-version-'))
+      const target = path.join(directory, '2.3.4')
+      const command = path.join(directory, 'fake-agent')
+      const previousPath = process.env['PATH']
+      try {
+        writeFileSync(target, '')
+        chmodSync(target, 0o755)
+        symlinkSync(target, command)
+        process.env['PATH'] = `${directory}${path.delimiter}${previousPath ?? ''}`
+
+        await expect(isInstalled('fake-agent')).resolves.toBe(true)
+        await expect(commandVersion('fake-agent')).resolves.toBe('2.3.4')
+      } finally {
+        process.env['PATH'] = previousPath
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+  )
+})
 
 describe('StdioJsonRpc', () => {
   it('forgets a timed-out request and still accepts the next reply', async () => {
     vi.useFakeTimers()
     try {
-      // SAFETY: StdioJsonRpc uses only these three streams and EventEmitter process events in this test.
-      const child = new EventEmitter() as ChildProcessWithoutNullStreams
-      child.stdin = new PassThrough()
-      child.stdout = new PassThrough()
-      child.stderr = new PassThrough()
+      const child = Object.assign(new EventEmitter(), {
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        exitCode: null,
+        signalCode: null,
+        kill: vi.fn(() => true),
+      }) satisfies StdioJsonRpcProcess
       const rpc = new StdioJsonRpc(child, 'test agent')
 
       const timedOut = rpc.request('slow', {}, { timeoutMs: 10 })
@@ -67,7 +110,13 @@ describe('runCli', () => {
 
     const result = await runCli(process.execPath, ['-e', script], 2_000)
 
-    expect(result).toEqual({ code: 0, stdout: 'early-late' })
+    expect(result).toEqual({ code: 0, stdout: 'early-late', stderr: '' })
+  })
+
+  it('captures provider status text written to stderr', async () => {
+    const result = await runCli(process.execPath, ['-e', "process.stderr.write('provider status')"])
+
+    expect(result).toEqual({ code: 0, stdout: '', stderr: 'provider status' })
   })
 })
 

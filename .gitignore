@@ -52,3 +52,8 @@ test-results/
 
 # Local scratch — anything here is yours alone
 scratch/
+
+# Local verification ledgers
+.unlazy/
+/apps/desktop/performance-results/
+/apps/desktop/preview-results/

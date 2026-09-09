@@ -1,10 +1,70 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { Model } from '@harness/contracts'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { ModelChoice } from '../model-catalog.js'
-import { requiredInstance } from '../test-dom.js'
+
+const haptics = vi.hoisted(() => ({
+  performAppHaptic: vi.fn(),
+  prepareAppHaptics: vi.fn(),
+}))
+
+const menuTriggerIntent = vi.hoisted(() => vi.fn())
+
+vi.mock('../haptics.js', () => haptics)
+
+vi.mock('./Menu.js', () => ({
+  Menu(props: {
+    trigger: (open: boolean) => ReactNode
+    children: (close: () => void) => ReactNode
+    disabled?: boolean
+    label?: string
+    panelRole?: string
+    panelLabel?: string
+    panelClassName?: string
+    onOpen?: () => void
+    onTriggerIntent?: () => void
+  }) {
+    const [open, setOpen] = useState(false)
+    return (
+      <div>
+        <button
+          type="button"
+          disabled={props.disabled}
+          aria-label={props.label}
+          aria-expanded={open}
+          onPointerEnter={() => {
+            props.onTriggerIntent?.()
+            if (props.onTriggerIntent) menuTriggerIntent()
+          }}
+          onFocus={() => {
+            props.onTriggerIntent?.()
+            if (props.onTriggerIntent) menuTriggerIntent()
+          }}
+          onClick={() =>
+            setOpen((current) => {
+              if (!current) props.onOpen?.()
+              return !current
+            })
+          }
+        >
+          {props.trigger(open)}
+        </button>
+        {open ? (
+          <div
+            role={props.panelRole ?? 'menu'}
+            aria-label={props.panelLabel}
+            className={props.panelClassName}
+          >
+            {props.children(() => setOpen(false))}
+          </div>
+        ) : null}
+      </div>
+    )
+  },
+}))
+
 import {
   ModelSelector,
   getCompactModelName,
@@ -13,42 +73,7 @@ import {
   getFastModeOffValue,
   getFriendlyEffortLabel,
   groupModelsBySource,
-  type ModelSelectorHaptics,
-  type ModelSelectorMenu,
 } from './ModelSelector.js'
-
-const performHaptic = vi.fn<ModelSelectorHaptics['perform']>()
-const prepareHaptics = vi.fn<ModelSelectorHaptics['prepare']>()
-const haptics = {
-  perform: performHaptic,
-  prepare: prepareHaptics,
-} satisfies ModelSelectorHaptics
-
-const TestMenu = ((props) => {
-  const [open, setOpen] = useState(false)
-  return (
-    <div>
-      <button
-        type="button"
-        disabled={props.disabled}
-        aria-label={props.label}
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        {props.trigger(open)}
-      </button>
-      {open ? (
-        <div
-          role={props.panelRole ?? 'menu'}
-          aria-label={props.panelLabel}
-          className={props.panelClassName}
-        >
-          {props.children(() => setOpen(false))}
-        </div>
-      ) : null}
-    </div>
-  )
-}) satisfies ModelSelectorMenu
 
 const RAW_MODELS: Model[] = [
   {
@@ -100,8 +125,6 @@ function renderSelector(overrides: RenderOverrides = {}) {
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
       onServiceTierChange={onServiceTierChange}
-      haptics={haptics}
-      menuComponent={TestMenu}
       {...overrides}
     />,
   )
@@ -109,32 +132,36 @@ function renderSelector(overrides: RenderOverrides = {}) {
   return { onModelChange, onEffortChange, onServiceTierChange }
 }
 
+async function openSelector() {
+  fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+  await waitFor(() => expect(screen.queryByText('Loading models…')).toBeNull())
+}
+
 beforeEach(() => {
-  performHaptic.mockClear()
-  prepareHaptics.mockClear()
+  haptics.performAppHaptic.mockClear()
+  haptics.prepareAppHaptics.mockClear()
+  menuTriggerIntent.mockClear()
   vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) => {
     callback(0)
     return 1
   })
-  const pointerCaptures = new WeakMap<HTMLElement, Set<number>>()
   Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
     configurable: true,
     value(this: HTMLElement, pointerId: number) {
-      const captures = pointerCaptures.get(this) ?? new Set<number>()
-      captures.add(pointerId)
-      pointerCaptures.set(this, captures)
+      ;(this as HTMLElement & { __pointerCapture?: number }).__pointerCapture = pointerId
     },
   })
   Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
     configurable: true,
     value(this: HTMLElement, pointerId: number) {
-      pointerCaptures.get(this)?.delete(pointerId)
+      const target = this as HTMLElement & { __pointerCapture?: number }
+      if (target.__pointerCapture === pointerId) delete target.__pointerCapture
     },
   })
   Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
     configurable: true,
     value(this: HTMLElement, pointerId: number) {
-      return pointerCaptures.get(this)?.has(pointerId) ?? false
+      return (this as HTMLElement & { __pointerCapture?: number }).__pointerCapture === pointerId
     },
   })
 })
@@ -146,7 +173,7 @@ afterEach(() => {
 })
 
 describe('ModelSelector', () => {
-  it('formats trigger labels and helper values for the combined pill', () => {
+  it('formats trigger labels and helper values for the combined pill', async () => {
     renderSelector()
     const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
 
@@ -157,7 +184,7 @@ describe('ModelSelector', () => {
     expect(getFriendlyEffortLabel('xhigh')).toBe('Extra High')
   })
 
-  it('shows active fast mode in the compact trigger', () => {
+  it('shows active fast mode in the compact trigger', async () => {
     renderSelector({ serviceTier: 'priority' })
 
     const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
@@ -173,10 +200,32 @@ describe('ModelSelector', () => {
     ])
   })
 
-  it('opens a dialog panel, toggles fast mode, and falls back to undefined when default fast would keep it on', () => {
+  it('requests the full catalog only when the picker opens', async () => {
+    const onOpen = vi.fn()
+    renderSelector({ onOpen })
+
+    expect(onOpen).not.toHaveBeenCalled()
+    await openSelector()
+
+    expect(onOpen).toHaveBeenCalledOnce()
+  })
+
+  it('warms the lazy panel on pointer and focus without opening it', () => {
+    renderSelector()
+
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    fireEvent.pointerEnter(trigger)
+    fireEvent.focus(trigger)
+
+    expect(menuTriggerIntent).toHaveBeenCalledTimes(2)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByRole('dialog', { name: 'Model and reasoning' })).toBeNull()
+  })
+
+  it('opens a dialog panel, toggles fast mode, and falls back to undefined when default fast would keep it on', async () => {
     const { onServiceTierChange } = renderSelector()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
     // Tier descriptions are data, not UI: the panel shows no plan copy.
     expect(screen.queryByText('1.5x speed')).toBeNull()
@@ -209,17 +258,17 @@ describe('ModelSelector', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
     expect(document.querySelector('.model-selector__fast-meta')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Disable fast mode' }))
     expect(toggleFastOff).toHaveBeenCalledWith(undefined)
     expect(getFastModeOffValue(fastDefaultModel.model)).toBeUndefined()
   })
 
-  it('uses pointer capture for the effort slider preview and commits on release', () => {
+  it('uses pointer capture for the effort slider preview and commits on release', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
     const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
     vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
       x: 0,
@@ -245,19 +294,19 @@ describe('ModelSelector', () => {
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
     expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
-    expect(prepareHaptics).toHaveBeenCalled()
-    expect(performHaptic).toHaveBeenCalledTimes(2)
-    expect(performHaptic).toHaveBeenNthCalledWith(1, 'alignment')
-    expect(performHaptic).toHaveBeenNthCalledWith(2, 'alignment')
+    expect(haptics.prepareAppHaptics).toHaveBeenCalled()
+    expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
+    expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(2, 'alignment')
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
   })
 
-  it('supports arrow and Home/End keyboard movement on the discrete slider', () => {
+  it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
     const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
 
     fireEvent.keyDown(slider, { key: 'ArrowRight' })
@@ -269,13 +318,13 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
   })
 
-  it('shows compact models immediately and leaves effort and tier to the owner', () => {
+  it('shows compact models immediately and leaves effort and tier to the owner', async () => {
     const { onModelChange, onEffortChange, onServiceTierChange } = renderSelector({
       effort: 'xhigh',
       serviceTier: 'priority',
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
     expect(screen.queryByText('Advanced')).toBeNull()
     expect(screen.queryByText('Best for broad tasks')).toBeNull()
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
@@ -290,9 +339,9 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
-  it('defaults to the flat list with inline provider headings', () => {
+  it('defaults to the flat list with inline provider headings', async () => {
     renderSelector()
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
 
     expect(screen.queryByRole('group', { name: 'Providers' })).toBeNull()
     expect(document.querySelector('.model-selector__models--flat')).toBeTruthy()
@@ -303,7 +352,7 @@ describe('ModelSelector', () => {
     expect(heading?.querySelector('svg')?.getAttribute('width')).toBe('11')
   })
 
-  it('searches every flat-list source without changing the selected model', () => {
+  it('searches every flat-list source without changing the selected model', async () => {
     const claude = {
       ...MODELS[0]!,
       key: 'claude-code:sonnet',
@@ -313,7 +362,7 @@ describe('ModelSelector', () => {
       model: { ...MODELS[0]!.model, id: 'sonnet', displayName: 'Sonnet 5' },
     }
     const { onModelChange } = renderSelector({ models: [...MODELS, claude] })
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
     const search = screen.getByRole('searchbox', { name: 'Search models' })
 
     fireEvent.change(search, { target: { value: 'claude sonnet' } })
@@ -323,9 +372,9 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
   })
 
-  it('moves from model search into the matching results with arrow keys', () => {
+  it('moves from model search into the matching results with arrow keys', async () => {
     renderSelector()
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
     const search = screen.getByRole('searchbox', { name: 'Search models' })
 
     fireEvent.change(search, { target: { value: 'mini' } })
@@ -342,7 +391,7 @@ describe('ModelSelector', () => {
     )
   })
 
-  it('omits controls when the selected model declares none', () => {
+  it('omits controls when the selected model declares none', async () => {
     const plain = {
       ...MODELS[0]!,
       key: 'grok:plain',
@@ -352,14 +401,14 @@ describe('ModelSelector', () => {
       model: { ...MODELS[0]!.model, reasoningEfforts: [], serviceTiers: [] },
     }
     renderSelector({ models: [plain], modelId: plain.key, effort: undefined })
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
 
     expect(document.querySelector('.model-selector__controls')).toBeNull()
     expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Enable fast mode' })).toBeNull()
   })
 
-  it('renders only a compact Fast control when effort is unsupported', () => {
+  it('renders only a compact Fast control when effort is unsupported', async () => {
     const fastOnly = {
       ...MODELS[1]!,
       model: { ...MODELS[1]!.model, reasoningEfforts: [] },
@@ -370,14 +419,14 @@ describe('ModelSelector', () => {
       effort: undefined,
       serviceTier: 'fast',
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
 
     expect(document.querySelector('.model-selector__controls.is-fast-only')).toBeTruthy()
     expect(screen.queryByRole('slider', { name: 'Reasoning effort' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Disable fast mode' })).toBeTruthy()
   })
 
-  it('filters the model list through a provider logo rail', () => {
+  it('filters the model list through a provider logo rail', async () => {
     localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
       key: 'claude-code:sonnet',
@@ -400,7 +449,7 @@ describe('ModelSelector', () => {
     ])
 
     const { onModelChange } = renderSelector({ models: [...MODELS, claudeModel] })
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
 
     expect(screen.getByRole('group', { name: 'Providers' })).toBeTruthy()
     expect(
@@ -431,7 +480,7 @@ describe('ModelSelector', () => {
     expect(onModelChange).not.toHaveBeenCalled()
   })
 
-  it('keeps ACP sources distinct by stable agent identity', () => {
+  it('keeps ACP sources distinct by stable agent identity', async () => {
     const acpModels: ModelChoice[] = ['gemini', 'qwen'].map((agentId) => ({
       ...MODELS[0]!,
       key: `acp:${agentId}:default`,
@@ -454,7 +503,7 @@ describe('ModelSelector', () => {
     ])
   })
 
-  it('searches every rail source without changing the selected model', () => {
+  it('searches every rail source without changing the selected model', async () => {
     localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {
       key: 'claude-code:sonnet',
@@ -471,7 +520,7 @@ describe('ModelSelector', () => {
       },
     }
     const { onModelChange } = renderSelector({ models: [...MODELS, claudeModel] })
-    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await openSelector()
 
     const search = screen.getByRole('searchbox', { name: 'Search models' })
     fireEvent.change(search, { target: { value: 'mini' } })
@@ -493,11 +542,11 @@ describe('ModelSelector', () => {
     )
     claudeSearch.focus()
     fireEvent.keyDown(claudeSearch, { key: 'Escape' })
-    expect(requiredInstance(claudeSearch, HTMLInputElement).value).toBe('')
+    expect((claudeSearch as HTMLInputElement).value).toBe('')
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
-  it('maps pointer positions onto discrete effort stops', () => {
+  it('maps pointer positions onto discrete effort stops', async () => {
     expect(
       getEffortIndexFromPointer({
         clientX: 114,

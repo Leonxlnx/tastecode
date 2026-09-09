@@ -6,21 +6,23 @@ import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
+import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
-import { requiredInstance, requiredValue } from '../test-dom.js'
 import { ProviderSettings, Settings } from './Settings.js'
-import { propertiesWhen } from '../properties-when.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
-function TestInstallTerminal(props: { installKey: string }) {
-  return <div data-testid="install-terminal" data-install-key={props.installKey} />
-}
+
+vi.mock('./InstallTerminal.js', () => ({
+  InstallTerminal: (props: { installKey: string }) => (
+    <div data-testid="install-terminal" data-install-key={props.installKey} />
+  ),
+}))
 
 function renderSettings(
   options: {
-    initialSection?: 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
+    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
@@ -71,7 +73,6 @@ function renderSettings(
       initialSection={options.initialSection ?? 'appearance'}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
-      installTerminalComponent={TestInstallTerminal}
     />,
   )
 }
@@ -89,6 +90,8 @@ afterEach(() => {
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
+  writeTerminalPlacement('bottom')
+  localStorage.removeItem(TERMINAL_PLACEMENT_KEY)
   localStorage.removeItem('harness.providerEmail.codex')
   localStorage.removeItem('harness.providerEmail.claude-code')
   localStorage.removeItem('harness.providerEmail.grok')
@@ -118,12 +121,47 @@ describe('settings viewport layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     expect(screen.getByRole('switch', { name: 'Provider rail layout' })).toBeTruthy()
+    expect(
+      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
+    ).toContain('Bottom panel')
 
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     expect(screen.queryByRole('switch', { name: 'Provider rail layout' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
+  })
+
+  it('pairs theme previews with one compact details editor', () => {
+    renderSettings()
+
+    expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
+    expect(screen.getByRole('img', { name: /code sample preview/i })).toBeTruthy()
+    expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
+      'system',
+      'light',
+      'dark',
+      'codex',
+    ])
+
+    const details = screen.getByRole('region', { name: 'Theme details' })
+    expect(
+      within(details)
+        .getAllByRole('combobox')
+        .map((control) => control.getAttribute('aria-label')),
+    ).toEqual(['Accent palette', 'Background', 'Interface font', 'Sidebar translucency'])
+  })
+
+  it('lets the terminal shortcut target the right sidebar', () => {
+    renderSettings({ initialSection: 'workflows' })
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
+    expect(
+      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
+    ).toContain('Right sidebar')
   })
 })
 
@@ -189,7 +227,7 @@ describe('settings dialog keyboard behavior', () => {
     renderSettings()
     const dialog = screen.getByRole('dialog', { name: 'Settings' })
     const first = screen.getByRole('button', { name: 'Back to app' })
-    const last = screen.getByRole('button', { name: 'Lavender' })
+    const last = screen.getByRole('combobox', { name: 'Sidebar translucency' })
 
     last.focus()
     fireEvent.keyDown(last, { key: 'Tab' })
@@ -230,7 +268,7 @@ describe('settings dialog keyboard behavior', () => {
   it('leaves Escape to a nested control that handles it', () => {
     const onClose = vi.fn()
     renderSettings({ onClose })
-    const nestedControl = screen.getByRole('button', { name: 'Lavender' })
+    const nestedControl = screen.getByRole('combobox', { name: 'Sidebar translucency' })
     nestedControl.addEventListener('keydown', (event) => event.preventDefault())
 
     nestedControl.focus()
@@ -303,7 +341,9 @@ function renderProviders(
   request: TestRequestResolver,
   account?: Account,
 ) {
-  const transport = new TestTransport(request)
+  const transport = new TestTransport((method, params) =>
+    method === 'providers.updates' ? { updates: [] } : request(method, params),
+  )
   render(
     <ProviderSettings
       provider="codex"
@@ -312,7 +352,6 @@ function renderProviders(
       transport={transport}
       onConnectionsChanged={() => {}}
       onAccountChange={() => {}}
-      installTerminalComponent={TestInstallTerminal}
     />,
   )
   return (loginId: string, success: boolean, error: string | null = null) =>
@@ -321,10 +360,9 @@ function renderProviders(
 function installedProvider(id: ProviderId, displayName: string): ProviderStatus {
   return { id, displayName, installed: true, auth: 'unknown' }
 }
-const providerRow = (name: string) =>
-  requiredValue(screen.getByText(name).closest<HTMLElement>('.settings__row'), 'provider row')
+const providerRow = (name: string) => screen.getByText(name).closest<HTMLElement>('.settings__row')!
 const action = (row: HTMLElement, name: string) =>
-  requiredInstance(within(row).getByRole('button', { name }), HTMLButtonElement)
+  within(row).getByRole('button', { name }) as HTMLButtonElement
 describe('provider authentication states', () => {
   it('keeps loading and failure distinct from signed out, then retries', async () => {
     const status = deferred<Account>()
@@ -510,7 +548,7 @@ describe('model settings', () => {
           resolved: {
             provider: 'codex' as const,
             model: 'gpt-5.6-luna',
-            effort: 'medium',
+            effort: 'low',
             sourceName: 'Codex',
             automatic: true,
           },
@@ -522,13 +560,15 @@ describe('model settings', () => {
         return {
           preference,
           sources,
-          ...propertiesWhen(target, (includedValue) => ({
-            resolved: {
-              ...includedValue,
-              sourceName: 'Codex',
-              automatic: false,
-            },
-          })),
+          ...(target
+            ? {
+                resolved: {
+                  ...target,
+                  sourceName: 'Codex',
+                  automatic: false,
+                },
+              }
+            : {}),
         }
       }
       throw new Error(`unexpected ${method}`)
@@ -540,7 +580,7 @@ describe('model settings', () => {
 
     const picker = await screen.findByRole('combobox', { name: 'Background model' })
     expect(picker.tagName).toBe('BUTTON')
-    expect(screen.getByText(/gpt-5\.6 luna through codex at medium effort/i)).toBeTruthy()
+    expect(screen.getByText(/gpt-5\.6 luna through codex at low effort/i)).toBeTruthy()
     fireEvent.click(picker)
     fireEvent.click(screen.getByRole('option', { name: 'GPT-5.6 Luna' }))
 
@@ -611,7 +651,7 @@ describe('model settings', () => {
     )
   })
 
-  it('shows a partially visible provider as off and turns every model on', () => {
+  it('uses All and None buttons to change every model for one provider', () => {
     const models: ModelChoice[] = [
       {
         key: 'opencode:ling',
@@ -692,8 +732,11 @@ describe('model settings', () => {
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
     expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
-    const providerToggle = screen.getByRole('switch', {
-      name: 'Include models from OpenCode in model picker',
+    const allButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
+    })
+    const noneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
     })
     const ling = screen.getByRole('switch', {
       name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
@@ -701,34 +744,48 @@ describe('model settings', () => {
     const qwen = screen.getByRole('switch', {
       name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
     })
-    expect(providerToggle.getAttribute('aria-checked')).toBe('false')
-    expect(providerToggle.classList.contains('is-on')).toBe(false)
+    expect(allButton.textContent).toBe('All')
+    expect(noneButton.textContent).toBe('None')
+    expect((allButton as HTMLButtonElement).disabled).toBe(false)
+    expect((noneButton as HTMLButtonElement).disabled).toBe(false)
+    expect(
+      screen.queryByRole('switch', {
+        name: 'Include models from OpenCode in model picker',
+      }),
+    ).toBeNull()
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
 
-    fireEvent.click(providerToggle)
+    fireEvent.click(allButton)
     expect(onModelVisibilityChange).toHaveBeenCalledOnce()
     expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set()))
-    const enabledProvider = screen.getByRole('switch', {
-      name: 'Include models from OpenCode in model picker',
+    const disabledAllButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
     })
-    expect(enabledProvider.getAttribute('aria-checked')).toBe('true')
-    expect(enabledProvider.classList.contains('is-on')).toBe(true)
-    fireEvent.click(enabledProvider)
+    const enabledNoneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
+    })
+    expect((disabledAllButton as HTMLButtonElement).disabled).toBe(true)
+    expect((enabledNoneButton as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.click(enabledNoneButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', false)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', false)
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
-    const disabledProvider = screen.getByRole('switch', {
-      name: 'Include models from OpenCode in model picker',
+    const enabledAllButton = screen.getByRole('button', {
+      name: 'Show all OpenCode models in model picker',
     })
-    expect(disabledProvider.getAttribute('aria-checked')).toBe('false')
-    fireEvent.click(disabledProvider)
+    const disabledNoneButton = screen.getByRole('button', {
+      name: 'Hide all OpenCode models from model picker',
+    })
+    expect((enabledAllButton as HTMLButtonElement).disabled).toBe(false)
+    expect((disabledNoneButton as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(enabledAllButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
     expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)
@@ -1010,15 +1067,33 @@ describe('provider settings', () => {
 
     const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')
     if (!codexRow) throw new Error('Codex provider row missing')
-    const email = within(codexRow).getByText('private@example.com')
+    const email = within(codexRow).getByText('private@example.com', {
+      selector: '.settings__email-value',
+    })
     expect(email.className).toBe('settings__email-value')
-    const emailButton = email.closest<HTMLButtonElement>('.settings__email')
-    expect(emailButton?.getAttribute('title')).toBe('Click to reveal email')
-    expect(emailButton?.getAttribute('data-revealed')).toBe('false')
-    if (!emailButton) throw new Error('redacted email button missing')
+    const emailControl = email.closest<HTMLElement>('.settings__email')
+    if (!emailControl) throw new Error('redacted email control missing')
+    const emailButton = within(emailControl).getByRole('button', { name: 'Show account email' })
+    expect(emailButton.getAttribute('title')).toBe('Hover to preview or click to keep visible')
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+    expect(emailControl.getAttribute('data-pinned')).toBe('false')
+
+    fireEvent.pointerEnter(emailButton, { pointerType: 'mouse' })
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    expect(emailButton.querySelector('.settings__email-eye--hide')).toBeTruthy()
+    fireEvent.pointerLeave(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+
+    fireEvent.pointerEnter(emailButton, { pointerType: 'mouse' })
     fireEvent.click(emailButton)
-    expect(emailButton.getAttribute('data-revealed')).toBe('true')
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    expect(emailControl.getAttribute('data-pinned')).toBe('true')
     expect(emailButton.getAttribute('title')).toBe('Click to hide email')
+    fireEvent.pointerLeave(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('true')
+    fireEvent.click(emailButton)
+    expect(emailControl.getAttribute('data-revealed')).toBe('false')
+    expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
     expect(codexRow.querySelector('.provider-row__status')?.textContent).toBe(
       'private@example.com · pro',
@@ -1104,7 +1179,6 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
-        installTerminalComponent={TestInstallTerminal}
       />
     )
     const view = render(settingsFor(onConnectionsChanged))
@@ -1147,6 +1221,53 @@ describe('provider settings', () => {
     view.rerender(settingsFor(() => onConnectionsChanged()))
     expect(screen.getByRole('button', { name: 'Installed' })).toBeTruthy()
     expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands provider installs to the expanded workspace terminal', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-codex-install' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            installed: false,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://developers.openai.com/codex/cli',
+              installCommand: 'npm install -g @openai/codex',
+              login: 'provider',
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+
+    await waitFor(() =>
+      expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
+        provider: 'codex',
+        displayName: 'Codex',
+        installKey: 'codex',
+        operation: 'install',
+      }),
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'providers.install',
+      params: { provider: 'codex', columns: 100, rows: 30 },
+    })
   })
 
   it('signs in to provider-CLI-managed logins in an in-app terminal, not a docs page', async () => {
@@ -1216,7 +1337,6 @@ describe('provider settings', () => {
         onAccountChange={() => {}}
         onReset={() => {}}
         onClose={() => {}}
-        installTerminalComponent={TestInstallTerminal}
       />,
     )
 
@@ -1269,13 +1389,14 @@ describe('provider settings', () => {
     expect(onConnectionsChanged).not.toHaveBeenCalled()
   })
 
-  it('hands Claude login to the expanded workspace terminal', async () => {
+  it('hands every provider CLI login to the expanded workspace terminal', async () => {
     const transport = new TestTransport(async (method) => {
       if (method === 'auth.status') return { signedIn: false }
-      if (method === 'providers.launch') return { terminalId: 'term-claude-login' }
+      if (method === 'providers.launch') return { terminalId: 'term-grok-login' }
       throw new Error(`unexpected ${method}`)
     })
     const onProviderLoginTerminalOpen = vi.fn()
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null)
 
     render(
       <ProviderSettings
@@ -1283,13 +1404,14 @@ describe('provider settings', () => {
         account={undefined}
         providerStatuses={[
           {
-            id: 'claude-code',
-            displayName: 'Claude Code',
+            id: 'grok',
+            displayName: 'Grok',
             installed: true,
             auth: 'unknown',
             setup: {
-              installUrl: 'https://code.claude.com/docs/en/getting-started',
+              installUrl: 'https://x.ai/cli',
               login: 'provider',
+              loginOpensBrowser: false,
             },
           },
         ]}
@@ -1297,7 +1419,6 @@ describe('provider settings', () => {
         onConnectionsChanged={() => {}}
         onAccountChange={() => {}}
         onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
-        installTerminalComponent={TestInstallTerminal}
       />,
     )
 
@@ -1306,15 +1427,24 @@ describe('provider settings', () => {
 
     await waitFor(() =>
       expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith({
-        provider: 'claude-code',
-        displayName: 'Claude Code',
-        installKey: 'login:claude-code',
+        provider: 'grok',
+        displayName: 'Grok',
+        installKey: 'login:grok',
       }),
     )
     expect(transport.requests).toContainEqual({
       method: 'providers.launch',
-      params: { provider: 'claude-code', columns: 320, rows: 30 },
+      params: { provider: 'grok', columns: 320, rows: 30 },
     })
+    transport.emit('terminal.output', {
+      terminalId: 'term-grok-login',
+      data: 'If the browser did not open, visit https://grok.example.test/oauth\r\n',
+    })
+    expect(open).toHaveBeenCalledWith(
+      'https://grok.example.test/oauth',
+      '_blank',
+      'noopener,noreferrer',
+    )
     expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })

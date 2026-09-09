@@ -1,52 +1,35 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { requiredElement, requiredInstance, requiredValue } from '../../test-dom.js'
-import {
-  WorkspaceBrowser,
-  type BrowserGuest,
-  type WorkspaceBrowserServices,
-} from './WorkspaceBrowser.js'
+import { WorkspaceBrowser } from './WorkspaceBrowser.js'
 
-let guests: BrowserGuest[] = []
-const openExternalUrl = vi.fn<WorkspaceBrowserServices['openExternalUrl']>()
+const nativeBrowser = vi.hoisted(() => ({
+  openExternal: vi.fn(),
+}))
 
-function createBrowserGuest(): BrowserGuest {
-  const view = document.createElement('webview')
-  let url = 'about:blank'
-  let title = ''
-  let loading = false
-  view.canGoBack = vi.fn(() => false)
-  view.canGoForward = vi.fn(() => false)
-  view.getTitle = vi.fn(() => title)
-  view.getURL = vi.fn(() => url)
-  view.goBack = vi.fn()
-  view.goForward = vi.fn()
-  view.isLoading = vi.fn(() => loading)
-  view.loadURL = vi.fn(async (nextUrl: string) => {
-    loading = true
-    view.dispatchEvent(new Event('did-start-loading'))
-    url = nextUrl
-    title = 'Example'
-    loading = false
-    dispatchGuestEvent(view, 'did-navigate', { url })
-    view.dispatchEvent(new Event('did-stop-loading'))
-  })
-  view.reload = vi.fn()
-  view.stop = vi.fn()
-  guests.push(view)
-  return view
+vi.mock('../../bridge.js', () => ({
+  isDesktop: true,
+  openExternalUrl: nativeBrowser.openExternal,
+}))
+
+type FakeBrowserGuest = HTMLElement & {
+  canGoBack: ReturnType<typeof vi.fn>
+  canGoForward: ReturnType<typeof vi.fn>
+  getTitle: ReturnType<typeof vi.fn>
+  getURL: ReturnType<typeof vi.fn>
+  goBack: ReturnType<typeof vi.fn>
+  goForward: ReturnType<typeof vi.fn>
+  isLoading: ReturnType<typeof vi.fn>
+  loadURL: ReturnType<typeof vi.fn>
+  reload: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
 }
 
-const services = {
-  isDesktop: true,
-  openExternalUrl,
-  createBrowserGuest,
-} satisfies WorkspaceBrowserServices
+let guests: FakeBrowserGuest[] = []
 
 beforeEach(() => {
   guests = []
-  openExternalUrl.mockResolvedValue(undefined)
+  nativeBrowser.openExternal.mockResolvedValue(undefined)
 
   vi.stubGlobal(
     'ResizeObserver',
@@ -55,6 +38,41 @@ beforeEach(() => {
       disconnect() {}
     },
   )
+
+  const originalCreateElement = document.createElement.bind(document)
+  vi.spyOn(document, 'createElement').mockImplementation(((
+    tagName: string,
+    options?: ElementCreationOptions,
+  ) => {
+    if (tagName !== 'webview') return originalCreateElement(tagName, options)
+    const element = originalCreateElement('div')
+    let url = 'about:blank'
+    let title = ''
+    let loading = false
+    const loadURL = vi.fn(async (nextUrl: string) => {
+      loading = true
+      element.dispatchEvent(new Event('did-start-loading'))
+      url = nextUrl
+      title = 'Example'
+      loading = false
+      dispatchGuestEvent(element, 'did-navigate', { url })
+      element.dispatchEvent(new Event('did-stop-loading'))
+    })
+    const view: FakeBrowserGuest = Object.assign(element, {
+      canGoBack: vi.fn(() => false),
+      canGoForward: vi.fn(() => false),
+      getTitle: vi.fn(() => title),
+      getURL: vi.fn(() => url),
+      goBack: vi.fn(),
+      goForward: vi.fn(),
+      isLoading: vi.fn(() => loading),
+      loadURL,
+      reload: vi.fn(),
+      stop: vi.fn(),
+    })
+    guests.push(view)
+    return view
+  }) as typeof document.createElement)
 
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (
     this: HTMLElement,
@@ -77,7 +95,7 @@ afterEach(() => {
 
 describe('WorkspaceBrowser', () => {
   it('navigates in an embedded Chromium guest and applies real responsive viewport sizes', async () => {
-    render(<WorkspaceBrowser active services={services} />)
+    render(<WorkspaceBrowser active />)
 
     const view = guests[0]!
     expect(view).toBeDefined()
@@ -85,15 +103,15 @@ describe('WorkspaceBrowser', () => {
     expect(view.getAttribute('src')).toBe('about:blank')
     act(() => view.dispatchEvent(new Event('dom-ready')))
 
-    const address = requiredInstance(screen.getByLabelText('Browser address'), HTMLInputElement)
+    const address = screen.getByLabelText('Browser address')
     fireEvent.change(address, { target: { value: 'example.com/docs' } })
-    fireEvent.submit(requiredValue(address.closest('form'), 'browser address form'))
+    fireEvent.submit(address.closest('form')!)
 
     await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith('https://example.com/docs'))
-    expect(address.value).toBe('https://example.com/docs')
+    expect((address as HTMLInputElement).value).toBe('https://example.com/docs')
 
     fireEvent.click(screen.getByRole('button', { name: 'Mobile · 390 × 844' }))
-    const host = requiredElement(document, '.workspace-browser__guest-host', HTMLElement)
+    const host = document.querySelector<HTMLElement>('.workspace-browser__guest-host')!
     expect(host.style.width).toBe('266px')
     expect(host.style.height).toBe('576px')
     expect(view.style.width).toBe('390px')
@@ -101,7 +119,7 @@ describe('WorkspaceBrowser', () => {
     expect(view.style.transform).toBe(`scale(${266 / 390})`)
 
     fireEvent.click(screen.getByTitle('Open in system browser'))
-    expect(openExternalUrl).toHaveBeenCalledWith('https://example.com/docs')
+    expect(nativeBrowser.openExternal).toHaveBeenCalledWith('https://example.com/docs')
   })
 
   it('opens a design preview and reloads the same URL for a later review pass', async () => {
@@ -109,20 +127,17 @@ describe('WorkspaceBrowser', () => {
       requestId: '00000000-0000-4000-8000-000000000001',
       url: 'http://127.0.0.1:4173/',
     }
-    const { rerender } = render(<WorkspaceBrowser active navigation={first} services={services} />)
+    const { rerender } = render(<WorkspaceBrowser active navigation={first} />)
     const view = guests[0]!
 
     expect(view.loadURL).not.toHaveBeenCalled()
     act(() => view.dispatchEvent(new Event('dom-ready')))
     await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith(first.url))
-    expect(requiredInstance(screen.getByLabelText('Browser address'), HTMLInputElement).value).toBe(
-      first.url,
-    )
+    expect((screen.getByLabelText('Browser address') as HTMLInputElement).value).toBe(first.url)
 
     rerender(
       <WorkspaceBrowser
         active
-        services={services}
         navigation={{ ...first, requestId: '00000000-0000-4000-8000-000000000002' }}
       />,
     )
@@ -131,7 +146,6 @@ describe('WorkspaceBrowser', () => {
     rerender(
       <WorkspaceBrowser
         active
-        services={services}
         navigation={{
           requestId: '00000000-0000-4000-8000-000000000003',
           url: 'http://127.0.0.1:5183/',
@@ -142,19 +156,19 @@ describe('WorkspaceBrowser', () => {
   })
 
   it('shows invalid input instead of sending privileged URLs to Chromium', () => {
-    render(<WorkspaceBrowser active services={services} />)
+    render(<WorkspaceBrowser active />)
     const view = guests[0]!
 
     const address = screen.getByLabelText('Browser address')
     fireEvent.change(address, { target: { value: 'file:///private/data' } })
-    fireEvent.submit(requiredValue(address.closest('form'), 'browser address form'))
+    fireEvent.submit(address.closest('form')!)
 
     expect(screen.getByRole('alert').textContent).toBe('Enter a valid HTTP or HTTPS URL.')
     expect(view.loadURL).not.toHaveBeenCalled()
   })
 
   it('surfaces main-frame load failures and ignores cancelled navigation', async () => {
-    render(<WorkspaceBrowser active services={services} />)
+    render(<WorkspaceBrowser active />)
     const view = guests[0]!
 
     act(() => {
@@ -177,10 +191,11 @@ describe('WorkspaceBrowser', () => {
   })
 })
 
-type GuestEventDetail =
-  { url: string } | { errorCode: number; errorDescription: string; isMainFrame: boolean }
-
-function dispatchGuestEvent(view: HTMLElement, name: string, detail: GuestEventDetail): void {
+function dispatchGuestEvent(
+  view: HTMLElement,
+  name: string,
+  detail: Record<string, unknown>,
+): void {
   const event = new Event(name)
   Object.assign(event, detail)
   view.dispatchEvent(event)

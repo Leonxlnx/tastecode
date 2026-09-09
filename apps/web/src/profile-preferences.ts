@@ -1,5 +1,3 @@
-import { propertiesWhen } from './properties-when.js'
-import { z } from 'zod'
 export type ProfileIdentityPreferences = {
   displayName: string
   avatarDataUrl?: string | undefined
@@ -19,7 +17,7 @@ export function readProfileIdentityPreferences(): ProfileIdentityPreferences {
     const avatarDataUrl = localStorage.getItem(AVATAR_KEY) ?? undefined
     return {
       displayName,
-      ...propertiesWhen(avatarDataUrl && DATA_URL.test(avatarDataUrl), () => ({ avatarDataUrl })),
+      ...(avatarDataUrl && DATA_URL.test(avatarDataUrl) ? { avatarDataUrl } : {}),
     }
   } catch {
     return { displayName: '' }
@@ -29,9 +27,8 @@ export function readProfileIdentityPreferences(): ProfileIdentityPreferences {
 export function writeProfileIdentityPreferences(identity: ProfileIdentityPreferences): void {
   try {
     localStorage.setItem(DISPLAY_NAME_KEY, identity.displayName.trim().slice(0, 64))
-    identity.avatarDataUrl
-      ? localStorage.setItem(AVATAR_KEY, identity.avatarDataUrl)
-      : localStorage.removeItem(AVATAR_KEY)
+    if (identity.avatarDataUrl) localStorage.setItem(AVATAR_KEY, identity.avatarDataUrl)
+    else localStorage.removeItem(AVATAR_KEY)
   } catch {
     // The current session can still use the preference when storage is unavailable.
   }
@@ -45,8 +42,7 @@ export async function readProfileImage(file: File): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.addEventListener('load', () => {
-      const result = z.string().safeParse(reader.result)
-      if (result.success) resolve(result.data)
+      if (typeof reader.result === 'string') resolve(reader.result)
       else reject(new Error('Read failed.'))
     })
     reader.addEventListener('error', () => reject(new Error('The image could not be read.')))

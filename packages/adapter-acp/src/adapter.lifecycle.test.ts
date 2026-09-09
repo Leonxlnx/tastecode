@@ -1,14 +1,24 @@
 import type { DomainEvent } from '@harness/contracts'
 import type {
-  JsonRpcInput,
   JsonRpcRequestOptions,
   JsonRpcValue,
   ParsedJsonRpcRequestOptions,
   ServerRequestHandler,
 } from '@harness/proc'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AcpAdapter, type AcpRpc } from './adapter.js'
 import type { ToolKind } from './protocol.js'
+
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
+  spawnCli: vi.fn(() => ({ pid: 1 })),
+  StdioJsonRpc: class {
+    constructor() {
+      if (!rpc) throw new Error('fake ACP RPC was not installed')
+      return rpc
+    }
+  },
+}))
 
 /**
  * Approval lifecycle under a faithful in-memory transport. It drives
@@ -29,17 +39,17 @@ class FakeAcpRpc implements AcpRpc {
 
   request(
     method: string,
-    params?: JsonRpcInput,
+    params?: unknown,
     options?: JsonRpcRequestOptions,
   ): Promise<JsonRpcValue | undefined>
   request<Result>(
     method: string,
-    params: JsonRpcInput,
+    params: unknown,
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
   request<Result>(
     method: string,
-    _params: JsonRpcInput = {},
+    _params: unknown = {},
     options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
   ): Promise<JsonRpcValue | undefined | Result> {
     const parse = (value: JsonRpcValue) =>
@@ -92,13 +102,10 @@ class FakeAcpRpc implements AcpRpc {
 let rpc: FakeAcpRpc | undefined
 
 function adapter(): AcpAdapter {
+  rpc = new FakeAcpRpc()
   return new AcpAdapter('gemini', {
     name: 'Gemini',
     command: 'gemini',
-    connect: () => {
-      rpc = new FakeAcpRpc()
-      return rpc
-    },
   })
 }
 

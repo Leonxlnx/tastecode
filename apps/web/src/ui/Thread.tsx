@@ -1,48 +1,38 @@
 import {
-  createContext,
+  lazy,
   memo,
+  Suspense,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type ComponentProps,
-  type ComponentType,
-  type Key,
-  type ReactNode,
+  useSyncExternalStore,
 } from 'react'
-import { useVirtualizer as useReactVirtualizer } from '@tanstack/react-virtual'
-import type {
-  ApprovalDecision,
-  ApprovalRequest,
-  ApprovalReview,
-  Item,
-  PlanStep,
-  UserInputRequest,
-} from '@harness/contracts'
+import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual'
+import type { ApprovalDecision, Item } from '@harness/contracts'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
-  ArrowDownToLine,
-  BookOpen,
-  Brain,
-  Check,
-  ChevronRight,
-  CircleAlert,
-  CircleQuestionMark,
-  Copy,
-  FilePenLine,
-  Images,
-  ListChecks,
-  LoaderCircle,
-  Palette,
-  Pencil,
-  RotateCcw,
-  Search,
-  SquareTerminal,
-  Wrench,
-} from 'lucide-react'
+  IconArrowBarToDown as ArrowDownToLine,
+  IconBook2 as BookOpen,
+  IconBrain as Brain,
+  IconCheck as Check,
+  IconChevronRight as ChevronRight,
+  IconAlertCircle as CircleAlert,
+  IconHelpCircle as CircleQuestionMark,
+  IconCopy as Copy,
+  IconFilePencil as FilePenLine,
+  IconLibraryPhoto as Images,
+  IconListCheck as ListChecks,
+  IconLoader2 as LoaderCircle,
+  IconPalette as Palette,
+  IconPencil as Pencil,
+  IconRotate as RotateCcw,
+  IconSearch as Search,
+  IconTerminal2 as SquareTerminal,
+  IconTool as Wrench,
+} from '@tabler/icons-react'
 import {
   previewViewedImage,
   revealPath,
@@ -53,16 +43,18 @@ import { isEditableTarget } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval, AutomaticApprovalReview } from './Approval.js'
 import { Diff } from './Diff.js'
-import { Markdown, type MarkdownProps, type MarkdownServices } from './Markdown.js'
-import { MediaViewer } from './MediaViewer.js'
+import { IconMorph } from './IconMorph.js'
+import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
+import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
-import { ThreadSearch } from './ThreadSearch.js'
 import {
+  activityGroupAt,
   createThreadProjector,
   isBlankReasoning,
   isStackedActivity,
   neighbourTurn,
-  type TurnTiming,
+  type TurnActivityGroup,
+  type TurnPresentation,
 } from './turns.js'
 import {
   activeTurnAnchor,
@@ -74,82 +66,27 @@ import {
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
-import { threadItemAt, type LiveItemUpdate } from '../thread-store.js'
+import {
+  activeTurnActivityIndices,
+  activeTurnIsSearching,
+  threadItemAt,
+  type LiveItemUpdate,
+} from '../thread-store.js'
+import type { ThreadFrameStore } from '../thread-frame-store.js'
+import {
+  checkpointForItem,
+  createCheckpointIndex,
+  type CheckpointIndex,
+} from '../checkpoint-index.js'
+import { enteringThreadItems } from '../thread-entry.js'
+import '../styles/thread.css'
+
+const ThreadSearch = lazy(() =>
+  import('./ThreadSearch.js').then((module) => ({ default: module.ThreadSearch })),
+)
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
-
-export type ThreadVirtualizerOptions = {
-  count: number
-  getScrollElement: () => HTMLDivElement | null
-  estimateSize: () => number
-  getItemKey: (index: number) => Key
-  overscan: number
-  initialRect: { width: number; height: number }
-}
-
-export type ThreadVirtualRow = {
-  index: number
-  key: Key
-  start: number
-  end: number
-}
-
-export type ThreadVirtualizer = {
-  getVirtualItems: () => ThreadVirtualRow[]
-  getTotalSize: () => number
-  getOffsetForIndex: (
-    index: number,
-    align?: 'auto' | 'start' | 'center' | 'end',
-  ) => readonly [number, string] | undefined
-  scrollToIndex: (index: number, options?: { align?: 'auto' | 'start' | 'center' | 'end' }) => void
-  measureElement: (element: Element | null) => void
-  measurementsCache: Array<{ start: number } | undefined>
-}
-
-export type ThreadThinkingOrbProps = ComponentProps<typeof ThinkingOrb>
-
-export type ThreadDependencies = {
-  useVirtualizer: (options: ThreadVirtualizerOptions) => ThreadVirtualizer
-  MarkdownComponent: ComponentType<MarkdownProps>
-  markdownServices?: MarkdownServices | undefined
-  ThinkingOrbComponent: ComponentType<ThreadThinkingOrbProps>
-  previewViewedImage: typeof previewViewedImage
-  revealPath: typeof revealPath
-  writeClipboardText: typeof writeClipboardText
-}
-
-function useDefaultThreadVirtualizer(options: ThreadVirtualizerOptions): ThreadVirtualizer {
-  return useReactVirtualizer(options)
-}
-
-function DefaultThinkingOrb(props: ThreadThinkingOrbProps) {
-  return <ThinkingOrb {...props} />
-}
-
-export const defaultThreadDependencies: ThreadDependencies = {
-  useVirtualizer: useDefaultThreadVirtualizer,
-  MarkdownComponent: Markdown,
-  ThinkingOrbComponent: DefaultThinkingOrb,
-  previewViewedImage,
-  revealPath,
-  writeClipboardText,
-}
-
-const ThreadDependenciesContext = createContext(defaultThreadDependencies)
-
-export function ThreadDependenciesProvider({
-  dependencies,
-  children,
-}: {
-  dependencies: ThreadDependencies
-  children: ReactNode
-}) {
-  return (
-    <ThreadDependenciesContext.Provider value={dependencies}>
-      {children}
-    </ThreadDependenciesContext.Provider>
-  )
-}
+const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
 
 /**
  * The thread.
@@ -159,31 +96,20 @@ export function ThreadDependenciesProvider({
  * rather than estimated because a single item can be three words or a 400-line
  * diff, and a wrong estimate shows up as scroll drift.
  *
- * Messages and reasoning summaries read as prose. Commands, tool calls and
- * file edits in one work batch share one line you can open. The default view
- * should read as a summary of what happened, not a transcript of every byte.
+ * Messages read as prose. Reasoning stays collapsed under a timed Thought
+ * row you can open. Commands, tool calls and file edits in one work batch
+ * share one line. The default view should read as a summary of what happened,
+ * not a transcript of every byte.
  */
-export type ThreadProps = {
-  items: Item[]
+export interface ThreadProps {
+  frameStore: ThreadFrameStore
   loading?: boolean
-  liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
-  itemVersion?: number | undefined
-  liveStart?: number | undefined
   projectPath?: string | undefined
-  running: boolean
-  searching?: boolean
-  activeTurn: { id: string; startedAt: number } | undefined
-  turnTiming?: TurnTiming | undefined
-  plan: PlanStep[]
-  diff: string | undefined
-  diffTurnId?: string | undefined
+  stopping?: boolean | undefined
   threadId?: string | undefined
   transport?: Transport | undefined
   searchJump?: { turnId: string; request: number } | undefined
   revealRequest?: number | undefined
-  approvals: ApprovalRequest[]
-  userInputs: UserInputRequest[]
-  reviews: ApprovalReview[]
   checkpoints?: Checkpoint[] | undefined
   keyboardActive?: boolean | undefined
   onEditMessage?: ((text: string) => void) | undefined
@@ -192,12 +118,21 @@ export type ThreadProps = {
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
-  dependencies?: ThreadDependencies | undefined
 }
 
-export function Thread(props: ThreadProps) {
-  const inheritedDependencies = useContext(ThreadDependenciesContext)
-  const dependencies = props.dependencies ?? inheritedDependencies
+export const Thread = memo(function Thread(props: ThreadProps) {
+  const thread = useSyncExternalStore(
+    props.frameStore.subscribeStructure,
+    props.frameStore.getStructureSnapshot,
+    props.frameStore.getStructureSnapshot,
+  )
+  const running = thread.running && !props.stopping
+  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
+  const activeActivityIndices = useMemo(
+    () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
+    [thread.items, thread.activeTurn?.id, thread.liveStart],
+  )
+  const currentApproval = thread.approvals[0]
   const scroller = useRef<HTMLDivElement>(null)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
@@ -209,8 +144,8 @@ export function Thread(props: ThreadProps) {
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
   const activeAnchor = useMemo(
-    () => activeTurnAnchor(props.items, props.activeTurn?.id),
-    [props.items, props.activeTurn?.id],
+    () => activeTurnAnchor(thread.items, thread.activeTurn?.id, thread.liveStart),
+    [thread.items, thread.activeTurn?.id, thread.liveStart],
   )
   const anchoredTurn = useRef({ threadId: props.threadId, itemId: activeAnchor?.id })
   /**
@@ -234,17 +169,13 @@ export function Thread(props: ThreadProps) {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
-  const liveItems = props.liveItems ?? EMPTY_LIVE_ITEMS
-  const itemAt = useCallback(
-    (index: number) => threadItemAt(props.items, liveItems, index),
-    [props.items, liveItems],
-  )
-  const enteringItemIds = useEnteringItemIds(props.items, props.threadId)
-  const settledTurnId = useSettledTurnId(props.running, props.activeTurn?.id)
-  const getItemKey = useVirtualItemKey(props.items, props.threadId)
+  const liveItems = thread.liveItems
+  const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
+  const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
+  const getItemKey = useVirtualItemKey(thread.items, props.threadId)
 
-  const virtualizer = dependencies.useVirtualizer({
-    count: props.items.length,
+  const virtualizer = useVirtualizer({
+    count: thread.items.length,
     getScrollElement: () => scroller.current,
     // Roughly one paragraph. Wrong estimates only cost a correction on measure.
     estimateSize: () => 72,
@@ -268,7 +199,7 @@ export function Thread(props: ThreadProps) {
       anchoredTurn.current = { threadId: props.threadId, itemId: activeAnchor?.id }
       return
     }
-    if (!props.running) {
+    if (!running) {
       anchoredTurn.current.itemId = undefined
       return
     }
@@ -278,39 +209,7 @@ export function Thread(props: ThreadProps) {
     anchorIndex.current = activeAnchor.index
     const el = scroller.current
     setMode(modeForNewTurn(el ? isAtBottom(el) : true))
-  }, [props.running, props.threadId, activeAnchor])
-
-  // Layout effect, not effect: this runs before paint, so the correction is
-  // never visible as a jump.
-  useLayoutEffect(() => {
-    const el = scroller.current
-    if (!el) return
-
-    const revealRequest = props.revealRequest ?? 0
-    if (completedRevealRequest.current !== revealRequest) {
-      completedRevealRequest.current = revealRequest
-      modeRef.current = 'follow-end'
-      setMode('follow-end')
-      writeScrollTop(el, el.scrollHeight - el.clientHeight)
-      return
-    }
-
-    if (modeRef.current === 'follow-end') {
-      writeScrollTop(el, el.scrollHeight - el.clientHeight)
-      return
-    }
-
-    if (modeRef.current === 'anchor-turn') {
-      const start = virtualizer.getOffsetForIndex(anchorIndex.current, 'start')?.[0]
-      if (start === undefined) return
-      const turnHeight = virtualizer.getTotalSize() - start
-      if (shouldReleaseAnchor(turnHeight, el.clientHeight)) {
-        setMode('follow-end')
-        return
-      }
-      writeScrollTop(el, start)
-    }
-  }, [props.items, props.itemVersion, props.revealRequest, virtualizer, writeScrollTop])
+  }, [running, props.threadId, activeAnchor])
 
   const onScroll = useCallback(() => {
     const el = scroller.current
@@ -369,23 +268,22 @@ export function Thread(props: ThreadProps) {
   )
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(props.items, props.turnTiming)
-  const activePresentation = props.activeTurn ? presentations.get(props.activeTurn.id) : undefined
-  const rawWorkLabel = useMemo(
-    () => workLabel(props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart),
-    [props.items, props.activeTurn?.id, props.searching, liveItems, props.liveStart],
-  )
-
+  const { turns, presentations } = projectThread(thread.items, thread.turnTiming)
+  const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
+  const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
+  const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
+  const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
+  const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
   useEffect(() => {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
-    const index = props.items.findIndex((item) => item.turnId === target.turnId)
+    const index = thread.items.findIndex((item) => item.turnId === target.turnId)
     if (index < 0) return
     completedSearchJump.current = target.request
     setFinding(false)
     setMode('free')
     virtualizer.scrollToIndex(index, { align: 'center' })
-  }, [props.items, props.searchJump, virtualizer])
+  }, [thread.items, props.searchJump, virtualizer])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
@@ -421,8 +319,8 @@ export function Thread(props: ThreadProps) {
   // maximum scroll offset, which is below the anchor row's true start
   // whenever the thread is shorter than the viewport.
   const showWorkingRail =
-    props.running &&
-    props.activeTurn !== undefined &&
+    running &&
+    thread.activeTurn !== undefined &&
     (activePresentation?.design === true || activePresentation?.firstResponseIndex === undefined)
   const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   const railOffset =
@@ -430,214 +328,388 @@ export function Thread(props: ThreadProps) {
       ? virtualizer.getTotalSize()
       : (virtualizer.measurementsCache[railIndex]?.start ?? virtualizer.getTotalSize())
 
-  // The overlays live outside the scroller: an absolutely positioned child
-  // of a scroll container scrolls away with the content.
   return (
-    <ThreadDependenciesContext.Provider value={dependencies}>
-      <div className="thread-shell">
-        {finding ? (
+    // The overlays live OUTSIDE the scroller: an absolutely positioned child
+    // of a scroll container scrolls away with the content — Ctrl+F used to
+    // yank the transcript to the top just to show the find bar, and "Jump to
+    // latest" rendered below the viewport exactly when it was needed.
+    <div className="thread-shell">
+      <FrameScrollFollower
+        frameStore={props.frameStore}
+        revealRequest={props.revealRequest ?? 0}
+        completedRevealRequest={completedRevealRequest}
+        scroller={scroller}
+        modeRef={modeRef}
+        anchorIndex={anchorIndex}
+        virtualizer={virtualizer}
+        writeScrollTop={writeScrollTop}
+        setMode={setMode}
+      />
+      {finding ? (
+        <Suspense fallback={null}>
           <ThreadSearch
-            items={props.items}
+            items={thread.items}
             liveItems={liveItems}
+            frameStore={props.frameStore}
             threadId={props.threadId}
             onJump={jumpTo}
             onClose={() => setFinding(false)}
           />
-        ) : null}
-        {props.items.length === 0 && !props.running ? (
-          props.loading ? (
-            <div className="empty thread__empty" role="status">
-              Loading conversation…
+        </Suspense>
+      ) : null}
+      {thread.items.length === 0 && !running ? (
+        props.loading ? (
+          <div className="empty thread__empty" role="status">
+            Loading conversation…
+          </div>
+        ) : (
+          <div className="empty thread__empty">
+            <div className="empty__prompt" role="heading" aria-level={1}>
+              Tell the agent what you want to build, then send it below.
             </div>
-          ) : (
-            <div className="empty thread__empty">
-              <div className="empty__prompt" role="heading" aria-level={1}>
-                Tell the agent what you want to build, then send it below.
+          </div>
+        )
+      ) : null}
+      <div className="thread" ref={scroller} onScroll={onScroll}>
+        <div className="thread__col">
+          <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
+            {rows.map((row) => {
+              const item = threadItemAt(thread.items, liveItems, row.index)
+              if (!item) return null
+              const presentation = presentations.get(item.turnId)
+              const activityGroup =
+                presentation && presentation.design !== true
+                  ? activityGroupAt(presentation.activityGroups, row.index)
+                  : undefined
+              return (
+                <ThreadFrameRow
+                  key={row.key}
+                  index={row.index}
+                  start={row.start}
+                  measureElement={virtualizer.measureElement}
+                  frameStore={props.frameStore}
+                  items={thread.items}
+                  presentation={presentation}
+                  activityGroup={activityGroup}
+                  running={running}
+                  activeTurnId={thread.activeTurn?.id}
+                  repeatedDesignRowAt={repeatedDesignRowAt}
+                  entering={enteringItemIds.has(item.id)}
+                  settlingTurnId={settledTurnId}
+                  showWorkingRail={showWorkingRail}
+                  projectPath={props.projectPath}
+                  onEditMessage={props.onEditMessage}
+                  checkpointIndex={checkpointIndex}
+                  onRevertCheckpoint={props.onRevertCheckpoint}
+                />
+              )
+            })}
+            {showWorkingRail && thread.activeTurn ? (
+              // Deliberately not keyed by turn id: the optimistic turn's id is
+              // replaced by the server's a few seconds in, and a key would
+              // remount the rail at exactly the moment this render position
+              // exists to survive. Before any response row exists the rail
+              // sits at the end of the runway, over the space the spacer
+              // below holds.
+              <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
+                <FrameWorkingRail
+                  frameStore={props.frameStore}
+                  items={thread.items}
+                  turnId={thread.activeTurn.id}
+                  liveStart={thread.liveStart}
+                  activityIndices={activeActivityIndices}
+                  startedAt={activePresentation?.workStartedAt ?? thread.activeTurn.startedAt}
+                />
               </div>
-            </div>
-          )
-        ) : null}
-        <div className="thread" ref={scroller} onScroll={onScroll}>
-          <div className="thread__col">
-            <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
-              {rows.map((row) => {
-                const item = itemAt(row.index)
-                if (!item) return null
-                const liveItemUpdate = liveItems.get(row.index)
-                const presentation = presentations.get(item.turnId)
-                const live = props.running && props.activeTurn?.id === item.turnId
-                const activityGroup =
-                  presentation && presentation.design !== true
-                    ? presentation.activityGroups.find(
-                        ({ firstIndex, lastIndex }) =>
-                          row.index >= firstIndex && row.index <= lastIndex,
-                      )
-                    : undefined
-                const compactedActivity = activityGroup !== undefined && isStackedActivity(item)
-                const activityLead = compactedActivity && activityGroup.firstIndex === row.index
-                const itemAfterActivity = activityGroup
-                  ? itemAt(activityGroup.lastIndex + 1)
-                  : undefined
-                const liveActivityGroup =
-                  live &&
-                  activityGroup !== undefined &&
-                  (itemAfterActivity === undefined || itemAfterActivity.turnId !== item.turnId)
-                const responseLead =
-                  !live &&
-                  presentation?.complete === true &&
-                  presentation.finalAnswerIndex === row.index
-                const completedCommentary =
-                  presentation?.complete === true &&
-                  item.type === 'message' &&
-                  item.role === 'assistant' &&
-                  item.phase === 'commentary' &&
-                  presentation.finalAnswerIndex !== undefined &&
-                  itemAt(presentation.finalAnswerIndex)?.phase === 'final_answer'
-                const suppressed =
-                  isBlankReasoning(item) ||
-                  completedCommentary ||
-                  (compactedActivity && !activityLead) ||
-                  isRepeatedDesignRow(item, props.items, row.index) ||
-                  // A design turn tells its story through the phase labels and
-                  // TasteCode notes; the provider's raw commands, tool calls, and
-                  // thinking would drown that story in noise.
-                  (presentation?.design === true &&
-                    !compactedActivity &&
-                    ((isActivity(item) && !designPhaseLabel(toolText(item))) ||
-                      item.type === 'error'))
-                const nextVisibleItem = itemAt(
-                  activityLead && activityGroup ? activityGroup.lastIndex + 1 : row.index + 1,
-                )
-                const compactToNext =
-                  !suppressed &&
-                  nextVisibleItem?.turnId === item.turnId &&
-                  !(item.type === 'message' && item.role === 'user') &&
-                  !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
-                const settling = settledTurnId === item.turnId
-                const railAnchor =
-                  showWorkingRail && live && presentation?.firstResponseIndex === row.index
-                const activityItems = activityGroup
-                  ? Array.from(
-                      { length: activityGroup.lastIndex - activityGroup.firstIndex + 1 },
-                      (_, offset) => itemAt(activityGroup.firstIndex + offset),
-                    ).filter((entry): entry is Item => entry !== undefined)
-                  : undefined
-                return (
-                  <div
-                    key={row.key}
-                    className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${enteringItemIds.has(item.id) ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
-                    data-index={row.index}
-                    ref={virtualizer.measureElement}
-                    style={{ transform: `translateY(${row.start}px)` }}
-                  >
-                    <Row
-                      item={item}
-                      liveTextUpdate={liveItemUpdate?.textUpdate}
-                      liveUpdateVersion={liveItemUpdate?.version}
-                      projectPath={props.projectPath}
-                      hidden={suppressed}
-                      activity={activityLead ? activityItems : undefined}
-                      activityLive={liveActivityGroup}
-                      live={live}
-                      responseText={responseLead ? presentation.responseText : undefined}
-                      finalResponse={responseLead}
-                      settling={settling}
-                      onEditMessage={props.onEditMessage}
-                      checkpoint={checkpointFor(
-                        presentation?.prompt ?? item,
-                        props.checkpoints ?? [],
-                      )}
-                      onRevertCheckpoint={props.onRevertCheckpoint}
-                    />
-                  </div>
-                )
-              })}
-              {showWorkingRail && props.activeTurn ? (
-                // Deliberately not keyed by turn id: the optimistic turn's id is
-                // replaced by the server's a few seconds in, and a key would
-                // remount the rail at exactly the moment this render position
-                // exists to survive. Before any response row exists the rail
-                // sits at the end of the runway, over the space the spacer
-                // below holds.
-                <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                  <WorkingRail
-                    startedAt={activePresentation?.workStartedAt ?? props.activeTurn.startedAt}
-                    label={rawWorkLabel}
-                  />
-                </div>
-              ) : null}
-            </div>
-
-            {showWorkingRail && props.activeTurn && railIndex === undefined ? (
-              <div className="thread__rail-spacer" aria-hidden />
-            ) : null}
-
-            {/* Above the plan and the diff: it is the only thing here that blocks
-            the agent, so it should be the first thing the eye lands on. */}
-            {props.userInputs.map((request) => (
-              <UserInput
-                key={request.id}
-                request={request}
-                onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
-              />
-            ))}
-
-            {props.approvals.map((request) => (
-              <Approval
-                key={request.id}
-                request={request}
-                onDecide={(d) => props.onDecide(request.id, d)}
-              />
-            ))}
-
-            {props.reviews.map((review) => (
-              <AutomaticApprovalReview key={review.id} review={review} />
-            ))}
-
-            {props.running ? <Plan steps={props.plan} compact /> : null}
-            {!props.running ? (
-              <Diff
-                diff={props.diff}
-                threadId={props.threadId}
-                transport={props.transport}
-                onUndo={
-                  props.threadId && props.diffTurnId && props.diff && props.onUndoChanges
-                    ? () => props.onUndoChanges!(props.threadId!, props.diffTurnId!, props.diff!)
-                    : undefined
-                }
-              />
             ) : null}
           </div>
-        </div>
 
-        {mode === 'free' ? (
-          <button
-            className="jump"
-            onClick={() => {
-              const el = scroller.current
-              if (!el) return
-              // Stay in free mode for the whole glide. Flipping to follow-end
-              // here unmounts the button, and the first mid-flight scroll event
-              // then flips it straight back — remounting it with its entrance
-              // animation — until the scroll lands. The onScroll handler hands
-              // over to follow-end once the glide actually reaches the bottom.
-              el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
-              // Already at the bottom? Nothing animates and no scroll event
-              // comes, so there would be no handover — hide right away.
-              if (isAtBottom(el)) setMode('follow-end')
-            }}
-          >
-            <ArrowDownToLine size={13} aria-hidden />
-            Jump to latest
-          </button>
-        ) : null}
+          {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
+            <div className="thread__rail-spacer" aria-hidden />
+          ) : null}
+
+          {/* Above the plan and the diff: it is the only thing here that blocks
+            the agent, so it should be the first thing the eye lands on. */}
+          {thread.userInputs.map((request) => (
+            <UserInput
+              key={request.id}
+              request={request}
+              onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
+            />
+          ))}
+
+          {currentApproval ? (
+            <Approval
+              key={currentApproval.id}
+              request={currentApproval}
+              onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
+            />
+          ) : null}
+
+          {reviews.map((review) => (
+            <AutomaticApprovalReview key={review.id} review={review} />
+          ))}
+
+          {running ? <Plan steps={thread.plan} compact /> : null}
+          {!running ? (
+            <Diff
+              diff={thread.diff}
+              threadId={props.threadId}
+              transport={props.transport}
+              onUndo={
+                props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
+                  ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
+                  : undefined
+              }
+            />
+          ) : null}
+        </div>
       </div>
-    </ThreadDependenciesContext.Provider>
+
+      {mode === 'free' ? (
+        <button
+          className="jump"
+          onClick={() => {
+            const el = scroller.current
+            if (!el) return
+            // Stay in free mode for the whole glide. Flipping to follow-end
+            // here unmounts the button, and the first mid-flight scroll event
+            // then flips it straight back — remounting it with its entrance
+            // animation — until the scroll lands. The onScroll handler hands
+            // over to follow-end once the glide actually reaches the bottom.
+            el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
+            // Already at the bottom? Nothing animates and no scroll event
+            // comes, so there would be no handover — hide right away.
+            if (isAtBottom(el)) setMode('follow-end')
+          }}
+        >
+          <ArrowDownToLine size={13} aria-hidden />
+          Jump to latest
+        </button>
+      ) : null}
+    </div>
   )
+})
+
+/**
+ * Follow-scroll needs every text frame, but the virtual list does not. Keep
+ * that small imperative update in its own subscriber so growing one live row
+ * never rerenders the transcript owner or reprojects the full thread.
+ */
+function FrameScrollFollower({
+  frameStore,
+  revealRequest,
+  completedRevealRequest,
+  scroller,
+  modeRef,
+  anchorIndex,
+  virtualizer,
+  writeScrollTop,
+  setMode,
+}: {
+  frameStore: ThreadFrameStore
+  revealRequest: number
+  completedRevealRequest: { current: number }
+  scroller: { current: HTMLDivElement | null }
+  modeRef: { current: ScrollMode }
+  anchorIndex: { current: number }
+  virtualizer: Virtualizer<HTMLDivElement, Element>
+  writeScrollTop: (element: HTMLElement, top: number) => void
+  setMode: (mode: ScrollMode) => void
+}) {
+  const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
+  const itemVersion = useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+
+  // Layout effect, not effect: this runs before paint, so the correction is
+  // never visible as a jump.
+  useLayoutEffect(() => {
+    const element = scroller.current
+    if (!element) return
+
+    if (completedRevealRequest.current !== revealRequest) {
+      completedRevealRequest.current = revealRequest
+      modeRef.current = 'follow-end'
+      setMode('follow-end')
+      writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      return
+    }
+
+    if (modeRef.current === 'follow-end') {
+      writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      return
+    }
+
+    if (modeRef.current === 'anchor-turn') {
+      const start = virtualizer.getOffsetForIndex(anchorIndex.current, 'start')?.[0]
+      if (start === undefined) return
+      const turnHeight = virtualizer.getTotalSize() - start
+      if (shouldReleaseAnchor(turnHeight, element.clientHeight)) {
+        setMode('follow-end')
+        return
+      }
+      writeScrollTop(element, start)
+    }
+  }, [
+    anchorIndex,
+    completedRevealRequest,
+    itemVersion,
+    modeRef,
+    revealRequest,
+    scroller,
+    setMode,
+    virtualizer,
+    writeScrollTop,
+  ])
+
+  return null
 }
 
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
+
+function useFrameLiveItems(
+  frameStore: ThreadFrameStore,
+  indices: readonly number[],
+): ReadonlyMap<number, LiveItemUpdate> {
+  const subscribe = useCallback(
+    (listener: () => void) => frameStore.subscribeItems(indices, listener),
+    [frameStore, indices],
+  )
+  const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
+  useSyncExternalStore(subscribe, getVersion, getVersion)
+  return frameStore.getSnapshot().liveItems
+}
+
+function useFrameLiveItemRange(
+  frameStore: ThreadFrameStore,
+  firstIndex: number,
+  lastIndex: number,
+): ReadonlyMap<number, LiveItemUpdate> {
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      return firstIndex === lastIndex
+        ? frameStore.subscribeItems([firstIndex], listener)
+        : frameStore.subscribeItemRange(firstIndex, lastIndex, listener)
+    },
+    [firstIndex, frameStore, lastIndex],
+  )
+  const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
+  useSyncExternalStore(subscribe, getVersion, getVersion)
+  return frameStore.getSnapshot().liveItems
+}
+
+const ThreadFrameRow = memo(function ThreadFrameRow({
+  index,
+  start,
+  measureElement,
+  frameStore,
+  items,
+  presentation,
+  activityGroup,
+  running,
+  activeTurnId,
+  repeatedDesignRowAt,
+  entering,
+  settlingTurnId,
+  showWorkingRail,
+  projectPath,
+  onEditMessage,
+  checkpointIndex,
+  onRevertCheckpoint,
+}: {
+  index: number
+  start: number
+  measureElement: (node: Element | null) => void
+  frameStore: ThreadFrameStore
+  items: Item[]
+  presentation: TurnPresentation | undefined
+  activityGroup: TurnActivityGroup | undefined
+  running: boolean
+  activeTurnId: string | undefined
+  repeatedDesignRowAt: (item: Item, index: number) => boolean
+  entering: boolean
+  settlingTurnId: string | undefined
+  showWorkingRail: boolean
+  projectPath: string | undefined
+  onEditMessage: ((text: string) => void) | undefined
+  checkpointIndex: CheckpointIndex<Checkpoint>
+  onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
+}) {
+  const firstSubscribedIndex = activityGroup?.firstIndex ?? index
+  const lastSubscribedIndex = activityGroup?.lastIndex ?? index
+  const liveItems = useFrameLiveItemRange(frameStore, firstSubscribedIndex, lastSubscribedIndex)
+  const item = threadItemAt(items, liveItems, index)
+  if (!item) return null
+
+  const live = running && activeTurnId === item.turnId
+  const compactedActivity =
+    activityGroup !== undefined &&
+    (isStackedActivity(item) ||
+      (presentation?.complete === true &&
+        item.type === 'message' &&
+        item.role === 'assistant' &&
+        index !== presentation.finalAnswerIndex))
+  const activityLead = compactedActivity && activityGroup.firstIndex === index
+  const itemAfterActivity = activityGroup
+    ? threadItemAt(items, liveItems, activityGroup.lastIndex + 1)
+    : undefined
+  const liveActivityGroup =
+    live &&
+    activityGroup !== undefined &&
+    (itemAfterActivity === undefined || itemAfterActivity.turnId !== item.turnId)
+  const responseLead =
+    !live && presentation?.complete === true && presentation.finalAnswerIndex === index
+  const suppressed =
+    isBlankReasoning(item) ||
+    (compactedActivity && !activityLead) ||
+    repeatedDesignRowAt(item, index) ||
+    // A design turn tells its story through the phase labels and TasteCode
+    // notes; raw provider work would drown that story in noise.
+    (presentation?.design === true &&
+      !compactedActivity &&
+      ((isActivity(item) && !designPhaseLabel(toolText(item))) || item.type === 'error'))
+  const nextVisibleItem = threadItemAt(
+    items,
+    liveItems,
+    activityLead && activityGroup ? activityGroup.lastIndex + 1 : index + 1,
+  )
+  const compactToNext =
+    !suppressed &&
+    nextVisibleItem?.turnId === item.turnId &&
+    !(item.type === 'message' && item.role === 'user') &&
+    !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
+  const settling = settlingTurnId === item.turnId
+  const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
+  const activitySource =
+    activityLead && activityGroup ? { group: activityGroup, items, liveItems } : undefined
+  const liveItemUpdate = liveItems.get(index)
+
+  return (
+    <div
+      className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${entering ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
+      data-index={index}
+      ref={measureElement}
+      style={{ transform: `translateY(${start}px)` }}
+    >
+      <Row
+        item={item}
+        liveTextUpdate={liveItemUpdate?.textUpdate}
+        liveUpdateVersion={liveItemUpdate?.version}
+        projectPath={projectPath}
+        hidden={suppressed}
+        activity={activitySource}
+        activityLive={liveActivityGroup}
+        live={live}
+        responseText={responseLead ? presentation.responseText : undefined}
+        finalResponse={responseLead}
+        settling={settling}
+        onEditMessage={onEditMessage}
+        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex)}
+        onRevertCheckpoint={onRevertCheckpoint}
+      />
+    </div>
+  )
+})
 
 /**
  * Only animate items appended while this thread is open. Historical rows can
@@ -661,32 +733,7 @@ function useEnteringItemIds(items: Item[], threadId?: string): ReadonlySet<strin
     }
     const previous = previousItems.current
     previousItems.current = items
-    let incoming: Item[] = []
-
-    if (items.length > previous.length) {
-      const appended = items.slice(previous.length)
-      // Loading an existing transcript is one state replacement, not a burst
-      // of new messages. A live event appends one item at a time.
-      if (!(previous.length === 0 && appended.length > 1)) incoming = appended
-    } else if (items.length === previous.length && items.length > 0) {
-      const previousTail = previous.at(-1)
-      const nextTail = items.at(-1)
-      const prefixStayedStable = items.length === 1 || previous.at(-2)?.id === items.at(-2)?.id
-      const reconciledLocalEcho =
-        previousTail?.id.startsWith('local:') === true &&
-        previousTail.role === 'user' &&
-        nextTail?.role === 'user' &&
-        previousTail.text === nextTail.text
-
-      if (
-        prefixStayedStable &&
-        nextTail &&
-        previousTail?.id !== nextTail.id &&
-        !reconciledLocalEcho
-      ) {
-        incoming = [nextTail]
-      }
-    }
+    const incoming = enteringThreadItems(previous, items)
 
     if (incoming.length === 0) return
 
@@ -781,7 +828,7 @@ const Row = memo(function Row({
   liveUpdateVersion: number | undefined
   projectPath: string | undefined
   hidden: boolean
-  activity: Item[] | undefined
+  activity: ActivityRenderSource | undefined
   activityLive: boolean
   live: boolean
   responseText: string | undefined
@@ -791,8 +838,6 @@ const Row = memo(function Row({
   checkpoint: Checkpoint | undefined
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
 }) {
-  const dependencies = useContext(ThreadDependenciesContext)
-  const MarkdownComponent = dependencies.MarkdownComponent
   if (hidden) return null
 
   // The working rail already announces the running design phase by name; a
@@ -803,7 +848,14 @@ const Row = memo(function Row({
   }
 
   if (activity) {
-    return <ActivityStack activity={activity} live={activityLive} settling={settling} />
+    return (
+      <ActivityStack
+        activity={activity}
+        live={activityLive}
+        projectPath={projectPath}
+        settling={settling}
+      />
+    )
   }
 
   // The user's own words get a surface so the eye can find where each exchange
@@ -858,13 +910,12 @@ const Row = memo(function Row({
     const text = responseText ?? item.text ?? ''
     return (
       <div className={`reply${live ? ' is-streaming' : ''}`}>
-        <MarkdownComponent
+        <Markdown
           text={text}
           projectPath={projectPath}
           streaming={live && item.status === 'started'}
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
-          services={dependencies.markdownServices}
         />
         {finalResponse && !live && item.status === 'completed' && text ? (
           <ResponseActions
@@ -882,16 +933,14 @@ const Row = memo(function Row({
     const text = item.text?.trim()
     if (!text) return null
     return (
-      <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
-        <MarkdownComponent
-          text={text}
-          projectPath={projectPath}
-          streaming={live && item.status === 'started'}
-          liveUpdate={liveTextUpdate}
-          updateVersion={liveUpdateVersion}
-          services={dependencies.markdownServices}
-        />
-      </div>
+      <ReasoningDisclosure
+        item={item}
+        text={text}
+        live={live}
+        projectPath={projectPath}
+        liveTextUpdate={liveTextUpdate}
+        liveUpdateVersion={liveUpdateVersion}
+      />
     )
   }
 
@@ -909,6 +958,46 @@ const Row = memo(function Row({
   return <AuxDisclosure item={item} live={live} />
 })
 
+function activityItemsForRender(
+  group: TurnActivityGroup,
+  items: readonly Item[],
+  liveItems: ReadonlyMap<number, LiveItemUpdate>,
+): Item[] {
+  let containsLiveUpdate = false
+  for (const index of liveItems.keys()) {
+    if (index >= group.firstIndex && index <= group.lastIndex) {
+      containsLiveUpdate = true
+      break
+    }
+  }
+  if (!containsLiveUpdate) return group.items
+
+  const activity: Item[] = []
+  for (let index = group.firstIndex; index <= group.lastIndex; index += 1) {
+    const item = threadItemAt(items, liveItems, index)
+    if (item && isWorkDisclosureItem(item)) activity.push(item)
+  }
+  return activity
+}
+
+type ActivityRenderSource = {
+  group: TurnActivityGroup
+  items: readonly Item[]
+  liveItems: ReadonlyMap<number, LiveItemUpdate>
+}
+
+function lastActivityItemForRender({
+  group,
+  items,
+  liveItems,
+}: ActivityRenderSource): Item | undefined {
+  for (let index = group.lastIndex; index >= group.firstIndex; index -= 1) {
+    const item = threadItemAt(items, liveItems, index)
+    if (item && isWorkDisclosureItem(item)) return item
+  }
+  return undefined
+}
+
 /**
  * A standalone operational row for activity that does not belong to a normal
  * tool stack, such as a design phase marker or an unknown provider item.
@@ -916,7 +1005,7 @@ const Row = memo(function Row({
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
   const detail =
-    item.type === 'command'
+    item.type === 'command' || item.type === 'tool_call'
       ? activityDetail(item)
       : isContextCompaction(item)
         ? undefined
@@ -959,32 +1048,139 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
             if (event.target === event.currentTarget) disclosure.finishClosing()
           }}
         >
-          <div className="aux__reveal-clip">
-            {isImageView(item) && item.status === 'completed' ? (
-              <ViewedImagePreview
-                reference={detail}
-                active={disclosure.expanded}
-                fallbackClassName="aux__out"
-              />
-            ) : (
-              <pre className="aux__out">{detail}</pre>
-            )}
-          </div>
+          {disclosure.contentMounted ? (
+            <div className="aux__reveal-clip">
+              {isImageView(item) && item.status === 'completed' ? (
+                <ViewedImagePreview
+                  reference={detail}
+                  active={disclosure.expanded}
+                  fallbackClassName="aux__out"
+                />
+              ) : (
+                <pre className="aux__out">{detail}</pre>
+              )}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>
   )
 }
 
-function checkpointFor(item: Item, checkpoints: Checkpoint[]): Checkpoint | undefined {
-  if (item.type !== 'message' || item.role !== 'user' || !item.text) return undefined
-  const label = item.text.trim().slice(0, 60) || 'Turn'
-  return checkpoints.findLast(
-    (checkpoint) => checkpoint.label === label && checkpoint.createdAt <= item.createdAt,
+type DisclosurePhase = 'closed' | 'open' | 'closing'
+
+function ReasoningDisclosure({
+  item,
+  text,
+  live,
+  projectPath,
+  liveTextUpdate,
+  liveUpdateVersion,
+}: {
+  item: Item
+  text: string
+  live: boolean
+  projectPath: string | undefined
+  liveTextUpdate: LiveItemUpdate['textUpdate'] | undefined
+  liveUpdateVersion: number | undefined
+}) {
+  const disclosure = useDisclosure()
+  const liveThinking = live && item.status === 'started'
+  const labelRef = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!liveThinking) return
+    let timer: number | undefined
+    const update = () => {
+      if (labelRef.current) labelRef.current.textContent = liveThoughtLabel(item.createdAt)
+    }
+    const schedule = () => {
+      window.clearTimeout(timer)
+      timer = undefined
+      if (document.visibilityState === 'hidden') return
+      update()
+      const elapsed = Math.max(0, Date.now() - item.createdAt)
+      if (item.createdAt <= 0 || elapsed > 86_400_000) return
+      const period = elapsed >= 3_600_000 ? 60_000 : 1_000
+      timer = window.setTimeout(schedule, Math.max(50, period - (elapsed % period)))
+    }
+    schedule()
+    document.addEventListener('visibilitychange', schedule)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', schedule)
+    }
+  }, [liveThinking, item.createdAt])
+
+  return (
+    <div
+      className={`aux aux--reasoning ${live ? 'aux--live' : ''}`}
+      data-expanded={disclosure.expanded}
+    >
+      <button
+        type="button"
+        className="aux__row"
+        aria-expanded={disclosure.expanded}
+        onClick={disclosure.toggle}
+      >
+        <span className="aux__glyph" aria-hidden>
+          <Brain size={13} />
+        </span>
+        <span ref={labelRef} className="aux__label">
+          {liveThinking ? liveThoughtLabel(item.createdAt) : thoughtLabel(item, false)}
+        </span>
+        <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
+      </button>
+      <div
+        className="aux__reveal"
+        data-open={disclosure.dataOpen}
+        aria-hidden={!disclosure.expanded}
+        inert={!disclosure.expanded}
+        onAnimationEnd={(event) => {
+          if (event.target === event.currentTarget) disclosure.finishClosing()
+        }}
+      >
+        <div className="aux__reveal-clip">
+          {disclosure.expanded || disclosure.dataOpen === 'closing' ? (
+            <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
+              <Markdown
+                text={text}
+                projectPath={projectPath}
+                streaming={live && item.status === 'started'}
+                liveUpdate={liveTextUpdate}
+                updateVersion={liveUpdateVersion}
+              />
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
   )
 }
 
-type DisclosurePhase = 'closed' | 'open' | 'closing'
+function thoughtLabel(item: Item, live: boolean): string {
+  if (live && item.status === 'started') return liveThoughtLabel(item.createdAt)
+  if (item.durationMs === undefined || item.durationMs < 1000) return 'Thought'
+  return `Thought for ${thoughtDuration(item.durationMs)}`
+}
+
+function liveThoughtLabel(startedAt: number): string {
+  if (startedAt <= 0) return 'Thinking'
+  const elapsed = Math.max(0, Date.now() - startedAt)
+  if (elapsed < 1000 || elapsed > 86_400_000) return 'Thinking'
+  return `Thought for ${thoughtDuration(elapsed)}`
+}
+
+function thoughtDuration(ms: number): string {
+  const totalSeconds = Math.max(1, Math.round(ms / 1000))
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes < 60) return seconds === 0 ? `${minutes}m` : `${minutes}m ${seconds}s`
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
+}
 
 function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
@@ -1002,6 +1198,7 @@ function useDisclosure() {
 
   return {
     expanded,
+    contentMounted: phase !== 'closed',
     dataOpen: phase === 'open' ? 'true' : phase === 'closing' ? 'closing' : 'false',
     toggle,
     finishClosing,
@@ -1011,17 +1208,35 @@ function useDisclosure() {
 function ActivityStack({
   activity,
   live,
+  projectPath,
   settling,
 }: {
-  activity: Item[]
+  activity: ActivityRenderSource
   live: boolean
+  projectPath: string | undefined
   settling: boolean
 }) {
-  const visibleActivity = activity.filter(isStackedActivity)
-  const current = visibleActivity.at(-1)
-  const label = live && current ? liveActivityLabel(current) : activityStackLabel(visibleActivity)
-  const summaryItem = live ? current : visibleActivity[0]
   const disclosure = useDisclosure()
+  const completedActivity = activity.group.items.filter(isWorkDisclosureItem)
+  const operationalActivity = completedActivity.filter(isStackedActivity)
+  const current = live
+    ? lastActivityItemForRender(activity)
+    : (operationalActivity.at(-1) ?? completedActivity.at(-1))
+  const hasCommentary = completedActivity.some(
+    (item) => item.type === 'message' && item.role === 'assistant',
+  )
+  const label =
+    live && current
+      ? liveActivityLabel(current)
+      : hasCommentary
+        ? `Worked for ${workedFor(activity.group.elapsedMs)}`
+        : activityStackLabel(operationalActivity)
+  const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
+  const visibleActivity = disclosure.contentMounted
+    ? activityItemsForRender(activity.group, activity.items, activity.liveItems).filter(
+        isWorkDisclosureItem,
+      )
+    : undefined
 
   if (!summaryItem) return null
 
@@ -1053,37 +1268,53 @@ function ActivityStack({
           if (event.target === event.currentTarget) disclosure.finishClosing()
         }}
       >
-        <div className="activity__reveal-clip">
-          <div className="activity__body">
-            {visibleActivity.map((item) => {
-              const detail = activityDetail(item)
-              return (
-                <div className="activity__item" key={item.id}>
-                  <div className="activity__file-change">
-                    {glyph(item)}
-                    <span className="activity__item-label">{activityItemLabel(item)}</span>
-                    {item.exitCode !== undefined && item.exitCode !== 0 ? (
-                      <span className="aux__code">exit {item.exitCode}</span>
+        {disclosure.contentMounted ? (
+          <div className="activity__reveal-clip">
+            <div className="activity__body">
+              {visibleActivity?.map((item) => {
+                if (item.type === 'message') {
+                  return (
+                    <div className="activity__message" key={item.id}>
+                      <Markdown text={item.text ?? ''} projectPath={projectPath} />
+                    </div>
+                  )
+                }
+                const detail = activityDetail(item)
+                return (
+                  <div className="activity__item" key={item.id}>
+                    <div className="activity__file-change">
+                      {glyph(item)}
+                      <span className="activity__item-label">{activityItemLabel(item)}</span>
+                      {item.exitCode !== undefined && item.exitCode !== 0 ? (
+                        <span className="aux__code">exit {item.exitCode}</span>
+                      ) : null}
+                    </div>
+                    {detail ? (
+                      isImageView(item) && item.status === 'completed' ? (
+                        <ViewedImagePreview
+                          reference={detail}
+                          active={disclosure.expanded}
+                          fallbackClassName="activity__detail"
+                        />
+                      ) : (
+                        <pre className="activity__detail">{detail}</pre>
+                      )
                     ) : null}
                   </div>
-                  {detail ? (
-                    isImageView(item) && item.status === 'completed' ? (
-                      <ViewedImagePreview
-                        reference={detail}
-                        active={disclosure.expanded}
-                        fallbackClassName="activity__detail"
-                      />
-                    ) : (
-                      <pre className="activity__detail">{detail}</pre>
-                    )
-                  ) : null}
-                </div>
-              )
-            })}
+                )
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </div>
+  )
+}
+
+function isWorkDisclosureItem(item: Item): boolean {
+  return (
+    isStackedActivity(item) ||
+    (item.type === 'message' && item.role === 'assistant' && Boolean(item.text?.trim()))
   )
 }
 
@@ -1092,6 +1323,12 @@ function activityDetail(item: Item): string | undefined {
   if (isContextCompaction(item)) return undefined
   const image = imageViewDetail(item)
   if (image !== undefined) return image
+  if (item.type === 'tool_call') return toolCallDetail(item)
+  if (item.type === 'command' && item.command) {
+    const detail = toolCallDetail(item)
+    if (detail !== undefined) return detail
+    if (/\s[[{]/.test(item.text ?? '')) return undefined
+  }
   const details =
     item.type === 'command' ? [item.text] : item.type === 'file_change' ? [item.text] : [item.text]
   const unique = details.filter(
@@ -1105,6 +1342,136 @@ function activityDetail(item: Item): string | undefined {
   return unique.length > 0 ? unique.join('\n') : undefined
 }
 
+function toolCallHeadline(item: Item): string {
+  const firstLine = (item.text ?? '').split('\n', 1)[0]?.trim() ?? ''
+  const withoutPayload = firstLine.replace(/\s*[[{].*$/, '').trim()
+  const raw = withoutPayload || firstLine
+  return raw ? humanToolHeadline(raw) : 'Tool call'
+}
+
+function humanToolHeadline(raw: string): string {
+  const space = raw.indexOf(' ')
+  const token = (space === -1 ? raw : raw.slice(0, space)).toLowerCase()
+  const rest = space === -1 ? '' : raw.slice(space + 1)
+  if (token === 'read_file') return rest ? `Read ${rest}` : 'Read file'
+  if (token === 'grep' || token === 'codebase_search') {
+    return rest ? `Searched ${rest}` : 'Searched'
+  }
+  if (token === 'list_dir' || token === 'list_files') {
+    return rest ? `Listed ${rest}` : 'Listed files'
+  }
+  if (/[_-]/.test(token)) {
+    const named = token.replaceAll(/[_-]+/g, ' ')
+    const titled = `${named.charAt(0).toUpperCase()}${named.slice(1)}`
+    return rest ? `${titled} ${rest}` : titled
+  }
+  return raw
+}
+
+function toolCallDetail(item: Item): string | undefined {
+  const text = item.text?.trim()
+  if (!text) return undefined
+  const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
+  const rest = text.includes('\n') ? text.slice(firstLine.length + 1).trim() : ''
+  const payloadIndex = firstLine.search(/\s[[{]/)
+  const firstLinePayload = payloadIndex > 0 ? firstLine.slice(payloadIndex).trim() : ''
+  const payload = [firstLinePayload, rest].filter(Boolean).join('\n') || undefined
+  return payload ? unwrapToolPayload(payload) : undefined
+}
+
+function unwrapToolPayload(text: string): string | undefined {
+  const trimmed = text.trim()
+  const values = parseJsonSequence(trimmed)
+  if (!values) return trimmed
+  const parts = values
+    .map((value) => readableToolJson(value))
+    .filter((value): value is string => value !== undefined)
+  const unique = [...new Set(parts)]
+  return unique.length > 0 ? unique.join('\n') : undefined
+}
+
+function parseJsonSequence(text: string): unknown[] | undefined {
+  const values: unknown[] = []
+  let index = 0
+  while (index < text.length) {
+    while (/\s/.test(text[index] ?? '')) index += 1
+    if (index >= text.length) break
+    if (text[index] !== '{' && text[index] !== '[') return undefined
+
+    const start = index
+    let depth = 0
+    let inString = false
+    let escaped = false
+    let closed = false
+    for (; index < text.length; index += 1) {
+      const character = text[index]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (character === '\\') escaped = true
+        else if (character === '"') inString = false
+        continue
+      }
+      if (character === '"') inString = true
+      else if (character === '{' || character === '[') depth += 1
+      else if (character === '}' || character === ']') {
+        depth -= 1
+        if (depth === 0) {
+          index += 1
+          closed = true
+          break
+        }
+      }
+    }
+    if (!closed) return undefined
+    try {
+      values.push(JSON.parse(text.slice(start, index)) as unknown)
+    } catch {
+      return undefined
+    }
+  }
+  return values.length > 0 ? values : undefined
+}
+
+function readableToolJson(value: unknown, depth = 0): string | undefined {
+  if (depth > 8 || value === null || value === undefined || value === '') return undefined
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) return undefined
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+      try {
+        return readableToolJson(JSON.parse(trimmed) as unknown, depth + 1) ?? value
+      } catch {
+        return value
+      }
+    }
+    return value
+  }
+  if (typeof value !== 'object') return undefined
+  if (Array.isArray(value)) {
+    if (value.every((entry) => typeof entry === 'number')) return undefined
+    const parts = value
+      .map((entry) => readableToolJson(entry, depth + 1))
+      .filter((entry): entry is string => entry !== undefined)
+    const unique = [...new Set(parts)]
+    return unique.length ? unique.join('\n') : undefined
+  }
+  const record = value as Record<string, unknown>
+  for (const key of ['text', 'stdout', 'output', 'result', 'message', 'content']) {
+    if (key in record) {
+      const extracted = readableToolJson(record[key], depth + 1)
+      if (extracted) return extracted
+    }
+  }
+  return undefined
+}
+
+function isSearchTool(text: string): boolean {
+  return text.includes('search') || /\bgrep\b/.test(text)
+}
+
 function ViewedImagePreview({
   reference,
   active,
@@ -1116,7 +1483,6 @@ function ViewedImagePreview({
   fallbackClassName?: string
   variant?: 'detail' | 'message'
 }) {
-  const dependencies = useContext(ThreadDependenciesContext)
   const [preview, setPreview] = useState<PickedAttachment>()
   const [previewSettled, setPreviewSettled] = useState(false)
   const [viewerOpen, setViewerOpen] = useState(false)
@@ -1130,8 +1496,7 @@ function ViewedImagePreview({
     setPreviewSettled(false)
     setThumbnailFailed(false)
     setImageFailed(false)
-    void dependencies
-      .previewViewedImage(reference)
+    void previewViewedImage(reference)
       .then((result) => {
         if (!cancelled) {
           setPreview(result)
@@ -1144,7 +1509,7 @@ function ViewedImagePreview({
     return () => {
       cancelled = true
     }
-  }, [active, dependencies.previewViewedImage, reference])
+  }, [active, reference])
 
   const inlineSource =
     preview?.thumbnailUrl && !thumbnailFailed ? preview.thumbnailUrl : preview?.previewUrl
@@ -1182,10 +1547,13 @@ function ViewedImagePreview({
         type="button"
         className="viewed-image-preview__open"
         aria-label={`Open preview of ${preview.name}`}
+        onPointerEnter={preloadMediaViewer}
+        onFocus={preloadMediaViewer}
         onClick={() => setViewerOpen(true)}
       >
         <img
           src={inlineSource}
+          onLoad={preloadMediaViewer}
           alt={`Preview of ${preview.name}`}
           draggable={false}
           onError={() =>
@@ -1201,15 +1569,15 @@ function ViewedImagePreview({
         </span>
       ) : null}
       {viewerOpen ? (
-        <MediaViewer
-          src={preview.previewUrl}
-          name={preview.name}
-          mediaType="image"
-          onReveal={
-            variant === 'message' ? () => void dependencies.revealPath(reference) : undefined
-          }
-          onClose={() => setViewerOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <MediaViewer
+            src={preview.previewUrl}
+            name={preview.name}
+            mediaType="image"
+            onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}
+            onClose={() => setViewerOpen(false)}
+          />
+        </Suspense>
       ) : null}
     </div>
   )
@@ -1258,8 +1626,8 @@ function activityCategoryLabel(item: Item): string {
       const text = toolText(item)
       if (isContextCompaction(item)) return 'Compacted context window'
       if (isImageView(item) || text.includes('image')) return 'Viewed images'
-      if (text.includes('search')) return 'Searched'
-      if (text.match(/read|open|file/)) return 'Read files'
+      if (isSearchTool(text)) return 'Searched'
+      if (text.match(/read|open|file|list/)) return 'Read files'
       return 'Used tools'
     }
     default:
@@ -1291,10 +1659,10 @@ function liveActivityLabel(item: Item): string {
         return ongoing ? 'Viewing image' : 'Viewed image'
       }
       if (text.includes('image')) return ongoing ? 'Viewing images' : 'Viewed images'
-      if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
-      if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
-      const tool = inlineActivityText(item.text)
-      if (!tool) return ongoing ? 'Using a tool' : 'Used a tool'
+      if (isSearchTool(text)) return ongoing ? 'Searching' : 'Searched'
+      if (text.match(/read|open|file|list/)) return ongoing ? 'Reading files' : 'Read files'
+      const tool = inlineActivityText(toolCallHeadline(item))
+      if (!tool || tool === 'Tool call') return ongoing ? 'Using a tool' : 'Used a tool'
       return `${ongoing ? 'Using' : 'Used'} ${tool}`
     }
     case 'plan':
@@ -1363,7 +1731,6 @@ function ResponseActions({
 }
 
 function CopyAction({ text, label }: { text: string; label: string }) {
-  const dependencies = useContext(ThreadDependenciesContext)
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
   // Rows are virtualized, so this unmounts the moment it scrolls out of the
@@ -1373,7 +1740,7 @@ function CopyAction({ text, label }: { text: string; label: string }) {
 
   const copy = async () => {
     try {
-      await dependencies.writeClipboardText(text)
+      await writeClipboardText(text)
       setFailed(false)
       setCopied(true)
       window.clearTimeout(resetTimer.current)
@@ -1393,13 +1760,11 @@ function CopyAction({ text, label }: { text: string; label: string }) {
         aria-label={label}
         title={failed ? 'Copy failed — click to retry' : 'Copy'}
       >
-        {failed ? (
-          <CircleAlert aria-hidden />
-        ) : copied ? (
-          <Check aria-hidden />
-        ) : (
+        <IconMorph active={failed ? 2 : copied ? 1 : 0}>
           <Copy aria-hidden />
-        )}
+          <Check aria-hidden />
+          <CircleAlert aria-hidden />
+        </IconMorph>
       </button>
       {failed ? (
         <span className="copy-action__error" role="alert">
@@ -1410,6 +1775,27 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   )
 }
 
+const FrameWorkingRail = memo(function FrameWorkingRail({
+  frameStore,
+  items,
+  turnId,
+  liveStart,
+  activityIndices,
+  startedAt,
+}: {
+  frameStore: ThreadFrameStore
+  items: Item[]
+  turnId: string
+  liveStart: number
+  activityIndices: readonly number[]
+  startedAt: number
+}) {
+  const liveItems = useFrameLiveItems(frameStore, activityIndices)
+  const searching = activeTurnIsSearching(items, turnId, liveItems, liveStart, activityIndices)
+  const label = workLabel(items, turnId, searching, liveItems, liveStart, activityIndices)
+  return <WorkingRail startedAt={startedAt} label={label} />
+})
+
 const WorkingRail = memo(function WorkingRail({
   startedAt,
   label,
@@ -1417,12 +1803,11 @@ const WorkingRail = memo(function WorkingRail({
   startedAt: number
   label: string
 }) {
-  const { ThinkingOrbComponent } = useContext(ThreadDependenciesContext)
   return (
     <div className="activity activity--working">
       <div className="activity__summary">
         <span className="activity__working-orb">
-          <ThinkingOrbComponent
+          <ThinkingOrb
             state={label === 'Searching' ? 'searching' : 'working'}
             size={20}
             aria-hidden
@@ -1489,6 +1874,7 @@ export function workLabel(
   searching: boolean | undefined,
   liveItems: ReadonlyMap<number, LiveItemUpdate> = EMPTY_LIVE_ITEMS,
   liveStart = 0,
+  activityIndices?: readonly number[],
 ) {
   if (searching) return 'Searching'
   if (!turnId) return 'Working'
@@ -1497,6 +1883,20 @@ export function workLabel(
   // leaves them there is nothing further back worth scanning — without the
   // break this was a full-transcript scan per streamed frame.
   let latest: string | undefined
+  if (activityIndices) {
+    for (const index of activityIndices) {
+      const item = threadItemAt(items, liveItems, index)
+      if (!item || item.status !== 'started' || !isActivity(item)) continue
+      if (isBlankReasoning(item)) continue
+      if (item.type === 'tool_call') {
+        const phase = designPhaseLabel(toolText(item))
+        if (phase) return phase
+      }
+      latest ??= summariseLive(item)
+    }
+    return latest ?? 'Working'
+  }
+
   for (let index = items.length - 1; index >= liveStart; index--) {
     const item = threadItemAt(items, liveItems, index)
     if (!item) continue
@@ -1522,12 +1922,24 @@ function WorkingTimer({ startedAt }: { startedAt: number }) {
   const initial = workedFor(Math.max(0, Date.now() - startedAt))
 
   useEffect(() => {
+    let timer: number | undefined
     const update = () => {
       if (text.current) text.current.textContent = workedFor(Math.max(0, Date.now() - startedAt))
     }
-    update()
-    const timer = window.setInterval(update, 1000)
-    return () => window.clearInterval(timer)
+    const schedule = () => {
+      window.clearTimeout(timer)
+      timer = undefined
+      if (document.visibilityState === 'hidden') return
+      update()
+      const elapsed = Math.max(0, Date.now() - startedAt)
+      timer = window.setTimeout(schedule, Math.max(50, 1_000 - (elapsed % 1_000)))
+    }
+    schedule()
+    document.addEventListener('visibilitychange', schedule)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', schedule)
+    }
   }, [startedAt])
 
   return <span ref={text}>{initial}</span>
@@ -1560,6 +1972,8 @@ function glyph(item: Item) {
   if (isContextCompaction(item)) return <ArrowDownToLine size={13} />
 
   switch (item.type) {
+    case 'message':
+      return <Brain size={13} />
     case 'command':
       return <SquareTerminal size={13} />
     case 'reasoning':
@@ -1569,8 +1983,8 @@ function glyph(item: Item) {
     case 'tool_call':
       if (toolText(item).includes('image')) return <Images size={14} />
       if (designPhaseLabel(toolText(item))) return <Palette size={13} />
-      if (toolText(item).includes('search')) return <Search size={14} />
-      if (toolText(item).match(/read|open|file/)) return <BookOpen size={14} />
+      if (isSearchTool(toolText(item))) return <Search size={14} />
+      if (toolText(item).match(/read|open|file|list/)) return <BookOpen size={14} />
       return <Wrench size={13} />
     case 'plan':
       return <ListChecks size={13} />
@@ -1588,7 +2002,7 @@ function summariseLive(item: Item): string {
     case 'command':
       return liveActivityLabel(item)
     case 'reasoning':
-      return item.text?.trim() || 'Thinking'
+      return ongoing ? 'Thinking' : thoughtLabel(item, false)
     case 'file_change':
       return ongoing ? 'Editing files' : 'Edited files'
     case 'tool_call': {
@@ -1604,8 +2018,8 @@ function summariseLive(item: Item): string {
         return ongoing ? 'Viewing image' : 'Viewed image'
       }
       if (text.includes('image')) return ongoing ? 'Viewing an image' : 'Viewed an image'
-      if (text.includes('search')) return ongoing ? 'Searching' : 'Searched'
-      if (text.match(/read|open|file/)) return ongoing ? 'Reading files' : 'Read files'
+      if (isSearchTool(text)) return ongoing ? 'Searching' : 'Searched'
+      if (text.match(/read|open|file|list/)) return ongoing ? 'Reading files' : 'Read files'
       return ongoing ? 'Using a tool' : 'Used a tool'
     }
     case 'plan':
@@ -1643,7 +2057,7 @@ function summarise(item: Item): string {
       if (item.exitCode !== undefined && item.exitCode !== 0) return 'Command failed'
       return 'Ran a command'
     case 'reasoning':
-      return 'Thinking'
+      return thoughtLabel(item, false)
     case 'file_change':
       return 'Edited files'
     case 'tool_call':
@@ -1663,8 +2077,7 @@ function summarise(item: Item): string {
               : item.status === 'started'
                 ? 'Image inspection interrupted'
                 : 'Viewed image'
-            : item.text) ??
-        'Tool call'
+            : toolCallHeadline(item))
       )
     case 'plan':
       return 'Plan'
@@ -1792,4 +2205,59 @@ export function isRepeatedDesignRow(item: Item, items: readonly Item[], index: n
     adjacentTurn = prior.turnId
   }
   return false
+}
+
+/** Retain the few computed phase rows when only the transcript tail changes. */
+export function createRepeatedDesignRowProjector(): (
+  items: readonly Item[],
+) => (item: Item, index: number) => boolean {
+  let previousItems: readonly Item[] | undefined
+  let results = new Map<number, boolean>()
+  let lookup = repeatedDesignRowLookup([], results)
+
+  return (items) => {
+    if (items === previousItems) return lookup
+    const retained = previousItems ? retainedItemPrefix(previousItems, items) : 0
+    if (retained === 0) results = new Map()
+    else for (const index of results.keys()) if (index >= retained) results.delete(index)
+    previousItems = items
+    lookup = repeatedDesignRowLookup(items, results)
+    return lookup
+  }
+}
+
+function repeatedDesignRowLookup(
+  items: readonly Item[],
+  results: Map<number, boolean>,
+): (item: Item, index: number) => boolean {
+  return (item, index) => {
+    if (item.type !== 'tool_call' || !designPhaseLabel(toolText(item))) return false
+    if (results.has(index)) return results.get(index)!
+    const repeated = isRepeatedDesignRow(item, items, index)
+    results.set(index, repeated)
+    return repeated
+  }
+}
+
+function retainedItemPrefix(previous: readonly Item[], next: readonly Item[]): number {
+  if (
+    next.length === previous.length + 1 &&
+    (previous.length === 0 || previous.at(-1) === next[previous.length - 1])
+  ) {
+    return previous.length
+  }
+  if (
+    previous.length === next.length + 1 &&
+    (next.length === 0 || next.at(-1) === previous[next.length - 1])
+  ) {
+    return next.length
+  }
+  if (
+    next.length === previous.length &&
+    next.length > 0 &&
+    (next.length === 1 || previous[next.length - 2] === next[next.length - 2])
+  ) {
+    return next.length - 1
+  }
+  return 0
 }

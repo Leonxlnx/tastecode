@@ -25,6 +25,7 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
   constructor(
     private readonly send: (socket: Client, request: PreviewCaptureRequest) => void,
     private readonly timeoutMs = 35_000,
+    private readonly cancel: (socket: Client, requestId: string) => void = () => undefined,
   ) {}
 
   get available(): boolean {
@@ -42,6 +43,7 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
       if (pending.socket !== socket) continue
       clearTimeout(pending.timer)
       this.#pending.delete(requestId)
+      this.#cancel(socket, requestId)
       pending.reject(new Error('Preview capture client disconnected'))
     }
     this.#dispatchNext()
@@ -49,6 +51,7 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
 
   capture(url: string, viewports: PreviewViewport[]): Promise<PreviewScreenshot[]> {
     if (!this.available) return Promise.reject(new Error('Preview capture is unavailable'))
+    if (this.#queue.length >= 16) return Promise.reject(new Error('Preview capture queue is full'))
 
     const request = { requestId: randomUUID(), url, viewports }
     return new Promise((resolve, reject) => {
@@ -101,6 +104,7 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
     const queued = this.#queue.shift()!
     const timer = setTimeout(() => {
       this.#pending.delete(queued.request.requestId)
+      this.#cancel(socket, queued.request.requestId)
       queued.reject(new Error('Preview capture timed out'))
       this.#dispatchNext()
     }, this.timeoutMs)
@@ -113,6 +117,15 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
       this.#pending.delete(queued.request.requestId)
       queued.reject(error instanceof Error ? error : new Error(String(error)))
       this.#dispatchNext()
+    }
+  }
+
+  #cancel(socket: Client, requestId: string): void {
+    try {
+      this.cancel(socket, requestId)
+    } catch {
+      // A disconnected client cannot receive cancellation. Its own bounded
+      // capture lifetime still releases the window and isolated session.
     }
   }
 }

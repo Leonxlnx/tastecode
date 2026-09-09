@@ -1,18 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Minus, Plus, RotateCcw } from 'lucide-react'
+import { IconMinus as Minus, IconPlus as Plus, IconRotate as RotateCcw } from '@tabler/icons-react'
 import { onAppZoomChange, setAppZoom } from '../bridge.js'
 
 const HIDE_DELAY_MS = 3_000
 
-export type ZoomHudServices = {
-  onAppZoomChange: typeof onAppZoomChange
-  setAppZoom: typeof setAppZoom
-}
-
-const defaultZoomHudServices: ZoomHudServices = { onAppZoomChange, setAppZoom }
-
-export function ZoomHud(props: { services?: ZoomHudServices | undefined }) {
-  const services = props.services ?? defaultZoomHudServices
+export function ZoomHud() {
   const [percent, setPercent] = useState<number>()
   const hideTimer = useRef<number | undefined>(undefined)
 
@@ -23,11 +15,11 @@ export function ZoomHud(props: { services?: ZoomHudServices | undefined }) {
 
   useEffect(
     () =>
-      services.onAppZoomChange((factor) => {
+      onAppZoomChange((factor) => {
         setPercent(Math.round(factor * 100))
         hideLater()
       }),
-    [services],
+    [],
   )
 
   useEffect(
@@ -49,11 +41,11 @@ export function ZoomHud(props: { services?: ZoomHudServices | undefined }) {
       }}
       onPointerLeave={hideLater}
     >
-      <button type="button" aria-label="Zoom out" onClick={() => void services.setAppZoom('out')}>
+      <button type="button" aria-label="Zoom out" onClick={() => void setAppZoom('out')}>
         <Minus size={14} aria-hidden />
       </button>
       <output aria-live="polite">{percent}%</output>
-      <button type="button" aria-label="Zoom in" onClick={() => void services.setAppZoom('in')}>
+      <button type="button" aria-label="Zoom in" onClick={() => void setAppZoom('in')}>
         <Plus size={14} aria-hidden />
       </button>
       <span className="zoom-hud__rule" aria-hidden />
@@ -61,7 +53,7 @@ export function ZoomHud(props: { services?: ZoomHudServices | undefined }) {
         type="button"
         className="zoom-hud__reset"
         disabled={percent === 100}
-        onClick={() => void services.setAppZoom('reset')}
+        onClick={() => void setAppZoom('reset')}
       >
         <RotateCcw size={13} aria-hidden />
         Reset

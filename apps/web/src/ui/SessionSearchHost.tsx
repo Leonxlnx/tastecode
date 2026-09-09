@@ -1,15 +1,20 @@
 import {
   forwardRef,
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
   useState,
   type ComponentProps,
-  type ComponentType,
 } from 'react'
-import { SessionSearch } from './SessionSearch.js'
+import type { SessionSearch as SessionSearchComponent } from './SessionSearch.js'
+
+const SessionSearch = lazy(() =>
+  import('./SessionSearch.js').then((module) => ({ default: module.SessionSearch })),
+)
 
 export type SessionSearchHandle = {
   open: (initialProjectPath?: string) => void
@@ -17,15 +22,12 @@ export type SessionSearchHandle = {
 }
 
 type SessionSearchHostProps = Omit<
-  ComponentProps<typeof SessionSearch>,
+  ComponentProps<typeof SessionSearchComponent>,
   'initialProjectPath' | 'onClose'
-> & {
-  SearchComponent?: ComponentType<ComponentProps<typeof SessionSearch>>
-}
+>
 
 const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearchHostProps>(
   function SessionSearchHost(props, ref) {
-    const { SearchComponent = SessionSearch, ...searchProps } = props
     const [request, setRequest] = useState<{ initialProjectPath: string | undefined }>()
     const opened = useRef(false)
     const restoreTarget = useRef<HTMLElement | undefined>(undefined)
@@ -67,15 +69,17 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
 
     if (!request) return null
     return (
-      <SearchComponent
-        {...searchProps}
-        initialProjectPath={request.initialProjectPath}
-        onSelect={(threadId, turnId) => {
-          close()
-          searchProps.onSelect(threadId, turnId)
-        }}
-        onClose={close}
-      />
+      <Suspense fallback={null}>
+        <SessionSearch
+          {...props}
+          initialProjectPath={request.initialProjectPath}
+          onSelect={(threadId, turnId) => {
+            close()
+            props.onSelect(threadId, turnId)
+          }}
+          onClose={close}
+        />
+      </Suspense>
     )
   },
 )

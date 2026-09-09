@@ -1,15 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import {
-  array,
-  type BoundaryValue,
-  fontWeights,
-  list,
-  member,
-  record,
-  string,
-  strings,
-} from './parse.js'
+import { array, fontWeights, list, member, record, string, strings } from './parse.js'
 
 export interface BrandSystem {
   version: 1
@@ -68,7 +59,7 @@ export interface BrandSystem {
   }
 }
 
-export function parseBrandSystem(value: BoundaryValue): BrandSystem {
+export function parseBrandSystem(value: unknown): BrandSystem {
   const brand = record(value, 'brand system')
   if (brand.version !== 1) throw new Error('brand system version must be 1')
 
@@ -180,7 +171,7 @@ export function parseBrandSystem(value: BoundaryValue): BrandSystem {
     },
     motionDirection: {
       summary: string(motionDirection.summary, 'motionDirection.summary'),
-      principles: strings(motionDirection.principles, 'motionDirection.principles'),
+      principles: motionPrinciples(motionDirection.principles),
       avoid: strings(motionDirection.avoid, 'motionDirection.avoid'),
     },
     voice: {
@@ -190,9 +181,32 @@ export function parseBrandSystem(value: BoundaryValue): BrandSystem {
   }
 }
 
-function parseSignatureDevice(
-  value: BoundaryValue,
-): BrandSystem['creativeDirection']['signatureDevice'] {
+function motionPrinciples(value: unknown): string[] {
+  const field = 'motionDirection.principles'
+  if (typeof value === 'string') return [string(value, field)]
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be a string array or an array of flat string objects`)
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry === 'string') return string(entry, `${field}[${index}]`)
+    const details = Object.entries(record(entry, `${field}[${index}]`))
+    if (details.length === 0) {
+      throw new Error(`${field}[${index}] must contain at least one string field`)
+    }
+    return details
+      .map(([name, detail]) => {
+        const label = name
+          .replace(/([a-z\d])([A-Z])/gu, '$1 $2')
+          .replace(/[_-]+/gu, ' ')
+          .toLowerCase()
+        return `${label}: ${string(detail, `${field}[${index}].${name}`)}`
+      })
+      .join('; ')
+  })
+}
+
+function parseSignatureDevice(value: unknown): BrandSystem['creativeDirection']['signatureDevice'] {
   const device = record(value, 'creativeDirection.signatureDevice')
   return {
     description: string(device.description, 'creativeDirection.signatureDevice.description'),
@@ -209,7 +223,7 @@ export function readBrandSystem(workspacePath: string): BrandSystem {
   return parseBrandSystem(JSON.parse(readFileSync(brandPath(workspacePath), 'utf8')))
 }
 
-export function writeBrandSystem(workspacePath: string, value: BoundaryValue): BrandSystem {
+export function writeBrandSystem(workspacePath: string, value: unknown): BrandSystem {
   const brand = parseBrandSystem(value)
   const outputPath = brandPath(workspacePath)
   mkdirSync(path.dirname(outputPath), { recursive: true })

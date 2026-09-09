@@ -16,7 +16,6 @@ import type {
 import {
   spawnCli,
   StdioJsonRpc,
-  type JsonRpcInput,
   type JsonRpcRequestOptions,
   type JsonRpcValue,
   type ParsedJsonRpcRequestOptions,
@@ -38,7 +37,6 @@ import {
   type PromptResult,
   type ContentBlock,
 } from './protocol.js'
-import { propertiesWhen, propertiesWhenDefined } from './properties-when.js'
 
 /**
  * One adapter for every agent that speaks the Agent Client Protocol.
@@ -72,7 +70,6 @@ export type AcpLaunchOptions = {
   spawn?: typeof spawnCli
   provider?: ProviderId
   mcpServers?: AcpMcpServer[]
-  connect?: AcpRpcConnector
 }
 
 export interface AcpRpc {
@@ -81,24 +78,17 @@ export interface AcpRpc {
   onServerRequest(handler: ServerRequestHandler): void
   request(
     method: string,
-    params?: JsonRpcInput,
+    params?: unknown,
     options?: JsonRpcRequestOptions,
   ): Promise<JsonRpcValue | undefined>
   request<Result>(
     method: string,
-    params: JsonRpcInput,
+    params: unknown,
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
-  notify(method: string, params?: JsonRpcInput): void
-  dispose(): void
+  notify(method: string, params?: unknown): void
+  dispose(): void | Promise<void>
 }
-
-export type AcpRpcConnector = (options: {
-  command: string
-  args: string[]
-  cwd: string
-  label: string
-}) => AcpRpc
 
 export type AcpMcpServer =
   | {
@@ -195,9 +185,9 @@ export function acpPromptContent(
 }
 
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   #spec: AcpLaunchSpec
   readonly #spawn: typeof spawnCli
-  readonly #connectRpc: AcpRpcConnector | undefined
   readonly #provider: ProviderId
   readonly #mcpServers: AcpMcpServer[]
   #rpc: AcpRpc | undefined
@@ -225,7 +215,6 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
     this.#spawn = launch?.spawn ?? spawnCli
-    this.#connectRpc = launch?.connect
     this.#provider = launch?.provider ?? 'acp'
     this.#mcpServers = launch?.mcpServers ?? []
     if (launch) {
@@ -308,7 +297,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
     const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
-      this.dispose()
+      await this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
     await rpc.request('session/load', {
@@ -422,20 +411,22 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const agentName = initialize?.agentInfo?.name
     const agentVersion = initialize?.agentInfo?.version
     return {
-      ...propertiesWhenDefined(protocolVersion, (protocolVersion) => ({ protocolVersion })),
-      ...propertiesWhen(agentName, (agentName) => ({ agentName })),
-      ...propertiesWhen(agentVersion, (agentVersion) => ({ agentVersion })),
+      ...(protocolVersion !== null && protocolVersion !== undefined ? { protocolVersion } : {}),
+      ...(agentName ? { agentName } : {}),
+      ...(agentVersion ? { agentVersion } : {}),
     }
   }
 
-  dispose(): void {
-    this.#rpc?.dispose()
+  dispose(): Promise<void> {
+    const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
+    this.#processStop = stopped
+    return stopped
   }
 
   async #connect(workspacePath: string, model: string | undefined): Promise<AcpRpc> {
@@ -445,18 +436,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         : this.#spec.args
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
-    this.#rpc?.dispose()
-    const rpc = this.#connectRpc
-      ? this.#connectRpc({
-          command: this.#spec.command,
-          args,
-          cwd: workspacePath,
-          label: this.#spec.name,
-        })
-      : new StdioJsonRpc(
-          this.#spawn(this.#spec.command, args, { cwd: workspacePath }),
-          this.#spec.name,
-        )
+    await this.#rpc?.dispose()
+    const rpc = new StdioJsonRpc(
+      this.#spawn(this.#spec.command, args, { cwd: workspacePath }),
+      this.#spec.name,
+    )
     this.#rpc = rpc
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
     rpc.onNotification((method, params) => this.#onNotification(method, params))
@@ -565,8 +549,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // command shows up as an anonymous "tool".
     if (call.toolCallId) {
       this.#streamer?.note(call.toolCallId, {
-        ...propertiesWhen(call.kind, (includedValue) => ({ kind: includedValue })),
-        ...propertiesWhen(call.title, (includedValue) => ({ title: includedValue })),
+        ...(call.kind ? { kind: call.kind } : {}),
+        ...(call.title ? { title: call.title } : {}),
       })
     }
 
@@ -633,7 +617,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // Anything still waiting is now unanswerable — the turn it belonged to is
     // over. The agent is still blocked on its request, so it must hear
     // "cancelled", not silence; the UI must hear "resolved".
-    for (const [id, respond] of [...this.#pendingApprovals]) {
+    for (const [id, respond] of this.#pendingApprovals) {
       respond({ outcome: { outcome: 'cancelled' } })
       this.emit('event', { type: 'approval.resolved', id })
     }

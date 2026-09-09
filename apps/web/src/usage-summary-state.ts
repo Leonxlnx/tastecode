@@ -1,6 +1,5 @@
 import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
 import { errorMessage } from './boundary.js'
-import { propertiesWhen } from './properties-when.js'
 
 type Summary = ResultOf<'usage.summary'>
 type Target = { provider: ProviderId; threadId?: string | undefined }
@@ -105,7 +104,7 @@ export class UsageSummaryController {
     this.#setState({
       status: 'loading',
       provider: target.provider,
-      ...propertiesWhen(summary, (summary) => ({ summary })),
+      ...(summary ? { summary } : {}),
     })
     const request = { revision, id: ++this.#nextRequestId }
     this.#request = request
@@ -125,7 +124,7 @@ export class UsageSummaryController {
             status: 'error',
             provider: target.provider,
             message: messageOf(error),
-            ...propertiesWhen(summary, (summary) => ({ summary })),
+            ...(summary ? { summary } : {}),
           })
           this.#flushAfterRequest(revision)
         },

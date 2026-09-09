@@ -2,26 +2,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
-import { requiredInstance } from '../test-dom.js'
-import { TestTransport } from '../test-transport.js'
-import type { VoiceRecording } from '../voice-recorder.js'
-import { Composer, insertTranscriptAtCursor, type ComposerVoiceRecorder } from './Composer.js'
+import type { Transport } from '../transport.js'
+import { Composer, insertTranscriptAtCursor } from './Composer.js'
 
-const recording = {
-  audioBase64: 'UklGRg==',
-  mimeType: 'audio/wav',
-  sampleRateHz: 24_000,
-  durationMs: 1_000,
-} satisfies VoiceRecording
-
-const recorder = {
-  recording: false,
+const recorder = vi.hoisted(() => ({
   start: vi.fn(async () => undefined),
-  stop: vi.fn(async () => recording),
+  stop: vi.fn(async () => ({
+    audioBase64: 'UklGRg==',
+    mimeType: 'audio/wav' as const,
+    sampleRateHz: 24_000 as const,
+    durationMs: 1_000,
+  })),
   cancel: vi.fn(async () => undefined),
   durationMs: 1_000,
   levels: [0.2, 0.8],
-} satisfies ComposerVoiceRecorder
+}))
+
+vi.mock('../voice-recorder.js', () => ({
+  MAX_RECORDING_MS: 120_000,
+  describeMicrophoneError: (error: Error) =>
+    error.name === 'NotAllowedError' ? 'Microphone access was denied.' : error.message,
+  formatRecordingDuration: () => '0:01',
+  useVoiceRecorder: () => ({ ...recorder, recording: false }),
+}))
 
 beforeEach(() => vi.clearAllMocks())
 afterEach(cleanup)
@@ -32,14 +35,11 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
     const onDraftChange = vi.fn()
     renderVoiceComposer({ onSend, onTranscribeVoice, onDraftChange })
-    const textarea = requiredInstance(
-      screen.getByPlaceholderText('Do anything'),
-      HTMLTextAreaElement,
-    )
+    const textarea = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     fireEvent.change(textarea, { target: { value: 'hello world' } })
     textarea.setSelectionRange(5, 5)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
 
     await waitFor(() => expect(textarea.value).toBe('hello spoken words world'))
@@ -53,7 +53,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
     renderVoiceComposer({ onSend, onTranscribeVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('spoken words', []))
@@ -64,7 +64,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
     renderVoiceComposer({ onTranscribeVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Discard voice note' }))
 
     await waitFor(() =>
@@ -83,13 +83,13 @@ describe('Composer voice dictation', () => {
       sendAvailability: 'setup-required',
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
 
     await waitFor(() =>
-      expect(
-        requiredInstance(screen.getByPlaceholderText('Do anything'), HTMLTextAreaElement).value,
-      ).toBe('spoken words'),
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'spoken words',
+      ),
     )
     expect(onSend).not.toHaveBeenCalled()
   })
@@ -99,7 +99,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(() => new Promise<string>(() => {}))
     renderVoiceComposer({ onTranscribeVoice, onCancelVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel transcription' }))
 
@@ -113,7 +113,7 @@ describe('Composer voice dictation', () => {
     recorder.start.mockRejectedValueOnce(denied)
     renderVoiceComposer()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Microphone access was denied.',
@@ -135,7 +135,7 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
     <Composer
       transport={voiceTransport()}
       provider="codex"
-      projects={[{ path: '/work/harness', name: 'TasteCode', sessions: [] }]}
+      projects={[{ path: '/work/harness', name: 'TasteCode' }]}
       projectPath="/work/harness"
       projectName="TasteCode"
       branch="main"
@@ -176,12 +176,16 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       onDeleteQueuedTurn={vi.fn()}
       onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
-      voiceRecorder={recorder}
       {...overrides}
     />,
   )
 }
 
-function voiceTransport(): TestTransport {
-  return new TestTransport()
+function voiceTransport(): Transport {
+  return {
+    state: 'open',
+    request: vi.fn(),
+    on: vi.fn(() => () => undefined),
+    onState: vi.fn(() => () => undefined),
+  } as unknown as Transport
 }

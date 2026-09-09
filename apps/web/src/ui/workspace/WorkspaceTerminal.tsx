@@ -1,9 +1,7 @@
-import { memo, type ComponentProps, type ComponentType } from 'react'
+import { memo } from 'react'
 import type { Transport } from '../../transport.js'
 import { TerminalPane } from '../TerminalPane.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
-
-export type WorkspaceTerminalPane = ComponentType<ComponentProps<typeof TerminalPane>>
 
 export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
   active: boolean
@@ -12,7 +10,6 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
   projectPath?: string | undefined
   theme: 'light' | 'dark'
   onClose: () => void
-  terminalPaneComponent?: WorkspaceTerminalPane | undefined
 }) {
   const target = props.threadId
     ? { threadId: props.threadId }
@@ -28,11 +25,9 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
       />
     )
   }
-  const TerminalPaneComponent = props.terminalPaneComponent ?? TerminalPane
-
   return (
     <div className="workspace-terminal">
-      <TerminalPaneComponent
+      <TerminalPane
         transport={props.transport}
         {...target}
         theme={props.theme}

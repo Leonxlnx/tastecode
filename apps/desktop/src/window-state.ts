@@ -1,22 +1,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Rectangle } from 'electron'
-import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
-const MainWindowStateSchema = z.object({
-  version: z.literal(1),
-  bounds: z.object({
-    x: z.number().int().safe(),
-    y: z.number().int().safe(),
-    width: z.number().int().safe().positive(),
-    height: z.number().int().safe().positive(),
-  }),
-  fullScreen: z.boolean(),
-  maximized: z.boolean(),
-})
-
-export type MainWindowState = z.output<typeof MainWindowStateSchema>
+export type MainWindowState = {
+  version: 1
+  bounds: Rectangle
+  fullScreen: boolean
+  maximized: boolean
+}
 
 export type RestoredMainWindowState = {
   bounds: Rectangle | Pick<Rectangle, 'width' | 'height'>
@@ -50,9 +41,40 @@ type MainWindowStateTarget = {
 
 const SAVE_DELAY_MS = 200
 
-export function parseMainWindowState(value: BoundaryValue): MainWindowState | undefined {
-  const result = MainWindowStateSchema.safeParse(value)
-  return result.success ? result.data : undefined
+export function parseMainWindowState(value: unknown): MainWindowState | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const candidate = value as Record<string, unknown>
+  const bounds = candidate['bounds']
+  if (typeof bounds !== 'object' || bounds === null || Array.isArray(bounds)) return undefined
+  const rectangle = bounds as Record<string, unknown>
+  const x = rectangle['x']
+  const y = rectangle['y']
+  const width = rectangle['width']
+  const height = rectangle['height']
+  if (
+    candidate['version'] !== 1 ||
+    typeof candidate['fullScreen'] !== 'boolean' ||
+    typeof candidate['maximized'] !== 'boolean' ||
+    !Number.isSafeInteger(x) ||
+    !Number.isSafeInteger(y) ||
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    (width as number) <= 0 ||
+    (height as number) <= 0
+  ) {
+    return undefined
+  }
+  return {
+    version: 1,
+    bounds: {
+      x: x as number,
+      y: y as number,
+      width: width as number,
+      height: height as number,
+    },
+    fullScreen: candidate['fullScreen'],
+    maximized: candidate['maximized'],
+  }
 }
 
 export function loadMainWindowState(filePath: string): MainWindowState | undefined {
@@ -101,7 +123,7 @@ export function persistMainWindowState(
   window: MainWindowStateTarget,
   initialState: RestoredMainWindowState,
   save: (state: MainWindowState) => void,
-  onError: (error: BoundaryValue) => void = () => undefined,
+  onError: (error: unknown) => void = () => undefined,
 ): MainWindowStatePersistence {
   let state: MainWindowState = {
     version: 1,

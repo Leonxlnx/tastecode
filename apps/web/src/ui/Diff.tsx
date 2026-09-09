@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, FilePenLine } from 'lucide-react'
+import { IconChevronDown as ChevronDown, IconFilePencil as FilePenLine } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import { DiffReview } from './DiffReview.js'
 

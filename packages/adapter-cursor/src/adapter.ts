@@ -47,6 +47,7 @@ function applyCursorTurnOptions(current: StartOptions, next: CursorTurnOptions):
 }
 
 export class CursorAdapter extends EventEmitter<Events> {
+  #processStop: Promise<void> = Promise.resolve()
   #workspacePath = ''
   #options: StartOptions = {}
   #sessionId: string | undefined
@@ -55,7 +56,6 @@ export class CursorAdapter extends EventEmitter<Events> {
   #mapper: CursorEventMapper | undefined
   #turnId: string | undefined
   #startingTurn = false
-  #turnCounter = 0
   #instructionsPending = false
   readonly #spawn: Spawn
   readonly #run: Run
@@ -149,8 +149,8 @@ export class CursorAdapter extends EventEmitter<Events> {
     })
     // The previous turn's process can outlive its `result` event by a moment;
     // a lingering child must not block or clobber the new turn.
-    if (this.#child) killTree(this.#child)
-    const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    if (this.#child) await killTree(this.#child)
+    const turnId = `${threadId}-turn-${crypto.randomUUID()}`
     const prompt =
       this.#instructionsPending && this.#options.instructions
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
@@ -179,6 +179,12 @@ export class CursorAdapter extends EventEmitter<Events> {
       child.stdout,
       (value) => this.#onEvent(CursorEventSchema.parse(value)),
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
+      {
+        onError: (error) => {
+          this.#fail(turnId, error.message)
+          void killTree(child)
+        },
+      },
     )
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
@@ -199,12 +205,14 @@ export class CursorAdapter extends EventEmitter<Events> {
   async interrupt(): Promise<void> {
     if (!this.#child || !this.#turnId) return
     const turnId = this.#turnId
-    killTree(this.#child)
+    const stopped = killTree(this.#child)
+    this.#processStop = stopped
     this.#child = undefined
     for (const event of this.#mapper?.finish() ?? []) this.emit('event', event)
     this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
     this.#turnId = undefined
     this.#mapper = undefined
+    await stopped
   }
 
   respondToApproval(): void {}
@@ -215,12 +223,14 @@ export class CursorAdapter extends EventEmitter<Events> {
     return parseCursorModels(result.stdout)
   }
 
-  dispose(): void {
-    if (this.#child) killTree(this.#child)
+  dispose(): Promise<void> {
+    const stopped = this.#child ? killTree(this.#child) : this.#processStop
     this.#child = undefined
     this.#threadId = undefined
     this.#turnId = undefined
     this.#mapper = undefined
+    this.#processStop = stopped
+    return stopped
   }
 
   #onEvent(event: CursorEvent): void {
@@ -250,6 +260,7 @@ export class CursorAdapter extends EventEmitter<Events> {
   }
 }
 
+// oxlint-disable-next-line no-control-regex, no-useless-escape -- ANSI parsing requires ESC.
 const ANSI = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g
 
 /**
