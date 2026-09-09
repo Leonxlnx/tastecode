@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events'
+import { realpathSync } from 'node:fs'
+import path from 'node:path'
 import type {
   ApprovalDecision,
   ApprovalMode,
@@ -249,14 +251,17 @@ export class ApiAgentSession extends EventEmitter<Events> {
         }
       }
       if (!interrupted) {
-        const detail = error instanceof Error ? error.message : String(error)
+        const detail = this.#redact(error instanceof Error ? error.message : String(error)).slice(
+          0,
+          400,
+        )
         this.emit('log', `direct API model request failed: ${detail}`)
         this.emit('event', {
           type: 'thread.error',
           threadId: thread.id,
           // The redacted real cause, not a shrug — "credit balance too low"
           // and "invalid api key" are actionable; "request failed" is not.
-          message: this.#redact(detail) || 'The model request failed.',
+          message: detail || 'The model request failed.',
         })
       }
       this.#finishOpenItems('failed')
@@ -460,11 +465,17 @@ export class ApiAgentSession extends EventEmitter<Events> {
 
   async #approved(call: ApiToolCall, signal: AbortSignal): Promise<boolean> {
     const review = this.#reviewTool(call)
-    // Session approval is keyed on what the user actually reviewed — command
-    // plus path plus reason — not on the tool name. Approving one `bash`
-    // invocation must not silently approve every future one.
+    // Include every reviewed field and exact structured input. A command can
+    // run different code in another directory even when its display is equal.
     const approvalKey = review
-      ? `${call.name}\0${review.command ?? ''}\0${review.path ?? ''}\0${review.reason ?? ''}`
+      ? JSON.stringify({
+          tool: call.name,
+          input: call.input,
+          review: {
+            ...review,
+            cwd: canonicalDirectory(review.cwd ?? '.', this.#thread!.workspacePath),
+          },
+        })
       : call.name
     if (!review || this.#approvedTools.has(approvalKey)) return true
     const request: ApprovalRequest = {
@@ -498,5 +509,15 @@ export class ApiAgentSession extends EventEmitter<Events> {
   #requireThread(threadId: string): Thread {
     if (!this.#thread || this.#thread.id !== threadId) throw new Error('no such API thread')
     return this.#thread
+  }
+}
+
+function canonicalDirectory(directory: string, workspace: string): string {
+  const resolved = path.resolve(workspace, directory)
+  try {
+    return realpathSync(resolved)
+  } catch {
+    // Preserve an absolute identity when the target does not exist yet.
+    return resolved
   }
 }

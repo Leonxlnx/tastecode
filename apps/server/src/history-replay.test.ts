@@ -82,6 +82,50 @@ describe('history replay compaction', () => {
     expect(compactHistoryReplay(tail)).toEqual(tail)
   })
 
+  it('leaves an already-final replay exact', () => {
+    const history = entries([
+      {
+        type: 'turn.started',
+        turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 1 },
+      },
+      { type: 'item.completed', item: item('reply', 'Done', 'completed') },
+      { type: 'diff.updated', diff: 'final diff' },
+      { type: 'plan.updated', steps: [{ step: 'Done', status: 'completed' }] },
+      {
+        type: 'usage.updated',
+        usage: {
+          inputTokens: 1,
+          cachedInputTokens: 0,
+          outputTokens: 1,
+          reasoningTokens: 0,
+          totalTokens: 2,
+        },
+      },
+      { type: 'turn.completed', turnId: 'turn-1', status: 'completed', completedAt: 2 },
+    ])
+
+    expect(compactHistoryReplay(history)).toEqual(history)
+  })
+
+  it('keeps the durable tail sequence when a running item is compacted', () => {
+    const history = entries([
+      {
+        type: 'turn.started',
+        turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 1 },
+      },
+      { type: 'item.started', item: item('reply', '') },
+      { type: 'item.delta', turnId: 'turn-1', itemId: 'reply', textDelta: 'Hello ' },
+      { type: 'item.delta', turnId: 'turn-1', itemId: 'reply', textDelta: 'world' },
+    ])
+
+    const compacted = compactHistoryReplay(history)
+    const durableSeq = compacted.at(-1)!.seq
+
+    expect(reduceEventLog(emptyThread, compacted)).toEqual(reduceEventLog(emptyThread, history))
+    expect(durableSeq).toBe(history.at(-1)!.seq)
+    expect(history.filter(({ seq }) => seq > durableSeq)).toEqual([])
+  })
+
   it('shrinks a realistic streamed replay by more than ninety percent', () => {
     const history = entries([
       {

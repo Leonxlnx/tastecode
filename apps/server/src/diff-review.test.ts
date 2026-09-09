@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -46,6 +54,23 @@ afterEach(() => {
 })
 
 describe('structured diff review', () => {
+  it('shows real hunks for a nested project and excludes sibling changes', async () => {
+    const nested = path.join(repo, 'nested project')
+    mkdirSync(nested)
+    writeFileSync(path.join(nested, '新 file.txt'), 'before\n')
+    git('add', '.')
+    git('commit', '-m', 'nested')
+    writeFileSync(path.join(nested, '新 file.txt'), 'after\n')
+    writeFileSync(path.join(repo, 'file.txt'), 'sibling edit\n')
+    const diff = await readWorkspaceDiff(nested)
+    expect(diff.files).toHaveLength(1)
+    expect(diff.files[0]?.path).toBe('nested project/新 file.txt')
+    expect(diff.files[0]?.hunks[0]?.lines).toContainEqual({
+      kind: 'addition',
+      newLine: 1,
+      text: 'after',
+    })
+  })
   it('reads staged, unstaged and untracked work without a session review scope', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'unstaged work' }))
     writeFileSync(path.join(repo, 'staged.txt'), 'staged work\n')

@@ -16,7 +16,7 @@ describe('sidebar resize frame', () => {
 
     expect(corner).toContain('border-top: 2px solid var(--line-strong);')
     expect(corner).toContain('border-left: 2px solid var(--line-strong);')
-    expect(corner).toContain('border-top-left-radius: 10px;')
+    expect(corner).toContain('border-top-left-radius: var(--r-lg);')
   })
 
   it('shows the corner and straight guide for hover, focus, and active resizing', () => {

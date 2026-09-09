@@ -10,7 +10,7 @@ import {
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
 
-function StatefulKeybindSettings(props: { onReset?: () => void }) {
+function StatefulKeybindSettings(props: { macOS?: boolean; onReset?: () => void }) {
   const [keybindings, setKeybindings] = useState<Keybindings>(createDefaultKeybindings)
   const change = (action: KeybindingId, shortcut: Shortcut | null) => {
     setKeybindings((current) => ({ ...current, [action]: shortcut }))
@@ -18,7 +18,7 @@ function StatefulKeybindSettings(props: { onReset?: () => void }) {
   return (
     <KeybindSettings
       keybindings={keybindings}
-      macOS={true}
+      macOS={props.macOS ?? true}
       onChange={change}
       onReset={() => {
         props.onReset?.()
@@ -39,9 +39,11 @@ describe('keybind settings', () => {
     expect(screen.getByRole('heading', { name: 'Chats' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Projects' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Workspace' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Change Command palette keybind' }).textContent).toBe(
-      '⌘K',
-    )
+    const commandPalette = screen.getByRole('button', {
+      name: 'Change Command palette keybind',
+    })
+    expect(commandPalette.querySelector('kbd')?.title).toBe('⌘K')
+    expect(commandPalette.querySelector('[data-shortcut-icon="command"]')).toBeTruthy()
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'Search keybinds' }), {
       target: { value: 'terminal' },
@@ -59,7 +61,10 @@ describe('keybind settings', () => {
     fireEvent.click(recorder)
     expect(recorder.getAttribute('aria-pressed')).toBe('true')
     fireEvent.keyDown(recorder, { key: 'G', metaKey: true, shiftKey: true })
-    expect(recorder.textContent).toBe('⌘⇧G')
+    expect(recorder.querySelector('kbd')?.title).toBe('⌘⇧G')
+    expect(recorder.querySelector('[data-shortcut-icon="command"]')).toBeTruthy()
+    expect(recorder.querySelector('[data-shortcut-icon="shift"]')).toBeTruthy()
+    expect(recorder.querySelector('.keybind-shortcut__key')?.textContent).toBe('G')
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear Command palette keybind' }))
     expect(recorder.textContent).toBe('Set keybind')
@@ -87,10 +92,26 @@ describe('keybind settings', () => {
     const recorder = screen.getByRole('button', { name: 'Change Command palette keybind' })
     fireEvent.click(recorder)
     fireEvent.keyDown(recorder, { key: 'g', metaKey: true })
-    expect(recorder.textContent).toBe('⌘G')
+    expect(recorder.querySelector('kbd')?.title).toBe('⌘G')
 
     fireEvent.click(screen.getByRole('button', { name: 'Reset all' }))
     expect(onReset).toHaveBeenCalledOnce()
-    expect(recorder.textContent).toBe('⌘K')
+    expect(recorder.querySelector('kbd')?.title).toBe('⌘K')
+  })
+
+  it('uses pictograms for non-macOS modifiers and special keys', () => {
+    render(<StatefulKeybindSettings macOS={false} />)
+    const commandPalette = screen.getByRole('button', {
+      name: 'Change Command palette keybind',
+    })
+
+    expect(commandPalette.querySelector('kbd')?.title).toBe('⌃K')
+    expect(commandPalette.querySelector('[data-shortcut-icon="control"]')).toBeTruthy()
+    expect(commandPalette.querySelector('.keybind-shortcut__key')?.textContent).toBe('K')
+
+    const nextChat = screen.getByRole('button', { name: 'Change Next chat keybind' })
+    expect(nextChat.querySelector('[data-shortcut-icon="control"]')).toBeTruthy()
+    expect(nextChat.querySelector('[data-shortcut-icon="option"]')).toBeTruthy()
+    expect(nextChat.querySelector('[data-shortcut-icon="arrow-down"]')).toBeTruthy()
   })
 })

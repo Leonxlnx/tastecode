@@ -1,19 +1,20 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import {
-  ArrowLeft,
-  ArrowRight,
-  ExternalLink,
-  Globe2,
-  LoaderCircle,
-  Laptop,
-  Monitor,
-  RefreshCw,
-  Smartphone,
-  Tablet,
-} from 'lucide-react'
+  IconArrowLeft as ArrowLeft,
+  IconArrowRight as ArrowRight,
+  IconExternalLink as ExternalLink,
+  IconWorld as Globe2,
+  IconLoader2 as LoaderCircle,
+  IconDeviceLaptop as Laptop,
+  IconDeviceDesktop as Monitor,
+  IconRefresh as RefreshCw,
+  IconDeviceMobile as Smartphone,
+  IconDeviceTablet as Tablet,
+} from '@tabler/icons-react'
 import { isDesktop, openExternalUrl } from '../../bridge.js'
 import { errorMessage } from '../../boundary.js'
+import { IconMorph } from '../IconMorph.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import { browserUrl } from './browser-url.js'
 import {
@@ -323,11 +324,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           disabled={!state.url}
           onClick={() => action(state.loading ? 'stop' : 'reload')}
         >
-          {state.loading ? (
-            <LoaderCircle className="spinner" size={15} aria-hidden />
-          ) : (
+          <IconMorph active={state.loading ? 1 : 0}>
             <RefreshCw size={14} aria-hidden />
-          )}
+            <LoaderCircle className="spinner" size={15} aria-hidden />
+          </IconMorph>
         </button>
         <form
           className="workspace-browser__address"

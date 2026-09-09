@@ -1,23 +1,21 @@
 import path from 'node:path'
-import { z } from 'zod'
 
 export const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
-
-const ArrayBufferViewSchema = z.custom<ArrayBufferView>((value) => ArrayBuffer.isView(value))
-const PastedFilePayloadSchema = z.object({
-  name: z.string(),
-  type: z.string(),
-  bytes: z.union([z.instanceof(ArrayBuffer), ArrayBufferViewSchema]),
-})
 
 export type PastedFile = { bytes: Buffer; name: string }
 
 export function pastedFile(payload: unknown): PastedFile {
-  const parsed = PastedFilePayloadSchema.safeParse(payload)
-  if (!parsed.success) {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     throw new Error('Invalid pasted file metadata')
   }
-  const candidate = parsed.data
+  const candidate = payload as { name?: unknown; type?: unknown; bytes?: unknown }
+  if (
+    typeof candidate.name !== 'string' ||
+    typeof candidate.type !== 'string' ||
+    !(candidate.bytes instanceof ArrayBuffer || ArrayBuffer.isView(candidate.bytes))
+  ) {
+    throw new Error('Invalid pasted file metadata')
+  }
 
   const bytes =
     candidate.bytes instanceof ArrayBuffer

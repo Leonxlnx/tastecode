@@ -38,7 +38,7 @@ const EFFORT_RANKS = new Map([
   ['ultra', 8],
 ])
 
-export function lowestReasoningEffort(model: Model): string | undefined {
+function lowestReasoningEffort(model: Model): string | undefined {
   let lowest: { effort: string; rank: number; index: number } | undefined
   for (const [index, effort] of model.reasoningEfforts.entries()) {
     const rank = EFFORT_RANKS.get(normalize(effort)) ?? 100 + index

@@ -17,6 +17,7 @@ import {
   ProviderIdSchema,
   ProviderSetupSchema,
   ProviderStatusSchema,
+  ProviderUpdateSchema,
   UsageSchema,
 } from './domain.js'
 import {
@@ -585,6 +586,16 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  /** Cached background release checks, separate from startup provider detection. */
+  'providers.updates': {
+    params: z.object({ refresh: z.boolean().optional() }),
+    result: z.object({ updates: z.array(ProviderUpdateSchema) }),
+  },
+  /** The server selects the updater; the client can only name a supported provider. */
+  'providers.update': {
+    params: z.object({ provider: ProviderIdSchema, ...TerminalSizeSchema['shape'] }),
+    result: z.object({ terminalId: TerminalIdSchema }),
+  },
   /** User-owned protocol-compatible CLIs. Secrets never belong in these fields. */
   'harnesses.list': {
     params: z.object({}),
@@ -757,6 +768,18 @@ export const methods = {
   'pullRequests.list': {
     params: z.object({ refresh: z.boolean().optional() }),
     result: PullRequestListResultSchema,
+  },
+  /**
+   * Install or authenticate the local GitHub CLI in an interactive terminal.
+   * The renderer names only the fixed setup action; the server owns the
+   * platform-specific command so this boundary cannot become a remote shell.
+   */
+  'pullRequests.setup': {
+    params: z.object({
+      action: z.enum(['install', 'login']),
+      ...TerminalSizeSchema['shape'],
+    }),
+    result: z.object({ terminalId: TerminalIdSchema }),
   },
   'pullRequests.detail': {
     params: z.object({
@@ -1055,6 +1078,25 @@ export const methods = {
     params: z.object({ terminalId: TerminalIdSchema }),
     result: z.object({}),
   },
+  /** Recover a terminal job after output or completion was missed on reconnect. */
+  'terminal.status': {
+    params: z.object({ terminalId: TerminalIdSchema }),
+    result: z.object({
+      status: z.enum(['running', 'exited', 'unknown']),
+      output: z.string(),
+      outputOffset: z.number().int().nonnegative(),
+      exitCode: z.number().int().nullable(),
+    }),
+  },
+  /** Renew short provider notification leases while a settings view is visible. */
+  'providers.watch': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string(),
+      targets: z.array(z.enum(['skills', 'mcp'])).max(2),
+    }),
+    result: z.object({ expiresInMs: z.number().int().positive() }),
+  },
   /** Materialize a browser clipboard image where the local agents can read it. */
   'attachments.saveImage': {
     params: z.object({
@@ -1203,6 +1245,8 @@ export const methods = {
          * second to write wins silently.
          */
         isolate: z.boolean().optional(),
+        /** Local branch used atomically for a shared or isolated checkout. */
+        baseRef: z.string().min(1).max(1024).optional(),
       })
       .superRefine((request, context) => {
         if ((request.provider === 'api') !== Boolean(request.connectionId)) {
@@ -1373,6 +1417,7 @@ export type Push = z.infer<typeof PushSchema>
 
 export const channels = {
   'preview.captureRequested': PreviewCaptureRequestSchema,
+  'preview.captureCancelled': z.object({ requestId: z.string().uuid() }),
   'server.welcome': z.object({
     serverVersion: z.string(),
     protocolVersion: z.number(),
@@ -1434,6 +1479,7 @@ export const channels = {
   'terminal.output': z.object({
     terminalId: TerminalIdSchema,
     data: z.string(),
+    outputOffset: z.number().int().nonnegative().optional(),
   }),
   'terminal.exit': z.object({
     terminalId: TerminalIdSchema,

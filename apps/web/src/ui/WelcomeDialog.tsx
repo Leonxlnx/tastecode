@@ -1,5 +1,6 @@
 import type { ProviderId, ProviderStatus } from '@harness/contracts'
-import { FolderOpen, Settings2 } from 'lucide-react'
+import { IconFolderOpen as FolderOpen, IconSettings2 as Settings2 } from '@tabler/icons-react'
+import '../styles/welcome.css'
 import { providerMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { useDialogFocus } from './dialog-focus.js'

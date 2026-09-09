@@ -373,6 +373,8 @@ export const ProviderSetupSchema = z.object({
   installCommand: z.string().optional(),
   /** `app` can authenticate in Harness; `provider` finishes setup in the provider's CLI. */
   login: z.enum(['app', 'provider']),
+  /** Whether the provider CLI opens its own OAuth page during terminal sign-in. */
+  loginOpensBrowser: z.boolean().optional(),
 })
 export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
 
@@ -476,3 +478,16 @@ export const ProviderStatusSchema = z.object({
   problem: z.string().optional(),
 })
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
+
+/** Public release metadata; update commands remain on the server. */
+export const ProviderUpdateSchema = z.object({
+  provider: ProviderIdSchema,
+  displayName: z.string(),
+  currentVersion: z.string().optional(),
+  latestVersion: z.string().optional(),
+  updateAvailable: z.boolean(),
+  canUpdate: z.boolean(),
+  updateUrl: z.url(),
+  error: z.string().optional(),
+})
+export type ProviderUpdate = z.infer<typeof ProviderUpdateSchema>

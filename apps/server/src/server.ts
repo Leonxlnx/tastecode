@@ -1,64 +1,40 @@
-import os from 'node:os'
-import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { detectAgents } from '@harness/adapter-acp'
-import {
-  ErrorCode,
-  methods,
-  PROTOCOL_VERSION,
-  RequestSchema,
-  type MethodName,
-} from '@harness/contracts'
-import { applyDesktopPath } from '@harness/proc'
+import { ErrorCode, methods, PROTOCOL_VERSION, type MethodName } from '@harness/contracts'
+import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
-import { Orchestrator, resolveWorkspacePath } from './orchestrator.js'
-import { detectProviders, installCommandFor, launchCommandFor } from './providers.js'
+import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
-import { migrateProductFile } from './product-paths.js'
+import { storeLocation } from './data-location.js'
+import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
-import { PullRequestService } from './pull-requests.js'
+import type { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
+import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
-import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
+import { listWorkspaceBranches, readWorkspace } from './workspace.js'
 import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
+import { LifecycleScheduler } from './lifecycle-scheduler.js'
+import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
+import { createHistoryResponseProjector } from './history-response.js'
+import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 
-export const SERVER_VERSION = '0.0.0'
+const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
 
-/**
- * Where the database lives.
- *
- * Under the platform's own per-user data directory rather than beside the
- * binary, so an update or a reinstall does not take someone's history with it.
- * `HARNESS_DATA_DIR` overrides it, which is what the tests and a portable
- * install use.
- */
-function storeLocation(): string {
-  const override = process.env['HARNESS_DATA_DIR']
-  if (override) {
-    return migrateProductFile(
-      path.join(override, 'tastecode.db'),
-      path.join(override, 'harness.db'),
-    )
+const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
+const startupMilestones = new Set<string>()
+
+function reportStartupMilestone(name: string): void {
+  if (!Number.isFinite(startupStartedAt) || startupStartedAt <= 0 || startupMilestones.has(name)) {
+    return
   }
-
-  const home = os.homedir()
-  const base =
-    process.platform === 'win32'
-      ? (process.env['APPDATA'] ?? path.join(home, 'AppData', 'Roaming'))
-      : process.platform === 'darwin'
-        ? path.join(home, 'Library', 'Application Support')
-        : (process.env['XDG_DATA_HOME'] ?? path.join(home, '.local', 'share'))
-
-  return migrateProductFile(
-    path.join(base, 'TasteCode', 'tastecode.db'),
-    path.join(base, 'PersonalHarness', 'harness.db'),
-  )
+  startupMilestones.add(name)
+  console.log(`[startup] ${name} ${Date.now() - startupStartedAt}ms`)
 }
 
 /**
@@ -79,10 +55,38 @@ export function startServer(
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
-  const wss = new WebSocketServer({ port, host })
+  const databasePath = storeLocation()
+  const releaseDataLease = acquireDataLease(databasePath)
+  let store: Store
+  try {
+    store = new Store(databasePath)
+  } catch (error) {
+    releaseDataLease()
+    throw error
+  }
+  let wss: WebSocketServer
+  try {
+    wss = new WebSocketServer({ port, host })
+  } catch (error) {
+    try {
+      store.close()
+    } finally {
+      releaseDataLease()
+    }
+    throw error
+  }
   const push = new PushBus()
-  const previewCapture = new PreviewCaptureCoordinator((socket, request) =>
-    push.send(socket, 'preview.captureRequested', request),
+  const providerService = import('./providers.js')
+  let updatesService: Promise<import('./provider-updates.js').ProviderUpdateService> | undefined
+  const providerUpdates = () =>
+    (updatesService ??= import('./provider-updates.js').then(
+      ({ ProviderUpdateService }) => new ProviderUpdateService(),
+    ))
+  void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
+  const previewCapture = new PreviewCaptureCoordinator(
+    (socket, request) => push.send(socket, 'preview.captureRequested', request),
+    35_000,
+    (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
   )
 
   // A port clash is the most likely startup failure — a previous run that did
@@ -100,14 +104,30 @@ export function startServer(
     process.exit(1)
   })
 
-  const databasePath = storeLocation()
-  const store = new Store(databasePath)
+  reportStartupMilestone('server-store-ready')
   store.recoverInterruptedThreads()
-  const pullRequests = new PullRequestService()
+  reportStartupMilestone('server-recovery-ready')
+  let pullRequests: Promise<PullRequestService> | undefined
+  const pullRequestService = () =>
+    (pullRequests ??= import('./pull-requests.js').then(
+      ({ PullRequestService }) => new PullRequestService(),
+    ))
+  let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
   const orchestrator = new Orchestrator(store, {
-    onEvent: (threadId, event, seq) => push.broadcast('thread.event', { threadId, event, seq }),
-    onSideEvent: (threadId, event, seq) =>
-      push.broadcast('sideChat.event', { threadId, event, seq }),
+    onEvent: (threadId, event, seq, serializedEvent) => {
+      if (serializedEvent === undefined) {
+        push.broadcast('thread.event', { threadId, event, seq })
+      } else {
+        push.broadcastRecordedEvent('thread.event', threadId, serializedEvent, seq)
+      }
+    },
+    onSideEvent: (threadId, event, seq, serializedEvent) => {
+      if (serializedEvent === undefined) {
+        push.broadcast('sideChat.event', { threadId, event, seq })
+      } else {
+        push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
+      }
+    },
     onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
     onLog: (line) => console.log(`[agent] ${line}`),
     onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
@@ -120,7 +140,9 @@ export function startServer(
     onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
-    onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
+    onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
+    onTerminalOutput: (terminalId, data, outputOffset) =>
+      push.broadcast('terminal.output', { terminalId, data, outputOffset }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
     capturePreview: (url, viewports) =>
@@ -128,9 +150,30 @@ export function startServer(
         ? previewCapture.capture(url, viewports)
         : Promise.resolve(undefined),
   })
-  orchestrator.refreshLifecycle()
-  const lifecycleTimer = setInterval(() => orchestrator.refreshLifecycle(), 30_000)
-  lifecycleTimer.unref()
+  reportStartupMilestone('server-orchestrator-ready')
+  const checkpointProtection = orchestrator.protectStoredCheckpoints()
+  const projectList = createProjectListProjector({
+    includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
+  })
+  const serializeProjectList = createSerializedResultCache()
+  const historyResponse = createHistoryResponseProjector()
+  const serializeHistory = createSerializedResultCache()
+  const projectListState: ProjectListState = {
+    isTurnRunning: (threadId) => orchestrator.isTurnRunning(threadId),
+    inboxStatus: (threadId, queued, unread) => orchestrator.inboxStatus(threadId, queued, unread),
+    revision: () => orchestrator.sidebarStatusRevision(),
+    changesSince: (revision) => orchestrator.sidebarStatusChangesSince(revision),
+  }
+  const lifecycleScheduler = new LifecycleScheduler(
+    () => orchestrator.refreshLifecycle(),
+    () => store.nextLifecycleRefreshAt(),
+  )
+  notifyLifecycleScheduleChanged = (hint) => {
+    if (hint === 'later') lifecycleScheduler.changedLater()
+    else if (typeof hint === 'number') lifecycleScheduler.deadlineAdded(hint)
+    else lifecycleScheduler.changed()
+  }
+  lifecycleScheduler.refreshNow()
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
   // starts instead of failing with a message about our own leftovers.
@@ -180,12 +223,12 @@ export function startServer(
       return
     }
 
-    const envelope = RequestSchema.safeParse(parsed)
-    if (!envelope.success) {
+    const envelope = parseRequestEnvelope(parsed)
+    if (!envelope) {
       console.warn('[server] dropped malformed request')
       return
     }
-    const { id, method, params } = envelope.data
+    const { id, method, params } = envelope
 
     // hasOwn, not truthiness: `methods` is a plain object, so 'constructor',
     // 'toString' and friends pass a truthy check and then blow up on
@@ -197,7 +240,10 @@ export function startServer(
     }
     try {
       const result = await route(socket, method, params)
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ id, result }))
+      if (socket.readyState === socket.OPEN) {
+        push.reply(socket, serializeSuccessResponse(id, result))
+        if (method === 'projects.list') reportStartupMilestone('server-projects-sent')
+      }
     } catch (error) {
       if (error instanceof InvalidParamsError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
@@ -240,15 +286,27 @@ export function startServer(
 
       case 'pullRequests.list': {
         const p = parseParams(method, params)
-        return pullRequests.list(
+        return (await pullRequestService()).list(
           store.projects().map((project) => project.path),
           p.refresh ?? false,
         )
       }
 
+      case 'pullRequests.setup': {
+        const p = parseParams(method, params)
+        const { githubSetupCommand } = await import('./pull-requests.js')
+        const command = githubSetupCommand(p.action)
+        return {
+          terminalId:
+            p.action === 'install'
+              ? orchestrator.installProvider('github-cli', command, p.columns, p.rows)
+              : orchestrator.launchProviderLogin('github-cli', command, p.columns, p.rows),
+        }
+      }
+
       case 'pullRequests.detail': {
         const p = parseParams(method, params)
-        return pullRequests.detail(
+        return (await pullRequestService()).detail(
           p.repository,
           p.number,
           store.projects().map((project) => project.path),
@@ -258,21 +316,44 @@ export function startServer(
 
       case 'pullRequests.files': {
         const p = parseParams(method, params)
-        return pullRequests.files(p.repository, p.number, p.page ?? 1, p.refresh ?? false)
+        return (await pullRequestService()).files(
+          p.repository,
+          p.number,
+          p.page ?? 1,
+          p.refresh ?? false,
+        )
       }
 
       case 'pullRequests.metadataOptions': {
         const p = parseParams(method, params)
-        return pullRequests.metadataOptions(p.repository, p.refresh ?? false)
+        return (await pullRequestService()).metadataOptions(p.repository, p.refresh ?? false)
       }
 
       case 'pullRequests.action': {
         const p = parseParams(method, params)
-        return pullRequests.action(p.repository, p.number, p.action)
+        return (await pullRequestService()).action(p.repository, p.number, p.action)
       }
 
       case 'providers.list':
-        return { providers: await detectProviders() }
+        return { providers: await (await providerService).detectProviders() }
+
+      case 'providers.updates':
+        return {
+          updates: await (await providerUpdates()).list(parseParams(method, params).refresh),
+        }
+
+      case 'providers.update': {
+        const p = parseParams(method, params)
+        const command = await (await providerUpdates()).commandFor(p.provider)
+        return {
+          terminalId: orchestrator.installProvider(
+            `update:${p.provider}`,
+            command,
+            p.columns,
+            p.rows,
+          ),
+        }
+      }
 
       case 'harnesses.list':
         return { harnesses: orchestrator.listCustomHarnesses() }
@@ -297,14 +378,16 @@ export function startServer(
 
       case 'providers.install': {
         const p = parseParams(method, params)
-        const command = installCommandFor(p.provider, p.agent)
+        const { installCommandFor } = await import('./providers.js')
+        const command = await installCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
       }
 
       case 'providers.launch': {
         const p = parseParams(method, params)
-        const command = launchCommandFor(p.provider, p.agent)
+        const { launchCommandFor } = await import('./providers.js')
+        const command = await launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
           terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
@@ -438,13 +521,7 @@ export function startServer(
 
       case 'workspace.switchBranch': {
         const p = parseParams(method, params)
-        const localSessionRunning = store
-          .threads(p.path)
-          .some((thread) => !thread.worktreePath && orchestrator.isRunning(thread.id))
-        if (localSessionRunning) {
-          throw new Error('stop local sessions in this project before switching branches')
-        }
-        return switchWorkspaceBranch(resolveWorkspacePath(p.path), p.branch)
+        return orchestrator.switchBranch(p.path, p.branch)
       }
 
       case 'workspace.diff': {
@@ -499,7 +576,7 @@ export function startServer(
       }
 
       case 'acp.agents': {
-        const agents = await detectAgents()
+        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
         return {
           agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
             id,
@@ -513,35 +590,19 @@ export function startServer(
         }
       }
 
-      case 'projects.list':
-        orchestrator.refreshLifecycle()
-        return {
-          projects: store.projects().map((project) => ({
-            ...project,
-            sessions: store.threads(project.path).map((thread) => ({
-              id: thread.id,
-              title: thread.title,
-              pinned: thread.pinned,
-              provider: thread.provider,
-              ...(!(thread.agent === undefined) ? { agent: thread.agent } : {}),
-              createdAt: thread.createdAt,
-              running: orchestrator.isTurnRunning(thread.id),
-              status: orchestrator.inboxStatus(thread.id),
-              unread: thread.unread,
-              lifecycle: thread.lifecycle,
-              ...(!(thread.worktreeBranch === undefined)
-                ? {
-                    worktreeBranch: thread.worktreeBranch,
-                  }
-                : {}),
-              ...(!(thread.closedAt === undefined)
-                ? {
-                    closedAt: thread.closedAt,
-                  }
-                : {}),
-            })),
-          })),
-        }
+      case 'projects.list': {
+        reportStartupMilestone('server-projects-requested')
+        lifecycleScheduler.refreshIfDue()
+        const projects = store.projects()
+        const threads = store.sidebarThreads()
+        const queuedThreadIds = store.queuedThreadIds()
+        reportStartupMilestone('server-projects-store-ready')
+        const projected = projectList(projects, threads, queuedThreadIds, projectListState)
+        reportStartupMilestone('server-projects-projected')
+        const serialized = serializeProjectList(projected)
+        reportStartupMilestone('server-projects-serialized')
+        return serialized
+      }
 
       case 'projects.add': {
         const p = parseParams(method, params)
@@ -596,6 +657,16 @@ export function startServer(
         const p = parseParams(method, params)
         orchestrator.writeTerminal(p.terminalId, p.data)
         return {}
+      }
+
+      case 'terminal.status': {
+        const p = parseParams(method, params)
+        return orchestrator.terminalStatus(p.terminalId)
+      }
+
+      case 'providers.watch': {
+        const p = parseParams(method, params)
+        return orchestrator.watchProvider(p.provider, p.projectPath, p.targets)
       }
 
       case 'terminal.resize': {
@@ -661,17 +732,23 @@ export function startServer(
         }
         await orchestrator.close(p.threadId)
         store.deleteThread(p.threadId)
+        orchestrator.forgetDeletedThread(p.threadId)
+        lifecycleScheduler.changed()
         return {}
       }
 
       case 'thread.history': {
         const p = parseParams(method, params)
-        const result = {
-          events: await orchestrator.history(p.threadId, p.afterSeq ?? 0),
-          running: orchestrator.isTurnRunning(p.threadId),
-        }
+        const history = await orchestrator.historyForResponse(p.threadId, p.afterSeq ?? 0)
+        const running = orchestrator.isTurnRunning(p.threadId)
+        const result = historyResponse(history.events, running)
         orchestrator.markThreadRead(p.threadId)
-        return result
+        return serializeHistory(
+          result,
+          history.serializedEvents === undefined
+            ? undefined
+            : `{"events":${history.serializedEvents},"running":${String(running)}}`,
+        )
       }
 
       case 'thread.diff': {
@@ -741,13 +818,14 @@ export function startServer(
 
       case 'sideChat.close': {
         const p = parseParams(method, params)
-        orchestrator.closeSideThread(p.threadId)
+        await orchestrator.closeSideThread(p.threadId)
         return {}
       }
 
       case 'thread.start': {
         const p = parseParams(method, params)
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
+          baseRef: p.baseRef,
           model: p.model,
           serviceTier: p.serviceTier,
           effort: p.effort,
@@ -882,7 +960,7 @@ export function startServer(
           ...(update.autoSettleDays === undefined ? {} : { autoSettleDays: update.autoSettleDays }),
         })
         push.broadcast('sidebar.settings', settings)
-        orchestrator.refreshLifecycle()
+        lifecycleScheduler.refreshNow()
         return settings
       }
     }
@@ -896,7 +974,8 @@ export function startServer(
     detail?: string,
   ): void {
     if (socket.readyState !== socket.OPEN) return
-    socket.send(
+    push.reply(
+      socket,
       JSON.stringify({
         id,
         error: { code, message, ...(detail ? { detail } : {}) },
@@ -909,14 +988,19 @@ export function startServer(
   return {
     port,
     close: async () => {
-      clearInterval(lifecycleTimer)
+      lifecycleScheduler.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
+        checkpointProtection,
         new Promise<void>((resolve) => wss.close(() => resolve())),
       ])
-      store.close()
+      try {
+        store.close()
+      } finally {
+        releaseDataLease()
+      }
       const errors = results
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
         .map((result) => result.reason)
@@ -997,6 +1081,10 @@ class InvalidParamsError extends Error {
 }
 
 function parseParams<M extends MethodName>(method: M, params: unknown): MethodParams<M> {
+  if (method === 'terminal.input' || method === 'terminal.resize') {
+    const frequent = parseFrequentMethodParams(method, params)
+    if (frequent) return frequent as MethodParams<M>
+  }
   const decoded = methods[method].params.safeParse(params)
   if (!decoded.success) {
     const first = decoded.error.issues[0]

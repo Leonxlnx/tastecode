@@ -2,12 +2,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const terminalCss = readFileSync(new URL('./terminal-pane.css', import.meta.url), 'utf8')
 
-function rule(selector: string): string {
+function rule(selector: string, css = appCss): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return (
-    appCss.match(new RegExp(`^${escaped} \\{(?<body>[\\s\\S]*?)\\n\\}`, 'm'))?.groups?.['body'] ??
-    ''
+    css.match(new RegExp(`^${escaped} \\{(?<body>[\\s\\S]*?)\\n\\}`, 'm'))?.groups?.['body'] ?? ''
   )
 }
 
@@ -19,7 +19,7 @@ describe('bottom terminal visual stability', () => {
   })
 
   it('keeps xterm from exposing its black viewport strip', () => {
-    const viewport = rule('.terminal-pane__viewport .xterm .xterm-viewport')
+    const viewport = rule('.terminal-pane__viewport .xterm .xterm-viewport', terminalCss)
 
     expect(viewport).toContain('overflow-x: hidden;')
     expect(viewport).toContain('background-color: transparent;')
@@ -46,10 +46,28 @@ describe('bottom terminal visual stability', () => {
   })
 
   it('avoids the stray focus rail and layout-property animation', () => {
-    expect(appCss).not.toContain('.terminal-pane__viewport:focus-within')
+    expect(terminalCss).not.toContain('.terminal-pane__viewport:focus-within')
     expect(rule('.stage__body')).not.toContain('transition:')
     expect(rule('.stage__body.has-terminal')).not.toContain('transition:')
-    expect(rule('.terminal-pane')).not.toContain('transition:')
+    expect(rule('.terminal-pane', terminalCss)).not.toContain('transition:')
+  })
+
+  it('keeps the new-session heading and composer fixed when the terminal opens', () => {
+    const newSession = rule('.stage__body.is-new-session')
+    const withTerminal = rule('.stage__body.is-new-session.has-terminal')
+    const conversation = rule('.stage__conversation.is-new-session')
+    const terminal = rule('.stage__body.is-new-session > .bottom-terminal')
+
+    expect(newSession).toContain('grid-template-rows: auto;')
+    expect(newSession).toContain('clamp(0px, calc(648px - 100vh), 188px)')
+    expect(withTerminal).toContain('grid-template-rows: auto;')
+    expect(conversation).toContain('grid-template-rows: auto auto;')
+    expect(terminal).toContain('position: absolute;')
+    expect(terminal).toContain('bottom: 0;')
+    expect(terminal).toContain('max-height: max(160px, calc(50% - 124px));')
+    expect(rule('.stage__body.is-new-session > .bottom-terminal > .terminal-pane')).toContain(
+      'max-height: 100%;',
+    )
   })
 
   it('removes positional motion when reduced motion is requested', () => {

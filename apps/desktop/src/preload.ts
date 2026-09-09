@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
-import { z } from 'zod'
 import type { AppUpdateState } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuAction } from './menu-contract.js'
+import { isAppUpdateState, isFiniteNumber } from './preload-validation.js'
 
 type PickedAttachment = {
   path: string
@@ -12,6 +12,9 @@ type PickedAttachment = {
   previewUrl?: string
   thumbnailUrl?: string
 }
+
+const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
+const startupBenchmarkEnabled = Number.isFinite(startupStartedAt) && startupStartedAt > 0
 
 /**
  * The entire native surface exposed to the renderer.
@@ -53,13 +56,15 @@ const api = {
     ipcRenderer.invoke('harness:writeClipboardText', clipboardText(text)),
   setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>
     ipcRenderer.invoke('harness:setZoom', action),
-  setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
+  setTheme: (preference: 'system' | 'light' | 'dark' | 'codex'): Promise<void> =>
     ipcRenderer.invoke('harness:setTheme', preference),
   prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
   performHaptic: (pattern: NativeHapticPattern): void =>
     ipcRenderer.send('harness:hapticFeedback', pattern),
   capturePreview: (request: PreviewCaptureRequest): Promise<PreviewCaptureResult> =>
     ipcRenderer.invoke('harness:capturePreview', request),
+  cancelPreviewCapture: (requestId: string): Promise<void> =>
+    ipcRenderer.invoke('harness:cancelPreviewCapture', requestId),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('harness:openExternal', url),
   getDiagnosticsEnabled: (): Promise<boolean> =>
     ipcRenderer.invoke('harness:getDiagnosticsEnabled'),
@@ -89,39 +94,26 @@ const api = {
   },
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {
-      const parsed = z.number().finite().safeParse(factor)
-      if (parsed.success) listener(parsed.data)
+      if (isFiniteNumber(factor)) listener(factor)
     }
     ipcRenderer.on('harness:zoomChanged', handler)
     return () => ipcRenderer.removeListener('harness:zoomChanged', handler)
   },
+  ...(startupBenchmarkEnabled
+    ? {
+        reportStartupMilestone: (name: string): void =>
+          ipcRenderer.send('harness:startupRendererMilestone', name),
+      }
+    : {}),
   isDesktop: true,
 }
 
 contextBridge.exposeInMainWorld('harness', api)
 
+if (startupBenchmarkEnabled) {
+  ipcRenderer.send('harness:startupPreloadReady', Date.now() - startupStartedAt)
+}
+
 export type HarnessBridge = typeof api
 
 type NativeHapticPattern = 'alignment' | 'generic'
-
-const updateStatuses = new Set<AppUpdateState['status']>([
-  'unsupported',
-  'idle',
-  'checking',
-  'downloading',
-  'current',
-  'ready',
-  'error',
-])
-
-const AppUpdateStateSchema = z.object({
-  status: z.enum([...updateStatuses]),
-  currentVersion: z.string(),
-  version: z.string().optional(),
-  progress: z.number().optional(),
-  error: z.string().optional(),
-})
-
-function isAppUpdateState(value: unknown): value is AppUpdateState {
-  return AppUpdateStateSchema.safeParse(value).success
-}

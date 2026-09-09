@@ -1,5 +1,6 @@
 import {
   lazy,
+  memo,
   Suspense,
   useCallback,
   useEffect,
@@ -11,26 +12,22 @@ import {
   type TransitionEvent,
 } from 'react'
 import {
-  FileDiff,
-  FolderOpen,
-  Globe2,
-  Maximize2,
-  MessageCirclePlus,
-  Minimize2,
-  Plus,
-  SquareTerminal,
-  X,
-  type LucideIcon,
-} from 'lucide-react'
-import { PreviewCaptureRequestSchema } from '@harness/contracts'
-import {
-  appHapticsEnabled,
-  performAppHaptic,
-  prepareAppHaptics,
-  ResizeHaptics,
-} from '../../haptics.js'
+  IconFileDiff as FileDiff,
+  IconFolderOpen as FolderOpen,
+  IconWorld as Globe2,
+  IconMaximize as Maximize2,
+  IconMessageCirclePlus as MessageCirclePlus,
+  IconMinimize as Minimize2,
+  IconPlus as Plus,
+  IconTerminal2 as SquareTerminal,
+  IconX as X,
+  type TablerIcon,
+} from '@tabler/icons-react'
+import { prepareAppHaptics } from '../../haptics.js'
 import { installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
+import { IconMorph } from '../IconMorph.js'
+import { beginPanelResize } from '../panel-resize.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -62,6 +59,7 @@ export type WorkspaceProviderLoginRequest = {
   id: number
   title: string
   installKey: string
+  showCodeInput?: boolean
 }
 
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
@@ -74,12 +72,13 @@ type WorkspaceTab =
       requestId: number
       title: string
       installKey: string
+      showCodeInput: boolean
     }
 
 const TOOLS: Array<{
   kind: WorkspaceTool
   title: string
-  Icon: LucideIcon
+  Icon: TablerIcon
 }> = [
   {
     kind: 'review',
@@ -113,7 +112,7 @@ const MIN_CHAT_WIDTH = 360
 const DESIGN_PREVIEW_TAB_ID = 'design-preview'
 const WORKSPACE_PANEL_CLOSE_FALLBACK_MS = 340
 
-export function WorkspacePanel(props: {
+function WorkspacePanelComponent(props: {
   open: boolean
   expanded: boolean
   width: number
@@ -135,6 +134,8 @@ export function WorkspacePanel(props: {
   terminalToggleRequest?: number | undefined
   providerLogin?: WorkspaceProviderLoginRequest | undefined
   onProviderLoginClose?: ((id: number) => void) | undefined
+  externalToolRequest?: { request: number; kind: WorkspaceTool } | undefined
+  designPreviewRequest?: BrowserNavigationRequest | undefined
 }) {
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
   const [activeId, setActiveId] = useState<string>()
@@ -152,6 +153,8 @@ export function WorkspacePanel(props: {
   const clearAfterClose = useRef(false)
   const providerLoginTabId = useRef<string | undefined>(undefined)
   const handledTerminalToggleRequest = useRef(0)
+  const handledExternalToolRequest = useRef(0)
+  const handledDesignPreviewRequest = useRef<string | undefined>(undefined)
   const nextTabId = useRef(1)
   openRef.current = props.open
   tabsRef.current = tabs
@@ -196,6 +199,13 @@ export function WorkspacePanel(props: {
     props.onOpen()
     setActiveId(terminal.id)
   }, [openTool, props.onOpen, props.open, props.terminalToggleRequest])
+
+  useEffect(() => {
+    const request = props.externalToolRequest
+    if (!request || request.request === handledExternalToolRequest.current) return
+    handledExternalToolRequest.current = request.request
+    openTool(request.kind)
+  }, [openTool, props.externalToolRequest])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -248,6 +258,7 @@ export function WorkspacePanel(props: {
         requestId: request.id,
         title: request.title,
         installKey: request.installKey,
+        showCodeInput: request.showCodeInput !== false,
       } as const,
     ]
     tabsRef.current = next
@@ -259,26 +270,24 @@ export function WorkspacePanel(props: {
     props.onOpen,
     props.providerLogin?.id,
     props.providerLogin?.installKey,
+    props.providerLogin?.showCodeInput,
     props.providerLogin?.title,
   ])
 
-  useEffect(
-    () =>
-      props.transport.on('preview.captureRequested', (value) => {
-        const request = PreviewCaptureRequestSchema.safeParse(value)
-        if (!request.success) return
-        clearAfterClose.current = false
-        props.onOpen()
-        setTabs((current) =>
-          current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
-            ? current
-            : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
-        )
-        setActiveId(DESIGN_PREVIEW_TAB_ID)
-        setDesignPreview({ requestId: request.data.requestId, url: request.data.url })
-      }),
-    [props.onOpen, props.transport],
-  )
+  useEffect(() => {
+    const request = props.designPreviewRequest
+    if (!request || handledDesignPreviewRequest.current === request.requestId) return
+    handledDesignPreviewRequest.current = request.requestId
+    clearAfterClose.current = false
+    props.onOpen()
+    setTabs((current) =>
+      current.some((tab) => tab.id === DESIGN_PREVIEW_TAB_ID)
+        ? current
+        : [...current, { id: DESIGN_PREVIEW_TAB_ID, kind: 'browser' }],
+    )
+    setActiveId(DESIGN_PREVIEW_TAB_ID)
+    setDesignPreview(request)
+  }, [props.designPreviewRequest, props.onOpen])
 
   useEffect(() => {
     if (!addOpen) return
@@ -372,75 +381,24 @@ export function WorkspacePanel(props: {
     prepareAppHaptics()
     event.currentTarget.setPointerCapture(event.pointerId)
     resizeCleanup.current()
-    const startX = event.clientX
-    const startWidth = props.width
     const layout = event.currentTarget.closest<HTMLElement>('.workspace-layout')
     const layoutWidth = layout?.clientWidth || window.innerWidth
-    const maximum = Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH)
-    const haptics = appHapticsEnabled()
-      ? new ResizeHaptics({
-          startValue: startWidth,
-          startTime: event.timeStamp,
-          minValue: MIN_PANEL_WIDTH,
-          maxValue: maximum,
-        })
-      : undefined
-    let currentWidth = startWidth
-    let resizeFrame: number | undefined
-    let pendingResize: { rawWidth: number; width: number; time: number } | undefined
-    let active = true
     const previousTransition = layout?.style.transition
     if (layout) layout.style.transition = 'none'
-    const applyPendingResize = () => {
-      resizeFrame = undefined
-      const pending = pendingResize
-      pendingResize = undefined
-      if (!pending) return
-      const changed = pending.width !== currentWidth
-      const tracking = Boolean(layout) && changed
-      if (changed) {
-        currentWidth = pending.width
-        layout?.style.setProperty('--workspace-panel-w', `${pending.width}px`)
-      }
-      const feedback = haptics?.sample({
-        rawValue: pending.rawWidth,
-        value: pending.width,
-        tracking,
-        time: pending.time,
-      })
-      if (feedback) performAppHaptic(feedback)
-    }
-    const move = (next: globalThis.PointerEvent) => {
-      const rawWidth = startWidth + startX - next.clientX
-      const nextWidth = Math.min(maximum, Math.max(MIN_PANEL_WIDTH, rawWidth))
-      pendingResize = { rawWidth, width: nextWidth, time: next.timeStamp }
-      if (resizeFrame === undefined) resizeFrame = requestAnimationFrame(applyPendingResize)
-    }
-    const cleanup = (commit: boolean) => {
-      if (!active) return
-      active = false
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
-      window.removeEventListener('blur', finish)
-      resizeCleanup.current = () => {}
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
-      resizeFrame = undefined
-      if (commit) {
-        applyPendingResize()
-        props.onWidthChange(currentWidth)
-      } else {
-        pendingResize = undefined
-        layout?.style.setProperty('--workspace-panel-w', `${props.width}px`)
-      }
-      if (layout) layout.style.transition = previousTransition ?? ''
-    }
-    const finish = () => cleanup(true)
-    resizeCleanup.current = () => cleanup(false)
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', finish, { once: true })
-    window.addEventListener('pointercancel', finish, { once: true })
-    window.addEventListener('blur', finish, { once: true })
+    resizeCleanup.current = beginPanelResize(event, {
+      axis: 'clientX',
+      initialSize: props.width,
+      minSize: MIN_PANEL_WIDTH,
+      maxSize: Math.max(MIN_PANEL_WIDTH, layoutWidth - MIN_CHAT_WIDTH),
+      style: layout?.style,
+      property: '--workspace-panel-w',
+      onFinish: (size, commit) => {
+        resizeCleanup.current = () => {}
+        if (commit) props.onWidthChange(size)
+        else layout?.style.setProperty('--workspace-panel-w', `${props.width}px`)
+        if (layout) layout.style.transition = previousTransition ?? ''
+      },
+    })
   }
 
   return (
@@ -529,11 +487,10 @@ export function WorkspacePanel(props: {
             aria-pressed={props.expanded}
             onClick={() => props.onExpandedChange(!props.expanded)}
           >
-            {props.expanded ? (
-              <Minimize2 size={14} aria-hidden />
-            ) : (
+            <IconMorph active={props.expanded ? 1 : 0}>
               <Maximize2 size={14} aria-hidden />
-            )}
+              <Minimize2 size={14} aria-hidden />
+            </IconMorph>
           </button>
         </div>
       </header>
@@ -576,6 +533,9 @@ export function WorkspacePanel(props: {
   )
 }
 
+/** Keep the closed host subscribed without reconciling its full shell on unrelated app updates. */
+export const WorkspacePanel = memo(WorkspacePanelComponent)
+
 function WorkspaceToolSurface(props: {
   tab: WorkspaceTab
   active: boolean
@@ -600,7 +560,9 @@ function WorkspaceToolSurface(props: {
           ariaLabel={`${props.tab.title} terminal`}
           profile="workspace"
         />
-        <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
+        {props.tab.showCodeInput ? (
+          <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
+        ) : null}
       </div>
     )
   }
@@ -685,7 +647,7 @@ function ProviderLoginCodeInput(props: { transport: Transport; installKey: strin
   return (
     <form className="workspace-provider-login__code" onSubmit={submit}>
       <label className="visually-hidden" htmlFor={`${props.installKey}-code`}>
-        Claude login code
+        Login code
       </label>
       <input
         id={`${props.installKey}-code`}

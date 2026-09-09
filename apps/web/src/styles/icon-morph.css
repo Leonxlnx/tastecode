@@ -1,0 +1,63 @@
+.icon-morph {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  line-height: 0;
+}
+
+.icon-morph__layer {
+  display: grid;
+  grid-area: 1 / 1;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-in-out);
+}
+
+.icon-morph__layer[data-active] {
+  opacity: 1;
+}
+
+.icon-morph__overlay {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.icon-morph[data-morphing] .icon-morph__layer {
+  opacity: 0;
+  transition: none;
+}
+
+.icon-morph[data-morphing] .icon-morph__overlay {
+  opacity: 1;
+}
+
+.icon-morph[data-morph-settled] .icon-morph__layer {
+  transition: none;
+}
+
+.streamdown-copy-morph {
+  display: contents;
+}
+
+/* Hidden loading glyphs stay mounted for a clean handoff, but do no work. */
+.icon-morph__layer:not([data-active]) :is(.spinner, .is-spinning) {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-morph__layer {
+    transition: opacity var(--dur-press) var(--ease-out) !important;
+  }
+
+  .icon-morph__overlay {
+    display: none;
+  }
+}

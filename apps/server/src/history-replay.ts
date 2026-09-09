@@ -16,6 +16,7 @@ const replayStateEvents = new Set<DomainEvent['type']>([
  */
 export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryEntry[] {
   if (entries.length === 0) return []
+  if (!needsHistoryCompaction(entries)) return entries.slice()
 
   const finalItems = new Map(projectHistoryItems(entries).map((item) => [item.id, item]))
   const firstItemEvent = new Map<string, { index: number; type: DomainEvent['type'] }>()
@@ -62,7 +63,45 @@ export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryE
     const item = finalItems.get(itemId)
     compacted.push(item ? { ...entry, event: finalItemEvent(item) } : entry)
   }
+
+  // The compacted state covers every durable event in the source replay. Keep
+  // that coverage visible to reconnecting clients even when the final source
+  // event was folded into an earlier item boundary.
+  const sourceTailSeq = entries.at(-1)!.seq
+  const compactedTail = compacted.at(-1)
+  if (compactedTail && compactedTail.seq !== sourceTailSeq) {
+    compacted[compacted.length - 1] = { ...compactedTail, seq: sourceTailSeq }
+  }
   return compacted
+}
+
+function needsHistoryCompaction(entries: readonly HistoryEntry[]): boolean {
+  const itemIds = new Set<string>()
+  let hasUsage = false
+  let hasDiff = false
+  let hasPlan = false
+
+  for (const { event } of entries) {
+    if (event.type === 'turn.started') {
+      hasDiff = false
+      hasPlan = false
+    } else if (event.type === 'usage.updated') {
+      if (hasUsage) return true
+      hasUsage = true
+    } else if (event.type === 'diff.updated') {
+      if (hasDiff) return true
+      hasDiff = true
+    } else if (event.type === 'plan.updated') {
+      if (hasPlan) return true
+      hasPlan = true
+    }
+
+    const itemId = historyItemId(event)
+    if (itemId === undefined) continue
+    if (itemIds.has(itemId)) return true
+    itemIds.add(itemId)
+  }
+  return false
 }
 
 function historyItemId(event: DomainEvent): string | undefined {

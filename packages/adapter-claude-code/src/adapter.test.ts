@@ -9,10 +9,13 @@ import type {
   SDKPartialAssistantMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
-import type { DomainEvent } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import type { DomainEvent, Item } from '@harness/contracts'
+import { describe, expect, it, vi } from 'vitest'
 import { ClaudeCodeAdapter, CLAUDE_CAPABILITIES, claudeUserMessage } from './adapter.js'
 import type { ClaudeQueryFactory, ClaudeQueryRuntime } from './sdk-runtime.js'
+import { Store } from '../../../apps/server/src/store.js'
+import { reduce, emptyThread } from '../../../apps/web/src/thread-store.js'
+import { projectThreadItems } from '../../../apps/web/src/ui/turns.js'
 
 class FakeQuery implements ClaudeQueryRuntime {
   readonly #messages: SDKMessage[] = []
@@ -125,12 +128,221 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('retries a rejected model transition before enqueuing the prompt', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const thread = await adapter.startThread('/repo', { model: 'opus' })
+      const setModel = vi
+        .spyOn(fake.queries[0]!, 'setModel')
+        .mockRejectedValueOnce(new Error('rejected'))
+      await expect(adapter.sendTurn(thread.id, 'Retry', [], { model: 'sonnet' })).rejects.toThrow(
+        'rejected',
+      )
+      await adapter.sendTurn(thread.id, 'Retry', [], { model: 'sonnet' })
+      expect(setModel).toHaveBeenCalledTimes(2)
+      const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+      expect((await prompts.next()).value?.message.content).toEqual([
+        { type: 'text', text: 'Retry' },
+      ])
+    } finally {
+      adapter.dispose()
+    }
+  })
+
+  it('keeps asking for approval after the SDK rejects full access', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const thread = await adapter.startThread('/repo', { approval: 'ask' })
+      await adapter.sendTurn(thread.id, 'Work')
+      vi.spyOn(fake.queries[0]!, 'setPermissionMode').mockRejectedValueOnce(new Error('rejected'))
+      await expect(adapter.setApproval('full')).rejects.toThrow('rejected')
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => {
+        events.push(event)
+        if (event.type === 'approval.requested') adapter.respondToApproval(event.request.id, 'deny')
+      })
+      const result = await fake.inputs[0]!.options.canUseTool!(
+        'Bash',
+        { command: 'echo test' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'permission-failure',
+        },
+      )
+      expect(result.behavior).toBe('deny')
+      expect(events.some((event) => event.type === 'approval.requested')).toBe(true)
+    } finally {
+      adapter.dispose()
+    }
+  })
+
+  it('serializes concurrent configuration without losing an access change', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const thread = await adapter.startThread('/repo', { model: 'opus', approval: 'ask' })
+      let finishModel!: () => void
+      vi.spyOn(fake.queries[0]!, 'setModel').mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishModel = resolve
+          }),
+      )
+      const model = adapter.sendTurn(thread.id, 'Work', [], { model: 'sonnet' })
+      const approval = adapter.setApproval('full')
+      await tick()
+      expect(fake.queries[0]!.permissionModes).toEqual([])
+      finishModel()
+      await Promise.all([model, approval])
+      expect(fake.queries[0]!.permissionModes).toEqual(['bypassPermissions'])
+      const result = await fake.inputs[0]!.options.canUseTool!(
+        'Bash',
+        { command: 'echo test' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'concurrent',
+        },
+      )
+      expect(result.behavior).toBe('allow')
+      await expect(adapter.sendTurn(thread.id, 'Duplicate')).rejects.toThrow('running turn')
+    } finally {
+      adapter.dispose()
+    }
+  })
+
+  it('rejects a late permission change after the same adapter is reopened', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const thread = await adapter.startThread('/repo', { approval: 'ask' })
+      let finish!: () => void
+      vi.spyOn(fake.queries[0]!, 'setPermissionMode').mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve
+          }),
+      )
+      const pending = adapter.setApproval('full')
+      const rejected = expect(pending).rejects.toThrow('session changed')
+      await tick()
+      await adapter.dispose()
+      await adapter.resumeThread(thread.id, '/repo', { approval: 'ask' })
+      finish()
+      await rejected
+      expect(fake.inputs[1]!.options.permissionMode).toBe('default')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('does not reuse a turn identity when a new instance resumes the session', async () => {
+    const first = new ClaudeCodeAdapter({ createQuery: harness().createQuery })
+    const resumed = new ClaudeCodeAdapter({ createQuery: harness().createQuery })
+    try {
+      const thread = await first.startThread('/repo')
+      const previous = await first.sendTurn(thread.id, 'One')
+      first.dispose()
+      await resumed.resumeThread(thread.id, '/repo')
+      const next = await resumed.sendTurn(thread.id, 'Two')
+      expect(next).not.toBe(previous)
+      expect(next).toMatch(new RegExp(`^${thread.id}-turn-`))
+      const previousStart: DomainEvent = {
+        type: 'turn.started',
+        turn: { id: previous, threadId: thread.id, status: 'running', createdAt: 1000 },
+      }
+      const previousEnd: DomainEvent = {
+        type: 'turn.completed',
+        turnId: previous,
+        status: 'completed',
+      }
+      const resumedStart: DomainEvent = {
+        type: 'turn.started',
+        turn: { id: next, threadId: thread.id, status: 'running', createdAt: 9000 },
+      }
+      const state = reduce(reduce(reduce(emptyThread, previousStart), previousEnd), resumedStart)
+      expect(state.activeTurn?.startedAt).toBe(9000)
+      const items: Item[] = [
+        {
+          id: 'prompt-1',
+          type: 'message',
+          role: 'user',
+          turnId: previous,
+          status: 'completed',
+          text: 'One',
+          createdAt: 1000,
+        },
+        {
+          id: 'answer-1',
+          type: 'message',
+          role: 'assistant',
+          phase: 'final_answer',
+          turnId: previous,
+          status: 'completed',
+          text: 'First answer',
+          createdAt: 2000,
+        },
+        {
+          id: 'prompt-2',
+          type: 'message',
+          role: 'user',
+          turnId: next,
+          status: 'completed',
+          text: 'Two',
+          createdAt: 9000,
+        },
+        {
+          id: 'answer-2',
+          type: 'message',
+          role: 'assistant',
+          phase: 'final_answer',
+          turnId: next,
+          status: 'completed',
+          text: 'Second answer',
+          createdAt: 10000,
+        },
+      ]
+      const projection = projectThreadItems(items)
+      expect(projection.turns).toHaveLength(2)
+      expect(projection.presentations.size).toBe(2)
+      const store = new Store(':memory:')
+      try {
+        store.addProject('/repo')
+        store.addThread({
+          id: thread.id,
+          projectPath: '/repo',
+          provider: 'claude-code',
+          title: 'Resumed test',
+        })
+        for (const event of [previousStart, previousEnd, resumedStart])
+          store.append(thread.id, event)
+        expect(store.recoverInterruptedThreads()).toContain(thread.id)
+      } finally {
+        store.close()
+      }
+    } finally {
+      first.dispose()
+      resumed.dispose()
+    }
+  })
+
   it('does not persist product-internal background sessions', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
     await adapter.startThread('/repo', { ephemeral: true })
 
     expect(fake.inputs[0]!.options.persistSession).toBe(false)
+    adapter.dispose()
+  })
+
+  it('always uses the installed Claude CLI instead of the SDK bundled executable', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    await adapter.startThread('/repo')
+
+    expect(fake.inputs[0]!.options.pathToClaudeCodeExecutable).toBe('claude')
+    expect(fake.inputs[0]!.options.spawnClaudeCodeProcess).toBeTypeOf('function')
     adapter.dispose()
   })
 

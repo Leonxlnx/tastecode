@@ -23,6 +23,57 @@ import {
   type ProviderLimitSource,
 } from './protocol.js'
 
+describe('audit recovery contracts', () => {
+  it('preserves a named base branch and rejects empty or excessive refs', () => {
+    const start = {
+      provider: 'codex',
+      workspacePath: '/repo',
+      isolate: true,
+      baseRef: 'feature/example',
+    }
+    expect(methods['thread.start'].params.parse(start)).toMatchObject(start)
+    expect(methods['thread.start'].params.safeParse({ ...start, baseRef: '' }).success).toBe(false)
+    expect(
+      methods['thread.start'].params.safeParse({ ...start, baseRef: 'x'.repeat(1025) }).success,
+    ).toBe(false)
+  })
+
+  it('requires valid offsets for recovered terminal results and accepts legacy output', () => {
+    const terminalId = '217b92e8-4a22-4ee7-901f-76a336efb32e'
+    const result = { status: 'exited', output: 'done', outputOffset: 200004, exitCode: 0 }
+    expect(methods['terminal.status'].result.parse(result)).toEqual(result)
+    expect(
+      methods['terminal.status'].result.safeParse({ ...result, outputOffset: -1 }).success,
+    ).toBe(false)
+    expect(channels['terminal.output'].parse({ terminalId, data: 'legacy' })).toEqual({
+      terminalId,
+      data: 'legacy',
+    })
+    expect(
+      channels['terminal.output'].safeParse({ terminalId, data: 'bad', outputOffset: 0.5 }).success,
+    ).toBe(false)
+  })
+
+  it('validates capture cancellation and bounded provider-watch targets', () => {
+    const requestId = '217b92e8-4a22-4ee7-901f-76a336efb32e'
+    expect(channels['preview.captureCancelled'].parse({ requestId })).toEqual({ requestId })
+    expect(
+      methods['providers.watch'].params.parse({
+        provider: 'api',
+        projectPath: '/repo',
+        targets: ['mcp', 'skills'],
+      }),
+    ).toMatchObject({ provider: 'api' })
+    expect(
+      methods['providers.watch'].params.safeParse({
+        provider: 'codex',
+        projectPath: '/repo',
+        targets: ['mcp', 'skills', 'mcp'],
+      }).success,
+    ).toBe(false)
+  })
+})
+
 describe('domain events', () => {
   it('accepts a streaming delta', () => {
     const event = {
@@ -1204,6 +1255,21 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('keeps update requests limited to a provider and terminal size', () => {
+    const request = { provider: 'codex', columns: 100, rows: 30 }
+    expect(
+      methods['providers.update'].params.parse({
+        ...request,
+        command: 'untrusted command',
+        version: 'untrusted version',
+      }),
+    ).toEqual(request)
+    expect(() =>
+      methods['providers.update'].params.parse({ ...request, provider: 'unlisted-cli' }),
+    ).toThrow()
+    expect(methods['providers.updates'].params.parse({ refresh: true })).toEqual({ refresh: true })
+  })
+
   it('names a launch target without carrying any command text', () => {
     const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
     expect(methods['providers.launch'].params.parse(valid)).toEqual(valid)
@@ -1216,6 +1282,20 @@ describe('protocol envelopes', () => {
     expect(() => methods['providers.launch'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     expect(methods['providers.launch'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
+    })
+  })
+
+  it('names a fixed GitHub CLI setup action without carrying command text', () => {
+    const valid = { action: 'login', columns: 320, rows: 30 }
+    expect(methods['pullRequests.setup'].params.parse(valid)).toEqual(valid)
+    expect(methods['pullRequests.setup'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
+      valid,
+    )
+    expect(() =>
+      methods['pullRequests.setup'].params.parse({ action: 'remove', columns: 100, rows: 30 }),
+    ).toThrow()
+    expect(methods['pullRequests.setup'].result.parse({ terminalId: 'term-github' })).toEqual({
+      terminalId: 'term-github',
     })
   })
 

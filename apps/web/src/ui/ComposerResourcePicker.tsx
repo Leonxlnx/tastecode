@@ -8,39 +8,20 @@ import {
   useState,
 } from 'react'
 import type { McpServer, ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { Box, Server } from 'lucide-react'
+import { IconBox as Box, IconServer as Server } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import '../styles/composer-resource-picker.css'
+import {
+  COMPOSER_RESOURCE_LIST_ID,
+  type ComposerResource,
+  type ComposerResourcePickerHandle,
+  type ComposerResourceTrigger,
+} from './composer-resource.js'
+
+export type { ComposerResource } from './composer-resource.js'
 
 type SkillsInventory = ResultOf<'skills.list'>
 type McpInventory = ResultOf<'mcp.list'>
-
-export type ComposerResourceKind = 'skill' | 'mcp'
-
-export type ComposerResource = {
-  key: string
-  kind: ComposerResourceKind
-  id: string
-  name: string
-  description: string
-  scope: string
-  token: string
-  available: boolean
-  unavailableReason?: string | undefined
-}
-
-export type ComposerResourceTrigger = {
-  marker: '/' | '$' | '@'
-  query: string
-  start: number
-  end: number
-}
-
-export type ComposerResourcePickerHandle = {
-  move: (direction: 1 | -1) => boolean
-  selectActive: () => boolean
-}
-
-export const COMPOSER_RESOURCE_LIST_ID = 'composer-resource-list'
 
 export const ComposerResourcePicker = forwardRef<
   ComposerResourcePickerHandle,
@@ -242,9 +223,7 @@ export const ComposerResourcePicker = forwardRef<
               className={`composer-resource-picker__option${selected ? ' is-active' : ''}${resource.available ? '' : ' is-unavailable'}`}
               data-index={index}
               key={resource.key}
-              onMouseEnter={() => {
-                if (resource.available) setActiveIndex(index)
-              }}
+              onMouseEnter={() => setActiveIndex(index)}
               onClick={() => {
                 if (resource.available) props.onSelect(resource)
               }}

@@ -1,24 +1,24 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import {
-  Archive,
-  Command,
-  Ellipsis,
-  FolderOpen,
-  GitBranch,
-  GitPullRequest,
-  History,
-  Keyboard,
-  PanelLeft,
-  PanelRightClose,
-  PanelRightOpen,
-  Pencil,
-  Pin,
-  PinOff,
-  Search,
-  Settings,
-  SquarePen,
-  SquareTerminal,
-} from 'lucide-react'
+  IconArchive as Archive,
+  IconCommand as Command,
+  IconDots as Ellipsis,
+  IconFolderOpen as FolderOpen,
+  IconGitBranch as GitBranch,
+  IconGitPullRequest as GitPullRequest,
+  IconHistory as History,
+  IconKeyboard as Keyboard,
+  IconLayoutSidebar as PanelLeft,
+  IconLayoutSidebarRightCollapse as PanelRightClose,
+  IconLayoutSidebarRightExpand as PanelRightOpen,
+  IconPencil as Pencil,
+  IconPinned as Pin,
+  IconPinnedOff as PinOff,
+  IconSearch as Search,
+  IconSettings as Settings,
+  IconEdit as SquarePen,
+  IconTerminal2 as SquareTerminal,
+} from '@tabler/icons-react'
 import { isDesktop, revealPath } from '../bridge.js'
 import {
   DEFAULT_KEYBINDINGS,
@@ -26,6 +26,7 @@ import {
   type KeybindingId,
   type Keybindings,
 } from '../shortcuts.js'
+import { IconMorph } from './IconMorph.js'
 import { Menu, MenuItem } from './Menu.js'
 
 type StageHeaderMenuActions = Pick<
@@ -47,6 +48,8 @@ export const PanelToggles = memo(function PanelToggles(props: {
   workspacePanelOpen: boolean
   terminalShortcutActive?: boolean | undefined
   keybindings?: Keybindings | undefined
+  onPrepareTerminal?: (() => void) | undefined
+  onPrepareWorkspace?: (() => void) | undefined
   onToggleWorkspace: () => void
   onToggleTerminal: () => void
 }) {
@@ -69,6 +72,8 @@ export const PanelToggles = memo(function PanelToggles(props: {
               : shortcutAria(keybindings.toggleTerminal)
           }
           title={props.terminalOpen ? 'Hide terminal' : 'Open terminal'}
+          onPointerEnter={props.onPrepareTerminal}
+          onFocus={props.onPrepareTerminal}
           onClick={props.onToggleTerminal}
         >
           <SquareTerminal size={16} aria-hidden />
@@ -81,13 +86,14 @@ export const PanelToggles = memo(function PanelToggles(props: {
         aria-pressed={props.workspacePanelOpen}
         aria-keyshortcuts={shortcutAria(keybindings.toggleWorkspace)}
         title={props.workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools'}
+        onPointerEnter={props.onPrepareWorkspace}
+        onFocus={props.onPrepareWorkspace}
         onClick={props.onToggleWorkspace}
       >
-        {props.workspacePanelOpen ? (
-          <PanelRightClose size={16} aria-hidden />
-        ) : (
+        <IconMorph active={props.workspacePanelOpen ? 1 : 0}>
           <PanelRightOpen size={16} aria-hidden />
-        )}
+          <PanelRightClose size={16} aria-hidden />
+        </IconMorph>
       </button>
     </div>
   )
@@ -139,7 +145,7 @@ function StageHeaderComponent(props: {
         {renaming ? (
           <input
             ref={renameInput}
-            className="stagehead__rename"
+            className="stagehead__rename rename--chat"
             value={draft}
             aria-label="Rename chat"
             onChange={(event) => setDraft(event.target.value)}
@@ -160,7 +166,7 @@ function StageHeaderComponent(props: {
           align="left"
           label={`Options for ${props.title ?? 'New chat'}`}
           triggerClassName="stagehead__menu-trigger"
-          panelClassName="menu--sidebar stagehead__options-menu"
+          panelClassName="menu--compact stagehead__options-menu"
           trigger={() => <Ellipsis size={16} aria-hidden />}
         >
           {(close) => (

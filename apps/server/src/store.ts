@@ -1,5 +1,14 @@
-import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  rmSync,
+  statSync,
+  writeSync,
+} from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import {
@@ -23,8 +32,26 @@ import type {
 } from '@harness/contracts'
 import { z } from 'zod'
 import type { TurnOptions } from './adapters.js'
+import { canonicalDataPath } from './data-lease.js'
+import {
+  affectsInboxProjection,
+  applyInboxProjectionEvent,
+  emptyInboxProjection,
+  isEmptyInboxProjection,
+  type InboxProjection,
+} from './inbox-projection.js'
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
+const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
+  mode: 'automatic',
+})
+
+function freezeBackgroundModelPreference(
+  preference: BackgroundModelPreference,
+): BackgroundModelPreference {
+  if (preference.mode === 'automatic') return AUTOMATIC_BACKGROUND_MODEL_PREFERENCE
+  return Object.freeze({ ...preference, target: Object.freeze({ ...preference.target }) })
+}
 
 /**
  * Everything that has to survive a restart.
@@ -82,6 +109,23 @@ export type StoredThread = {
   parentThreadId?: string | undefined
 }
 
+/** Only the fields sent by `projects.list`; recovery-only metadata stays in SQLite. */
+export type StoredSidebarThread = {
+  id: string
+  projectPath: string
+  provider: ProviderId
+  agent?: string | undefined
+  title: string
+  pinned: boolean
+  createdAt: number
+  closedAt?: number | undefined
+  worktreeBranch?: string | undefined
+  lifecycle: ThreadLifecycle
+  unread: boolean
+}
+
+type SidebarThreadUpdate = (thread: StoredSidebarThread) => StoredSidebarThread
+
 export type StoredCheckpoint = {
   id: number
   threadId: string
@@ -91,13 +135,6 @@ export type StoredCheckpoint = {
   commit: string
   label: string
   createdAt: number
-}
-
-export type StoredUsageEvent = {
-  threadId: string
-  provider: ProviderId
-  at: number
-  usage: Usage
 }
 
 export type StoredQueuedTurn = {
@@ -124,15 +161,23 @@ export type SessionSearchPage = {
   nextCursor: string | null
 }
 
+export type SerializedEventAppend = { seq: number; serializedEvent: string }
+
 type SearchCursor = {
   snapshotId: string
   position: number
 }
 
+type SearchRowIds = number[] | Uint32Array
+
 type SearchSnapshot = {
   ftsQuery: string
+  terms: readonly string[]
   projectPath: string | null
   provider: ProviderId | null
+  revision: number
+  expiresAt: number
+  rowIds: SearchRowIds
 }
 
 export type UsageSummary = { session: UsageTotal; today: UsageTotal }
@@ -151,33 +196,55 @@ type InterruptedThreadState = {
 const RESTART_INTERRUPTION_MESSAGE =
   'Turn interrupted: TasteCode restarted. Send a new message to continue.'
 
-const SNIPPET_START = '\u0001'
-const SNIPPET_END = '\u0002'
 const SEARCH_INDEX_VERSION = 'session_search_v1'
+const USAGE_INDEX_VERSION = 'usage_events_v1'
+const INBOX_INDEX_VERSION = 'inbox_events_v2'
+const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
+const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
+const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v1'
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
 const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
-const MAX_SEARCH_SNAPSHOTS = 32
+// The renderer owns one active search. Keep a few recently used cursors for
+// backtracking, but do not let abandoned broad queries retain dozens of packed
+// result arrays for the full five-minute cursor lifetime.
+const MAX_SEARCH_SNAPSHOTS = 8
+const MAX_SEARCH_PAGE_SIZE = 100
 const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
+const ASCII_SEARCH_TOKEN = /^\p{ASCII}+$/u
+const ASCII_SEARCH_TEXT = /^\p{ASCII}*$/u
+const ASCII_COMPARABLE_SEARCH_TERM = /^[a-z0-9][a-z0-9_]*$/
+const ASCII_FTS_SEARCH_TERM = /^[a-z0-9]+$/
+const ASCII_FTS_TEXT_TOKEN = /[a-z0-9]+/g
+const SEARCH_COMBINING_MARK = /\p{M}/gu
+const ASCII_SNIPPET_SCAN_THRESHOLD = 4_096
+const SEARCH_SNAPSHOT_REUSE_SCAN_LIMIT = 16_384
 
-const SEARCH_SNAPSHOT_SCHEMA = `
-CREATE TEMP TABLE session_search_snapshots (
-  id           TEXT PRIMARY KEY,
-  fts_query    TEXT NOT NULL,
-  project_path TEXT,
-  provider     TEXT,
-  expires_at   INTEGER NOT NULL
-);
+type SearchSnippetToken = { start: number; end: number; highlighted: boolean }
 
-CREATE TEMP TABLE session_search_snapshot_rows (
-  position     INTEGER PRIMARY KEY,
-  snapshot_id  TEXT NOT NULL,
-  search_rowid INTEGER NOT NULL,
-  snippet      TEXT NOT NULL,
-  UNIQUE (snapshot_id, search_rowid)
-);
+function parseSearchRowIds(serialized: string): SearchRowIds {
+  const unpacked = JSON.parse(serialized) as number[]
+  if (unpacked.length <= MAX_SEARCH_PAGE_SIZE) return unpacked
+  const packed = new Uint32Array(unpacked.length)
+  for (let index = 0; index < unpacked.length; index += 1) {
+    const rowId = unpacked[index]!
+    if (!Number.isInteger(rowId) || rowId < 0 || rowId > 0xffff_ffff) return unpacked
+    packed[index] = rowId
+  }
+  return packed
+}
 
-CREATE INDEX session_search_snapshot_page
-  ON session_search_snapshot_rows (snapshot_id, position);
+function searchRowIdPage(rowIds: SearchRowIds, start: number, end: number): number[] {
+  if (Array.isArray(rowIds)) return rowIds.slice(start, end)
+  return Array.from(rowIds.subarray(start, end))
+}
+
+const LIFECYCLE_INDEXES = `
+CREATE INDEX IF NOT EXISTS threads_due_snooze
+  ON threads (wake_at)
+  WHERE closed_at IS NULL AND lifecycle_state = 'snoozed' AND ephemeral = 0;
+CREATE INDEX IF NOT EXISTS threads_inactive
+  ON threads (last_active_at)
+  WHERE closed_at IS NULL AND lifecycle_state = 'active' AND ephemeral = 0 AND keep_active = 0;
 `
 
 const SCHEMA = `
@@ -228,6 +295,59 @@ CREATE TABLE IF NOT EXISTS events (
   payload   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS usage_events (
+  event_seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  at        INTEGER NOT NULL,
+  payload   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS usage_events_thread_seq ON usage_events (thread_id, event_seq);
+CREATE INDEX IF NOT EXISTS usage_events_at ON usage_events (at);
+
+CREATE TABLE IF NOT EXISTS inbox_events (
+  event_seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  payload   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS inbox_events_thread_seq ON inbox_events (thread_id, event_seq);
+
+CREATE TABLE IF NOT EXISTS user_submission_items (
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  item_id   TEXT NOT NULL,
+  event_seq INTEGER NOT NULL REFERENCES events(seq) ON DELETE CASCADE,
+  PRIMARY KEY (thread_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS turn_diff_events (
+  event_seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
+  thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  turn_id   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS turn_diff_events_thread_turn_seq
+  ON turn_diff_events (thread_id, turn_id, event_seq DESC);
+
+CREATE TABLE IF NOT EXISTS recovery_lifecycles (
+  thread_id     TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  lifecycle_key TEXT NOT NULL,
+  event_type    TEXT,
+  started_seq   INTEGER REFERENCES events(seq) ON DELETE SET NULL,
+  terminal_seq  INTEGER REFERENCES events(seq) ON DELETE SET NULL,
+  payload       TEXT,
+  PRIMARY KEY (thread_id, lifecycle_key)
+);
+
+CREATE INDEX IF NOT EXISTS recovery_lifecycles_open
+  ON recovery_lifecycles (started_seq)
+  WHERE started_seq IS NOT NULL AND terminal_seq IS NULL;
+
+CREATE TABLE IF NOT EXISTS recovery_errors (
+  thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  event_seq INTEGER NOT NULL REFERENCES events(seq) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS queued_turn_events (
   seq       INTEGER PRIMARY KEY AUTOINCREMENT,
   thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
@@ -258,6 +378,10 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS checkpoint_repositories (
+  path TEXT PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS restore_undos (
   token            TEXT PRIMARY KEY,
   thread_id        TEXT NOT NULL UNIQUE,
@@ -265,6 +389,12 @@ CREATE TABLE IF NOT EXISTS restore_undos (
   snapshot_commit  TEXT NOT NULL,
   events_json      TEXT NOT NULL,
   checkpoints_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS thread_replay_snapshots (
+  thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  seq       INTEGER NOT NULL,
+  payload   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -345,8 +475,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
 
 type SqliteInteger = number | bigint
 type ColumnRow = { name: string }
-type IdentifierRow = { id: string }
 type StringValueRow = { value: string }
+type MigrationRow = { name: string }
 type ProjectRow = { path: string; name: string; pinned: SqliteInteger; created_at: SqliteInteger }
 type WorktreeRow = {
   id: string
@@ -377,6 +507,37 @@ type ThreadRow = {
   ephemeral: SqliteInteger
   parent_thread_id: string | null
 }
+type SidebarThreadRow = Pick<
+  ThreadRow,
+  | 'id'
+  | 'project_path'
+  | 'provider'
+  | 'agent'
+  | 'title'
+  | 'pinned'
+  | 'created_at'
+  | 'closed_at'
+  | 'worktree_branch'
+  | 'lifecycle_state'
+  | 'lifecycle_at'
+  | 'lifecycle_reason'
+  | 'wake_at'
+  | 'keep_active'
+  | 'woke_at'
+  | 'unread'
+>
+type InactiveThreadCandidateRow = Pick<ThreadRow, 'id' | 'unread'>
+type ThreadIdRow = Pick<ThreadRow, 'id'>
+type ThreadLifecycleRow = Pick<
+  ThreadRow,
+  | 'lifecycle_state'
+  | 'lifecycle_at'
+  | 'lifecycle_reason'
+  | 'wake_at'
+  | 'keep_active'
+  | 'woke_at'
+  | 'created_at'
+>
 type SidebarSettingsRow = { mode: string; auto_settle_days: SqliteInteger | null }
 const StoredTurnOptionsSchema = z.object({
   model: z.string().optional(),
@@ -402,8 +563,9 @@ type QueuedTurnClaimRow = { thread_id: string; queue_id: string; intent: string 
 type DiffDecisionRow = { decision: string }
 type InterruptedThreadRow = { thread_id: string; payload: string; resumable: SqliteInteger }
 type HistoryRow = { seq: SqliteInteger; payload: string }
+type ThreadEventRow = { thread_id: string; payload: string }
 type PayloadRow = { payload: string }
-type SearchSnapshotRow = { fts_query: string; project_path: string | null; provider: string | null }
+type SearchRowIdsRow = { search_rowids: string }
 type SearchResultRow = {
   project_path: string
   project_name: string
@@ -414,16 +576,24 @@ type SearchResultRow = {
   turn_id: string
   created_at: SqliteInteger
   position: SqliteInteger
-  snippet: string
+  text: string
 }
 type EventRow = { seq: SqliteInteger; thread_id: string; at: SqliteInteger; payload: string }
-type UsageEventRow = {
-  thread_id: string
-  at: SqliteInteger
-  payload: string
-  provider: string
-}
 type ThreadPayloadRow = { thread_id: string; payload: string }
+type SearchableEntry = { turnId: string; createdAt?: number | undefined; text: string }
+type ActiveLifecycleRow = { woke_at: SqliteInteger | null; keep_active: SqliteInteger }
+type RecoveryMutation =
+  | { kind: 'start'; eventType: string; lifecycleKey: string }
+  | { kind: 'terminal'; lifecycleKey: string }
+  | { kind: 'error' }
+type DerivedIndexRebuild = {
+  search: boolean
+  usage: boolean
+  inbox: boolean
+  userSubmission: boolean
+  turnDiff: boolean
+  recovery: boolean
+}
 type CheckpointRow = {
   id: SqliteInteger
   thread_id: string
@@ -433,12 +603,24 @@ type CheckpointRow = {
   created_at: SqliteInteger
 }
 type RestoreUndoRow = {
+  thread_id: string
+  snapshot_commit: string
   checkpoint_seq: SqliteInteger
   events_json: string
   checkpoints_json: string
 }
 type SnapshotCommitRow = { snapshot_commit: string }
 type MaxSequenceRow = { seq: SqliteInteger | null }
+type MinTimestampRow = { at: SqliteInteger | null }
+type ReplaySnapshotRow = { seq: SqliteInteger; payload: string }
+type ReplayEntry = { seq: number; event: DomainEvent }
+
+/** Keep hot thread metadata without retaining every thread in a large workspace. */
+const THREAD_CACHE_LIMIT = 128
+// Count and bytes are separate: many short threads should not evict one another,
+// while the character budget still bounds the parsed replay payloads.
+const REPLAY_SNAPSHOT_CACHE_LIMIT = 64
+const REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT = 16 * 1024 * 1024
 
 const StoredEventRowsSchema = z.array(
   z.object({
@@ -458,25 +640,124 @@ const StoredCheckpointRowsSchema = z.array(
     created_at: z.number().safe().int(),
   }),
 )
+const ReplaySnapshotSchema = z.array(
+  z.object({ seq: z.number().safe().int(), event: DomainEventSchema }),
+)
 const SearchCursorSchema = z.object({
   snapshotId: z.string().min(1),
   position: z.number().safe().int().min(1),
 })
 
 export class Store {
+  readonly checkpointNamespace: string
+  readonly location: string
   #db: DatabaseSync
   #insertEvent: StatementSync
   #insertSearchEntry: StatementSync
+  #insertUsageEvent: StatementSync
+  #insertInboxEvent: StatementSync
+  #deleteInboxStatus: StatementSync
+  #deleteInboxRequest: StatementSync
+  #deleteThreadInboxEvents: StatementSync
+  #insertUserSubmission: StatementSync
+  #hasUserSubmission: StatementSync
+  #insertTurnDiffEvent: StatementSync
+  #readTurnDiff: StatementSync
+  #upsertRecoveryStart: StatementSync
+  #settleRecoveryLifecycle: StatementSync
+  #upsertRecoveryError: StatementSync
+  #readInterruptedThreads: StatementSync
+  #insertQueuedTurnEvent: StatementSync
+  #listQueuedTurns: StatementSync
+  #hasQueuedSubmission: StatementSync
+  #openThread: StatementSync
+  #nextQueuedPosition: StatementSync
+  #insertQueuedTurn: StatementSync
+  #deleteQueuedTurn: StatementSync
+  #queuedTurnPosition: StatementSync
+  #previousQueuedTurn: StatementSync
+  #nextQueuedTurn: StatementSync
+  #swapQueuedTurnPositions: StatementSync
+  #findQueuedTurn: StatementSync
+  #dispatchQueuedTurn: StatementSync
+  #restoreQueuedTurn: StatementSync
+  #claimedQueuedTurn: StatementSync
+  #deleteClaimedQueuedTurn: StatementSync
+  #queuedTurnInState: StatementSync
+  #hasQueuedTurn: StatementSync
+  #clearQueuedTurnsStatement: StatementSync
+  #insertProject: StatementSync
+  #findProject: StatementSync
+  #insertThread: StatementSync
+  #listProjects: StatementSync
+  #listProjectThreads: StatementSync
+  #listThreads: StatementSync
+  #listSidebarThreads: StatementSync
+  #findThread: StatementSync
+  #threadHistory: StatementSync
+  #threadInboxEvents: StatementSync
+  #queuedThreadIds: StatementSync
+  #settleThreadStatement: StatementSync
+  #settleInactiveThreadStatement: StatementSync
+  #activateThreadStatement: StatementSync
+  #wakeSnoozedThreadStatement: StatementSync
+  #touchActiveThreadStatement: StatementSync
+  #touchThreadStatement: StatementSync
+  #dueSnoozedThreadIds: StatementSync
+  #nextSnoozedThread: StatementSync
+  #oldestActiveThread: StatementSync
+  #inactiveThreadCandidates: StatementSync
+  #readReplaySnapshotBase: StatementSync
+  #readTailReplaySnapshot: StatementSync
+  #writeReplaySnapshot: StatementSync
+  #deleteReplaySnapshot: StatementSync
+  #lastSequence: StatementSync
+  #selectSearchSnapshot = new Map<number, StatementSync>()
+  #readSearchResults: StatementSync
+  #readSidebarSettings: StatementSync
+  #writeSidebarSettings: StatementSync
+  #readAppSetting: StatementSync
+  #writeAppSetting: StatementSync
   #searchResultKey: Buffer
+  #projectsCache: StoredProject[] | undefined
+  #projectCache = new Map<string, StoredProject>()
+  #queuedThreadIdsCache: Set<string> | undefined
+  /** `null` is a retained miss; `undefined` means the key was never cached. */
+  #threadCache = new Map<string, StoredThread | null>()
+  #sidebarThreadsCache: StoredSidebarThread[] | undefined
+  #sidebarThreadIndexes: Map<string, number> | undefined
+  #sidebarThreadUpdateBatchDepth = 0
+  #pendingSidebarThreads: StoredSidebarThread[] | undefined
+  #sidebarSettingsCache: SidebarSettings | undefined
+  #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
+  #replaySnapshotCache = new Map<
+    string,
+    { seq: number; entries: ReplayEntry[]; characters: number }
+  >()
+  #replaySnapshotCacheCharacters = 0
+  /** Search cursors are process-local; retaining packed row IDs avoids a temp-table write per hit. */
+  #searchSnapshots = new Map<string, SearchSnapshot>()
+  /** Fresh searches may share ranked IDs only while the searchable event index is unchanged. */
+  #searchRevision = 0
   /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
   #ephemeralThreads = new Set<string>()
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
+    if (location !== ':memory:') location = canonicalDataPath(location)
+    this.location = location
+    this.checkpointNamespace = createHash('sha256')
+      .update(location === ':memory:' ? randomUUID() : path.resolve(location))
+      .digest('hex')
+      .slice(0, 32)
     if (location !== ':memory:') mkdirSync(path.dirname(location), { recursive: true })
     this.#db = new DatabaseSync(location)
     // Without WAL a reader blocks a writer, and we do both on every turn.
     this.#db.exec('PRAGMA journal_mode = WAL')
+    // Search and history are read-heavy once the event log grows. Mapping the
+    // stable database pages avoids copying them through SQLite's small default
+    // page cache; the OS still brings pages into physical memory on demand.
+    this.#db.exec('PRAGMA mmap_size = 268435456')
     // FULL fsyncs the WAL on every commit — and append() commits per streamed
     // delta chunk. NORMAL only syncs at checkpoint; with WAL a crash can lose
     // the tail of the log but cannot corrupt the database, which is the right
@@ -484,7 +765,17 @@ export class Store {
     this.#db.exec('PRAGMA synchronous = NORMAL')
     this.#db.exec('PRAGMA foreign_keys = ON')
     this.#db.exec(SCHEMA)
-    this.#db.exec(SEARCH_SNAPSHOT_SCHEMA)
+    this.#readSidebarSettings = this.#db.prepare(
+      `SELECT mode, auto_settle_days FROM sidebar_settings WHERE id = 1`,
+    )
+    this.#writeSidebarSettings = this.#db.prepare(
+      `UPDATE sidebar_settings SET mode = ?, auto_settle_days = ? WHERE id = 1`,
+    )
+    this.#readAppSetting = this.#db.prepare(`SELECT value FROM app_settings WHERE key = ?`)
+    this.#writeAppSetting = this.#db.prepare(
+      `INSERT INTO app_settings (key, value) VALUES (?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+    )
     this.#searchResultKey = this.#loadSearchResultKey()
     // These statements run for every persisted event. Preparing them once
     // keeps SQLite compilation off the streamed-delta path.
@@ -495,36 +786,375 @@ export class Store {
       `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
+    this.#insertUsageEvent = this.#db.prepare(
+      `INSERT OR REPLACE INTO usage_events (event_seq, thread_id, at, payload)
+       VALUES (?, ?, ?, ?)`,
+    )
+    this.#insertInboxEvent = this.#db.prepare(
+      `INSERT OR REPLACE INTO inbox_events (event_seq, thread_id, payload) VALUES (?, ?, ?)`,
+    )
+    this.#deleteInboxStatus = this.#db.prepare(
+      `DELETE FROM inbox_events
+       WHERE thread_id = ?
+         AND json_extract(payload, '$.type') IN ('thread.error', 'turn.completed')`,
+    )
+    this.#deleteInboxRequest = this.#db.prepare(
+      `DELETE FROM inbox_events
+       WHERE thread_id = ?
+         AND json_extract(payload, '$.type') = ?
+         AND json_extract(payload, '$.request.id') = ?`,
+    )
+    this.#deleteThreadInboxEvents = this.#db.prepare(`DELETE FROM inbox_events WHERE thread_id = ?`)
+    this.#insertUserSubmission = this.#db.prepare(
+      `INSERT OR IGNORE INTO user_submission_items (thread_id, item_id, event_seq)
+       VALUES (?, ?, ?)`,
+    )
+    this.#hasUserSubmission = this.#db.prepare(
+      `SELECT 1 FROM user_submission_items WHERE thread_id = ? AND item_id = ?`,
+    )
+    this.#insertTurnDiffEvent = this.#db.prepare(
+      `INSERT OR REPLACE INTO turn_diff_events (event_seq, thread_id, turn_id)
+       VALUES (?, ?, ?)`,
+    )
+    this.#readTurnDiff = this.#db.prepare(
+      `SELECT events.payload
+       FROM turn_diff_events
+       INNER JOIN events ON events.seq = turn_diff_events.event_seq
+       WHERE turn_diff_events.thread_id = ? AND turn_diff_events.turn_id = ?
+       ORDER BY turn_diff_events.event_seq DESC LIMIT 1`,
+    )
+    this.#upsertRecoveryStart = this.#db.prepare(
+      `INSERT INTO recovery_lifecycles
+         (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
+       VALUES (?, ?, ?, ?, NULL, ?)
+       ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
+         event_type = excluded.event_type,
+         started_seq = excluded.started_seq,
+         payload = excluded.payload
+       WHERE recovery_lifecycles.terminal_seq IS NULL`,
+    )
+    this.#settleRecoveryLifecycle = this.#db.prepare(
+      `INSERT INTO recovery_lifecycles
+         (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
+       VALUES (?, ?, NULL, NULL, ?, NULL)
+       ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
+         event_type = NULL,
+         started_seq = NULL,
+         terminal_seq = excluded.terminal_seq,
+         payload = NULL`,
+    )
+    this.#upsertRecoveryError = this.#db.prepare(
+      `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
+       ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
+    )
+    this.#readInterruptedThreads = this.#db.prepare(
+      `SELECT recovery.thread_id, recovery.payload,
+              CASE WHEN recovery.event_type = 'user_input.requested'
+                AND EXISTS (
+                  SELECT 1 FROM design_runs
+                  WHERE design_runs.thread_id = recovery.thread_id
+                    AND json_extract(design_runs.payload, '$.phase') = 'brief'
+                ) THEN 1 ELSE 0 END AS resumable
+       FROM recovery_lifecycles AS recovery
+       INNER JOIN threads ON threads.id = recovery.thread_id
+       LEFT JOIN recovery_errors AS errors ON errors.thread_id = recovery.thread_id
+       WHERE threads.closed_at IS NULL
+         AND recovery.started_seq IS NOT NULL
+         AND recovery.terminal_seq IS NULL
+         AND recovery.payload IS NOT NULL
+         AND (recovery.event_type <> 'turn.started' OR errors.event_seq IS NULL
+              OR errors.event_seq < recovery.started_seq)
+       ORDER BY recovery.started_seq`,
+    )
+    this.#insertQueuedTurnEvent = this.#db.prepare(
+      `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    this.#listQueuedTurns = this.#db.prepare(
+      `SELECT queued_turns.* FROM queued_turns
+       INNER JOIN threads ON threads.id = queued_turns.thread_id
+       WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
+         AND threads.closed_at IS NULL
+       ORDER BY queued_turns.position`,
+    )
+    this.#hasQueuedSubmission = this.#db.prepare(
+      `SELECT 1 FROM queued_turns
+       WHERE thread_id = ? AND client_submission_id = ? LIMIT 1`,
+    )
+    this.#openThread = this.#db.prepare(`SELECT 1 FROM threads WHERE id = ? AND closed_at IS NULL`)
+    this.#nextQueuedPosition = this.#db.prepare(
+      `SELECT COALESCE(MAX(position), -1) + 1 AS position
+       FROM queued_turns WHERE thread_id = ?`,
+    )
+    this.#insertQueuedTurn = this.#db.prepare(
+      `INSERT INTO queued_turns
+         (thread_id, queue_id, client_submission_id, position, state, intent, payload, created_at)
+       VALUES (?, ?, ?, ?, 'queued', 'normal', ?, ?)`,
+    )
+    this.#deleteQueuedTurn = this.#db.prepare(
+      `DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`,
+    )
+    this.#queuedTurnPosition = this.#db.prepare(
+      `SELECT position FROM queued_turns
+       WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+    )
+    this.#previousQueuedTurn = this.#db.prepare(
+      `SELECT queue_id, position FROM queued_turns
+       WHERE thread_id = ? AND state = 'queued' AND position < ?
+       ORDER BY position DESC LIMIT 1`,
+    )
+    this.#nextQueuedTurn = this.#db.prepare(
+      `SELECT queue_id, position FROM queued_turns
+       WHERE thread_id = ? AND state = 'queued' AND position > ?
+       ORDER BY position ASC LIMIT 1`,
+    )
+    this.#swapQueuedTurnPositions = this.#db.prepare(
+      `UPDATE queued_turns SET position = CASE queue_id WHEN ? THEN ? WHEN ? THEN ? END
+       WHERE thread_id = ? AND queue_id IN (?, ?)`,
+    )
+    this.#findQueuedTurn = this.#db.prepare(
+      `SELECT * FROM queued_turns
+       WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+    )
+    this.#dispatchQueuedTurn = this.#db.prepare(
+      `UPDATE queued_turns SET state = 'dispatching', intent = ?
+       WHERE thread_id = ? AND queue_id = ?`,
+    )
+    this.#restoreQueuedTurn = this.#db.prepare(
+      `UPDATE queued_turns SET state = 'queued', intent = 'normal'
+       WHERE thread_id = ? AND queue_id = ?`,
+    )
+    this.#claimedQueuedTurn = this.#db.prepare(
+      `SELECT 1 FROM queued_turns
+       WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+    )
+    this.#deleteClaimedQueuedTurn = this.#db.prepare(
+      `DELETE FROM queued_turns
+       WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+    )
+    this.#queuedTurnInState = this.#db.prepare(
+      `SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ? AND state = ?`,
+    )
+    this.#hasQueuedTurn = this.#db.prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? LIMIT 1`)
+    this.#clearQueuedTurnsStatement = this.#db.prepare(
+      `DELETE FROM queued_turns WHERE thread_id = ?`,
+    )
     this.#migrate()
+    this.#db.exec(LIFECYCLE_INDEXES)
+    this.#insertProject = this.#db.prepare(
+      `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
+       ON CONFLICT (path) DO NOTHING`,
+    )
+    this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
+    this.#insertThread = this.#db.prepare(
+      `INSERT INTO threads
+        (id, project_path, provider, agent, provider_session_id, title, created_at,
+          worktree_path, worktree_branch,
+          lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+    )
+    this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
+    this.#listProjectThreads = this.#db.prepare(
+      `SELECT * FROM threads WHERE project_path = ? AND ephemeral = 0 ORDER BY created_at DESC`,
+    )
+    this.#listThreads = this.#db.prepare(
+      `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
+    )
+    this.#listSidebarThreads = this.#db.prepare(
+      `SELECT id, project_path, provider, agent, title, pinned, created_at, closed_at,
+              worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
+              keep_active, woke_at, unread
+       FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
+    )
+    for (let mask = 0; mask < 4; mask += 1) {
+      const clauses = ['session_search MATCH ?']
+      const threadFilters: string[] = []
+      // Build the small eligible-thread set once instead of probing the thread
+      // primary key for every FTS match. The visible page still joins metadata.
+      if ((mask & 1) !== 0) threadFilters.push('threads.project_path = ?')
+      if ((mask & 2) !== 0) threadFilters.push('threads.provider = ?')
+      if (threadFilters.length > 0) {
+        clauses.push(
+          `session_search.thread_id IN (
+             SELECT threads.id FROM threads WHERE ${threadFilters.join(' AND ')}
+           )`,
+        )
+      }
+      this.#selectSearchSnapshot.set(
+        mask,
+        this.#db.prepare(
+          `SELECT json_group_array(search_rowid) AS search_rowids
+           FROM (
+             SELECT session_search.rowid AS search_rowid
+             FROM session_search
+             WHERE ${clauses.join(' AND ')}
+             ORDER BY rank, session_search.created_at DESC,
+                      session_search.rowid DESC
+           )`,
+        ),
+      )
+    }
+    this.#readSearchResults = this.#db.prepare(
+      `SELECT projects.path AS project_path, projects.name AS project_name,
+              threads.id AS thread_id, threads.title AS thread_title,
+              threads.provider, session_search.event_seq, session_search.turn_id,
+              session_search.created_at,
+              CAST(page.key AS INTEGER) + ? + 1 AS position,
+              session_search.text
+       FROM json_each(?) AS page
+       JOIN session_search ON session_search.rowid = CAST(page.value AS INTEGER)
+       JOIN threads ON threads.id = session_search.thread_id
+       JOIN projects ON projects.path = threads.project_path
+       ORDER BY CAST(page.key AS INTEGER)
+       `,
+    )
+    this.#findThread = this.#db.prepare(`SELECT * FROM threads WHERE id = ?`)
+    this.#threadHistory = this.#db.prepare(
+      `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
+    )
+    this.#threadInboxEvents = this.#db.prepare(
+      `SELECT thread_id, payload FROM inbox_events ORDER BY event_seq`,
+    )
+    this.#queuedThreadIds = this.#db.prepare(
+      `SELECT DISTINCT queued_turns.thread_id
+       FROM queued_turns
+       INNER JOIN threads ON threads.id = queued_turns.thread_id
+       WHERE queued_turns.state = 'queued' AND threads.closed_at IS NULL`,
+    )
+    this.#settleThreadStatement = this.#db.prepare(
+      `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
+       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ?`,
+    )
+    this.#settleInactiveThreadStatement = this.#db.prepare(
+      `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?,
+       lifecycle_reason = 'inactivity', wake_at = NULL, keep_active = 0, woke_at = NULL
+       WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'active'
+       AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?`,
+    )
+    this.#activateThreadStatement = this.#db.prepare(
+      `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
+       lifecycle_reason = NULL, wake_at = NULL,
+       woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END
+       WHERE id = ? RETURNING woke_at, keep_active`,
+    )
+    this.#wakeSnoozedThreadStatement = this.#db.prepare(
+      `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
+       lifecycle_reason = NULL, wake_at = NULL, woke_at = ?, last_active_at = ?
+       WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'snoozed'
+         AND ephemeral = 0 AND wake_at <= ? RETURNING woke_at, keep_active`,
+    )
+    this.#touchActiveThreadStatement = this.#db.prepare(
+      `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`,
+    )
+    this.#touchThreadStatement = this.#db.prepare(
+      `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
+       lifecycle_reason = NULL, wake_at = NULL,
+       woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END,
+       last_active_at = ?, unread = MAX(unread, ?)
+       WHERE id = ? RETURNING woke_at, keep_active`,
+    )
+    this.#dueSnoozedThreadIds = this.#db.prepare(
+      `SELECT id FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
+       AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
+    )
+    this.#nextSnoozedThread = this.#db.prepare(
+      `SELECT MIN(wake_at) AS at FROM threads
+       WHERE closed_at IS NULL AND lifecycle_state = 'snoozed' AND ephemeral = 0`,
+    )
+    this.#oldestActiveThread = this.#db.prepare(
+      `SELECT MIN(last_active_at) AS at FROM threads
+       WHERE closed_at IS NULL AND lifecycle_state = 'active'
+         AND ephemeral = 0 AND keep_active = 0`,
+    )
+    this.#inactiveThreadCandidates = this.#db.prepare(
+      `SELECT id, unread FROM threads
+       WHERE closed_at IS NULL AND lifecycle_state = 'active'
+         AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?
+       ORDER BY last_active_at`,
+    )
+    this.#readReplaySnapshotBase = this.#db.prepare(
+      `SELECT seq, payload FROM thread_replay_snapshots WHERE thread_id = ?`,
+    )
+    this.#readTailReplaySnapshot = this.#db.prepare(
+      `SELECT snapshot.seq, snapshot.payload
+       FROM thread_replay_snapshots AS snapshot
+       WHERE snapshot.thread_id = ?
+         AND snapshot.seq = COALESCE(
+           (SELECT MAX(events.seq) FROM events WHERE events.thread_id = snapshot.thread_id),
+           0
+         )`,
+    )
+    this.#writeReplaySnapshot = this.#db.prepare(
+      `INSERT INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)
+       ON CONFLICT (thread_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload`,
+    )
+    this.#deleteReplaySnapshot = this.#db.prepare(
+      `DELETE FROM thread_replay_snapshots WHERE thread_id = ?`,
+    )
+    this.#lastSequence = this.#db.prepare(`SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`)
     this.#purgeEphemeralThreads()
     this.#recoverQueuedTurnClaims()
-    const searchIndexReady = this.#db
-      .prepare(`SELECT 1 FROM schema_migrations WHERE name = ?`)
-      .get(SEARCH_INDEX_VERSION)
-    if (!searchIndexReady) this.#rebuildSearchIndex()
+    const completedMigrations = new Set(
+      sqliteRows<MigrationRow>(this.#db.prepare(`SELECT name FROM schema_migrations`)).map(
+        ({ name }) => name,
+      ),
+    )
+    const rebuild: DerivedIndexRebuild = {
+      search: !completedMigrations.has(SEARCH_INDEX_VERSION),
+      usage: !completedMigrations.has(USAGE_INDEX_VERSION),
+      inbox: !completedMigrations.has(INBOX_INDEX_VERSION),
+      userSubmission: !completedMigrations.has(USER_SUBMISSION_INDEX_VERSION),
+      turnDiff: !completedMigrations.has(TURN_DIFF_INDEX_VERSION),
+      recovery: !completedMigrations.has(RECOVERY_STATE_VERSION),
+    }
+    if (Object.values(rebuild).some(Boolean)) this.#rebuildDerivedIndexes(rebuild)
   }
 
   /** Bring a database written by an older build up to the current shape. */
   #migrate(): void {
+    const columnsByTable = new Map<string, Set<string>>()
     for (const { table, column, definition } of ADDED_COLUMNS) {
-      const columns = sqliteRows<ColumnRow>(this.#db.prepare(`PRAGMA table_info(${table})`)).map(
-        (row) => row.name,
-      )
-      if (columns.includes(column)) continue
+      let columns = columnsByTable.get(table)
+      if (!columns) {
+        columns = new Set(
+          sqliteRows<ColumnRow>(this.#db.prepare(`PRAGMA table_info(${table})`)).map(
+            (row) => row.name,
+          ),
+        )
+        columnsByTable.set(table, columns)
+      }
+      if (columns.has(column)) continue
       this.#db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+      columns.add(column)
     }
     this.#db.exec(`UPDATE threads SET last_active_at = created_at WHERE last_active_at = 0`)
   }
 
   /** Side chats intentionally do not survive an app restart or a crashed renderer. */
   #purgeEphemeralThreads(): void {
-    const ids = sqliteRows<IdentifierRow>(
-      this.#db.prepare(`SELECT id FROM threads WHERE ephemeral = 1`),
-    ).map((row) => row.id)
-    for (const id of ids) this.deleteThread(id)
+    const exists = this.#db.prepare(`SELECT 1 FROM threads WHERE ephemeral = 1 LIMIT 1`).get()
+    if (!exists) return
+    this.#transaction(() => {
+      this.#db.exec(`
+        DELETE FROM session_search
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM events
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM checkpoints
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM restore_undos
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM diff_decisions
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM design_runs
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM threads WHERE ephemeral = 1;
+      `)
+    })
   }
 
   close(): void {
+    this.#searchSnapshots.clear()
     this.#db.close()
   }
 
@@ -532,10 +1162,7 @@ export class Store {
     this.#db
       .prepare(`INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`)
       .run(SEARCH_RESULT_KEY_SETTING, randomBytes(32).toString('base64url'))
-    const row = requiredSqliteRow<StringValueRow>(
-      this.#db.prepare(`SELECT value FROM app_settings WHERE key = ?`),
-      SEARCH_RESULT_KEY_SETTING,
-    )
+    const row = requiredSqliteRow<StringValueRow>(this.#readAppSetting, SEARCH_RESULT_KEY_SETTING)
     const key = Buffer.from(row.value, 'base64url')
     if (key.length !== 32) throw new Error('Search result identity key is invalid.')
     return key
@@ -544,6 +1171,8 @@ export class Store {
   // ---- projects ----------------------------------------------------------
 
   addProject(projectPath: string, name?: string): StoredProject {
+    const retained = this.#projectCache.get(projectPath)
+    if (retained) return retained
     const project: StoredProject = {
       path: projectPath,
       name: name ?? path.basename(projectPath),
@@ -552,12 +1181,12 @@ export class Store {
     }
     // Adding a project twice is a normal thing for a user to do; it must not
     // wipe the name they gave it.
-    this.#db
-      .prepare(
-        `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
-         ON CONFLICT (path) DO NOTHING`,
-      )
-      .run(project.path, project.name, project.createdAt)
+    const inserted = this.#insertProject.run(project.path, project.name, project.createdAt)
+    if (Number(inserted.changes) > 0) {
+      this.#projectsCache = undefined
+      this.#projectCache.set(projectPath, project)
+      return project
+    }
     return this.project(projectPath) ?? project
   }
 
@@ -565,29 +1194,40 @@ export class Store {
     this.#db
       .prepare(`UPDATE projects SET pinned = ? WHERE path = ?`)
       .run(pinned ? 1 : 0, projectPath)
+    this.#projectsCache = undefined
+    const retained = this.#projectCache.get(projectPath)
+    if (retained) this.#projectCache.set(projectPath, { ...retained, pinned })
   }
 
   project(projectPath: string): StoredProject | undefined {
-    const row = sqliteRow<ProjectRow>(
-      this.#db.prepare(`SELECT * FROM projects WHERE path = ?`),
-      projectPath,
-    )
-    return row ? toProject(row) : undefined
+    const retained = this.#projectCache.get(projectPath)
+    if (retained) return retained
+    const row = sqliteRow<ProjectRow>(this.#findProject, projectPath)
+    const project = row ? toProject(row) : undefined
+    if (project) this.#projectCache.set(projectPath, project)
+    return project
   }
 
   projects(): StoredProject[] {
-    return sqliteRows<ProjectRow>(
-      this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`),
-    ).map(toProject)
+    if (!this.#projectsCache) {
+      this.#projectsCache = sqliteRows<ProjectRow>(this.#listProjects).map(toProject)
+      for (const project of this.#projectsCache) this.#projectCache.set(project.path, project)
+    }
+    return this.#projectsCache
   }
 
   renameProject(projectPath: string, name: string): void {
     this.#db.prepare(`UPDATE projects SET name = ? WHERE path = ?`).run(name, projectPath)
+    this.#projectsCache = undefined
+    const retained = this.#projectCache.get(projectPath)
+    if (retained) this.#projectCache.set(projectPath, { ...retained, name })
   }
 
   /** Hides the project from the sidebar. Re-adding it restores its chat history. */
   removeProject(projectPath: string): void {
     this.#db.prepare(`DELETE FROM projects WHERE path = ?`).run(projectPath)
+    this.#projectsCache = undefined
+    this.#projectCache.delete(projectPath)
   }
 
   // ---- threads -----------------------------------------------------------
@@ -604,30 +1244,23 @@ export class Store {
     const stored = { ...thread, createdAt: thread.createdAt ?? Date.now() }
     const ephemeral = thread.ephemeral ?? false
     const lifecycle = { state: 'active', keepActive: false } as const
-    this.#db
-      .prepare(
-        `INSERT INTO threads
-          (id, project_path, provider, agent, provider_session_id, title, created_at,
-            worktree_path, worktree_branch,
-            lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
-      )
-      .run(
-        stored.id,
-        stored.projectPath,
-        stored.provider,
-        stored.agent ?? null,
-        stored.providerSessionId ?? null,
-        stored.title,
-        stored.createdAt,
-        stored.worktreePath ?? null,
-        stored.worktreeBranch ?? null,
-        stored.createdAt,
-        ephemeral ? 1 : 0,
-        stored.parentThreadId ?? null,
-      )
+    this.#insertThread.run(
+      stored.id,
+      stored.projectPath,
+      stored.provider,
+      stored.agent ?? null,
+      stored.providerSessionId ?? null,
+      stored.title,
+      stored.createdAt,
+      stored.worktreePath ?? null,
+      stored.worktreeBranch ?? null,
+      stored.createdAt,
+      ephemeral ? 1 : 0,
+      stored.parentThreadId ?? null,
+    )
     if (ephemeral) this.#ephemeralThreads.add(stored.id)
-    return {
+    this.#invalidateSidebarThreads()
+    const result = {
       ...stored,
       pinned: false,
       lifecycle,
@@ -635,6 +1268,8 @@ export class Store {
       lastActiveAt: stored.createdAt,
       ephemeral,
     }
+    this.#cacheThread(stored.id, result)
+    return result
   }
 
   /**
@@ -663,43 +1298,100 @@ export class Store {
     this.#db
       .prepare(`UPDATE threads SET worktree_path = NULL, worktree_branch = NULL WHERE id = ?`)
       .run(threadId)
+    this.#updateCachedThread(threadId, (thread) => {
+      if (thread.worktreePath === undefined && thread.worktreeBranch === undefined) return thread
+      const { worktreePath: _worktreePath, worktreeBranch: _worktreeBranch, ...updated } = thread
+      return updated
+    })
+    this.#updateSidebarThread(threadId, (thread) => {
+      if (thread.worktreeBranch === undefined) return thread
+      const { worktreeBranch: _worktreeBranch, ...updated } = thread
+      return updated
+    })
   }
 
   thread(id: string): StoredThread | undefined {
-    const row = sqliteRow<ThreadRow>(this.#db.prepare(`SELECT * FROM threads WHERE id = ?`), id)
-    return row ? toThread(row) : undefined
+    const cached = this.#threadCache.get(id)
+    if (cached !== undefined) return cached ?? undefined
+    const row = sqliteRow<ThreadRow>(this.#findThread, id)
+    const thread = row ? toThread(row) : undefined
+    this.#cacheThread(id, thread)
+    return thread
   }
 
   /** Newest first — the rail shows recent work at the top. */
   threads(projectPath?: string): StoredThread[] {
     const rows = projectPath
-      ? sqliteRows<ThreadRow>(
-          this.#db.prepare(
-            `SELECT * FROM threads WHERE project_path = ? AND ephemeral = 0 ORDER BY created_at DESC`,
-          ),
-          projectPath,
-        )
-      : sqliteRows<ThreadRow>(
-          this.#db.prepare(`SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`),
-        )
+      ? sqliteRows<ThreadRow>(this.#listProjectThreads, projectPath)
+      : sqliteRows<ThreadRow>(this.#listThreads)
     return rows.map(toThread)
+  }
+
+  /** Compact metadata for the sidebar's all-thread refresh. */
+  sidebarThreads(): StoredSidebarThread[] {
+    if (!this.#sidebarThreadsCache) {
+      this.#sidebarThreadsCache = sqliteRows<SidebarThreadRow>(this.#listSidebarThreads).map(
+        toSidebarThread,
+      )
+      this.#sidebarThreadIndexes = new Map(
+        this.#sidebarThreadsCache.map((thread, index) => [thread.id, index]),
+      )
+    }
+    this.#flushPendingSidebarThreads()
+    return this.#sidebarThreadsCache
+  }
+
+  batchSidebarThreadUpdates<T>(operation: () => T): T {
+    this.#sidebarThreadUpdateBatchDepth += 1
+    try {
+      return operation()
+    } finally {
+      this.#sidebarThreadUpdateBatchDepth -= 1
+      if (this.#sidebarThreadUpdateBatchDepth === 0) this.#flushPendingSidebarThreads()
+    }
+  }
+
+  batchLifecycleUpdates<T>(operation: () => T): T {
+    return this.batchSidebarThreadUpdates(() => {
+      try {
+        return this.#transaction(operation)
+      } catch (error) {
+        this.#threadCache.clear()
+        this.#invalidateSidebarThreads()
+        throw error
+      }
+    })
   }
 
   renameThread(id: string, title: string): void {
     this.#db.prepare(`UPDATE threads SET title = ? WHERE id = ?`).run(title, id)
+    this.#updateCachedThread(id, (thread) =>
+      thread.title === title ? thread : { ...thread, title },
+    )
+    this.#updateSidebarThread(id, (thread) =>
+      thread.title === title ? thread : { ...thread, title },
+    )
   }
 
   setThreadPinned(id: string, pinned: boolean): void {
     this.#db.prepare(`UPDATE threads SET pinned = ? WHERE id = ?`).run(pinned ? 1 : 0, id)
+    this.#updateCachedThread(id, (thread) =>
+      thread.pinned === pinned ? thread : { ...thread, pinned },
+    )
+    this.#updateSidebarThread(id, (thread) =>
+      thread.pinned === pinned ? thread : { ...thread, pinned },
+    )
   }
 
   /** Persist the provider's opaque resume identity as thread recovery metadata. */
   setProviderSessionId(id: string, providerSessionId: string): void {
     if (!providerSessionId) throw new Error('provider session id cannot be empty')
     this.#updateThread(
-      `UPDATE threads SET provider_session_id = ? WHERE id = ?`,
-      providerSessionId,
       id,
+      `UPDATE threads SET provider_session_id = ? WHERE id = ?`,
+      (thread) =>
+        thread.providerSessionId === providerSessionId ? thread : { ...thread, providerSessionId },
+      providerSessionId,
     )
   }
 
@@ -708,135 +1400,252 @@ export class Store {
     reason: 'manual' | 'inactivity' | 'change_request',
     at = Date.now(),
   ): ThreadLifecycle {
-    this.#updateThread(
-      `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
-       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ?`,
-      at,
-      reason,
-      id,
-    )
-    return { state: 'settled', settledAt: at, reason }
+    const lifecycle = { state: 'settled' as const, settledAt: at, reason }
+    const result = this.#settleThreadStatement.run(at, reason, id)
+    if (result.changes === 0) throw new Error('thread not found')
+    this.#updateCachedThread(id, (thread) => ({ ...thread, lifecycle }))
+    this.#updateSidebarThread(id, (thread) => ({ ...thread, lifecycle }))
+    return lifecycle
+  }
+
+  settleInactiveThread(id: string, cutoff: number, at = Date.now()): ThreadLifecycle | undefined {
+    const lifecycle = { state: 'settled' as const, settledAt: at, reason: 'inactivity' as const }
+    const result = this.#settleInactiveThreadStatement.run(at, id, cutoff)
+    if (result.changes === 0) return undefined
+    this.#updateCachedThread(id, (thread) => ({ ...thread, lifecycle }))
+    this.#updateSidebarThread(id, (thread) => ({ ...thread, lifecycle }))
+    return lifecycle
   }
 
   snoozeThread(id: string, wakeAt: number, at = Date.now()): ThreadLifecycle {
+    const lifecycle = { state: 'snoozed' as const, snoozedAt: at, wakeAt }
     this.#updateThread(
+      id,
       `UPDATE threads SET lifecycle_state = 'snoozed', lifecycle_at = ?,
        lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL WHERE id = ?`,
+      (thread) => ({ ...thread, lifecycle }),
       at,
       wakeAt,
-      id,
     )
-    return { state: 'snoozed', snoozedAt: at, wakeAt }
+    this.#updateSidebarThread(id, (thread) => ({ ...thread, lifecycle }))
+    return lifecycle
   }
 
   activateThread(id: string, at = Date.now()): ThreadLifecycle {
-    const before = this.thread(id)
-    if (!before) throw new Error('thread not found')
-    const wokeAt = before.lifecycle.state === 'active' ? before.lifecycle.wokeAt : at
-    const keepActive = before.lifecycle.state === 'active' ? before.lifecycle.keepActive : false
-    this.#db
-      .prepare(
-        `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
-         lifecycle_reason = NULL, wake_at = NULL, woke_at = ? WHERE id = ?`,
-      )
-      .run(wokeAt ?? null, id)
-    return {
-      state: 'active',
-      keepActive,
-      ...(!(wokeAt === undefined) ? { wokeAt } : {}),
-    }
+    const row = sqliteRow<ActiveLifecycleRow>(this.#activateThreadStatement, at, id)
+    if (!row) throw new Error('thread not found')
+    const lifecycle = toActiveLifecycle(row)
+    this.#updateCachedThread(id, (thread) => ({ ...thread, lifecycle }))
+    this.#updateSidebarThread(id, (thread) =>
+      thread.lifecycle === lifecycle ? thread : { ...thread, lifecycle },
+    )
+    return lifecycle
+  }
+
+  wakeSnoozedThread(id: string, dueAt: number, at = Date.now()): ThreadLifecycle | undefined {
+    const row = sqliteRow<ActiveLifecycleRow>(this.#wakeSnoozedThreadStatement, at, at, id, dueAt)
+    if (!row) return undefined
+    const lifecycle = toActiveLifecycle(row)
+    this.#updateCachedThread(id, (thread) => ({ ...thread, lifecycle, lastActiveAt: at }))
+    this.#updateSidebarThread(id, (thread) => ({ ...thread, lifecycle }))
+    return lifecycle
   }
 
   setThreadKeepActive(id: string, keepActive: boolean, at = Date.now()): ThreadLifecycle {
     const lifecycle = this.activateThread(id, at)
     this.#db.prepare(`UPDATE threads SET keep_active = ? WHERE id = ?`).run(keepActive ? 1 : 0, id)
     const wokeAt = lifecycle.state === 'active' ? lifecycle.wokeAt : undefined
-    return {
-      state: 'active',
-      keepActive,
-      ...(wokeAt === undefined ? {} : { wokeAt }),
-    }
+    const updated = activeLifecycle(keepActive, wokeAt)
+    this.#updateCachedThread(id, (thread) => ({ ...thread, lifecycle: updated }))
+    this.#updateSidebarThread(id, (thread) =>
+      thread.lifecycle === updated ? thread : { ...thread, lifecycle: updated },
+    )
+    return updated
   }
 
   touchThread(id: string, unread = false, at = Date.now()): ThreadLifecycle {
-    const lifecycle = this.activateThread(id, at)
-    this.#db
-      .prepare(`UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`)
-      .run(at, unread ? 1 : 0, id)
+    const retained = this.#threadCache.get(id)
+    let lifecycle: ThreadLifecycle
+    if (retained?.lifecycle.state === 'active') {
+      const result = this.#touchActiveThreadStatement.run(at, unread ? 1 : 0, id)
+      if (Number(result.changes) === 0) throw new Error('thread not found')
+      lifecycle = retained.lifecycle
+    } else {
+      const row = sqliteRow<ActiveLifecycleRow>(
+        this.#touchThreadStatement,
+        at,
+        at,
+        unread ? 1 : 0,
+        id,
+      )
+      if (!row) throw new Error('thread not found')
+      lifecycle = toActiveLifecycle(row)
+    }
+    this.#updateCachedThread(id, (thread) => ({
+      ...thread,
+      lifecycle,
+      unread: thread.unread || unread,
+      lastActiveAt: at,
+    }))
+    this.#updateSidebarThread(id, (thread) => {
+      const nextUnread = thread.unread || unread
+      return thread.lifecycle === lifecycle && thread.unread === nextUnread
+        ? thread
+        : { ...thread, lifecycle, unread: nextUnread }
+    })
     return lifecycle
   }
 
   markThreadRead(id: string): void {
-    this.#updateThread(`UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ?`, id)
+    this.#updateThread(
+      id,
+      `UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ?`,
+      (thread) => ({
+        ...thread,
+        lifecycle:
+          thread.lifecycle.state === 'active'
+            ? activeLifecycle(thread.lifecycle.keepActive, undefined)
+            : thread.lifecycle,
+        unread: false,
+      }),
+    )
+    this.#updateSidebarThread(id, (thread) => {
+      const lifecycle =
+        thread.lifecycle.state === 'active'
+          ? activeLifecycle(thread.lifecycle.keepActive, undefined)
+          : thread.lifecycle
+      return thread.lifecycle === lifecycle && !thread.unread
+        ? thread
+        : { ...thread, lifecycle, unread: false }
+    })
   }
 
-  dueSnoozedThreads(now = Date.now()): StoredThread[] {
-    return sqliteRows<ThreadRow>(
-      this.#db.prepare(
-        `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
-         AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
-      ),
-      now,
-    ).map(toThread)
+  dueSnoozedThreadIds(now = Date.now()): string[] {
+    return sqliteRows<ThreadIdRow>(this.#dueSnoozedThreadIds, now).map((row) => row.id)
   }
 
-  inactiveThreads(cutoff: number): StoredThread[] {
-    return sqliteRows<ThreadRow>(
-      this.#db.prepare(
-        `SELECT * FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'active'
-         AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ? ORDER BY last_active_at`,
-      ),
-      cutoff,
-    ).map(toThread)
+  inactiveThreadCandidates(cutoff: number): Array<{ id: string; unread: boolean }> {
+    return sqliteRows<InactiveThreadCandidateRow>(this.#inactiveThreadCandidates, cutoff).map(
+      (row) => ({ id: row.id, unread: row.unread === 1 }),
+    )
+  }
+
+  /** The next time a lifecycle refresh can change persisted state. */
+  nextLifecycleRefreshAt(): number | undefined {
+    const snoozed = sqliteRow<MinTimestampRow>(this.#nextSnoozedThread)?.at
+    const autoSettleDays = this.sidebarSettings().autoSettleDays
+    const oldestActive =
+      autoSettleDays === null ? null : sqliteRow<MinTimestampRow>(this.#oldestActiveThread)?.at
+    const settleAt =
+      autoSettleDays === null || oldestActive === null || oldestActive === undefined
+        ? undefined
+        : Number(oldestActive) + autoSettleDays * 24 * 60 * 60 * 1_000
+    if (snoozed === null || snoozed === undefined) return settleAt
+    return settleAt === undefined ? Number(snoozed) : Math.min(Number(snoozed), settleAt)
   }
 
   sidebarSettings(): SidebarSettings {
-    const row = requiredSqliteRow<SidebarSettingsRow>(
-      this.#db.prepare(`SELECT mode, auto_settle_days FROM sidebar_settings WHERE id = 1`),
+    if (this.#sidebarSettingsCache) return this.#sidebarSettingsCache
+    const row = requiredSqliteRow<SidebarSettingsRow>(this.#readSidebarSettings)
+    this.#sidebarSettingsCache = Object.freeze(
+      SidebarSettingsSchema.parse({
+        mode: row.mode,
+        autoSettleDays: row.auto_settle_days === null ? null : Number(row.auto_settle_days),
+      }),
     )
-    return SidebarSettingsSchema.parse({
-      mode: row.mode,
-      autoSettleDays: row.auto_settle_days === null ? null : Number(row.auto_settle_days),
-    })
+    return this.#sidebarSettingsCache
   }
 
   updateSidebarSettings(settings: Partial<SidebarSettings>): SidebarSettings {
     const current = this.sidebarSettings()
-    const next = { ...current, ...settings }
-    this.#db
-      .prepare(`UPDATE sidebar_settings SET mode = ?, auto_settle_days = ? WHERE id = 1`)
-      .run(next.mode, next.autoSettleDays)
-    return next
+    const next = Object.freeze({ ...current, ...settings })
+    this.#writeSidebarSettings.run(next.mode, next.autoSettleDays)
+    this.#sidebarSettingsCache = next
+    return this.#sidebarSettingsCache
   }
 
   backgroundModelPreference(): BackgroundModelPreference {
-    const row = sqliteRow<StringValueRow>(
-      this.#db.prepare(`SELECT value FROM app_settings WHERE key = ?`),
-      BACKGROUND_MODEL_SETTING,
-    )
-    if (!row) return { mode: 'automatic' }
-    try {
-      return BackgroundModelPreferenceSchema.parse(JSON.parse(row.value))
-    } catch {
-      return { mode: 'automatic' }
+    if (this.#backgroundModelPreferenceCache) return this.#backgroundModelPreferenceCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, BACKGROUND_MODEL_SETTING)
+    if (!row) {
+      this.#backgroundModelPreferenceCache = AUTOMATIC_BACKGROUND_MODEL_PREFERENCE
+      return this.#backgroundModelPreferenceCache
     }
+    try {
+      this.#backgroundModelPreferenceCache = freezeBackgroundModelPreference(
+        BackgroundModelPreferenceSchema.parse(JSON.parse(row.value)),
+      )
+    } catch {
+      this.#backgroundModelPreferenceCache = AUTOMATIC_BACKGROUND_MODEL_PREFERENCE
+    }
+    return this.#backgroundModelPreferenceCache
   }
 
   updateBackgroundModelPreference(
     preference: BackgroundModelPreference,
   ): BackgroundModelPreference {
-    this.#db
-      .prepare(
-        `INSERT INTO app_settings (key, value) VALUES (?, ?)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      )
-      .run(BACKGROUND_MODEL_SETTING, JSON.stringify(preference))
-    return preference
+    this.#writeAppSetting.run(BACKGROUND_MODEL_SETTING, JSON.stringify(preference))
+    this.#backgroundModelPreferenceCache = freezeBackgroundModelPreference(preference)
+    return this.#backgroundModelPreferenceCache
   }
 
-  #updateThread(sql: string, ...params: Array<string | number>): void {
-    const result = this.#db.prepare(sql).run(...params)
+  #updateThread(
+    id: string,
+    sql: string,
+    update: (thread: StoredThread) => StoredThread,
+    ...params: Array<string | number>
+  ): void {
+    const result = this.#db.prepare(sql).run(...params, id)
     if (result.changes === 0) throw new Error('thread not found')
+    this.#updateCachedThread(id, update)
+  }
+
+  #cacheThread(id: string, thread: StoredThread | undefined): void {
+    if (!this.#threadCache.has(id) && this.#threadCache.size >= THREAD_CACHE_LIMIT) {
+      const oldestId = this.#threadCache.keys().next().value
+      if (oldestId !== undefined) this.#threadCache.delete(oldestId)
+    }
+    this.#threadCache.set(id, thread ?? null)
+  }
+
+  #updateCachedThread(id: string, update: (thread: StoredThread) => StoredThread): void {
+    const current = this.#threadCache.get(id)
+    if (current === undefined) return
+    if (current === null) {
+      // A successful mutation proves that a previously missing row now exists.
+      this.#threadCache.delete(id)
+      return
+    }
+    const next = update(current)
+    if (next !== current) this.#threadCache.set(id, next)
+  }
+
+  #invalidateSidebarThreads(): void {
+    this.#pendingSidebarThreads = undefined
+    this.#sidebarThreadsCache = undefined
+    this.#sidebarThreadIndexes = undefined
+  }
+
+  #flushPendingSidebarThreads(): void {
+    if (!this.#pendingSidebarThreads) return
+    this.#sidebarThreadsCache = this.#pendingSidebarThreads
+    this.#pendingSidebarThreads = undefined
+  }
+
+  #updateSidebarThread(id: string, update: SidebarThreadUpdate): void {
+    const threads = this.#sidebarThreadsCache
+    const index = this.#sidebarThreadIndexes?.get(id)
+    if (!threads || index === undefined) return
+    const current = (this.#pendingSidebarThreads ?? threads)[index]
+    if (!current) {
+      this.#invalidateSidebarThreads()
+      return
+    }
+    const next = update(current)
+    if (next === current) return
+    const updated = this.#pendingSidebarThreads ?? [...threads]
+    updated[index] = next
+    this.#pendingSidebarThreads = updated
   }
 
   /**
@@ -844,10 +1653,13 @@ export class Store {
    * process; it does not mean the user wanted the transcript gone.
    */
   closeThread(id: string): void {
+    const closedAt = Date.now()
     this.#transaction(() => {
       this.#clearQueuedTurns(id)
-      this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(Date.now(), id)
+      this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(closedAt, id)
     })
+    this.#updateCachedThread(id, (thread) => ({ ...thread, closedAt }))
+    this.#updateSidebarThread(id, (thread) => ({ ...thread, closedAt }))
   }
 
   deleteThread(id: string): void {
@@ -866,10 +1678,127 @@ export class Store {
       this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
       this.#db.exec('COMMIT')
+      this.#searchRevision += 1
       this.#ephemeralThreads.delete(id)
+      this.#deleteCachedReplaySnapshot(id)
+      this.#cacheThread(id, undefined)
+      this.#invalidateSidebarThreads()
     } catch (error) {
       this.#db.exec('ROLLBACK')
       throw error
+    }
+  }
+
+  historyStorage() {
+    const count = (sql: string) => Number((this.#db.prepare(sql).get() as { count: number }).count)
+    const size = (file: string) =>
+      file !== ':memory:' && existsSync(file) ? statSync(file).size : 0
+    return {
+      databaseBytes: size(this.location),
+      walBytes: size(`${this.location}-wal`),
+      reclaimableBytes:
+        count('SELECT freelist_count AS count FROM pragma_freelist_count') *
+        count('SELECT page_size AS count FROM pragma_page_size'),
+      threads: count('SELECT count(*) AS count FROM threads'),
+      closedThreads: count('SELECT count(*) AS count FROM threads WHERE closed_at IS NOT NULL'),
+      events: count('SELECT count(*) AS count FROM events'),
+    }
+  }
+
+  exportHistory(destination: string): void {
+    this.#transaction(() => this.#writeHistoryArchive(destination))
+  }
+
+  /** No automatic retention: preview the exact eligible closed tasks before applying. */
+  historyCleanupCandidates(before: number): string[] {
+    if (!Number.isFinite(before) || before <= 0) throw new Error('cleanup requires a valid date')
+    return sqliteRows<{ id: string }>(
+      this.#db.prepare(
+        'SELECT id FROM threads WHERE closed_at < ? AND worktree_path IS NULL ORDER BY closed_at, id',
+      ),
+      before,
+    ).map((row) => row.id)
+  }
+
+  pruneHistory(before: number, archive: string): number {
+    let ids: string[] = []
+    this.#transaction(() => {
+      ids = this.historyCleanupCandidates(before)
+      // The archive is flushed to disk while the transaction still holds the
+      // selected state. A failed write cannot erase even one conversation.
+      this.#writeHistoryArchive(archive, ids)
+      for (const id of ids) {
+        this.#db.prepare('DELETE FROM session_search WHERE thread_id = ?').run(id)
+        for (const table of [
+          'events',
+          'checkpoints',
+          'restore_undos',
+          'diff_decisions',
+          'design_runs',
+        ]) {
+          this.#db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(id)
+        }
+        this.#db.prepare('DELETE FROM threads WHERE id = ?').run(id)
+      }
+    })
+    for (const id of ids) {
+      this.#ephemeralThreads.delete(id)
+      this.#deleteCachedReplaySnapshot(id)
+      this.#cacheThread(id, undefined)
+    }
+    this.#searchRevision += 1
+    this.#searchSnapshots.clear()
+    this.#queuedThreadIdsCache = undefined
+    this.#invalidateSidebarThreads()
+    return ids.length
+  }
+
+  reclaimHistorySpace(): void {
+    // Explicit maintenance only; VACUUM is never on the streaming path.
+    this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    this.#db.exec('VACUUM')
+    this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  }
+
+  #writeHistoryArchive(destination: string, ids?: readonly string[]): void {
+    const descriptor = openSync(destination, 'wx', 0o600)
+    let complete = false
+    try {
+      const write = (value: unknown) => {
+        const bytes = Buffer.from(`${JSON.stringify(value)}\n`)
+        let offset = 0
+        while (offset < bytes.length)
+          offset += writeSync(descriptor, bytes, offset, bytes.length - offset)
+      }
+      write({
+        format: 'tastecode-history',
+        version: 1,
+        exportedAt: Date.now(),
+        checkpointNamespace: this.checkpointNamespace,
+      })
+      const tables = [
+        'threads',
+        'events',
+        'checkpoints',
+        'restore_undos',
+        'diff_decisions',
+        'design_runs',
+      ] as const
+      for (const table of tables) {
+        const key = table === 'threads' ? 'id' : 'thread_id'
+        if (ids) {
+          const query = this.#db.prepare(`SELECT * FROM ${table} WHERE ${key} = ?`)
+          for (const id of ids) for (const row of query.iterate(id)) write({ table, row })
+        } else {
+          for (const row of this.#db.prepare(`SELECT * FROM ${table}`).iterate())
+            write({ table, row })
+        }
+      }
+      fsyncSync(descriptor)
+      complete = true
+    } finally {
+      closeSync(descriptor)
+      if (!complete) rmSync(destination, { force: true })
     }
   }
 
@@ -898,27 +1827,18 @@ export class Store {
   // ---- queued turns -----------------------------------------------------
 
   queuedTurns(threadId: string): StoredQueuedTurn[] {
-    return sqliteRows<QueuedTurnRow>(
-      this.#db.prepare(
-        `SELECT queued_turns.* FROM queued_turns
-         INNER JOIN threads ON threads.id = queued_turns.thread_id
-         WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
-           AND threads.closed_at IS NULL
-         ORDER BY queued_turns.position`,
-      ),
-      threadId,
-    ).map(toQueuedTurn)
+    return sqliteRows<QueuedTurnRow>(this.#listQueuedTurns, threadId).map(toQueuedTurn)
+  }
+
+  queuedThreadIds(): Set<string> {
+    this.#queuedThreadIdsCache ??= new Set(
+      sqliteRows<{ thread_id: string }>(this.#queuedThreadIds).map((row) => row.thread_id),
+    )
+    return this.#queuedThreadIdsCache
   }
 
   hasQueuedSubmission(threadId: string, clientSubmissionId: string): boolean {
-    return (
-      this.#db
-        .prepare(
-          `SELECT 1 FROM queued_turns
-           WHERE thread_id = ? AND client_submission_id = ? LIMIT 1`,
-        )
-        .get(threadId, clientSubmissionId) !== undefined
-    )
+    return this.#hasQueuedSubmission.get(threadId, clientSubmissionId) !== undefined
   }
 
   enqueueQueuedTurn(turn: Omit<StoredQueuedTurn, 'intent'>): void {
@@ -928,87 +1848,54 @@ export class Store {
       options: turn.options,
     })
     this.#transaction(() => {
-      const open = this.#db
-        .prepare(`SELECT 1 FROM threads WHERE id = ? AND closed_at IS NULL`)
-        .get(turn.threadId)
+      const open = this.#openThread.get(turn.threadId)
       if (!open) throw new Error('thread not found')
       const position = Number(
-        requiredSqliteRow<PositionRow>(
-          this.#db.prepare(
-            `SELECT COALESCE(MAX(position), -1) + 1 AS position
-             FROM queued_turns WHERE thread_id = ?`,
-          ),
-          turn.threadId,
-        ).position,
+        requiredSqliteRow<PositionRow>(this.#nextQueuedPosition, turn.threadId).position,
       )
       this.#appendQueuedTurnEvent(turn.threadId, turn.id, 'enqueue', {
         ...turn,
         intent: 'normal',
         position,
       })
-      this.#db
-        .prepare(
-          `INSERT INTO queued_turns
-             (thread_id, queue_id, client_submission_id, position, state, intent, payload, created_at)
-           VALUES (?, ?, ?, ?, 'queued', 'normal', ?, ?)`,
-        )
-        .run(
-          turn.threadId,
-          turn.id,
-          turn.clientSubmissionId ?? null,
-          position,
-          payload,
-          turn.createdAt,
-        )
+      this.#insertQueuedTurn.run(
+        turn.threadId,
+        turn.id,
+        turn.clientSubmissionId ?? null,
+        position,
+        payload,
+        turn.createdAt,
+      )
     })
+    this.#queuedThreadIdsCache = undefined
   }
 
   deleteQueuedTurn(threadId: string, queueId: string): boolean {
     return this.#mutateQueuedTurn(threadId, queueId, 'queued', 'delete', () => {
-      this.#db
-        .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
-        .run(threadId, queueId)
+      this.#deleteQueuedTurn.run(threadId, queueId)
     })
   }
 
   moveQueuedTurn(threadId: string, queueId: string, direction: 'up' | 'down'): boolean {
     return this.#transaction(() => {
-      const current = sqliteRow<PositionRow>(
-        this.#db.prepare(
-          `SELECT position FROM queued_turns
-           WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
-        ),
-        threadId,
-        queueId,
-      )
+      const current = sqliteRow<PositionRow>(this.#queuedTurnPosition, threadId, queueId)
       if (!current) return false
-      const comparison = direction === 'up' ? '<' : '>'
-      const order = direction === 'up' ? 'DESC' : 'ASC'
       const adjacent = sqliteRow<AdjacentQueuedTurnRow>(
-        this.#db.prepare(
-          `SELECT queue_id, position FROM queued_turns
-           WHERE thread_id = ? AND state = 'queued' AND position ${comparison} ?
-           ORDER BY position ${order} LIMIT 1`,
-        ),
+        direction === 'up' ? this.#previousQueuedTurn : this.#nextQueuedTurn,
         threadId,
         current.position,
       )
       if (!adjacent) return false
       this.#appendQueuedTurnEvent(threadId, queueId, 'move', { direction })
-      this.#db
-        .prepare(
-          `UPDATE queued_turns SET position = CASE queue_id WHEN ? THEN ? WHEN ? THEN ? END
-           WHERE thread_id = ? AND queue_id IN (?, ?)`,
-        )
-        .run(
-          queueId,
-          adjacent.position,
-          adjacent.queue_id,
-          current.position,
-          threadId,
-          queueId,
-          adjacent.queue_id,
-        )
+      this.#swapQueuedTurnPositions.run(
+        queueId,
+        adjacent.position,
+        adjacent.queue_id,
+        current.position,
+        threadId,
+        queueId,
+        adjacent.queue_id,
+      )
       return true
     })
   }
@@ -1018,65 +1905,44 @@ export class Store {
     queueId: string,
     intent: 'normal' | 'steer',
   ): StoredQueuedTurn | undefined {
-    return this.#transaction(() => {
-      const row = sqliteRow<QueuedTurnRow>(
-        this.#db.prepare(
-          `SELECT * FROM queued_turns
-           WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
-        ),
-        threadId,
-        queueId,
-      )
+    const claimed = this.#transaction(() => {
+      const row = sqliteRow<QueuedTurnRow>(this.#findQueuedTurn, threadId, queueId)
       if (!row) return undefined
       this.#appendQueuedTurnEvent(threadId, queueId, 'claim', { intent })
-      this.#db
-        .prepare(
-          `UPDATE queued_turns SET state = 'dispatching', intent = ?
-           WHERE thread_id = ? AND queue_id = ?`,
-        )
-        .run(intent, threadId, queueId)
+      this.#dispatchQueuedTurn.run(intent, threadId, queueId)
       return { ...toQueuedTurn(row), intent }
     })
+    if (claimed) this.#queuedThreadIdsCache = undefined
+    return claimed
   }
 
   restoreQueuedTurn(threadId: string, queueId: string): boolean {
     return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'restore', () => {
-      this.#db
-        .prepare(
-          `UPDATE queued_turns SET state = 'queued', intent = 'normal'
-           WHERE thread_id = ? AND queue_id = ?`,
-        )
-        .run(threadId, queueId)
+      this.#restoreQueuedTurn.run(threadId, queueId)
     })
   }
 
   completeQueuedTurn(threadId: string, queueId: string): boolean {
     return this.#mutateQueuedTurn(threadId, queueId, 'dispatching', 'complete', () => {
-      this.#db
-        .prepare(`DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`)
-        .run(threadId, queueId)
+      this.#deleteQueuedTurn.run(threadId, queueId)
     })
   }
 
-  appendAndCompleteQueuedTurn(threadId: string, queueId: string, event: DomainEvent): number {
-    return this.#transaction(() => {
-      const claimed = this.#db
-        .prepare(
-          `SELECT 1 FROM queued_turns
-           WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
-        )
-        .get(threadId, queueId)
+  appendAndCompleteQueuedTurn(
+    threadId: string,
+    queueId: string,
+    event: DomainEvent,
+  ): SerializedEventAppend {
+    const serializedEvent = JSON.stringify(event)
+    const seq = this.#transaction(() => {
+      const claimed = this.#claimedQueuedTurn.get(threadId, queueId)
       if (!claimed) throw new Error('queued prompt is no longer claimed')
-      const seq = this.#appendEvent(threadId, event, Date.now())
+      const eventSeq = this.#appendEventPayload(threadId, event, Date.now(), serializedEvent)
       this.#appendQueuedTurnEvent(threadId, queueId, 'complete', {})
-      this.#db
-        .prepare(
-          `DELETE FROM queued_turns
-           WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
-        )
-        .run(threadId, queueId)
-      return seq
+      this.#deleteClaimedQueuedTurn.run(threadId, queueId)
+      return eventSeq
     })
+    return { seq, serializedEvent }
   }
 
   clearQueuedTurns(threadId: string): void {
@@ -1084,13 +1950,15 @@ export class Store {
   }
 
   clearAllQueuedTurns(): string[] {
-    return this.#transaction(() => {
+    const threadIds = this.#transaction(() => {
       const threadIds = sqliteRows<{ thread_id: string }>(
         this.#db.prepare(`SELECT DISTINCT thread_id FROM queued_turns ORDER BY thread_id`),
       ).map((row) => row.thread_id)
       for (const threadId of threadIds) this.#clearQueuedTurns(threadId)
       return threadIds
     })
+    if (threadIds.length > 0) this.#queuedThreadIdsCache = undefined
+    return threadIds
   }
 
   #mutateQueuedTurn(
@@ -1100,24 +1968,23 @@ export class Store {
     mutation: string,
     project: () => void,
   ): boolean {
-    return this.#transaction(() => {
-      const exists = this.#db
-        .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ? AND state = ?`)
-        .get(threadId, queueId, state)
+    const changed = this.#transaction(() => {
+      const exists = this.#queuedTurnInState.get(threadId, queueId, state)
       if (!exists) return false
       this.#appendQueuedTurnEvent(threadId, queueId, mutation, {})
       project()
       return true
     })
+    if (changed) this.#queuedThreadIdsCache = undefined
+    return changed
   }
 
   #clearQueuedTurns(threadId: string): void {
-    const exists = this.#db
-      .prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? LIMIT 1`)
-      .get(threadId)
+    const exists = this.#hasQueuedTurn.get(threadId)
     if (!exists) return
     this.#appendQueuedTurnEvent(threadId, null, 'clear', {})
-    this.#db.prepare(`DELETE FROM queued_turns WHERE thread_id = ?`).run(threadId)
+    this.#clearQueuedTurnsStatement.run(threadId)
+    this.#queuedThreadIdsCache = undefined
   }
 
   #appendQueuedTurnEvent(
@@ -1126,12 +1993,7 @@ export class Store {
     mutation: string,
     payload: unknown,
   ): void {
-    this.#db
-      .prepare(
-        `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
-         VALUES (?, ?, ?, ?, ?)`,
-      )
-      .run(threadId, queueId, Date.now(), mutation, serializeJson(payload))
+    this.#insertQueuedTurnEvent.run(threadId, queueId, Date.now(), mutation, serializeJson(payload))
   }
 
   #recoverQueuedTurnClaims(): void {
@@ -1199,73 +2061,9 @@ export class Store {
   recoverInterruptedThreads(): string[] {
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      // SQLite returns only unfinished lifecycle starts. Months of completed
-      // turns and streamed deltas never cross into JavaScript at startup.
-      const rows = sqliteRows<InterruptedThreadRow>(
-        this.#db.prepare(
-          `WITH typed_events AS (
-             SELECT events.seq, events.thread_id, events.payload,
-                    json_extract(events.payload, '$.type') AS event_type
-             FROM events
-             INNER JOIN threads ON threads.id = events.thread_id
-             WHERE threads.closed_at IS NULL
-           ),
-           lifecycle_events AS (
-             SELECT seq, thread_id, payload, event_type,
-                    CASE event_type
-                      WHEN 'turn.started' THEN 'turn:' || json_extract(payload, '$.turn.id')
-                      WHEN 'turn.completed' THEN 'turn:' || json_extract(payload, '$.turnId')
-                      WHEN 'item.started' THEN 'item:' || json_extract(payload, '$.item.id')
-                      WHEN 'item.completed' THEN 'item:' || json_extract(payload, '$.item.id')
-                      WHEN 'approval.requested' THEN 'approval:' || json_extract(payload, '$.request.id')
-                      WHEN 'approval.resolved' THEN 'approval:' || json_extract(payload, '$.id')
-                      WHEN 'user_input.requested' THEN 'input:' || json_extract(payload, '$.request.id')
-                      WHEN 'user_input.resolved' THEN 'input:' || json_extract(payload, '$.id')
-                      WHEN 'approval.review.started' THEN 'review:' || json_extract(payload, '$.review.id')
-                      WHEN 'approval.review.completed' THEN 'review:' || json_extract(payload, '$.review.id')
-                    END AS lifecycle_key
-             FROM typed_events
-             WHERE event_type IN (
-               'turn.started', 'turn.completed', 'thread.error',
-               'item.started', 'item.completed',
-               'approval.requested', 'approval.resolved',
-               'user_input.requested', 'user_input.resolved',
-               'approval.review.started', 'approval.review.completed'
-             )
-           ),
-           lifecycle_state AS (
-             SELECT thread_id, lifecycle_key,
-                    MAX(CASE WHEN event_type IN (
-                      'turn.started', 'item.started', 'approval.requested',
-                      'user_input.requested', 'approval.review.started') THEN seq END) AS started_seq,
-                    MAX(CASE WHEN event_type IN (
-                      'turn.completed', 'item.completed', 'approval.resolved',
-                      'user_input.resolved', 'approval.review.completed') THEN seq END) AS terminal_seq
-             FROM lifecycle_events
-             WHERE lifecycle_key IS NOT NULL
-             GROUP BY thread_id, lifecycle_key
-           ),
-           last_errors AS (
-             SELECT thread_id, MAX(seq) AS seq FROM lifecycle_events
-             WHERE event_type = 'thread.error'
-             GROUP BY thread_id
-           )
-           SELECT started.thread_id, started.payload,
-                  CASE WHEN started.event_type = 'user_input.requested'
-                    AND EXISTS (
-                      SELECT 1 FROM design_runs
-                      WHERE design_runs.thread_id = started.thread_id
-                        AND json_extract(design_runs.payload, '$.phase') = 'brief'
-                    ) THEN 1 ELSE 0 END AS resumable
-           FROM lifecycle_state
-           INNER JOIN lifecycle_events AS started ON started.seq = lifecycle_state.started_seq
-           LEFT JOIN last_errors ON last_errors.thread_id = started.thread_id
-           WHERE lifecycle_state.terminal_seq IS NULL
-             AND (started.event_type <> 'turn.started' OR last_errors.seq IS NULL
-                  OR last_errors.seq < started.seq)
-           ORDER BY started.seq`,
-        ),
-      )
+      // The write path keeps only current process-owned lifecycles here. A
+      // long transcript therefore costs the same to recover as a short one.
+      const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThreads)
 
       const states = new Map<string, InterruptedThreadState>()
       for (const row of rows) {
@@ -1347,9 +2145,59 @@ export class Store {
   /** Returns the sequence number, which is what a client resumes from. */
   append(threadId: string, event: DomainEvent): number {
     const at = Date.now()
+    const serializedEvent = JSON.stringify(event)
+    return this.#appendSerializedEvent(threadId, event, at, serializedEvent)
+  }
+
+  /** Return the exact stored JSON so the push path can reuse its encoding. */
+  appendWithSerializedEvent(threadId: string, event: DomainEvent): SerializedEventAppend {
+    const at = Date.now()
+    const serializedEvent = JSON.stringify(event)
+    return {
+      seq: this.#appendSerializedEvent(threadId, event, at, serializedEvent),
+      serializedEvent,
+    }
+  }
+
+  #appendSerializedEvent(
+    threadId: string,
+    event: DomainEvent,
+    at: number,
+    serializedEvent: string,
+  ): number {
+    // Token deltas intentionally have no secondary index. Keep the dominant
+    // write path to one serialization and one prepared SQLite insert.
+    if (event.type === 'item.delta') {
+      return this.#insertEventRow(threadId, at, serializedEvent)
+    }
+    const searchEntry = this.#ephemeralThreads.has(threadId) ? undefined : searchableEntry(event)
+    const usageEvent = event.type === 'usage.updated'
+    const inboxEvent = affectsInboxProjection(event)
+    const userSubmissionId = userSubmissionItemId(event)
+    const turnDiffId = event.type === 'diff.updated' ? event.turnId : undefined
+    const recovery = recoveryMutation(event)
+    // A lone SQLite insert is already atomic. Only open an explicit
+    // transaction when the event and a derived index row must commit together.
+    if (
+      !searchEntry &&
+      !usageEvent &&
+      !inboxEvent &&
+      userSubmissionId === undefined &&
+      turnDiffId === undefined &&
+      recovery === undefined
+    ) {
+      return this.#insertEventRow(threadId, at, serializedEvent)
+    }
+
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      const seq = this.#appendEvent(threadId, event, at)
+      const seq = this.#insertEventRow(threadId, at, serializedEvent)
+      if (searchEntry) this.#indexSearchEntry(seq, threadId, at, searchEntry)
+      if (usageEvent) this.#indexUsageEvent(seq, threadId, at, serializedEvent)
+      if (inboxEvent) this.#indexInboxEvent(seq, threadId, event, serializedEvent)
+      if (userSubmissionId) this.#indexUserSubmission(seq, threadId, userSubmissionId)
+      if (turnDiffId !== undefined) this.#indexTurnDiff(seq, threadId, turnDiffId)
+      if (recovery) this.#indexRecoveryMutation(seq, threadId, recovery, serializedEvent)
       this.#db.exec('COMMIT')
       return seq
     } catch (error) {
@@ -1358,21 +2206,47 @@ export class Store {
     }
   }
 
-  hasItem(threadId: string, itemId: string): boolean {
-    return (
-      this.#db
-        .prepare(
-          `SELECT 1 FROM events
-           WHERE thread_id = ? AND json_extract(payload, '$.item.id') = ? LIMIT 1`,
-        )
-        .get(threadId, itemId) !== undefined
+  /** Persist one window and retain each exact event encoding for its push. */
+  appendBatchWithSerializedEvents(
+    records: ReadonlyArray<{ threadId: string; event: DomainEvent }>,
+  ): SerializedEventAppend[] {
+    if (records.length === 0) return []
+    const at = Date.now()
+    return this.#transaction(() =>
+      records.map(({ threadId, event }) => {
+        const serializedEvent = JSON.stringify(event)
+        return {
+          seq: this.#appendEventPayload(threadId, event, at, serializedEvent),
+          serializedEvent,
+        }
+      }),
     )
   }
 
+  hasUserSubmission(threadId: string, itemId: string): boolean {
+    return this.#hasUserSubmission.get(threadId, itemId) !== undefined
+  }
+
+  #insertEventRow(threadId: string, at: number, payload: string): number {
+    if (this.#replaySnapshotCache.size > 0) this.#deleteCachedReplaySnapshot(threadId)
+    return Number(this.#insertEvent.run(threadId, at, payload).lastInsertRowid)
+  }
+
   #appendEvent(threadId: string, event: DomainEvent, at: number): number {
-    const result = this.#insertEvent.run(threadId, at, JSON.stringify(event))
-    const seq = Number(result.lastInsertRowid)
+    return this.#appendEventPayload(threadId, event, at, JSON.stringify(event))
+  }
+
+  #appendEventPayload(threadId: string, event: DomainEvent, at: number, payload: string): number {
+    const seq = this.#insertEventRow(threadId, at, payload)
+    if (event.type === 'item.delta') return seq
     if (!this.#ephemeralThreads.has(threadId)) this.#indexEvent(seq, threadId, at, event)
+    if (event.type === 'usage.updated') this.#indexUsageEvent(seq, threadId, at, payload)
+    if (affectsInboxProjection(event)) this.#indexInboxEvent(seq, threadId, event, payload)
+    const userSubmissionId = userSubmissionItemId(event)
+    if (userSubmissionId) this.#indexUserSubmission(seq, threadId, userSubmissionId)
+    if (event.type === 'diff.updated') this.#indexTurnDiff(seq, threadId, event.turnId)
+    const recovery = recoveryMutation(event)
+    if (recovery) this.#indexRecoveryMutation(seq, threadId, recovery, payload)
     return seq
   }
 
@@ -1383,30 +2257,114 @@ export class Store {
    * the thread fresh asks for all of it. Same call either way.
    */
   history(threadId: string, afterSeq = 0): Array<{ seq: number; event: DomainEvent }> {
-    return sqliteRows<HistoryRow>(
-      this.#db.prepare(
-        `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
-      ),
-      threadId,
-      afterSeq,
-    ).map((row) => {
-      return { seq: Number(row.seq), event: DomainEventSchema.parse(JSON.parse(row.payload)) }
+    return sqliteRows<HistoryRow>(this.#threadHistory, threadId, afterSeq).map((row) => {
+      return { seq: Number(row.seq), event: parseDomainEvent(row.payload) }
     })
+  }
+
+  /** Read the latest saved replay as an immutable base, even when a small tail is newer. */
+  replaySnapshotBase(threadId: string): { seq: number; entries: ReplayEntry[] } | undefined {
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) {
+      this.#promoteCachedReplaySnapshot(threadId, cached)
+      return { seq: cached.seq, entries: cached.entries }
+    }
+    const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
+    if (!row) return undefined
+    const seq = Number(row.seq)
+    const entries = this.#cacheReplaySnapshot(threadId, seq, row.payload)
+    return entries ? { seq, entries } : undefined
+  }
+
+  /** Preserve SQLite's JSON for the first response after a process restart. */
+  tailReplaySnapshotForResponse(
+    threadId: string,
+  ): { entries: ReplayEntry[]; serializedEntries?: string | undefined } | undefined {
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) {
+      this.#promoteCachedReplaySnapshot(threadId, cached)
+      return { entries: cached.entries }
+    }
+    const row = sqliteRow<ReplaySnapshotRow>(this.#readTailReplaySnapshot, threadId)
+    if (!row) return undefined
+    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload)
+    return entries ? { entries, serializedEntries: row.payload } : undefined
+  }
+
+  #cacheReplaySnapshot(threadId: string, seq: number, payload: string): ReplayEntry[] | undefined {
+    try {
+      const entries = ReplaySnapshotSchema.parse(JSON.parse(payload))
+      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length)
+      return entries
+    } catch {
+      this.#deleteReplaySnapshot.run(threadId)
+      this.#deleteCachedReplaySnapshot(threadId)
+      return undefined
+    }
+  }
+
+  #promoteCachedReplaySnapshot(
+    threadId: string,
+    cached: { seq: number; entries: ReplayEntry[]; characters: number },
+  ): void {
+    this.#replaySnapshotCache.delete(threadId)
+    this.#replaySnapshotCache.set(threadId, cached)
+  }
+
+  #rememberReplaySnapshot(
+    threadId: string,
+    seq: number,
+    entries: ReplayEntry[],
+    characters: number,
+  ): void {
+    this.#deleteCachedReplaySnapshot(threadId)
+    if (characters > REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT) return
+    while (
+      this.#replaySnapshotCache.size >= REPLAY_SNAPSHOT_CACHE_LIMIT ||
+      this.#replaySnapshotCacheCharacters + characters > REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT
+    ) {
+      const oldestThreadId = this.#replaySnapshotCache.keys().next().value
+      if (oldestThreadId === undefined) break
+      this.#deleteCachedReplaySnapshot(oldestThreadId)
+    }
+    this.#replaySnapshotCache.set(threadId, { seq, entries, characters })
+    this.#replaySnapshotCacheCharacters += characters
+  }
+
+  #deleteCachedReplaySnapshot(threadId: string): void {
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (!cached) return
+    this.#replaySnapshotCache.delete(threadId)
+    this.#replaySnapshotCacheCharacters -= cached.characters
+  }
+
+  /** Cache only renderer-ready derived data; the event log remains authoritative. */
+  saveReplaySnapshot(
+    threadId: string,
+    seq: number,
+    entries: ReadonlyArray<{ seq: number; event: DomainEvent }>,
+  ): string {
+    const payload = JSON.stringify(entries)
+    this.#writeReplaySnapshot.run(threadId, seq, payload)
+    this.#rememberReplaySnapshot(threadId, seq, entries as ReplayEntry[], payload.length)
+    return payload
+  }
+
+  /** Build only non-default sidebar status rows in one database read. */
+  inboxProjections(): Map<string, InboxProjection> {
+    const projections = new Map<string, InboxProjection>()
+    for (const row of sqliteRows<ThreadEventRow>(this.#threadInboxEvents)) {
+      const projection = projections.get(row.thread_id) ?? emptyInboxProjection()
+      applyInboxProjectionEvent(projection, parseDomainEvent(row.payload))
+      if (isEmptyInboxProjection(projection)) projections.delete(row.thread_id)
+      else projections.set(row.thread_id, projection)
+    }
+    return projections
   }
 
   /** The final provider-owned patch shown for one turn. */
   turnDiff(threadId: string, turnId: string): string | undefined {
-    const row = sqliteRow<PayloadRow>(
-      this.#db.prepare(
-        `SELECT payload FROM events
-         WHERE thread_id = ?
-           AND json_extract(payload, '$.type') = 'diff.updated'
-           AND json_extract(payload, '$.turnId') = ?
-         ORDER BY seq DESC LIMIT 1`,
-      ),
-      threadId,
-      turnId,
-    )
+    const row = sqliteRow<PayloadRow>(this.#readTurnDiff, threadId, turnId)
     if (!row) return undefined
     const event = DomainEventSchema.parse(JSON.parse(row.payload))
     return event.type === 'diff.updated' ? event.diff : undefined
@@ -1415,119 +2373,103 @@ export class Store {
   searchSessions(options: SessionSearchOptions): SessionSearchPage {
     const requestedLimit = options.limit ?? 25
     const limit = Number.isSafeInteger(requestedLimit)
-      ? Math.min(Math.max(requestedLimit, 1), 100)
+      ? Math.min(Math.max(requestedLimit, 1), MAX_SEARCH_PAGE_SIZE)
       : 25
-    const ftsQuery = toFtsQuery(options.query)
-    if (!ftsQuery) return { results: [], nextCursor: null }
+    const terms = searchTerms(options.query)
+    if (terms.length === 0) return { results: [], nextCursor: null }
+    const ftsQuery = toFtsQuery(terms)
     const cursor = decodeCursor(options.cursor)
-    const clauses = ['session_search MATCH ?']
     const parameters: Array<string | number> = [ftsQuery]
+    let filterMask = 0
 
     if (options.projectPath) {
-      clauses.push('threads.project_path = ?')
+      filterMask |= 1
       parameters.push(options.projectPath)
     }
     if (options.provider) {
-      clauses.push('threads.provider = ?')
+      filterMask |= 2
       parameters.push(options.provider)
     }
 
     const now = Date.now()
-    this.#pruneSearchSnapshots(now, !cursor)
-    const snapshotId = cursor?.snapshotId ?? randomUUID()
+    this.#pruneSearchSnapshots(now, false)
+    let snapshotId: string
+    let snapshot: SearchSnapshot
     if (cursor) {
-      const snapshot = sqliteRow<SearchSnapshotRow>(
-        this.#db.prepare(
-          `SELECT fts_query, project_path, provider
-           FROM session_search_snapshots
-           WHERE id = ? AND expires_at > ?`,
-        ),
-        snapshotId,
-        now,
-      )
-      if (!snapshot) throw new Error('Search results expired. Search again.')
-      const expected: SearchSnapshot = {
-        ftsQuery,
-        projectPath: options.projectPath ?? null,
-        provider: options.provider ?? null,
+      snapshotId = cursor.snapshotId
+      const retained = this.#searchSnapshots.get(snapshotId)
+      if (!retained || retained.expiresAt <= now) {
+        this.#searchSnapshots.delete(snapshotId)
+        throw new Error('Search results expired. Search again.')
       }
       if (
-        snapshot.fts_query !== expected.ftsQuery ||
-        snapshot.project_path !== expected.projectPath ||
-        (snapshot.provider === null ? null : ProviderIdSchema.parse(snapshot.provider)) !==
-          expected.provider
+        retained.ftsQuery !== ftsQuery ||
+        retained.projectPath !== (options.projectPath ?? null) ||
+        retained.provider !== (options.provider ?? null)
       ) {
         throw new Error('Search cursor does not match this query.')
       }
-      this.#db
-        .prepare(`UPDATE session_search_snapshots SET expires_at = ? WHERE id = ?`)
-        .run(now + SEARCH_SNAPSHOT_TTL_MS, snapshotId)
+      retained.expiresAt = now + SEARCH_SNAPSHOT_TTL_MS
+      this.#searchSnapshots.delete(snapshotId)
+      this.#searchSnapshots.set(snapshotId, retained)
+      snapshot = retained
     } else {
-      this.#db.exec('SAVEPOINT create_search_snapshot')
-      try {
-        this.#db
-          .prepare(
-            `INSERT INTO session_search_snapshots
-               (id, fts_query, project_path, provider, expires_at)
-             VALUES (?, ?, ?, ?, ?)`,
-          )
-          .run(
-            snapshotId,
-            ftsQuery,
-            options.projectPath ?? null,
-            options.provider ?? null,
-            now + SEARCH_SNAPSHOT_TTL_MS,
-          )
-        this.#db
-          .prepare(
-            `INSERT INTO session_search_snapshot_rows
-               (snapshot_id, search_rowid, snippet)
-             SELECT ?, session_search.rowid,
-                    snippet(session_search, 4, ?, ?, ' … ', 24)
-             FROM session_search
-             JOIN threads ON threads.id = session_search.thread_id
-             JOIN projects ON projects.path = threads.project_path
-             WHERE ${clauses.join(' AND ')}
-             ORDER BY bm25(session_search), session_search.created_at DESC,
-                      session_search.rowid DESC`,
-          )
-          .run(snapshotId, SNIPPET_START, SNIPPET_END, ...parameters)
-        this.#db.exec('RELEASE create_search_snapshot')
-      } catch (error) {
-        this.#db.exec('ROLLBACK TO create_search_snapshot')
-        this.#db.exec('RELEASE create_search_snapshot')
-        throw error
+      const projectPath = options.projectPath ?? null
+      const provider = options.provider ?? null
+      let cached: [string, SearchSnapshot] | undefined
+      for (const entry of this.#searchSnapshots) {
+        const retained = entry[1]
+        if (
+          retained.revision === this.#searchRevision &&
+          retained.ftsQuery === ftsQuery &&
+          retained.projectPath === projectPath &&
+          retained.provider === provider
+        ) {
+          cached = entry
+          break
+        }
+      }
+      if (cached) {
+        snapshotId = cached[0]
+        snapshot = cached[1]
+        snapshot.expiresAt = now + SEARCH_SNAPSHOT_TTL_MS
+        this.#searchSnapshots.delete(snapshotId)
+        this.#searchSnapshots.set(snapshotId, snapshot)
+      } else {
+        this.#pruneSearchSnapshots(now, true)
+        const selectSnapshot = this.#selectSearchSnapshot.get(filterMask)
+        if (!selectSnapshot) throw new Error('search filter statement is unavailable')
+        const row = sqliteRow<SearchRowIdsRow>(selectSnapshot, ...parameters)
+        snapshotId = randomUUID()
+        snapshot = {
+          ftsQuery,
+          terms,
+          projectPath,
+          provider,
+          revision: this.#searchRevision,
+          expiresAt: now + SEARCH_SNAPSHOT_TTL_MS,
+          rowIds: parseSearchRowIds(row?.search_rowids ?? '[]'),
+        }
+        this.#searchSnapshots.set(snapshotId, snapshot)
       }
     }
 
     const position = cursor?.position ?? 0
+    const pageRowIds = searchRowIdPage(snapshot.rowIds, position, position + limit + 1)
     const rows = sqliteRows<SearchResultRow>(
-      this.#db.prepare(
-        `SELECT projects.path AS project_path, projects.name AS project_name,
-                 threads.id AS thread_id, threads.title AS thread_title,
-                 threads.provider, session_search.event_seq, session_search.turn_id,
-                 session_search.created_at,
-                 snapshot.position,
-                 snapshot.snippet
-         FROM session_search_snapshot_rows AS snapshot
-         JOIN session_search ON session_search.rowid = snapshot.search_rowid
-         JOIN threads ON threads.id = session_search.thread_id
-         JOIN projects ON projects.path = threads.project_path
-         WHERE snapshot.snapshot_id = ? AND snapshot.position > ?
-         ORDER BY snapshot.position
-         LIMIT ?`,
-      ),
-      snapshotId,
+      this.#readSearchResults,
       position,
-      limit + 1,
+      JSON.stringify(pageRowIds),
     )
 
     const page = rows.slice(0, limit)
+    const comparableTerms = terms.map(comparableSearchToken)
     const resultIds = encodeSearchResultIds(
       this.#searchResultKey,
       page.map((row) => Number(row.event_seq)),
     )
     const last = page.at(-1)
+    const hasMore = rows.length > limit && last !== undefined
     return {
       results: page.map((row, index) => ({
         resultId: resultIds[index]!,
@@ -1538,62 +2480,218 @@ export class Store {
         turnId: row.turn_id,
         provider: ProviderIdSchema.parse(row.provider),
         createdAt: Number(row.created_at),
-        snippet: parseSnippet(row.snippet),
+        snippet: createSearchSnippetWithComparableTerms(row.text, comparableTerms),
       })),
-      nextCursor:
-        rows.length > limit && last
-          ? encodeCursor({
-              snapshotId,
-              position: Number(last.position),
-            })
-          : null,
+      nextCursor: hasMore
+        ? encodeCursor({
+            snapshotId,
+            position: Number(last.position),
+          })
+        : null,
     }
   }
 
   #pruneSearchSnapshots(now: number, reserveSlot: boolean): void {
-    const expired = sqliteRows<IdentifierRow>(
-      this.#db.prepare(`SELECT id FROM session_search_snapshots WHERE expires_at <= ?`),
-      now,
-    ).map((row) => row.id)
-    const active = sqliteRows<IdentifierRow>(
-      this.#db.prepare(`SELECT id FROM session_search_snapshots ORDER BY expires_at DESC`),
-    ).map((row) => row.id)
+    for (const [snapshotId, snapshot] of this.#searchSnapshots) {
+      if (snapshot.expiresAt <= now) this.#searchSnapshots.delete(snapshotId)
+    }
     const retainedCount = MAX_SEARCH_SNAPSHOTS - (reserveSlot ? 1 : 0)
-    const overflow = active.slice(retainedCount)
-    for (const snapshotId of new Set([...expired, ...overflow])) {
-      this.#db
-        .prepare(`DELETE FROM session_search_snapshot_rows WHERE snapshot_id = ?`)
-        .run(snapshotId)
-      this.#db.prepare(`DELETE FROM session_search_snapshots WHERE id = ?`).run(snapshotId)
+    while (this.#searchSnapshots.size > retainedCount) {
+      const oldestSnapshotId = this.#searchSnapshots.keys().next().value
+      if (oldestSnapshotId === undefined) break
+      this.#searchSnapshots.delete(oldestSnapshotId)
     }
   }
 
-  #rebuildSearchIndex(): void {
-    // Batched: loading the entire events table into memory at construction
-    // was a startup hang for a database with months of streamed history.
+  #indexEvent(seq: number, threadId: string, at: number, event: DomainEvent): void {
+    const entry = searchableEntry(event)
+    if (!entry) return
+    this.#indexSearchEntry(seq, threadId, at, entry)
+  }
+
+  #indexSearchEntry(seq: number, threadId: string, at: number, entry: SearchableEntry): void {
+    const previousRevision = this.#searchRevision
+    this.#insertSearchEntry.run(seq, threadId, seq, entry.turnId, entry.createdAt ?? at, entry.text)
+    this.#searchRevision = previousRevision + 1
+    if (this.#searchSnapshots.size === 0) return
+    const thread = this.#threadCache.get(threadId)
+    let tokens: string[] | undefined
+    let tokensComputed = false
+    for (const snapshot of this.#searchSnapshots.values()) {
+      if (snapshot.revision !== previousRevision) continue
+      if (
+        thread &&
+        ((snapshot.projectPath !== null && snapshot.projectPath !== thread.projectPath) ||
+          (snapshot.provider !== null && snapshot.provider !== thread.provider))
+      ) {
+        snapshot.revision = this.#searchRevision
+        continue
+      }
+      if (!tokensComputed) {
+        tokens = asciiFtsTextTokens(entry.text)
+        tokensComputed = true
+      }
+      if (!tokens) continue
+      if (asciiFtsTokensDefinitelyMiss(snapshot.terms, tokens)) {
+        snapshot.revision = this.#searchRevision
+      }
+    }
+  }
+
+  #indexUsageEvent(seq: number, threadId: string, at: number, payload: string): void {
+    this.#insertUsageEvent.run(seq, threadId, at, payload)
+  }
+
+  #indexInboxEvent(seq: number, threadId: string, event: DomainEvent, payload: string): void {
+    if (event.type === 'approval.requested' || event.type === 'user_input.requested') {
+      this.#deleteInboxRequest.run(threadId, event.type, event.request.id)
+      this.#insertInboxEvent.run(seq, threadId, payload)
+      return
+    }
+    if (event.type === 'approval.resolved') {
+      this.#deleteInboxRequest.run(threadId, 'approval.requested', event.id)
+      return
+    }
+    if (event.type === 'user_input.resolved') {
+      this.#deleteInboxRequest.run(threadId, 'user_input.requested', event.id)
+      return
+    }
+    if (event.type === 'thread.error') {
+      this.#deleteInboxStatus.run(threadId)
+      this.#insertInboxEvent.run(seq, threadId, payload)
+      return
+    }
+    if (event.type === 'turn.completed') {
+      this.#deleteInboxStatus.run(threadId)
+      if (event.status === 'failed') this.#insertInboxEvent.run(seq, threadId, payload)
+    }
+  }
+
+  #indexUserSubmission(seq: number, threadId: string, itemId: string): void {
+    this.#insertUserSubmission.run(threadId, itemId, seq)
+  }
+
+  #indexTurnDiff(seq: number, threadId: string, turnId: string): void {
+    this.#insertTurnDiffEvent.run(seq, threadId, turnId)
+  }
+
+  #indexRecoveryMutation(
+    seq: number,
+    threadId: string,
+    mutation: RecoveryMutation,
+    payload: string,
+  ): void {
+    if (mutation.kind === 'start') {
+      this.#upsertRecoveryStart.run(
+        threadId,
+        mutation.lifecycleKey,
+        mutation.eventType,
+        seq,
+        payload,
+      )
+      return
+    }
+    if (mutation.kind === 'terminal') {
+      this.#settleRecoveryLifecycle.run(threadId, mutation.lifecycleKey, seq)
+      return
+    }
+    this.#upsertRecoveryError.run(threadId, seq)
+  }
+
+  #rebuildDerivedIndexes(rebuild: DerivedIndexRebuild): void {
+    const eventTypes = new Set<DomainEvent['type']>()
+    const include = (...types: DomainEvent['type'][]) => {
+      for (const type of types) eventTypes.add(type)
+    }
+    if (rebuild.search) include('item.completed')
+    if (rebuild.usage) include('usage.updated')
+    if (rebuild.inbox) {
+      include(
+        'approval.requested',
+        'approval.resolved',
+        'user_input.requested',
+        'user_input.resolved',
+        'thread.error',
+        'turn.completed',
+      )
+    }
+    if (rebuild.userSubmission) include('item.started', 'item.completed')
+    if (rebuild.turnDiff) include('diff.updated')
+    if (rebuild.recovery) {
+      include(
+        'turn.started',
+        'turn.completed',
+        'thread.error',
+        'item.started',
+        'item.completed',
+        'approval.requested',
+        'approval.resolved',
+        'user_input.requested',
+        'user_input.resolved',
+        'approval.review.started',
+        'approval.review.completed',
+      )
+    }
+
+    const types = [...eventTypes]
+    const placeholders = types.map(() => '?').join(', ')
     const batch = this.#db.prepare(
-      `SELECT seq, thread_id, at, payload FROM events WHERE seq > ? ORDER BY seq LIMIT 5000`,
+      `SELECT seq, thread_id, at, payload FROM events
+       WHERE seq > ? AND json_extract(payload, '$.type') IN (${placeholders})
+       ORDER BY seq LIMIT 5000`,
+    )
+    const saveMigration = this.#db.prepare(
+      `INSERT OR REPLACE INTO schema_migrations (name) VALUES (?)`,
     )
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      this.#db.exec(`DELETE FROM session_search`)
+      if (rebuild.search) this.#db.exec(`DELETE FROM session_search`)
+      if (rebuild.usage) this.#db.exec(`DELETE FROM usage_events`)
+      if (rebuild.inbox) this.#db.exec(`DELETE FROM inbox_events`)
+      if (rebuild.userSubmission) this.#db.exec(`DELETE FROM user_submission_items`)
+      if (rebuild.turnDiff) this.#db.exec(`DELETE FROM turn_diff_events`)
+      if (rebuild.recovery) {
+        this.#db.exec(`DELETE FROM recovery_lifecycles; DELETE FROM recovery_errors`)
+      }
+
       let cursor = 0
       for (;;) {
-        const rows = sqliteRows<EventRow>(batch, cursor)
+        const rows = sqliteRows<EventRow>(batch, cursor, ...types)
         if (rows.length === 0) break
         for (const row of rows) {
-          this.#indexEvent(
-            Number(row.seq),
-            row.thread_id,
-            Number(row.at),
-            DomainEventSchema.parse(JSON.parse(row.payload)),
-          )
+          const event = DomainEventSchema.parse(JSON.parse(row.payload))
+          const seq = Number(row.seq)
+          const at = Number(row.at)
+          if (rebuild.search) this.#indexEvent(seq, row.thread_id, at, event)
+          if (rebuild.usage && event.type === 'usage.updated') {
+            this.#indexUsageEvent(seq, row.thread_id, at, row.payload)
+          }
+          if (rebuild.inbox && affectsInboxProjection(event)) {
+            this.#indexInboxEvent(seq, row.thread_id, event, row.payload)
+          }
+          if (rebuild.userSubmission) {
+            const itemId = userSubmissionItemId(event)
+            if (itemId) this.#indexUserSubmission(seq, row.thread_id, itemId)
+          }
+          if (rebuild.turnDiff && event.type === 'diff.updated') {
+            this.#indexTurnDiff(seq, row.thread_id, event.turnId)
+          }
+          if (rebuild.recovery) {
+            const mutation = recoveryMutation(event)
+            if (mutation) {
+              this.#indexRecoveryMutation(seq, row.thread_id, mutation, row.payload)
+            }
+          }
         }
         cursor = Number(rows.at(-1)?.seq ?? cursor)
       }
-      this.#db
-        .prepare(`INSERT OR REPLACE INTO schema_migrations (name) VALUES (?)`)
-        .run(SEARCH_INDEX_VERSION)
+
+      if (rebuild.search) saveMigration.run(SEARCH_INDEX_VERSION)
+      if (rebuild.usage) saveMigration.run(USAGE_INDEX_VERSION)
+      if (rebuild.inbox) saveMigration.run(INBOX_INDEX_VERSION)
+      if (rebuild.userSubmission) saveMigration.run(USER_SUBMISSION_INDEX_VERSION)
+      if (rebuild.turnDiff) saveMigration.run(TURN_DIFF_INDEX_VERSION)
+      if (rebuild.recovery) saveMigration.run(RECOVERY_STATE_VERSION)
       this.#db.exec('COMMIT')
     } catch (error) {
       this.#db.exec('ROLLBACK')
@@ -1601,35 +2699,54 @@ export class Store {
     }
   }
 
-  #indexEvent(seq: number, threadId: string, at: number, event: DomainEvent): void {
-    const entry = searchableEntry(event)
-    if (!entry) return
-    this.#insertSearchEntry.run(seq, threadId, seq, entry.turnId, entry.createdAt ?? at, entry.text)
-  }
-
-  /** Persistent totals derived from the event log that already owns usage. */
-  usageEvents(): StoredUsageEvent[] {
-    const rows = sqliteRows<UsageEventRow>(
+  #rebuildThreadRecoveryState(threadId: string): void {
+    this.#db.prepare(`DELETE FROM recovery_lifecycles WHERE thread_id = ?`).run(threadId)
+    this.#db.prepare(`DELETE FROM recovery_errors WHERE thread_id = ?`).run(threadId)
+    const rows = sqliteRows<EventRow>(
       this.#db.prepare(
-        `SELECT e.thread_id, e.at, e.payload, t.provider
-         FROM events e JOIN threads t ON t.id = e.thread_id
-         WHERE e.payload LIKE '%"usage.updated"%'
-         ORDER BY e.thread_id, e.seq`,
+        `SELECT seq, thread_id, at, payload
+         FROM events
+         WHERE thread_id = ?
+           AND json_extract(payload, '$.type') IN (
+             'turn.started', 'turn.completed', 'thread.error',
+             'item.started', 'item.completed',
+             'approval.requested', 'approval.resolved',
+             'user_input.requested', 'user_input.resolved',
+             'approval.review.started', 'approval.review.completed'
+           )
+         ORDER BY seq`,
       ),
+      threadId,
     )
-
-    const events: StoredUsageEvent[] = []
     for (const row of rows) {
       const event = DomainEventSchema.parse(JSON.parse(row.payload))
-      if (event.type !== 'usage.updated') continue
-      events.push({
-        threadId: row.thread_id,
-        provider: ProviderIdSchema.parse(row.provider),
-        at: Number(row.at),
-        usage: event.usage,
-      })
+      const mutation = recoveryMutation(event)
+      if (mutation) {
+        this.#indexRecoveryMutation(Number(row.seq), row.thread_id, mutation, row.payload)
+      }
     }
-    return events
+  }
+
+  #rebuildThreadInboxState(threadId: string): void {
+    this.#deleteThreadInboxEvents.run(threadId)
+    const rows = sqliteRows<EventRow>(
+      this.#db.prepare(
+        `SELECT seq, thread_id, at, payload
+         FROM events
+         WHERE thread_id = ?
+           AND json_extract(payload, '$.type') IN (
+             'approval.requested', 'approval.resolved',
+             'user_input.requested', 'user_input.resolved',
+             'thread.error', 'turn.completed'
+           )
+         ORDER BY seq`,
+      ),
+      threadId,
+    )
+    for (const row of rows) {
+      const event = DomainEventSchema.parse(JSON.parse(row.payload))
+      this.#indexInboxEvent(Number(row.seq), row.thread_id, event, row.payload)
+    }
   }
 
   usageSummary(threadId: string, since: number): UsageSummary {
@@ -1655,8 +2772,8 @@ export class Store {
     {
       const rows = sqliteRows<PayloadRow>(
         this.#db.prepare(
-          `SELECT payload FROM events
-           WHERE thread_id = ? AND payload LIKE '%"usage.updated"%' ORDER BY seq`,
+          `SELECT payload FROM usage_events
+           WHERE thread_id = ? ORDER BY event_seq`,
         ),
         threadId,
       )
@@ -1679,11 +2796,11 @@ export class Store {
       const previous = new Map<string, UsageTotal>()
       const seeds = sqliteRows<ThreadPayloadRow>(
         this.#db.prepare(
-          `SELECT e.thread_id, e.payload
-           FROM events e
-           JOIN (SELECT thread_id, MAX(seq) AS seq FROM events
-                 WHERE payload LIKE '%"usage.updated"%' AND at < ? GROUP BY thread_id) last
-             ON e.thread_id = last.thread_id AND e.seq = last.seq`,
+          `SELECT u.thread_id, u.payload
+           FROM usage_events u
+           JOIN (SELECT thread_id, MAX(event_seq) AS event_seq FROM usage_events
+                 WHERE at < ? GROUP BY thread_id) last
+             ON u.thread_id = last.thread_id AND u.event_seq = last.event_seq`,
         ),
         since,
       )
@@ -1694,10 +2811,10 @@ export class Store {
 
       const rows = sqliteRows<ThreadPayloadRow>(
         this.#db.prepare(
-          `SELECT e.thread_id, e.payload, t.provider
-           FROM events e JOIN threads t ON t.id = e.thread_id
-           WHERE e.at >= ? AND e.payload LIKE '%"usage.updated"%'
-           ORDER BY e.thread_id, e.seq`,
+          `SELECT u.thread_id, u.payload, t.provider
+           FROM usage_events u JOIN threads t ON t.id = u.thread_id
+           WHERE u.at >= ?
+           ORDER BY u.thread_id, u.event_seq`,
         ),
         since,
       )
@@ -1717,6 +2834,52 @@ export class Store {
   }
 
   // ---- checkpoints -------------------------------------------------------
+
+  recordCheckpointRepository(repoPath: string): void {
+    this.#db.prepare('INSERT OR IGNORE INTO checkpoint_repositories(path) VALUES (?)').run(repoPath)
+  }
+
+  checkpointRepositories(): string[] {
+    return sqliteRows<{ path: string }>(
+      this.#db.prepare('SELECT path FROM checkpoint_repositories'),
+    ).map((row) => row.path)
+  }
+
+  /** Include the hidden conversation tail needed to undo a restore. */
+  checkpointReferences(): Array<{
+    threadId: string
+    projectPath: string
+    worktreePath?: string
+    commits: Set<string>
+  }> {
+    const result = new Map<
+      string,
+      { threadId: string; projectPath: string; worktreePath?: string; commits: Set<string> }
+    >()
+    const add = (threadId: string, commit: string) => {
+      const thread = this.thread(threadId)
+      if (!thread) return
+      let entry = result.get(threadId)
+      if (!entry) {
+        entry = {
+          threadId,
+          projectPath: thread.projectPath,
+          ...(thread.worktreePath ? { worktreePath: thread.worktreePath } : {}),
+          commits: new Set(),
+        }
+        result.set(threadId, entry)
+      }
+      entry.commits.add(commit)
+    }
+    for (const row of sqliteRows<CheckpointRow>(this.#db.prepare('SELECT * FROM checkpoints')))
+      add(row.thread_id, row.commit_sha)
+    for (const row of sqliteRows<RestoreUndoRow>(this.#db.prepare('SELECT * FROM restore_undos'))) {
+      add(row.thread_id, row.snapshot_commit)
+      for (const checkpoint of StoredCheckpointRowsSchema.parse(JSON.parse(row.checkpoints_json)))
+        add(row.thread_id, checkpoint.commit_sha)
+    }
+    return [...result.values()]
+  }
 
   addCheckpoint(entry: {
     threadId: string
@@ -1774,14 +2937,23 @@ export class Store {
    * two different stories.
    */
   #truncateAfter(threadId: string, seq: number): void {
+    this.#deleteReplaySnapshot.run(threadId)
+    this.#deleteCachedReplaySnapshot(threadId)
     this.#db
       .prepare(
         `DELETE FROM session_search
          WHERE rowid IN (SELECT seq FROM events WHERE thread_id = ? AND seq > ?)`,
       )
       .run(threadId, seq)
+    this.#searchRevision += 1
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
+    // The inbox index keeps only current state. Rebuild this one thread so a
+    // removed resolution or terminal event exposes the retained state again.
+    this.#rebuildThreadInboxState(threadId)
+    // Terminal rows are compact tombstones. Rebuild this one thread so a
+    // removed terminal event exposes the retained start again.
+    this.#rebuildThreadRecoveryState(threadId)
   }
 
   /** Save and remove the conversation tail so a restore remains reversible. */
@@ -1846,17 +3018,32 @@ export class Store {
 
     this.#db.exec('BEGIN IMMEDIATE')
     try {
+      this.#deleteReplaySnapshot.run(threadId)
+      this.#deleteCachedReplaySnapshot(threadId)
       const insertEvent = this.#db.prepare(
         `INSERT INTO events (seq, thread_id, at, payload) VALUES (?, ?, ?, ?)`,
       )
       for (const event of events) {
         insertEvent.run(event.seq, event.thread_id, event.at, event.payload)
-        this.#indexEvent(
-          event.seq,
-          event.thread_id,
-          event.at,
-          DomainEventSchema.parse(JSON.parse(event.payload)),
-        )
+        const parsed = DomainEventSchema.parse(JSON.parse(event.payload))
+        this.#indexEvent(event.seq, event.thread_id, event.at, parsed)
+        if (parsed.type === 'usage.updated') {
+          this.#indexUsageEvent(event.seq, event.thread_id, event.at, event.payload)
+        }
+        if (affectsInboxProjection(parsed)) {
+          this.#indexInboxEvent(event.seq, event.thread_id, parsed, event.payload)
+        }
+        const userSubmissionId = userSubmissionItemId(parsed)
+        if (userSubmissionId) {
+          this.#indexUserSubmission(event.seq, event.thread_id, userSubmissionId)
+        }
+        if (parsed.type === 'diff.updated') {
+          this.#indexTurnDiff(event.seq, event.thread_id, parsed.turnId)
+        }
+        const recovery = recoveryMutation(parsed)
+        if (recovery) {
+          this.#indexRecoveryMutation(event.seq, event.thread_id, recovery, event.payload)
+        }
       }
       const insertCheckpoint = this.#db.prepare(
         `INSERT INTO checkpoints (id, thread_id, seq, commit_sha, label, created_at)
@@ -1881,18 +3068,13 @@ export class Store {
   }
 
   lastSeq(threadId: string): number {
-    const row = sqliteRow<MaxSequenceRow>(
-      this.#db.prepare(`SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`),
-      threadId,
-    )
+    const row = sqliteRow<MaxSequenceRow>(this.#lastSequence, threadId)
     const seq = row?.seq ?? null
     return seq ? Number(seq) : 0
   }
 }
 
-function searchableEntry(
-  event: DomainEvent,
-): { turnId: string; createdAt?: number | undefined; text: string } | undefined {
+function searchableEntry(event: DomainEvent): SearchableEntry | undefined {
   if (event.type !== 'item.completed') return undefined
   const { item } = event
   const text =
@@ -1905,6 +3087,60 @@ function searchableEntry(
           : undefined
   if (!text?.trim()) return undefined
   return { turnId: item.turnId, createdAt: item.createdAt, text }
+}
+
+function userSubmissionItemId(event: DomainEvent): string | undefined {
+  if (event.type !== 'item.started' && event.type !== 'item.completed') return undefined
+  return event.item.type === 'message' && event.item.role === 'user' ? event.item.id : undefined
+}
+
+function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
+  switch (event.type) {
+    case 'turn.started':
+      return {
+        kind: 'start',
+        eventType: event.type,
+        lifecycleKey: `turn:${event.turn.id}`,
+      }
+    case 'turn.completed':
+      return { kind: 'terminal', lifecycleKey: `turn:${event.turnId}` }
+    case 'item.started':
+      return {
+        kind: 'start',
+        eventType: event.type,
+        lifecycleKey: `item:${event.item.id}`,
+      }
+    case 'item.completed':
+      return { kind: 'terminal', lifecycleKey: `item:${event.item.id}` }
+    case 'approval.requested':
+      return {
+        kind: 'start',
+        eventType: event.type,
+        lifecycleKey: `approval:${event.request.id}`,
+      }
+    case 'approval.resolved':
+      return { kind: 'terminal', lifecycleKey: `approval:${event.id}` }
+    case 'user_input.requested':
+      return {
+        kind: 'start',
+        eventType: event.type,
+        lifecycleKey: `input:${event.request.id}`,
+      }
+    case 'user_input.resolved':
+      return { kind: 'terminal', lifecycleKey: `input:${event.id}` }
+    case 'approval.review.started':
+      return {
+        kind: 'start',
+        eventType: event.type,
+        lifecycleKey: `review:${event.review.id}`,
+      }
+    case 'approval.review.completed':
+      return { kind: 'terminal', lifecycleKey: `review:${event.review.id}` }
+    case 'thread.error':
+      return { kind: 'error' }
+    default:
+      return undefined
+  }
 }
 
 function encodeSearchResultIds(key: Buffer, eventSeqs: number[]): string[] {
@@ -1921,11 +3157,28 @@ function encodeSearchResultIds(key: Buffer, eventSeqs: number[]): string[] {
   )
 }
 
-function toFtsQuery(query: string): string | undefined {
+function searchTerms(query: string): string[] {
   const terms = query.normalize('NFKC').toLowerCase().match(SEARCH_TOKEN) ?? []
-  const uniqueTerms = [...new Set(terms)]
-  if (uniqueTerms.length === 0) return undefined
-  return uniqueTerms.map((term) => `("${term}" OR "${term}"*)`).join(' AND ')
+  return [...new Set(terms)]
+}
+
+function asciiFtsTextTokens(value: string): string[] | undefined {
+  if (value.length > SEARCH_SNAPSHOT_REUSE_SCAN_LIMIT || !ASCII_SEARCH_TEXT.test(value)) {
+    return undefined
+  }
+  return value.toLowerCase().match(ASCII_FTS_TEXT_TOKEN) ?? []
+}
+
+function asciiFtsTokensDefinitelyMiss(search: readonly string[], text: readonly string[]): boolean {
+  for (const term of search) {
+    if (!ASCII_FTS_SEARCH_TERM.test(term)) continue
+    if (!text.some((token) => token.startsWith(term))) return true
+  }
+  return false
+}
+
+function toFtsQuery(terms: readonly string[]): string {
+  return terms.map((term) => `("${term}" OR "${term}"*)`).join(' AND ')
 }
 
 function encodeCursor(cursor: SearchCursor): string {
@@ -1941,28 +3194,263 @@ function decodeCursor(cursor: string | undefined): SearchCursor | undefined {
   }
 }
 
-function parseSnippet(value: string): SessionSearchResult['snippet'] {
+export function createSearchSnippet(
+  value: string,
+  terms: readonly string[],
+): SessionSearchResult['snippet'] {
+  return createSearchSnippetWithComparableTerms(value, terms.map(comparableSearchToken))
+}
+
+function createSearchSnippetWithComparableTerms(
+  value: string,
+  comparableTerms: readonly string[],
+): SessionSearchResult['snippet'] {
+  const asciiMatcher = asciiSnippetMatcher(value, comparableTerms)
+  if (asciiMatcher) return createAsciiSearchSnippet(value, comparableTerms, asciiMatcher)
+
+  const tokenLimit = 24
+  const recentLimit = tokenLimit - 1
+  const recent: SearchSnippetToken[] = []
+  const firstTokens: SearchSnippetToken[] = []
+  const iterator = value.matchAll(SEARCH_TOKEN)[Symbol.iterator]()
+  let recentStart = 0
+  let tokenCount = 0
+  let firstMatch = -1
+  let selectedPriorCount = 0
+  let preceding: SearchSnippetToken[] = []
+  let tokens: SearchSnippetToken[] | undefined
+  let endsAtValueEnd = true
+
+  while (true) {
+    const next = iterator.next()
+    if (next.done) break
+    const match = next.value
+    const start = match.index
+    const text = match[0]
+    const token = {
+      start,
+      end: start + text.length,
+      highlighted: comparableTerms.some((term) => comparableSearchToken(text).startsWith(term)),
+    }
+    const tokenIndex = tokenCount
+    tokenCount += 1
+
+    if (tokens) {
+      tokens.push(token)
+      if (tokens.length < tokenLimit) continue
+      endsAtValueEnd = iterator.next().done === true
+      break
+    }
+
+    if (firstTokens.length < tokenLimit) firstTokens.push(token)
+    if (token.highlighted) {
+      firstMatch = tokenIndex
+      preceding =
+        recentStart === 0
+          ? recent.slice()
+          : [...recent.slice(recentStart), ...recent.slice(0, recentStart)]
+      selectedPriorCount = Math.min(6, preceding.length)
+      tokens = [...preceding.slice(-selectedPriorCount), token]
+      continue
+    }
+
+    if (recent.length < recentLimit) recent.push(token)
+    else {
+      recent[recentStart] = token
+      recentStart = (recentStart + 1) % recentLimit
+    }
+  }
+
+  if (tokenCount === 0) return [{ text: value, highlighted: false }]
+
+  let firstToken = 0
+  if (!tokens) {
+    tokens = firstTokens
+    endsAtValueEnd = tokenCount <= tokenLimit
+  } else {
+    if (endsAtValueEnd && tokens.length < tokenLimit) {
+      const unselectedPriorCount = preceding.length - selectedPriorCount
+      const additionalPriorCount = Math.min(tokenLimit - tokens.length, unselectedPriorCount)
+      if (additionalPriorCount > 0) {
+        const end = preceding.length - selectedPriorCount
+        tokens = [...preceding.slice(end - additionalPriorCount, end), ...tokens]
+        selectedPriorCount += additionalPriorCount
+      }
+    }
+    firstToken = firstMatch - selectedPriorCount
+  }
+
+  return formatSearchSnippet(value, tokens, firstToken === 0, endsAtValueEnd)
+}
+
+function asciiSnippetMatcher(
+  value: string,
+  comparableTerms: readonly string[],
+): RegExp | undefined {
+  if (
+    comparableTerms.length === 0 ||
+    !comparableTerms.every((term) => ASCII_COMPARABLE_SEARCH_TERM.test(term))
+  ) {
+    return undefined
+  }
+  const matcher = new RegExp(comparableTerms.join('|'), 'gi')
+  const firstRawMatch = matcher.exec(value)
+  if (firstRawMatch && firstRawMatch.index < ASCII_SNIPPET_SCAN_THRESHOLD) return undefined
+  if (!ASCII_SEARCH_TEXT.test(value)) return undefined
+  matcher.lastIndex = 0
+  return matcher
+}
+
+function createAsciiSearchSnippet(
+  value: string,
+  comparableTerms: readonly string[],
+  matcher: RegExp,
+): SessionSearchResult['snippet'] {
+  const firstMatch = firstAsciiSearchMatch(value, matcher)
+  if (firstMatch === undefined) {
+    const tokens = nextAsciiSearchTokens(value, 0, 25)
+    return formatSearchSnippet(
+      value,
+      highlightAsciiSearchTokens(value, tokens.slice(0, 24), comparableTerms),
+      true,
+      tokens.length <= 24,
+    )
+  }
+
+  const matched = nextAsciiSearchToken(value, firstMatch)
+  if (!matched) return [{ text: value, highlighted: false }]
+
+  const previous: SearchSnippetToken[] = []
+  let cursor = matched.start
+  while (previous.length < 24) {
+    const token = previousAsciiSearchToken(value, cursor)
+    if (!token) break
+    previous.push(token)
+    cursor = token.start
+  }
+  const following = nextAsciiSearchTokens(value, matched.end, 24)
+  const selectedFollowingCount = Math.min(17, following.length)
+  const selectedPriorCount = Math.min(23 - selectedFollowingCount, previous.length)
+  const selected = [
+    ...previous.slice(0, selectedPriorCount).reverse(),
+    matched,
+    ...following.slice(0, 23 - selectedPriorCount),
+  ]
+  const selectedFollowing = selected.length - selectedPriorCount - 1
+  return formatSearchSnippet(
+    value,
+    highlightAsciiSearchTokens(value, selected, comparableTerms),
+    previous.length <= selectedPriorCount,
+    following.length <= selectedFollowing,
+  )
+}
+
+function firstAsciiSearchMatch(value: string, matcher: RegExp): number | undefined {
+  let match = matcher.exec(value)
+  while (match) {
+    if (isAsciiSearchTokenStart(value, match.index)) return match.index
+    match = matcher.exec(value)
+  }
+  return undefined
+}
+
+function isAsciiSearchTokenStart(value: string, index: number): boolean {
+  let cursor = index - 1
+  while (cursor >= 0 && value.charCodeAt(cursor) === 95) cursor -= 1
+  return cursor < 0 || !isAsciiSearchTokenInitial(value.charCodeAt(cursor))
+}
+
+function nextAsciiSearchTokens(value: string, from: number, limit: number): SearchSnippetToken[] {
+  const tokens: SearchSnippetToken[] = []
+  let cursor = from
+  while (tokens.length < limit) {
+    const token = nextAsciiSearchToken(value, cursor)
+    if (!token) break
+    tokens.push(token)
+    cursor = token.end
+  }
+  return tokens
+}
+
+function nextAsciiSearchToken(value: string, from: number): SearchSnippetToken | undefined {
+  let start = from
+  while (start < value.length && !isAsciiSearchTokenInitial(value.charCodeAt(start))) start += 1
+  if (start >= value.length) return undefined
+  let end = start + 1
+  while (end < value.length && isAsciiSearchTokenContinuation(value.charCodeAt(end))) end += 1
+  return { start, end, highlighted: false }
+}
+
+function previousAsciiSearchToken(value: string, before: number): SearchSnippetToken | undefined {
+  let end = before
+  while (end > 0) {
+    let cursor = end - 1
+    while (cursor >= 0 && !isAsciiSearchTokenContinuation(value.charCodeAt(cursor))) cursor -= 1
+    if (cursor < 0) return undefined
+    const tokenEnd = cursor + 1
+    while (cursor >= 0 && isAsciiSearchTokenContinuation(value.charCodeAt(cursor))) cursor -= 1
+    const runStart = cursor + 1
+    let start = runStart
+    while (start < tokenEnd && !isAsciiSearchTokenInitial(value.charCodeAt(start))) start += 1
+    if (start < tokenEnd) return { start, end: tokenEnd, highlighted: false }
+    end = runStart
+  }
+  return undefined
+}
+
+function isAsciiSearchTokenInitial(code: number): boolean {
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+}
+
+function isAsciiSearchTokenContinuation(code: number): boolean {
+  return code === 95 || isAsciiSearchTokenInitial(code)
+}
+
+function highlightAsciiSearchTokens(
+  value: string,
+  tokens: readonly SearchSnippetToken[],
+  comparableTerms: readonly string[],
+): SearchSnippetToken[] {
+  return tokens.map((token) => ({
+    ...token,
+    highlighted: comparableTerms.some((term) =>
+      value.slice(token.start, token.end).toLowerCase().startsWith(term),
+    ),
+  }))
+}
+
+function formatSearchSnippet(
+  value: string,
+  tokens: readonly SearchSnippetToken[],
+  startsAtValueStart: boolean,
+  endsAtValueEnd: boolean,
+): SessionSearchResult['snippet'] {
+  if (tokens.length === 0) return [{ text: value, highlighted: false }]
+  const start = startsAtValueStart ? 0 : tokens[0]!.start
+  const end = endsAtValueEnd ? value.length : tokens.at(-1)!.end
   const parts: SessionSearchResult['snippet'] = []
-  let highlighted = false
-  let text = ''
-  const push = () => {
+  const append = (text: string, highlighted: boolean) => {
     if (!text) return
     const previous = parts.at(-1)
     if (previous?.highlighted === highlighted) previous.text += text
     else parts.push({ text, highlighted })
-    text = ''
   }
 
-  for (const character of value) {
-    if (character === SNIPPET_START || character === SNIPPET_END) {
-      push()
-      highlighted = character === SNIPPET_START
-    } else {
-      text += character
-    }
+  if (start > 0) append('… ', false)
+  let cursor = start
+  for (const token of tokens) {
+    append(value.slice(cursor, token.start), false)
+    append(value.slice(token.start, token.end), token.highlighted)
+    cursor = token.end
   }
-  push()
+  append(value.slice(cursor, end), false)
+  if (end < value.length) append(' …', false)
   return parts.length > 0 ? parts : [{ text: value, highlighted: false }]
+}
+
+function comparableSearchToken(value: string): string {
+  if (ASCII_SEARCH_TOKEN.test(value)) return value.toLowerCase()
+  return value.normalize('NFKD').toLowerCase().replace(SEARCH_COMBINING_MARK, '')
 }
 
 type UsageTotal = Omit<Usage, 'contextWindow' | 'model' | 'cumulative' | 'inputIncludesCached'>
@@ -2046,34 +3534,122 @@ function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn {
   }
 }
 
-function toThread(row: ThreadRow): StoredThread {
-  // Null timestamps (rows migrated before these columns existed) must not
-  // become NaN — a snoozed thread with NaN wakeAt can never be woken.
-  const lifecycle = ThreadLifecycleSchema.parse(
-    row.lifecycle_state === 'settled'
-      ? {
-          state: 'settled',
-          settledAt: Number(row.lifecycle_at ?? row.created_at),
-          reason: row.lifecycle_reason ?? 'manual',
-        }
-      : row.lifecycle_state === 'snoozed'
-        ? {
-            state: 'snoozed',
-            snoozedAt: Number(row.lifecycle_at ?? row.created_at),
-            wakeAt: Number(row.wake_at ?? row.created_at),
-          }
-        : row.lifecycle_state === 'active'
-          ? {
-              state: 'active',
-              keepActive: row.keep_active === 1,
-              ...(row.woke_at === null ? {} : { wokeAt: Number(row.woke_at) }),
-            }
-          : { state: row.lifecycle_state },
-  )
+function parseDomainEvent(serialized: string): DomainEvent {
+  const value: unknown = JSON.parse(serialized)
+  if (value !== null && typeof value === 'object') {
+    const event = value as Record<string, unknown>
+    if (
+      event.type === 'item.delta' &&
+      typeof event.turnId === 'string' &&
+      typeof event.itemId === 'string' &&
+      typeof event.textDelta === 'string'
+    ) {
+      return {
+        type: 'item.delta',
+        turnId: event.turnId,
+        itemId: event.itemId,
+        textDelta: event.textDelta,
+      }
+    }
+  }
+  return DomainEventSchema.parse(value)
+}
+
+function toProviderId(provider: string): ProviderId {
+  switch (provider) {
+    case 'codex':
+    case 'claude-code':
+    case 'grok':
+    case 'cursor':
+    case 'opencode':
+    case 'antigravity':
+    case 'pi':
+    case 'acp':
+    case 'api':
+      return provider
+    default:
+      return ProviderIdSchema.parse(provider)
+  }
+}
+
+function isLifecycleReason(reason: string): reason is 'manual' | 'inactivity' | 'change_request' {
+  return reason === 'manual' || reason === 'inactivity' || reason === 'change_request'
+}
+
+function isNonnegativeInteger(value: number): boolean {
+  return Number.isInteger(value) && value >= 0
+}
+
+const ACTIVE_LIFECYCLE = Object.freeze({ state: 'active' as const, keepActive: false })
+const KEPT_ACTIVE_LIFECYCLE = Object.freeze({ state: 'active' as const, keepActive: true })
+
+function activeLifecycle(keepActive: boolean, wokeAt: number | undefined): ThreadLifecycle {
+  if (wokeAt === undefined) return keepActive ? KEPT_ACTIVE_LIFECYCLE : ACTIVE_LIFECYCLE
+  return { state: 'active', keepActive, wokeAt }
+}
+
+function toActiveLifecycle(row: ActiveLifecycleRow): ThreadLifecycle {
+  const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
+  const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
+  return wokeAt === undefined || isNonnegativeInteger(wokeAt)
+    ? lifecycle
+    : ThreadLifecycleSchema.parse(lifecycle)
+}
+
+function toThreadLifecycle(row: ThreadLifecycleRow): ThreadLifecycle {
+  if (row.lifecycle_state === 'settled') {
+    const settledAt = Number(row.lifecycle_at ?? row.created_at)
+    const reason = row.lifecycle_reason ?? 'manual'
+    if (isNonnegativeInteger(settledAt) && isLifecycleReason(reason)) {
+      return { state: 'settled', settledAt, reason }
+    }
+    return ThreadLifecycleSchema.parse({ state: 'settled', settledAt, reason })
+  }
+
+  if (row.lifecycle_state === 'snoozed') {
+    const snoozedAt = Number(row.lifecycle_at ?? row.created_at)
+    const wakeAt = Number(row.wake_at ?? row.created_at)
+    const lifecycle = { state: 'snoozed' as const, snoozedAt, wakeAt }
+    return isNonnegativeInteger(snoozedAt) && isNonnegativeInteger(wakeAt)
+      ? lifecycle
+      : ThreadLifecycleSchema.parse(lifecycle)
+  }
+
+  if (row.lifecycle_state === 'active') {
+    const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
+    const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
+    return wokeAt === undefined || isNonnegativeInteger(wokeAt)
+      ? lifecycle
+      : ThreadLifecycleSchema.parse(lifecycle)
+  }
+
+  return ThreadLifecycleSchema.parse({ state: row.lifecycle_state })
+}
+
+function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread {
   return {
     id: row.id,
     projectPath: row.project_path,
-    provider: ProviderIdSchema.parse(row.provider),
+    provider: toProviderId(row.provider),
+    ...(row.agent === null ? {} : { agent: row.agent }),
+    title: row.title,
+    pinned: row.pinned === 1,
+    createdAt: Number(row.created_at),
+    ...(row.closed_at === null ? {} : { closedAt: Number(row.closed_at) }),
+    ...(row.worktree_branch === null ? {} : { worktreeBranch: row.worktree_branch }),
+    lifecycle: toThreadLifecycle(row),
+    unread: row.unread === 1,
+  }
+}
+
+function toThread(row: ThreadRow): StoredThread {
+  // Null timestamps (rows migrated before these columns existed) must not
+  // become NaN — a snoozed thread with NaN wakeAt can never be woken.
+  const lifecycle = toThreadLifecycle(row)
+  return {
+    id: row.id,
+    projectPath: row.project_path,
+    provider: toProviderId(row.provider),
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,

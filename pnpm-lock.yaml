@@ -155,6 +155,9 @@ importers:
       '@fontsource-variable/geist-mono':
         specifier: ^5.3.0
         version: 5.3.0
+      '@fontsource-variable/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
@@ -164,6 +167,9 @@ importers:
       '@pierre/diffs':
         specifier: ^1.3.5
         version: 1.3.5(patch_hash=a4942319fdd2393ae2e617fb0e15f09bb9e1db9947933551590baca0028daf3a)(@shikijs/themes@4.3.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@tabler/icons-react':
+        specifier: ^3.46.0
+        version: 3.46.0(react@19.2.8)
       '@tanstack/react-virtual':
         specifier: ^3.14.8
         version: 3.14.8(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -182,12 +188,6 @@ importers:
       '@xterm/xterm':
         specifier: 6.0.0
         version: 6.0.0
-      border-beam:
-        specifier: 1.3.0
-        version: 1.3.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      lucide-react:
-        specifier: ^1.27.0
-        version: 1.27.0(react@19.2.8)
       micromark:
         specifier: 4.0.2
         version: 4.0.2
@@ -287,6 +287,9 @@ importers:
       '@harness/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@harness/proc':
+        specifier: workspace:*
+        version: link:../proc
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
@@ -776,6 +779,9 @@ packages:
   '@fontsource-variable/geist@5.3.0':
     resolution: {integrity: sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA==}
 
+  '@fontsource-variable/inter@5.3.0':
+    resolution: {integrity: sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==}
+
   '@fontsource-variable/jetbrains-mono@5.3.0':
     resolution: {integrity: sha512-F32xpS2NsGYoQi2ADSkKTgpJj7ozajsGgDJ8woTnqjmIB+dxDIqImjl4pXZVEExu8UFZ2ndhmX18EBS/hdz3Lw==}
 
@@ -1249,6 +1255,14 @@ packages:
     resolution: {integrity: sha512-4BAffykYOgO+5nzBWYwE3W90sBgLJoUPRWWcL8wlyiM8IB8ipJz3UMJ9KXQd1RKQXpKp8Tutn80HZtWsu2u76w==}
     engines: {node: '>=10'}
 
+  '@tabler/icons-react@3.46.0':
+    resolution: {integrity: sha512-CCm7xJWhDT2PH4ZIFkP6AgYKtVhq0gpYkjUN+GVh1AzmIQaa77OW0bQPBPQiTE0PsXMR9oSxFqA3qBglzPyrVQ==}
+    peerDependencies:
+      react: '>= 16'
+
+  '@tabler/icons@3.46.0':
+    resolution: {integrity: sha512-f2RYFl3fzPwj5WO82x6en0dmkjefxEfOm16D1ByM6cj/McNiwOkL4VaPUoP9VVIrXAD9WnTSVFr70px703b//A==}
+
   '@tanstack/react-virtual@3.14.8':
     resolution: {integrity: sha512-O39GJQpAYEJcIu3uN1//YtmhjSEOyw75vg9CKCatBDPiD5hKtZQoJHfferyrB/LdOD3UWaoMLWtdEjarwIwdDw==}
     peerDependencies:
@@ -1611,12 +1625,6 @@ packages:
   boolean@3.2.0:
     resolution: {integrity: sha512-d0II/GO9uf9lfUHH2BQsjxzRJZBdsjgsBiW4BvhWk/3qoKwQFjIDVN19PfX8F2D/r9PCMTtLWjYVCFrpeYUzsw==}
     deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
-
-  border-beam@1.3.0:
-    resolution: {integrity: sha512-oZSISp3aQau4ASTmzm5pzxeBinO6Fh2HW0gyEixJgtpUZvRiU0vNpP+IwGRrNpIyqPjA7Rf5EBnVqDSJ49cm5w==}
-    peerDependencies:
-      react: '>=18.0.0'
-      react-dom: '>=18.0.0'
 
   brace-expansion@1.1.18:
     resolution: {integrity: sha512-Edep/X9fGqVNmzKBVsDYIOtD+z1tuezV70LBjdCst9Tqu76lsnvRiZ6oTic1n+/BIwX6QDGAO94PN4N2SADvtw==}
@@ -2628,11 +2636,6 @@ packages:
 
   lru_map@0.4.1:
     resolution: {integrity: sha512-I+lBvqMMFfqaV8CJCISjI3wbjmwVu/VyOoU7+qtu9d7ioW5klMgsTTiUOUp+DJvfTTzKXoPbyC6YfgkNcyPSOg==}
-
-  lucide-react@1.27.0:
-    resolution: {integrity: sha512-rJicGl/3Fly/E0rOH1YmPZ6e49JCnKknh1ox1vpHnkfjujAkKA6sqUZvH3MTAaXXjgexyUwgNwTJzTtYuAFYJw==}
-    peerDependencies:
-      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
@@ -3932,6 +3935,8 @@ snapshots:
 
   '@fontsource-variable/geist@5.3.0': {}
 
+  '@fontsource-variable/inter@5.3.0': {}
+
   '@fontsource-variable/jetbrains-mono@5.3.0': {}
 
   '@hono/node-server@2.1.1(hono@4.13.2)':
@@ -4288,6 +4293,13 @@ snapshots:
   '@szmarczak/http-timer@4.0.6':
     dependencies:
       defer-to-connect: 2.0.1
+
+  '@tabler/icons-react@3.46.0(react@19.2.8)':
+    dependencies:
+      '@tabler/icons': 3.46.0
+      react: 19.2.8
+
+  '@tabler/icons@3.46.0': {}
 
   '@tanstack/react-virtual@3.14.8(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
@@ -4712,11 +4724,6 @@ snapshots:
 
   boolean@3.2.0:
     optional: true
-
-  border-beam@1.3.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
-    dependencies:
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
 
   brace-expansion@1.1.18:
     dependencies:
@@ -5870,10 +5877,6 @@ snapshots:
       yallist: 4.0.0
 
   lru_map@0.4.1: {}
-
-  lucide-react@1.27.0(react@19.2.8):
-    dependencies:
-      react: 19.2.8
 
   lz-string@1.5.0: {}
 

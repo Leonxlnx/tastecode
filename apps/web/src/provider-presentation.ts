@@ -1,4 +1,4 @@
-import type { ModelConnectionPreset, ProviderId } from '@harness/contracts'
+import type { ProviderId } from '@harness/contracts'
 
 export type ProviderMark =
   | 'openai'
@@ -64,12 +64,6 @@ export function sourcePresentation(input: {
   }
 }
 
-export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
-  if (preset === 'openai') return 'openai'
-  if (preset === 'anthropic') return 'anthropic'
-  return preset
-}
-
 export function agentMark(agentId: string): ProviderMark {
   if (agentId === 'gemini' || agentId === 'kimi' || agentId === 'qwen') return agentId
   return 'acp'
@@ -79,7 +73,7 @@ export function agentPresentation(
   agentId: string,
   sourceName?: string | undefined,
 ): ProviderPresentation {
-  const known = Object.entries(ACP_AGENTS).find(([id]) => id === agentId)?.[1]
+  const known: ProviderPresentation | undefined = ACP_AGENTS[agentId as keyof typeof ACP_AGENTS]
   return sourcePresentation({
     provider: 'acp',
     sourceName: sourceName?.trim() || known?.label || agentId,

@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { PanelLeft } from 'lucide-react'
+import { IconLayoutSidebar as PanelLeft } from '@tabler/icons-react'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 
 /**

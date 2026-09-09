@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-08-22 906b6d99</span>
+        <span class="meta">2026-09-09 main d6d34b15</span>
       </div>
     </div>
 
@@ -262,7 +262,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Sign in with real ChatGPT OAuth, shows email and plan in Settings</span
+                >Sign in with real ChatGPT OAuth, shows email and plan in Settings
+                <span class="d">codex login runs in the expanded setup terminal card</span></span
               ></label
             >
           </li>
@@ -341,8 +342,8 @@
               ><input type="checkbox" /><span
                 >CLI sign-in, redacted account email and plan, sign out from Settings
                 <span class="d"
-                  >claude auth login runs in the guided provider terminal; SDK initialization fills
-                  account details without sending a prompt</span
+                  >claude auth login runs in the expanded setup terminal card; SDK initialization
+                  fills account details without sending a prompt</span
                 ></span
               ></label
             >
@@ -613,7 +614,7 @@
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
                   stable slots across loading, ready, setup, busy, and failure states; empty action
-                  slots do not create a second grid row, keeping signed-in rows at 46 px; primary
+                  slots do not create a second grid row, keeping signed-in rows at 56 px; primary
                   and secondary actions share the fixed right edge on desktop and narrow layouts;
                   CLI versions live in the provider-mark tooltip instead of widening account rows;
                   <a href="./screenshots/provider-density-after.png">compact evidence</a>,
@@ -633,7 +634,20 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Guided install per provider in an in-app terminal</span
+                >Provider update buttons and release notifications
+                <span class="d"
+                  >background checks for Codex, Claude Code, and Grok; current and available
+                  versions in Providers, trusted update commands with live terminal details and
+                  verified completion, setup guides for managed installs, and one dismissible toast
+                  per release</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Guided install per provider in the expanded workspace terminal card</span
               ></label
             >
           </li>
@@ -652,11 +666,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Guided sign-in card
+                >Expanded setup terminal card
                 <span class="d"
-                  >browser opens itself, device code as copy chip, live status line, paste-ready
-                  one-time-code field for the active login terminal, terminal only behind
-                  Details</span
+                  >provider installs and sign-ins plus GitHub CLI install and login share one live
+                  workspace terminal; browser handoff, device code copy, live status, and the
+                  one-time-code field stay scoped to the active setup terminal</span
                 ></span
               ></label
             >
@@ -758,11 +772,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model picker grouped by stable source identity with provider logos; the flat list
-                is the first-run layout, while both layouts share full-catalog search, arrow-key
-                entry into filtered results, and selection preservation; new-chat source changes
-                keep readiness checks silent; first-run visibility favors current Codex and Claude
-                families while saved visibility and future unknown models remain authoritative</span
+                >Compact model picker grouped by stable source identity with provider logos, with a
+                content-sized menu and the dither effort slider; the flat list is the first-run
+                layout, while both layouts share full-catalog search, arrow-key entry into filtered
+                results, and selection preservation; new-chat source changes keep readiness checks
+                silent; first-run visibility favors current Codex and Claude families while saved
+                visibility and future unknown models remain authoritative</span
               ></label
             >
           </li>
@@ -825,7 +840,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Permission mode selector <span class="d">ask, auto, auto-review, full</span></span
+                >Permission mode selector
+                <span class="d"
+                  >ask, auto, auto-review, and full; each provider remembers its own last
+                  choice</span
+                ></span
               ></label
             >
           </li>
@@ -836,9 +855,10 @@
                 ordinary file attachments gated by declared source capability; Codex, Claude Code,
                 and Grok receive their native image and file-reference formats; raster images and
                 videos get lightweight composer previews, sent image previews above their message,
-                and an app-native full-window viewer; selected images reach ACP image blocks only
-                after the agent advertises image prompts, while rejected sends restore the original
-                draft and attachment set</span
+                and an app-native full-window viewer that opens without a reveal delay or photo size
+                animation; selected images reach ACP image blocks only after the agent advertises
+                image prompts, while rejected sends restore the original draft and attachment
+                set</span
               ></label
             >
           </li>
@@ -1091,7 +1111,10 @@
             <label
               ><input type="checkbox" /><span
                 >Checkpoint every turn, reversible rollback with changed-file inspection
-                <span class="d">missing and cross-thread checkpoints fail closed</span></span
+                <span class="d"
+                  >Git refs protect saved states; shared-checkout guards wait for active and
+                  stopping agents; nested project restore stays in scope</span
+                ></span
               ></label
             >
           </li>
@@ -1111,6 +1134,17 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >History size report, NDJSON export, previewed cleanup with an archive, and database
+                space reclamation
+                <span class="d"
+                  >explicit local maintenance; active tasks and private checkouts remain</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -1183,7 +1217,8 @@
               ><input type="checkbox" /><span
                 >Git branch and diff stats detected live for the context chip
                 <span class="d"
-                  >agent turns refresh them only after the project becomes idle</span
+                  >agent turns refresh them only after the project becomes idle; new chats default
+                  to main and remember the last branch picked for each project</span
                 ></span
               ></label
             >
@@ -1195,7 +1230,8 @@
                 state for the signed-in GitHub account
                 <span class="d"
                   >composable state, review, merge, repository, author, and base-branch filters with
-                  search and cached lazy loading</span
+                  search and cached lazy loading; missing or signed-out GitHub CLI setup opens the
+                  expanded terminal card and refreshes the list after success</span
                 ></span
               ></label
             >
@@ -1357,6 +1393,20 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Menus and selects open from their trigger and retain their panel through a short
+                exit
+                <span class="d"
+                  >rapid reopening reverses the same surface; all buttons and popup triggers share
+                  instant press feedback with no scaling; open popup triggers keep their fill;
+                  keyboard menus are instant, reduced motion uses a fade, and centered dialogs share
+                  one entrance</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Account popup exactly as wide as its button
                 <span class="d"
                   >lifted clear of the sidebar divider with matching corner radius; prefetched limit
@@ -1385,7 +1435,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Command palette with reachable keybind settings</span
+                >Command palette with readable result spacing and reachable keybind settings</span
               ></label
             >
           </li>
@@ -1394,11 +1444,11 @@
               ><input type="checkbox" /><span
                 >Cross-session title and full-text search with project and agent filters
                 <span class="d"
-                  >compact 520 px panel with flat filter controls; prefix ranking, highlighted
-                  snippets, keyboard navigation, and stable pagination over an immutable ranked
-                  server snapshot with indexed range seeks; opaque result identities retain
-                  selection and DOM focus across inserts, and closing search restores an available
-                  opener or composer</span
+                  >520 px panel with a clear search field, guided empty state, aligned dates, and
+                  responsive filter controls; prefix ranking, highlighted snippets, keyboard
+                  navigation, and stable pagination over an immutable ranked server snapshot with
+                  indexed range seeks; opaque result identities retain selection and DOM focus
+                  across inserts, and closing search restores an available opener or composer</span
                 ></span
               ></label
             >
@@ -1484,13 +1534,35 @@
         </header>
         <ul class="check">
           <li>
-            <label><input type="checkbox" /><span>Theme: System, Light, Dark</span></label>
+            <label
+              ><input type="checkbox" /><span
+                >Theme preview: System, Light, Dark, Codex
+                <span class="d"
+                  >Large selectable cards and a two-pane code sample expose surface, syntax,
+                  semantic color, and contrast differences before customization</span
+                ></span
+              ></label
+            >
           </li>
           <li>
             <label
               ><input type="checkbox" /><span
-                >Six fonts
-                <span class="d">Geist, System, Humanist, Rounded, Editorial, Mono</span></span
+                >Installed interface font selector
+                <span class="d"
+                  >System default, bundled font families, and every installed font family appear in
+                  one deduplicated alphabetical list with name search</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Compact theme details editor
+                <span class="d"
+                  >Accent, background, installed font, sidebar translucency, and available macOS
+                  controls share one bordered, divided settings card</span
+                ></span
               ></label
             >
           </li>
@@ -1557,7 +1629,9 @@
               ><input type="checkbox" /><span
                 >Design tokens throughout, no raw values downstream
                 <span class="d"
-                  >rounded controls stay unchanged while cards and panels scale up around them</span
+                  >flat controls with 5 px corners and 8 px cards and menus across chat, search,
+                  Settings, workspace tools, and pull requests; prompt controls keep their 32 px
+                  height and reasoning sliders keep their dither texture</span
                 ></span
               ></label
             >
@@ -1574,10 +1648,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Nine sections
+                >Ten compact sections with flat selection states
                 <span class="d"
-                  >General, Profile, and Appearance first, then Providers, Models, MCP, Skills, Data
-                  &amp; privacy, About</span
+                  >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP,
+                  Skills, Data &amp; privacy, About</span
                 ></span
               ></label
             >
@@ -1591,7 +1665,10 @@
           </li>
           <li>
             <label
-              ><input type="checkbox" /><span>Every row one line at 46 px, no subtext</span></label
+              ><input type="checkbox" /><span
+                >Flat Settings cards with small corners, 48 px base rows, clear labels and notes,
+                and provider names aligned beside their icons</span
+              ></label
             >
           </li>
           <li>

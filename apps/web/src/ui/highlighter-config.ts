@@ -2,6 +2,9 @@ import type { CodeHighlighterPlugin } from 'streamdown'
 
 export const LIGHT_THEME = 'github-light-default'
 export const DARK_THEME = 'github-dark-default'
+export const MAX_HIGHLIGHT_CHARACTERS = 64 * 1024
+export const HIGHLIGHT_QUEUE_CHARACTER_LIMIT = 256 * 1024
+export const HIGHLIGHT_QUEUE_ENTRY_LIMIT = 32
 
 /** Languages an agent emits constantly. Everything else loads on demand. */
 export const COMMON_LANGUAGES = [

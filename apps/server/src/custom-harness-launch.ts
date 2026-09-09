@@ -3,7 +3,9 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
-import { desktopPath, killTree, spawnCli } from '@harness/proc'
+import { spawnCli } from '@harness/proc/cli'
+import { desktopPath } from '@harness/proc/desktop-path'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
@@ -79,11 +81,12 @@ export function runCustomHarness(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error(`${harness.displayName} did not answer within ${timeoutMs / 1_000}s`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')
