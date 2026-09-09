@@ -1,5 +1,10 @@
 import type { ChannelName, DataOf, MethodName, ParamsOf, Push, ResultOf } from '@harness/contracts'
-import { canCapturePreview, capturePreview, reportStartupMilestone } from './bridge.js'
+import {
+  canCapturePreview,
+  cancelPreviewCapture,
+  capturePreview,
+  reportStartupMilestone,
+} from './bridge.js'
 import { parseStartupMethodResult } from './transport-startup-validation.js'
 
 type WireError = { message?: string; detail?: string }
@@ -150,6 +155,7 @@ class WebSocketTransport implements Transport {
   #responses = new Map<string, unknown>()
   #validationBytes = 0
   #responseValidationBytes = 0
+  #captures = new Set<string>()
 
   #stateListeners = new Set<(s: ConnectionState) => void>()
   #sequenceGapListeners = new Set<(expected: number, received: number) => void>()
@@ -177,6 +183,7 @@ class WebSocketTransport implements Transport {
     this.#closedByUs = true
     this.#clearReconnectTimer()
     this.#socket?.close()
+    this.#cancelCaptures()
     // This instance is being discarded; nothing will ever flush the queue or
     // answer in-flight calls. A request left pending here kept its caller's
     // await hanging (and the composer stuck on Stop) until a reload.
@@ -431,6 +438,7 @@ class WebSocketTransport implements Transport {
   }
 
   #rejectInFlight(): void {
+    this.#cancelCaptures()
     this.#validationQueue = []
     this.#validationBytes = 0
     for (const id of this.#inFlight) {
@@ -440,6 +448,11 @@ class WebSocketTransport implements Transport {
       }
     }
     this.#inFlight.clear()
+  }
+
+  #cancelCaptures(): void {
+    for (const id of this.#captures) void cancelPreviewCapture(id).catch(() => undefined)
+    this.#captures.clear()
   }
 
   #scheduleReconnect(immediate = false): void {
@@ -513,7 +526,9 @@ class WebSocketTransport implements Transport {
     this.#lastSequence = sequence
 
     const listeners = this.#channelListeners.get(channel)
-    const shouldCapture = channel === 'preview.captureRequested' && canCapturePreview
+    const shouldCapture =
+      (channel === 'preview.captureRequested' || channel === 'preview.captureCancelled') &&
+      canCapturePreview
     if (!shouldCapture && (!listeners || listeners.size === 0)) return
 
     const validation = this.#validation
@@ -544,13 +559,28 @@ class WebSocketTransport implements Transport {
     if (this.#socket !== source || this.#closedByUs) return
 
     let parsedData: unknown
+    if (channel === 'preview.captureCancelled' && canCapturePreview) {
+      try {
+        const request = validation.parseChannelData('preview.captureCancelled', data)
+        this.#captures.delete(request.requestId)
+        void cancelPreviewCapture(request.requestId).catch(() => undefined)
+      } catch {
+        return
+      }
+    }
     if (channel === 'preview.captureRequested' && canCapturePreview) {
       const request = validation.parsePreviewCaptureRequest(data)
       if (request) {
+        if (this.#captures.has(request.requestId)) return
+        this.#captures.add(request.requestId)
         parsedData = request
         void capturePreview(request)
-          .then((result) => this.request('preview.captureResult', result))
+          .then((result) => {
+            if (this.#socket !== source || !this.#captures.delete(request.requestId)) return
+            return this.request('preview.captureResult', result)
+          })
           .catch(() => undefined)
+          .finally(() => this.#captures.delete(request.requestId))
       }
     }
 

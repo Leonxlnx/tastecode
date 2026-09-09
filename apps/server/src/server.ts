@@ -78,8 +78,10 @@ export function startServer(
   const push = new PushBus()
   const providerService = import('./providers.js')
   void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
-  const previewCapture = new PreviewCaptureCoordinator((socket, request) =>
-    push.send(socket, 'preview.captureRequested', request),
+  const previewCapture = new PreviewCaptureCoordinator(
+    (socket, request) => push.send(socket, 'preview.captureRequested', request),
+    35_000,
+    (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
   )
 
   // A port clash is the most likely startup failure — a previous run that did

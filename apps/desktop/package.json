@@ -13,6 +13,7 @@
     "build:main": "node scripts/build-main.js",
     "benchmark:startup": "node scripts/benchmark-startup.js",
     "benchmark:startup:compare": "node scripts/compare-startup.js",
+    "verify:preview": "node scripts/verify-preview.js",
     "typecheck": "tsc -b",
     "start": "tsc -b && node scripts/build-main.js && node scripts/build-preload.js && node scripts/start.js",
     "test": "vitest run src --passWithNoTests",

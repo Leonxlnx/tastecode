@@ -63,6 +63,8 @@ const api = {
     ipcRenderer.send('harness:hapticFeedback', pattern),
   capturePreview: (request: PreviewCaptureRequest): Promise<PreviewCaptureResult> =>
     ipcRenderer.invoke('harness:capturePreview', request),
+  cancelPreviewCapture: (requestId: string): Promise<void> =>
+    ipcRenderer.invoke('harness:cancelPreviewCapture', requestId),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('harness:openExternal', url),
   getDiagnosticsEnabled: (): Promise<boolean> =>
     ipcRenderer.invoke('harness:getDiagnosticsEnabled'),

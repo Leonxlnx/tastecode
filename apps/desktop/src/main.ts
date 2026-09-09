@@ -25,7 +25,7 @@ import {
   type Event as ElectronEvent,
   type WebContents,
 } from 'electron'
-import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import type { PreviewCaptureRequest } from '@harness/contracts'
 import { applyDesktopPath, desktopPath } from '@harness/proc/desktop-path'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
@@ -55,9 +55,7 @@ import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
-import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
-import { clearPreviewSession } from './preview-session.js'
-import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
+import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { restoreMainWindowPresence } from './window-presence.js'
@@ -172,6 +170,18 @@ const MAX_ATTACHMENT_THUMBNAILS = 64
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
+const previewCaptures = new PreviewCaptureOwner({
+  createWindow: createPreviewWindow,
+  releaseWindow: (window) => {
+    captureWindows.delete(window)
+  },
+  directory: (requestId) =>
+    path.join(app.getPath('temp'), 'TasteCode', 'preview-captures', requestId),
+  parseAudit: async (value) => {
+    const { PreviewDomAuditSchema } = await import('@harness/contracts')
+    return PreviewDomAuditSchema.parse(value)
+  },
+})
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -474,7 +484,7 @@ function createWindow(): void {
   // flight, the app must still quit/reset — transient windows don't get a vote.
   window.on('closed', () => {
     if (appWindows().length === 0) {
-      for (const capture of captureWindows) capture.destroy()
+      previewCaptures.cancelAll()
     }
   })
 
@@ -643,12 +653,25 @@ ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
   clipboard.writeText(clipboardText(value))
 })
 
-ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
-  if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
-  const { PreviewCaptureRequestSchema } = await import('@harness/contracts')
-  const parsed = PreviewCaptureRequestSchema.safeParse(value)
-  if (!parsed.success) throw new Error('Invalid preview capture request')
-  return capturePreview(parsed.data)
+ipcMain.handle('harness:capturePreview', (event, value: unknown) =>
+  previewCaptures.captureAfterValidation(
+    value,
+    async () => {
+      const { PreviewCaptureRequestSchema } = await import('@harness/contracts')
+      return (input) => {
+        const parsed = PreviewCaptureRequestSchema.safeParse(input)
+        if (!parsed.success) throw new Error('Invalid preview capture request')
+        return parsed.data
+      }
+    },
+    () => !appIsQuitting && !event.sender.isDestroyed() && isOwnRenderer(event.sender),
+  ),
+)
+
+ipcMain.handle('harness:cancelPreviewCapture', (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (typeof value !== 'string' || value.length > 64) throw new Error('Invalid preview capture id')
+  previewCaptures.cancel(value)
 })
 
 ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
@@ -668,14 +691,7 @@ async function openDiagnosticsDirectory(): Promise<boolean> {
   return (await shell.openPath(diagnostics.directory)) === ''
 }
 
-async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
-  const { PreviewDomAuditSchema } = await import('@harness/contracts')
-  const directory = path.join(
-    app.getPath('temp'),
-    'TasteCode',
-    'preview-captures',
-    request.requestId,
-  )
+function createPreviewWindow(request: PreviewCaptureRequest): BrowserWindow {
   const preview = new BrowserWindow({
     width: request.viewports[0]!.width,
     height: request.viewports[0]!.height,
@@ -688,9 +704,8 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
-      // One fixed partition, cleared after every run. A partition per request
-      // would leave Electron's session registry holding a live session (and
-      // its network stack) per capture for the life of the process.
+      // The capture owner serializes access and refuses reuse after failed cleanup.
+      // Per-request partitions would retain an unbounded number of sessions.
       partition: 'preview-capture',
     },
   })
@@ -706,82 +721,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
   preview.webContents.on('will-navigate', restrictNavigation)
   preview.webContents.on('will-redirect', restrictNavigation)
 
-  // A pending webfont or a throttled hidden renderer can stall the settle
-  // script forever; the whole capture races a hard deadline instead of
-  // leaving a hidden BrowserWindow alive and the caller's promise pending.
-  let deadlineTimer: NodeJS.Timeout | undefined
-  const deadline = new Promise<never>((_, reject) => {
-    deadlineTimer = setTimeout(() => reject(new Error('preview capture timed out')), 30_000)
-    deadlineTimer.unref?.()
-  })
-  // Until the first race attaches a handler, a firing deadline would be an
-  // unhandled rejection — fatal in the main process — e.g. when mkdir throws.
-  deadline.catch(() => undefined)
-  try {
-    await mkdir(directory, { recursive: true, mode: 0o700 })
-    await Promise.race([preview.loadURL(request.url), deadline])
-    if (!allowsPreviewNavigation(request.url, preview.webContents.getURL())) {
-      throw new Error('preview navigated outside its local origin')
-    }
-    const screenshots = []
-    // Duplicate viewports would collide on the wx-flagged filename and fail
-    // the entire request.
-    const seen = new Set<string>()
-    for (const viewport of request.viewports) {
-      const key = `${viewport.width}x${viewport.height}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      preview.setContentSize(viewport.width, viewport.height)
-      await Promise.race([preview.webContents.executeJavaScript(PREVIEW_SETTLE_SCRIPT), deadline])
-      const domAudit = PreviewDomAuditSchema.parse(
-        await Promise.race([
-          preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
-            { code: PREVIEW_DOM_AUDIT_SCRIPT },
-          ]),
-          deadline,
-        ]),
-      )
-      const destination = path.join(directory, `${key}.png`)
-      const pageHeight = await Promise.race([
-        preview.webContents.executeJavaScript(PREVIEW_PAGE_HEIGHT_SCRIPT),
-        deadline,
-      ])
-      await writeFile(
-        destination,
-        (
-          await preview.webContents.capturePage({
-            x: 0,
-            y: 0,
-            width: viewport.width,
-            height: Number(pageHeight),
-          })
-        ).toPNG(),
-        {
-          flag: 'wx',
-          mode: 0o600,
-        },
-      )
-      screenshots.push({ path: destination, ...viewport, domAudit })
-    }
-    return { status: 'completed', requestId: request.requestId, screenshots }
-  } catch (error) {
-    // Nothing consumes a failed capture's directory; leaving it accumulates.
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined)
-    return {
-      status: 'failed',
-      requestId: request.requestId,
-      error: error instanceof Error ? error.message : String(error),
-    }
-  } finally {
-    clearTimeout(deadlineTimer)
-    // The closed-last-window handler may have destroyed us already; touching
-    // a destroyed webContents throws, which would eat a successful result.
-    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) preview.destroy()
-    captureWindows.delete(preview)
-    // The fixed partition is shared by every capture, so the IPC must not
-    // resolve until both browser storage and the HTTP cache are clean.
-    await clearPreviewSession(previewSession)
-  }
+  return preview
 }
 
 /** Screenshot directories older than a day have no consumer left — the design
@@ -883,6 +823,7 @@ if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
   app.on('before-quit', () => {
     appIsQuitting = true
+    previewCaptures.cancelAll()
     mainWindowStatePersistence?.saveAndStop()
   })
   app.on('will-quit', () => {
