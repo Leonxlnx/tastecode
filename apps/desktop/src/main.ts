@@ -102,6 +102,12 @@ const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
 const startupSettledMetricsDelayMs = startupSettleDelay(process.env['HARNESS_STARTUP_SETTLE_MS'])
+const startupRendererPath =
+  Number.isFinite(startupStartedAt) &&
+  startupStartedAt > 0 &&
+  process.env['HARNESS_STARTUP_RENDERER']
+    ? path.resolve(process.env['HARNESS_STARTUP_RENDERER'])
+    : undefined
 
 function logStartupMilestone(name: string): void {
   if (!Number.isFinite(startupStartedAt) || startupStartedAt <= 0) return
@@ -159,8 +165,19 @@ function finishStartupBenchmarkIfReady(): void {
   // both values since the previous read; memory is sampled at the end.
   app.getAppMetrics()
   setTimeout(() => {
-    console.log(`[startup] settled ${JSON.stringify(summarizeAppMetrics(app.getAppMetrics()))}`)
-    app.quit()
+    const metrics = app.getAppMetrics()
+    void import('./performance-memory.js')
+      .then(async ({ collectSettledBenchmarkMemory }) => {
+        const memory = await collectSettledBenchmarkMemory(() => app.getAppMetrics())
+        console.log(
+          '[startup] settled ' + JSON.stringify({ ...summarizeAppMetrics(metrics), memory }),
+        )
+        app.quit()
+      })
+      .catch((error: unknown) => {
+        console.error('[startup] memory measurement failed', error)
+        app.exit(1)
+      })
   }, startupSettledMetricsDelayMs)
 }
 
@@ -492,9 +509,10 @@ function createWindow(): void {
     void window.loadURL(devServer)
   } else {
     void window.loadFile(
-      app.isPackaged
-        ? path.join(process.resourcesPath, 'web', 'index.html')
-        : path.join(here, '../../web/dist/index.html'),
+      startupRendererPath ??
+        (app.isPackaged
+          ? path.join(process.resourcesPath, 'web', 'index.html')
+          : path.join(here, '../../web/dist/index.html')),
     )
   }
 }
