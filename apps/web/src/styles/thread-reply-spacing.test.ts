@@ -2,11 +2,17 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const css = [
+  readFileSync(new URL('./app.css', import.meta.url), 'utf8'),
+  readFileSync(new URL('./markdown.css', import.meta.url), 'utf8'),
+  readFileSync(new URL('./thread.css', import.meta.url), 'utf8'),
+].join('\n')
+const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+const composerSource = readFileSync(new URL('../ui/Composer.tsx', import.meta.url), 'utf8')
 
 describe('thread reply spacing', () => {
   it('keeps assistant prose compact without shrinking prompts or code', () => {
-    const thread = css.match(/\.thread \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const thread = css.match(/^\.thread \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body']
     const reply = css.match(/\.reply \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
     const responseMarkdown = css.match(/\.reply > \.md \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
     const proseLeading = css.match(
@@ -110,5 +116,29 @@ describe('thread reply spacing', () => {
 
   it('uses a small gap inside one live work sequence', () => {
     expect(css).toContain('.thread__row.is-compact-to-next {\n  padding-bottom: 4px;\n}')
+  })
+
+  it('floats the docked composer without a full-width hit layer', () => {
+    const dockedComposer = css.match(
+      /\.stage__conversation:not\(\.is-new-session\) > \.composer \{(?<body>[\s\S]*?)\n\}/,
+    )?.groups?.['body']
+    const threadClearance = css.match(
+      /\.stage__conversation:not\(\.is-new-session\) \.thread \{(?<body>[\s\S]*?)\n\}/,
+    )?.groups?.['body']
+    const jumpClearance = css.match(
+      /\.stage__conversation:not\(\.is-new-session\) \.jump \{(?<body>[\s\S]*?)\n\}/,
+    )?.groups?.['body']
+
+    expect(appSource).toContain('className={`stage__conversation${activeId')
+    expect(dockedComposer).toContain('position: absolute')
+    expect(dockedComposer).toContain('bottom: 0')
+    expect(dockedComposer).toContain('pointer-events: none')
+    expect(css).toMatch(
+      /\.stage__conversation:not\(\.is-new-session\) > \.composer \.composer__box \{[^}]*pointer-events: auto;/s,
+    )
+    expect(threadClearance).toContain('padding-bottom: calc(var(--composer-overlay-height) + 4px)')
+    expect(jumpClearance).toContain('bottom: calc(var(--composer-overlay-height) + 14px)')
+    expect(composerSource).toContain("style.setProperty('--composer-overlay-height'")
+    expect(composerSource).toContain('new ResizeObserverConstructor(updateOverlayHeight)')
   })
 })

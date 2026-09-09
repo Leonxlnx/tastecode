@@ -171,7 +171,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
     },
     motionDirection: {
       summary: string(motionDirection.summary, 'motionDirection.summary'),
-      principles: strings(motionDirection.principles, 'motionDirection.principles'),
+      principles: motionPrinciples(motionDirection.principles),
       avoid: strings(motionDirection.avoid, 'motionDirection.avoid'),
     },
     voice: {
@@ -179,6 +179,31 @@ export function parseBrandSystem(value: unknown): BrandSystem {
       avoid: strings(voice.avoid, 'voice.avoid'),
     },
   }
+}
+
+function motionPrinciples(value: unknown): string[] {
+  const field = 'motionDirection.principles'
+  if (typeof value === 'string') return [string(value, field)]
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be a string array or an array of flat string objects`)
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry === 'string') return string(entry, `${field}[${index}]`)
+    const details = Object.entries(record(entry, `${field}[${index}]`))
+    if (details.length === 0) {
+      throw new Error(`${field}[${index}] must contain at least one string field`)
+    }
+    return details
+      .map(([name, detail]) => {
+        const label = name
+          .replace(/([a-z\d])([A-Z])/gu, '$1 $2')
+          .replace(/[_-]+/gu, ' ')
+          .toLowerCase()
+        return `${label}: ${string(detail, `${field}[${index}].${name}`)}`
+      })
+      .join('; ')
+  })
 }
 
 function parseSignatureDevice(value: unknown): BrandSystem['creativeDirection']['signatureDevice'] {

@@ -1,12 +1,5 @@
 import path from 'node:path'
 import os from 'node:os'
-import { z } from 'zod'
-
-const SafePathSchema = z
-  .string()
-  .min(1)
-  .max(32_768)
-  .refine((value) => !value.includes('\0'))
 
 export function projectFilePath(value: unknown, projectRootValue: unknown): string {
   const file = safePath(value)
@@ -38,9 +31,15 @@ function expandHomePath(value: string): string {
 }
 
 function safePath(value: unknown): string {
-  const parsed = SafePathSchema.safeParse(value)
-  if (!parsed.success) throw new Error('Invalid project file path')
-  return parsed.data
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > 32_768 ||
+    value.includes('\0')
+  ) {
+    throw new Error('Invalid project file path')
+  }
+  return value
 }
 
 function windowsPath(value: string): boolean {

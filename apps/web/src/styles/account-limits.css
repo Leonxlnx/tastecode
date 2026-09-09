@@ -1,0 +1,305 @@
+.account-menu__usage {
+  min-height: 0;
+  display: grid;
+  gap: 0;
+  font-size: var(--t-xs);
+  color: var(--text-2);
+  padding: 0 0 2px;
+  border-bottom: 1px solid var(--menu-line);
+  margin-bottom: 2px;
+}
+
+.account-menu__usage-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 6px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 460;
+  letter-spacing: -0.006em;
+  line-height: 1.3;
+  text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__usage-head:hover {
+  background: var(--menu-hover);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.account-menu__usage-head:focus-visible {
+  background: var(--menu-hover);
+  border-color: var(--text-2);
+  box-shadow: none;
+  outline: 0;
+}
+
+.account-menu__usage-head svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--text-3);
+}
+
+.account-menu__usage-value {
+  margin-left: auto;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.account-menu__usage-reveal {
+  /* The popup is anchored to its bottom edge. Reveal details above the
+     summary so Usage stays beside the fixed Profile and Settings actions. */
+  order: -1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--dur-slow) var(--ease-out),
+    opacity var(--dur-slow) var(--ease-out);
+}
+
+.account-menu__usage-reveal[data-open='false'] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@starting-style {
+  .account-menu__usage-reveal {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.account-menu__usage-reveal-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.account-menu__usage-details {
+  min-height: 0;
+  display: grid;
+  gap: 0;
+  max-height: min(340px, calc(100vh - 160px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  margin: 0 7px 3px;
+  padding: 6px 0 9px;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-menu__usage-reveal {
+    transition: opacity var(--dur-fast) var(--ease-out) !important;
+  }
+}
+
+.account-menu__usage-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-3);
+  line-height: 1.35;
+}
+
+.account-menu__source {
+  display: grid;
+  gap: 7px;
+}
+
+.account-menu__source + .account-menu__source {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line-strong);
+}
+
+.account-menu__source h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-xs);
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.account-menu__source h3 svg {
+  width: 13px;
+  height: 13px;
+}
+
+.account-menu__usage-error {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
+  gap: 7px;
+  color: var(--error);
+}
+
+.account-menu__usage-error span,
+.account-menu__usage-error small {
+  display: block;
+}
+
+.account-menu__usage-error small {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.account-menu__usage-error button {
+  align-self: center;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  background: var(--chrome-raised);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 6px;
+}
+
+.account-menu__limit {
+  display: grid;
+  gap: 4px;
+}
+
+.account-menu__limit-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  min-height: 16px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+}
+
+.account-menu__limit-label {
+  min-width: 0;
+  color: var(--text);
+  font-weight: 520;
+}
+
+.account-menu__limit-value {
+  flex: none;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.account-menu__limit-slot {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+
+.account-menu__limit-slot > * {
+  grid-area: 1 / 1;
+}
+
+.account-menu__limit-btn {
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  background: var(--chrome-raised);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1.3;
+  padding: 1px 6px;
+}
+
+.account-menu__limit-btn:hover:not(:disabled),
+.account-menu__limit-btn:focus-visible {
+  background: var(--control-hover);
+}
+
+.account-menu__limit-btn:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.account-menu__limit-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.account-menu__limit-use,
+.account-menu__limit-value {
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__limit-use {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.account-menu__limit--reset:is(:hover, :focus-within):not(.is-confirming) .account-menu__limit-use {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.account-menu__limit--reset:is(:hover, :focus-within):not(.is-confirming)
+  .account-menu__limit-value {
+  opacity: 0;
+}
+
+@media (hover: none) {
+  .account-menu__limit--reset:not(.is-confirming) .account-menu__limit-use {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .account-menu__limit--reset:not(.is-confirming) .account-menu__limit-value {
+    opacity: 0;
+  }
+}
+
+.account-menu__limit.is-confirming {
+  outline: none;
+}
+
+.account-menu__limit-note {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.account-menu__limit-bar {
+  height: 3px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.account-menu__limit-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--running);
+}
+
+.account-menu__limit-bar > span[data-low] {
+  background: var(--error);
+}
+
+.account-menu__limit-reset {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.3;
+}

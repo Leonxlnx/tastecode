@@ -21,6 +21,7 @@ type SourceState = {
   accountResponse?: JsonRpcValue
   failure?: string
   rateLimitsResponse?: JsonRpcValue
+  consumeResponse?: JsonRpcValue
 }
 
 const emptyRateLimits = {
@@ -47,6 +48,9 @@ function sourceAdapter(initial: Partial<SourceState> = {}) {
     }
     if (method === 'account/rateLimits/read') {
       return state.rateLimitsResponse ?? emptyRateLimits
+    }
+    if (method === 'account/rateLimitResetCredit/consume') {
+      return state.consumeResponse ?? { outcome: 'reset' }
     }
     return {}
   })
@@ -141,7 +145,14 @@ describe('Codex rate-limit source', () => {
 
     await expect(adapter.rateLimitSource()).resolves.toEqual({
       status: 'ready',
-      limits: [{ label: 'Rate limit resets', usedPercent: 0, valueLabel: '2 available' }],
+      limits: [
+        {
+          label: 'Rate limit resets',
+          usedPercent: 0,
+          valueLabel: '2 available',
+          action: 'consume-reset',
+        },
+      ],
     })
     adapter.dispose()
   })
@@ -182,6 +193,51 @@ describe('Codex rate-limit source', () => {
     await expect(adapter.rateLimitSource()).rejects.toThrow(
       'Codex rate-limit response was invalid.',
     )
+    adapter.dispose()
+  })
+})
+
+describe('Codex rate-limit reset consume', () => {
+  it('redeems the next available credit with the caller-supplied key', async () => {
+    const { adapter, rpc } = sourceAdapter()
+    await adapter.start()
+
+    await expect(
+      adapter.consumeRateLimitReset('8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+    ).resolves.toBe('reset')
+    expect(rpc.calls.filter(({ method }) => method.includes('rateLimitReset'))).toEqual([
+      {
+        method: 'account/rateLimitResetCredit/consume',
+        params: { idempotencyKey: '8ae96ff3-3425-4f4c-8772-b6fd61502868' },
+        timeoutMs: 10_000,
+      },
+    ])
+    adapter.dispose()
+  })
+
+  it.each(['nothingToReset', 'noCredit', 'alreadyRedeemed'] as const)(
+    'returns the %s outcome without selecting a credit id',
+    async (outcome) => {
+      const { adapter, rpc } = sourceAdapter({ consumeResponse: { outcome } })
+      await adapter.start()
+
+      await expect(
+        adapter.consumeRateLimitReset('8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+      ).resolves.toBe(outcome)
+      expect(rpc.calls.at(-1)?.params).toEqual({
+        idempotencyKey: '8ae96ff3-3425-4f4c-8772-b6fd61502868',
+      })
+      adapter.dispose()
+    },
+  )
+
+  it('rejects a malformed successful consume response', async () => {
+    const { adapter } = sourceAdapter({ consumeResponse: { outcome: 'ok' } })
+    await adapter.start()
+
+    await expect(
+      adapter.consumeRateLimitReset('8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+    ).rejects.toThrow('Codex reset-credit response was invalid.')
     adapter.dispose()
   })
 })

@@ -123,6 +123,7 @@ type OpenItem = { item: Item; text: string }
  * but this adapter deliberately consumes only the stable common subset.
  */
 export class PiAdapter extends EventEmitter<Events> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #command: string
   readonly #args: string[]
   readonly #displayName: string
@@ -306,14 +307,16 @@ export class PiAdapter extends EventEmitter<Events> {
     return models
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
     this.#intentionalStop = true
-    if (this.#child) killTree(this.#child)
+    const stopped = this.#child ? killTree(this.#child) : this.#processStop
     this.#child = undefined
     this.#rejectPending(new Error(`${this.#displayName} stopped`))
     this.#activeTurnId = undefined
     this.#threadId = undefined
     this.#items.clear()
+    this.#processStop = stopped
+    return stopped
   }
 
   async #startProcess(cwd: string, ephemeral = false): Promise<void> {
@@ -329,6 +332,12 @@ export class PiAdapter extends EventEmitter<Events> {
       child.stdout,
       (value) => this.#onValue(value),
       (line) => this.emit('log', `${this.#displayName} non-JSON output: ${line.slice(0, 200)}`),
+      {
+        onError: (error) => {
+          this.#processFailed(error.message)
+          void killTree(child)
+        },
+      },
     )
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))

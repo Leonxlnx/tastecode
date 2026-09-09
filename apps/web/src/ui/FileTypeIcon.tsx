@@ -1,56 +1,67 @@
 import {
-  Atom,
-  Bird,
-  Braces,
-  CodeXml,
-  Coffee,
-  Cog,
-  Container,
-  Database,
-  FileCode2,
-  FileText,
-  Gem,
-  Hash,
-  Image as ImageIcon,
-  Settings2,
-  SquareTerminal,
-  type LucideIcon,
-} from 'lucide-react'
+  IconBrandCpp,
+  IconBrandCSharp,
+  IconBrandCss3,
+  IconBrandDocker,
+  IconBrandGolang,
+  IconBrandJavascript,
+  IconBrandKotlin,
+  IconBrandPhp,
+  IconBrandPython,
+  IconBrandReact,
+  IconBrandRust,
+  IconBrandSvelte,
+  IconBrandSwift,
+  IconBrandTypescript,
+  IconBrandVue,
+  IconBraces,
+  IconCode,
+  IconCoffee,
+  IconDatabase,
+  IconDiamond,
+  IconFileCode,
+  IconFileText,
+  IconLetterC,
+  IconMarkdown,
+  IconPhoto,
+  IconSettings,
+  IconTerminal2,
+  type TablerIcon,
+} from '@tabler/icons-react'
 
 type IconSpec = {
   kind: string
-  Icon?: LucideIcon
-  label?: string
+  Icon: TablerIcon
 }
 
 const ICONS = {
-  react: { kind: 'react', Icon: Atom },
-  typescript: { kind: 'typescript', label: 'TS' },
-  javascript: { kind: 'javascript', label: 'JS' },
-  style: { kind: 'style', Icon: Hash },
-  markup: { kind: 'markup', Icon: CodeXml },
-  data: { kind: 'data', Icon: Braces },
-  markdown: { kind: 'markdown', Icon: FileText },
-  text: { kind: 'text', Icon: FileText },
-  database: { kind: 'database', Icon: Database },
-  shell: { kind: 'shell', Icon: SquareTerminal },
-  python: { kind: 'python', label: 'PY' },
-  rust: { kind: 'rust', Icon: Cog },
-  ruby: { kind: 'ruby', Icon: Gem },
-  java: { kind: 'java', Icon: Coffee },
-  kotlin: { kind: 'kotlin', label: 'K' },
-  go: { kind: 'go', label: 'GO' },
-  swift: { kind: 'swift', Icon: Bird },
-  php: { kind: 'php', label: 'PHP' },
-  c: { kind: 'c', label: 'C' },
-  cpp: { kind: 'cpp', label: 'C++' },
-  csharp: { kind: 'csharp', label: 'C#' },
-  vue: { kind: 'vue', label: 'V' },
-  svelte: { kind: 'svelte', label: 'S' },
-  image: { kind: 'image', Icon: ImageIcon },
-  config: { kind: 'config', Icon: Settings2 },
-  docker: { kind: 'docker', Icon: Container },
-  code: { kind: 'code', Icon: FileCode2 },
+  react: { kind: 'react', Icon: IconBrandReact },
+  typescript: { kind: 'typescript', Icon: IconBrandTypescript },
+  javascript: { kind: 'javascript', Icon: IconBrandJavascript },
+  style: { kind: 'style', Icon: IconBrandCss3 },
+  markup: { kind: 'markup', Icon: IconCode },
+  data: { kind: 'data', Icon: IconBraces },
+  markdown: { kind: 'markdown', Icon: IconMarkdown },
+  text: { kind: 'text', Icon: IconFileText },
+  database: { kind: 'database', Icon: IconDatabase },
+  shell: { kind: 'shell', Icon: IconTerminal2 },
+  python: { kind: 'python', Icon: IconBrandPython },
+  rust: { kind: 'rust', Icon: IconBrandRust },
+  ruby: { kind: 'ruby', Icon: IconDiamond },
+  java: { kind: 'java', Icon: IconCoffee },
+  kotlin: { kind: 'kotlin', Icon: IconBrandKotlin },
+  go: { kind: 'go', Icon: IconBrandGolang },
+  swift: { kind: 'swift', Icon: IconBrandSwift },
+  php: { kind: 'php', Icon: IconBrandPhp },
+  c: { kind: 'c', Icon: IconLetterC },
+  cpp: { kind: 'cpp', Icon: IconBrandCpp },
+  csharp: { kind: 'csharp', Icon: IconBrandCSharp },
+  vue: { kind: 'vue', Icon: IconBrandVue },
+  svelte: { kind: 'svelte', Icon: IconBrandSvelte },
+  image: { kind: 'image', Icon: IconPhoto },
+  config: { kind: 'config', Icon: IconSettings },
+  docker: { kind: 'docker', Icon: IconBrandDocker },
+  code: { kind: 'code', Icon: IconFileCode },
 } satisfies Record<string, IconSpec>
 
 type IconKind = keyof typeof ICONS
@@ -148,19 +159,21 @@ export function FileTypeIcon({ path }: { path: string }) {
 
   return (
     <span className="md-file-ref__icon" data-file-icon={spec.kind} aria-hidden>
-      {Icon ? <Icon /> : <span className="md-file-ref__monogram">{spec.label}</span>}
+      <Icon />
     </span>
   )
 }
 
 function iconKind(path: string): IconKind | undefined {
-  const withoutPosition = path.replace(/:\d+(?::\d+)?$/, '')
-  const filename = withoutPosition.split(/[\\/]/).at(-1)?.toLowerCase()
+  const withoutPosition = path.includes(':') ? path.replace(/:\d+(?::\d+)?$/, '') : path
+  const separator = Math.max(withoutPosition.lastIndexOf('/'), withoutPosition.lastIndexOf('\\'))
+  const filename = withoutPosition.slice(separator + 1).toLowerCase()
   if (!filename) return undefined
 
-  const namedKind = Object.entries(KIND_BY_FILENAME).find(([name]) => name === filename)?.[1]
+  const namedKind: IconKind | undefined =
+    KIND_BY_FILENAME[filename as keyof typeof KIND_BY_FILENAME]
   if (namedKind) return namedKind
 
   const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : ''
-  return Object.entries(KIND_BY_EXTENSION).find(([name]) => name === extension)?.[1]
+  return KIND_BY_EXTENSION[extension as keyof typeof KIND_BY_EXTENSION]
 }

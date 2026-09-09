@@ -8,11 +8,9 @@
   margin: 0;
   overflow: hidden;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, white 7%, transparent),
-    var(--shadow-flyout);
+  box-shadow: var(--shadow-flyout);
   transform-origin: center bottom;
   animation: brief-input-in 220ms var(--ease-out) both;
 }
@@ -43,63 +41,41 @@
 
 .brief-input__option {
   display: flex;
-  min-height: 38px;
+  min-height: 32px;
   align-items: center;
   gap: 9px;
-  padding: 7px 10px;
+  padding: 5px 8px;
   border: 1px solid color-mix(in srgb, var(--line-strong) 68%, transparent);
-  border-radius: var(--r-popup-item);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 50%, transparent),
-    color-mix(in srgb, var(--surface-2) 32%, transparent)
-  );
-  box-shadow:
-    inset 0 1px color-mix(in srgb, white 8%, transparent),
-    0 1px 1px color-mix(in srgb, black 16%, transparent);
+  border-radius: var(--r-md);
+  background: var(--control-hover);
+  box-shadow: none;
   color: var(--text-2);
   cursor: pointer;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
   .brief-input__option:hover {
     border-color: var(--line-strong);
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--surface-3) 72%, transparent),
-      color-mix(in srgb, var(--surface-2) 50%, transparent)
-    );
+    background: var(--menu-hover);
     color: var(--text);
   }
 }
 
 .brief-input__option:focus-within {
   border-color: var(--line-strong);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 72%, transparent),
-    color-mix(in srgb, var(--surface-2) 50%, transparent)
-  );
+  background: var(--menu-hover);
   color: var(--text);
-}
-
-.brief-input__option:active {
-  box-shadow: inset 0 1px 2px color-mix(in srgb, black 25%, transparent);
-  transform: scale(0.985);
 }
 
 .brief-input__option:has(input[type='radio']:checked) {
   border-color: color-mix(in srgb, var(--text-2) 74%, transparent);
   background: var(--surface-3);
-  box-shadow:
-    inset 0 1px 2px color-mix(in srgb, black 18%, transparent),
-    inset 0 0 0 1px color-mix(in srgb, white 4%, transparent);
+  box-shadow: none;
   color: var(--text);
 }
 
@@ -156,7 +132,7 @@
   border: 1px solid var(--line);
   border-radius: calc(var(--r-md) - 2px);
   background: color-mix(in srgb, var(--surface) 72%, transparent);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, black 18%, transparent);
+  box-shadow: none;
   color: var(--text-3);
   font-weight: 450;
 }
@@ -192,14 +168,8 @@
   padding: 6px 11px;
   border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent);
   border-radius: var(--r-md);
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--surface-3) 58%, transparent),
-    color-mix(in srgb, var(--surface-2) 38%, transparent)
-  );
-  box-shadow:
-    inset 0 1px color-mix(in srgb, white 9%, transparent),
-    0 1px 1px color-mix(in srgb, black 18%, transparent);
+  background: var(--control-hover);
+  box-shadow: none;
   color: var(--text-2);
   font: inherit;
   font-size: var(--t-sm);
@@ -210,21 +180,13 @@
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out),
-    opacity var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
-}
-
-.brief-input__actions button:active:not(:disabled) {
-  box-shadow: inset 0 1px 2px color-mix(in srgb, black 24%, transparent);
-  transform: scale(0.97);
+    opacity var(--dur-fast) var(--ease-out);
 }
 
 .brief-input__next:not(:disabled) {
   border-color: color-mix(in srgb, white 54%, var(--line-strong));
-  background: linear-gradient(180deg, white, color-mix(in srgb, white 82%, var(--surface-3)));
-  box-shadow:
-    inset 0 1px white,
-    0 1px 2px color-mix(in srgb, black 28%, transparent);
+  background: var(--light);
+  box-shadow: none;
   color: var(--on-light);
 }
 
@@ -244,7 +206,7 @@
   left: 0;
   padding: 0 13px;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   color: var(--text-2);
   font-size: var(--t-sm);
 }
@@ -252,9 +214,7 @@
 .brief-input__spinner {
   width: 14px;
   height: 14px;
-  border: 2px solid var(--line-strong);
-  border-top-color: var(--text);
-  border-radius: var(--r-circle);
+  color: var(--text);
   animation: brief-spin 700ms linear infinite;
 }
 

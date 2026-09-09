@@ -39,7 +39,7 @@ describe('Composer voice dictation', () => {
     fireEvent.change(textarea, { target: { value: 'hello world' } })
     textarea.setSelectionRange(5, 5)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
 
     await waitFor(() => expect(textarea.value).toBe('hello spoken words world'))
@@ -53,7 +53,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
     renderVoiceComposer({ onSend, onTranscribeVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('spoken words', []))
@@ -64,7 +64,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
     renderVoiceComposer({ onTranscribeVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Discard voice note' }))
 
     await waitFor(() =>
@@ -83,7 +83,7 @@ describe('Composer voice dictation', () => {
       sendAvailability: 'setup-required',
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
 
     await waitFor(() =>
@@ -99,7 +99,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(() => new Promise<string>(() => {}))
     renderVoiceComposer({ onTranscribeVoice, onCancelVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel transcription' }))
 
@@ -113,7 +113,7 @@ describe('Composer voice dictation', () => {
     recorder.start.mockRejectedValueOnce(denied)
     renderVoiceComposer()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Microphone access was denied.',
@@ -135,7 +135,7 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
     <Composer
       transport={voiceTransport()}
       provider="codex"
-      projects={[{ path: '/work/harness', name: 'TasteCode', sessions: [] }]}
+      projects={[{ path: '/work/harness', name: 'TasteCode' }]}
       projectPath="/work/harness"
       projectName="TasteCode"
       branch="main"
