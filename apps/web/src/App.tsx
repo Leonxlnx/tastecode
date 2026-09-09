@@ -45,6 +45,7 @@ import {
 } from './shortcuts.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
+import { OptimisticMutations } from './optimistic-mutations.js'
 import {
   appendUserMessage,
   beginOptimisticTurn,
@@ -3655,14 +3656,56 @@ export function App() {
     },
     [beginSession],
   )
+  const [sidebarMutations] = useState(() => new OptimisticMutations(setNotice))
+  useEffect(
+    () =>
+      transport.onState((state) => {
+        if (state === 'open') sidebarMutations.reconcile()
+      }),
+    [sidebarMutations, transport],
+  )
+  const recoverSidebarProject = useCallback(
+    async (path: string, field: 'name' | 'pinned') => {
+      const { projects: list } = await transport.request('projects.list', {})
+      const saved = list.find((project) => project.path === path)
+      return () =>
+        setProjects((current) =>
+          current.flatMap((project) =>
+            project.path !== path
+              ? [project]
+              : saved
+                ? [{ ...project, [field]: saved[field] }]
+                : [],
+          ),
+        )
+    },
+    [transport],
+  )
+  const recoverSidebarSession = useCallback(
+    async (id: string, field: 'title' | 'pinned') => {
+      const { projects: list } = await transport.request('projects.list', {})
+      const saved = list.flatMap((project) => project.sessions).find((session) => session.id === id)
+      return () =>
+        setProjects((current) =>
+          saved
+            ? updateSession(current, id, (session) => ({ ...session, [field]: saved[field] }))
+            : removeSession(current, id),
+        )
+    },
+    [transport],
+  )
   const renameSidebarProject = useCallback(
     (path: string, name: string) => {
       setProjects((current) =>
         current.map((project) => (project.path === path ? { ...project, name } : project)),
       )
-      void transport.request('projects.rename', { path, name }).catch(() => undefined)
+      void sidebarMutations.run(
+        `project:${path}:name`,
+        () => transport.request('projects.rename', { path, name }),
+        () => recoverSidebarProject(path, 'name'),
+      )
     },
-    [transport],
+    [recoverSidebarProject, sidebarMutations, transport],
   )
   const removeSidebarProject = useCallback(
     (path: string) => {
@@ -3690,9 +3733,13 @@ export function App() {
       setProjects((current) =>
         current.map((project) => (project.path === path ? { ...project, pinned } : project)),
       )
-      void transport.request('projects.pin', { path, pinned }).catch(() => undefined)
+      void sidebarMutations.run(
+        `project:${path}:pinned`,
+        () => transport.request('projects.pin', { path, pinned }),
+        () => recoverSidebarProject(path, 'pinned'),
+      )
     },
-    [transport],
+    [recoverSidebarProject, sidebarMutations, transport],
   )
   const renameSidebarSession = useCallback(
     (id: string, title: string) => {
@@ -3703,17 +3750,25 @@ export function App() {
         if (!pending.threadId) return
         id = pending.threadId
       }
-      void transport.request('thread.rename', { threadId: id, title }).catch(() => undefined)
+      void sidebarMutations.run(
+        `thread:${id}:title`,
+        () => transport.request('thread.rename', { threadId: id, title }),
+        () => recoverSidebarSession(id, 'title'),
+      )
     },
-    [transport],
+    [recoverSidebarSession, sidebarMutations, transport],
   )
   const toggleSidebarSessionPin = useCallback(
     (id: string) => {
       const pinned = !findSession(projectsRef.current, id)?.session.pinned
       setProjects((current) => updateSession(current, id, (session) => ({ ...session, pinned })))
-      void transport.request('thread.pin', { threadId: id, pinned }).catch(() => undefined)
+      void sidebarMutations.run(
+        `thread:${id}:pinned`,
+        () => transport.request('thread.pin', { threadId: id, pinned }),
+        () => recoverSidebarSession(id, 'pinned'),
+      )
     },
-    [transport],
+    [recoverSidebarSession, sidebarMutations, transport],
   )
   const deleteSidebarSession = useCallback(
     (id: string) => void archiveSession(id),

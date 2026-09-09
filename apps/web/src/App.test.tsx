@@ -3864,6 +3864,71 @@ describe('new chats', () => {
     expect(screen.getByText('Pinned')).toBeTruthy()
   })
 
+  it.each(['project rename', 'project pin', 'chat rename', 'chat pin'])(
+    'restores saved values and reports a refused %s',
+    async (operation) => {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'Project name',
+          pinned: false,
+          createdAt: 0,
+          sessions: [
+            {
+              id: 'saved-thread',
+              title: 'Saved title',
+              provider: 'codex',
+              createdAt: 0,
+              running: false,
+            },
+          ],
+        },
+      ]
+      const request = transport.request.getMockImplementation()!
+      const method =
+        operation === 'project rename'
+          ? 'projects.rename'
+          : operation === 'project pin'
+            ? 'projects.pin'
+            : operation === 'chat rename'
+              ? 'thread.rename'
+              : 'thread.pin'
+      transport.request.mockImplementation((name: string, params: unknown) =>
+        name === method ? Promise.reject(new Error('Save was refused')) : request(name, params),
+      )
+      render(<App />)
+      if (operation.startsWith('project')) {
+        fireEvent.contextMenu(await screen.findByRole('button', { name: 'Project name' }))
+        fireEvent.click(
+          await screen.findByRole('menuitem', {
+            name: operation.endsWith('pin') ? 'Pin to top' : 'Edit name',
+          }),
+        )
+      } else if (operation.endsWith('pin')) {
+        fireEvent.contextMenu(await screen.findByRole('button', { name: /^Saved title,/ }))
+        fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin chat' }))
+      } else fireEvent.click(await screen.findByRole('button', { name: 'Rename Saved title' }))
+      if (operation.endsWith('rename')) {
+        const input = screen.getByDisplayValue(
+          operation.startsWith('project') ? 'Project name' : 'Saved title',
+        )
+        fireEvent.change(input, { target: { value: 'Unsaved name' } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+      }
+      expect(await screen.findByText('Save was refused')).toBeTruthy()
+      await waitFor(() => {
+        expect(screen.queryByText('Unsaved name')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Project name' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: /^Saved title,/ })).toBeTruthy()
+      })
+      if (operation === 'chat pin') expect(screen.queryByText('Pinned')).toBeNull()
+      if (operation === 'project pin') {
+        fireEvent.contextMenu(screen.getByRole('button', { name: 'Project name' }))
+        expect(await screen.findByRole('menuitem', { name: 'Pin to top' })).toBeTruthy()
+      }
+    },
+  )
+
   it('shows changed files before restoring and offers undo afterwards', async () => {
     serverProjects = [
       {
