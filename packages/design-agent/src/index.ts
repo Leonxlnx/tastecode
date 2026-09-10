@@ -81,6 +81,7 @@ export {
 export {
   designBuildCorrectionPrompt,
   designBuildPrompt,
+  designWorkspaceFileBaseline,
   exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateExactBuildFiles,

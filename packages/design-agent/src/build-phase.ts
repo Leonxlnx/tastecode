@@ -1,11 +1,10 @@
-import { readdirSync } from 'node:fs'
-import path from 'node:path'
 import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
 import { record, string, strings } from './parse.js'
+import { normalizeWorkspaceFile, workspaceEntries } from './workspace-files.js'
 
 export type BuildPhaseOutput =
   | { status: 'complete'; summary: string; files: string[]; checks: string[] }
@@ -88,7 +87,12 @@ export function exactBuildFileBaseline(
   brief: DesignBrief,
 ): string[] | undefined {
   const expected = exactBuildFiles(brief)
-  return expected ? workspaceFiles(workspacePath, expected) : undefined
+  return expected ? workspaceFiles(workspacePath) : undefined
+}
+
+/** Capture before any Design phase can create files, including asset acquisition. */
+export function designWorkspaceFileBaseline(workspacePath: string): string[] {
+  return workspaceFiles(workspacePath)
 }
 
 export function validateExactBuildFiles(
@@ -99,13 +103,25 @@ export function validateExactBuildFiles(
   const expected = exactBuildFiles(brief)
   if (!expected) return
 
-  const actual = workspaceFiles(workspacePath, expected)
+  const entries = workspaceEntries(workspacePath)
+  const actual = entries.map(({ relative }) => relative)
+  const regularFiles = new Set(entries.filter(({ file }) => file).map(({ relative }) => relative))
   const expectedSet = new Set(expected)
+  for (const file of expected) {
+    const parts = file.split('/')
+    for (let index = 1; index < parts.length; index += 1)
+      expectedSet.add(`${parts.slice(0, index).join('/')}/`)
+  }
   const actualSet = new Set(actual)
   const baselineSet = new Set(baseline)
-  const missing = expected.filter((file) => !actualSet.has(file))
+  const missing = expected.filter((file) => !regularFiles.has(file))
   const removed = baseline.filter((file) => !actualSet.has(file))
-  const unexpected = actual.filter((file) => !expectedSet.has(file) && !baselineSet.has(file))
+  const unexpectedEntries = actual.filter(
+    (file) => !expectedSet.has(file) && !baselineSet.has(file),
+  )
+  const unexpected = unexpectedEntries.filter(
+    (file, index) => !file.endsWith('/') || !unexpectedEntries[index + 1]?.startsWith(file),
+  )
   if (missing.length === 0 && removed.length === 0 && unexpected.length === 0) return
 
   throw new ExactBuildFilesError(
@@ -124,6 +140,8 @@ export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
   const value = record(JSON.parse(fenced?.[1] ?? text), 'build output')
   const files = strings(value.files, 'build files')
+  if (files.some((file) => !normalizeWorkspaceFile(file)))
+    throw new Error('build files must be relative paths inside the workspace')
   const checks = strings(value.checks, 'build checks')
   if (value.status === 'complete') {
     return { status: 'complete', summary: string(value.summary, 'build summary'), files, checks }
@@ -142,8 +160,8 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
   ]
   for (const source of sources) {
     const markers = [
-      /\b(?:create|deliver|write)\s+exactly\s+(?=[\s"'`(]*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))/gi,
-      /\b(?:only\s+(?:create|deliver|write)|(?:create|deliver|write)\s+only)\s+(?=[\s"'`(]*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))/gi,
+      /\b(?:create|deliver|write)\s+exactly\s+(?=[\s"'`(]*(?:[\w@.-]+[\\/])*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))/gi,
+      /\b(?:only\s+(?:create|deliver|write)|(?:create|deliver|write)\s+only)\s+(?=[\s"'`(]*(?:[\w@.-]+[\\/])*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))/gi,
       /\bexactly\s+(?:these\s+)?(?:files?|deliverables?)\s*:?\s*/gi,
       /\b(?:files?|deliverables?)\s+(?:must\s+)?be\s+exactly\s*:?\s*/gi,
       /\b(?:create|deliver|write)\s+(?:these\s+)?(?:\d+|three)\s+files?\s*:?\s*/gi,
@@ -159,7 +177,7 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
           /(?:^|[\s"'`(])((?:[\w@.-]+[\\/])*(?:\.[\w@-]+|[\w@-]+\.[\w-]+))(?=$|[\s"'`,;:).])/g,
         ),
       ]
-        .map((result) => normalizeFile(result[1]!))
+        .map((result) => normalizeWorkspaceFile(result[1]!))
         .filter((file): file is string => file !== undefined)
       if (files.length > 0) return [...new Set(files)]
     }
@@ -167,33 +185,8 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
   return undefined
 }
 
-function normalizeFile(file: string): string | undefined {
-  const normalized = path.posix.normalize(file.replaceAll('\\', '/'))
-  return path.posix.isAbsolute(normalized) || normalized === '..' || normalized.startsWith('../')
-    ? undefined
-    : normalized
-}
-
-function workspaceFiles(workspacePath: string, expected: string[]): string[] {
-  const files: string[] = []
-  const expectedDirectories = new Set(
-    expected.flatMap((file) => {
-      const parts = file.split('/')
-      return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join('/'))
-    }),
-  )
-  const walk = (directory: string, prefix = ''): void => {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (!prefix && (entry.name === '.git' || entry.name === '.taste')) continue
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name
-      if (entry.isDirectory() && expectedDirectories.has(relative)) {
-        walk(path.join(directory, entry.name), relative)
-      } else if (entry.isDirectory()) files.push(`${relative}/`)
-      else files.push(relative)
-    }
-  }
-  walk(workspacePath)
-  return files.sort()
+function workspaceFiles(workspacePath: string): string[] {
+  return workspaceEntries(workspacePath).map(({ relative }) => relative)
 }
 
 function list(files: string[]): string {

@@ -129,6 +129,93 @@ describe('build phase', () => {
     }
   })
 
+  it('rejects new files inside pre-existing normal directories', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-extra-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest: 'Create exactly index.html; do not create other files.',
+    }
+    try {
+      mkdirSync(path.join(workspace, 'src'))
+      writeFileSync(path.join(workspace, 'src', 'existing.ts'), 'pre-existing user file')
+      const baseline = exactBuildFileBaseline(workspace, brief)
+
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      writeFileSync(path.join(workspace, 'src', 'unexpected.ts'), 'new file')
+
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
+        'unexpected files: src/unexpected.ts',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps internal metadata and dependency trees opaque', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-opaque-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest: 'Create exactly index.html; do not create other files.',
+    }
+    try {
+      for (const directory of ['.git', '.taste', 'node_modules/package', '.pnpm-store/v3']) {
+        mkdirSync(path.join(workspace, directory), { recursive: true })
+        writeFileSync(path.join(workspace, directory, 'existing.json'), '{}')
+      }
+      const baseline = exactBuildFileBaseline(workspace, brief)
+
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      for (const directory of ['.git', '.taste', 'node_modules/package', '.pnpm-store/v3']) {
+        writeFileSync(path.join(workspace, directory, 'created-during-build.json'), '{}')
+      }
+
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).not.toThrow()
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects new files inside nested internal-named directories', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-internal-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest: 'Create exactly index.html; do not create other files.',
+    }
+    try {
+      mkdirSync(path.join(workspace, 'src'))
+      const baseline = exactBuildFileBaseline(workspace, brief)
+
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      for (const directory of ['.git', '.taste']) {
+        mkdirSync(path.join(workspace, 'src', directory))
+        writeFileSync(path.join(workspace, 'src', directory, 'hidden.json'), '{}')
+      }
+
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).toThrow(
+        'unexpected files: src/.git/hidden.json, src/.taste/hidden.json',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts an expected file inside a nested directory', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-expected-'))
+    const brief = {
+      ...artifacts[0],
+      originalRequest: 'Create exactly src/index.ts; do not create other files.',
+    }
+    try {
+      mkdirSync(path.join(workspace, 'src'))
+      const baseline = exactBuildFileBaseline(workspace, brief)
+      writeFileSync(path.join(workspace, 'src', 'index.ts'), 'export {}')
+
+      expect(() => validateExactBuildFiles(workspace, brief, baseline)).not.toThrow()
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it.each([
     'Only create index.html, styles.css, and app.js; no other files.',
     'The files must be exactly index.html, styles.css, and app.js.',
