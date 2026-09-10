@@ -1608,6 +1608,40 @@ describe('durable user submissions', () => {
 })
 
 describe('provider-neutral design briefing', () => {
+  it('rejects duplicate briefing IDs without presenting ambiguous questions', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-duplicate-'))
+    const { orchestrator, sessions, received } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const question = {
+        id: 'audience',
+        header: 'Audience',
+        question: 'Who is it for?',
+        allowOther: true,
+        options: [{ label: 'Teams', description: 'Use a team audience.' }],
+      }
+      sessions[0]?.emit(
+        message(
+          JSON.stringify({
+            status: 'questions',
+            message: 'Questions',
+            questions: [question, { ...question, question: 'Who buys it?' }],
+            brief: null,
+          }),
+          's1-turn',
+        ),
+      )
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+      expect(sessions[0]?.sent[1]).toContain('briefing question ids must be unique')
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('accepts a Design turn from turn.started while sendTurn is still pending', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-started-'))
     const { orchestrator, sessions, received, store, logs } = harness()
