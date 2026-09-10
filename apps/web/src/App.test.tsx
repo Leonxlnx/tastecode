@@ -2525,7 +2525,7 @@ describe('new chats', () => {
     await waitFor(() =>
       expect(
         screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
-      ).toContain('Authenticated'),
+      ).toContain('Signed in'),
     )
   })
 

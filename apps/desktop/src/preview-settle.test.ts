@@ -1,10 +1,12 @@
 import vm from 'node:vm'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PREVIEW_PAGE_HEIGHT_SCRIPT,
   PREVIEW_SETTLE_SCRIPT,
   previewCaptureHeight,
 } from './preview-settle.js'
+
+afterEach(() => vi.useRealTimers())
 
 describe('preview capture settling', () => {
   it('waits for decoded and pending images before the final paint frames', async () => {
@@ -26,6 +28,7 @@ describe('preview capture settling', () => {
           { complete: true, decode },
           {
             complete: false,
+            removeEventListener: vi.fn(),
             addEventListener: (name: string, listener: () => void) => {
               pendingListeners.set(name, listener)
             },
@@ -33,6 +36,8 @@ describe('preview capture settling', () => {
         ],
       },
       requestAnimationFrame: frame,
+      cancelAnimationFrame: vi.fn(),
+      clearTimeout,
       innerHeight: 844,
       scrollTo,
       scrollX: 0,
@@ -57,6 +62,47 @@ describe('preview capture settling', () => {
         Math,
       }),
     ).toBe(12_000)
+  })
+
+  it('finishes with suspended frames, fonts, and images and releases every wait', async () => {
+    vi.useFakeTimers()
+    const callbacks = new Map<number, () => void>()
+    let nextFrame = 0
+    const listeners = new Map<string, () => void>()
+    const scrollTo = vi.fn()
+    const never = new Promise(() => {})
+    const result = vm.runInNewContext(PREVIEW_SETTLE_SCRIPT, {
+      document: {
+        documentElement: { scrollHeight: 800 },
+        body: { scrollHeight: 800 },
+        fonts: { ready: never },
+        getAnimations: () => [{ finished: never }],
+        images: [
+          {
+            complete: false,
+            addEventListener: (name: string, callback: () => void) => listeners.set(name, callback),
+            removeEventListener: (name: string) => listeners.delete(name),
+          },
+        ],
+      },
+      requestAnimationFrame: (callback: () => void) => {
+        callbacks.set(++nextFrame, callback)
+        return nextFrame
+      },
+      cancelAnimationFrame: (id: number) => callbacks.delete(id),
+      setTimeout,
+      clearTimeout,
+      innerHeight: 800,
+      scrollX: 0,
+      scrollY: 140,
+      scrollTo,
+    }) as Promise<void>
+    await vi.advanceTimersByTimeAsync(3000)
+    await result
+    expect(scrollTo).toHaveBeenLastCalledWith(0, 140)
+    expect(listeners.size).toBe(0)
+    expect(callbacks.size).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('clamps a hostile page result again in trusted main-process code', () => {

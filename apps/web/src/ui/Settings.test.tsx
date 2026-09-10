@@ -376,7 +376,8 @@ describe('provider authentication states', () => {
     status.reject(new Error('Codex status unavailable'))
     expect((await screen.findByRole('alert')).textContent).toContain('Codex status unavailable')
     const issue = within(row).getByRole('button', { name: 'Problem details' })
-    expect(issue.getAttribute('aria-describedby')).toBe(within(row).getByRole('tooltip').id)
+    fireEvent.focus(issue)
+    expect(issue.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id)
     expect(within(row).queryByRole('button', { name: 'Sign in' })).toBeNull()
     fireEvent.click(action(row, 'Retry'))
     await waitFor(() =>
@@ -431,7 +432,8 @@ describe('provider authentication states', () => {
     expect(signOut.className).toContain('is-secondary')
     expect(signOut.className).toContain('is-danger')
     expect(signOut.className).not.toContain('is-quiet')
-    expect(within(claude).getByRole('tooltip').textContent).toBe('Claude Code should be updated')
+    fireEvent.focus(within(claude).getByRole('button', { name: 'Problem details' }))
+    expect(screen.getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
     expect(within(grok).queryByRole('button', { name: 'Problem details' })).toBeNull()
     const guide = within(grok).getByRole('link', { name: 'Open setup guide' })
@@ -930,6 +932,18 @@ describe('provider settings', () => {
     expect(screen.queryByRole('button', { name: 'Add custom harness' })).toBeNull()
   })
 
+  it('shows a plan without an email when the provider exposes it', async () => {
+    renderProviders([installedProvider('claude-code', 'Claude Code')], (method) => {
+      if (method === 'auth.status') return { signedIn: true, plan: 'Pro' }
+      throw new Error(`unexpected ${method}`)
+    })
+    await waitFor(() =>
+      expect(providerRow('Claude Code').querySelector('.provider-row__status')?.textContent).toBe(
+        'Signed in · Pro',
+      ),
+    )
+  })
+
   it('shows an honest signed-in fallback instead of asking for an email', async () => {
     renderProviders([installedProvider('grok', 'Grok')], (method) => {
       if (method === 'auth.status') return { signedIn: true }
@@ -1106,7 +1120,7 @@ describe('provider settings', () => {
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
     expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe(
-      'Authenticated as claude@example.com · pro',
+      'claude@example.com · pro',
     )
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
