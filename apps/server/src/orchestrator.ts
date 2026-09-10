@@ -986,11 +986,13 @@ export class Orchestrator {
 
   addMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
+    this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.add(provider, projectPath, server)
   }
 
   updateMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
+    this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.update(provider, projectPath, server)
   }
 

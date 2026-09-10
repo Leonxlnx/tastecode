@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
   ModelInfo,
+  McpServerConfig,
+  McpServerStatus,
   Options,
   SDKControlInitializeResponse,
   SDKMessage,
@@ -13,9 +15,20 @@ import type { DomainEvent, Item } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { ClaudeCodeAdapter, CLAUDE_CAPABILITIES, claudeUserMessage } from './adapter.js'
 import type { ClaudeQueryFactory, ClaudeQueryRuntime } from './sdk-runtime.js'
+import { createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import { Store } from '../../../apps/server/src/store.js'
 import { reduce, emptyThread } from '../../../apps/web/src/thread-store.js'
 import { projectThreadItems } from '../../../apps/web/src/ui/turns.js'
+
+vi.mock('./mcp-bootstrap.js', async (original) => ({
+  ...(await original<typeof import('./mcp-bootstrap.js')>()),
+  createClaudeMcpBootstrap: vi.fn(async (ids: string[]) => ({
+    servers: Object.fromEntries(
+      ids.map((id) => [id, { type: 'http' as const, url: 'http://127.0.0.1:49152/bootstrap' }]),
+    ),
+    close: vi.fn(async () => {}),
+  })),
+}))
 
 class FakeQuery implements ClaudeQueryRuntime {
   readonly #messages: SDKMessage[] = []
@@ -25,9 +38,12 @@ class FakeQuery implements ClaudeQueryRuntime {
   interrupts = 0
   readonly modelsSet: Array<string | undefined> = []
   readonly permissionModes: string[] = []
+  readonly mcpConfigurations: Record<string, McpServerConfig>[] = []
+  mcpServers: Record<string, McpServerConfig>
 
-  constructor(models: ModelInfo[] = []) {
+  constructor(models: ModelInfo[] = [], mcpServers: Record<string, McpServerConfig> = {}) {
     this.models = models
+    this.mcpServers = mcpServers
   }
 
   emitMessage(message: SDKMessage): void {
@@ -59,6 +75,21 @@ class FakeQuery implements ClaudeQueryRuntime {
     return this.models
   }
 
+  async mcpServerStatus(): Promise<McpServerStatus[]> {
+    return Object.entries(this.mcpServers).map(([name, config]) => ({
+      name,
+      status: 'connected',
+      config,
+      tools: [],
+    }))
+  }
+
+  async setMcpServers(servers: Record<string, McpServerConfig>) {
+    this.mcpConfigurations.push(servers)
+    this.mcpServers = servers
+    return { added: Object.keys(servers), removed: [], errors: {} }
+  }
+
   async initializationResult(): Promise<SDKControlInitializeResponse> {
     return {
       commands: [],
@@ -87,7 +118,7 @@ function harness(models: ModelInfo[] = []) {
   const queries: FakeQuery[] = []
   const createQuery: ClaudeQueryFactory = (input) => {
     inputs.push(input)
-    const query = new FakeQuery(models)
+    const query = new FakeQuery(models, input.options.mcpServers)
     queries.push(query)
     return query
   }
@@ -97,6 +128,356 @@ function harness(models: ModelInfo[] = []) {
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 describe('Claude Agent SDK session', () => {
+  it.each([false, true])('passes project MCP safely on open (resume: %s)', async (resume) => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const secret = `canary-${crypto.randomUUID()}`
+    try {
+      const options = {
+        mcpServers: [
+          {
+            id: 'remote',
+            enabled: true as const,
+            transport: {
+              type: 'http' as const,
+              url: 'https://example.test/mcp',
+              headers: { Authorization: { source: 'credential' as const, credentialRef: 'token' } },
+            },
+          },
+        ],
+        mcpCredentials: { token: secret },
+      }
+      const thread = resume
+        ? await adapter.resumeThread('claude-existing', '/repo', options)
+        : await adapter.startThread('/repo', options)
+      expect(JSON.stringify(fake.inputs[0]!.options.mcpServers)).not.toContain(secret)
+      expect(fake.inputs[0]!.options.mcpServers).toEqual({
+        remote: { type: 'http', url: 'http://127.0.0.1:49152/bootstrap' },
+      })
+      expect(Object.values(fake.inputs[0]!.options.env!)).not.toContain(secret)
+      expect(fake.queries[0]!.mcpConfigurations).toEqual([
+        {
+          remote: {
+            type: 'http',
+            url: 'https://example.test/mcp',
+            headers: { Authorization: secret },
+          },
+        },
+      ])
+      expect(
+        (await vi.mocked(createClaudeMcpBootstrap).mock.results.at(-1)!.value).close,
+      ).toHaveBeenCalled()
+      await adapter.sendTurn(thread.id, 'Proceed')
+      expect(
+        (await fake.inputs[0]!.prompt[Symbol.asyncIterator]().next()).value?.message.content,
+      ).toEqual([{ type: 'text', text: 'Proceed' }])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('rejects inherited disable before creating a Claude process', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    await expect(
+      adapter.startThread('/repo', { mcpServers: [{ id: 'hidden', enabled: false }] }),
+    ).rejects.toThrow('cannot hide an inherited MCP server')
+    expect(fake.inputs).toHaveLength(0)
+    await adapter.dispose()
+  })
+
+  it.each(['initialize', 'factory', 'status', 'configure'] as const)(
+    'cleans up a %s failure and redacts the error',
+    async (phase) => {
+      const fake = harness()
+      const secret = `canary-${crypto.randomUUID()}`
+      const adapter = new ClaudeCodeAdapter({
+        createQuery: (input) => {
+          if (phase === 'factory') throw new Error(`cannot continue: ${secret}`)
+          const query = fake.createQuery(input) as FakeQuery
+          vi.spyOn(
+            query,
+            phase === 'status'
+              ? 'mcpServerStatus'
+              : phase === 'configure'
+                ? 'setMcpServers'
+                : 'initializationResult',
+          ).mockRejectedValue(new Error(`cannot continue: ${secret}`))
+          return query
+        },
+      })
+      const logs: string[] = []
+      adapter.on('log', (line) => logs.push(line))
+      try {
+        await expect(
+          adapter.startThread('/repo', {
+            mcpServers: [
+              {
+                id: 'remote',
+                enabled: true,
+                transport: {
+                  type: 'http',
+                  url: 'https://example.test/mcp',
+                  headers: { Authorization: { source: 'credential', credentialRef: 'token' } },
+                },
+              },
+            ],
+            mcpCredentials: { token: secret },
+          }),
+        ).rejects.toThrow('cannot continue: [REDACTED]')
+        if (phase !== 'factory') {
+          expect(fake.queries[0]!.closed).toBe(true)
+          expect(fake.inputs[0]!.options.abortController!.signal.aborted).toBe(true)
+          expect((await fake.inputs[0]!.prompt[Symbol.asyncIterator]().next()).done).toBe(true)
+        }
+        expect(logs.join('\n')).not.toContain(secret)
+        expect(
+          (await vi.mocked(createClaudeMcpBootstrap).mock.results.at(-1)!.value).close,
+        ).toHaveBeenCalled()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('bounds stalled initialization and clears the session on timeout', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      startupTimeoutMs: 20,
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        vi.spyOn(query, 'initializationResult').mockImplementation(() => new Promise(() => {}))
+        return query
+      },
+    })
+    await expect(adapter.startThread('/repo')).rejects.toThrow('startup timed out')
+    expect(fake.queries[0]!.closed).toBe(true)
+    await adapter.dispose()
+  })
+
+  it('cancels a pending open immediately when disposed', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        vi.spyOn(query, 'initializationResult').mockImplementation(() => new Promise(() => {}))
+        return query
+      },
+    })
+    const starting = adapter.startThread('/repo')
+    const stopped = expect(starting).rejects.toThrow('Claude session is closed')
+    await adapter.dispose()
+    await stopped
+    expect(fake.queries[0]!.closed).toBe(true)
+  })
+
+  it.each(['status', 'configure'] as const)(
+    'bounds a stalled MCP %s and closes the bootstrap',
+    async (phase) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({
+        startupTimeoutMs: 25,
+        createQuery(input) {
+          const query = fake.createQuery(input) as FakeQuery
+          vi.spyOn(
+            query,
+            phase === 'status' ? 'mcpServerStatus' : 'setMcpServers',
+          ).mockImplementation(() => new Promise(() => {}))
+          return query
+        },
+      })
+      try {
+        await expect(
+          adapter.startThread('/repo', {
+            mcpServers: [
+              {
+                id: 'remote',
+                enabled: true,
+                transport: { type: 'http', url: 'https://example.test/mcp' },
+              },
+            ],
+          }),
+        ).rejects.toThrow('startup timed out')
+        expect(fake.queries[0]!.closed).toBe(true)
+        expect(
+          (await vi.mocked(createClaudeMcpBootstrap).mock.results.at(-1)!.value).close,
+        ).toHaveBeenCalled()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('waits for bootstrap cleanup when disposed during bind', async () => {
+    const fake = harness()
+    let complete!: (value: Awaited<ReturnType<typeof createClaudeMcpBootstrap>>) => void
+    const close = vi.fn(async () => {})
+    vi.mocked(createClaudeMcpBootstrap).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve
+        }),
+    )
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const starting = expect(
+      adapter.startThread('/repo', {
+        mcpServers: [
+          {
+            id: 'remote',
+            enabled: true,
+            transport: { type: 'http', url: 'https://example.test/mcp' },
+          },
+        ],
+      }),
+    ).rejects.toThrow('Claude session is closed')
+    let disposed = false
+    const disposing = adapter.dispose().then(() => {
+      disposed = true
+    })
+    await tick()
+    expect(disposed).toBe(false)
+    complete({
+      servers: { remote: { type: 'http', url: 'http://127.0.0.1:49152/bootstrap' } },
+      close,
+    })
+    await disposing
+    await starting
+    expect(close).toHaveBeenCalled()
+    expect(fake.queries).toHaveLength(0)
+  })
+
+  it('redacts split process stderr and provider errors at their publication boundaries', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const secret = `canary-${crypto.randomUUID()}`
+    const logs: string[] = []
+    const events: DomainEvent[] = []
+    adapter.on('log', (line) => logs.push(line))
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo', {
+        mcpServers: [
+          {
+            id: 'remote',
+            enabled: true,
+            transport: {
+              type: 'http',
+              url: 'https://example.test/mcp',
+              headers: { Authorization: { source: 'credential', credentialRef: 'token' } },
+            },
+          },
+        ],
+        mcpCredentials: { token: secret },
+      })
+      const options = fake.inputs[0]!.options
+      const child = options.spawnClaudeCodeProcess!({
+        command: process.execPath,
+        args: [
+          '-e',
+          "const value=process.env.FIXTURE_TOKEN; process.stderr.write('failure ' + value.slice(0, 9)); setTimeout(()=>process.stderr.end(value.slice(9) + ' tail'), 10)",
+        ],
+        env: { ...options.env, FIXTURE_TOKEN: secret },
+        signal: options.abortController!.signal,
+      })
+      child.stdout.resume()
+      await new Promise<void>((resolve, reject) => {
+        child.once('error', reject)
+        child.once('close', () => resolve())
+      })
+      await tick()
+      expect(logs.join('')).toContain('[REDACTED]')
+      expect(logs.join('')).toContain('tail')
+      await adapter.sendTurn(thread.id, 'Fail safely')
+      const failure = resultMessage(true)
+      if (failure.type !== 'result' || !('errors' in failure))
+        throw new Error('Expected an error result fixture')
+      fake.queries[0]!.emitMessage({ ...failure, errors: [`request failed: ${secret}`] })
+      await tick()
+      expect(events).toContainEqual({
+        type: 'thread.error',
+        threadId: thread.id,
+        message: 'request failed: [REDACTED]',
+      })
+      expect(JSON.stringify({ logs, events })).not.toContain(secret)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('does not enqueue a turn before startup finishes', async () => {
+    const fake = harness()
+    let initialized!: () => void
+    const adapter = new ClaudeCodeAdapter({
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        const result = query.initializationResult()
+        vi.spyOn(query, 'initializationResult').mockImplementation(async () => {
+          await new Promise<void>((resolve) => {
+            initialized = resolve
+          })
+          return result
+        })
+        return query
+      },
+    })
+    try {
+      const starting = adapter.startThread('/repo')
+      const sessionId = fake.inputs[0]!.options.sessionId!
+      let enqueued = false
+      const sending = adapter.sendTurn(`claude-${sessionId}`, 'Wait for startup').then(() => {
+        enqueued = true
+      })
+      await tick()
+      expect(enqueued).toBe(false)
+      initialized()
+      await starting
+      await sending
+      expect(enqueued).toBe(true)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it.each(['model', 'interrupt'] as const)(
+    'keeps late %s errors redacted after dispose clears session options',
+    async (control) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      const secret = `canary-${crypto.randomUUID()}`
+      const thread = await adapter.startThread('/repo', {
+        mcpServers: [
+          {
+            id: 'remote',
+            enabled: true,
+            transport: {
+              type: 'http',
+              url: 'https://example.test/mcp',
+              headers: { Authorization: { source: 'credential', credentialRef: 'token' } },
+            },
+          },
+        ],
+        mcpCredentials: { token: secret },
+      })
+      let fail!: (error: Error) => void
+      vi.spyOn(fake.queries[0]!, control === 'model' ? 'setModel' : 'interrupt').mockImplementation(
+        () =>
+          new Promise((_, reject) => {
+            fail = reject
+          }),
+      )
+      if (control === 'interrupt') await adapter.sendTurn(thread.id, 'Begin turn')
+      const controlled = expect(
+        control === 'model'
+          ? adapter.sendTurn(thread.id, 'Change model', [], { model: 'sonnet' })
+          : adapter.interrupt(),
+      ).rejects.toThrow('late [REDACTED]')
+      await tick()
+      await adapter.dispose()
+      fail(new Error(`late ${secret}`))
+      await controlled
+    },
+  )
+
   it('declares the controls supplied by the SDK', () => {
     expect(CLAUDE_CAPABILITIES).toMatchObject({
       steer: true,

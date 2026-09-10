@@ -3,6 +3,7 @@ import type {
   Account,
   McpCapabilities,
   McpServer,
+  McpServerConfig,
   Model,
   ProviderId,
   ProviderLimit,
@@ -11,6 +12,7 @@ import type {
   SkillCapabilities,
   SkillDiscoveryError,
 } from '@harness/contracts'
+import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
@@ -56,6 +58,7 @@ export type CodexControlAdapter = Pick<
 
 /** Injectable readers keep auth tests independent of installed CLIs and credentials. */
 export type ProviderServices = {
+  validateMcpServer?: (server: McpServerConfig) => void
   account?: (agent?: string) => Promise<Account>
   usageLimitSource?: () => Promise<LimitSource>
   startLogin?: (
@@ -66,6 +69,7 @@ export type ProviderServices = {
 
 export type ProviderControl = {
   capabilities: ProviderControlCapabilities
+  validateMcpServer?: (server: McpServerConfig) => void
   account(agent?: string): Promise<Account>
   usageLimitSource(): Promise<ProviderLimitSource>
   signOut(agent?: string): Promise<void>
@@ -128,6 +132,7 @@ const defaultServices = {
   opencode: {},
   pi: {},
   'claude-code': {
+    validateMcpServer: validateClaudeMcpServer,
     account: async () => (await loadClaude()).claudeAccount(),
     usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
@@ -274,6 +279,7 @@ export class ProviderControls {
           this.#options.onAuthChanged?.(provider)
         }),
       watch: (projectPath, targets) => this.#watch(provider, projectPath, targets),
+      ...(services.validateMcpServer ? { validateMcpServer: services.validateMcpServer } : {}),
       ...(capabilities.nativeModels
         ? { listModels: (agent?: string) => this.#readModels(provider, agent) }
         : {}),

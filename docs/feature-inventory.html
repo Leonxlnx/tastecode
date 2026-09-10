@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-10 base main 1b5c85f1 + PR #1006</span>
+        <span class="meta">2026-09-10 base main a44f4410 + PR #986</span>
       </div>
     </div>
 
@@ -1483,9 +1483,12 @@
                 >MCP servers: empty project view until explicitly added, then enable and disable,
                 inspect, per-project scope
                 <span class="d"
-                  >a provider selector manages separate Codex and Grok project inventories; Codex
-                  can hot-reload compatible changes, while Grok receives its selected servers over
-                  ACP when a new session starts</span
+                  >a provider selector manages separate Codex, Claude Code, and Grok project
+                  definitions; Codex can hot-reload compatible changes, Grok receives selected
+                  servers through ACP, and Claude receives enabled definitions on start and resume
+                  with credentials kept out of process arguments; controls follow the available
+                  capabilities, and Claude rejects unsupported inherited-server hiding before
+                  saving</span
                 ></span
               ></label
             >
@@ -1880,6 +1883,11 @@
       <p class="sub">
         Exact Design output rules inspect nested folders and reject unexpected files and linked
         deliverables.
+      </p>
+
+      <p class="sub">
+        Claude project MCP settings apply on start and resume with credentials scoped to each
+        server.
       </p>
 
       <footer>

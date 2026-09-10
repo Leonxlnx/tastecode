@@ -3395,15 +3395,47 @@ describe('persisted threads', () => {
 })
 
 describe('MCP inventory', () => {
-  it('reports unsupported providers without starting one', async () => {
+  it('validates Claude project MCP settings before saving additions or edits', async () => {
+    const { orchestrator, sessions } = harness()
+    const safe: McpServerConfig = {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    }
+    try {
+      expect(() =>
+        orchestrator.addMcpServer('claude-code', '/repo', { id: 'hidden', enabled: false }),
+      ).toThrow('cannot hide an inherited MCP server')
+      expect(() =>
+        orchestrator.addMcpServer('claude-code', '/repo', {
+          id: 'custom',
+          enabled: true,
+          transport: { type: 'stdio', command: 'node', args: [], cwd: '/another-project' },
+        }),
+      ).toThrow('custom working directory')
+      expect((await orchestrator.listMcpServers('claude-code', '/repo')).servers).toEqual([])
+      orchestrator.addMcpServer('claude-code', '/repo', safe)
+      const saved = await orchestrator.listMcpServers('claude-code', '/repo')
+      expect(saved.servers.map(({ id }) => id)).toEqual(['docs'])
+      expect(() =>
+        orchestrator.updateMcpServer('claude-code', '/repo', { id: 'docs', enabled: false }),
+      ).toThrow('cannot hide an inherited MCP server')
+      expect(await orchestrator.listMcpServers('claude-code', '/repo')).toEqual(saved)
+      expect(sessions).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('reports provider MCP capabilities without starting one', async () => {
     const { orchestrator } = harness()
 
     await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
       capabilities: {
         inventory: false,
-        add: false,
-        update: false,
-        remove: false,
+        add: true,
+        update: true,
+        remove: true,
         reload: false,
         startOAuth: false,
         cancelOAuth: false,

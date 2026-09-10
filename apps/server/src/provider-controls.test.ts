@@ -111,6 +111,30 @@ afterEach(async () => {
 })
 
 describe('declared provider controls', () => {
+  it('validates Claude MCP changes without starting a control process', () => {
+    const { registry, createCodex } = setup()
+    const control = registry.forProvider('claude-code')
+    expect(control.capabilities.managedMcp).toBe(true)
+    expect(control.listMcpServers).toBeUndefined()
+    expect(() => control.validateMcpServer!({ id: 'inherited', enabled: false })).toThrow(
+      'cannot hide an inherited MCP server',
+    )
+    expect(() =>
+      control.validateMcpServer!({
+        id: 'local',
+        enabled: true,
+        transport: { type: 'stdio', command: 'node', cwd: 'C:\\other' },
+      }),
+    ).toThrow('custom working directory')
+    expect(() =>
+      control.validateMcpServer!({
+        id: 'local',
+        enabled: true,
+        transport: { type: 'stdio', command: 'node', args: ['mcp.mjs'] },
+      }),
+    ).not.toThrow()
+    expect(createCodex).not.toHaveBeenCalled()
+  })
   it('keeps the full roster and creates no processes until a read needs one', async () => {
     const { registry, createCodex } = setup()
     expect(Object.keys(PROVIDER_CAPABILITIES).sort()).toEqual([...ProviderIdSchema.options].sort())

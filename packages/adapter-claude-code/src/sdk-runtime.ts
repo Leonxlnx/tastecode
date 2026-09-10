@@ -17,6 +17,8 @@ export type ClaudeQueryRuntime = Pick<
   | 'setModel'
   | 'setPermissionMode'
   | 'supportedModels'
+  | 'mcpServerStatus'
+  | 'setMcpServers'
 > &
   AsyncIterable<SDKMessage>
 
@@ -50,6 +52,7 @@ export function claudeSdkSpawner(
   onStderr?: (chunk: string) => void,
   onStop?: (stopped: Promise<void>) => void,
   onSpawn?: (child: ReturnType<ClaudeSpawn>) => void,
+  onStderrEnd?: () => void,
 ) {
   return (options: SpawnOptions): SpawnedProcess => {
     const child = spawn(options.command, options.args, {
@@ -69,6 +72,7 @@ export function claudeSdkSpawner(
     }
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => onStderr?.(chunk))
+    child.stderr.once('end', () => onStderrEnd?.())
     child.stderr.resume()
     if (options.signal.aborted) abort()
     else options.signal.addEventListener('abort', abort, { once: true })
