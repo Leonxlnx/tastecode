@@ -932,6 +932,18 @@ describe('provider settings', () => {
     expect(screen.queryByRole('button', { name: 'Add custom harness' })).toBeNull()
   })
 
+  it('shows a plan without an email when the provider exposes it', async () => {
+    renderProviders([installedProvider('claude-code', 'Claude Code')], (method) => {
+      if (method === 'auth.status') return { signedIn: true, plan: 'Pro' }
+      throw new Error(`unexpected ${method}`)
+    })
+    await waitFor(() =>
+      expect(providerRow('Claude Code').querySelector('.provider-row__status')?.textContent).toBe(
+        'Signed in · Pro',
+      ),
+    )
+  })
+
   it('shows an honest signed-in fallback instead of asking for an email', async () => {
     renderProviders([installedProvider('grok', 'Grok')], (method) => {
       if (method === 'auth.status') return { signedIn: true }
@@ -1108,7 +1120,7 @@ describe('provider settings', () => {
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
     expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe(
-      'Authenticated as claude@example.com · pro',
+      'claude@example.com · pro',
     )
     if (!claudeRow || !grokRow) throw new Error('provider row missing')
     fireEvent.click(within(claudeRow).getByRole('button', { name: 'Sign out' }))
