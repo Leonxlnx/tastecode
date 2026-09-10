@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { RowIssue } from './RowIssue.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
 import type {
@@ -30,7 +31,6 @@ import type {
 import { z } from 'zod'
 import {
   IconArrowLeft as ArrowLeft,
-  IconAlertCircle as CircleAlert,
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
   IconDatabase as Database,
@@ -2090,20 +2090,10 @@ function providerEmailKey(provider: ProviderId): string {
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {
   const [savedEmail] = useState(() => localStorage.getItem(providerEmailKey(props.provider)))
   const email = props.account.email ?? savedEmail
-  const claude = props.provider === 'claude-code'
 
   return (
     <>
-      {email ? (
-        <>
-          {claude ? 'Authenticated as ' : null}
-          <AccountEmail email={email} />
-        </>
-      ) : claude ? (
-        'Authenticated'
-      ) : (
-        'Signed in'
-      )}
+      {email ? <AccountEmail email={email} /> : 'Signed in'}
       {props.account.plan ? ' · ' : null}
       {props.account.plan}
     </>
@@ -2142,25 +2132,6 @@ function AccountEmail(props: { email: string }) {
       </button>
       <span className="settings__email-clip">
         <span className="settings__email-value">{props.email}</span>
-      </span>
-    </span>
-  )
-}
-
-/**
- * Errors never grow a second line: every row keeps one height, and problems
- * live behind a red dot whose bubble carries the message plus a tip. Hover
- * or focus opens it — it is a real button so keyboards reach it too.
- */
-function RowIssue(props: { message: string; tip?: string | undefined }) {
-  return (
-    <span className="row-issue">
-      <button type="button" className="row-issue__dot" aria-label={'Problem: ' + props.message}>
-        <CircleAlert size={14} aria-hidden />
-      </button>
-      <span role="tooltip" className="row-issue__bubble">
-        {props.message}
-        {props.tip ? <span className="row-issue__tip">{props.tip}</span> : null}
       </span>
     </span>
   )
