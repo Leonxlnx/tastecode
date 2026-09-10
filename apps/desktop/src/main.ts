@@ -722,6 +722,7 @@ function createPreviewWindow(request: PreviewCaptureRequest): BrowserWindow {
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
+      backgroundThrottling: false,
       // The capture owner serializes access and refuses reuse after failed cleanup.
       // Per-request partitions would retain an unbounded number of sessions.
       partition: 'preview-capture',
