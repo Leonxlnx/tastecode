@@ -4564,11 +4564,18 @@ describe('new chats', () => {
 
   it('loads, applies, and persists an installed interface font', async () => {
     const originalQuery = Object.getOwnPropertyDescriptor(globalThis, 'queryLocalFonts')
-    const queryLocalFonts = vi.fn().mockResolvedValue([
+    const records = [
       { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Regular' },
       { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Bold' },
       { family: 'Zilla Slab', fullName: 'Zilla Slab Regular' },
-    ])
+    ]
+    let finishScan!: (value: typeof records) => void
+    const queryLocalFonts = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishScan = resolve
+        }),
+    )
     Object.defineProperty(globalThis, 'queryLocalFonts', {
       configurable: true,
       value: queryLocalFonts,
@@ -4583,6 +4590,9 @@ describe('new chats', () => {
       expect(queryLocalFonts).toHaveBeenCalledOnce()
       const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
       expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      expect(screen.getByRole('status').textContent).toBe('Loading fonts…')
+      expect(screen.queryAllByRole('option')).toHaveLength(0)
+      await act(async () => finishScan(records))
         'Atkinson Hyperlegible',
         'Geist',
         'Geist Mono',
@@ -4611,6 +4621,14 @@ describe('new chats', () => {
       expect(document.documentElement.dataset.font).toBe('local')
     } finally {
       if (originalQuery) Object.defineProperty(globalThis, 'queryLocalFonts', originalQuery)
+      openSettings()
+      fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Interface font' }), {
+        key: 'ArrowDown',
+      })
+      expect(screen.getByRole('option', { name: 'Atkinson Hyperlegible' })).toBeTruthy()
+      expect(screen.getAllByRole('option')).toHaveLength(6)
+      expect(queryLocalFonts).toHaveBeenCalledOnce()
       else Reflect.deleteProperty(globalThis, 'queryLocalFonts')
     }
   })
