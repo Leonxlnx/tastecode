@@ -1,3 +1,30 @@
+.composer__dictation-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-columns var(--dur-slow) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out),
+    visibility var(--dur-slow);
+}
+
+.composer__dictation-options[data-hidden] {
+  grid-template-columns: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.composer__dictation-options-clip {
+  min-width: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer__dictation-options {
+    transition: opacity var(--dur-press) var(--ease-out);
+  }
+}
+
 .composer-voice-bar {
   display: flex;
   align-items: center;
