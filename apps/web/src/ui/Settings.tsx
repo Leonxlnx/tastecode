@@ -46,7 +46,7 @@ import {
   IconUser as UserRound,
 } from '@tabler/icons-react'
 import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
-import { listInstalledFontFamilies } from '../local-fonts.js'
+import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-fonts.js'
 import {
   appUpdateState,
   checkForAppUpdates,
@@ -1171,16 +1171,13 @@ function AppearanceSettings(props: {
   onMacOSFontSmoothingChange: (enabled: boolean) => void
   showMacOSHaptics?: boolean | undefined
 }) {
-  const [installedFontFamilies, setInstalledFontFamilies] = useState<readonly string[]>([])
-  const fontFamiliesRequested = useRef(false)
+  const [installedFontFamilies, setInstalledFontFamilies] = useState(readInstalledFontFamilies)
   const requestInstalledFontFamilies = useCallback(() => {
-    if (fontFamiliesRequested.current) return
-    fontFamiliesRequested.current = true
     void listInstalledFontFamilies().then(setInstalledFontFamilies)
   }, [])
   const fontOptions = useMemo(() => {
     const optionsByLabel = new Map<string, { value: FontPreference; label: string }>()
-    for (const family of installedFontFamilies) {
+    for (const family of installedFontFamilies ?? []) {
       const value = fontPreferenceForFamily(family)
       if (!value) continue
       optionsByLabel.set(fontOptionKey(family), { value, label: family })
@@ -1255,11 +1252,7 @@ function AppearanceSettings(props: {
           </div>
         </SettingsRow>
         <SettingsRow className="appearance-editor__row" title="Interface font">
-          <div
-            className="appearance-control"
-            onClickCapture={requestInstalledFontFamilies}
-            onKeyDownCapture={requestInstalledFontFamilies}
-          >
+          <div className="appearance-control">
             <span className="appearance-control__type" aria-hidden>
               Aa
             </span>
@@ -1269,6 +1262,8 @@ function AppearanceSettings(props: {
               align="right"
               value={props.fontPreference}
               options={fontOptions}
+              onOpen={requestInstalledFontFamilies}
+              loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
               search={FONT_SEARCH}
               onChange={props.onFontPreferenceChange}
             />
