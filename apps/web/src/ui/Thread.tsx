@@ -41,7 +41,7 @@ import {
 } from '../bridge.js'
 import { isEditableTarget } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
-import { Approval, AutomaticApprovalReview } from './Approval.js'
+import { Approval } from './Approval.js'
 import { Diff } from './Diff.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -127,7 +127,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     props.frameStore.getStructureSnapshot,
   )
   const running = thread.running && !props.stopping
-  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
   const activeActivityIndices = useMemo(
     () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
     [thread.items, thread.activeTurn?.id, thread.liveStart],
@@ -445,10 +444,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
             />
           ) : null}
-
-          {reviews.map((review) => (
-            <AutomaticApprovalReview key={review.id} review={review} />
-          ))}
 
           {running ? <Plan steps={thread.plan} compact /> : null}
           {!running ? (
