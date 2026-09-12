@@ -624,11 +624,7 @@ export class Orchestrator {
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
-    this.#voice = new VoiceService(
-      this.#modelConnections,
-      this.#readCredential,
-      handlers.voiceTranscriber,
-    )
+    this.#voice = new VoiceService(handlers.voiceTranscriber)
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
       onExit: handlers.onTerminalExit ?? (() => {}),
