@@ -358,6 +358,10 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
     expect(document.querySelector('.account__name')?.textContent).toBe('private@example.com')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
+    expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('85%')
+    expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
+      '85% used · codex · 7 days',
+    )
     expect(accountTrigger.querySelector('.account__chevron')).not.toBeNull()
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))

@@ -454,6 +454,18 @@
   white-space: nowrap;
 }
 
+.account__usage {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.account__usage + .account__chevron {
+  margin-left: 0;
+}
+
 .account__chevron {
   flex: none;
   margin-left: auto;
