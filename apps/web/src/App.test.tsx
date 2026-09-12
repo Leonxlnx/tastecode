@@ -74,6 +74,7 @@ const utilityRenders = vi.hoisted(() => ({
 const appRenders = vi.hoisted(() => vi.fn())
 const highlighterHighlight = vi.hoisted(() => vi.fn(() => ({ tokens: [] })))
 const desktopShell = vi.hoisted(() => ({ enabled: false }))
+const shortcutPlatform = vi.hoisted(() => ({ macOS: true }))
 const nativeMenu = vi.hoisted(() => ({
   listener: undefined as ((action: NativeMenuAction) => void) | undefined,
   syncShortcuts: vi.fn(),
@@ -286,7 +287,7 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
   isMacOS: () => {
     appRenders()
-    return true
+    return shortcutPlatform.macOS
   },
 }))
 
@@ -355,6 +356,7 @@ function contractValidServerProviders(): ServerProvider[] {
 }
 
 beforeEach(() => {
+  shortcutPlatform.macOS = true
   desktopShell.enabled = false
   pickFolder.mockReset().mockResolvedValue(undefined)
   droppedProjectFolderPaths.mockReset().mockResolvedValue([])
@@ -4564,11 +4566,18 @@ describe('new chats', () => {
 
   it('loads, applies, and persists an installed interface font', async () => {
     const originalQuery = Object.getOwnPropertyDescriptor(globalThis, 'queryLocalFonts')
-    const queryLocalFonts = vi.fn().mockResolvedValue([
+    const records = [
       { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Regular' },
       { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Bold' },
       { family: 'Zilla Slab', fullName: 'Zilla Slab Regular' },
-    ])
+    ]
+    let finishScan!: (value: typeof records) => void
+    const queryLocalFonts = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishScan = resolve
+        }),
+    )
     Object.defineProperty(globalThis, 'queryLocalFonts', {
       configurable: true,
       value: queryLocalFonts,
@@ -4581,6 +4590,9 @@ describe('new chats', () => {
       fireEvent.click(screen.getByRole('combobox', { name: 'Interface font' }))
 
       expect(queryLocalFonts).toHaveBeenCalledOnce()
+      expect(screen.getByRole('status').textContent).toBe('Loading fonts…')
+      expect(screen.queryAllByRole('option')).toHaveLength(0)
+      await act(async () => finishScan(records))
       const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
       expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
         'Atkinson Hyperlegible',
@@ -4609,6 +4621,14 @@ describe('new chats', () => {
       render(<App />)
       expect(screen.queryByRole('combobox', { name: 'Interface font' })).toBeNull()
       expect(document.documentElement.dataset.font).toBe('local')
+      openSettings()
+      fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Interface font' }), {
+        key: 'ArrowDown',
+      })
+      expect(screen.getByRole('option', { name: 'Atkinson Hyperlegible' })).toBeTruthy()
+      expect(screen.getAllByRole('option')).toHaveLength(6)
+      expect(queryLocalFonts).toHaveBeenCalledOnce()
     } finally {
       if (originalQuery) Object.defineProperty(globalThis, 'queryLocalFonts', originalQuery)
       else Reflect.deleteProperty(globalThis, 'queryLocalFonts')
@@ -5806,6 +5826,62 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
+  it.each([true, false])(
+    'opens newest sessions with platform shortcuts (macOS: %s)',
+    async (macOS) => {
+      shortcutPlatform.macOS = macOS
+      const modifier = macOS ? { metaKey: true } : { ctrlKey: true }
+      serverProjects = [
+        {
+          path: '/work/other',
+          name: 'Other',
+          pinned: false,
+          createdAt: 0,
+          sessions: [{ id: 'other', title: 'Other session', createdAt: 100 }],
+        },
+        {
+          path: '/work/top',
+          name: 'Top',
+          pinned: true,
+          createdAt: 1,
+          sessions: Array.from({ length: 9 }, (_, index) => ({
+            id: `recent-${index}`,
+            title: `Recent ${index}`,
+            createdAt: index,
+          })),
+        },
+      ]
+      render(<App />)
+      await screen.findByRole('button', { name: 'Top' })
+      for (const [key, id] of [
+        ['1', 'recent-8'],
+        ['9', 'recent-0'],
+      ]) {
+        fireEvent.keyDown(window, { key, ...modifier })
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith(
+            'thread.history',
+            expect.objectContaining({ threadId: id }),
+          ),
+        )
+      }
+      transport.request.mockClear()
+      fireEvent.keyDown(window, { key: '2', metaKey: !macOS, ctrlKey: macOS })
+      fireEvent.keyDown(window, { key: '2', ...modifier, shiftKey: true })
+      expect(transport.request).not.toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-7' }),
+      )
+      fireEvent.keyDown(window, { key: ',', metaKey: true })
+      await screen.findByRole('dialog', { name: 'Settings' })
+      fireEvent.keyDown(window, { key: '2', ...modifier })
+      expect(transport.request).not.toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-7' }),
+      )
+    },
+  )
+
   it('runs sidebar and terminal actions from the native menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
