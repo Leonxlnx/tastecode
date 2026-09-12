@@ -1588,6 +1588,7 @@ function ViewedImagePreview({
         <Suspense fallback={null}>
           <MediaViewer
             src={preview.previewUrl}
+            thumbnailSrc={inlineSource}
             name={preview.name}
             mediaType="image"
             onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}

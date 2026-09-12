@@ -686,17 +686,13 @@
     transition: none !important;
   }
 
-  .pr-toolbar-menu-trigger:is(:active, [aria-expanded='true']):not(:disabled):not(
-      [aria-disabled='true']
-    )
+  .pr-toolbar-menu-trigger[aria-expanded='true']:not(:disabled):not([aria-disabled='true'])
     > .pr-toolbar-button,
-  .pr-status-menu-trigger:is(:active, [aria-expanded='true']):not(:disabled):not(
-      [aria-disabled='true']
-    )
+  .pr-status-menu-trigger[aria-expanded='true']:not(:disabled):not([aria-disabled='true'])
     > .pr-status-pill {
     background-image: linear-gradient(
-      var(--control-press-overlay),
-      var(--control-press-overlay)
+      var(--control-open-overlay),
+      var(--control-open-overlay)
     ) !important;
   }
 }
