@@ -5808,24 +5808,6 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
-  it('runs sidebar and terminal actions from the native menu', async () => {
-    render(<App />)
-    await screen.findByRole('button', { name: /^New session,/ })
-
-    expect(nativeMenu.syncShortcuts).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toggleSidebar: { key: 'b', primary: true },
-        toggleTerminal: { key: 'j', primary: true },
-      }),
-    )
-
-    act(() => nativeMenu.listener?.('toggleSidebar'))
-    expect(document.querySelector('.shell')?.classList).toContain('is-narrow')
-
-    act(() => nativeMenu.listener?.('toggleTerminal'))
-    expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
-  })
-
   it.each([true, false])(
     'opens newest sessions with platform shortcuts (macOS: %s)',
     async (macOS) => {
@@ -5881,6 +5863,24 @@ describe('global shortcuts', () => {
       )
     },
   )
+
+  it('runs sidebar and terminal actions from the native menu', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    expect(nativeMenu.syncShortcuts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toggleSidebar: { key: 'b', primary: true },
+        toggleTerminal: { key: 'j', primary: true },
+      }),
+    )
+
+    act(() => nativeMenu.listener?.('toggleSidebar'))
+    expect(document.querySelector('.shell')?.classList).toContain('is-narrow')
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
+  })
 
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
     render(<App />)
