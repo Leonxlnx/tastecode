@@ -1,4 +1,3 @@
-import { z } from 'zod'
 export type ProfileIdentityPreferences = {
   displayName: string
   avatarDataUrl?: string | undefined
@@ -43,8 +42,7 @@ export async function readProfileImage(file: File): Promise<string> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.addEventListener('load', () => {
-      const result = z.string().safeParse(reader.result)
-      if (result.success) resolve(result.data)
+      if (typeof reader.result === 'string') resolve(reader.result)
       else reject(new Error('Read failed.'))
     })
     reader.addEventListener('error', () => reject(new Error('The image could not be read.')))

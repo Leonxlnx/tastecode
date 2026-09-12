@@ -14,7 +14,7 @@ export type ClaudeAccountOptions = {
 
 export type ClaudeLogin = {
   loginId: string
-  cancel: () => void
+  cancel: () => Promise<void>
 }
 
 export async function claudeAccount(options: ClaudeAccountOptions = {}): Promise<Account> {

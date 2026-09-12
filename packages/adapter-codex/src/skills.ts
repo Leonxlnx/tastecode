@@ -45,7 +45,7 @@ export function mapSkillList(
               displayName: skill.interface?.displayName,
             }
           : {}),
-        description: skill.description,
+        description: skill.description ?? '',
         source: { type: 'folder' as const, path: path.dirname(skillPath) },
         scope: skill.scope === 'repo' ? 'project' : skill.scope,
         enabled: skill.enabled,

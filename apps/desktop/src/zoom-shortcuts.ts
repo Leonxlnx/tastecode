@@ -1,11 +1,8 @@
-import { z } from 'zod'
-
 export type ZoomAction = 'in' | 'out' | 'reset'
-const ZoomActionSchema = z.enum(['in', 'out', 'reset'])
 export const DEFAULT_ZOOM_FACTOR = 1.1
 
 export function isZoomAction(value: unknown): value is ZoomAction {
-  return ZoomActionSchema.safeParse(value).success
+  return value === 'in' || value === 'out' || value === 'reset'
 }
 
 export function zoomShortcut(input: {

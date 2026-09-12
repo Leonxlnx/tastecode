@@ -16,23 +16,24 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `@anthropic-ai/claude-agent-sdk` | Claude Code adapter runtime | LicenseRef-Anthropic-Commercial-Terms | [source](https://github.com/anthropics/claude-agent-sdk-typescript) |
 | `@fontsource-variable/geist` | Geist variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/geist-mono` | Geist Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
+| `@fontsource-variable/inter` | Inter variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/jetbrains-mono` | JetBrains Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@napi-rs/keyring` | OS credential-store integration | MIT | [source](https://github.com/Brooooooklyn/keyring-node) |
 | `@opencode-ai/sdk` | OpenCode adapter client | MIT | [source](https://github.com/anomalyco/opencode) |
 | `@pierre/diffs` | Pull-request diff rendering | Apache-2.0 | [source](https://github.com/pierrecomputer/pierre) |
+| `@tabler/icons-react` | Interface icons | MIT | [source](https://github.com/tabler/tabler-icons) |
 | `@tanstack/react-virtual` | Thread virtualization | MIT | [source](https://github.com/TanStack/virtual) |
 | `@xterm/addon-fit` | Terminal sizing | MIT | [source](https://github.com/xtermjs/xterm.js) |
 | `@xterm/addon-unicode11` | Terminal Unicode width support | MIT | [source](https://github.com/xtermjs/xterm.js) |
 | `@xterm/addon-web-links` | Terminal link detection | MIT | [source](https://github.com/xtermjs/xterm.js) |
 | `@xterm/addon-webgl` | Terminal WebGL renderer | MIT | [source](https://github.com/xtermjs/xterm.js) |
 | `@xterm/xterm` | Terminal UI | MIT | [source](https://github.com/xtermjs/xterm.js) |
-| `border-beam` | Animated border effect | MIT | [source](https://github.com/Jakubantalik/border-beam) |
 | `electron` | Desktop runtime | MIT | [source](https://github.com/electron/electron) |
 | `electron-updater` | Desktop update client | MIT | [source](https://github.com/electron-userland/electron-builder) |
-| `lucide-react` | Interface icons | ISC AND MIT | [source](https://github.com/lucide-icons/lucide) |
 | `micromark` | Markdown parsing | MIT | [source](https://github.com/micromark/micromark) |
 | `micromark-util-decode-string` | Markdown string decoding | MIT | [source](https://github.com/micromark/micromark) |
 | `node-pty` | Pseudoterminal integration | MIT | [source](https://github.com/microsoft/node-pty) |
+| `parse5` | Static preview HTML parsing | MIT | [source](https://github.com/inikulin/parse5) |
 | `react` | Renderer UI | MIT | [source](https://github.com/facebook/react) |
 | `react-dom` | Renderer DOM integration | MIT | [source](https://github.com/facebook/react) |
 | `shiki` | Syntax highlighting | MIT | [source](https://github.com/shikijs/shiki) |

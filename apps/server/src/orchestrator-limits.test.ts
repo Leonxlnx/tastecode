@@ -6,6 +6,7 @@ const sources = vi.hoisted(() => ({
   codex: vi.fn(),
   claude: vi.fn(),
   grok: vi.fn(),
+  consume: vi.fn(),
   constructed: 0,
   disposed: [] as number[],
 }))
@@ -27,6 +28,9 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
       }
       rateLimitSource(): Promise<unknown> {
         return sources.codex()
+      }
+      consumeRateLimitReset(idempotencyKey: string): Promise<unknown> {
+        return sources.consume(idempotencyKey)
       }
     },
   }
@@ -55,6 +59,7 @@ beforeEach(() => {
   sources.codex.mockReset()
   sources.claude.mockReset()
   sources.grok.mockReset()
+  sources.consume.mockReset()
   sources.constructed = 0
   sources.disposed = []
 })
@@ -126,6 +131,38 @@ describe('provider limit sources', () => {
     const instance = orchestrator()
 
     await expect(instance.usageLimitSource('grok')).rejects.toThrow('Grok billing request failed.')
+    await instance.disposeAll()
+  })
+})
+
+describe('rate-limit reset consume', () => {
+  it('redeems through a short-lived Codex adapter and notifies usage listeners', async () => {
+    const onUsageChanged = vi.fn()
+    sources.consume.mockResolvedValue('reset')
+    const instance = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      onUsageChanged,
+    })
+
+    await expect(
+      instance.consumeRateLimitReset('codex', '8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+    ).resolves.toEqual({ outcome: 'reset' })
+    expect(sources.consume).toHaveBeenCalledWith('8ae96ff3-3425-4f4c-8772-b6fd61502868')
+    expect(sources.disposed).toEqual([1])
+    expect(onUsageChanged).toHaveBeenCalledWith('codex')
+    await instance.disposeAll()
+  })
+
+  it('does not consume through an engine that has no reset credits', async () => {
+    const instance = orchestrator()
+
+    await expect(
+      instance.consumeRateLimitReset('grok', '8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+    ).rejects.toThrow('provider "grok" cannot consume a rate-limit reset')
+    expect(sources.consume).not.toHaveBeenCalled()
+    expect(sources.constructed).toBe(0)
     await instance.disposeAll()
   })
 })

@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { AlertTriangle, FolderPlus } from 'lucide-react'
+import {
+  IconAlertTriangle as AlertTriangle,
+  IconFolderPlus as FolderPlus,
+} from '@tabler/icons-react'
 import { pickSkillFolder } from '../bridge.js'
 import type { Transport } from '../transport.js'
+import { useProviderWatch } from '../provider-watch.js'
 
 type Inventory = ResultOf<'skills.list'>
 type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
@@ -14,6 +18,7 @@ export function SkillsSettings(props: {
   projectPath: string | undefined
   projectName: string | undefined
 }) {
+  useProviderWatch(props.transport, props.provider, props.projectPath, 'skills')
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()

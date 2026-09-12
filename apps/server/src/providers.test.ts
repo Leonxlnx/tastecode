@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   detectProviders,
   installCommandFor,
   launchCommandFor,
+  prewarmProviders,
   type SystemProbe,
 } from './providers.js'
 
@@ -16,13 +17,15 @@ function system(overrides: Partial<SystemProbe> = {}): SystemProbe {
   return {
     isInstalled: async () => false,
     version: async () => undefined,
-    acpAgents: async () => [],
+    auth: async () => 'unknown',
     ...overrides,
   }
 }
 
 const find = (list: Awaited<ReturnType<typeof detectProviders>>, id: string) =>
   list.find((entry) => entry.id === id)!
+
+afterEach(() => vi.useRealTimers())
 
 describe('detectProviders', () => {
   it('shares one machine scan across concurrent callers', async () => {
@@ -47,6 +50,43 @@ describe('detectProviders', () => {
 
     release()
     await Promise.all([first, second])
+  })
+
+  it('consumes one prewarmed scan before refreshing the machine state', async () => {
+    let installedChecks = 0
+    const sharedSystem = system({
+      isInstalled: async () => {
+        installedChecks += 1
+        return false
+      },
+    })
+
+    const prewarmed = prewarmProviders(sharedSystem)
+    expect(prewarmProviders(sharedSystem)).toBe(prewarmed)
+    await prewarmed
+    expect(installedChecks).toBe(3)
+
+    expect(detectProviders(sharedSystem)).toBe(prewarmed)
+    await detectProviders(sharedSystem)
+    expect(installedChecks).toBe(6)
+  })
+
+  it('refreshes a prewarmed scan that waited too long for its first reader', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(0)
+    let installedChecks = 0
+    const sharedSystem = system({
+      isInstalled: async () => {
+        installedChecks += 1
+        return false
+      },
+    })
+
+    await prewarmProviders(sharedSystem)
+    vi.setSystemTime(30_001)
+    await detectProviders(sharedSystem)
+
+    expect(installedChecks).toBe(6)
   })
 
   it('reports an installed provider with the version it gave us', async () => {
@@ -80,6 +120,7 @@ describe('detectProviders', () => {
     expect(find(providers, 'codex').setup?.installUrl).toBe(
       'https://developers.openai.com/codex/cli',
     )
+    expect(find(providers, 'codex').setup?.login).toBe('provider')
     expect(find(providers, 'claude-code').setup?.installUrl).toBe(
       'https://code.claude.com/docs/en/getting-started',
     )
@@ -103,6 +144,18 @@ describe('detectProviders', () => {
     expect(providers.every((entry) => entry.auth === 'unknown')).toBe(true)
   })
 
+  it('reports the login state returned by an installed provider', async () => {
+    const providers = await detectProviders(
+      system({
+        isInstalled: async () => true,
+        auth: async (provider) => (provider === 'codex' ? 'authenticated' : 'unknown'),
+      }),
+    )
+
+    expect(find(providers, 'codex').auth).toBe('authenticated')
+    expect(find(providers, 'claude-code').auth).toBe('unknown')
+  })
+
   it('reports every provider we know about, installed or not', async () => {
     const providers = await detectProviders(system())
 
@@ -111,32 +164,38 @@ describe('detectProviders', () => {
 })
 
 describe('install command resolution', () => {
-  it('resolves install commands from the server-side tables only', () => {
-    expect(installCommandFor('acp', 'kimi')).toBe('npm install -g @moonshot-ai/kimi-code')
-    expect(installCommandFor('claude-code')).toBe('npm install -g @anthropic-ai/claude-code')
-    expect(installCommandFor('acp', 'gemini')).toBe('npm install -g @google/gemini-cli')
+  it('resolves install commands from the server-side tables only', async () => {
+    await expect(installCommandFor('acp', 'kimi')).resolves.toBe(
+      'npm install -g @moonshot-ai/kimi-code',
+    )
+    await expect(installCommandFor('claude-code')).resolves.toBe(
+      'npm install -g @anthropic-ai/claude-code',
+    )
+    await expect(installCommandFor('acp', 'gemini')).resolves.toBe(
+      'npm install -g @google/gemini-cli',
+    )
   })
 
-  it('refuses targets it cannot script instead of guessing', () => {
+  it('refuses targets it cannot script instead of guessing', async () => {
     // Grok ships its own installer; there is no command worth running blind.
-    expect(() => installCommandFor('grok')).toThrow(/no scripted install/)
-    expect(() => installCommandFor('acp', 'nonexistent')).toThrow(/unknown install target/)
-    expect(() => installCommandFor('acp')).toThrow(/unknown install target/)
+    await expect(installCommandFor('grok')).rejects.toThrow(/no scripted install/)
+    await expect(installCommandFor('acp', 'nonexistent')).rejects.toThrow(/unknown install target/)
+    await expect(installCommandFor('acp')).rejects.toThrow(/unknown install target/)
   })
 })
 
 describe('sign-in launch command resolution', () => {
-  it('resolves the interactive sign-in CLI from the server-side tables only', () => {
-    expect(launchCommandFor('acp', 'gemini')).toBe('gemini')
-    expect(launchCommandFor('acp', 'kimi')).toBe('kimi')
-    expect(launchCommandFor('acp', 'qwen')).toBe('qwen')
-    expect(launchCommandFor('claude-code')).toBe('claude auth login')
-    expect(launchCommandFor('grok')).toBe('grok login')
+  it('resolves the interactive sign-in CLI from the server-side tables only', async () => {
+    await expect(launchCommandFor('acp', 'gemini')).resolves.toBe('gemini')
+    await expect(launchCommandFor('acp', 'kimi')).resolves.toBe('kimi')
+    await expect(launchCommandFor('acp', 'qwen')).resolves.toBe('qwen')
+    await expect(launchCommandFor('codex')).resolves.toBe('codex login')
+    await expect(launchCommandFor('claude-code')).resolves.toBe('claude auth login')
+    await expect(launchCommandFor('grok')).resolves.toBe('grok login')
   })
 
-  it('refuses providers whose sign-in happens in the app, and unknown targets', () => {
-    expect(() => launchCommandFor('codex')).toThrow(/signs in through the app/)
-    expect(() => launchCommandFor('acp', 'nonexistent')).toThrow(/unknown launch target/)
-    expect(() => launchCommandFor('acp')).toThrow(/unknown launch target/)
+  it('refuses unknown launch targets', async () => {
+    await expect(launchCommandFor('acp', 'nonexistent')).rejects.toThrow(/unknown launch target/)
+    await expect(launchCommandFor('acp')).rejects.toThrow(/unknown launch target/)
   })
 })

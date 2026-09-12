@@ -1,18 +1,28 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Download,
-  FolderOpen,
-  Maximize2,
-  Minimize2,
-  Minus,
-  Pause,
-  Play,
-  Plus,
-  Volume2,
-  VolumeX,
-  X,
-} from 'lucide-react'
+  IconDownload as Download,
+  IconFolderOpen as FolderOpen,
+  IconMaximize as Maximize2,
+  IconMinimize as Minimize2,
+  IconMinus as Minus,
+  IconPlayerPause as Pause,
+  IconPlayerPlay as Play,
+  IconPlus as Plus,
+  IconVolume as Volume2,
+  IconVolumeOff as VolumeX,
+  IconVideoOff as VideoOff,
+  IconX as X,
+} from '@tabler/icons-react'
+import { IconMorph } from './IconMorph.js'
+import '../styles/media-viewer.css'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 3
@@ -21,6 +31,7 @@ const SEEK_STEP_SECONDS = 5
 
 export function MediaViewer(props: {
   src: string
+  thumbnailSrc?: string | undefined
   name: string
   mediaType: 'image' | 'video'
   onReveal?: (() => void) | undefined
@@ -35,6 +46,7 @@ export function MediaViewer(props: {
   const [videoError, setVideoError] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [imageSize, setImageSize] = useState<{ width: number; height: number }>()
+  const [loadedImageSrc, setLoadedImageSrc] = useState<string>()
   const dialog = useRef<HTMLDivElement>(null)
   const viewport = useRef<HTMLDivElement>(null)
   const image = useRef<HTMLImageElement>(null)
@@ -176,15 +188,16 @@ export function MediaViewer(props: {
     return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (props.mediaType !== 'image') return
     const element = viewport.current
     if (!element) return
 
+    fitImageToViewport()
     const observer = new ResizeObserver(fitImageToViewport)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [fitImageToViewport, props.mediaType])
+  }, [fitImageToViewport, props.mediaType, props.src])
 
   useEffect(() => {
     const element = viewport.current
@@ -269,12 +282,28 @@ export function MediaViewer(props: {
               if (zoom <= 1 && event.target === event.currentTarget) onClose.current()
             }}
           >
+            {props.thumbnailSrc && loadedImageSrc !== props.src ? (
+              <img
+                className="media-viewer__thumbnail"
+                src={props.thumbnailSrc}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+              />
+            ) : null}
             <img
               ref={image}
               src={props.src}
               alt={props.name}
               draggable={false}
-              onLoad={fitImageToViewport}
+              decoding="async"
+              style={
+                props.thumbnailSrc && loadedImageSrc !== props.src ? { opacity: 0 } : undefined
+              }
+              onLoad={() => {
+                setLoadedImageSrc(props.src)
+                fitImageToViewport()
+              }}
             />
           </div>
         ) : (
@@ -288,6 +317,7 @@ export function MediaViewer(props: {
               <video
                 ref={video}
                 src={props.src}
+                poster={props.thumbnailSrc}
                 aria-label={props.name}
                 playsInline
                 preload="metadata"
@@ -348,11 +378,10 @@ export function MediaViewer(props: {
                   aria-label={paused ? 'Play video' : 'Pause video'}
                   title={paused ? 'Play' : 'Pause'}
                 >
-                  {paused ? (
+                  <IconMorph active={paused ? 0 : 1}>
                     <Play size={16} fill="currentColor" aria-hidden />
-                  ) : (
                     <Pause size={16} fill="currentColor" aria-hidden />
-                  )}
+                  </IconMorph>
                 </button>
                 <input
                   className="media-viewer__scrubber"
@@ -379,7 +408,10 @@ export function MediaViewer(props: {
                   aria-label={muted ? 'Unmute video' : 'Mute video'}
                   title={muted ? 'Unmute' : 'Mute'}
                 >
-                  {muted ? <VolumeX size={16} aria-hidden /> : <Volume2 size={16} aria-hidden />}
+                  <IconMorph active={muted ? 1 : 0}>
+                    <Volume2 size={16} aria-hidden />
+                    <VolumeX size={16} aria-hidden />
+                  </IconMorph>
                 </button>
                 <button
                   type="button"
@@ -387,11 +419,10 @@ export function MediaViewer(props: {
                   aria-label={fullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
                   title={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
                 >
-                  {fullscreen ? (
-                    <Minimize2 size={16} aria-hidden />
-                  ) : (
+                  <IconMorph active={fullscreen ? 1 : 0}>
                     <Maximize2 size={16} aria-hidden />
-                  )}
+                    <Minimize2 size={16} aria-hidden />
+                  </IconMorph>
                 </button>
               </div>
             </div>
@@ -443,8 +474,7 @@ function formatTime(value: number): string {
 function VideoErrorIcon() {
   return (
     <span className="media-viewer__video-error-icon" aria-hidden>
-      <Play size={18} />
-      <span />
+      <VideoOff size={24} />
     </span>
   )
 }

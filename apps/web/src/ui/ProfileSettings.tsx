@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Account } from '@harness/contracts'
-import { ImagePlus, Trash2 } from 'lucide-react'
+import { IconPhotoPlus as ImagePlus, IconTrash as Trash2 } from '@tabler/icons-react'
 import {
   PROFILE_IMAGE_ACCEPT,
   profileInitials,
