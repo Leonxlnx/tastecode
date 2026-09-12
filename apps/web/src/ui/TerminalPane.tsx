@@ -20,7 +20,19 @@ type TerminalStatus =
   | { state: 'reconnecting' }
   | { state: 'error'; message: string }
 
-type TerminalPaneProps = {
+const activeTerminalLeases = new Map<string, number>()
+
+function acquireTerminalLease(key: string): () => void {
+  activeTerminalLeases.set(key, (activeTerminalLeases.get(key) ?? 0) + 1)
+  return () => {
+    const next = (activeTerminalLeases.get(key) ?? 1) - 1
+    if (next > 0) activeTerminalLeases.set(key, next)
+    else activeTerminalLeases.delete(key)
+  }
+}
+
+export type TerminalPaneProps = {
+  terminalKey?: string
   transport: Transport
   height?: number
   theme: 'light' | 'dark'
@@ -126,6 +138,8 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
         console.warn('[terminal] link addon unavailable', error)
       })
 
+    const terminalKey = props.terminalKey
+    const releaseTerminalLease = terminalKey ? acquireTerminalLease(terminalKey) : undefined
     let terminalId: string | undefined
     let opening = false
     let resizeFrame: number | undefined
@@ -189,16 +203,21 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       void props.transport
         .request('terminal.open', {
           ...target.request,
+          ...(terminalKey ? { terminalKey } : {}),
           ...openedSize,
         })
         .then(({ terminalId: openedId }) => {
           opening = false
-          if (disposed) return
+          if (disposed) {
+            if (terminalKey && !activeTerminalLeases.has(terminalKey))
+              void props.transport
+                .request('terminal.close', { terminalId: openedId })
+                .catch(() => undefined)
+            return
+          }
           terminalId = openedId
           lastResize = openedSize
-          if (activeRef.current) {
-            for (const data of earlyOutput.get(openedId) ?? []) instance.write(data)
-          }
+          for (const data of earlyOutput.get(openedId) ?? []) instance.write(data)
           earlyOutput.clear()
           setStatus({ state: 'open' })
           if (activeRef.current) {
@@ -237,11 +256,11 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
 
     const offState = props.transport.onState(onConnection)
     const offOutput = props.transport.on('terminal.output', (event) => {
-      if (event.terminalId === terminalId && activeRef.current) instance.write(event.data)
+      if (event.terminalId === terminalId) instance.write(event.data)
       // Only while our own open is in flight. terminal.output is a global
       // broadcast, so buffering whenever we have no id meant a pane left on
       // an exited terminal accumulated every other session's output forever.
-      else if (!terminalId && opening && activeRef.current) {
+      else if (!terminalId && opening) {
         const buffered = earlyOutput.get(event.terminalId) ?? []
         buffered.push(event.data)
         earlyOutput.set(event.terminalId, buffered)
@@ -272,6 +291,16 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
 
     return () => {
       disposed = true
+      releaseTerminalLease?.()
+      if (terminalKey && terminalId) {
+        const closingId = terminalId
+        queueMicrotask(() => {
+          if (!activeTerminalLeases.has(terminalKey))
+            void props.transport
+              .request('terminal.close', { terminalId: closingId })
+              .catch(() => undefined)
+        })
+      }
       resizeCleanup.current()
       if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
       refit.current = () => {}
@@ -285,12 +314,17 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       terminal.current = null
       instance.dispose()
     }
-  }, [props.transport, target, workspace])
+  }, [props.transport, target, workspace, props.terminalKey])
+
+  useLayoutEffect(() => {
+    if (props.height !== undefined) setHeight(props.height)
+  }, [props.height])
 
   useLayoutEffect(() => {
     if (!active) return
     activate.current()
     refit.current()
+    terminal.current?.focus()
   }, [active])
 
   useLayoutEffect(() => {
@@ -349,13 +383,16 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       ) : (
         <header className="terminal-pane__header">
           <span className="terminal-pane__title">Terminal</span>
-          <span className={`terminal-pane__status is-${status.state}`} aria-live="polite">
+          <span
+            className={`terminal-pane__status is-${status.state}${status.state === 'open' ? ' visually-hidden' : ''}`}
+            aria-live="polite"
+          >
             {statusText(status)}
           </span>
           <div className="terminal-pane__actions">
             {status.state === 'error' ? (
               <button
-                className="icon-btn"
+                className="icon-btn icon-btn--always"
                 title="Restart terminal"
                 onClick={() => reconnect.current()}
               >
@@ -363,14 +400,18 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
               </button>
             ) : null}
             <button
-              className="icon-btn"
+              className="icon-btn icon-btn--always"
               title="Copy selection"
               disabled={!hasSelection}
               onClick={() => terminal.current && copyTerminalSelection(terminal.current)}
             >
               <Copy size={13} aria-hidden />
             </button>
-            <button className="icon-btn" title="Hide terminal" onClick={props.onClose}>
+            <button
+              className="icon-btn icon-btn--always"
+              title="Hide terminal"
+              onClick={props.onClose}
+            >
               <X size={14} aria-hidden />
             </button>
           </div>

@@ -289,6 +289,7 @@ describe('Thread live frame isolation', () => {
     )
 
     fireEvent.click(view.getByRole('button', { name: /running echo two/i }))
+    fireEvent.click(view.getByRole('button', { name: /echo one/i }))
     const live = reduceDeltas(initial, [
       {
         type: 'item.delta',
@@ -299,6 +300,6 @@ describe('Thread live frame isolation', () => {
     ])
     act(() => store.publish(live))
 
-    expect(view.container.querySelector('.activity__detail')?.textContent).toBe('first output')
+    expect(view.container.querySelector('.aux__out')?.textContent).toBe('first output')
   })
 })
