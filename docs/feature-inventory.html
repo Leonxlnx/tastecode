@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-10 base main a44f4410 + PR #986</span>
+        <span class="meta">2026-09-12 base main e4494a74 + 1086</span>
       </div>
     </div>
 
@@ -614,9 +614,11 @@
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
                   stable slots across loading, ready, setup, busy, and failure states; empty action
-                  slots do not create a second grid row, keeping signed-in rows at 56 px; primary
-                  and secondary actions share the fixed right edge on desktop and narrow layouts;
+                  slots stay hidden, with account details below the provider name in compact rows;
+                  primary and secondary actions share the right edge on desktop and narrow layouts;
                   CLI versions live in the provider-mark tooltip instead of widening account rows;
+                  account labels use the same email-or-signed-in grammar; error tooltips escape
+                  clipped cards, stay inside the viewport, and support keyboard dismissal;
                   <a href="./screenshots/provider-density-after.png">compact evidence</a>,
                   <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                   <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
@@ -636,10 +638,10 @@
               ><input type="checkbox" /><span
                 >Provider update buttons and release notifications
                 <span class="d"
-                  >background checks for Codex, Claude Code, and Grok; current and available
-                  versions in Providers, trusted update commands with live terminal details and
-                  verified completion, setup guides for managed installs, and one dismissible toast
-                  per release</span
+                  >background checks for Codex, Claude Code, and Grok; a compact Providers footer
+                  reopens available updates. The toast shows versions, runs trusted update commands,
+                  and handles progress, verified completion, retry, terminal details, and managed
+                  install guides. Dismissal is remembered per release</span
                 ></span
               ></label
             >
@@ -856,7 +858,8 @@
                 and Grok receive their native image and file-reference formats; raster images and
                 videos get lightweight composer previews, sent image previews above their message,
                 and an app-native full-window viewer that opens without a reveal delay or photo size
-                animation; selected images reach ACP image blocks only after the agent advertises
+                animation; desktop image previews and browser images offer a native Copy Image
+                context menu; selected images reach ACP image blocks only after the agent advertises
                 image prompts, while rejected sends restore the original draft and attachment
                 set</span
               ></label
@@ -1465,7 +1468,8 @@
                   modal dialogs; the always-available top-row Options menu exposes common sidebar,
                   terminal, workspace, chat, search, pull request, and settings actions, while the
                   desktop File, View, Chat, Workspace, Window, and Help menus mirror the same
-                  actions and current custom accelerators</span
+                  actions and current custom accelerators. Cmd+1–9 on macOS and Ctrl+1–9 on
+                  Windows/Linux open the nine newest sessions in the first sidebar project</span
                 ></span
               ></label
             >
@@ -1555,7 +1559,9 @@
                 >Installed interface font selector
                 <span class="d"
                   >System default, bundled font families, and every installed font family appear in
-                  one deduplicated alphabetical list with name search</span
+                  one deduplicated alphabetical list with name search. The complete list is cached
+                  across app restarts, refreshes after 24 hours, and replaces the first-load message
+                  only when ready</span
                 ></span
               ></label
             >

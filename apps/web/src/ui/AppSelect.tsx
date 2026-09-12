@@ -80,6 +80,8 @@ export function AppSelect<Value extends string>(props: {
   drop?: Drop
   align?: 'left' | 'right'
   search?: SelectSearch
+  loadingMessage?: string | undefined
+  onOpen?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [modality, setModality] = useState<'keyboard' | 'pointer'>('keyboard')
@@ -98,21 +100,22 @@ export function AppSelect<Value extends string>(props: {
   const normalizedQuery = normalizeSearch(searchQuery.trim())
   const visibleOptions = useMemo(
     () =>
-      props.options
+      (props.loadingMessage ? [] : props.options)
         .map((option, index) => ({ option, index }))
         .filter(
           ({ option }) =>
             normalizedQuery.length === 0 || normalizeSearch(option.label).includes(normalizedQuery),
         ),
-    [normalizedQuery, props.options],
+    [normalizedQuery, props.options, props.loadingMessage],
   )
   const visibleEnabledIndexes = useMemo(
     () => visibleOptions.filter(({ option }) => !option.disabled).map(({ index }) => index),
     [visibleOptions],
   )
   const requestedActiveIndex = props.options.findIndex((option) => option.value === activeValue)
-  const activeIndex =
-    open && searchEnabled && !visibleEnabledIndexes.includes(requestedActiveIndex)
+  const activeIndex = props.loadingMessage
+    ? -1
+    : open && searchEnabled && !visibleEnabledIndexes.includes(requestedActiveIndex)
       ? (visibleEnabledIndexes[0] ?? -1)
       : requestedActiveIndex
 
@@ -145,6 +148,7 @@ export function AppSelect<Value extends string>(props: {
   }
 
   const openListbox = (direction: 1 | -1 = 1, input: 'keyboard' | 'pointer' = 'keyboard') => {
+    props.onOpen?.()
     const initial =
       selectedIndex >= 0 && !props.options[selectedIndex]?.disabled
         ? selectedIndex
@@ -161,6 +165,7 @@ export function AppSelect<Value extends string>(props: {
   }
 
   const choose = (index: number) => {
+    if (props.loadingMessage) return
     const option = props.options[index]
     if (!option || option.disabled) return
     if (option.value !== props.value) props.onChange(option.value)
@@ -380,6 +385,7 @@ export function AppSelect<Value extends string>(props: {
         aria-label={props.ariaLabel}
         aria-controls={listboxId}
         aria-expanded={open}
+        aria-busy={Boolean(props.loadingMessage) || undefined}
         aria-haspopup="listbox"
         aria-activedescendant={open && activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
         disabled={props.disabled}
@@ -405,6 +411,7 @@ export function AppSelect<Value extends string>(props: {
               inert={!open}
               role={props.search ? undefined : 'listbox'}
               aria-label={props.search ? undefined : props.ariaLabel}
+              aria-busy={Boolean(props.loadingMessage) || undefined}
               style={
                 position
                   ? {
@@ -440,13 +447,18 @@ export function AppSelect<Value extends string>(props: {
                   className="app-select__options"
                   role="listbox"
                   aria-label={props.ariaLabel}
+                  aria-busy={Boolean(props.loadingMessage) || undefined}
                 >
                   {optionNodes}
                 </div>
               ) : (
                 optionNodes
               )}
-              {props.search && visibleOptions.length === 0 ? (
+              {props.loadingMessage ? (
+                <p className="app-select__empty" role="status">
+                  {props.loadingMessage}
+                </p>
+              ) : props.search && visibleOptions.length === 0 ? (
                 <p className="app-select__empty" role="status">
                   {props.search.emptyMessage ?? 'No matching options'}
                 </p>
