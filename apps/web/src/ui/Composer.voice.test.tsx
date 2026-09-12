@@ -48,6 +48,32 @@ describe('Composer voice dictation', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
+  it('hides mode controls but keeps file attachments working during dictation', async () => {
+    const originalPrompt = window.prompt
+    window.prompt = vi.fn(() => '/work/reference.txt')
+    const onSend = vi.fn()
+    renderVoiceComposer({ onSend, onTranscribeVoice: async () => 'spoken words' })
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+      await screen.findByRole('button', { name: 'Stop and transcribe voice note' })
+      expect(screen.queryByRole('button', { name: 'Permissions' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Design' })).toBeNull()
+      const add = screen.getByRole('button', { name: 'Attach files' })
+      expect((add as HTMLButtonElement).disabled).toBe(false)
+      fireEvent.click(add)
+      await screen.findByText('reference.txt')
+      expect(recorder.cancel).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send voice note' }))
+      await waitFor(() =>
+        expect(onSend).toHaveBeenCalledWith('spoken words', ['/work/reference.txt']),
+      )
+      expect(screen.getByRole('button', { name: 'Permissions' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Design' })).toBeTruthy()
+    } finally {
+      window.prompt = originalPrompt
+    }
+  })
+
   it('transcribes and sends from the arrow action', async () => {
     const onSend = vi.fn()
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
@@ -127,6 +153,43 @@ describe('insertTranscriptAtCursor', () => {
       text: 'hello spoken world',
       cursor: 12,
     })
+  })
+})
+
+describe('Dictation startup and recovery', () => {
+  it('puts the microphone before Send', async () => {
+    renderVoiceComposer()
+    const mic = await screen.findByRole('button', { name: 'Record voice note' })
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(mic.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows startup at once and lets Escape cancel a pending microphone', async () => {
+    let finish!: () => void
+    recorder.start.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finish = () => resolve(undefined)
+        }),
+    )
+    const onTranscribeVoice = vi.fn()
+    renderVoiceComposer({ onTranscribeVoice })
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+    expect(screen.getByText('Starting…')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await screen.findByRole('button', { name: 'Record voice note' })
+    finish()
+    await waitFor(() => expect(recorder.cancel).toHaveBeenCalled())
+    expect(onTranscribeVoice).not.toHaveBeenCalled()
+  })
+
+  it('returns to idle if audio encoding fails', async () => {
+    recorder.stop.mockRejectedValueOnce(new Error('Could not encode audio'))
+    renderVoiceComposer()
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
+    await screen.findByRole('button', { name: 'Record voice note' })
+    expect(screen.getByText('Could not encode audio')).toBeTruthy()
   })
 })
 

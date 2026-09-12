@@ -1762,63 +1762,74 @@ function ComposerComponent(props: {
                   </button>
                 ) : null}
 
-                <Menu
-                  label="Permissions"
-                  triggerClassName="composer__permission"
-                  panelClassName="menu--compact menu--permissions"
-                  trigger={() => (
-                    <span
-                      className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
-                    >
-                      <ApprovalIcon size={13} aria-hidden />
-                      <span>{approval.short}</span>
-                    </span>
-                  )}
+                <div
+                  className="composer__dictation-options"
+                  data-hidden={voiceState !== 'idle' ? '' : undefined}
+                  inert={voiceState !== 'idle'}
+                  aria-hidden={voiceState !== 'idle'}
                 >
-                  {(close) => (
-                    <>
-                      {APPROVAL_MODES.filter(
-                        (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
-                      ).map((mode) => {
-                        const ModeIcon = mode.icon
-                        return (
-                          <MenuItem
-                            key={mode.id}
-                            title={mode.title}
-                            detail={mode.detail}
-                            icon={<ModeIcon size={14} aria-hidden />}
-                            className={`composer__permission-option composer__permission-option--${mode.id}`}
-                            active={mode.id === props.approval}
-                            onClick={() => {
-                              props.onApprovalChange(mode.id)
-                              close()
-                            }}
-                          />
-                        )
-                      })}
-                    </>
-                  )}
-                </Menu>
+                  <div className="composer__dictation-options-clip">
+                    <div className="composer__dictation-options-content">
+                      <Menu
+                        label="Permissions"
+                        triggerClassName="composer__permission"
+                        panelClassName="menu--compact menu--permissions"
+                        trigger={() => (
+                          <span
+                            className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
+                          >
+                            <ApprovalIcon size={13} aria-hidden />
+                            <span>{approval.short}</span>
+                          </span>
+                        )}
+                      >
+                        {(close) => (
+                          <>
+                            {APPROVAL_MODES.filter(
+                              (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
+                            ).map((mode) => {
+                              const ModeIcon = mode.icon
+                              return (
+                                <MenuItem
+                                  key={mode.id}
+                                  title={mode.title}
+                                  detail={mode.detail}
+                                  icon={<ModeIcon size={14} aria-hidden />}
+                                  className={`composer__permission-option composer__permission-option--${mode.id}`}
+                                  active={mode.id === props.approval}
+                                  onClick={() => {
+                                    props.onApprovalChange(mode.id)
+                                    close()
+                                  }}
+                                />
+                              )
+                            })}
+                          </>
+                        )}
+                      </Menu>
 
-                <DesignBeam
-                  className="composer__design-button-beam"
-                  strength={0.58}
-                  active={props.designMode}
-                >
-                  <button
-                    type="button"
-                    className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
-                    aria-pressed={props.designMode}
-                    aria-keyshortcuts={shortcutAria(keybindings.toggleDesignMode)}
-                    onFocus={preloadDesignBeamStyles}
-                    onPointerEnter={preloadDesignBeamStyles}
-                    onClick={() => props.onDesignModeChange(!props.designMode)}
-                    title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
-                  >
-                    <Palette size={13} aria-hidden />
-                    <span>Design</span>
-                  </button>
-                </DesignBeam>
+                      <DesignBeam
+                        className="composer__design-button-beam"
+                        strength={0.58}
+                        active={props.designMode}
+                      >
+                        <button
+                          type="button"
+                          className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
+                          aria-pressed={props.designMode}
+                          aria-keyshortcuts={shortcutAria(keybindings.toggleDesignMode)}
+                          onFocus={preloadDesignBeamStyles}
+                          onPointerEnter={preloadDesignBeamStyles}
+                          onClick={() => props.onDesignModeChange(!props.designMode)}
+                          title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+                        >
+                          <Palette size={13} aria-hidden />
+                          <span>Design</span>
+                        </button>
+                      </DesignBeam>
+                    </div>
+                  </div>
+                </div>
 
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 

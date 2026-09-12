@@ -1799,8 +1799,8 @@ export function App() {
       setVoiceAvailable(false)
       return
     }
-    // Voice uses the server's OpenAI connection store. Wait until the same
-    // catalog revision has resolved both its provider fallback and connection
+    // Wait until the same catalog revision has resolved the provider fallback
+    // and connection
     // snapshot, so either startup order produces one status request.
     if (
       modelConnectionsSource?.transport !== transport ||

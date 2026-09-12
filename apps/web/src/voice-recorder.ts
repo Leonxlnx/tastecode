@@ -5,7 +5,7 @@ export type { VoiceRecording } from './voice-capability.js'
 
 const VOICE_SAMPLE_RATE = 24_000
 export const MAX_RECORDING_MS = 120_000
-const BUFFER_SIZE = 4_096
+const BUFFER_SIZE = 1_024
 const MAX_WAVEFORM_LEVELS = 160
 const WAVEFORM_EMIT_INTERVAL_MS = 45
 
