@@ -1112,7 +1112,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Auto-review mode where the provider supports it</span
+                >Auto-review by default where supported; Full access otherwise. Saved choices take
+                priority.</span
               ></label
             >
           </li>
@@ -1282,10 +1283,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Resizable right-side workspace with persistent tool tabs
+                >Resizable bottom and right tool panels
                 <span class="d"
-                  >compact 2-by-2-plus-one icon launcher, Review, independent Terminal, Browser, and
-                  Files tabs with middle-click closing, CSP-safe compact terminals with link
+                  >compact 2-by-2-plus-one picker for Review, Terminal, Browser, Files, and
+                  Temporary chat. Each panel has independent tool tabs, a + menu, and an upper-right
+                  close button. Tabs fade on add and close; neighbouring tabs slide into place. Tabs
+                  support drag reordering and Alt+Left/Right with the app haptic preference. Closing
+                  the panel returns to the picker. No manual expansion. Bottom and right terminals
+                  have separate shells. Edge resizing remains. CSP-safe compact terminals with link
                   detection, distinct desktop/tablet/mobile Browser controls, lazy file trees and
                   side chat; New chat terminals use the selected project's current checkout, while
                   active chats use their exact session checkout; one fixed in-chat toggle opens and

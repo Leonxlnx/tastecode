@@ -93,7 +93,6 @@ const NATIVE_MENU_ACTION_IDS = [
   'openPullRequests',
   'toggleTerminal',
   'toggleWorkspace',
-  'expandWorkspace',
   'toggleFastMode',
   'toggleDesignMode',
   'toggleIsolatedSession',

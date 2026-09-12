@@ -5,6 +5,7 @@ import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 
 export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
   active: boolean
+  terminalKey: string
   transport: Transport
   threadId?: string | undefined
   projectPath?: string | undefined
@@ -28,6 +29,7 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
   return (
     <div className="workspace-terminal">
       <TerminalPane
+        terminalKey={props.terminalKey}
         transport={props.transport}
         {...target}
         theme={props.theme}

@@ -27,6 +27,7 @@ const spawnPty: SpawnPty = (file, args, options) => {
 }
 
 type TerminalEntry = {
+  key: string
   threadId: string
   process: IPty
   output: { dispose(): void }
@@ -148,8 +149,9 @@ export class TerminalManager {
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
-  open(threadId: string, cwd: string, columns: number, rows: number): string {
-    return this.#spawn(threadId, [], cwd, columns, rows)
+  open(threadId: string, cwd: string, columns: number, rows: number, terminalKey?: string): string {
+    const key = terminalKey ? JSON.stringify([threadId, terminalKey]) : threadId
+    return this.#spawn(key, [], cwd, columns, rows, threadId)
   }
 
   /**
@@ -165,9 +167,16 @@ export class TerminalManager {
     return this.#spawn(key, args, cwd, columns, rows)
   }
 
-  #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
+  #spawn(
+    key: string,
+    args: string[],
+    cwd: string,
+    columns: number,
+    rows: number,
+    threadId = key,
+  ): string {
     if (this.#closingAll) throw new Error('terminal manager is closing')
-    if (this.#closingThreads.has(key)) throw new Error(`terminal is closing: ${key}`)
+    if (this.#closingThreads.has(threadId)) throw new Error(`terminal is closing: ${key}`)
 
     const currentId = this.#byThread.get(key)
     if (currentId) {
@@ -209,7 +218,7 @@ export class TerminalManager {
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve
     })
-    const entry = { threadId: key, process, output, outputBuffer, exited }
+    const entry = { key, threadId, process, output, outputBuffer, exited }
     this.#byId.set(terminalId, entry)
     this.#byThread.set(key, terminalId)
 
@@ -281,8 +290,8 @@ export class TerminalManager {
     this.#byId.delete(terminalId)
     // Only unmap the key if it still points at this terminal — closing a
     // stale id must not orphan a newer pty spawned under the same key.
-    if (this.#byThread.get(entry.threadId) === terminalId) {
-      this.#byThread.delete(entry.threadId)
+    if (this.#byThread.get(entry.key) === terminalId) {
+      this.#byThread.delete(entry.key)
     }
     // node-pty flushes buffered output after kill(); the client tore this
     // pane down, so those late chunks must not be broadcast for its id.
@@ -322,8 +331,14 @@ export class TerminalManager {
 
   async #drainThread(threadId: string): Promise<void> {
     const waits = new Set(this.#closingByThread.get(threadId) ?? [])
-    const terminalId = this.#byThread.get(threadId)
-    if (terminalId) waits.add(this.close(terminalId))
+    for (const [terminalId, entry] of this.#byId) {
+      if (entry.threadId !== threadId) continue
+      try {
+        waits.add(this.close(terminalId))
+      } catch (error) {
+        waits.add(Promise.reject(error))
+      }
+    }
     await settleAll(waits, `terminal shutdown failed for ${threadId}`)
   }
 
