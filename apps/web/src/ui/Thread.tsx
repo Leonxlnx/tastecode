@@ -1583,6 +1583,7 @@ function ViewedImagePreview({
   )
 }
 
+            thumbnailSrc={inlineSource}
 const IMAGE_ATTACHMENT_RE = /\.(?:apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 
 function isImageAttachment(reference: string): boolean {
