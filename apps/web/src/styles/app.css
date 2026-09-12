@@ -1705,7 +1705,7 @@
   border: 1px solid var(--queue-line);
   border-bottom: 0;
   border-radius: var(--r-card) var(--r-card) 0 0;
-  animation: composer-queue-panel-in var(--dur-fast) var(--ease-out) both;
+  animation: composer-queue-panel-in var(--dur-slow) var(--ease-rail) both;
 }
 
 @keyframes composer-queue-panel-in {
@@ -1737,7 +1737,7 @@
 }
 
 .queue-row[data-queue-phase='entering'] {
-  animation: composer-queue-item-in var(--dur-fast) var(--ease-out) both;
+  animation: composer-queue-item-in var(--dur-slow) var(--ease-in-out) both;
 }
 
 .queue-row[data-queue-phase='exiting'] {

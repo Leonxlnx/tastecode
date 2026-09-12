@@ -229,8 +229,9 @@ const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 const COMPOSER_DOCK_MOTION_MS = 320
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 const COMPOSER_QUEUE_ANIMATION_ID = 'harness-composer-queue'
-const COMPOSER_QUEUE_MOTION_MS = 180
-const COMPOSER_QUEUE_EASING = 'cubic-bezier(0.77, 0, 0.175, 1)'
+// Match --dur-slow and --ease-rail so the panel and row reveal settle together.
+const COMPOSER_QUEUE_MOTION_MS = 260
+const COMPOSER_QUEUE_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
 const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
 const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
 const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
