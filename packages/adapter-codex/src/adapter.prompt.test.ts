@@ -93,19 +93,59 @@ describe('Codex prompt transport', () => {
     adapter.dispose()
   })
 
-  it('updates a live thread with the selected access level', async () => {
+  it.each(['ask', 'auto', 'auto-review', 'full'] as const)(
+    'applies %s to the next turn of an already-loaded chat',
+    async (mode) => {
+      const { adapter, rpc } = promptAdapter()
+      await adapter.start()
+      const thread = await adapter.startThread('C:\\repo', { approval: 'full' })
+      rpc.emitNotification('turn/started', {
+        threadId: thread.id,
+        turn: { id: 'turn-live' },
+      })
+
+      await adapter.setApproval(mode)
+
+      // A settings change must not resume the loaded thread, start an empty
+      // turn, or interrupt work already in progress.
+      expect(rpc.calls.map((call) => call.method)).toEqual(['initialize', 'thread/start'])
+      await adapter.sendTurn(thread.id, 'Continue')
+      await adapter.sendTurn(thread.id, 'And continue again')
+      const turns = rpc.calls.filter((call) => call.method === 'turn/start')
+      expect(turns).toHaveLength(2)
+      for (const turn of turns) {
+        expect(turn.params).toMatchObject({
+          approvalPolicy: mode === 'ask' ? 'untrusted' : mode === 'full' ? 'never' : 'on-request',
+          approvalsReviewer: mode === 'auto-review' ? 'auto_review' : 'user',
+          sandboxPolicy:
+            mode === 'full'
+              ? { type: 'dangerFullAccess' }
+              : mode === 'ask'
+                ? { type: 'readOnly', networkAccess: false }
+                : {
+                    type: 'workspaceWrite',
+                    writableRoots: [],
+                    networkAccess: false,
+                    excludeTmpdirEnvVar: false,
+                    excludeSlashTmp: false,
+                  },
+        })
+      }
+      adapter.dispose()
+    },
+  )
+
+  it('uses the last selection when switching back from auto-review to ask first', async () => {
     const { adapter, rpc } = promptAdapter()
     await adapter.start()
-    await adapter.startThread('C:\\repo', { approval: 'auto-review' })
-
-    await adapter.setApproval('full')
-
-    expect(rpc.calls.find((call) => call.method === 'thread/resume')?.params).toMatchObject({
-      threadId: 'thread-1',
-      cwd: 'C:\\repo',
-      approvalPolicy: 'never',
-      sandbox: 'danger-full-access',
+    const thread = await adapter.resumeThread('thread-1', 'C:\\repo', { approval: 'full' })
+    await adapter.setApproval('auto-review')
+    await adapter.setApproval('ask')
+    await adapter.sendTurn(thread.id, 'Continue')
+    expect(rpc.calls.find((call) => call.method === 'turn/start')?.params).toMatchObject({
+      approvalPolicy: 'untrusted',
       approvalsReviewer: 'user',
+      sandboxPolicy: { type: 'readOnly', networkAccess: false },
     })
     adapter.dispose()
   })

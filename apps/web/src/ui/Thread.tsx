@@ -41,7 +41,7 @@ import {
 } from '../bridge.js'
 import { isEditableTarget } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
-import { Approval, AutomaticApprovalReview } from './Approval.js'
+import { Approval } from './Approval.js'
 import { Diff } from './Diff.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
@@ -127,7 +127,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     props.frameStore.getStructureSnapshot,
   )
   const running = thread.running && !props.stopping
-  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
   const activeActivityIndices = useMemo(
     () => activeTurnActivityIndices(thread.items, thread.activeTurn?.id, thread.liveStart),
     [thread.items, thread.activeTurn?.id, thread.liveStart],
@@ -445,10 +444,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
             />
           ) : null}
-
-          {reviews.map((review) => (
-            <AutomaticApprovalReview key={review.id} review={review} />
-          ))}
 
           {running ? <Plan steps={thread.plan} compact /> : null}
           {!running ? (
@@ -1249,11 +1244,14 @@ function ActivityStack({
         type="button"
         className="activity__summary"
         aria-expanded={disclosure.expanded}
+        title={label}
         onClick={disclosure.toggle}
       >
-        <span className="activity__glyph" aria-hidden>
-          {glyph(summaryItem)}
-        </span>
+        {live || !hasCommentary ? (
+          <span className="activity__glyph" aria-hidden>
+            {glyph(summaryItem)}
+          </span>
+        ) : null}
         <span className="activity__label" aria-live="polite" aria-atomic="true">
           {label}
         </span>
@@ -1280,13 +1278,26 @@ function ActivityStack({
                   )
                 }
                 const detail = activityDetail(item)
+                const itemLabel = activityItemLabel(item)
                 return (
-                  <div className="activity__item" key={item.id}>
+                  <div
+                    className="activity__item"
+                    data-failed={
+                      item.status === 'failed' ||
+                      (item.exitCode !== undefined && item.exitCode !== 0)
+                    }
+                    key={item.id}
+                  >
                     <div className="activity__file-change">
                       {glyph(item)}
-                      <span className="activity__item-label">{activityItemLabel(item)}</span>
+                      <span className="activity__item-label" title={itemLabel}>
+                        {itemLabel}
+                      </span>
                       {item.exitCode !== undefined && item.exitCode !== 0 ? (
                         <span className="aux__code">exit {item.exitCode}</span>
+                      ) : null}
+                      {item.durationMs !== undefined && item.durationMs >= 1000 ? (
+                        <span className="aux__time">{duration(item.durationMs)}</span>
                       ) : null}
                     </div>
                     {detail ? (
@@ -1572,6 +1583,7 @@ function ViewedImagePreview({
         <Suspense fallback={null}>
           <MediaViewer
             src={preview.previewUrl}
+            thumbnailSrc={inlineSource}
             name={preview.name}
             mediaType="image"
             onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}

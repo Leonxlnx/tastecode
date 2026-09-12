@@ -1,15 +1,6 @@
 import { useEffect, useRef } from 'react'
-import type {
-  ApprovalDecision,
-  ApprovalRequest,
-  ApprovalReview as ApprovalReviewData,
-} from '@harness/contracts'
-import {
-  IconLoader2 as LoaderCircle,
-  IconShieldExclamation as ShieldAlert,
-  IconShieldCheck as ShieldCheck,
-} from '@tabler/icons-react'
-import { IconMorph } from './IconMorph.js'
+import type { ApprovalDecision, ApprovalRequest } from '@harness/contracts'
+import { IconShieldExclamation as ShieldAlert } from '@tabler/icons-react'
 
 /**
  * The agent asking permission.
@@ -79,38 +70,6 @@ export function Approval(props: {
   )
 }
 
-export function AutomaticApprovalReview({ review }: { review: ApprovalReviewData }) {
-  const card = useRef<HTMLDivElement>(null)
-  const reviewing = review.status === 'in_progress'
-
-  useEffect(() => {
-    card.current?.scrollIntoView({ block: 'nearest' })
-  }, [review.status])
-
-  return (
-    <div
-      className={`approval approval--review is-${review.status}`}
-      ref={card}
-      role="status"
-      aria-label={`Automatic review: ${reviewStatus(review.status)}`}
-    >
-      <div className="approval__head">
-        <IconMorph active={reviewing ? 1 : 0}>
-          <ShieldCheck size={14} aria-hidden />
-          <LoaderCircle className="spinner" size={14} aria-hidden />
-        </IconMorph>
-        <span className="approval__title">{reviewStatus(review.status)}</span>
-        {review.riskLevel ? (
-          <span className="approval-review__risk">{capitalize(review.riskLevel)} risk</span>
-        ) : null}
-      </div>
-
-      <p className="approval-review__description">{review.description}</p>
-      {review.rationale ? <p className="approval-review__rationale">{review.rationale}</p> : null}
-    </div>
-  )
-}
-
 function title(request: ApprovalRequest): string {
   switch (request.kind) {
     case 'command':
@@ -120,23 +79,4 @@ function title(request: ApprovalRequest): string {
     case 'permissions':
       return 'Grant extra access?'
   }
-}
-
-function reviewStatus(status: ApprovalReviewData['status']): string {
-  switch (status) {
-    case 'in_progress':
-      return 'Reviewing access'
-    case 'approved':
-      return 'Access approved'
-    case 'denied':
-      return 'Access denied'
-    case 'timed_out':
-      return 'Review timed out'
-    case 'aborted':
-      return 'Review aborted'
-  }
-}
-
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1)
 }
