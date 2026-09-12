@@ -1183,7 +1183,7 @@ function ComposerComponent(props: {
     const trimmed = composerPromptWithResources(content, selectedResources)
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (
-      trimmed === '' ||
+      (trimmed === '' && paths.length === 0) ||
       paths.length !== attachments.length ||
       props.disabled ||
       sendAvailabilityRef.current !== 'ready' ||
@@ -1256,7 +1256,7 @@ function ComposerComponent(props: {
     props.running && !hasDraftText && attachments.length === 0 && selectedResources.length === 0
   const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
-    (!hasDraftText && selectedResources.length === 0) ||
+    (!hasDraftText && selectedResources.length === 0 && attachments.length === 0) ||
     attachments.some((attachment) => !attachment.path) ||
     props.disabled ||
     props.sendAvailability !== 'ready' ||

@@ -197,7 +197,7 @@ vi.mock('./ui/Composer.js', async (importOriginal) => {
   return {
     ...original,
     Composer: memo((props: ComponentProps<typeof original.Composer>) => {
-      shellRenders.composer()
+      shellRenders.composer(props)
       return <original.Composer {...props} />
     }),
   }
@@ -2295,6 +2295,36 @@ describe('new chats', () => {
         afterSeq: 1,
       }),
     )
+  })
+
+  it('names an attachment-only session from its files', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    const props = shellRenders.composer.mock.lastCall?.[0] as ComponentProps<
+      typeof import('./ui/Composer.js').Composer
+    >
+    act(() => props.onSend('', ['/work/reference.png', 'C:\\work\\brief.pdf']))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.rename', {
+        threadId: 'thread-1',
+        title: 'reference.png, brief.pdf',
+      })
+      expect(transport.request).toHaveBeenCalledWith('backgroundModel.generateTitle', {
+        threadId: 'thread-1',
+        prompt: 'reference.png, brief.pdf',
+        expectedTitle: 'reference.png, brief.pdf',
+      })
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({
+          text: '',
+          attachments: ['/work/reference.png', 'C:\\work\\brief.pdf'],
+        }),
+      )
+    })
   })
 
   it('replaces the prompt fallback with a generated session title', async () => {
