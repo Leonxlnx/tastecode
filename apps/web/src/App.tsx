@@ -228,17 +228,6 @@ const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
 const NOTICE_AUTO_DISMISS_MS = 5_000
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 type BottomTerminalPhase = 'closed' | 'opening' | 'open' | 'closing'
-type TerminalPaneModule = typeof import('./ui/TerminalPane.js')
-type TerminalPaneComponent = TerminalPaneModule['TerminalPane']
-type LazyTerminalPaneModule = { default: TerminalPaneComponent }
-let terminalPanePromise: Promise<LazyTerminalPaneModule> | undefined
-let resolvedTerminalPane: TerminalPaneComponent | undefined
-const loadTerminalPane = (): Promise<LazyTerminalPaneModule> =>
-  (terminalPanePromise ??= import('./ui/TerminalPane.js').then((module) => {
-    resolvedTerminalPane = module.TerminalPane
-    return { default: module.TerminalPane }
-  }))
-const TerminalPane = lazy(loadTerminalPane)
 const PullRequestsView = lazy(() =>
   import('./ui/pull-requests/PullRequestsView.js').then((module) => ({
     default: module.PullRequestsView,
@@ -752,6 +741,7 @@ export function App() {
     readTerminalPlacement,
     readTerminalPlacement,
   )
+  const [bottomTerminalToggleRequest, setBottomTerminalToggleRequest] = useState(0)
   const [terminalHeight, setTerminalHeight] = useState(readTerminalHeight)
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false)
   const [workspacePanelHasMounted, setWorkspacePanelHasMounted] = useState(false)
@@ -3944,10 +3934,11 @@ export function App() {
     setRollbackOpen(true)
   }, [])
   const prepareBottomTerminal = useCallback(() => {
-    // Loading follows intent instead of a launch timer. A closed app pays no
-    // xterm parse, DOM, worker, or GPU cost, while hover/focus still gets a
-    // head start before the click that mounts the terminal.
-    void loadTerminalPane().catch(() => undefined)
+    void loadWorkspacePanel().catch(() => undefined)
+  }, [])
+  const openBottomPanel = useCallback(() => {
+    setBottomTerminalHasMounted(true)
+    setBottomTerminalPhase('opening')
   }, [])
   const toggleTerminal = useCallback(() => {
     setBottomTerminalHasMounted(true)
@@ -3963,8 +3954,9 @@ export function App() {
       return
     }
     if (!activePath) return
-    toggleTerminal()
-  }, [activePath, terminalPlacement, toggleTerminal])
+    setBottomTerminalHasMounted(true)
+    setBottomTerminalToggleRequest((request) => request + 1)
+  }, [activePath, terminalPlacement])
   const closeTerminal = useCallback(() => {
     setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
   }, [])
@@ -4021,15 +4013,6 @@ export function App() {
     if (workspacePanelOpen) setWorkspacePanelExpanded(false)
     else setWorkspacePanelHasMounted(true)
     setWorkspacePanelOpen((open) => !open)
-  }, [workspacePanelOpen])
-  const toggleExpandedWorkspacePanel = useCallback(() => {
-    if (!workspacePanelOpen) {
-      setWorkspacePanelHasMounted(true)
-      setWorkspacePanelOpen(true)
-      setWorkspacePanelExpanded(true)
-      return
-    }
-    setWorkspacePanelExpanded((expanded) => !expanded)
   }, [workspacePanelOpen])
   const toggleFastMode = useCallback(() => {
     const model = selectedModelChoice?.model
@@ -4091,9 +4074,6 @@ export function App() {
       toggleWorkspace: () => {
         if (activePath) toggleWorkspacePanel()
       },
-      expandWorkspace: () => {
-        if (activePath) toggleExpandedWorkspacePanel()
-      },
       toggleFastMode,
       toggleDesignMode: () => {
         if (!thread.running) setDesignMode((enabled) => !enabled)
@@ -4115,7 +4095,6 @@ export function App() {
       openSettings,
       startNewChat,
       thread.running,
-      toggleExpandedWorkspacePanel,
       toggleFastMode,
       toggleRail,
       toggleSidebarSessionPin,
@@ -4421,7 +4400,6 @@ export function App() {
     workspacePanelOpen,
   ])
 
-  const RenderedTerminalPane = resolvedTerminalPane ?? TerminalPane
   const RenderedWorkspacePanel = resolvedWorkspacePanel ?? WorkspacePanel
 
   return (
@@ -4632,29 +4610,32 @@ export function App() {
                       onTransitionEnd={finishBottomTerminalMotion}
                     >
                       <Suspense fallback={null}>
-                        {active ? (
-                          <RenderedTerminalPane
-                            key={`thread:${active.session.id}`}
-                            transport={transport}
-                            threadId={active.session.id}
-                            height={terminalHeight}
-                            theme={themeColorScheme}
-                            active={terminalOpen}
-                            onHeightChange={setTerminalHeight}
-                            onClose={closeTerminal}
-                          />
-                        ) : (
-                          <RenderedTerminalPane
-                            key={`project:${activePath}`}
-                            transport={transport}
-                            projectPath={activePath}
-                            height={terminalHeight}
-                            theme={themeColorScheme}
-                            active={terminalOpen}
-                            onHeightChange={setTerminalHeight}
-                            onClose={closeTerminal}
-                          />
-                        )}
+                        <RenderedWorkspacePanel
+                          placement="bottom"
+                          open={terminalOpen}
+                          expanded={false}
+                          width={terminalHeight}
+                          transport={transport}
+                          threadId={activeId}
+                          projectPath={activePath}
+                          projectName={activeProject ? displayName(activeProject) : undefined}
+                          branch={
+                            active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]
+                          }
+                          theme={themeColorScheme}
+                          sideChatParentStatus={sideChatParentStatus}
+                          sideChatStartOptions={sideChatStartOptions}
+                          nativeSurfacesVisible={
+                            !settingsOpen &&
+                            paletteScope === null &&
+                            !rollbackOpen &&
+                            !checkoutDelete
+                          }
+                          onOpen={openBottomPanel}
+                          onClose={closeTerminal}
+                          onWidthChange={setTerminalHeight}
+                          terminalToggleRequest={bottomTerminalToggleRequest}
+                        />
                       </Suspense>
                     </div>
                   ) : null}
@@ -4683,7 +4664,6 @@ export function App() {
                 }
                 onOpen={openWorkspacePanel}
                 onClose={closeWorkspacePanel}
-                onExpandedChange={setWorkspacePanelExpanded}
                 onWidthChange={setWorkspacePanelWidth}
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}

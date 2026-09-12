@@ -17,7 +17,6 @@ export const NATIVE_MENU_ACTIONS = [
   'openPullRequests',
   'toggleTerminal',
   'toggleWorkspace',
-  'expandWorkspace',
   'toggleFastMode',
   'toggleDesignMode',
   'toggleIsolatedSession',

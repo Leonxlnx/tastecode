@@ -648,8 +648,8 @@ export function startServer(
         return {
           terminalId:
             'threadId' in p
-              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows)
-              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows),
+              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows, p.terminalKey)
+              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows, p.terminalKey),
         }
       }
 

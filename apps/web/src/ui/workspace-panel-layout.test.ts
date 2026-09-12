@@ -5,17 +5,11 @@ const appCss = readFileSync(new URL('../styles/app.css', import.meta.url), 'utf8
 const css = readFileSync(new URL('./workspace-panel.css', import.meta.url), 'utf8')
 
 describe('workspace panel layout', () => {
-  it('aligns the chrome and keeps the launcher compact and balanced', () => {
+  it('keeps the panel free of chrome and the launcher compact and balanced', () => {
     const panel = css.match(/\.workspace-panel \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
     const layout = appCss.match(/\.workspace-layout \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
     const openLayout =
       appCss.match(/\.workspace-layout\.is-panel-open \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
-    const chrome =
-      css.match(/\.workspace-panel__chrome \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
-    const closingControls =
-      css.match(
-        /\.workspace-panel:not\(\.is-open\) \.workspace-panel__controls \{(?<body>[\s\S]*?)\n\}/,
-      )?.groups?.body ?? ''
     const launcher =
       css.match(/\.workspace-selector__list \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
     const launcherButton =
@@ -33,8 +27,8 @@ describe('workspace panel layout', () => {
       'grid-template-columns: minmax(360px, 1fr) min(var(--workspace-panel-w), calc(100% - 360px))',
     )
     expect(css).not.toContain('.workspace-layout')
-    expect(chrome).toContain('height: 42px')
-    expect(closingControls).toContain('visibility: hidden')
+    expect(css).not.toContain('.workspace-panel__chrome')
+    expect(panel).toContain('grid-template-rows: auto minmax(0, 1fr)')
     expect(launcher).toContain('width: min(100%, 420px)')
     expect(launcher).toContain('grid-template-columns: repeat(2, minmax(0, 1fr))')
     expect(launcherButton).toContain('grid-template-columns: 20px minmax(0, 1fr)')
