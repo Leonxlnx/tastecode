@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { AlertTriangle, FolderPlus } from 'lucide-react'
+import {
+  IconAlertTriangle as AlertTriangle,
+  IconFolderPlus as FolderPlus,
+} from '@tabler/icons-react'
 import { pickSkillFolder } from '../bridge.js'
 import type { Transport } from '../transport.js'
+import { useProviderWatch } from '../provider-watch.js'
 
 type Inventory = ResultOf<'skills.list'>
 type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
@@ -13,8 +17,8 @@ export function SkillsSettings(props: {
   providerName: string
   projectPath: string | undefined
   projectName: string | undefined
-  pickSkillFolder?: typeof pickSkillFolder | undefined
 }) {
+  useProviderWatch(props.transport, props.provider, props.projectPath, 'skills')
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
@@ -141,7 +145,7 @@ export function SkillsSettings(props: {
     setError(undefined)
     setBusy('install')
     try {
-      const folderPath = await (props.pickSkillFolder ?? pickSkillFolder)()
+      const folderPath = await pickSkillFolder()
       if (!folderPath || !isCurrentContext()) return
       const { skill } = await props.transport.request('skills.installFromFolder', {
         provider: props.provider,

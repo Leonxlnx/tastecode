@@ -1,265 +1,217 @@
-import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
 import {
   assertCommitSha,
-  assertReleaseTag,
-  RELEASE_TAG,
-  RELEASE_VERSION,
-  releaseAssets,
+  hashFile,
+  isMain,
+  openRegularFile,
+  releaseConfig,
   verifyReleaseDirectory,
 } from './release-manifest.js'
+import { verifyReleaseCheckout } from './verify-release-input.js'
 
-function releaseDescription() {
-  return 'Automated unsigned release proof. Keep this release in draft until clean-machine QA, signing decisions, updater validation, and final checksum review are complete.'
+export function draftDescription(approvedSha, config = releaseConfig) {
+  return `Release artifact proof\n\nCommit: ${approvedSha}\nConfiguration: ${config.configSha256}\n\nUnsigned packaging proof only. Signing, notarization, clean-machine product QA, and updater proof are separate release gates. Keep this release in draft.`
 }
 
+// This writer never publishes, retargets, deletes, or replaces anything. The workflow serializes
+// writers repository-wide. State is checked again before each upload because humans can also edit drafts.
 export async function uploadDraftRelease({
   releaseDirectory,
   token,
   repository,
-  targetCommit,
-  tag = RELEASE_TAG,
+  approvedSha,
+  uploadApproval,
+  config = releaseConfig,
   fetchImpl = fetch,
-  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 }) {
-  if (!token || !repository || !targetCommit) {
-    throw new Error('GITHUB_TOKEN, GITHUB_REPOSITORY, and GITHUB_SHA are required')
+  assertCommitSha(approvedSha)
+  if (uploadApproval !== approvedSha)
+    throw new Error('Draft upload requires explicit approval for this exact SHA')
+  if (!token || !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository ?? ''))
+    throw new Error('A token and valid owner/repository are required')
+  const directory = path.resolve(releaseDirectory)
+  const names = await verifyReleaseDirectory(directory, { approvedSha, config })
+  const local = new Map()
+  for (const name of names) {
+    const handle = await openRegularFile(path.join(directory, name))
+    const size = (await handle.stat()).size
+    await handle.close()
+    local.set(name, { size, digest: `sha256:${await hashFile(path.join(directory, name))}` })
   }
-
-  assertCommitSha(targetCommit)
-  assertReleaseTag(tag)
-
-  const repositoryParts = repository.split('/')
-  if (repositoryParts.length !== 2 || repositoryParts.some((part) => !part)) {
-    throw new Error(`Invalid GITHUB_REPOSITORY: ${repository}`)
-  }
-
-  const [owner, repo] = repositoryParts
-  const resolvedDirectory = path.resolve(releaseDirectory)
-  const desiredRelease = {
-    target_commitish: targetCommit,
-    name: `TasteCode ${RELEASE_VERSION}`,
-    body: releaseDescription(),
+  const base = `https://api.github.com/repos/${repository}`
+  const tag = config.tag
+  const desired = {
+    tag_name: tag,
+    target_commitish: approvedSha,
+    name: `${config.productName} ${config.version} — packaging proof`,
+    body: draftDescription(approvedSha, config),
     draft: true,
-    prerelease: true,
-  }
-  const expectedNames = await verifyReleaseDirectory(resolvedDirectory, {
-    platform: 'all',
-    exact: true,
-  })
-  const expectedSet = new Set(expectedNames)
-  const localSizes = new Map()
-
-  for (const name of expectedNames) {
-    localSizes.set(name, (await stat(path.join(resolvedDirectory, name))).size)
+    prerelease: config.prerelease,
   }
 
-  const apiHeaders = {
-    Accept: 'application/vnd.github+json',
-    Authorization: `Bearer ${token}`,
-    'X-GitHub-Api-Version': '2022-11-28',
-  }
-
-  async function apiRequest(url, options = {}) {
+  async function request(url, options = {}, allowMissing = false) {
     const response = await fetchImpl(url, {
       ...options,
-      headers: { ...apiHeaders, ...options.headers },
-    })
-
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, 1_000)
-      const error = new Error(
-        `${options.method ?? 'GET'} ${url} failed: ${response.status} ${detail}`,
-      )
-      error.status = response.status
-      throw error
-    }
-
-    return response
-  }
-
-  const mainRefResponse = await apiRequest(
-    `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/main`,
-  )
-  const mainRef = await mainRefResponse.json()
-  if (mainRef.object?.sha !== targetCommit) {
-    throw new Error(`Approved release commit ${targetCommit} is no longer the current main commit`)
-  }
-
-  async function listReleasesForTag() {
-    const matches = []
-
-    for (let page = 1; ; page += 1) {
-      const response = await apiRequest(
-        `https://api.github.com/repos/${owner}/${repo}/releases?per_page=100&page=${page}`,
-      )
-      const releases = await response.json()
-      matches.push(...releases.filter((release) => release.tag_name === tag))
-      if (releases.length < 100) break
-    }
-
-    if (matches.length > 1) {
-      const details = matches
-        .map((release) => `#${release.id} (${release.draft ? 'draft' : 'published'})`)
-        .join(', ')
-      throw new Error(
-        `Multiple releases use tag ${tag}: ${details}. Delete duplicate drafts before uploading.`,
-      )
-    }
-
-    return matches[0] ?? null
-  }
-
-  function assertMutableDraft(release) {
-    if (!release.draft) throw new Error(`Refusing to modify non-draft release ${tag}`)
-  }
-
-  async function confirmUniqueCreatedRelease(createdId) {
-    for (let attempt = 0; attempt < 4; attempt += 1) {
-      const confirmed = await listReleasesForTag()
-      if (confirmed) {
-        if (confirmed.id !== createdId) {
-          throw new Error(`Release ${tag} changed identity during creation`)
-        }
-        assertMutableDraft(confirmed)
-        return confirmed
-      }
-      await wait(250 * 2 ** attempt)
-    }
-    throw new Error(`Could not confirm unique draft release ${tag}`)
-  }
-
-  async function getOrCreateDraft() {
-    const existing = await listReleasesForTag()
-    if (existing) {
-      // Published releases are immutable. This check intentionally precedes every PATCH/DELETE.
-      assertMutableDraft(existing)
-      return existing
-    }
-
-    try {
-      const response = await apiRequest(`https://api.github.com/repos/${owner}/${repo}/releases`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tag_name: tag,
-          ...desiredRelease,
-        }),
-      })
-      const created = await response.json()
-      assertMutableDraft(created)
-      return confirmUniqueCreatedRelease(created.id)
-    } catch (error) {
-      if (error.status !== 422) throw error
-      await wait(500)
-      const racedRelease = await listReleasesForTag()
-      if (!racedRelease) throw error
-      assertMutableDraft(racedRelease)
-      return racedRelease
-    }
-  }
-
-  let release = await getOrCreateDraft()
-  assertMutableDraft(release)
-
-  const needsReleaseUpdate = Object.entries(desiredRelease).some(
-    ([key, value]) => release[key] !== value,
-  )
-  if (needsReleaseUpdate) {
-    const response = await apiRequest(
-      `https://api.github.com/repos/${owner}/${repo}/releases/${release.id}`,
-      {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(desiredRelease),
+      redirect: 'error',
+      signal: AbortSignal.timeout(5 * 60 * 1000),
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...options.headers,
       },
-    )
-    release = await response.json()
-    assertMutableDraft(release)
-  }
-
-  for (const [key, value] of Object.entries(desiredRelease)) {
-    if (release[key] !== value) {
-      throw new Error(`Draft release ${key} did not reconcile to the approved value`)
-    }
-  }
-
-  async function listAssets() {
-    const assets = []
-    for (let page = 1; ; page += 1) {
-      const response = await apiRequest(
-        `https://api.github.com/repos/${owner}/${repo}/releases/${release.id}/assets?per_page=100&page=${page}`,
+    })
+    if (allowMissing && response.status === 404) return null
+    if (!response.ok) {
+      await response.body?.cancel()
+      // API error bodies can reflect private input. Never copy them or credentials into CI logs.
+      throw new Error(
+        `GitHub ${options.method ?? 'GET'} failed with HTTP ${response.status}; the draft was not published and no existing assets were removed`,
       )
-      const pageAssets = await response.json()
-      assets.push(...pageAssets)
-      if (pageAssets.length < 100) break
+    }
+    return response.json()
+  }
+
+  async function list(url) {
+    const rows = []
+    for (let page = 1; page <= 100; page += 1) {
+      const values = await request(`${url}?per_page=100&page=${page}`)
+      if (!Array.isArray(values)) throw new Error('GitHub returned an invalid list')
+      rows.push(...values)
+      if (values.length < 100) return rows
+    }
+    throw new Error('GitHub pagination exceeded the safe release lookup limit')
+  }
+
+  async function verifyRefs() {
+    const main = await request(`${base}/git/ref/heads/main`)
+    if (main.object?.type !== 'commit' || main.object.sha !== approvedSha)
+      throw new Error('The approved release commit is no longer the current main commit')
+    const tagRef = await request(`${base}/git/ref/tags/${encodeURIComponent(tag)}`, {}, true)
+    if (!tagRef) return
+    let object = tagRef.object
+    for (let depth = 0; object?.type === 'tag' && depth < 5; depth += 1) {
+      assertCommitSha(object.sha)
+      object = (await request(`${base}/git/tags/${object.sha}`)).object
+    }
+    if (object?.type !== 'commit' || object.sha !== approvedSha)
+      throw new Error('The existing release tag does not point to the approved commit')
+  }
+
+  function assertDraft(release) {
+    if (!Number.isSafeInteger(release?.id) || release.id <= 0)
+      throw new Error('GitHub returned an invalid release identity')
+    if (release.draft !== true) throw new Error('Refusing to modify a published release')
+    if (Object.entries(desired).some(([key, value]) => release[key] !== value))
+      throw new Error(
+        'Existing draft does not match this approved commit and proof; it was left untouched',
+      )
+  }
+
+  async function uniqueDraft() {
+    const matches = (await list(`${base}/releases`)).filter((release) => release.tag_name === tag)
+    if (matches.length > 1)
+      throw new Error('Multiple releases use this tag; all drafts were left untouched')
+    if (matches.length === 0) return null
+    const release = await request(`${base}/releases/${matches[0].id}`)
+    assertDraft(release)
+    return release
+  }
+
+  function verifyAsset(asset) {
+    const expected = local.get(asset.name)
+    if (
+      !Number.isSafeInteger(asset.id) ||
+      asset.id <= 0 ||
+      !expected ||
+      asset.state !== 'uploaded' ||
+      asset.size !== expected.size ||
+      asset.digest !== expected.digest
+    )
+      throw new Error(
+        'Remote draft asset does not match the exact local SHA-256 manifest; nothing was replaced',
+      )
+  }
+
+  async function assetsFor(id) {
+    const assets = await list(`${base}/releases/${id}/assets`)
+    const seen = new Set()
+    for (const asset of assets) {
+      verifyAsset(asset)
+      if (seen.has(asset.name)) throw new Error('Duplicate remote draft asset name')
+      seen.add(asset.name)
     }
     return assets
   }
 
-  async function deleteAsset(asset) {
+  await verifyRefs()
+  let release = await uniqueDraft()
+  if (!release) {
+    await verifyRefs()
+    // A failed/uncertain POST is never retried. A later explicit run can resume a verified draft.
+    const created = await request(`${base}/releases`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(desired),
+    })
+    assertDraft(created)
+    release = await uniqueDraft()
+    if (!release || release.id !== created.id)
+      throw new Error('Draft identity changed during creation; no assets were uploaded')
+  }
+  const id = release.id
+  for (const name of names) {
+    await verifyRefs()
+    release = await uniqueDraft()
+    if (release?.id !== id) throw new Error('Draft identity changed during upload')
+    const existing = await assetsFor(id)
+    if (existing.some((asset) => asset.name === name)) continue
+    const expected = local.get(name)
+    const filePath = path.join(directory, name)
+    if (`sha256:${await hashFile(filePath)}` !== expected.digest)
+      throw new Error('Local release asset changed before upload')
+    const handle = await openRegularFile(filePath)
+    const stream = handle.createReadStream({ autoClose: false })
     try {
-      await apiRequest(
-        `https://api.github.com/repos/${owner}/${repo}/releases/assets/${asset.id}`,
-        { method: 'DELETE' },
-      )
-    } catch (error) {
-      if (error.status !== 404) throw error
-    }
-  }
-
-  const currentAssets = await listAssets()
-  for (const asset of currentAssets) {
-    await deleteAsset(asset)
-    console.log(
-      `${expectedSet.has(asset.name) ? 'Replacing' : 'Removing'} draft asset ${asset.name}`,
-    )
-  }
-
-  for (const name of expectedNames) {
-    const filePath = path.join(resolvedDirectory, name)
-    const fileSize = localSizes.get(name)
-    await apiRequest(
-      `https://uploads.github.com/repos/${owner}/${repo}/releases/${release.id}/assets?name=${encodeURIComponent(name)}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'Content-Length': String(fileSize),
+      const asset = await request(
+        `https://uploads.github.com/repos/${repository}/releases/${id}/assets?name=${encodeURIComponent(name)}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': String(expected.size),
+          },
+          body: stream,
+          duplex: 'half',
         },
-        body: createReadStream(filePath),
-        duplex: 'half',
-      },
-    )
-    console.log(`Uploaded ${name} (${fileSize} bytes)`)
-  }
-
-  const finalAssets = await listAssets()
-  const finalNames = finalAssets.map((asset) => asset.name).sort()
-  if (JSON.stringify(finalNames) !== JSON.stringify(releaseAssets('all'))) {
-    throw new Error(`Draft release asset reconciliation failed: ${finalNames.join(', ')}`)
-  }
-
-  for (const asset of finalAssets) {
-    if (asset.size !== localSizes.get(asset.name)) {
-      throw new Error(`Draft release asset size mismatch for ${asset.name}`)
+      )
+      if (asset.name !== name) throw new Error('GitHub changed the uploaded asset name')
+      verifyAsset(asset)
+    } finally {
+      stream.destroy()
+      await handle.close()
     }
   }
-
-  return { release, assets: finalAssets }
+  await verifyRefs()
+  release = await uniqueDraft()
+  if (release?.id !== id) throw new Error('Draft identity changed before final verification')
+  const assets = await assetsFor(id)
+  if (JSON.stringify(assets.map((asset) => asset.name).sort()) !== JSON.stringify(names))
+    throw new Error('Draft is incomplete; retry only after inspecting the exact draft')
+  await verifyReleaseDirectory(directory, { approvedSha, config })
+  return { release, assets }
 }
 
-const isMain =
-  process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
-
-if (isMain) {
-  await uploadDraftRelease({
-    releaseDirectory: process.argv[2] ?? 'release',
+if (isMain(import.meta.url)) {
+  const approvedSha = verifyReleaseCheckout()
+  const result = await uploadDraftRelease({
+    releaseDirectory: process.argv[2] ?? 'release-final',
     token: process.env.GITHUB_TOKEN,
     repository: process.env.GITHUB_REPOSITORY,
-    targetCommit: process.env.GITHUB_SHA,
-    tag: process.env.RELEASE_TAG ?? RELEASE_TAG,
+    approvedSha,
+    uploadApproval: process.env.RELEASE_UPLOAD_APPROVAL,
   })
+  console.log(
+    `Verified draft #${result.release.id}: ${result.assets.length} assets. Packaging proof only; nothing published.`,
+  )
 }

@@ -1,10 +1,13 @@
-import { detectAgents, findAgentSpec } from '@harness/adapter-acp'
-import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code'
-import { CODEX_CAPABILITIES } from '@harness/adapter-codex'
-import { GROK_CAPABILITIES } from '@harness/adapter-grok'
+import { codexLoginStatus } from '@harness/adapter-codex/auth'
+import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
+import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
+import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
+import { CODEX_UPDATES } from '@harness/adapter-codex/updates'
+import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
+import { GROK_UPDATES } from '@harness/adapter-grok/updates'
+import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
-import { commandVersion, isInstalled } from '@harness/proc'
-import { propertiesWhen } from './properties-when.js'
+import { commandVersion, isInstalled } from '@harness/proc/cli'
 
 /**
  * What this machine can actually run.
@@ -26,6 +29,7 @@ type Probe = {
   command?: string
   capabilities?: ProviderStatus['capabilities']
   setup: ProviderSetup
+  updater?: CliUpdateSource
   supportedVersion?: string
   /** Interactive sign-in command, for providers whose login lives in their own CLI. */
   loginCommand?: string
@@ -36,17 +40,21 @@ type Probe = {
 const PROBES: Probe[] = [
   {
     id: 'codex',
+    updater: CODEX_UPDATES,
     displayName: 'Codex',
     command: 'codex',
     capabilities: CODEX_CAPABILITIES,
     setup: {
       installUrl: 'https://developers.openai.com/codex/cli',
       installCommand: 'npm install -g @openai/codex',
-      login: 'app',
+      login: 'provider',
+      loginOpensBrowser: true,
     },
+    loginCommand: 'codex login',
   },
   {
     id: 'claude-code',
+    updater: CLAUDE_UPDATES,
     displayName: 'Claude Code',
     command: 'claude',
     capabilities: CLAUDE_CAPABILITIES,
@@ -54,17 +62,20 @@ const PROBES: Probe[] = [
       installUrl: 'https://code.claude.com/docs/en/getting-started',
       installCommand: 'npm install -g @anthropic-ai/claude-code',
       login: 'provider',
+      loginOpensBrowser: true,
     },
     loginCommand: 'claude auth login',
   },
   {
     id: 'grok',
+    updater: GROK_UPDATES,
     displayName: 'Grok',
     command: 'grok',
     capabilities: GROK_CAPABILITIES,
     setup: {
       installUrl: 'https://x.ai/cli',
       login: 'provider',
+      loginOpensBrowser: false,
     },
     // Device flow in the CLI's own terminal, same shape as `kimi login`.
     loginCommand: 'grok login',
@@ -88,13 +99,22 @@ const PROBES: Probe[] = [
 export type SystemProbe = {
   isInstalled(command: string): Promise<boolean>
   version(command: string): Promise<string | undefined>
-  acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
+  auth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']>
 }
 
 const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
-  acpAgents: detectAgents,
+  auth: (provider) =>
+    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+}
+
+export function providerUpdateSources() {
+  return PROBES.flatMap((entry) =>
+    entry.updater
+      ? [{ provider: entry.id, displayName: entry.displayName, updater: entry.updater }]
+      : [],
+  )
 }
 
 /**
@@ -102,10 +122,14 @@ const REAL_SYSTEM: SystemProbe = {
  * nowhere else. The renderer names a target; it never sends command text —
  * that is what keeps `providers.install` from being a remote shell.
  */
-export function installCommandFor(provider: ProviderStatus['id'], agent?: string): string {
+export async function installCommandFor(
+  provider: ProviderStatus['id'],
+  agent?: string,
+): Promise<string> {
   const target =
     provider === 'acp'
-      ? (() => {
+      ? await (async () => {
+          const { findAgentSpec } = await import('@harness/adapter-acp/agents')
           const spec = agent ? findAgentSpec(agent) : undefined
           return spec ? { name: spec.name, setup: spec.setup } : undefined
         })()
@@ -127,8 +151,12 @@ export function installCommandFor(provider: ProviderStatus['id'], agent?: string
  * ACP agents sign in inside their ordinary interactive CLI, so the launch is
  * the bare binary; direct providers name an explicit login command.
  */
-export function launchCommandFor(provider: ProviderStatus['id'], agent?: string): string {
+export async function launchCommandFor(
+  provider: ProviderStatus['id'],
+  agent?: string,
+): Promise<string> {
   if (provider === 'acp') {
+    const { findAgentSpec } = await import('@harness/adapter-acp/agents')
     const spec = agent ? findAgentSpec(agent) : undefined
     if (!spec) throw new Error(`unknown launch target: ${agent ?? provider}`)
     if (spec.setup.login !== 'provider') {
@@ -145,8 +173,44 @@ export function launchCommandFor(provider: ProviderStatus['id'], agent?: string)
 }
 
 const providerDetections = new WeakMap<SystemProbe, Promise<ProviderStatus[]>>()
+const PROVIDER_PREWARM_TTL_MS = 30_000
+const prewarmedProviderDetections = new WeakMap<
+  SystemProbe,
+  { detection: Promise<ProviderStatus[]>; expiresAt: number }
+>()
+
+/**
+ * Start one provider scan before the renderer asks for it. The resolved result
+ * is consumed once, so later refreshes still observe installs and login changes.
+ */
+export function prewarmProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
+  const current = prewarmedProviderDetections.get(system)
+  if (current) return current.detection
+
+  const detection = scanProviders(system)
+  prewarmedProviderDetections.set(system, {
+    detection,
+    expiresAt: Date.now() + PROVIDER_PREWARM_TTL_MS,
+  })
+  void detection.catch(() => {
+    if (prewarmedProviderDetections.get(system)?.detection === detection) {
+      prewarmedProviderDetections.delete(system)
+    }
+  })
+  return detection
+}
 
 export function detectProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
+  const prewarmed = prewarmedProviderDetections.get(system)
+  if (prewarmed) {
+    prewarmedProviderDetections.delete(system)
+    if (prewarmed.expiresAt >= Date.now()) return prewarmed.detection
+  }
+
+  return scanProviders(system)
+}
+
+function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
@@ -169,7 +233,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
       installed: false,
       auth: 'unknown',
       setup: entry.setup,
-      ...propertiesWhen(entry.unbuilt, (includedValue) => ({ problem: includedValue })),
+      ...(entry.unbuilt ? { problem: entry.unbuilt } : {}),
     }
   }
 
@@ -185,18 +249,20 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     }
   }
 
-  const version = await system.version(entry.command)
+  const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
   const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
   return {
     id: entry.id,
     displayName: entry.displayName,
     installed: true,
-    auth: 'unknown',
+    auth,
     setup: entry.setup,
-    ...propertiesWhen(version, (version) => ({ version })),
-    ...propertiesWhen(entry.capabilities, (includedValue) => ({ capabilities: includedValue })),
-    ...propertiesWhen(unsupported, () => ({
-      problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
-    })),
+    ...(version ? { version } : {}),
+    ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
+    ...(unsupported
+      ? {
+          problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
+        }
+      : {}),
   }
 }

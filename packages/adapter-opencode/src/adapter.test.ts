@@ -1,11 +1,10 @@
 import { once } from 'node:events'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import type { DomainEvent } from '@harness/contracts'
-import { JsonRpcValueSchema, type JsonRpcValue } from '@harness/proc'
+import { JsonRpcValueSchema, MAX_PROTOCOL_FRAME_BYTES, type JsonRpcValue } from '@harness/proc'
 import type { Event } from '@opencode-ai/sdk'
 import { afterEach, describe, expect, it } from 'vitest'
-import { z } from 'zod'
 import {
   OpenCodeAdapter,
   OPENCODE_CAPABILITIES,
@@ -29,6 +28,52 @@ afterEach(async () => {
 })
 
 describe('OpenCode adapter', () => {
+  it('does not reuse a turn identity when a fresh instance resumes', async () => {
+    const mock = await serveOpenCodeV2()
+    const first = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const resumed = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await first.startThread('/repo')
+      const previous = await first.sendTurn(thread.id, 'One')
+      first.dispose()
+      await resumed.resumeThread(thread.id, '/repo')
+      expect(await resumed.sendTurn(thread.id, 'Two')).not.toBe(previous)
+    } finally {
+      first.dispose()
+      resumed.dispose()
+    }
+  })
+
+  it.each(['v1', 'v2'] as const)(
+    'fails the active turn when a %s SSE event exceeds the bound',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      try {
+        const thread = await adapter.startThread('/repo')
+        const events: DomainEvent[] = []
+        adapter.on('event', (event) => events.push(event))
+        await adapter.sendTurn(thread.id, 'Work')
+        const oversize = 'x'.repeat(MAX_PROTOCOL_FRAME_BYTES)
+        if (protocol === 'v1') {
+          // SAFETY: Unknown vendor events are valid SSE JSON and the framing
+          // limit must reject them before any domain payload is interpreted.
+          mock.broadcast({ type: 'oversized', properties: { value: oversize } } as never)
+        } else {
+          mock.broadcast({ type: 'oversized', data: { value: oversize } } as never)
+        }
+        await expect
+          .poll(() =>
+            events.some((event) => event.type === 'turn.completed' && event.status === 'failed'),
+          )
+          .toBe(true)
+        await expect(adapter.sendTurn(thread.id, 'Retry')).rejects.toThrow()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
   it('starts and streams a captured native session through the generated SDK', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
@@ -122,13 +167,13 @@ describe('OpenCode adapter', () => {
     // synchronously-started turn and must not finish it as empty/successful.
     mock.broadcast(idle)
     mock.broadcast(idle)
-    await expect(followUp).resolves.toContain('-turn-2')
+    expect(await followUp).not.toBe(completions[0])
     expect(completions).toHaveLength(1)
 
     mock.broadcast(busy)
     mock.broadcast(idle)
     await expect.poll(() => completions).toHaveLength(2)
-    expect(completions[1]).toContain('-turn-2')
+    expect(completions[1]).not.toBe(completions[0])
     adapter.dispose()
   })
 
@@ -436,7 +481,12 @@ describe('OpenCode adapter', () => {
 })
 
 type RequestRecord = { method: string; url: string; body: JsonRpcValue | undefined }
-const ServerAddressSchema = z.object({ port: z.number() })
+
+function serverPort(server: Server): number {
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('missing test port')
+  return address.port
+}
 
 async function serveOpenCode(): Promise<{
   baseUrl: string
@@ -515,9 +565,9 @@ async function serveOpenCode(): Promise<{
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = ServerAddressSchema.parse(server.address())
+  const port = serverPort(server)
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://127.0.0.1:${port}`,
     requests,
     broadcast(event) {
       for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`)
@@ -642,9 +692,9 @@ async function serveOpenCodeV2(
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = ServerAddressSchema.parse(server.address())
+  const port = serverPort(server)
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://127.0.0.1:${port}`,
     requests,
     broadcast(event) {
       for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`)

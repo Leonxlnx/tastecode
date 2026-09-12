@@ -23,5 +23,19 @@ export default defineConfig({
     port: 5183,
     strictPort: true,
   },
-  build: { outDir: 'dist', emptyOutDir: true, assetsInlineLimit: 0 },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    rolldownOptions: {
+      output: {
+        // The shell's shared modules used to become ten tiny startup chunks.
+        // Keep the initial graph together while preserving every lazy feature
+        // boundary, which removes file reads and module handoffs at launch.
+        codeSplitting: { groups: [{ name: 'startup', tags: ['$initial'] }] },
+      },
+    },
+  },
+  // Module workers keep Shiki's language imports split instead of packing the
+  // complete grammar catalog into one multi-megabyte worker entry.
+  worker: { format: 'es' },
 })

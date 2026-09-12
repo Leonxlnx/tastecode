@@ -1,4 +1,5 @@
 import type { ProviderPresentation } from '../provider-presentation.js'
+import '../styles/source-identity.css'
 import { ProviderIcon } from './ProviderIcon.js'
 
 export function SourceIdentity(props: {

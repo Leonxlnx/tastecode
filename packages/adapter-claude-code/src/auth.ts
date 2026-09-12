@@ -1,7 +1,6 @@
 import type { Account } from '@harness/contracts'
 import { killTree, runCli, spawnCli } from '@harness/proc'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 const ClaudeAccountSchema = z.object({
   loggedIn: z.boolean(),
@@ -15,7 +14,7 @@ export type ClaudeAccountOptions = {
 
 export type ClaudeLogin = {
   loginId: string
-  cancel: () => void
+  cancel: () => Promise<void>
 }
 
 export async function claudeAccount(options: ClaudeAccountOptions = {}): Promise<Account> {
@@ -36,8 +35,8 @@ export function parseClaudeAccount(output: string): Account {
   const value = result.data
   return {
     signedIn: value.loggedIn,
-    ...propertiesWhen(value.email, (email) => ({ email })),
-    ...propertiesWhen(value.subscriptionType, (plan) => ({ plan })),
+    ...(value.email ? { email: value.email } : {}),
+    ...(value.subscriptionType ? { plan: value.subscriptionType } : {}),
   }
 }
 

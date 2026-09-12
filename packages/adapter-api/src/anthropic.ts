@@ -1,9 +1,9 @@
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
 import {
   type JsonObject,
-  JsonValueSchema,
   jsonNumber as number,
   jsonObject as object,
+  parseJsonValue,
   jsonString as string,
 } from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiTransport } from './runtime.js'
@@ -73,7 +73,7 @@ export function createAnthropicMessagesTransport(options: AnthropicOptions): Api
         const block = blocks.get(index) ?? {}
         if (block.type === 'tool_use') {
           const input = json.get(index)
-          block.input = JsonValueSchema.parse(input ? JSON.parse(input) : (block.input ?? {}))
+          block.input = input ? parseJsonValue(input) : (block.input ?? {})
           yield {
             type: 'tool_call',
             call: {
@@ -134,7 +134,7 @@ export async function listAnthropicModels(
   while (true) {
     const response = await fetch(endpoint, { headers: headers(apiKey) })
     if (!response.ok) throw new Error(`Anthropic model listing failed with HTTP ${response.status}`)
-    const body = object(await response.json())
+    const body = object(parseJsonValue(await response.text()))
     if (Array.isArray(body.data)) {
       for (const entry of body.data.map(object)) {
         const id = string(entry.id)

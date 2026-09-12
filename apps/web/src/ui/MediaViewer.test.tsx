@@ -1,9 +1,50 @@
 // @vitest-environment happy-dom
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MediaViewer } from './MediaViewer.js'
 
 describe('MediaViewer image zoom', () => {
+  afterEach(cleanup)
+
+  it('keeps the thumbnail visible until the full image loads, including when the source changes', () => {
+    const props = {
+      src: 'large.png',
+      thumbnailSrc: 'small.png',
+      name: 'photo',
+      mediaType: 'image' as const,
+      onClose: vi.fn(),
+    }
+    const view = render(<MediaViewer {...props} />)
+    const fullImage = screen.getByRole('img', { name: 'photo' })
+    const thumbnail = () => document.querySelector('.media-viewer__thumbnail')
+    expect(thumbnail()?.getAttribute('src')).toBe('small.png')
+    expect(fullImage.style.opacity).toBe('0')
+
+    fireEvent.load(fullImage)
+    expect(thumbnail()).toBeNull()
+    expect(fullImage.style.opacity).toBe('')
+
+    view.rerender(<MediaViewer {...props} src="next.png" thumbnailSrc="next-small.png" />)
+    expect(thumbnail()?.getAttribute('src')).toBe('next-small.png')
+    expect(fullImage.style.opacity).toBe('0')
+    fireEvent.load(fullImage)
+    expect(thumbnail()).toBeNull()
+    expect(fullImage.style.opacity).toBe('')
+  })
+
+  it('shows the thumbnail as the video poster while metadata loads', () => {
+    render(
+      <MediaViewer
+        src="movie.mp4"
+        thumbnailSrc="poster.png"
+        name="movie"
+        mediaType="video"
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByLabelText('movie').getAttribute('poster')).toBe('poster.png')
+  })
+
   it('scales the fitted image dimensions instead of an empty viewport-sized frame', () => {
     const { container } = render(
       <MediaViewer src="preview.png" name="preview.png" mediaType="image" onClose={vi.fn()} />,

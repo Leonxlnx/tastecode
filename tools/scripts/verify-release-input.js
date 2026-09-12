@@ -1,32 +1,35 @@
-import path from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { assertCommitSha } from './release-manifest.js'
+import { execFileSync } from 'node:child_process'
+import { assertCommitSha, isMain, repositoryRoot } from './release-manifest.js'
 
-export function verifyReleaseInput({ approvedSha, eventSha, eventRef }) {
+export function verifyReleaseInput({
+  approvedSha,
+  eventSha,
+  eventRef,
+  checkoutSha,
+  dirty = false,
+}) {
   assertCommitSha(approvedSha)
   assertCommitSha(eventSha)
-
-  if (eventRef !== 'refs/heads/main') {
-    throw new Error(`Release proof must be dispatched from refs/heads/main, got ${eventRef}`)
-  }
-
-  if (approvedSha !== eventSha) {
-    throw new Error(
-      `Approved SHA ${approvedSha} must equal the main commit selected for this run ${eventSha}`,
-    )
-  }
-
+  assertCommitSha(checkoutSha)
+  if (eventRef !== 'refs/heads/main')
+    throw new Error('Release proof must be dispatched from refs/heads/main')
+  if (approvedSha !== eventSha || approvedSha !== checkoutSha)
+    throw new Error('Approved SHA must equal both the selected main commit and checkout HEAD')
+  if (dirty) throw new Error('Release proof requires a clean source checkout')
   return approvedSha
 }
 
-const isMain =
-  process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
-
-if (isMain) {
-  const approvedSha = verifyReleaseInput({
-    approvedSha: process.env.APPROVED_SHA,
-    eventSha: process.env.EVENT_SHA,
-    eventRef: process.env.EVENT_REF,
+export function verifyReleaseCheckout(env = process.env) {
+  const git = (args) =>
+    execFileSync('git', args, { cwd: repositoryRoot, encoding: 'utf8', windowsHide: true }).trim()
+  return verifyReleaseInput({
+    approvedSha: env.APPROVED_SHA,
+    eventSha: env.EVENT_SHA,
+    eventRef: env.EVENT_REF,
+    checkoutSha: git(['rev-parse', 'HEAD']),
+    dirty: git(['status', '--porcelain', '--untracked-files=normal']).length !== 0,
   })
-  console.log(`Approved exact main commit ${approvedSha}`)
 }
+
+if (isMain(import.meta.url))
+  console.log(`Approved exact clean main commit ${verifyReleaseCheckout()}`)

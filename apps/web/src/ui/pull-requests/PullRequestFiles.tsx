@@ -1,13 +1,4 @@
-import {
-  lazy,
-  Suspense,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ComponentType,
-} from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   PullRequestAction,
   PullRequestDetail,
@@ -15,28 +6,24 @@ import type {
   PullRequestReviewThread,
 } from '@harness/contracts'
 import {
-  ArrowUpRight,
-  Check,
-  ChevronRight,
-  CircleAlert,
-  Ellipsis,
-  FileCode2,
-  LoaderCircle,
-  Pencil,
-  RotateCcw,
-  Trash2,
-  X,
-} from 'lucide-react'
+  IconArrowUpRight as ArrowUpRight,
+  IconCheck as Check,
+  IconChevronRight as ChevronRight,
+  IconAlertCircle as CircleAlert,
+  IconDots as Ellipsis,
+  IconFileCode2 as FileCode2,
+  IconLoader2 as LoaderCircle,
+  IconPencil as Pencil,
+  IconRotate as RotateCcw,
+  IconTrash as Trash2,
+  IconX as X,
+} from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
-import { errorMessage as messageOf } from '../../boundary.js'
+import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { parsePullRequestPatch } from './diff.js'
-import type {
-  PullRequestDiffAnnotation,
-  PullRequestDiffRendererProps,
-  PullRequestDiffSide,
-} from './PullRequestDiffRenderer.js'
+import type { PullRequestDiffAnnotation, PullRequestDiffSide } from './PullRequestDiffRenderer.js'
 
 const LazyPullRequestDiffRenderer = lazy(() =>
   import('./PullRequestDiffRenderer.js').then((module) => ({
@@ -44,15 +31,12 @@ const LazyPullRequestDiffRenderer = lazy(() =>
   })),
 )
 
-export type PullRequestDiffView = ComponentType<PullRequestDiffRendererProps>
-
 export function PullRequestFiles(props: {
   detail: PullRequestDetail
   transport: Transport
   onAction: (action: PullRequestAction) => Promise<boolean>
   onConfirmAction: (action: PullRequestAction) => void
   actionBusy: boolean
-  diffRendererComponent?: PullRequestDiffView | undefined
 }) {
   const [files, setFiles] = useState<PullRequestFile[]>([])
   const [selectedPath, setSelectedPath] = useState<string>()
@@ -173,7 +157,6 @@ export function PullRequestFiles(props: {
             busy={props.actionBusy}
             onAction={props.onAction}
             onConfirmAction={props.onConfirmAction}
-            diffRendererComponent={props.diffRendererComponent}
           />
         ) : (
           <div className="pr-file-loading">No files were returned for this pull request.</div>
@@ -192,12 +175,10 @@ function PullRequestFileDiff(props: {
   busy: boolean
   onAction: (action: PullRequestAction) => Promise<boolean>
   onConfirmAction: (action: PullRequestAction) => void
-  diffRendererComponent?: PullRequestDiffView | undefined
 }) {
   const hunks = useMemo(() => parsePullRequestPatch(props.file.patch ?? ''), [props.file.patch])
   const [commentLine, setCommentLine] = useState<DiffCommentTarget>()
   const [comment, setComment] = useState('')
-  const DiffRendererComponent = props.diffRendererComponent ?? LazyPullRequestDiffRenderer
   const visibleCoordinates = useMemo(() => {
     const result = new Set<string>()
     for (const hunk of hunks) {
@@ -312,7 +293,7 @@ function PullRequestFileDiff(props: {
               </div>
             }
           >
-            <DiffRendererComponent
+            <LazyPullRequestDiffRenderer
               file={props.file}
               cacheKey={`${props.headRefOid}:${props.file.sha}`}
               annotations={annotations}
@@ -419,11 +400,10 @@ function InlineThread(props: {
             })
           }
         >
-          {props.thread.resolved ? (
-            <RotateCcw size={11} aria-hidden />
-          ) : (
+          <IconMorph active={props.thread.resolved ? 1 : 0}>
             <Check size={11} aria-hidden />
-          )}
+            <RotateCcw size={11} aria-hidden />
+          </IconMorph>
           {props.thread.resolved ? 'Reopen' : 'Resolve'}
         </button>
       </header>
@@ -595,4 +575,8 @@ function fileName(path: string): string {
 function parentPath(path: string): string {
   const parts = path.split('/')
   return parts.length > 1 ? parts.slice(0, -1).join('/') : 'repository root'
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }

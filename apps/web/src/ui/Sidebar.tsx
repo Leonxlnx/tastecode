@@ -1,9 +1,14 @@
 import {
+  lazy,
   memo,
+  Suspense,
+  type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type RefObject,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -12,26 +17,38 @@ import {
   useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { Account, ProviderId, ThreadInboxStatus, ThreadLifecycle } from '@harness/contracts'
+import type {
+  Account,
+  ProviderId,
+  ResultOf,
+  ThreadInboxStatus,
+  ThreadLifecycle,
+} from '@harness/contracts'
 import {
-  Archive,
-  Ellipsis,
-  Folder,
-  FolderOpen,
-  FolderPen,
-  GitPullRequest,
-  PanelLeftClose,
-  Pencil,
-  Pin,
-  PinOff,
-  Plus,
-  Search,
-  Settings,
-  SquarePen,
-  UserRound,
-  X,
-} from 'lucide-react'
-import { isDesktop, revealPath } from '../bridge.js'
+  IconArchive as Archive,
+  IconChevronUp as ChevronUp,
+  IconDots as Ellipsis,
+  IconFolderOpen as FolderOpen,
+  IconFolderPlus as FolderPen,
+  IconGitPullRequest as GitPullRequest,
+  IconLayoutSidebarLeftCollapse as PanelLeftClose,
+  IconLoader2 as LoaderCircle,
+  IconPencil as Pencil,
+  IconPinned as Pin,
+  IconPinnedOff as PinOff,
+  IconPlus as Plus,
+  IconSearch as Search,
+  IconSettings as Settings,
+  IconEdit as SquarePen,
+  IconUser as UserRound,
+  IconX as X,
+} from '@tabler/icons-react'
+import {
+  canDropProjectFolders,
+  droppedProjectFolderPaths,
+  isDesktop,
+  revealPath,
+} from '../bridge.js'
 import {
   appHapticsSupported,
   performAppHaptic,
@@ -44,10 +61,25 @@ import { sessionSourcePresentation } from '../provider-presentation.js'
 import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
-import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
+import type { AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
-import { InboxSidebar, type InboxActions } from './InboxSidebar.js'
+import type { InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
+
+type AccountLimitsModule = typeof import('./AccountLimits.js')
+type AccountLimitsComponent = AccountLimitsModule['AccountLimits']
+type LazyAccountLimitsModule = { default: AccountLimitsComponent }
+let accountLimitsPromise: Promise<LazyAccountLimitsModule> | undefined
+let resolvedAccountLimits: AccountLimitsComponent | undefined
+const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
+  (accountLimitsPromise ??= import('./AccountLimits.js').then((module) => {
+    resolvedAccountLimits = module.AccountLimits
+    return { default: module.AccountLimits }
+  }))
+const AccountLimits = lazy(loadAccountLimits)
+const InboxSidebar = lazy(() =>
+  import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
+)
 
 /**
  * The rail. Collapsible, searchable, and everything in it can be renamed.
@@ -79,19 +111,11 @@ export type Project = {
   pinned?: boolean
 }
 
-export type SidebarHaptics = {
-  perform: typeof performAppHaptic
-  prepare: typeof prepareAppHaptics
-}
-
-const defaultSidebarHaptics: SidebarHaptics = {
-  perform: performAppHaptic,
-  prepare: prepareAppHaptics,
-}
-
 type DropPosition = 'before' | 'after'
+type ProjectDropTarget = { path: string; position: DropPosition }
+type PinnedSession = { projectPath: string; session: Session }
+type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
 
-const BRAILLE_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
 /** Narrowest width at which the New chat row and the chat rows stay
  *  roomy — the narrowest rail still looks deliberate, never squeezed. */
 const MIN_RAIL_WIDTH = 240
@@ -119,7 +143,20 @@ const REVEAL_COOLDOWN_MS = 1250
 /** Matches the .rail__edge hit strip. */
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
+const INITIAL_PROJECT_RENDER_COUNT = 30
+const DEFERRED_PROJECT_RENDER_COUNT = 20
+const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
+const VIRTUALIZED_PROJECT_SESSION_COUNT = 64
+const VIRTUAL_SESSION_ROW_HEIGHT = 27
+const VIRTUAL_SESSION_VIEWPORT_ROWS = 16
+const VIRTUAL_SESSION_OVERSCAN = 6
+const VIRTUAL_SESSION_VIEWPORT_HEIGHT = VIRTUAL_SESSION_ROW_HEIGHT * VIRTUAL_SESSION_VIEWPORT_ROWS
+const projectMenuTrigger = () => (
+  <span className="dots">
+    <Ellipsis size={16} aria-hidden />
+  </span>
+)
 
 function SidebarComponent(props: {
   projects: Project[]
@@ -131,6 +168,9 @@ function SidebarComponent(props: {
   keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
+  onConsumeReset?:
+    | ((provider: ProviderId, idempotencyKey: string) => Promise<ResultOf<'usage.consumeReset'>>)
+    | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined
   collapsed: boolean
@@ -138,6 +178,7 @@ function SidebarComponent(props: {
   onClose: () => void
   onWidthChange: (width: number) => void
   onAddProject: () => void
+  onAddDroppedProjects?: ((paths: string[]) => void) | undefined
   onNewSession: (projectPath?: string, chooseProject?: boolean) => void
   onSelectSession: (id: string) => void
   onRenameProject: (path: string, name: string) => void
@@ -158,61 +199,133 @@ function SidebarComponent(props: {
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile') => void
-  haptics?: SidebarHaptics | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const hapticServices = props.haptics ?? defaultSidebarHaptics
   const profileDisplayName = props.profileIdentity?.displayName.trim()
-  const [edgeRevealed, setEdgeRevealed] = useState(false)
+  const usageLimit = (props.usageStates ?? [])
+    .flatMap((state) => {
+      const source = state.summary?.limitSource
+      const limits = source
+        ? source.status === 'ready'
+          ? source.limits
+          : []
+        : (state.summary?.limits ?? [])
+      return limits.map((limit) => ({ ...limit, provider: state.provider }))
+    })
+    .filter((limit) => limit.valueLabel === undefined && Number.isFinite(limit.usedPercent))
+    .reduce<{ usedPercent: number; label: string; provider: string } | undefined>(
+      (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
+      undefined,
+    )
+  const usagePercent = usageLimit
+    ? Math.round(Math.min(100, Math.max(0, usageLimit.usedPercent)))
+    : undefined
+  useEffect(() => {
+    void loadAccountLimits()
+  }, [])
   const slotRef = useRef<HTMLDivElement>(null)
+  const railRef = useRef<HTMLElement>(null)
+  const resizeHandleRef = useRef<HTMLButtonElement>(null)
+  const actionsRef = useRef(props)
+  useLayoutEffect(() => {
+    actionsRef.current = props
+  })
+  /** Kept out of React state on purpose. Revealing used to reconcile every
+   *  project and chat row before the transform could even start. */
+  const edgeRevealed = useRef(false)
   /** Set by the resize handle when its release is what collapsed the rail. */
   const foldedByDrag = useRef(false)
   /** True while the edge is being dragged: widening a revealed rail carries the
    *  pointer well clear of it, which must not read as leaving. */
   const resizing = useRef(false)
-  /** Previous reveal state, so the hide direction can be told from the show. */
-  const wasRevealed = useRef(false)
   /** Running while a just-folded rail refuses to reveal again. */
-  const [cooling, setCooling] = useState(false)
   const coolDown = useRef<number | undefined>(undefined)
   /** Where the pointer was last seen during that wait. */
   const pointerX = useRef(Number.POSITIVE_INFINITY)
+  /** Hiding the reveal only after a grace period lets the pointer travel up to
+   *  the title bar toggle without the flyout flickering away underneath it. */
+  const revealHide = useRef<number | undefined>(undefined)
+  /** Keeps the quick retract transition selected until it finishes. */
+  const revealOut = useRef<number | undefined>(undefined)
 
-  const endCooldown = () => {
+  const cancelRevealHide = useCallback(() => {
+    if (revealHide.current === undefined) return
+    clearTimeout(revealHide.current)
+    revealHide.current = undefined
+  }, [])
+
+  const cancelRevealOut = useCallback(() => {
+    if (revealOut.current === undefined) return
+    clearTimeout(revealOut.current)
+    revealOut.current = undefined
+  }, [])
+
+  /** Updates only the two DOM contracts that control the compositor layer.
+   *  The sidebar contents do not depend on temporary hover state, so they do
+   *  not need a React render when the pointer touches the window edge. */
+  const setEdgeReveal = useCallback(
+    (revealed: boolean, animateExit = true) => {
+      const slot = slotRef.current
+      if (!slot) return
+      const collapsed = slot.classList.contains('is-collapsed')
+      if (revealed && !collapsed) return
+
+      cancelRevealHide()
+      cancelRevealOut()
+      edgeRevealed.current = revealed
+      slot.classList.toggle('is-revealed', revealed)
+      railRef.current?.toggleAttribute('inert', collapsed && !revealed)
+      if (resizeHandleRef.current) {
+        resizeHandleRef.current.hidden = collapsed && !revealed
+      }
+
+      if (revealed || !animateExit || !collapsed) {
+        slot.classList.remove('is-reveal-out')
+        return
+      }
+
+      slot.classList.add('is-reveal-out')
+      revealOut.current = window.setTimeout(() => {
+        revealOut.current = undefined
+        slot.classList.remove('is-reveal-out')
+      }, REVEAL_OUT_MS)
+    },
+    [cancelRevealHide, cancelRevealOut],
+  )
+
+  const endCooldown = useCallback(() => {
     if (coolDown.current !== undefined) clearTimeout(coolDown.current)
     coolDown.current = undefined
-    setCooling(false)
-  }
+  }, [])
 
-  const startCooldown = (releaseX: number) => {
-    pointerX.current = releaseX
-    if (coolDown.current !== undefined) clearTimeout(coolDown.current)
-    setCooling(true)
-    coolDown.current = window.setTimeout(() => {
-      coolDown.current = undefined
-      setCooling(false)
-      // The wait is over: a pointer still parked at the edge gets its reveal.
-      if (pointerX.current <= REVEAL_EDGE_WIDTH) setEdgeRevealed(true)
-    }, REVEAL_COOLDOWN_MS)
-  }
+  const startCooldown = useCallback(
+    (releaseX: number) => {
+      pointerX.current = releaseX
+      if (coolDown.current !== undefined) clearTimeout(coolDown.current)
+      coolDown.current = window.setTimeout(() => {
+        coolDown.current = undefined
+        // The wait is over: a pointer still parked at the edge gets its reveal.
+        if (pointerX.current <= REVEAL_EDGE_WIDTH) setEdgeReveal(true)
+      }, REVEAL_COOLDOWN_MS)
+    },
+    [setEdgeReveal],
+  )
 
-  useEffect(() => endCooldown, [])
-
-  useEffect(() => {
-    if (!cooling) return
-    const onMove = (event: MouseEvent) => {
-      pointerX.current = event.clientX
-    }
-    window.addEventListener('mousemove', onMove)
-    return () => window.removeEventListener('mousemove', onMove)
-  }, [cooling])
+  useEffect(
+    () => () => {
+      cancelRevealHide()
+      cancelRevealOut()
+      endCooldown()
+    },
+    [cancelRevealHide, cancelRevealOut, endCooldown],
+  )
 
   /* Collapsing hands the rail to the absolute flyout, whose translate would
      animate in from no transform at all — the rail appearing at full width
      before sliding away. After a drag fold it is already gone, so that reads
      as it flashing open and shut. This runs on React's commit, before the
      browser paints, which is the only point where suppressing it is reliable;
-     the handle cannot do it, since collapsing unmounts the handle. */
+     the handle cannot do it because the collapsed class does not exist yet. */
   useLayoutEffect(() => {
     const slot = slotRef.current
     const shell = slot?.closest<HTMLElement>('.shell')
@@ -245,41 +358,19 @@ function SidebarComponent(props: {
     })
     return () => cancelAnimationFrame(frame)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- width is read, not a trigger
-  }, [props.collapsed])
-  /* A reveal that retracts is its own motion, quicker than a deliberate
-     collapse. Removing the revealed class alone cannot express that: the
-     resulting state is plain "collapsed", identical to a real collapse. A
-     marker set on the same commit distinguishes them, and it has to be a
-     layout effect — after paint would be too late, the slow transition would
-     already be running. */
-  useLayoutEffect(() => {
-    const slot = slotRef.current
-    const retracting = wasRevealed.current && !edgeRevealed && props.collapsed
-    wasRevealed.current = edgeRevealed
-    if (!retracting || !slot) return
-    slot.classList.add('is-reveal-out')
-    const done = window.setTimeout(() => slot.classList.remove('is-reveal-out'), REVEAL_OUT_MS)
-    return () => clearTimeout(done)
-  }, [edgeRevealed, props.collapsed])
+  }, [endCooldown, props.collapsed])
 
-  /* Hiding the reveal only after a grace period lets the pointer travel up to
-     the title bar toggle without the flyout flickering away underneath it. */
-  const revealHide = useRef<number | undefined>(undefined)
-  const cancelRevealHide = () => {
-    if (revealHide.current !== undefined) {
-      clearTimeout(revealHide.current)
-      revealHide.current = undefined
-    }
-  }
-  const scheduleRevealHide = () => {
+  const scheduleRevealHide = useCallback(() => {
     // Never restarted. This is called from every mouse move outside the rail,
     // and re-arming each time meant the grace only elapsed once the pointer
     // came to a complete stop — so a rail left behind while the mouse kept
     // moving stayed open for as long as the movement lasted.
-    if (revealHide.current !== undefined) return
-    revealHide.current = window.setTimeout(() => setEdgeRevealed(false), REVEAL_GRACE_MS)
-  }
-  useEffect(() => cancelRevealHide, [])
+    if (!edgeRevealed.current || revealHide.current !== undefined) return
+    revealHide.current = window.setTimeout(() => {
+      revealHide.current = undefined
+      setEdgeReveal(false)
+    }, REVEAL_GRACE_MS)
+  }, [setEdgeReveal])
 
   /* What keeps a revealed rail in place. The slot's own mouse events cannot
      see the title bar above it, and that is exactly where someone aims to pin
@@ -287,10 +378,15 @@ function SidebarComponent(props: {
      its edge. Retracting while the user is still travelling toward the toggle
      is what made the reveal feel like it snapped back on its own. */
   useEffect(() => {
-    if (!edgeRevealed || !props.collapsed) return
+    if (!props.collapsed) return
     const onMove = (event: MouseEvent) => {
-      if (resizing.current || event.clientX <= props.width + REVEAL_KEEP_BUFFER) cancelRevealHide()
-      else scheduleRevealHide()
+      if (coolDown.current !== undefined) pointerX.current = event.clientX
+      if (!edgeRevealed.current) return
+      if (resizing.current || event.clientX <= props.width + REVEAL_KEEP_BUFFER) {
+        cancelRevealHide()
+      } else {
+        scheduleRevealHide()
+      }
     }
     // Pointer position decides, and only this listener decides: the slot's own
     // mouseleave used to schedule the hide unconditionally, so travelling up
@@ -299,35 +395,71 @@ function SidebarComponent(props: {
     // toggle the user was about to press.
     window.addEventListener('mousemove', onMove)
     // Leaving the window entirely produces no more moves, so it is its own signal.
-    document.addEventListener('mouseleave', scheduleRevealHide)
+    const onLeave = () => scheduleRevealHide()
+    document.addEventListener('mouseleave', onLeave)
     return () => {
       window.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseleave', scheduleRevealHide)
+      document.removeEventListener('mouseleave', onLeave)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the two schedulers are stable module-shape helpers
-  }, [edgeRevealed, props.collapsed, props.width])
+  }, [cancelRevealHide, props.collapsed, props.width, scheduleRevealHide])
   const [scope, setScope] = useState('')
   const [bodyScrolled, setBodyScrolled] = useState(false)
   const inbox = props.mode === 'inbox' && props.inbox !== undefined
 
-  const closeOnNarrowViewport = () => {
-    if (globalThis.matchMedia?.('(max-width: 700px)').matches) props.onClose()
-  }
+  const closeOnNarrowViewport = useCallback(() => {
+    if (globalThis.matchMedia?.('(max-width: 700px)').matches) actionsRef.current.onClose()
+  }, [])
 
-  const selectSession = (id: string) => {
-    props.onSelectSession(id)
-    closeOnNarrowViewport()
-  }
+  const selectSession = useCallback(
+    (id: string) => {
+      actionsRef.current.onSelectSession(id)
+      closeOnNarrowViewport()
+    },
+    [closeOnNarrowViewport],
+  )
 
-  const newSession = (projectPath?: string, chooseProject?: boolean) => {
-    props.onNewSession(projectPath, chooseProject)
-    closeOnNarrowViewport()
-  }
+  const newSession = useCallback(
+    (projectPath?: string, chooseProject?: boolean) => {
+      actionsRef.current.onNewSession(projectPath, chooseProject)
+      closeOnNarrowViewport()
+    },
+    [closeOnNarrowViewport],
+  )
 
-  const openPullRequests = () => {
-    props.onOpenPullRequests?.()
+  const addProject = useCallback(() => {
+    props.onAddProject()
     closeOnNarrowViewport()
-  }
+  }, [closeOnNarrowViewport, props.onAddProject])
+
+  const openPullRequests = useCallback(() => {
+    actionsRef.current.onOpenPullRequests?.()
+    closeOnNarrowViewport()
+  }, [closeOnNarrowViewport])
+
+  const renameProject = useCallback(
+    (path: string, name: string) => actionsRef.current.onRenameProject(path, name),
+    [],
+  )
+  const removeProject = useCallback((path: string) => actionsRef.current.onRemoveProject(path), [])
+  const toggleProjectPin = useCallback((path: string) => actionsRef.current.onTogglePin(path), [])
+  const renameSession = useCallback(
+    (id: string, title: string) => actionsRef.current.onRenameSession(id, title),
+    [],
+  )
+  const toggleSessionPin = useCallback(
+    (id: string) => actionsRef.current.onToggleSessionPin?.(id),
+    [],
+  )
+  const deleteSession = useCallback((id: string) => actionsRef.current.onDeleteSession(id), [])
+  const archiveProject = useCallback(
+    (sessionIds: string[]) => actionsRef.current.onArchiveProject(sessionIds),
+    [],
+  )
+  const reorderSession = useCallback(
+    (projectPath: string, sourceId: string, targetId: string, position: DropPosition) =>
+      actionsRef.current.onReorderSession(projectPath, sourceId, targetId, position),
+    [],
+  )
 
   useEffect(() => {
     if (props.collapsed) return
@@ -337,60 +469,163 @@ function SidebarComponent(props: {
     // re-opened on the toggle click.
     const slot = slotRef.current
     const shell = slot?.closest<HTMLElement>('.shell')
-    if (edgeRevealed && shell) {
+    if (edgeRevealed.current && shell) {
       shell.dataset['resizing'] = ''
       requestAnimationFrame(() => requestAnimationFrame(() => delete shell.dataset['resizing']))
     }
-    setEdgeRevealed(false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reveal state is read, not a trigger
-  }, [props.collapsed])
+    setEdgeReveal(false, false)
+  }, [props.collapsed, setEdgeReveal])
 
   useEffect(() => {
     if (scope && !props.projects.some((project) => project.path === scope)) setScope('')
   }, [props.projects, scope])
 
-  // Memoised because the sidebar re-renders with every streamed frame: these
-  // three passes over every project and session ran 60 times a second while
-  // an answer arrived, for a list that had not changed.
-  const pinnedSessions = useMemo(() => {
-    const sessions = props.projects.flatMap((project) =>
-      project.sessions
-        .filter((session) => session.pinned)
-        .map((session) => ({ projectPath: project.path, session })),
-    )
-    return prioritizeSessions(sessions, ({ session }) => session)
+  // A status push replaces one project in an otherwise retained tree. Keep
+  // every unchanged projection stable so React only reconciles that project.
+  const { orderedProjects, pinnedSessions } = useMemo(() => {
+    const pinned: PinnedSession[] = []
+    const pinnedProjects: Project[] = []
+    const projects: Project[] = []
+    for (const source of props.projects) {
+      const projection = projectSidebarProjection(source)
+      pinned.push(...projection.pinnedSessions)
+      if (source.pinned) pinnedProjects.push(projection.project)
+      else projects.push(projection.project)
+    }
+    return {
+      orderedProjects: [...pinnedProjects, ...projects],
+      pinnedSessions: prioritizeSessions(pinned, ({ session }) => session),
+    }
   }, [props.projects])
-  const orderedProjects = useMemo(
-    () =>
-      [
-        ...props.projects.filter((project) => project.pinned),
-        ...props.projects.filter((project) => !project.pinned),
-      ].map((project) => ({
-        ...project,
-        sessions: prioritizeSessions(
-          project.sessions.filter((session) => !session.pinned),
-          (session) => session,
-        ),
-      })),
-    [props.projects],
-  )
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
-  const [projectDropTarget, setProjectDropTarget] = useState<{
-    path: string
-    position: DropPosition
-  }>()
+  const [folderDropActive, setFolderDropActive] = useState(false)
+  const folderDragDepth = useRef(0)
+  const [projectDropTarget, setProjectDropTarget] = useState<ProjectDropTarget>()
+  const draggedProjectPathRef = useRef<string | undefined>(undefined)
+  const projectDropTargetRef = useRef<ProjectDropTarget | undefined>(undefined)
+  const orderedProjectsRef = useRef(orderedProjects)
+  orderedProjectsRef.current = orderedProjects
+  const [projectRenderLimit, setProjectRenderLimit] = useState(INITIAL_PROJECT_RENDER_COUNT)
+  const { renderedProjects, renderedProjectCount } = useMemo(() => {
+    let count = Math.min(projectRenderLimit, orderedProjects.length)
+    if (count < orderedProjects.length && props.activeProjectPath) {
+      const activeIndex = orderedProjects.findIndex(
+        (project) => project.path === props.activeProjectPath,
+      )
+      if (activeIndex >= count) count = activeIndex + 1
+    }
+    return {
+      renderedProjectCount: count,
+      renderedProjects:
+        count === orderedProjects.length ? orderedProjects : orderedProjects.slice(0, count),
+    }
+  }, [orderedProjects, projectRenderLimit, props.activeProjectPath])
 
-  const endProjectDrag = () => {
+  useEffect(() => {
+    if (inbox || renderedProjectCount >= orderedProjects.length) return
+
+    // Thirty collapsed rows already cover a normal rail viewport. Mount the
+    // remaining dormant rows in short idle batches instead of making a large
+    // project catalog consume the first frame. The active project bypasses
+    // the limit above, so restoring a deep selection never waits for idle.
+    const revealNextProjects = () => {
+      setProjectRenderLimit((current) =>
+        Math.min(
+          orderedProjects.length,
+          Math.max(current, renderedProjectCount) + DEFERRED_PROJECT_RENDER_COUNT,
+        ),
+      )
+    }
+    if (typeof window.requestIdleCallback === 'function') {
+      const idle = window.requestIdleCallback(revealNextProjects, {
+        timeout: DEFERRED_PROJECT_RENDER_TIMEOUT_MS,
+      })
+      return () => window.cancelIdleCallback(idle)
+    }
+
+    const timeout = window.setTimeout(revealNextProjects, 0)
+    return () => window.clearTimeout(timeout)
+  }, [inbox, orderedProjects.length, renderedProjectCount])
+
+  const endProjectDrag = useCallback(() => {
+    draggedProjectPathRef.current = undefined
+    projectDropTargetRef.current = undefined
     setDraggedProjectPath(undefined)
     setProjectDropTarget(undefined)
+  }, [])
+
+  const startProjectDrag = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
+    if (event.target !== event.currentTarget || !actionsRef.current.onReorderProject) return
+    prepareAppHaptics()
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', project.path)
+    draggedProjectPathRef.current = project.path
+    setDraggedProjectPath(project.path)
+  }, [])
+
+  const dragOverProject = useCallback((event: DragEvent<HTMLElement>, project: Project) => {
+    const draggedPath = draggedProjectPathRef.current
+    if (!draggedPath || draggedPath === project.path) return
+    const source = orderedProjectsRef.current.find((candidate) => candidate.path === draggedPath)
+    if (source?.pinned !== project.pinned) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const position: DropPosition =
+      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+    const current = projectDropTargetRef.current
+    if (current?.path === project.path && current.position === position) return
+    const next = { path: project.path, position }
+    projectDropTargetRef.current = next
+    setProjectDropTarget(next)
+    performAppHaptic('alignment')
+  }, [])
+
+  const dropProject = useCallback(
+    (event: DragEvent<HTMLElement>, project: Project) => {
+      event.preventDefault()
+      const draggedPath = draggedProjectPathRef.current
+      const target = projectDropTargetRef.current
+      if (draggedPath && target?.path === project.path) {
+        actionsRef.current.onReorderProject?.(draggedPath, project.path, target.position)
+      }
+      endProjectDrag()
+    },
+    [endProjectDrag],
+  )
+
+  const folderDropEnabled = canDropProjectFolders && props.onAddDroppedProjects !== undefined
+  const hasDroppedFiles = (event: DragEvent<HTMLElement>) =>
+    Array.from(event.dataTransfer.types ?? []).includes('Files')
+
+  const showFolderDropTarget = (event: DragEvent<HTMLElement>) => {
+    if (!folderDropEnabled || !hasDroppedFiles(event)) return
+    event.preventDefault()
+    folderDragDepth.current += 1
+    if (folderDragDepth.current === 1) setFolderDropActive(true)
+  }
+
+  const hideFolderDropTarget = (event: DragEvent<HTMLElement>) => {
+    if (!folderDropEnabled || !hasDroppedFiles(event)) return
+    folderDragDepth.current = Math.max(0, folderDragDepth.current - 1)
+    if (folderDragDepth.current === 0) setFolderDropActive(false)
+  }
+
+  const addDroppedProjects = (event: DragEvent<HTMLElement>) => {
+    if (!folderDropEnabled || !hasDroppedFiles(event)) return
+    event.preventDefault()
+    folderDragDepth.current = 0
+    setFolderDropActive(false)
+    event.dataTransfer.dropEffect = 'copy'
+    void droppedProjectFolderPaths(event.dataTransfer.files).then((paths) => {
+      if (paths.length > 0) props.onAddDroppedProjects?.(paths)
+    })
   }
 
   return (
     <div
       ref={slotRef}
-      className={`rail-slot ${props.collapsed ? 'is-collapsed' : ''} ${
-        edgeRevealed ? 'is-revealed' : ''
-      }`}
+      className={`rail-slot ${props.collapsed ? 'is-collapsed' : ''}`}
       onMouseEnter={cancelRevealHide}
     >
       {props.collapsed ? (
@@ -401,8 +636,7 @@ function SidebarComponent(props: {
             // A rail just folded by dragging stays folded, even though the
             // pointer is still resting on this strip.
             if (coolDown.current !== undefined) return
-            cancelRevealHide()
-            setEdgeRevealed(true)
+            setEdgeReveal(true)
           }}
         />
       ) : null}
@@ -417,28 +651,45 @@ function SidebarComponent(props: {
         />
       ) : null}
 
-      <nav className="rail" inert={props.collapsed && !edgeRevealed ? true : undefined}>
+      <nav
+        ref={railRef}
+        className={`rail${folderDropActive ? ' is-folder-drop-target' : ''}`}
+        inert={props.collapsed ? true : undefined}
+        onDragEnter={showFolderDropTarget}
+        onDragOver={(event) => {
+          if (!folderDropEnabled || !hasDroppedFiles(event)) return
+          event.preventDefault()
+          event.dataTransfer.dropEffect = 'copy'
+        }}
+        onDragLeave={hideFolderDropTarget}
+        onDrop={addDroppedProjects}
+      >
+        {folderDropActive ? (
+          <div className="rail__folder-drop" role="status">
+            <FolderOpen size={18} aria-hidden />
+            <span>Drop folders to add projects</span>
+          </div>
+        ) : null}
         {inbox ? (
-          <InboxSidebar
-            projects={props.projects}
-            scope={scope}
-            activeProjectPath={props.activeProjectPath}
-            activeSessionId={props.activeSessionId}
-            actions={props.inbox!}
-            onScopeChange={setScope}
-            onAddProject={() => {
-              props.onAddProject()
-              closeOnNarrowViewport()
-            }}
-            onNewSession={newSession}
-            onSelectSession={selectSession}
-            onRenameSession={props.onRenameSession}
-            onToggleSessionPin={(id) => props.onToggleSessionPin?.(id)}
-            onArchiveSession={props.onDeleteSession}
-            onArchiveSessions={props.onArchiveProject}
-            pullRequestsActive={props.pullRequestsActive}
-            onOpenPullRequests={props.onOpenPullRequests ? openPullRequests : undefined}
-          />
+          <Suspense fallback={null}>
+            <InboxSidebar
+              projects={props.projects}
+              scope={scope}
+              activeProjectPath={props.activeProjectPath}
+              activeSessionId={props.activeSessionId}
+              actions={props.inbox!}
+              onScopeChange={setScope}
+              onAddProject={addProject}
+              onNewSession={newSession}
+              onSelectSession={selectSession}
+              onRenameSession={renameSession}
+              onToggleSessionPin={toggleSessionPin}
+              onArchiveSession={deleteSession}
+              onArchiveSessions={archiveProject}
+              pullRequestsActive={props.pullRequestsActive}
+              onOpenPullRequests={props.onOpenPullRequests ? openPullRequests : undefined}
+            />
+          </Suspense>
         ) : (
           <>
             <div className={`rail__actions${bodyScrolled ? ' is-scrolled' : ''}`}>
@@ -458,7 +709,7 @@ function SidebarComponent(props: {
                     }
                   }}
                 >
-                  <SquarePen size={15} aria-hidden />
+                  <SquarePen size={13} aria-hidden />
                   <span>New chat</span>
                 </button>
                 <button
@@ -469,7 +720,7 @@ function SidebarComponent(props: {
                   title="Search chats"
                   aria-keyshortcuts={shortcutAria(keybindings.searchSessions)}
                 >
-                  <Search size={15} aria-hidden />
+                  <Search size={13} aria-hidden />
                 </button>
               </div>
               <button
@@ -480,7 +731,7 @@ function SidebarComponent(props: {
                 }}
                 aria-keyshortcuts={shortcutAria(keybindings.newProject)}
               >
-                <FolderPen size={15} aria-hidden />
+                <FolderPen size={13} aria-hidden />
                 <span>New project</span>
               </button>
               {props.onOpenPullRequests ? (
@@ -491,7 +742,7 @@ function SidebarComponent(props: {
                   aria-keyshortcuts={shortcutAria(keybindings.openPullRequests)}
                   onClick={openPullRequests}
                 >
-                  <GitPullRequest size={15} aria-hidden />
+                  <GitPullRequest size={13} aria-hidden />
                   <span>Pull requests</span>
                 </button>
               ) : null}
@@ -540,17 +791,19 @@ function SidebarComponent(props: {
                     closeOnNarrowViewport()
                   }}
                 >
-                  <Plus size={13} aria-hidden />
+                  <Plus size={12} aria-hidden />
                 </button>
               </div>
               {orderedProjects.length === 0 ? (
                 <p className="rail__hint">Nothing here yet.</p>
               ) : (
-                orderedProjects.map((project) => (
+                renderedProjects.map((project) => (
                   <ProjectRow
-                    {...props}
                     key={project.path}
                     project={project}
+                    activeSessionId={
+                      project.path === props.activeProjectPath ? props.activeSessionId : undefined
+                    }
                     active={project.path === props.activeProjectPath}
                     reorderable={Boolean(props.onReorderProject)}
                     dragging={project.path === draggedProjectPath}
@@ -559,47 +812,20 @@ function SidebarComponent(props: {
                         ? projectDropTarget.position
                         : undefined
                     }
-                    onProjectDragStart={(event) => {
-                      if (event.target !== event.currentTarget || !props.onReorderProject) return
-                      hapticServices.prepare()
-                      event.dataTransfer.effectAllowed = 'move'
-                      event.dataTransfer.setData('text/plain', project.path)
-                      setDraggedProjectPath(project.path)
-                    }}
-                    onProjectDragOver={(event) => {
-                      if (!draggedProjectPath || draggedProjectPath === project.path) return
-                      const source = orderedProjects.find(
-                        (candidate) => candidate.path === draggedProjectPath,
-                      )
-                      if (source?.pinned !== project.pinned) return
-                      event.preventDefault()
-                      event.dataTransfer.dropEffect = 'move'
-                      const bounds = event.currentTarget.getBoundingClientRect()
-                      const position: DropPosition =
-                        event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-                      if (
-                        projectDropTarget?.path === project.path &&
-                        projectDropTarget.position === position
-                      )
-                        return
-                      setProjectDropTarget({ path: project.path, position })
-                      hapticServices.perform('alignment')
-                    }}
-                    onProjectDrop={(event) => {
-                      event.preventDefault()
-                      if (draggedProjectPath && projectDropTarget?.path === project.path) {
-                        props.onReorderProject?.(
-                          draggedProjectPath,
-                          project.path,
-                          projectDropTarget.position,
-                        )
-                      }
-                      endProjectDrag()
-                    }}
+                    onProjectDragStart={startProjectDrag}
+                    onProjectDragOver={dragOverProject}
+                    onProjectDrop={dropProject}
                     onProjectDragEnd={endProjectDrag}
-                    onNewSession={(path) => newSession(path)}
+                    onNewSession={newSession}
                     onSelectSession={selectSession}
-                    haptics={hapticServices}
+                    onRenameProject={renameProject}
+                    onRemoveProject={removeProject}
+                    onTogglePin={toggleProjectPin}
+                    onRenameSession={renameSession}
+                    onToggleSessionPin={props.onToggleSessionPin ? toggleSessionPin : undefined}
+                    onDeleteSession={deleteSession}
+                    onArchiveProject={archiveProject}
+                    onReorderSession={reorderSession}
                   />
                 ))
               )}
@@ -612,7 +838,7 @@ function SidebarComponent(props: {
             drop="up"
             gap={14}
             label="Account"
-            panelClassName="menu--settings"
+            panelClassName="menu--compact menu--settings"
             panelRole="dialog"
             panelLabel="Account and plan limits"
             trigger={() => (
@@ -626,67 +852,92 @@ function SidebarComponent(props: {
                     )
                   )}
                 </span>
-                <span className="account__name">{profileDisplayName || props.providerName}</span>
+                <span className="account__name">
+                  {profileDisplayName || props.account?.email || props.providerName}
+                </span>
+                {usageLimit ? (
+                  <span
+                    className="account__usage"
+                    title={`${usagePercent}% used · ${usageLimit.provider} · ${usageLimit.label}`}
+                    aria-label={`${usagePercent}% of usage limit used`}
+                  >
+                    {usagePercent}%
+                  </span>
+                ) : null}
+                <ChevronUp className="account__chevron" size={13} aria-hidden />
               </span>
             )}
           >
-            {(close) => (
-              <>
-                {props.usageStates ? (
-                  <AccountLimits states={props.usageStates} onRetry={props.onRetryUsage ?? noop} />
-                ) : null}
-                <button
-                  type="button"
-                  className="menu__item"
-                  onClick={() => {
-                    props.onOpenSettings('profile')
-                    closeOnNarrowViewport()
-                    close()
-                  }}
-                >
-                  <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
-                </button>
-                <button
-                  type="button"
-                  className="menu__item"
-                  aria-keyshortcuts={shortcutAria(keybindings.settings)}
-                  onClick={() => {
-                    props.onOpenSettings()
-                    closeOnNarrowViewport()
-                    close()
-                  }}
-                >
-                  <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
-                </button>
-              </>
-            )}
+            {(close) => {
+              const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
+              return (
+                <>
+                  {props.usageStates ? (
+                    <Suspense fallback={null}>
+                      <RenderedAccountLimits
+                        states={props.usageStates}
+                        onRetry={props.onRetryUsage ?? noop}
+                        onConsumeReset={props.onConsumeReset}
+                      />
+                    </Suspense>
+                  ) : null}
+                  <div className="account-menu__actions">
+                    <button
+                      type="button"
+                      className="menu__item"
+                      onClick={() => {
+                        props.onOpenSettings('profile')
+                        closeOnNarrowViewport()
+                        close()
+                      }}
+                    >
+                      <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                    </button>
+                    <button
+                      type="button"
+                      className="menu__item"
+                      aria-keyshortcuts={shortcutAria(keybindings.settings)}
+                      onClick={() => {
+                        props.onOpenSettings()
+                        closeOnNarrowViewport()
+                        close()
+                      }}
+                    >
+                      <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+                    </button>
+                  </div>
+                </>
+              )
+            }}
           </Menu>
         </div>
       </nav>
-      {!props.collapsed || edgeRevealed ? (
-        <RailResizeHandle
-          width={props.width}
-          /* A revealed rail is already collapsed, so there is nothing to fold:
-             the drag only resizes it, and the new width is what the next
-             reveal and the next expand come back at. */
-          foldable={!props.collapsed}
-          onWidthChange={props.onWidthChange}
-          onResizingChange={(active) => {
-            resizing.current = active
-            if (active) cancelRevealHide()
-          }}
-          onCollapse={(releaseX) => {
-            foldedByDrag.current = true
-            startCooldown(releaseX)
-            props.onClose()
-          }}
-        />
-      ) : null}
+      <RailResizeHandle
+        buttonRef={resizeHandleRef}
+        hidden={props.collapsed}
+        width={props.width}
+        /* A revealed rail is already collapsed, so there is nothing to fold:
+           the drag only resizes it, and the new width is what the next
+           reveal and the next expand come back at. */
+        foldable={!props.collapsed}
+        onWidthChange={props.onWidthChange}
+        onResizingChange={(active) => {
+          resizing.current = active
+          if (active) cancelRevealHide()
+        }}
+        onCollapse={(releaseX) => {
+          foldedByDrag.current = true
+          startCooldown(releaseX)
+          props.onClose()
+        }}
+      />
     </div>
   )
 }
 
 function RailResizeHandle(props: {
+  buttonRef: RefObject<HTMLButtonElement | null>
+  hidden: boolean
   width: number
   /** False on a revealed rail: it is already collapsed, so the drag only sizes it. */
   foldable: boolean
@@ -785,7 +1036,9 @@ function RailResizeHandle(props: {
 
   return (
     <button
+      ref={props.buttonRef}
       type="button"
+      hidden={props.hidden}
       className="rail__resize"
       role="separator"
       aria-label="Resize sidebar"
@@ -887,16 +1140,16 @@ function clampRailWidth(width: number): number {
   return Math.min(MAX_RAIL_WIDTH, Math.max(MIN_RAIL_WIDTH, Math.round(width)))
 }
 
-function ProjectRow(props: {
+const ProjectRow = memo(function ProjectRow(props: {
   project: Project
   activeSessionId: string | undefined
   active: boolean
   reorderable: boolean
   dragging: boolean
   dropPosition: DropPosition | undefined
-  onProjectDragStart: (event: DragEvent<HTMLElement>) => void
-  onProjectDragOver: (event: DragEvent<HTMLElement>) => void
-  onProjectDrop: (event: DragEvent<HTMLElement>) => void
+  onProjectDragStart: (event: DragEvent<HTMLElement>, project: Project) => void
+  onProjectDragOver: (event: DragEvent<HTMLElement>, project: Project) => void
+  onProjectDrop: (event: DragEvent<HTMLElement>, project: Project) => void
   onProjectDragEnd: () => void
   onNewSession: (path: string) => void
   onSelectSession: (id: string) => void
@@ -904,7 +1157,7 @@ function ProjectRow(props: {
   onRemoveProject: (path: string) => void
   onTogglePin: (path: string) => void
   onRenameSession: (id: string, title: string) => void
-  onToggleSessionPin?: (id: string) => void
+  onToggleSessionPin: ((id: string) => void) | undefined
   onDeleteSession: (id: string) => void
   onArchiveProject: (sessionIds: string[]) => void
   onReorderSession: (
@@ -913,55 +1166,57 @@ function ProjectRow(props: {
     targetId: string,
     position: DropPosition,
   ) => void
-  haptics: SidebarHaptics
 }) {
   const count = props.project.sessions.length
   const [open, setOpen] = useState(props.active)
+  const [sessionsMounted, setSessionsMounted] = useState(props.active)
   const [showAllSessions, setShowAllSessions] = useState(false)
+  const [actionsReady, setActionsReady] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
-  const [draggedSessionId, setDraggedSessionId] = useState<string>()
-  const [dropTarget, setDropTarget] = useState<{
-    id: string
-    position: DropPosition
-  }>()
-  const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
   const previousCount = useRef(count)
+  const openRef = useRef(props.active)
+  const sessionUnmountTimer = useRef<number | undefined>(undefined)
   const expanded = open
-  const hasMoreSessions = count > COLLAPSED_PROJECT_SESSION_COUNT
-  const visibleSessions = showAllSessions
-    ? props.project.sessions
-    : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
-  const reorderable = true
+
+  const cancelSessionUnmount = useCallback(() => {
+    if (sessionUnmountTimer.current === undefined) return
+    window.clearTimeout(sessionUnmountTimer.current)
+    sessionUnmountTimer.current = undefined
+  }, [])
+
+  const finishSessionUnmount = useCallback(() => {
+    cancelSessionUnmount()
+    setSessionsMounted(false)
+  }, [cancelSessionUnmount])
+
+  const setProjectOpen = useCallback(
+    (next: boolean) => {
+      if (next === openRef.current) return
+      openRef.current = next
+      cancelSessionUnmount()
+      if (next) {
+        setSessionsMounted(true)
+        setOpen(true)
+        return
+      }
+      setOpen(false)
+      sessionUnmountTimer.current = window.setTimeout(finishSessionUnmount, RAIL_FOLD_MS)
+    },
+    [cancelSessionUnmount, finishSessionUnmount],
+  )
 
   useEffect(() => {
-    if (previousCount.current === 0 && count > 0) setOpen(true)
+    if (previousCount.current === 0 && count > 0) setProjectOpen(true)
     previousCount.current = count
-  }, [count])
+  }, [count, setProjectOpen])
 
-  useEffect(() => setOpen(props.active), [props.active])
+  // Sync the active project before paint. A passive mount effect can run after
+  // an immediate user click and undo that first manual toggle.
+  useLayoutEffect(() => setProjectOpen(props.active), [props.active, setProjectOpen])
 
-  const endDrag = () => {
-    setDraggedSessionId(undefined)
-    setDropTarget(undefined)
-    dropTargetRef.current = undefined
-  }
-
-  const dragOverSession = (event: DragEvent<HTMLLIElement>, targetId: string) => {
-    if (!draggedSessionId || draggedSessionId === targetId) return
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const bounds = event.currentTarget.getBoundingClientRect()
-    const position: DropPosition =
-      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
-    const current = dropTargetRef.current
-    if (current?.id === targetId && current.position === position) return
-    const next = { id: targetId, position }
-    dropTargetRef.current = next
-    setDropTarget(next)
-    props.haptics.perform('alignment')
-  }
+  useEffect(() => cancelSessionUnmount, [cancelSessionUnmount])
 
   return (
     <section
@@ -969,12 +1224,17 @@ function ProjectRow(props: {
       data-open={expanded}
       data-drop-position={props.dropPosition}
       draggable={props.reorderable}
-      onDragStart={props.onProjectDragStart}
-      onDragOver={props.onProjectDragOver}
-      onDrop={props.onProjectDrop}
+      onDragStart={(event) => props.onProjectDragStart(event, props.project)}
+      onDragOver={(event) => props.onProjectDragOver(event, props.project)}
+      onDrop={(event) => props.onProjectDrop(event, props.project)}
       onDragEnd={props.onProjectDragEnd}
     >
-      <div className="proj__head">
+      <div
+        className="proj__head"
+        onMouseEnter={() => setActionsReady(true)}
+        onFocusCapture={() => setActionsReady(true)}
+        onContextMenuCapture={() => setActionsReady(true)}
+      >
         {renaming ? (
           <InlineRename
             value={displayName(props.project)}
@@ -991,16 +1251,16 @@ function ProjectRow(props: {
               className="proj__toggle"
               onClick={() => {
                 if (count === 0) {
-                  setOpen(!expanded)
+                  setProjectOpen(!expanded)
                   return
                 }
                 if (expanded) setShowAllSessions(false)
-                setOpen(!expanded)
+                setProjectOpen(!expanded)
               }}
               aria-expanded={expanded}
               title={props.project.path}
             >
-              <Folder className="proj__mark" size={12} aria-hidden />
+              <span className="proj__mark" aria-hidden />
               <span className="proj__name">{displayName(props.project)}</span>
             </button>
 
@@ -1010,11 +1270,9 @@ function ProjectRow(props: {
               label="Project options"
               panelClassName="menu--sidebar"
               contextMenuTargetRef={contextMenuTarget}
-              trigger={() => (
-                <span className="dots">
-                  <Ellipsis size={16} aria-hidden />
-                </span>
-              )}
+              {...(actionsReady
+                ? { trigger: projectMenuTrigger }
+                : { contextMenuOnly: true as const })}
             >
               {(close) => (
                 <>
@@ -1076,7 +1334,7 @@ function ProjectRow(props: {
               onClick={() => props.onNewSession(props.project.path)}
               title="New chat here"
             >
-              <SquarePen size={15} aria-hidden />
+              {actionsReady ? <SquarePen size={15} aria-hidden /> : null}
             </button>
           </>
         )}
@@ -1108,65 +1366,256 @@ function ProjectRow(props: {
           the drawer's real height. The old per-row cap was double the actual
           row height, which spent half the duration moving nothing — the main
           reason the sidebar read as sluggish. */}
-      <div className="proj__drawer" data-open={expanded} aria-hidden={!expanded}>
-        <ul className="proj__sessions">
-          {count === 0 ? <li className="rail__hint">No chats</li> : null}
-          {visibleSessions.map((session) => (
-            <SessionRow
-              key={session.id}
-              session={session}
-              active={session.id === props.activeSessionId}
-              onSelect={() => props.onSelectSession(session.id)}
-              onRename={(title) => props.onRenameSession(session.id, title)}
-              onDelete={() => props.onDeleteSession(session.id)}
-              onTogglePin={() => props.onToggleSessionPin?.(session.id)}
-              onOpenInExplorer={() => void revealPath(props.project.path)}
-              reorderable={reorderable}
-              dragging={session.id === draggedSessionId}
-              dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
-              onDragStart={(event) => {
-                props.haptics.prepare()
-                event.dataTransfer.effectAllowed = 'move'
-                event.dataTransfer.setData('text/plain', session.id)
-                setDraggedSessionId(session.id)
-              }}
-              onDragOver={(event) => dragOverSession(event, session.id)}
-              onDrop={(event) => {
-                event.preventDefault()
-                if (
-                  draggedSessionId &&
-                  dropTarget?.id === session.id &&
-                  draggedSessionId !== session.id
-                ) {
-                  props.onReorderSession(
-                    props.project.path,
-                    draggedSessionId,
-                    session.id,
-                    dropTarget.position,
-                  )
-                }
-                endDrag()
-              }}
-              onDragEnd={endDrag}
-            />
-          ))}
-          {hasMoreSessions ? (
-            <li className="proj__sessions-toggle-row">
-              <button
-                type="button"
-                className="proj__sessions-toggle"
-                aria-expanded={showAllSessions}
-                onClick={() => setShowAllSessions((current) => !current)}
-              >
-                {showAllSessions ? 'Show less' : 'Show more'}
-              </button>
-            </li>
-          ) : null}
-        </ul>
+      <div
+        className="proj__drawer"
+        data-open={expanded}
+        aria-hidden={!expanded}
+        onTransitionEnd={(event) => {
+          if (
+            event.target === event.currentTarget &&
+            event.propertyName === 'grid-template-rows' &&
+            !expanded
+          ) {
+            finishSessionUnmount()
+          }
+        }}
+      >
+        {sessionsMounted ? (
+          <ProjectSessions
+            project={props.project}
+            activeSessionId={props.activeSessionId}
+            showAll={showAllSessions}
+            onShowAllChange={setShowAllSessions}
+            onSelectSession={props.onSelectSession}
+            onRenameSession={props.onRenameSession}
+            onDeleteSession={props.onDeleteSession}
+            onToggleSessionPin={props.onToggleSessionPin}
+            onReorderSession={props.onReorderSession}
+          />
+        ) : null}
       </div>
     </section>
   )
-}
+})
+
+const ProjectSessions = memo(function ProjectSessions(props: {
+  project: Project
+  activeSessionId: string | undefined
+  showAll: boolean
+  onShowAllChange: (showAll: boolean) => void
+  onSelectSession: (id: string) => void
+  onRenameSession: (id: string, title: string) => void
+  onToggleSessionPin: ((id: string) => void) | undefined
+  onDeleteSession: (id: string) => void
+  onReorderSession: (
+    projectPath: string,
+    sourceId: string,
+    targetId: string,
+    position: DropPosition,
+  ) => void
+}) {
+  const count = props.project.sessions.length
+  const [draggedSessionId, setDraggedSessionId] = useState<string>()
+  const [dropTarget, setDropTarget] = useState<{
+    id: string
+    position: DropPosition
+  }>()
+  const draggedSessionIdRef = useRef<string | undefined>(undefined)
+  const dropTargetRef = useRef<{ id: string; position: DropPosition } | undefined>(undefined)
+  const virtualSessionList = useRef<HTMLUListElement>(null)
+  const virtualized = props.showAll && count > VIRTUALIZED_PROJECT_SESSION_COUNT
+  const [virtualRange, setVirtualRange] = useState(() =>
+    virtualSessionRange(0, props.project.sessions.length),
+  )
+  const virtualRangeRef = useRef(virtualRange)
+  const updateVirtualRange = useCallback(
+    (scrollTop: number) => {
+      const next = virtualSessionRange(scrollTop, count)
+      const current = virtualRangeRef.current
+      if (current.start === next.start && current.end === next.end) return
+      virtualRangeRef.current = next
+      setVirtualRange(next)
+    },
+    [count],
+  )
+  const visibleStart = virtualized ? virtualRange.start : 0
+  const visibleSessions = props.showAll
+    ? virtualized
+      ? props.project.sessions.slice(virtualRange.start, virtualRange.end)
+      : props.project.sessions
+    : props.project.sessions.slice(0, COLLAPSED_PROJECT_SESSION_COUNT)
+  const virtualHeight = (count + 1) * VIRTUAL_SESSION_ROW_HEIGHT
+  const virtualListStyle = virtualized
+    ? ({
+        '--virtual-session-height': `${virtualHeight}px`,
+        height: Math.min(virtualHeight, VIRTUAL_SESSION_VIEWPORT_HEIGHT),
+      } as CSSProperties)
+    : undefined
+
+  useLayoutEffect(() => {
+    if (!virtualized) return
+    const list = virtualSessionList.current
+    if (!list) return
+    const activeIndex = props.activeSessionId
+      ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
+      : -1
+    const target = Math.max(
+      0,
+      Math.min(
+        activeIndex * VIRTUAL_SESSION_ROW_HEIGHT - VIRTUAL_SESSION_VIEWPORT_HEIGHT / 2,
+        virtualHeight - VIRTUAL_SESSION_VIEWPORT_HEIGHT,
+      ),
+    )
+    list.scrollTop = activeIndex >= 0 ? target : 0
+    updateVirtualRange(list.scrollTop)
+  }, [props.activeSessionId, updateVirtualRange, virtualHeight, virtualized])
+
+  const endDrag = useCallback(() => {
+    draggedSessionIdRef.current = undefined
+    setDraggedSessionId(undefined)
+    setDropTarget(undefined)
+    dropTargetRef.current = undefined
+  }, [])
+
+  const startSessionDrag = useCallback((event: DragEvent<HTMLLIElement>, sessionId: string) => {
+    prepareAppHaptics()
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', sessionId)
+    draggedSessionIdRef.current = sessionId
+    setDraggedSessionId(sessionId)
+  }, [])
+
+  const dragOverSession = useCallback((event: DragEvent<HTMLLIElement>, targetId: string) => {
+    const draggedSessionId = draggedSessionIdRef.current
+    if (!draggedSessionId || draggedSessionId === targetId) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const position: DropPosition =
+      event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+    const current = dropTargetRef.current
+    if (current?.id === targetId && current.position === position) return
+    const next = { id: targetId, position }
+    dropTargetRef.current = next
+    setDropTarget(next)
+    performAppHaptic('alignment')
+  }, [])
+
+  const dropSession = useCallback(
+    (event: DragEvent<HTMLLIElement>, targetId: string) => {
+      event.preventDefault()
+      const draggedSessionId = draggedSessionIdRef.current
+      const target = dropTargetRef.current
+      if (draggedSessionId && target?.id === targetId && draggedSessionId !== targetId) {
+        props.onReorderSession(props.project.path, draggedSessionId, targetId, target.position)
+      }
+      endDrag()
+    },
+    [endDrag, props.onReorderSession, props.project.path],
+  )
+
+  return (
+    <ul
+      ref={virtualSessionList}
+      className={`proj__sessions${virtualized ? ' proj__sessions--virtual' : ''}`}
+      style={virtualListStyle}
+      tabIndex={virtualized ? 0 : undefined}
+      aria-label={virtualized ? `${displayName(props.project)} chats` : undefined}
+      onScroll={
+        virtualized ? (event) => updateVirtualRange(event.currentTarget.scrollTop) : undefined
+      }
+    >
+      {count === 0 ? <li className="rail__hint">No chats</li> : null}
+      {visibleSessions.map((session, visibleIndex) => {
+        const sessionIndex = visibleStart + visibleIndex
+        return (
+          <ProjectSessionRow
+            key={session.id}
+            session={session}
+            projectPath={props.project.path}
+            active={session.id === props.activeSessionId}
+            onSelectSession={props.onSelectSession}
+            onRenameSession={props.onRenameSession}
+            onDeleteSession={props.onDeleteSession}
+            onToggleSessionPin={props.onToggleSessionPin}
+            reorderable
+            dragging={session.id === draggedSessionId}
+            dropPosition={dropTarget?.id === session.id ? dropTarget.position : undefined}
+            onDragStart={startSessionDrag}
+            onDragOver={dragOverSession}
+            onDrop={dropSession}
+            onDragEnd={endDrag}
+            virtualTop={virtualized ? sessionIndex * VIRTUAL_SESSION_ROW_HEIGHT : undefined}
+            virtualPosition={virtualized ? sessionIndex + 1 : undefined}
+            virtualSetSize={virtualized ? count : undefined}
+          />
+        )
+      })}
+      {count > COLLAPSED_PROJECT_SESSION_COUNT ? (
+        <li
+          className="proj__sessions-toggle-row"
+          style={
+            virtualized
+              ? { transform: `translateY(${count * VIRTUAL_SESSION_ROW_HEIGHT}px)` }
+              : undefined
+          }
+        >
+          <button
+            type="button"
+            className="proj__sessions-toggle"
+            aria-expanded={props.showAll}
+            onClick={() => props.onShowAllChange(!props.showAll)}
+          >
+            {props.showAll ? 'Show less' : 'Show more'}
+          </button>
+        </li>
+      ) : null}
+    </ul>
+  )
+})
+
+const ProjectSessionRow = memo(function ProjectSessionRow(props: {
+  session: Session
+  projectPath: string
+  active: boolean
+  onSelectSession: (id: string) => void
+  onRenameSession: (id: string, title: string) => void
+  onDeleteSession: (id: string) => void
+  onToggleSessionPin: ((id: string) => void) | undefined
+  reorderable: boolean
+  dragging: boolean
+  dropPosition: DropPosition | undefined
+  onDragStart: (event: DragEvent<HTMLLIElement>, sessionId: string) => void
+  onDragOver: (event: DragEvent<HTMLLIElement>, targetId: string) => void
+  onDrop: (event: DragEvent<HTMLLIElement>, targetId: string) => void
+  onDragEnd: () => void
+  virtualTop: number | undefined
+  virtualPosition: number | undefined
+  virtualSetSize: number | undefined
+}) {
+  const { session } = props
+  return (
+    <SessionRow
+      session={session}
+      active={props.active}
+      onSelect={() => props.onSelectSession(session.id)}
+      onRename={(title) => props.onRenameSession(session.id, title)}
+      onDelete={() => props.onDeleteSession(session.id)}
+      onTogglePin={() => props.onToggleSessionPin?.(session.id)}
+      onOpenInExplorer={() => void revealPath(props.projectPath)}
+      reorderable={props.reorderable}
+      dragging={props.dragging}
+      dropPosition={props.dropPosition}
+      onDragStart={(event) => props.onDragStart(event, session.id)}
+      onDragOver={(event) => props.onDragOver(event, session.id)}
+      onDrop={(event) => props.onDrop(event, session.id)}
+      onDragEnd={props.onDragEnd}
+      virtualTop={props.virtualTop}
+      virtualPosition={props.virtualPosition}
+      virtualSetSize={props.virtualSetSize}
+    />
+  )
+})
 
 function SessionRow(props: {
   session: Session
@@ -1184,15 +1633,25 @@ function SessionRow(props: {
   onDragOver: (event: DragEvent<HTMLLIElement>) => void
   onDrop: (event: DragEvent<HTMLLIElement>) => void
   onDragEnd: () => void
+  virtualTop?: number | undefined
+  virtualPosition?: number | undefined
+  virtualSetSize?: number | undefined
 }) {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
 
   if (renaming) {
     return (
-      <li>
+      <li
+        className={`sessrow is-renaming${props.active ? ' is-active' : ''}${props.standalone ? ' is-pinned' : ''}`}
+        style={virtualSessionStyle(props.virtualTop)}
+        aria-posinset={props.virtualPosition}
+        aria-setsize={props.virtualSetSize}
+      >
         <InlineRename
           value={props.session.title}
+          className="rename--chat rename--session"
+          ariaLabel={`Rename ${props.session.title}`}
           onCommit={(title) => {
             props.onRename(title)
             setRenaming(false)
@@ -1214,6 +1673,9 @@ function SessionRow(props: {
       onDragOver={props.onDragOver}
       onDrop={props.onDrop}
       onDragEnd={props.onDragEnd}
+      style={virtualSessionStyle(props.virtualTop)}
+      aria-posinset={props.virtualPosition}
+      aria-setsize={props.virtualSetSize}
     >
       <button
         ref={contextMenuTarget}
@@ -1254,62 +1716,59 @@ function SessionRow(props: {
         </button>
       </span>
 
-      <div className="sess__context-menu">
-        <Menu
-          drop="down"
-          align="right"
-          label={`Options for ${props.session.title}`}
-          triggerClassName="sess__context-menu-trigger"
-          panelClassName="menu--sidebar"
-          contextMenuTargetRef={contextMenuTarget}
-          trigger={() => <Ellipsis size={16} aria-hidden />}
-        >
-          {(close) => (
-            <>
+      <Menu
+        drop="down"
+        align="right"
+        label={`Options for ${props.session.title}`}
+        panelClassName="menu--sidebar"
+        contextMenuTargetRef={contextMenuTarget}
+        contextMenuOnly
+      >
+        {(close) => (
+          <>
+            <MenuItem
+              title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
+              icon={
+                props.session.pinned ? (
+                  <PinOff size={14} aria-hidden />
+                ) : (
+                  <Pin size={14} aria-hidden />
+                )
+              }
+              onClick={() => {
+                props.onTogglePin()
+                close()
+              }}
+            />
+            <MenuItem
+              title="Rename chat"
+              icon={<Pencil size={14} aria-hidden />}
+              onClick={() => {
+                setRenaming(true)
+                close()
+              }}
+            />
+            <MenuItem
+              title="Archive chat"
+              icon={<Archive size={14} aria-hidden />}
+              onClick={() => {
+                props.onDelete()
+                close()
+              }}
+            />
+            {isDesktop ? (
               <MenuItem
-                title={props.session.pinned ? 'Unpin chat' : 'Pin chat'}
-                icon={
-                  props.session.pinned ? (
-                    <PinOff size={14} aria-hidden />
-                  ) : (
-                    <Pin size={14} aria-hidden />
-                  )
-                }
+                title="Open in Explorer"
+                icon={<FolderOpen size={14} aria-hidden />}
                 onClick={() => {
-                  props.onTogglePin()
+                  props.onOpenInExplorer()
                   close()
                 }}
               />
-              <MenuItem
-                title="Rename chat"
-                icon={<Pencil size={14} aria-hidden />}
-                onClick={() => {
-                  setRenaming(true)
-                  close()
-                }}
-              />
-              <MenuItem
-                title="Archive chat"
-                icon={<Archive size={14} aria-hidden />}
-                onClick={() => {
-                  props.onDelete()
-                  close()
-                }}
-              />
-              {isDesktop ? (
-                <MenuItem
-                  title="Open in Explorer"
-                  icon={<FolderOpen size={14} aria-hidden />}
-                  onClick={() => {
-                    props.onOpenInExplorer()
-                    close()
-                  }}
-                />
-              ) : null}
-            </>
-          )}
-        </Menu>
-      </div>
+            ) : null}
+          </>
+        )}
+      </Menu>
     </li>
   )
 }
@@ -1362,13 +1821,7 @@ function SidebarConfirmDialog(props: {
 
 function SessionStatus(props: { status: Session['status'] }) {
   if (props.status === 'starting' || props.status === 'working') {
-    return (
-      <span className="sess__spinner" aria-hidden>
-        {BRAILLE_SPINNER_FRAMES.map((frame) => (
-          <span key={frame}>{frame}</span>
-        ))}
-      </span>
-    )
+    return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
   }
 
   if (props.status === 'approval' || props.status === 'input' || props.status === 'queued') {
@@ -1405,13 +1858,50 @@ function sessionLabel(session: Session): string {
   }
 }
 
+function virtualSessionRange(scrollTop: number, count: number) {
+  const firstVisible = Math.floor(scrollTop / VIRTUAL_SESSION_ROW_HEIGHT)
+  const start = Math.max(0, firstVisible - VIRTUAL_SESSION_OVERSCAN)
+  const end = Math.min(
+    count,
+    firstVisible + VIRTUAL_SESSION_VIEWPORT_ROWS + VIRTUAL_SESSION_OVERSCAN,
+  )
+  return { start, end }
+}
+
+function virtualSessionStyle(top: number | undefined): CSSProperties | undefined {
+  return top === undefined ? undefined : { transform: `translateY(${top}px)` }
+}
+
+const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
+
+function projectSidebarProjection(source: Project): ProjectSidebarProjection {
+  const cached = projectSidebarProjections.get(source)
+  if (cached) return cached
+
+  const pinnedSessions: PinnedSession[] = []
+  const unpinnedSessions: Session[] = []
+  for (const session of source.sessions) {
+    if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
+    else unpinnedSessions.push(session)
+  }
+  const sessions = prioritizeSessions(unpinnedSessions, (session) => session)
+  const sessionsUnchanged =
+    pinnedSessions.length === 0 &&
+    sessions.length === source.sessions.length &&
+    sessions.every((session, index) => session === source.sessions[index])
+  const project = sessionsUnchanged ? source : { ...source, sessions }
+  const projection = { project, pinnedSessions }
+  projectSidebarProjections.set(source, projection)
+  return projection
+}
+
 function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
   const active: T[] = []
   const unread: T[] = []
   const rest: T[] = []
   for (const value of sessions) {
     const session = getSession(value)
-    if (['starting', 'working', 'queued', 'approval', 'input'].includes(session.status)) {
+    if (isActiveStatus(session.status)) {
       active.push(value)
     } else if (session.unread) {
       unread.push(value)
@@ -1419,12 +1909,25 @@ function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session)
       rest.push(value)
     }
   }
-  return [...active, ...unread, ...rest]
+  const ordered = [...active, ...unread, ...rest]
+  return ordered.every((value, index) => value === sessions[index]) ? sessions : ordered
+}
+
+function isActiveStatus(status: Session['status']): boolean {
+  return (
+    status === 'starting' ||
+    status === 'working' ||
+    status === 'queued' ||
+    status === 'approval' ||
+    status === 'input'
+  )
 }
 
 /** Rename in place. Enter commits, Escape reverts, blur commits. */
 function InlineRename(props: {
   value: string
+  className?: string
+  ariaLabel?: string
   onCommit: (value: string) => void
   onCancel: () => void
 }) {
@@ -1444,8 +1947,9 @@ function InlineRename(props: {
   return (
     <input
       ref={input}
-      className="rename"
+      className={`rename${props.className ? ` ${props.className}` : ''}`}
       value={draft}
+      aria-label={props.ariaLabel}
       spellCheck={false}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}

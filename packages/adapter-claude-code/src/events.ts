@@ -1,7 +1,6 @@
 import type { DomainEvent, Item, Usage } from '@harness/contracts'
 import { JsonRpcValueSchema } from '@harness/proc'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * The Claude Code stream-json envelope, as the binary actually emits it.
@@ -171,17 +170,9 @@ function blockToItem(
 /** Tool results are sometimes a string, sometimes a content-block array. */
 function flattenContent(content: ToolResultContent | undefined): string {
   if (content === undefined) return ''
-  const text = z.string().safeParse(content)
-  if (text.success) return text.data
-  return z
-    .array(ResultPartSchema)
-    .parse(content)
-    .map((part) => {
-      const partText = z.string().safeParse(part)
-      return partText.success
-        ? partText.data
-        : (z.object({ text: z.string().optional() }).parse(part).text ?? '')
-    })
+  if (typeof content === 'string') return content
+  return content
+    .map((part) => (typeof part === 'string' ? part : (part.text ?? '')))
     .join('')
     .trim()
 }
@@ -199,6 +190,6 @@ export function toUsage(usage: ClaudeUsage | undefined, costUsd?: number): Usage
     reasoningTokens: 0,
     totalTokens: input + output + cached + (usage.cache_creation_input_tokens ?? 0),
     inputIncludesCached: false,
-    ...propertiesWhen(!(costUsd === undefined), () => ({ costUsd })),
+    ...(!(costUsd === undefined) ? { costUsd } : {}),
   }
 }

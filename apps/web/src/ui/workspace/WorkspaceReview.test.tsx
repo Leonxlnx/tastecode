@@ -1,12 +1,15 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { SessionDiff } from '@harness/contracts'
-import { afterEach, describe, expect, it } from 'vitest'
-import { requiredInstance } from '../../test-dom.js'
-import { TestTransport } from '../../test-transport.js'
-import { WorkspaceReview, type WorkspaceCodeView } from './WorkspaceReview.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Transport } from '../../transport.js'
+import { WorkspaceReview } from './WorkspaceReview.js'
 
-const TestCodeView = (() => <div>src/index.ts</div>) satisfies WorkspaceCodeView
+vi.mock('@pierre/diffs/react', () => ({
+  CodeView: ({ items }: { items: Array<{ fileDiff: { name: string } }> }) => (
+    <div>{items.map((item) => item.fileDiff.name).join(', ')}</div>
+  ),
+}))
 
 afterEach(cleanup)
 
@@ -37,26 +40,19 @@ describe('WorkspaceReview', () => {
         },
       ],
     } satisfies SessionDiff
-    const transport = new TestTransport(async (method) => {
-      if (method === 'workspace.diff') return diff
-      throw new Error(`unexpected method ${method}`)
-    })
+    const request = vi.fn(async () => diff)
 
     render(
       <WorkspaceReview
-        transport={transport}
+        transport={{ request } as unknown as Transport}
         projectPath="/repo"
         branch="main"
         theme="dark"
-        codeViewComponent={TestCodeView}
       />,
     )
 
     expect(await screen.findByText('src/index.ts')).toBeTruthy()
-    expect(transport.requests).toContainEqual({
-      method: 'workspace.diff',
-      params: { projectPath: '/repo' },
-    })
+    expect(request).toHaveBeenCalledWith('workspace.diff', { projectPath: '/repo' })
     expect(screen.queryByText(/isolated session/i)).toBeNull()
   })
 
@@ -73,7 +69,7 @@ describe('WorkspaceReview', () => {
         },
       ],
     } satisfies SessionDiff
-    const transport = new TestTransport(async (method) => {
+    const request = vi.fn(async (method: string) => {
       if (method === 'workspace.diff') return diff
       if (method === 'backgroundModel.generateCommitMessage') {
         return { message: 'fix(review): keep commit drafts cheap' }
@@ -83,21 +79,20 @@ describe('WorkspaceReview', () => {
 
     render(
       <WorkspaceReview
-        transport={transport}
+        transport={{ request } as unknown as Transport}
         projectPath="/repo"
         threadId="thread-1"
         branch="main"
         theme="dark"
-        codeViewComponent={TestCodeView}
       />,
     )
 
     fireEvent.click(await screen.findByRole('button', { name: 'Draft commit message' }))
 
     expect(await screen.findByText('fix(review): keep commit drafts cheap')).toBeTruthy()
-    expect(transport.requests).toContainEqual({
-      method: 'backgroundModel.generateCommitMessage',
-      params: { projectPath: '/repo', threadId: 'thread-1' },
+    expect(request).toHaveBeenCalledWith('backgroundModel.generateCommitMessage', {
+      projectPath: '/repo',
+      threadId: 'thread-1',
     })
   })
 
@@ -118,26 +113,25 @@ describe('WorkspaceReview', () => {
     const draft = new Promise<{ message: string }>((resolve) => {
       finishDraft = resolve
     })
-    const transport = new TestTransport(async (method) => {
-      if (method === 'workspace.diff') return diff
+    const request = vi.fn((method: string) => {
+      if (method === 'workspace.diff') return Promise.resolve(diff)
       if (method === 'backgroundModel.generateCommitMessage') return draft
-      throw new Error(`unexpected method ${method}`)
+      return Promise.reject(new Error(`unexpected method ${method}`))
     })
 
     render(
       <WorkspaceReview
-        transport={transport}
+        transport={{ request } as unknown as Transport}
         projectPath="/repo"
         branch="main"
         theme="dark"
-        codeViewComponent={TestCodeView}
       />,
     )
 
     const generate = await screen.findByRole('button', { name: 'Draft commit message' })
     fireEvent.click(generate)
     fireEvent.click(screen.getByRole('button', { name: 'Refresh diff' }))
-    await waitFor(() => expect(requiredInstance(generate, HTMLButtonElement).disabled).toBe(false))
+    await waitFor(() => expect((generate as HTMLButtonElement).disabled).toBe(false))
     await act(async () => finishDraft({ message: 'stale draft' }))
 
     expect(screen.queryByText('stale draft')).toBeNull()

@@ -1,7 +1,5 @@
 import { spawn } from 'node:child_process'
 import type { Writable } from 'node:stream'
-import { z } from 'zod'
-import type { BoundaryValue } from './boundary.js'
 
 export type MacHapticPattern = 'alignment' | 'generic'
 
@@ -214,8 +212,6 @@ export class MacOSHaptics {
   }
 }
 
-const MacHapticPatternSchema = z.enum(['alignment', 'generic'])
-
-export function isMacHapticPattern(value: BoundaryValue): value is MacHapticPattern {
-  return MacHapticPatternSchema.safeParse(value).success
+export function isMacHapticPattern(value: unknown): value is MacHapticPattern {
+  return value === 'alignment' || value === 'generic'
 }

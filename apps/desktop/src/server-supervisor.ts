@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * The packaged app owns its core server. In development tools/scripts/dev.js
@@ -19,25 +18,53 @@ export function restartDelayMs(consecutiveFailures: number): number {
 }
 
 /** A run that survived this long counts as healthy and resets the backoff. */
-export const HEALTHY_RUN_MS = 30_000
+const HEALTHY_RUN_MS = 30_000
 
 /** After this many failures in a row the server is not coming back on its own. */
 export const MAX_CONSECUTIVE_FAILURES = 8
 
-export type SupervisorOptions = {
+type SupervisorCallbacks = {
+  onLog: (line: string) => void
+  /** Called once when the supervisor gives up, for a user-facing surface. */
+  onGaveUp?: (() => void) | undefined
+}
+
+type CommandSupervisorOptions = {
   command: string
   args: string[]
   env: NodeJS.ProcessEnv
   cwd?: string | undefined
-  onLog: (line: string) => void
-  /** Called once when the supervisor gives up, for a user-facing surface. */
-  onGaveUp?: (() => void) | undefined
   spawnFn?: typeof spawn
+}
+
+export type SupervisedServerProcess = {
+  stdout: NodeJS.ReadableStream | null
+  stderr: NodeJS.ReadableStream | null
+  kill: () => boolean
+  onError: (listener: (error: unknown) => void) => void
+  onExit: (listener: (code: number | null, signal: NodeJS.Signals | null) => void) => void
+}
+
+type ProcessSupervisorOptions = {
+  launch: () => SupervisedServerProcess
+}
+
+export type SupervisorOptions = SupervisorCallbacks &
+  (CommandSupervisorOptions | ProcessSupervisorOptions)
+
+function supervisedChildProcess(child: ChildProcess): SupervisedServerProcess {
+  return {
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: () => child.kill(),
+    onError: (listener) => child.on('error', listener),
+    onExit: (listener) => child.on('exit', listener),
+  }
 }
 
 export class ServerSupervisor {
   readonly #options: SupervisorOptions
-  #child: ChildProcess | undefined
+  #child: SupervisedServerProcess | undefined
   #stopped = false
   #failures = 0
   #startedAt = 0
@@ -49,14 +76,18 @@ export class ServerSupervisor {
 
   start(): void {
     if (this.#stopped || this.#child) return
-    const spawnFn = this.#options.spawnFn ?? spawn
     this.#startedAt = Date.now()
-    const child = spawnFn(this.#options.command, this.#options.args, {
-      env: this.#options.env,
-      ...propertiesWhen(this.#options.cwd, (includedValue) => ({ cwd: includedValue })),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
+    const child =
+      'launch' in this.#options
+        ? this.#options.launch()
+        : supervisedChildProcess(
+            (this.#options.spawnFn ?? spawn)(this.#options.command, this.#options.args, {
+              env: this.#options.env,
+              ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
+              stdio: ['ignore', 'pipe', 'pipe'],
+              windowsHide: true,
+            }),
+          )
     this.#child = child
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
@@ -65,11 +96,11 @@ export class ServerSupervisor {
     }
     child.stdout?.on('data', forward)
     child.stderr?.on('data', forward)
-    child.on('error', (error) => {
+    child.onError((error) => {
       this.#options.onLog(`server failed to start: ${String(error)}`)
       this.#onExit(child)
     })
-    child.on('exit', (code, signal) => {
+    child.onExit((code, signal) => {
       this.#options.onLog(`server exited (code ${code ?? 'null'}, signal ${signal ?? 'null'})`)
       this.#onExit(child)
     })
@@ -84,7 +115,7 @@ export class ServerSupervisor {
     child?.kill()
   }
 
-  #onExit(child: ChildProcess): void {
+  #onExit(child: SupervisedServerProcess): void {
     if (this.#child !== child) return
     this.#child = undefined
     if (this.#stopped) return

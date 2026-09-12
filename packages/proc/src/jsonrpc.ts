@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { z } from 'zod'
 import { killTree } from './kill.js'
+import { LineBuffer } from './frames.js'
 
 /**
  * Newline-delimited JSON-RPC 2.0 over a child process's stdio.
@@ -16,28 +17,40 @@ import { killTree } from './kill.js'
 
 export type JsonRpcId = number | string
 
+export type StdioJsonRpcProcess = Pick<
+  ChildProcessWithoutNullStreams,
+  'stdin' | 'stdout' | 'stderr' | 'on' | 'exitCode' | 'signalCode' | 'pid' | 'kill'
+>
+
 export const JsonRpcValueSchema = z.json()
-const JsonRpcInputSchema = z.unknown()
+export type JsonRpcValue = z.infer<typeof JsonRpcValueSchema>
+
+// JSON.parse already establishes JSON compatibility. This schema validates
+// only the JSON-RPC envelope instead of walking every payload a second time.
+const ParsedJsonValueSchema = z.custom<JsonRpcValue>()
 const JsonRpcFrameSchema = z.object({
   id: z.union([z.number(), z.string()]).optional(),
   method: z.string().optional(),
-  params: JsonRpcValueSchema.optional(),
-  result: JsonRpcValueSchema.optional(),
+  params: ParsedJsonValueSchema.optional(),
+  result: ParsedJsonValueSchema.optional(),
   error: z
     .object({
       code: z.number().optional(),
       message: z.string().optional(),
-      data: JsonRpcValueSchema.optional(),
+      data: ParsedJsonValueSchema.optional(),
     })
     .optional(),
 })
 
-export type JsonRpcValue = z.infer<typeof JsonRpcValueSchema>
-export type JsonRpcInput = z.input<typeof JsonRpcInputSchema>
 type JsonRpcResult = JsonRpcValue | undefined
 
+export function parseJsonValue(text: string): JsonRpcValue {
+  // SAFETY: JSON.parse can return only JSON primitives, arrays, and objects.
+  return JSON.parse(text) as JsonRpcValue
+}
+
 export interface JsonRpcResultParser<Result> {
-  parse(value: JsonRpcInput): Result
+  parse(value: unknown): Result
 }
 
 export interface JsonRpcRequestOptions {
@@ -72,7 +85,7 @@ export class JsonRpcError extends Error {
 }
 
 export class StdioJsonRpc {
-  #child: ChildProcessWithoutNullStreams
+  #child: StdioJsonRpcProcess
   /**
    * Our outbound calls only.
    *
@@ -83,21 +96,29 @@ export class StdioJsonRpc {
    */
   #pending = new Map<JsonRpcId, PendingCall>()
   #nextId = 1
-  #buffer = ''
+  readonly #buffer: LineBuffer
   #disposed = false
+  #termination: Promise<void> | undefined
   #exited = false
   /** Why the transport is finished, so late callers get an answer not a hang. */
   #failure: Error | undefined
   #label: string
+  readonly #onProtocolError: ((error: Error) => void) | undefined
 
   #onNotification: (method: string, params: JsonRpcResult) => void = () => {}
   #onServerRequest: ServerRequestHandler = (_m, _p, respond) => respond(null)
   #onStderr: (text: string) => void = () => {}
 
   /** `label` names the process in errors, so a dead child says which one died. */
-  constructor(child: ChildProcessWithoutNullStreams, label = 'agent') {
+  constructor(
+    child: StdioJsonRpcProcess,
+    label = 'agent',
+    options: { maxFrameBytes?: number; onProtocolError?: (error: Error) => void } = {},
+  ) {
     this.#child = child
     this.#label = label
+    this.#buffer = new LineBuffer(options.maxFrameBytes)
+    this.#onProtocolError = options.onProtocolError
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => this.#ingest(chunk))
     child.stderr.setEncoding('utf8')
@@ -129,19 +150,15 @@ export class StdioJsonRpc {
     this.#onStderr = handler
   }
 
-  request(
-    method: string,
-    params?: JsonRpcInput,
-    options?: JsonRpcRequestOptions,
-  ): Promise<JsonRpcResult>
+  request(method: string, params?: unknown, options?: JsonRpcRequestOptions): Promise<JsonRpcResult>
   request<Result>(
     method: string,
-    params: JsonRpcInput,
+    params: unknown,
     options: ParsedJsonRpcRequestOptions<Result>,
   ): Promise<Result>
   request<Result>(
     method: string,
-    params: JsonRpcInput = {},
+    params: unknown = {},
     options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
   ): Promise<JsonRpcResult | Result> {
     // Also when the process is gone: #write silently drops the frame once the
@@ -161,42 +178,49 @@ export class StdioJsonRpc {
       }
       this.#pending.set(id, call)
     })
-    const message = { jsonrpc: '2.0', id, method, params: JsonRpcValueSchema.parse(params) }
-    this.#write(message)
+    this.#write({ jsonrpc: '2.0', id, method, params })
     return 'result' in options ? promise.then((value) => options.result.parse(value)) : promise
   }
 
-  notify(method: string, params: JsonRpcInput = {}): void {
+  notify(method: string, params: unknown = {}): void {
     if (this.#disposed) return
     this.#write({ jsonrpc: '2.0', method, params })
   }
 
-  dispose(): void {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    if (this.#disposed) return this.#termination ?? Promise.resolve()
     this.#disposed = true
     this.#failAll(new Error('transport disposed'))
-    killTree(this.#child)
+    this.#buffer.clear()
+    this.#termination = killTree(this.#child)
+    return this.#termination
   }
 
-  #write(message: JsonRpcInput): void {
+  #write(message: unknown): void {
     if (this.#exited || !this.#child.stdin.writable) return
-    this.#child.stdin.write(JSON.stringify(JsonRpcValueSchema.parse(message)) + '\n')
+    this.#child.stdin.write(JSON.stringify(message) + '\n')
   }
 
   #ingest(chunk: string): void {
-    this.#buffer += chunk
-    let newline: number
-    while ((newline = this.#buffer.indexOf('\n')) >= 0) {
-      const line = this.#buffer.slice(0, newline).trim()
-      this.#buffer = this.#buffer.slice(newline + 1)
-      if (line) this.#handleLine(line)
+    if (this.#failure || this.#disposed) return
+    try {
+      this.#buffer.write(chunk, (line) => {
+        if (line.trim()) this.#handleLine(line.trim())
+      })
+    } catch (error) {
+      this.#failure = error instanceof Error ? error : new Error('Provider stream failed')
+      this.#buffer.clear()
+      this.#failAll(this.#failure)
+      this.#onStderr(this.#failure.message)
+      this.dispose()
+      this.#onProtocolError?.(this.#failure)
     }
   }
 
   #handleLine(line: string): void {
-    let parsed: JsonRpcInput
+    let parsed: unknown
     try {
-      parsed = JSON.parse(line)
+      parsed = parseJsonValue(line)
     } catch {
       // A non-JSON line means the CLI printed something to stdout that is not
       // protocol traffic. Surfacing it beats silently discarding it, because

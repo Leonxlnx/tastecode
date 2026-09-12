@@ -4,197 +4,131 @@ on:
   workflow_dispatch:
     inputs:
       approved_sha:
-        description: Exact 40-character main commit approved for this release proof
+        description: Exact 40-character main commit approved for packaging proof
         required: true
         type: string
+      upload_draft:
+        description: Also upload verified unsigned proof to one draft (never publish)
+        required: true
+        default: false
+        type: boolean
 
-# Hosted Actions stay manual. Every build job is read-only; only the final serial writer can
-# update the private draft release.
+# Hosted Actions are manual. This group serializes every managed release writer, across tags.
+# The default run only produces workflow artifacts. Signed distribution is a separate owner gate.
 permissions:
   contents: read
 
 concurrency:
-  group: release-artifact-proof-v0.1.0-beta.1
+  group: release-artifact-proof
   cancel-in-progress: false
+
+env:
+  APPROVED_SHA: ${{ inputs.approved_sha }}
+  EVENT_SHA: ${{ github.sha }}
+  EVENT_REF: ${{ github.ref }}
 
 jobs:
   verify-input:
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && inputs.approved_sha == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
-
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-
-      - name: Verify exact approved main commit
-        env:
-          APPROVED_SHA: ${{ inputs.approved_sha }}
-          EVENT_SHA: ${{ github.sha }}
-          EVENT_REF: ${{ github.ref }}
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          run_install: false
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter .
+      - name: Verify approved source
         run: node tools/scripts/verify-release-input.js
 
   package:
     needs: verify-input
+    timeout-minutes: 60
     permissions:
       contents: read
-
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2025
             platform: windows
             label: windows-x64
-          - os: macos-14
+          - os: macos-15
             platform: macos
             label: macos-arm64
-
     runs-on: ${{ matrix.os }}
-
-    env:
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           ref: ${{ inputs.approved_sha }}
           persist-credentials: false
-
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
-          version: 11.8.0
           run_install: false
-
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify production license graph
-        run: pnpm licenses:verify
-
-      - name: Format and lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Test
-        run: pnpm test
-
-      - name: Test release tooling
-        run: node --test tools/scripts/release-tools.test.js
-
-      - name: Build
-        run: pnpm build
-
+      - run: pnpm install --frozen-lockfile
+      - run: node tools/scripts/verify-release-input.js
+      - run: pnpm licenses:verify
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
       - name: Build preload
         run: pnpm --filter @harness/desktop exec node scripts/build-preload.js
-
-      - name: Package Windows x64
-        if: matrix.platform == 'windows'
-        run: pnpm --filter @harness/desktop exec electron-builder --win nsis --x64 --publish never
-
-      - name: Package macOS Apple Silicon
-        if: matrix.platform == 'macos'
-        run: pnpm --filter @harness/desktop exec electron-builder --mac dmg zip --arm64 --publish never
-
-      - name: Prove packaged Windows native bindings
-        if: matrix.platform == 'windows'
-        run: pnpm --filter @harness/desktop verify:native-bindings -- "../../release/win-unpacked/TasteCode.exe"
-
-      - name: Prove packaged macOS native bindings
-        if: matrix.platform == 'macos'
-        run: pnpm --filter @harness/desktop verify:native-bindings -- "../../release/mac-arm64/Taste Code.app"
-
-      - name: Smoke-test unsigned Windows installer
-        if: matrix.platform == 'windows'
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem release -File -Filter 'TasteCode-*-win-x64.exe'
-          if ($installer.Count -ne 1) { throw "Expected one Windows installer, found $($installer.Count)" }
-
-          $signature = Get-AuthenticodeSignature $installer[0].FullName
-          if ($signature.Status -ne 'NotSigned') {
-            throw "Expected an unsigned beta installer, got $($signature.Status)"
-          }
-
-          $install = Start-Process -FilePath $installer[0].FullName -ArgumentList '/S' -PassThru -Wait
-          if ($install.ExitCode -ne 0) { throw "Silent install failed with $($install.ExitCode)" }
-
-          $programsRoot = Join-Path $env:LOCALAPPDATA 'Programs'
-          $installed = @(Get-ChildItem $programsRoot -File -Filter 'TasteCode.exe' -Recurse)
-          if ($installed.Count -ne 1) {
-            throw "Expected one installed TasteCode.exe, found $($installed.Count)"
-          }
-
-          $uninstaller = @(Get-ChildItem $installed[0].Directory.FullName -File -Filter 'Uninstall*.exe')
-          if ($uninstaller.Count -ne 1) {
-            throw "Expected one uninstaller beside TasteCode.exe, found $($uninstaller.Count)"
-          }
-
-          $uninstall = Start-Process -FilePath $uninstaller[0].FullName -ArgumentList '/S' -PassThru -Wait
-          if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall failed with $($uninstall.ExitCode)" }
-
-      - name: Verify macOS containers
-        if: matrix.platform == 'macos'
-        run: |
-          dmg="$(find release -maxdepth 1 -name 'TasteCode-*-mac-arm64.dmg' -print -quit)"
-          zip="$(find release -maxdepth 1 -name 'TasteCode-*-mac-arm64.zip' -print -quit)"
-          test -n "$dmg" && test -n "$zip"
-          hdiutil verify "$dmg"
-          unzip -t "$zip"
-
-      - name: Generate SHA-256 checksums
-        run: node tools/scripts/release-checksums.js release SHA256SUMS-${{ matrix.label }}.txt ${{ matrix.platform }}
-
-      - name: Stage exact platform manifest
-        run: node tools/scripts/stage-release-assets.js release release-proof ${{ matrix.platform }}
-
-      - name: Upload immutable workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Build fresh unsigned package and prove licenses, feed, native bindings, and containers
+        run: node tools/scripts/verify-release-assets.js --package release/proof-${{ matrix.label }} ${{ matrix.platform }}
+      - name: Stage the exact verified platform assets
+        run: node tools/scripts/stage-release-assets.js release/proof-${{ matrix.label }} release/staged-${{ matrix.label }} ${{ matrix.platform }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-${{ matrix.label }}-${{ inputs.approved_sha }}
-          path: release-proof
+          name: release-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          path: release/staged-${{ matrix.label }}
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
           compression-level: 0
 
-  publish-draft:
+  upload-draft:
+    if: inputs.upload_draft && github.ref == 'refs/heads/main' && inputs.approved_sha == github.sha
     needs: [verify-input, package]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: write
-
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           ref: ${{ inputs.approved_sha }}
           persist-credentials: false
-
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 24
-
-      - name: Download both immutable platform artifacts
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+          node-version: 22
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
-          pattern: release-*-${{ inputs.approved_sha }}
-          path: release-final
-          merge-multiple: true
-
-      - name: Verify exact combined release manifest
-        run: node tools/scripts/verify-release-assets.js release-final all
-
-      - name: Reconcile one private draft release
+          run_install: false
+      - run: pnpm install --frozen-lockfile --ignore-scripts --filter .
+      - run: node tools/scripts/verify-release-input.js
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-windows-x64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          path: release/final
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          path: release/final
+      - name: Verify both platform manifests, provenance, and hashes
+        run: node tools/scripts/verify-release-assets.js release/final all
+      - name: Upload or resume the exact draft without replacing assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_SHA: ${{ inputs.approved_sha }}
-          RELEASE_TAG: v0.1.0-beta.1
-        run: node tools/scripts/upload-draft-release.js release-final
+          RELEASE_UPLOAD_APPROVAL: ${{ inputs.approved_sha }}
+        run: node tools/scripts/upload-draft-release.js release/final

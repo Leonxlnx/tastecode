@@ -1,20 +1,20 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import {
-  ArrowLeft,
-  ArrowRight,
-  ExternalLink,
-  Globe2,
-  LoaderCircle,
-  Laptop,
-  Monitor,
-  RefreshCw,
-  Smartphone,
-  Tablet,
-} from 'lucide-react'
+  IconArrowLeft as ArrowLeft,
+  IconArrowRight as ArrowRight,
+  IconExternalLink as ExternalLink,
+  IconWorld as Globe2,
+  IconLoader2 as LoaderCircle,
+  IconDeviceLaptop as Laptop,
+  IconDeviceDesktop as Monitor,
+  IconRefresh as RefreshCw,
+  IconDeviceMobile as Smartphone,
+  IconDeviceTablet as Tablet,
+} from '@tabler/icons-react'
 import { isDesktop, openExternalUrl } from '../../bridge.js'
 import { errorMessage } from '../../boundary.js'
-import type { BoundaryValue } from '../../boundary.js'
+import { IconMorph } from '../IconMorph.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import { browserUrl } from './browser-url.js'
 import {
@@ -39,7 +39,7 @@ type BrowserState = {
   canGoForward: boolean
 }
 
-export type BrowserGuest = HTMLElement & {
+type BrowserGuest = HTMLElement & {
   canGoBack(): boolean
   canGoForward(): boolean
   getTitle(): string
@@ -50,18 +50,6 @@ export type BrowserGuest = HTMLElement & {
   loadURL(url: string): Promise<void>
   reload(): void
   stop(): void
-}
-
-export type WorkspaceBrowserServices = {
-  isDesktop: boolean
-  openExternalUrl: typeof openExternalUrl
-  createBrowserGuest: () => BrowserGuest
-}
-
-const defaultWorkspaceBrowserServices: WorkspaceBrowserServices = {
-  isDesktop,
-  openExternalUrl,
-  createBrowserGuest: () => document.createElement('webview'),
 }
 
 declare global {
@@ -100,11 +88,9 @@ export type BrowserNavigationRequest = {
 export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   active,
   navigation,
-  services = defaultWorkspaceBrowserServices,
 }: {
   active: boolean
   navigation?: BrowserNavigationRequest | undefined
-  services?: WorkspaceBrowserServices | undefined
 }) {
   const canvas = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
@@ -138,9 +124,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
 
   useLayoutEffect(() => {
     const element = host.current
-    if (!element || !services.isDesktop) return
+    if (!element || !isDesktop) return
 
-    const view = services.createBrowserGuest()
+    const view = document.createElement('webview')
     view.className = 'workspace-browser__guest'
     view.setAttribute('aria-label', 'Browser page')
     view.setAttribute('partition', 'persist:harness-browser')
@@ -205,7 +191,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     element.append(view)
     guest.current = view
 
-    if (!z.function().safeParse(view.loadURL).success) {
+    if (typeof view.loadURL !== 'function') {
       setError('The in-app browser is unavailable in this window.')
     }
 
@@ -224,7 +210,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       view.removeEventListener('render-process-gone', onRendererGone)
       view.remove()
     }
-  }, [services, syncGuestState])
+  }, [syncGuestState])
 
   useLayoutEffect(() => {
     const canvasElement = canvas.current
@@ -271,10 +257,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         return false
       }
       const view = guest.current
-      const canLoad = view ? z.function().safeParse(view.loadURL).success : false
-      if (!view || !canLoad || readyGuest.current !== view) {
+      if (!view || typeof view.loadURL !== 'function' || readyGuest.current !== view) {
         setError(
-          view && canLoad
+          view && typeof view.loadURL === 'function'
             ? 'The in-app browser is still starting.'
             : 'The in-app browser is unavailable in this window.',
         )
@@ -284,7 +269,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       setAddress(url)
       setState((current) => ({ ...current, url, loading: true }))
       setError(undefined)
-      void view.loadURL(url).catch((cause) => {
+      void view.loadURL(url).catch((cause: unknown) => {
         if (!isAbortedNavigation(cause)) setError(errorMessage(cause))
         syncGuestState()
       })
@@ -339,11 +324,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           disabled={!state.url}
           onClick={() => action(state.loading ? 'stop' : 'reload')}
         >
-          {state.loading ? (
-            <LoaderCircle className="spinner" size={15} aria-hidden />
-          ) : (
+          <IconMorph active={state.loading ? 1 : 0}>
             <RefreshCw size={14} aria-hidden />
-          )}
+            <LoaderCircle className="spinner" size={15} aria-hidden />
+          </IconMorph>
         </button>
         <form
           className="workspace-browser__address"
@@ -366,9 +350,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             title="Open in system browser"
             disabled={!state.url}
             onClick={() =>
-              void services
-                .openExternalUrl(state.url)
-                .catch((cause: BoundaryValue) => setError(errorMessage(cause)))
+              void openExternalUrl(state.url).catch((cause: unknown) =>
+                setError(errorMessage(cause)),
+              )
             }
           >
             <ExternalLink size={14} aria-hidden />
@@ -405,9 +389,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           <div className="workspace-browser__placeholder">
             <WorkspaceEmptyState
               kind="browser"
-              title={services.isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
+              title={isDesktop ? 'Start browsing' : 'Desktop browser unavailable'}
               detail={
-                services.isDesktop
+                isDesktop
                   ? 'Enter a URL to open a page.'
                   : 'The in-app browser runs in the desktop app.'
               }
@@ -424,18 +408,16 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   )
 })
 
-function webPageUrl(value: BoundaryValue): string {
-  const parsed = z.string().safeParse(value)
-  if (!parsed.success) return ''
+function webPageUrl(value: unknown): string {
+  if (typeof value !== 'string') return ''
   try {
-    const url = new URL(parsed.data)
-    return url.protocol === 'https:' || url.protocol === 'http:' ? parsed.data : ''
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:' ? value : ''
   } catch {
     return ''
   }
 }
 
-function isAbortedNavigation(cause: BoundaryValue): boolean {
-  const error = z.instanceof(Error).safeParse(cause)
-  return error.success && /ERR_ABORTED|\(-3\)/i.test(error.data.message)
+function isAbortedNavigation(cause: unknown): boolean {
+  return cause instanceof Error && /ERR_ABORTED|\(-3\)/i.test(cause.message)
 }

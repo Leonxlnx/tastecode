@@ -82,6 +82,23 @@ async function devPortListeners() {
     return listeners
   }
 
+  if (process.platform === 'linux') {
+    try {
+      const { stdout } = await execFileAsync('ss', ['-H', '-ltnp'])
+      for (const line of stdout.split(/\r?\n/)) {
+        const fields = line.trim().split(/\s+/)
+        if (fields.length < 5 || fields[0].toUpperCase() !== 'LISTEN') continue
+        const port = Number.parseInt(fields[3].match(/:(\d+)$/)?.[1] ?? '', 10)
+        for (const match of line.matchAll(/pid=(\d+)/g)) {
+          add(port, Number.parseInt(match[1], 10))
+        }
+      }
+      return listeners
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+
   let stdout
   try {
     ;({ stdout } = await execFileAsync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn']))

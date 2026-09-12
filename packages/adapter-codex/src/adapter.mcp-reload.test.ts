@@ -3,6 +3,19 @@ import type { McpServerConfig } from '@harness/contracts'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc, type RecordedRpcCall } from './fake-rpc.test-support.js'
 
+const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
+
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
+  spawnCli: vi.fn(() => ({ pid: 1 })),
+  StdioJsonRpc: class {
+    constructor() {
+      if (!proc.rpc) throw new Error('fake Codex RPC was not installed')
+      return proc.rpc
+    }
+  },
+}))
+
 const stdioServer = (id: string): McpServerConfig => ({
   id,
   enabled: true,
@@ -44,9 +57,9 @@ function mcpRpc(state: { failResume: boolean }) {
 async function startedAdapter() {
   const state = { failResume: false }
   const rpc = mcpRpc(state)
+  proc.rpc = rpc
   const adapter = new CodexAdapter({
     mcpServers: [stdioServer('github')],
-    connect: () => rpc,
   })
   await adapter.start()
 
@@ -106,10 +119,10 @@ describe('Codex MCP hot-reload', () => {
       },
     }
     const rpc = mcpRpc({ failResume: false })
+    proc.rpc = rpc
     const adapter = new CodexAdapter({
       mcpServers: [withSecret],
       mcpCredentials: { 'github-token': 'old-secret' },
-      connect: () => rpc,
     })
     await adapter.start()
 

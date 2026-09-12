@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import { ApiAgentSession, type ApiStreamEvent, type ApiTransport } from './runtime.js'
@@ -9,6 +12,116 @@ function transport(...events: ApiStreamEvent[]): ApiTransport {
 }
 
 describe('ApiAgentSession', () => {
+  it('redacts transport errors before either event or log publication', async () => {
+    const secret = 'canary-credential-never-log-me'
+    const session = new ApiAgentSession({
+      model: 'test',
+      secrets: [secret],
+      transport: async function* () {
+        yield { type: 'text', delta: '' }
+        throw new Error(`invalid ${secret}`)
+      },
+    })
+    const logs: string[] = []
+    const events: DomainEvent[] = []
+    session.on('log', (line) => logs.push(line))
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('/repo', 'test')
+    await session.waitForTurn(await session.sendTurn(thread.id, 'Go'))
+    expect(JSON.stringify({ logs, events })).not.toContain(secret)
+    expect(logs).toEqual(['direct API model request failed: invalid [REDACTED]'])
+    expect(events).toContainEqual({
+      type: 'thread.error',
+      threadId: thread.id,
+      message: 'invalid [REDACTED]',
+    })
+  })
+
+  it('requires a fresh session approval when the same command changes cwd or scope', async () => {
+    let round = 0
+    let executions = 0
+    const reviews: string[] = []
+    const directories = ['.', '.', 'sub', 'sub']
+    const session = new ApiAgentSession({
+      model: 'test',
+      transport: async function* () {
+        if (round < directories.length) {
+          yield {
+            type: 'tool_call',
+            call: { id: `call-${round}`, name: 'run_command', input: { command: 'npm test' } },
+          }
+          yield { type: 'finish', reason: 'tool_calls' }
+          round++
+        } else yield { type: 'finish', reason: 'stop' }
+      },
+      reviewTool: () => ({
+        threadId: 'test',
+        kind: 'command',
+        command: 'npm test',
+        cwd: directories[round]!,
+        reason: round === 3 ? 'changed scope' : 'run tests',
+      }),
+      executeTool: async () => {
+        executions++
+        return { content: 'done' }
+      },
+    })
+    session.on('event', (event) => {
+      if (event.type !== 'approval.requested') return
+      reviews.push(event.request.cwd!)
+      session.respondToApproval(event.request.id, 'approve-session')
+    })
+    const thread = session.startThread('/repo', 'test')
+    await session.waitForTurn(await session.sendTurn(thread.id, 'Run tests'))
+    expect(executions).toBe(4)
+    expect(reviews).toEqual(['.', 'sub', 'sub'])
+  })
+
+  it('asks again when a reviewed directory alias resolves to a different directory', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'harness-approval-cwd-'))
+    const alias = path.join(directory, 'alias')
+    for (const name of ['one', 'two']) mkdirSync(path.join(directory, name))
+    symlinkSync(path.join(directory, 'one'), alias, 'junction')
+    let requests = 0
+    let executions = 0
+    let round = 0
+    const session = new ApiAgentSession({
+      model: 'test',
+      transport: async function* () {
+        if (round++ < 2) {
+          yield {
+            type: 'tool_call',
+            call: { id: `call-${round}`, name: 'run_command', input: { command: 'npm test' } },
+          }
+          yield { type: 'finish', reason: 'tool_calls' }
+        } else yield { type: 'finish', reason: 'stop' }
+      },
+      reviewTool: () => ({ kind: 'command', command: 'npm test', cwd: alias }),
+      executeTool: async () => {
+        executions++
+        if (executions === 1) {
+          rmSync(alias)
+          symlinkSync(path.join(directory, 'two'), alias, 'junction')
+        }
+        return { content: 'done' }
+      },
+    })
+    session.on('event', (event) => {
+      if (event.type !== 'approval.requested') return
+      requests++
+      session.respondToApproval(event.request.id, 'approve-session')
+    })
+    try {
+      const thread = session.startThread(directory, 'test')
+      await session.waitForTurn(await session.sendTurn(thread.id, 'Run tests'))
+      expect(requests).toBe(2)
+      expect(executions).toBe(2)
+    } finally {
+      session.dispose()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
   it('adds shared instructions to the first provider prompt only', async () => {
     const seen: string[][] = []
     const session = new ApiAgentSession({
@@ -248,6 +361,7 @@ describe('ApiAgentSession', () => {
     const session = new ApiAgentSession({
       model: 'test-model',
       secrets: [secret],
+      // oxlint-disable-next-line require-yield -- The test stream fails only after cancellation.
       transport: async function* ({ signal }) {
         release?.()
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()))

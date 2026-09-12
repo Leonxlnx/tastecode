@@ -1,11 +1,5 @@
-import { type BoundaryRecord, type BoundaryValue, list, record, string } from './parse.js'
-
-export const DESIGN_BRIEF_ATTACHMENT = 'tastecode://design-brief-v1'
-const LEGACY_DESIGN_BRIEF_ATTACHMENT = 'personal-harness://design-brief-v1'
-
-export function isDesignBriefAttachment(path: string): boolean {
-  return path === DESIGN_BRIEF_ATTACHMENT || path === LEGACY_DESIGN_BRIEF_ATTACHMENT
-}
+import { type BoundaryRecord, list, record, string } from './parse.js'
+export { DESIGN_BRIEF_ATTACHMENT, isDesignBriefAttachment } from './attachment.js'
 
 export const FINAL_BRIEFING_QUESTION = {
   id: 'final_note',
@@ -135,22 +129,30 @@ export function parseBriefingOutput(text: string): BriefingOutput {
   ) {
     throw new Error('briefing output must contain questions or a completed brief')
   }
+  const questions = value.questions.map(question)
+  if (new Set(questions.map(({ id }) => id)).size !== questions.length) {
+    throw new Error('briefing question ids must be unique')
+  }
   return {
     status: 'questions',
     message: string(value.message, 'message'),
-    questions: value.questions.map(question),
+    questions,
     brief: null,
   }
 }
 
-function question(value: BoundaryValue): BriefingQuestion {
+function question(value: unknown): BriefingQuestion {
   const questionRecord = record(value, 'briefing question')
+  const id = string(questionRecord.id, 'question id')
+  if (!/^[a-z][a-z0-9_]*$/.test(id) || ['constructor', 'prototype', '__proto__'].includes(id)) {
+    throw new Error('question id must be a stable snake_case identifier')
+  }
   const options = list(questionRecord.options, 'briefing question options')
   if (options.length === 0) {
     throw new Error('briefing question must contain options')
   }
   return {
-    id: string(questionRecord.id, 'question id'),
+    id,
     header: string(questionRecord.header, 'question header'),
     question: string(questionRecord.question, 'question'),
     allowOther: questionRecord.allowOther !== false,

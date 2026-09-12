@@ -10,12 +10,12 @@ import type {
   Model,
   Thread,
 } from '@harness/contracts'
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
+import { createOpencodeClient, type Event, type OpencodeClient } from '@opencode-ai/sdk'
 import {
   JsonRpcValueSchema,
   killTree,
+  readSseData,
   spawnCli,
-  type JsonRpcInput,
   type JsonRpcValue,
 } from '@harness/proc'
 import { z } from 'zod'
@@ -25,7 +25,6 @@ import {
   type OpenCodeV2Event,
   type OpenCodeWireEvent,
 } from './events.js'
-import { propertiesWhen } from './properties-when.js'
 
 export const OPENCODE_CAPABILITIES: Capabilities = {
   steer: false,
@@ -77,7 +76,7 @@ const ReasoningModelSchema = z.object({
 /** OpenCode owns variant names and can add custom ones in project config.
  *  Accept both catalog shapes it uses for variants so the result remains
  *  model-specific instead of guessing from the underlying provider name. */
-export function openCodeReasoningEfforts(model: JsonRpcInput): string[] {
+export function openCodeReasoningEfforts(model: unknown): string[] {
   const parsed = ReasoningModelSchema.safeParse(model)
   if (!parsed.success) return []
   const value = parsed.data.variants ?? parsed.data.options?.variants
@@ -103,7 +102,7 @@ export function openCodeMcpConfig(servers: McpServerConfig[], credentials: Recor
   const resolve = (
     value: { source: 'literal'; value: string } | { source: 'credential'; credentialRef: string },
   ) => (value.source === 'literal' ? value.value : (credentials[value.credentialRef] ?? ''))
-  const mcp = z.record(z.string(), JsonRpcValueSchema).parse({})
+  const mcp: Record<string, JsonRpcValue> = {}
   for (const server of servers) {
     if (!server.enabled) {
       mcp[server.id] = { type: 'local', command: ['true'], enabled: false }
@@ -113,22 +112,32 @@ export function openCodeMcpConfig(servers: McpServerConfig[], credentials: Recor
       mcp[server.id] = {
         type: 'local',
         command: [server.transport.command, ...(server.transport.args ?? [])],
-        ...propertiesWhen(server.transport.environment, (includedValue) => ({
-          environment: Object.fromEntries(
-            Object.entries(includedValue).map(([key, value]) => [key, resolve(value)]),
-          ),
-        })),
+        ...(server.transport.environment
+          ? {
+              environment: Object.fromEntries(
+                Object.entries(server.transport.environment).map(([key, value]) => [
+                  key,
+                  resolve(value),
+                ]),
+              ),
+            }
+          : {}),
         enabled: true,
       }
     } else {
       mcp[server.id] = {
         type: 'remote',
         url: server.transport.url,
-        ...propertiesWhen(server.transport.headers, (includedValue) => ({
-          headers: Object.fromEntries(
-            Object.entries(includedValue).map(([key, value]) => [key, resolve(value)]),
-          ),
-        })),
+        ...(server.transport.headers
+          ? {
+              headers: Object.fromEntries(
+                Object.entries(server.transport.headers).map(([key, value]) => [
+                  key,
+                  resolve(value),
+                ]),
+              ),
+            }
+          : {}),
         enabled: true,
       }
     }
@@ -179,12 +188,13 @@ type OpenCodeV2Provider = z.infer<typeof OpenCodeV2ProviderSchema>
 type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
 
 export class OpenCodeAdapter extends EventEmitter<Events> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
   readonly #configuredBaseUrl: string | undefined
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
   #baseUrl: string | undefined
-  #server: { close(): void } | undefined
+  #server: { close(): Promise<void> } | undefined
   #protocol: OpenCodeProtocol | undefined
   #authorization: string | undefined
   #client: OpencodeClient | undefined
@@ -192,11 +202,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   #sessionId: string | undefined
   #threadId: string | undefined
   #turnId: string | undefined
-  #turnCounter = 0
   /** Whether the server showed any session activity since the turn started. */
   #turnSawActivity = false
   #mapper: OpenCodeEventMapper | undefined
   #eventController: AbortController | undefined
+  #streamFailure: Error | undefined
   #approval: ApprovalMode = 'ask'
   #pendingApprovals = new Map<string, { request: ApprovalRequest; surfaced: boolean }>()
   #replyingApprovals = new Map<string, Promise<void>>()
@@ -264,7 +274,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
           body: JSON.stringify({
             title: 'TasteCode',
             location: { directory: workspacePath },
-            ...propertiesWhen(model, (model) => ({ model })),
+            ...(model ? { model } : {}),
           }),
         },
         SessionEnvelopeSchema,
@@ -349,6 +359,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       throw new Error('OpenCode session has not started')
     }
     if (attachments.length) throw new Error('OpenCode attachments are not supported yet')
+    if (this.#streamFailure) throw this.#streamFailure
     if (this.#turnId) throw new Error('a turn is already running')
     const selection = applyOpenCodeTurnOptions(
       { model: this.#model, effort: this.#effort },
@@ -356,7 +367,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     )
     this.#model = selection.model
     this.#effort = selection.effort
-    const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    const turnId = `${threadId}-turn-${randomUUID()}`
     this.#turnId = turnId
     this.#turnSawActivity = false
     this.#mapper = new OpenCodeEventMapper(turnId, this.#model)
@@ -373,14 +384,12 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#effort && this.#effort !== OPENCODE_DEFAULT_VARIANT ? this.#effort : undefined
     void this.#client!.session.promptAsync({
       path: { id: this.#sessionId },
-      // SAFETY: The captured OpenCode v1 endpoint accepts this text-only prompt body;
-      // the generated SDK models the same runtime endpoint with an impossible `never` body.
       body: {
         parts: [{ type: 'text', text }],
-        ...propertiesWhen(model, (model) => ({ model })),
-        ...propertiesWhen(variant, (variant) => ({ variant })),
-        ...propertiesWhen(this.#instructions, (includedValue) => ({ system: includedValue })),
-      } as never,
+        ...(model ? { model } : {}),
+        ...(variant ? { variant } : {}),
+        ...(this.#instructions ? { system: this.#instructions } : {}),
+      },
       throwOnError: true,
     }).catch(() => this.#failTurn(turnId))
     return turnId
@@ -478,18 +487,20 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
             displayName: `${provider.name} · ${model.name}`,
             isDefault: result.default[provider.id] === model.id,
             reasoningEfforts,
-            ...propertiesWhen(reasoningEfforts.length > 0, () => ({
-              defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-            })),
+            ...(reasoningEfforts.length > 0
+              ? {
+                  defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+                }
+              : {}),
             serviceTiers: [],
           }
         }),
       )
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
     this.#eventController?.abort()
-    this.#server?.close()
+    const stopped = this.#server?.close() ?? this.#processStop
     this.#eventController = undefined
     this.#server = undefined
     // Without this a disposed instance stays pointed at the closed port and a
@@ -506,37 +517,48 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#instructionsPending = false
     this.#pendingApprovals.clear()
     this.#replyingApprovals.clear()
+    this.#processStop = stopped
+    return stopped
   }
 
   #newClient(directory?: string): OpencodeClient {
     return createOpencodeClient({
       baseUrl: this.#baseUrl!,
-      ...propertiesWhen(directory, (directory) => ({ directory })),
-      ...propertiesWhen(this.#authorization, (includedValue) => ({
-        headers: { authorization: includedValue },
-      })),
+      ...(directory ? { directory } : {}),
+      ...(this.#authorization
+        ? {
+            headers: { authorization: this.#authorization },
+          }
+        : {}),
     })
   }
 
   async #subscribe(): Promise<void> {
+    this.#streamFailure = undefined
     this.#eventController?.abort()
     const controller = new AbortController()
     this.#eventController = controller
-    if (this.#protocol === 'v2') {
-      await this.#subscribeV2(controller)
-      return
-    }
-    const { stream } = await this.#client!.event.subscribe({ signal: controller.signal })
-    void (async () => {
-      try {
-        for await (const event of stream) this.#onEvent(event)
-      } catch {
-        if (!controller.signal.aborted) {
-          this.emit('log', 'OpenCode event stream disconnected')
-          this.#failTurn()
-        }
-      }
-    })()
+    const protocol = this.#protocol!
+    const url = new URL(protocol === 'v2' ? '/api/event' : '/event', this.#baseUrl)
+    if (protocol === 'v1') url.searchParams.set('directory', this.#workspacePath)
+    const response = await fetch(url, {
+      headers: this.#authorization ? { authorization: this.#authorization } : {},
+      signal: controller.signal,
+    })
+    if (!response.ok || !response.body) throw new Error('OpenCode event stream failed')
+    void readOpenCodeSse(
+      response.body,
+      (event) => this.#onEvent(event),
+      controller.signal,
+      protocol,
+    )
+      .catch(() => undefined)
+      .finally(() => {
+        if (controller.signal.aborted || controller !== this.#eventController) return
+        this.#streamFailure = new Error('OpenCode event stream disconnected')
+        this.emit('log', this.#streamFailure.message)
+        this.#failTurn()
+      })
   }
 
   async #detectProtocol(): Promise<OpenCodeProtocol> {
@@ -553,14 +575,14 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     }
   }
 
-  async #v2Request(path: string, init: RequestInit = {}): Promise<JsonRpcValue | undefined> {
+  async #v2Request(path: string, init: RequestInit = {}): Promise<unknown> {
     const headers = new Headers(init.headers)
     if (this.#authorization) headers.set('authorization', this.#authorization)
     if (init.body !== undefined) headers.set('content-type', 'application/json')
     const response = await fetch(new URL(path, this.#baseUrl), { ...init, headers })
     if (!response.ok) throw new Error(`OpenCode v2 request failed (${response.status})`)
     if (response.status === 204) return undefined
-    return JsonRpcValueSchema.parse(await response.json())
+    return response.json()
   }
 
   #v2RequestParsed<Result>(
@@ -569,22 +591,6 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     result: z.ZodType<Result>,
   ): Promise<Result> {
     return this.#v2Request(path, init).then((value) => result.parse(value))
-  }
-
-  async #subscribeV2(controller: AbortController): Promise<void> {
-    const response = await fetch(new URL('/api/event', this.#baseUrl), {
-      headers: this.#authorization ? { authorization: this.#authorization } : {},
-      signal: controller.signal,
-    })
-    if (!response.ok || !response.body) throw new Error('OpenCode v2 event stream failed')
-    void readOpenCodeSse(response.body, (event) => this.#onEvent(event), controller.signal).catch(
-      () => {
-        if (!controller.signal.aborted) {
-          this.emit('log', 'OpenCode event stream disconnected')
-          this.#failTurn()
-        }
-      },
-    )
   }
 
   async #sendV2Turn(text: string, turnId: string): Promise<void> {
@@ -650,9 +656,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
           displayName: `${providerNames.get(model.providerID)} · ${model.name}`,
           isDefault: defaultModel?.providerID === model.providerID && defaultModel.id === model.id,
           reasoningEfforts,
-          ...propertiesWhen(reasoningEfforts.length > 0, () => ({
-            defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-          })),
+          ...(reasoningEfforts.length > 0
+            ? {
+                defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+              }
+            : {}),
           serviceTiers: [],
         }
       })
@@ -840,7 +848,7 @@ function openCodeV2Model(
   return {
     id: model.modelID,
     providerID: model.providerID,
-    ...propertiesWhen(variant, (includedVariant) => ({ variant: includedVariant })),
+    ...(variant ? { variant: variant } : {}),
   }
 }
 
@@ -850,7 +858,7 @@ async function launchOpenCodeServer(
 ): Promise<{
   url: string
   authorization: string
-  close(): void
+  close(): Promise<void>
 }> {
   // OpenCode v2 currently fixes the Basic-auth username to `opencode`; only
   // the password is configurable on the wire.
@@ -862,9 +870,11 @@ async function launchOpenCodeServer(
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
-        ...propertiesWhen(Object.keys(config).length > 0, () => ({
-          OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-        })),
+        ...(Object.keys(config).length > 0
+          ? {
+              OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
+            }
+          : {}),
       },
     })
     let output = ''
@@ -874,8 +884,10 @@ async function launchOpenCodeServer(
       settled = true
       clearTimeout(timer)
       if (error || !url) {
-        killTree(child)
-        reject(error ?? new Error('OpenCode server did not publish a URL'))
+        void killTree(child).then(
+          () => reject(error ?? new Error('OpenCode server did not publish a URL')),
+          reject,
+        )
         return
       }
       resolve({ url, authorization, close: () => killTree(child) })
@@ -897,41 +909,35 @@ async function launchOpenCodeServer(
   })
 }
 
+const OpenCodeV1EventSchema = z.object({
+  type: z.string(),
+  properties: z.record(z.string(), JsonRpcValueSchema),
+})
+
 async function readOpenCodeSse(
   stream: ReadableStream<Uint8Array>,
-  onEvent: (event: OpenCodeV2Event) => void,
+  onEvent: (event: OpenCodeWireEvent) => void,
   signal: AbortSignal,
+  protocol: OpenCodeProtocol,
 ): Promise<void> {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  try {
-    while (!signal.aborted) {
-      const result = await reader.read()
-      if (result.done) return
-      buffer += decoder.decode(result.value, { stream: true })
-      buffer = buffer.replace(/\r\n/g, '\n')
-      let boundary: number
-      while ((boundary = buffer.indexOf('\n\n')) >= 0) {
-        const frame = buffer.slice(0, boundary)
-        buffer = buffer.slice(boundary + 2)
-        const data = frame
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trimStart())
-          .join('\n')
-        if (!data) continue
-        try {
-          const parsed = OpenCodeV2EventSchema.safeParse(JSON.parse(data))
-          if (parsed.success) onEvent(parsed.data)
-        } catch {
-          // One malformed frame must not disconnect an otherwise healthy SSE
-          // stream; OpenCode will publish the next durable event independently.
-        }
+  for await (const data of readSseData(stream)) {
+    if (signal.aborted) return
+    if (!data) continue
+    try {
+      const value: unknown = JSON.parse(data)
+      if (protocol === 'v2') {
+        const parsed = OpenCodeV2EventSchema.safeParse(value)
+        if (parsed.success) onEvent(parsed.data)
+      } else {
+        const parsed = OpenCodeV1EventSchema.safeParse(value)
+        // SAFETY: The SDK also validates only JSON. Check the common envelope
+        // first; the mapper consumes the captured event variants, and the
+        // surrounding catch discards malformed variant-specific payloads.
+        if (parsed.success) onEvent(parsed.data as Event)
       }
+    } catch {
+      // A malformed event does not invalidate the following durable event.
     }
-  } finally {
-    reader.releaseLock()
   }
 }
 

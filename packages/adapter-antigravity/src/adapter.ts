@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, readNdjson } from '@harness/proc'
+import { killTree, spawnOwned, readNdjson } from '@harness/proc'
 import { z } from 'zod'
 import {
   collapseAntigravityModels,
@@ -11,7 +11,6 @@ import {
   rememberAntigravityIndex,
   resolveAntigravityModel,
 } from './models.js'
-import { propertiesWhen } from './properties-when.js'
 
 /**
  * Tier 3 adapter: drives Google's Antigravity CLI (`agy`) in headless
@@ -150,6 +149,7 @@ type SpawnFn = (
 ) => ChildProcessWithoutNullStreams
 
 export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: SpawnFn
   #workspacePath = ''
   #options: AntigravityStartOptions = {}
@@ -165,7 +165,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawn
+    this.#spawn = options.spawn ?? spawnOwned
   }
 
   get capabilities(): Capabilities {
@@ -216,7 +216,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
-    if (this.#child) this.#stop(this.#child)
+    if (this.#child) await this.#stop(this.#child)
     const child = this.#spawn(antigravityCommand(), args, {
       cwd: this.#workspacePath,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -287,9 +287,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             this.emit('event', {
               type: 'usage.updated',
               usage: {
-                ...propertiesWhen(this.#options.model, (includedValue) => ({
-                  model: includedValue,
-                })),
+                ...(this.#options.model
+                  ? {
+                      model: this.#options.model,
+                    }
+                  : {}),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_tokens ?? 0,
                 outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
@@ -311,6 +313,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
         }
       },
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
+      {
+        onError: (error) => {
+          this.emit('event', { type: 'thread.error', threadId, message: error.message })
+          void killTree(child)
+        },
+      },
     )
 
     child.stderr.setEncoding('utf8')
@@ -342,7 +350,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   }
 
   async interrupt(): Promise<void> {
-    if (this.#child) this.#stop(this.#child)
+    if (this.#child) await this.#stop(this.#child)
   }
 
   /**
@@ -367,11 +375,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        if (result instanceof Error) reject(result)
-        else resolve(result)
+        void killTree(child).then(() => {
+          if (result instanceof Error) reject(result)
+          else resolve(result)
+        }, reject)
       }
       const timer = setTimeout(() => {
-        killTree(child)
         finish(new Error('Antigravity model discovery timed out'))
       }, 15000)
       child.stdout.setEncoding('utf8')
@@ -389,14 +398,17 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     })
   }
 
-  dispose(): void {
-    if (this.#child) this.#stop(this.#child)
+  dispose(): Promise<void> {
+    const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
+    this.#processStop = stopped
+    return stopped
   }
 
-  #stop(child: ChildProcessWithoutNullStreams): void {
+  #stop(child: ChildProcessWithoutNullStreams): Promise<void> {
     this.#intentionalKills.add(child)
-    killTree(child)
+    this.#processStop = killTree(child)
+    return this.#processStop
   }
 }
 

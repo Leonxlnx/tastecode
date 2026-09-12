@@ -2,9 +2,9 @@ import { existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Account, Model, ProviderSetup } from '@harness/contracts'
-import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { isInstalled, spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
-import { propertiesWhen } from './properties-when.js'
 
 const KimiModelsSchema = z.object({
   models: z
@@ -223,9 +223,11 @@ export function parseKimiModels(output: string): Model[] {
       displayName: details.displayName ?? id,
       isDefault: index === 0,
       reasoningEfforts: details.supportEfforts ?? [],
-      ...propertiesWhen(details.defaultEffort, (defaultReasoningEffort) => ({
-        defaultReasoningEffort,
-      })),
+      ...(details.defaultEffort
+        ? {
+            defaultReasoningEffort: details.defaultEffort,
+          }
+        : {}),
       serviceTiers: [],
     }
   })
@@ -240,10 +242,12 @@ function captureCli(command: string, args: string[], timeoutMs = 5000): Promise<
       if (settled) return
       settled = true
       clearTimeout(timer)
-      error ? reject(error) : resolve(output)
+      void killTree(child).then(() => {
+        if (error) reject(error)
+        else resolve(output)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error(`${command} model discovery timed out`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')

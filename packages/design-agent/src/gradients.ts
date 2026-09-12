@@ -1,6 +1,5 @@
 import type { BrandSystem } from './brand.js'
-import { z } from 'zod'
-import { boundedInteger, type BoundaryValue, record } from './parse.js'
+import { boundedInteger, record } from './parse.js'
 
 export const GRADIENT_PURPOSES = ['card', 'section', 'page'] as const
 export type GradientPurpose = (typeof GRADIENT_PURPOSES)[number]
@@ -32,9 +31,8 @@ interface GradientPoint {
 }
 
 const HEX = /^#(?:[\da-f]{3}|[\da-f]{6})$/iu
-const HexSchema = z.string().regex(HEX)
 
-export function generateGradientSet(input: BoundaryValue): GradientSet {
+export function generateGradientSet(input: unknown): GradientSet {
   const request = parseRequest(input)
   const random = mulberry32(request.seed)
   return {
@@ -101,7 +99,7 @@ function point(random: () => number): GradientPoint {
   return { x: Math.round(12 + random() * 76), y: Math.round(10 + random() * 80) }
 }
 
-function parseRequest(input: BoundaryValue): GradientRequest {
+function parseRequest(input: unknown): GradientRequest {
   const value = record(input, 'gradient request')
   return {
     background: color(value.background, 'background'),
@@ -112,19 +110,18 @@ function parseRequest(input: BoundaryValue): GradientRequest {
   }
 }
 
-function color(value: BoundaryValue, field: string): string {
+function color(value: unknown, field: string): string {
   const normalized = normalizeHex(value)
   if (!normalized) throw new Error(`gradient ${field} must be an opaque sRGB hex color`)
   return normalized
 }
 
-function normalizeHex(value: BoundaryValue): string | undefined {
-  const result = HexSchema.safeParse(value)
-  if (!result.success) return undefined
-  const hex = result.data
+function normalizeHex(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !HEX.test(value)) return undefined
+  const hex = value
   return (
     hex.length === 4
-      ? `#${[...hex.slice(1)].map((character) => character.repeat(2)).join('')}`
+      ? `#${Array.from(hex.slice(1), (character) => character.repeat(2)).join('')}`
       : hex
   ).toUpperCase()
 }
@@ -134,7 +131,7 @@ function rgba(value: string, alpha: number): string {
   return `rgba(${channels.join(', ')} / ${alpha})`
 }
 
-function integer(value: BoundaryValue, field: string, minimum: number, maximum: number): number {
+function integer(value: unknown, field: string, minimum: number, maximum: number): number {
   const result = boundedInteger(value, minimum, maximum)
   if (result === undefined) {
     throw new Error(`gradient ${field} must be an integer from ${minimum} to ${maximum}`)

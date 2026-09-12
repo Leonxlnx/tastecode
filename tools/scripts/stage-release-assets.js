@@ -1,38 +1,42 @@
-import { copyFile, mkdir, readdir } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { copyFile, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { releaseAssets, verifyReleaseDirectory } from './release-manifest.js'
+import { isMain, releaseConfig, verifyReleaseDirectory } from './release-manifest.js'
 
-export async function stageReleaseAssets(sourceDirectory, destinationDirectory, platform) {
+export async function stageReleaseAssets(
+  sourceDirectory,
+  destinationDirectory,
+  platform,
+  { approvedSha, config = releaseConfig } = {},
+) {
   const source = path.resolve(sourceDirectory)
   const destination = path.resolve(destinationDirectory)
   if (source === destination) throw new Error('Release staging source and destination must differ')
-
-  await verifyReleaseDirectory(source, { platform, exact: false })
-  await mkdir(destination, { recursive: true })
-
-  const existing = await readdir(destination)
-  if (existing.length > 0) throw new Error(`Release staging directory is not empty: ${destination}`)
-
-  for (const name of releaseAssets(platform)) {
-    await copyFile(path.join(source, name), path.join(destination, name))
+  const names = await verifyReleaseDirectory(source, {
+    platform,
+    exact: false,
+    approvedSha,
+    config,
+  })
+  await mkdir(destination)
+  try {
+    for (const name of names)
+      await copyFile(path.join(source, name), path.join(destination, name), constants.COPYFILE_EXCL)
+    await verifyReleaseDirectory(destination, { platform, approvedSha, config })
+    return destination
+  } catch (error) {
+    await rm(destination, { recursive: true, force: true })
+    throw error
   }
-
-  await verifyReleaseDirectory(destination, { platform, exact: true })
-  return destination
 }
 
-const isMain =
-  process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url
-
-if (isMain) {
-  const source = process.argv[2] ?? 'release'
-  const destination = process.argv[3]
-  const platform = process.argv[4]
-  if (!destination || !platform) {
-    throw new Error('Usage: node stage-release-assets.js <source> <destination> <platform>')
-  }
-
-  const staged = await stageReleaseAssets(source, destination, platform)
-  console.log(`Staged verified ${platform} release assets in ${staged}`)
+if (isMain(import.meta.url)) {
+  const [source, destination, platform] = process.argv.slice(2)
+  if (!source || !destination || !platform)
+    throw new Error(
+      'Usage: node stage-release-assets.js <source> <new-destination> <windows|macos>',
+    )
+  console.log(
+    `Staged verified assets in ${await stageReleaseAssets(source, destination, platform, { approvedSha: process.env.APPROVED_SHA })}`,
+  )
 }

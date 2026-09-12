@@ -2,7 +2,7 @@
 import { createRef, useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TestTransport } from '../test-transport.js'
+import type { Transport } from '../transport.js'
 import { SessionSearchHost, type SessionSearchHandle } from './SessionSearchHost.js'
 
 const PROJECTS = [
@@ -20,10 +20,9 @@ const PROJECTS = [
   },
 ]
 
-const transport = new TestTransport(async (method) => {
-  if (method === 'search.sessions') return { results: [], nextCursor: null }
-  throw new Error(`Unexpected request: ${method}`)
-})
+const transport = {
+  request: vi.fn(async () => ({ results: [], nextCursor: null })),
+} as unknown as Transport
 
 function SearchHost(props: { onSelect?: () => void }) {
   const search = useRef<SessionSearchHandle>(null)
@@ -58,7 +57,7 @@ describe('SessionSearchHost focus restoration', () => {
     opener.focus()
     fireEvent.click(opener)
     const input = await screen.findByRole('combobox', { name: 'Search every chat' })
-    expect(document.activeElement).toBe(input)
+    await waitFor(() => expect(document.activeElement).toBe(input))
 
     close(input)
 

@@ -1,0 +1,119 @@
+.composer-resource-picker {
+  position: absolute;
+  z-index: 50;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(380px, 100%);
+  overflow: hidden;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-popup);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text);
+  /* This list follows typed input; it must be ready on the next frame. */
+}
+
+.composer-resource-picker__list {
+  max-height: min(240px, calc(100vh - 170px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 3px;
+}
+
+.composer-resource-picker__option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 7px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-popup-item);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.composer-resource-picker__option:not(.is-unavailable):is(:hover, :focus-visible, .is-active) {
+  background: var(--surface-3);
+}
+
+.composer-resource-picker__option + .composer-resource-picker__option {
+  margin-top: 1px;
+}
+
+.composer-resource-picker__option > svg {
+  color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.composer-resource-picker__option:not(.is-unavailable):is(:hover, :focus-visible, .is-active)
+  > svg {
+  color: var(--text);
+}
+
+.composer-resource-picker__option.is-unavailable {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.composer-resource-picker__copy {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.composer-resource-picker__name {
+  flex: none;
+  max-width: 42%;
+  overflow: hidden;
+  font-size: var(--t-sm);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-resource-picker__description {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-resource-picker__status {
+  display: grid;
+  min-height: 48px;
+  margin: 0;
+  padding: 14px;
+  place-items: center;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+@media (max-width: 620px) {
+  .composer-resource-picker__description {
+    display: none;
+  }
+
+  .composer-resource-picker__name {
+    max-width: 100%;
+  }
+}
+
+@container chat-stage (max-width: 480px) {
+  .composer-resource-picker__description,
+  .composer-resource-picker__meta span:last-child {
+    display: none;
+  }
+
+  .composer-resource-picker__name {
+    max-width: 100%;
+  }
+}

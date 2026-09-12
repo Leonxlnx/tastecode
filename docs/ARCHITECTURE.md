@@ -124,8 +124,10 @@ depend on that vendor. A different Claude surface can still replace it without t
 entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
 directory, and non-secret environment overrides in
 `~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
-never belong in this file. Custom commands resolve against a desktop-safe PATH that includes
-conventional user locations such as `~/.local/bin`. When a mod boots from its own directory,
+never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
+desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
+adds conventional user locations such as `~/.local/bin` and Homebrew's prefix rather than
+sourcing `.zshrc`. When a mod boots from its own directory,
 `HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
 receive that project normally. The source gets its own model catalog and persisted identity, so
 a fork can coexist with the stock CLI without replacing it.
@@ -151,6 +153,24 @@ session id, the adapter emits it as recovery metadata and the server persists it
 Restarted runtimes receive both ids and must return the original TasteCode id; the provider id is
 used only at that adapter's resume boundary. A provider that never reported one fails with a
 recoverable new-chat instruction rather than passing a synthetic TasteCode id to the provider.
+
+**Completed resumable runtimes are a hardware-scaled warm LRU.** Each attached adapter can own a
+child process, so keeping every completed thread attached makes idle memory grow without a bound.
+TasteCode keeps one warm idle runtime per 2 GiB of RAM, with a floor of four and a ceiling of 16.
+Viewing a thread refreshes its recency; an evicted thread resumes on its next submission. Running,
+queued, Side chat, provider-operation, and non-resumable runtimes are never evicted.
+
+**Large optional feature engines load only when their feature starts.** The server keeps Design
+mode's tiny attachment marker on the normal turn path, but defers its full prompts, parsers, and
+validators until a design run starts or resumes. An unused optional feature must not add to every
+startup or idle process merely because its routes exist.
+
+**Startup readiness uses the lightest provider-owned check.** Codex sign-in readiness comes from
+its short `login status` command, so opening TasteCode does not start a full `app-server` merely to
+enable the composer. Provider Settings still asks the native protocol for rich account details.
+The selected source may also reuse a model catalog that the provider validated within the last five
+minutes; opening the model picker always requests live discovery. Cached models never replace the
+per-launch sign-in check.
 
 **Tier 3 will break** — it's coupled to someone else's output shape. Each Tier 3 adapter
 needs a declared version range, a CI contract test that runs the real binary, graceful
@@ -240,6 +260,17 @@ servers in `session/new`. Sessions without a project server keep the captured st
 path. This preserves Grok's inherited user configuration without writing `~/.grok/config.toml`
 or a repository `.grok/config.toml` on the user's behalf.
 
+Claude Code receives enabled project definitions on both start and resume through the Agent
+SDK. Initial same-id loopback definitions suppress overridden inherited servers without exposing
+credentials. Before the session becomes ready, the SDK control channel replaces these definitions
+with the configured transports. Each server receives only its own credentials; secrets do not
+enter command arguments or the shared Claude process environment. Diagnostics are redacted.
+Other inherited servers remain available. The captured SDK cannot safely hide an inherited
+server without writing vendor settings. Claude's adapter therefore rejects disabled entries
+and unsupported per-server working directories before persistence or process startup. It
+does not advertise live inventory, reload, or OAuth controls. Removing a project definition
+still restores the inherited configuration on the next start or resume.
+
 _Rejected:_ repository-local MCP config (opening an untrusted checkout must not authorize
 command execution; revisit only with an explicit trust gate) · SQLite config (not
 human-readable or hand-editable) · writing project state into each vendor's global config
@@ -249,14 +280,15 @@ human-readable or hand-editable) · writing project state into each vendor's glo
 
 ## Storage
 
-**SQLite in the server. Append-only event log is the source of truth; UI state is a derived
-read model. FTS5 for search.**
+**SQLite in the server. The append-only event log is the source of truth for thread
+transcripts and orchestration history; UI state is a derived read model. FTS5 for search.**
 
 - Crash mid-turn → replay the log, lose nothing.
 - Undo and checkpoints fall out naturally.
 - Read-model migrations are cheap because they can always be rebuilt.
-- **Rule: state changes by appending an event.** No direct writes to read-model tables. This
-  is the rule most likely to erode; enforce it in review.
+- **Rule: transcript and orchestration history changes by appending an event.** Project,
+  lifecycle, settings, and catalog metadata remain ordinary transactional records. Never write
+  directly to read models derived from the event log.
 
 **Checkpoints are git**, captured on turn start and completion. Correct, inspectable with
 tools users already trust, identical across every engine. Non-git directories fall back to a
@@ -265,6 +297,23 @@ content-addressed snapshot of touched files only.
 **Search is FTS5** over message and tool-output text. Instant search across every session
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well.
+
+**Many-thread sidebar state stays sparse and incremental.** The SQLite inbox index materializes
+only current failures and pending requests; successful historic turns do not add startup work.
+Index migrations and transcript rewrites rebuild it from the append-only event log. In memory,
+Inbox projections allocate approval and input sets only while requests are pending. Live status
+changes enter a bounded thread-id journal, so `projects.list` updates the exact changed rows while
+its project, thread, and queue snapshots are unchanged. An expired journal falls back to a
+complete projection. Visible inbox clocks also stay narrow: second, minute, and day values use
+separate stable context lanes, so one working thread updates its own status without rebuilding
+idle rows, menus, or shelf details. Repeated closed menus mount only their trigger; the full
+positioning and keyboard controller activates on first use and stays warm. Context-menu targets
+share one delegated listener set instead of installing listeners on every visible row.
+
+**Long-thread replay snapshots extend from their durable tail.** An exact snapshot is returned
+without parsing the event log. When a few newer events exist, the server reads only those events,
+folds them over the prior compact replay, and replaces the snapshot. History rewrites delete the
+snapshot first, so a stale branch can never survive a restore.
 
 |             | Windows                     | macOS                                      |
 | ----------- | --------------------------- | ------------------------------------------ |
@@ -277,8 +326,22 @@ overwriting an existing TasteCode file.
 
 Config is human-readable and hand-editable on purpose. It is never where secrets go.
 
-Needs deciding before v1: a retention policy. Unbounded event logs grow forever, and
-silently deleting a user's history is unacceptable.
+History retention is user controlled. The local `history` command reports storage size,
+exports records, previews eligible closed tasks, and archives them before explicit cleanup.
+Cleanup retains active tasks and private checkouts, then reclaims unused database pages.
+There is no automatic history expiry. See [History maintenance](./HISTORY.md).
+
+Checkpoint and undo commits have database-scoped Git refs. Worktree cleanup combines all
+retained commits by Git common directory before removing unused refs. Restore and branch
+switch guards instead use the canonical checkout directory: separate worktrees can work
+independently, while tasks sharing a checkout cannot restore files during another turn or
+while its process is still stopping. An isolated start receives its base ref directly.
+
+`ProviderControls` owns provider-specific account, login, usage, MCP and skill behavior.
+Shared orchestration reads declared capabilities and merges shared local configuration.
+Settings views renew 60-second notification leases; one read cannot hold a control process
+for the whole app lifetime. `ThreadController` owns web transcript, replay, queue, submission
+and draft state, while the frame store still batches streamed deltas for React.
 
 _Rejected:_ JSONL files (we'll _read_ Claude Code's, but no indexing/transactions/search) ·
 libsql/Turso (sync story we don't need yet) · SQLite in the renderer (source of truth in the
@@ -308,10 +371,21 @@ The rules that solve it:
    after, identical layout box so nothing reflows. Only the languages we load; cache by
    content hash.
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
-5. **Collapse huge blocks by default** — better UX and better performance.
-6. **Never mount full history on open.** Last N turns, fetch older on demand.
+5. **Closed activity owns no detail DOM.** Command and tool details mount when their
+   disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
+   must not consume layout, DOM, or image-preview work.
+6. **Collapse huge blocks by default** — better UX and better performance.
+7. **Never mount full history on open.** Last N turns, fetch older on demand.
+8. **Partial background caches do not grow a second transcript.** At most eight inactive
+   workers keep a hot transcript, with 256 items or 256 KiB per worker and 512 items or 512 KiB
+   in total. Older or larger workers retain only lifecycle and attention state. Their transcript
+   reloads from the local event log when selected.
+9. **Completed inactive histories have a shared text budget.** The three-entry / 3,000-item LRU
+   also caps retained strings at 8 Mi characters (at most 16 MiB of UTF-16 payload). An oversized
+   completed transcript leaves the cache and reloads from the local event log when selected, so
+   one huge reply cannot consume idle memory.
 
-### Budgets — CI gates, not aspirations
+### Budgets — local release gates
 
 |                                         |                          |
 | --------------------------------------- | ------------------------ |
@@ -324,6 +398,10 @@ The rules that solve it:
 
 Build a 1,000-message fixture thread early, keep it in the repo, run every UI PR against it.
 **A PR that regresses a budget doesn't merge.**
+
+The [local Electron gate](./PERFORMANCE-CHECKS.md) measures real visible rows, repeated
+startup and stable idle memory. Reports also keep transient memory peaks. Hosted CI stays
+manual.
 
 ---
 
@@ -343,18 +421,32 @@ registry entry, which is deliberately a good first outside contribution.
 
 ## Change log
 
-| Date       | Change                                                                            |
-| ---------- | --------------------------------------------------------------------------------- |
-| 2026-07-28 | Initial decisions.                                                                |
-| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.            |
-| 2026-08-02 | Added Codex-backed voice dictation.                                               |
-| 2026-08-03 | Added the provider-neutral direct API runtime decision.                           |
-| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.                 |
-| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.                |
-| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                            |
-| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests.           |
-| 2026-08-14 | Removed phone and remote-client support from active product scope.                |
-| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.                       |
-| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.                 |
-| 2026-08-18 | Moved voice transcription from ChatGPT session reuse to explicit OpenAI API auth. |
-| 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.            |
+| Date       | Change                                                                                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-07-28 | Initial decisions.                                                                                                                                                             |
+| 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                                                                                                         |
+| 2026-08-02 | Added Codex-backed voice dictation.                                                                                                                                            |
+| 2026-08-03 | Added the provider-neutral direct API runtime decision.                                                                                                                        |
+| 2026-08-06 | Replaced the Electron target with a staged Rust + GPUI migration.                                                                                                              |
+| 2026-08-12 | Added user-owned, protocol-compatible harness commands and Pi RPC.                                                                                                             |
+| 2026-08-12 | Defined provider-neutral ephemeral Side chat sessions.                                                                                                                         |
+| 2026-08-12 | Standardized Electron browser previews on sandboxed `<webview>` guests.                                                                                                        |
+| 2026-08-14 | Removed phone and remote-client support from active product scope.                                                                                                             |
+| 2026-08-14 | Routed project-enabled Grok MCP sessions through ACP stdio.                                                                                                                    |
+| 2026-08-15 | Archived the Rust + GPUI rewrite and restored Electron on `main`.                                                                                                              |
+| 2026-08-18 | Moved voice transcription from ChatGPT session reuse to explicit OpenAI API auth.                                                                                              |
+| 2026-08-18 | Separated stable TasteCode ids from provider-native resume identities.                                                                                                         |
+| 2026-08-21 | Bounded completed resumable adapter runtimes with a hardware-scaled warm LRU.                                                                                                  |
+| 2026-08-21 | Made many-thread Inbox state sparse and status projection incremental.                                                                                                         |
+| 2026-08-21 | Materialized only current Inbox state instead of replaying every historic turn.                                                                                                |
+| 2026-08-21 | Extended stale long-thread replay snapshots from only their new event tail.                                                                                                    |
+| 2026-08-21 | Added shared item, byte, and worker limits for background transcript caches.                                                                                                   |
+| 2026-08-21 | Bounded completed inactive transcript caches by retained string size.                                                                                                          |
+| 2026-08-21 | Deferred closed menu controllers and shared row context-menu listeners.                                                                                                        |
+| 2026-08-21 | Released one-shot Codex control processes after a short idle window.                                                                                                           |
+| 2026-08-21 | Expired resumable thread processes after a bounded warm idle window.                                                                                                           |
+| 2026-08-21 | Limited runtime-retention sweeps to safe resumable idle processes.                                                                                                             |
+| 2026-08-21 | Removed full provider-control startup from cached, signed-in launches.                                                                                                         |
+| 2026-08-21 | Indexed workspace review folders to bound large changed-file tree construction.                                                                                                |
+| 2026-08-22 | Applied the desktop-safe PATH to provider detection, CLI spawns, and the PTY.                                                                                                  |
+| 2026-09-08 | Added checkpoint reachability and checkout guards, explicit history maintenance, provider controls, task-state ownership, bounded leases and local Electron performance gates. |
