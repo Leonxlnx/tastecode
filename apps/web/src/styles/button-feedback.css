@@ -1,4 +1,4 @@
-/* Important rules in this layer keep lazy feature styles from delaying a press. */
+/* Keep hover and open states immediate, without a separate mouse-down flash. */
 @layer button-feedback {
   :where(
     button,
@@ -23,29 +23,9 @@
     transition: none !important;
 
     &:not(:disabled):not([aria-disabled='true']) {
-      &:active {
-        /* A translucent fill keeps primary, danger, and selected colors readable. */
-        background-image: linear-gradient(
-          var(--control-press-overlay),
-          var(--control-press-overlay)
-        ) !important;
-      }
-
       &[aria-haspopup]:not([aria-haspopup='false'])[aria-expanded='true'] {
         background: var(--control-pressed) !important;
       }
     }
-  }
-
-  /* Preview images cover their button's fill, so dim the image itself on press. */
-  :where(.attachment-preview__open, .viewed-image-preview__open, .queue-row__media) img {
-    transition: none !important;
-  }
-
-  :where(.attachment-preview__open, .viewed-image-preview__open, .queue-row__media):not(
-      :disabled
-    ):not([aria-disabled='true']):active
-    img {
-    opacity: var(--control-pressed-image-opacity) !important;
   }
 }
