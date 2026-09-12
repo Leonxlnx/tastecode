@@ -387,6 +387,34 @@ describe('Composer media attachments', () => {
   })
 })
 
+describe('Composer attachment-only messages', () => {
+  it.each([
+    ['image.png', 'image/png', false],
+    ['brief.pdf', 'application/pdf', false],
+    ['notes.txt', 'text/plain', true],
+  ])('sends %s without text (running: %s)', async (name, type, running) => {
+    const path = `/tmp/${name}`
+    bridge.savePastedFile.mockResolvedValueOnce({ path, name })
+    const onSend = vi.fn()
+    renderComposer(onSend, { running })
+    const composer = screen.getByPlaceholderText('Do anything')
+    const button = screen.getByRole('button', { name: running ? 'Stop' : 'Send' })
+    if (!running) expect((button as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.paste(composer, {
+      clipboardData: { files: [new File(['file bytes'], name, { type })] },
+    })
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: running ? 'Queue' : 'Send' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    )
+    if (running) fireEvent.keyDown(composer, { key: 'Enter' })
+    else fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('', [path])
+  })
+})
+
 describe('Composer attachment source switching', () => {
   it('keeps existing attachments removable but blocks sending them through an unsupported source', async () => {
     bridge.pickFiles.mockResolvedValue(['/work/reference.txt'])

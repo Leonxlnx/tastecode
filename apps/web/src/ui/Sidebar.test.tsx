@@ -289,7 +289,7 @@ describe('Sidebar chat actions', () => {
   it('uses the classic account footer in the inbox sidebar', async () => {
     const onAddProject = vi.fn()
     const onOpenSettings = vi.fn()
-    render(
+    const view = (
       <Sidebar
         projects={[]}
         activeProjectPath={undefined}
@@ -349,8 +349,40 @@ describe('Sidebar chat actions', () => {
         onReorderSession={vi.fn()}
         onOpenSearch={vi.fn()}
         onOpenSettings={onOpenSettings}
-      />,
+      />
     )
+
+    const rendered = render(view)
+    for (const [usedPercent, expected] of [
+      [11, undefined],
+      [79, undefined],
+      [79.9, undefined],
+      [80, '20%'],
+      [89, '11%'],
+      [100, '0%'],
+    ] as const) {
+      rendered.rerender({
+        ...view,
+        props: {
+          ...view.props,
+          usageStates: [
+            {
+              ...view.props.usageStates[0],
+              summary: {
+                ...view.props.usageStates[0].summary,
+                limitSource: {
+                  provider: 'codex',
+                  status: 'ready',
+                  limits: [{ label: '7 days', usedPercent }],
+                },
+              },
+            },
+          ],
+        },
+      })
+      expect(document.querySelector('.account__usage')?.textContent).toBe(expected)
+    }
+    rendered.rerender(view)
 
     expect(screen.queryByRole('button', { name: /Switch to V[12]/ })).toBeNull()
     expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
@@ -358,9 +390,9 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
     expect(document.querySelector('.account__name')?.textContent).toBe('private@example.com')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
-    expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('85%')
+    expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('15%')
     expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
-      '85% used · codex · 7 days',
+      '15% left · codex · 7 days',
     )
     expect(accountTrigger.querySelector('.account__chevron')).not.toBeNull()
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')

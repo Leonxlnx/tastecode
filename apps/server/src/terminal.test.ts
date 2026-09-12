@@ -148,6 +148,30 @@ describe('TerminalManager', () => {
     }
   })
 
+  it('keeps tab shells separate and closes every shell owned by a thread', async () => {
+    const shells: ReturnType<typeof controlledPty>[] = []
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      {
+        spawnPty: () => {
+          const shell = controlledPty()
+          shells.push(shell)
+          return shell
+        },
+      },
+    )
+    const bottom = manager.open('thread-tabs', os.tmpdir(), 80, 24, 'bottom-1')
+    const right = manager.open('thread-tabs', os.tmpdir(), 80, 24, 'right-1')
+    const second = manager.open('thread-tabs', os.tmpdir(), 80, 24, 'bottom-2')
+    expect(new Set([bottom, right, second]).size).toBe(3)
+    expect(manager.open('thread-tabs', os.tmpdir(), 80, 24, 'bottom-1')).toBe(bottom)
+    const closing = manager.closeThread('thread-tabs')
+    expect(() => manager.open('thread-tabs', os.tmpdir(), 80, 24, 'right-2')).toThrow(/closing/)
+    for (const shell of shells) shell.emitExit(0)
+    await closing
+    for (const id of [bottom, right, second]) expect(manager.status(id).status).toBe('exited')
+  })
+
   it('bounds shutdown when a PTY never reports its exit', async () => {
     const pty = controlledPty()
     const manager = new TerminalManager(
