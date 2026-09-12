@@ -1262,9 +1262,9 @@ function AppearanceSettings(props: {
               ariaLabel="Interface font"
               align="right"
               value={props.fontPreference}
+              options={fontOptions}
               onOpen={requestInstalledFontFamilies}
               loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
-              options={fontOptions}
               search={FONT_SEARCH}
               onChange={props.onFontPreferenceChange}
             />

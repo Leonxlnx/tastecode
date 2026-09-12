@@ -4588,11 +4588,11 @@ describe('new chats', () => {
       fireEvent.click(screen.getByRole('combobox', { name: 'Interface font' }))
 
       expect(queryLocalFonts).toHaveBeenCalledOnce()
-      const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
-      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       expect(screen.getByRole('status').textContent).toBe('Loading fonts…')
       expect(screen.queryAllByRole('option')).toHaveLength(0)
       await act(async () => finishScan(records))
+      const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
+      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
         'Atkinson Hyperlegible',
         'Geist',
         'Geist Mono',
@@ -4619,8 +4619,6 @@ describe('new chats', () => {
       render(<App />)
       expect(screen.queryByRole('combobox', { name: 'Interface font' })).toBeNull()
       expect(document.documentElement.dataset.font).toBe('local')
-    } finally {
-      if (originalQuery) Object.defineProperty(globalThis, 'queryLocalFonts', originalQuery)
       openSettings()
       fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
       fireEvent.keyDown(screen.getByRole('combobox', { name: 'Interface font' }), {
@@ -4629,6 +4627,8 @@ describe('new chats', () => {
       expect(screen.getByRole('option', { name: 'Atkinson Hyperlegible' })).toBeTruthy()
       expect(screen.getAllByRole('option')).toHaveLength(6)
       expect(queryLocalFonts).toHaveBeenCalledOnce()
+    } finally {
+      if (originalQuery) Object.defineProperty(globalThis, 'queryLocalFonts', originalQuery)
       else Reflect.deleteProperty(globalThis, 'queryLocalFonts')
     }
   })
