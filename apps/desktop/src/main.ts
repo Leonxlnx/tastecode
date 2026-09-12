@@ -43,6 +43,7 @@ import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
@@ -415,6 +416,10 @@ function createWindow(): void {
     window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
   )
   configureEmbeddedBrowser(window.webContents)
+  configureImageContextMenu(window.webContents, window)
+  window.webContents.on('did-attach-webview', (_event, guest) => {
+    configureImageContextMenu(guest, window)
+  })
   restoreMainWindowPresence(process.platform, app, window)
   const windowStatePersistence = persistMainWindowState(
     window,

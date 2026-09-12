@@ -4133,6 +4133,19 @@ export function App() {
       }
       if (paletteScope || rollbackOpen || checkoutDelete) return
 
+      // Number keys open the newest sessions in the first sidebar project.
+      const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        const currentProjects = projectsRef.current
+        const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
+        const session = project?.sessions
+          .slice()
+          .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
+        event.preventDefault()
+        if (session) void selectSession(session.id)
+        return
+      }
+
       const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
         matchesShortcut(event, keybindings[candidate.id]),
       )
@@ -4144,7 +4157,16 @@ export function App() {
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [checkoutDelete, keybindingActions, keybindings, paletteScope, rollbackOpen, settingsOpen])
+  }, [
+    checkoutDelete,
+    keybindingActions,
+    keybindings,
+    macOS,
+    paletteScope,
+    rollbackOpen,
+    selectSession,
+    settingsOpen,
+  ])
 
   const sideChatParentStatus: SideChatParentStatus =
     thread.approvals.length > 0
@@ -4792,8 +4814,8 @@ export function App() {
           stopped, the working rail kept counting, and nothing said why. */}
       <ProviderUpdateNotice
         transport={transport}
-        onOpenProviders={openProviderSetup}
-        suppressed={offline || Boolean(notice) || settingsOpen}
+        onUpdated={refreshCatalog}
+        suppressed={offline || Boolean(notice)}
       />
       <NoticePresence className="notice notice--offline" role="status" visible={offline}>
         <LoaderCircle className="spinner" size={12} aria-hidden />

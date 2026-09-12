@@ -65,6 +65,44 @@ function renderCompleted(items: Item[]) {
 }
 
 describe('approval queue', () => {
+  it.each(['in_progress', 'approved', 'denied', 'timed_out', 'aborted'] as const)(
+    'keeps automatic %s reviews out of chat while manual requests remain usable',
+    (status) => {
+      const onDecide = vi.fn()
+      render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              reviews: {
+                'review-1': {
+                  id: 'review-1',
+                  turnId: 'turn-1',
+                  status,
+                  description: 'Automatic command review',
+                  rationale: 'Automatic review rationale',
+                  riskLevel: 'low',
+                  startedAt: 10,
+                },
+              },
+              approvals: [
+                { id: 'approval-1', kind: 'command', command: 'pnpm test', createdAt: 10 },
+              ],
+            })
+          }
+          onDecide={onDecide}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      expect(screen.queryByText('Automatic command review')).toBeNull()
+      expect(screen.queryByText('Automatic review rationale')).toBeNull()
+      expect(screen.queryByRole('status', { name: /Automatic review:/ })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Allow once' }))
+      expect(onDecide).toHaveBeenCalledWith('approval-1', 'approve')
+    },
+  )
+
   it('shows pending requests one at a time in request order', () => {
     const first: ApprovalRequest = {
       id: 'approval-1',
