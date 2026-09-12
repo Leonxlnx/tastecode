@@ -1244,12 +1244,12 @@ function ActivityStack({
     <div
       className={`activity${live ? ' activity--live' : ''}${settling ? ' is-settling' : ''}`}
       data-expanded={disclosure.expanded}
-        title={label}
     >
       <button
         type="button"
         className="activity__summary"
         aria-expanded={disclosure.expanded}
+        title={label}
         onClick={disclosure.toggle}
       >
         {live || !hasCommentary ? (
@@ -1278,12 +1278,12 @@ function ActivityStack({
                 if (item.type === 'message') {
                   return (
                     <div className="activity__message" key={item.id}>
-                const itemLabel = activityItemLabel(item)
                       <Markdown text={item.text ?? ''} projectPath={projectPath} />
                     </div>
                   )
                 }
                 const detail = activityDetail(item)
+                const itemLabel = activityItemLabel(item)
                 return (
                   <div
                     className="activity__item"
@@ -1296,13 +1296,13 @@ function ActivityStack({
                     <div className="activity__file-change">
                       {glyph(item)}
                       <span className="activity__item-label" title={itemLabel}>
-                      {item.durationMs !== undefined && item.durationMs >= 1000 ? (
-                        <span className="aux__time">{duration(item.durationMs)}</span>
-                      ) : null}
                         {itemLabel}
                       </span>
                       {item.exitCode !== undefined && item.exitCode !== 0 ? (
                         <span className="aux__code">exit {item.exitCode}</span>
+                      ) : null}
+                      {item.durationMs !== undefined && item.durationMs >= 1000 ? (
+                        <span className="aux__time">{duration(item.durationMs)}</span>
                       ) : null}
                     </div>
                     {detail ? (
