@@ -83,7 +83,6 @@ export function createApplicationMenuTemplate(options: AppMenuOptions): MenuItem
         action('Toggle Sidebar', 'toggleSidebar'),
         action('Toggle Terminal', 'toggleTerminal'),
         action('Toggle Workspace Tools', 'toggleWorkspace'),
-        action('Expand Workspace Tools', 'expandWorkspace'),
         separator,
         {
           label: 'Actual Size',

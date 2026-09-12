@@ -9,6 +9,7 @@ import {
   IconHistory as History,
   IconKeyboard as Keyboard,
   IconLayoutSidebar as PanelLeft,
+  IconLayoutBottombar as PanelBottom,
   IconLayoutSidebarRightCollapse as PanelRightClose,
   IconLayoutSidebarRightExpand as PanelRightOpen,
   IconPencil as Pencil,
@@ -64,19 +65,19 @@ export const PanelToggles = memo(function PanelToggles(props: {
         <button
           type="button"
           className={`stagehead__action${props.terminalOpen ? ' is-open' : ''}`}
-          aria-label={props.terminalOpen ? 'Hide terminal' : 'Open terminal'}
+          aria-label={props.terminalOpen ? 'Hide bottom panel' : 'Show bottom panel'}
           aria-pressed={props.terminalOpen}
           aria-keyshortcuts={
             props.terminalShortcutActive === false
               ? undefined
               : shortcutAria(keybindings.toggleTerminal)
           }
-          title={props.terminalOpen ? 'Hide terminal' : 'Open terminal'}
+          title={props.terminalOpen ? 'Hide bottom panel' : 'Show bottom panel'}
           onPointerEnter={props.onPrepareTerminal}
           onFocus={props.onPrepareTerminal}
           onClick={props.onToggleTerminal}
         >
-          <SquareTerminal size={16} aria-hidden />
+          <PanelBottom size={16} aria-hidden />
         </button>
       ) : null}
       <button

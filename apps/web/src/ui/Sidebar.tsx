@@ -1,3 +1,4 @@
+import { useArchiveMotion } from './useArchiveMotion.js'
 import {
   lazy,
   memo,
@@ -217,8 +218,8 @@ function SidebarComponent(props: {
       (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
       undefined,
     )
-  const usagePercent = usageLimit
-    ? Math.round(Math.min(100, Math.max(0, usageLimit.usedPercent)))
+  const usageRemaining = usageLimit
+    ? Math.min(100, Math.max(0, 100 - usageLimit.usedPercent))
     : undefined
   useEffect(() => {
     void loadAccountLimits()
@@ -450,10 +451,19 @@ function SidebarComponent(props: {
     (id: string) => actionsRef.current.onToggleSessionPin?.(id),
     [],
   )
-  const deleteSession = useCallback((id: string) => actionsRef.current.onDeleteSession(id), [])
+  const animateArchive = useArchiveMotion()
+  const deleteSession = useCallback(
+    (id: string) => {
+      animateArchive([id], (ids) => {
+        for (const sessionId of ids) actionsRef.current.onDeleteSession(sessionId)
+      })
+    },
+    [animateArchive],
+  )
   const archiveProject = useCallback(
-    (sessionIds: string[]) => actionsRef.current.onArchiveProject(sessionIds),
-    [],
+    (sessionIds: string[]) =>
+      animateArchive(sessionIds, (ids) => actionsRef.current.onArchiveProject(ids)),
+    [animateArchive],
   )
   const reorderSession = useCallback(
     (projectPath: string, sourceId: string, targetId: string, position: DropPosition) =>
@@ -855,13 +865,13 @@ function SidebarComponent(props: {
                 <span className="account__name">
                   {profileDisplayName || props.account?.email || props.providerName}
                 </span>
-                {usageLimit ? (
+                {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
                   <span
                     className="account__usage"
-                    title={`${usagePercent}% used · ${usageLimit.provider} · ${usageLimit.label}`}
-                    aria-label={`${usagePercent}% of usage limit used`}
+                    title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
+                    aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
                   >
-                    {usagePercent}%
+                    {Math.round(usageRemaining)}%
                   </span>
                 ) : null}
                 <ChevronUp className="account__chevron" size={13} aria-hidden />
@@ -1667,6 +1677,7 @@ function SessionRow(props: {
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
       } ${props.dragging ? 'is-dragging' : ''}`}
+      data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
       onDragStart={props.onDragStart}
