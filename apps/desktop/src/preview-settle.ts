@@ -61,17 +61,30 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
   }
 })()`
 
-export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => Math.min(
-  12000,
-  Math.max(innerHeight, document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
-))()`
+export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => ({
+  documentElement: document.documentElement.scrollHeight,
+  body: document.body?.scrollHeight ?? 0,
+}))()`
 
 export const MAX_PREVIEW_HEIGHT = 12_000
 
-/** Page measurements cross a trust boundary before reaching native bitmap allocation. */
+/** Validate raw DOM measurements before they reach native bitmap allocation. */
 export function previewCaptureHeight(value: unknown, viewportHeight: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('documentElement' in value) ||
+    !('body' in value) ||
+    !validHeight(value.documentElement) ||
+    !validHeight(value.body) ||
+    !validHeight(viewportHeight) ||
+    viewportHeight === 0
+  ) {
     throw new Error('Invalid preview page height')
   }
-  return Math.min(MAX_PREVIEW_HEIGHT, Math.max(viewportHeight, Math.ceil(value)))
+  return Math.min(MAX_PREVIEW_HEIGHT, Math.max(viewportHeight, value.documentElement, value.body))
+}
+
+function validHeight(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }

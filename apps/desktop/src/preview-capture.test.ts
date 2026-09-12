@@ -28,7 +28,9 @@ function fixture() {
     getURL: vi.fn(() => request().url),
     executeJavaScriptInIsolatedWorld: vi.fn(
       async (_world: number, scripts: Array<{ code: string }>) =>
-        scripts[0]!.code === PREVIEW_PAGE_HEIGHT_SCRIPT ? 100_000_000 : undefined,
+        scripts[0]!.code === PREVIEW_PAGE_HEIGHT_SCRIPT
+          ? { body: 100_000_000, documentElement: 100_000_000 }
+          : undefined,
     ),
     capturePage: vi.fn().mockResolvedValue({ toPNG: () => Buffer.from('png') }),
   }
