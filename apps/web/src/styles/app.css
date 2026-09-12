@@ -1540,7 +1540,8 @@
   z-index: 30;
   inset: 0 auto auto 0;
   width: var(--rail-w);
-  height: var(--titlebar-h);
+  height: 42px;
+  padding-bottom: 1px;
   background: transparent;
 }
 
