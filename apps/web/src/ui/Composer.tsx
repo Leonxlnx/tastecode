@@ -229,8 +229,9 @@ const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 const COMPOSER_DOCK_MOTION_MS = 320
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 const COMPOSER_QUEUE_ANIMATION_ID = 'harness-composer-queue'
-const COMPOSER_QUEUE_MOTION_MS = 180
-const COMPOSER_QUEUE_EASING = 'cubic-bezier(0.77, 0, 0.175, 1)'
+// Match --dur-slow and --ease-rail so the panel and row reveal settle together.
+const COMPOSER_QUEUE_MOTION_MS = 260
+const COMPOSER_QUEUE_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
 const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
 const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
 const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
@@ -362,6 +363,7 @@ function QueuedMediaPreviewCard({ reference }: { reference: string }) {
         <Suspense fallback={null}>
           <MediaViewer
             src={preview.previewUrl}
+            thumbnailSrc={inlineSource}
             name={preview.name}
             mediaType={preview.mediaType}
             onReveal={() => void revealPath(reference)}
@@ -518,6 +520,7 @@ function ComposerComponent(props: {
   const [attachmentError, setAttachmentError] = useState<string>()
   const [viewingMedia, setViewingMedia] = useState<{
     src: string
+    thumbnailSrc?: string | undefined
     name: string
     mediaType: 'image' | 'video'
     localPath?: string
@@ -557,6 +560,7 @@ function ComposerComponent(props: {
   const pendingQueueLayout = useRef<QueueLayoutSnapshot | null>(null)
   const previousNewSession = useRef(props.newSession)
   const attachmentsChangeReady = useRef(false)
+  const attachmentsEdited = useRef(false)
   const resourcesChangeReady = useRef(false)
   const onReady = useRef(props.onReady)
   onReady.current = props.onReady
@@ -957,6 +961,7 @@ function ComposerComponent(props: {
     if (props.draftRequest.attachments !== undefined) {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
+      attachmentsEdited.current = false
       const paths = props.draftRequest.attachments
       setAttachments(
         paths.map((path) => {
@@ -1156,7 +1161,11 @@ function ComposerComponent(props: {
     }
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     const hydrated = draftRequestRef.current?.attachments
-    if (hydrated !== undefined && sameDraftPaths(paths, hydrated)) return
+    // Only suppress the initial restore. Returning to that same list after an
+    // edit (including clearing on send) must also update the saved draft.
+    if (!attachmentsEdited.current && hydrated !== undefined && sameDraftPaths(paths, hydrated))
+      return
+    attachmentsEdited.current = true
     props.onAttachmentsChange?.(paths)
   }, [attachments, props.onAttachmentsChange])
 
@@ -1525,6 +1534,7 @@ function ComposerComponent(props: {
                           if (!attachment.previewUrl || !attachment.mediaType) return
                           setViewingMedia({
                             src: attachment.previewUrl,
+                            thumbnailSrc: attachmentThumbnailUrl(attachment),
                             name: attachment.name,
                             mediaType: attachment.mediaType,
                             ...(attachment.previewUrl.startsWith('tastecode-attachment:') &&
@@ -1915,6 +1925,7 @@ function ComposerComponent(props: {
         <Suspense fallback={null}>
           <MediaViewer
             src={viewingMedia.src}
+            thumbnailSrc={viewingMedia.thumbnailSrc}
             name={viewingMedia.name}
             mediaType={viewingMedia.mediaType}
             onReveal={

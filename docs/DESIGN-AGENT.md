@@ -270,14 +270,14 @@ handle the returned list without a product-level maximum.
 Artifacts are a chain of evidence and decisions, not copies of one growing object. A later phase
 may consume earlier artifacts but never silently rewrite them.
 
-| Artifact      | Owns                                                           | Consumes                                            |
-| ------------- | -------------------------------------------------------------- | --------------------------------------------------- |
-| `brief.json`  | User intent, facts, constraints, answers, assumptions          | Request and briefing answers                        |
-| `brand.json`  | Derived visual and verbal system                               | Brief, project evidence, internal brand rules       |
-| `page.json`   | Page story, copy, composition, responsive and interaction plan | Brief and brand                                     |
-| `assets.json` | Asset needs, real sources, provenance, status, destinations    | Brief, brand, page, project files, optional sources |
-| `review.json` | Latest visual verdict and actionable findings                  | Brief, brand, page, rendered screenshots            |
-| Project files | The implementation                                             | All validated artifacts                             |
+| Artifact      | Owns                                                              | Consumes                                       |
+| ------------- | ----------------------------------------------------------------- | ---------------------------------------------- |
+| `brief.json`  | User intent, facts, constraints, answers, assumptions             | Request and briefing answers                   |
+| `brand.json`  | Derived visual and verbal system                                  | Brief, project evidence, supplied references   |
+| `page.json`   | Page story, copy, reference lock, responsive and interaction plan | Brief, brand, supplied and internal references |
+| `assets.json` | Exact needs, roles, composition, provenance, status, destinations | Brief, brand, page, references, project files  |
+| `review.json` | Latest visual verdict and actionable findings                     | Brief, brand, page, references, screenshots    |
+| Project files | The implementation                                                | All validated artifacts                        |
 
 Every artifact is rebuilt field by field by a parser before it is written. A model cannot persist
 arbitrary extra properties. Machine output may be plain JSON or one complete JSON fence; prose
@@ -342,6 +342,8 @@ The current version-one blueprint contains:
 - the user question, decision stage, prior-section dependencies, and real evidence for each section;
 - final concise heading, body copy, and calls to action;
 - one beta layout family, the exact selected case IDs, and a content-specific layout direction;
+- one `referenceDirectionId` per section, identifying either a supplied user mockup or an internal
+  direction image;
 - one bounded motion decision per section with purpose, trigger, behavior, duration, easing, and a
   reduced-motion equivalent;
 - component needs;
@@ -365,16 +367,22 @@ New Page-phase outputs must map every section to Hero, About, Feature, How It Wo
 Stats, FAQ, CTA, Pricing, Contact, or Footer and select the exact human-authored beta cases they
 apply. A custom-named section such as Showcase may reuse the compatible Feature family. Unknown,
 cross-family, missing, duplicated, and directly repeated compositions fail the Page phase before
-Build. Build treats the family, cases, layout direction, and responsive transformations as hard
-composition requirements; Review compares visible geometry against the same decisions. Older
-version-one artifacts without these additive fields remain readable.
+Build. The model must explicitly return every `referenceDirectionId`; TasteCode does not silently
+fill an omitted choice, and a run with supplied user mockups must select at least one of them. Build
+treats the reference as the primary composition contract; family and cases classify and support
+it. Page, Build, and Review preserve its macro geometry, hierarchy, proportions, alignment,
+overlap, density, negative space, media placement, and motion logic while adapting the project
+identity, copy, colors, type, icons, image subjects, and small details. Older version-one artifacts
+without these additive fields remain readable outside the strict new Page-phase boundary.
 
 The package also carries 132 generated and visually inspected direction references across all 11
-layout families. A deterministic brief-and-brand seed selects one compact geometry cue per family
-for the Page prompt. The cues are optional, never override the brief, brand, accessibility, copy,
-responsive, or case rules, and never copy the reference identity. Only generated WebP variants are
-stored; the source screenshots are excluded. Provider turns receive the distilled cues rather than
-132 binary attachments, keeping the phase provider-neutral and the prompt bounded.
+layout families. A deterministic brief-content seed selects one direction per family without
+reshuffling it when only palette or typography changes. Image-capable provider turns receive the
+selected WebP files, not only their text cues. Supplied user references are persisted with the
+Design flow, receive stable `user-reference-#` IDs, outrank the internal deck, and are reattached to
+Brand, Page, Assets, Build, Review, and Repair, including after restart. A provider that cannot
+inspect images fails explicitly rather than silently ignoring supplied references. Repair also
+receives the exact failed viewport screenshots and their dimensions, not only textual findings.
 
 ### Current `assets.json`
 
@@ -384,21 +392,40 @@ Each asset has:
 - kind: image, illustration, video, icon, font, or component;
 - status: existing, needed, or ready;
 - purpose and requirements;
+- semantic role and every consuming section ID;
+- exact aspect ratio and composition for visual assets;
 - optional source kind: project, user, OriginKit, generated, or external;
 - source reference and optional license;
 - optional workspace-relative destination.
 
-Ready assets require a real source and destination. Ready external assets also require recorded
-reuse terms. Existing assets require a source. Absolute destinations and parent-directory escapes
-are rejected. Duplicate IDs are rejected.
+New Asset-phase output must match the union of Page asset and component IDs exactly. Ready assets
+require a non-empty real file at the destination. Ready external assets also require recorded
+reuse terms. Existing raster visuals must resolve to a real project or supplied user file.
+`source.kind: user` records the stable `user-reference-#` ID and must resolve to the corresponding
+attached file. Absolute destinations, parent-directory escapes, arbitrary user paths, and project
+or destination symlinks that resolve outside the workspace are rejected. Duplicate IDs, missing
+or extra needs, wrong section ownership, and generated interface, icon, logo, or data-diagram
+assets are rejected. Raster content must be a recognizable PNG, JPEG, WebP, or GIF, its real pixel
+dimensions must match the declared aspect ratio, and generated or downloaded images must clear the
+production resolution floor. Content sniffing still rejects SVG renamed as a raster extension.
+Build cannot report `complete` while a photography, product-image, editorial-illustration, or
+interface-capture record remains `needed`; unresolved meaningful imagery forces an honest failed
+result instead of a generated substitute.
+
+PNG data also passes chunk checksum and bounded decompression checks. JPEG, GIF, and WebP
+validation establishes container and dimension evidence; the browser and visual Review must
+still prove that images decode and look correct. A manifest or model report alone does not prove
+image quality or license ownership. Supplied assets used in the page need a workspace copy so
+the finished result does not depend on an upload path.
 
 The Asset phase is an acquisition step rather than a wish list. It keeps every Page asset and
-component ID, reuses suitable project or user files first, then invokes available image generation,
-then falls back to available image search with verified source and reuse terms. A generated or
-downloaded file must be saved inside the project before it is marked ready. When the selected provider
-cannot perform generation or licensed search, the need remains explicitly unresolved. Abstract
-SVGs, fake dashboards, sonar graphics, line-grid ornaments, empty cards, and generic geometric
-filler do not satisfy an image-led layout case.
+component ID and reuses suitable project or supplied files first. Licensed search comes next for
+factual, editorial, or professional photography; image generation is reserved for precise,
+brand-specific original needs. Generated output receives an exact creative brief, intended crop
+inspection, and at most one defect-led regeneration. A generated or downloaded file must be saved
+inside the project before it is marked ready. SVG is allowed only for a functional icon, logo, or
+truthful data diagram. It cannot satisfy photography, product imagery, editorial art, interface
+capture, or a generic open visual need.
 
 ### Build result
 
@@ -414,11 +441,40 @@ typography stays within the approved two families, and internal notes never appe
 Cards group coherent features, people, plans, proof, actions, or media through one base language
 and at most one emphasized variant; they may not become empty equal-column boxes or unrelated
 experiments. The brand accent must reach meaningful actions and states rather than surviving only
-in tiny labels. Hairline grids, repeated separator systems, colored card rails, ornamental SVGs,
-unstyled controls, overflow, clipping, and footer overlap require repair. Representative interface
-or operational data may make a one-shot page feel complete, but Build returns it in a
+in tiny labels. Hairline grids, repeated separator systems, full-height one-sided card-edge rails,
+ornamental SVGs, unstyled controls, overflow, clipping, and footer overlap require repair. Before
+Preview and after every Repair, TasteCode scans the workspace source rather than trusting the
+provider's file report. A persisted baseline captured before the first Design turn preserves
+unrelated existing user code while making newly introduced violations enforceable. The gate rejects card-edge borders,
+pseudo-elements, inset shadows, narrow hard-stop gradients, child strips, equivalent utility
+classes, and standalone or inline SVG substitutes not backed by an explicit functional asset in
+`assets.json`, then permits one bounded source edit to remove the new output. Representative
+interface or operational data may make a one-shot page feel complete, but Build returns it in a
 `Verify before publishing:` summary that the final Harness message surfaces after Preview instead
 of adding a disclaimer to the website.
+
+The approved Brief, Brand, Page, and Asset artifacts are persisted on the Design flow before
+Build. Build and Repair receive those snapshots, may not rewrite them, and are checked against all
+four on-disk `.taste/*.json` artifacts before Preview or recapture. TasteCode restores any changed
+artifact and rejects the phase result if a provider tries to remove an exact-file constraint,
+change the approved direction, remove a reference lock, change an asset role, or otherwise weaken
+an approved constraint.
+
+All later phases, including resumed phases, check these trusted snapshots. Artifact replacement
+is atomic and does not write through file symlinks. Reference and acquired media hashes must
+still match; native component source remains editable during Build and Repair. Older interrupted
+runs that lack the required snapshots must restart Design mode. Existing version-one artifacts
+remain readable.
+
+Exact deliverable checks compare with the workspace before any Design phase uses tools,
+including Asset acquisition. They inspect normal nested directories, preserve pre-existing
+files, reject symlink deliverables, and keep dependency trees opaque. Source checks compare with
+the initial baseline and permit SVGs in the exact source file of a manifested functional icon,
+logo, or data diagram. They check specific source patterns, not overall visual quality.
+
+Filesystem work has explicit limits: 25,000 entries, 40 directory levels, 2 MB per source or JSON
+artifact, 32 MB of scanned source, 32 MB per media file, and 128 MB per media snapshot. A scan that
+exceeds a limit stops with an error instead of silently accepting unchecked files.
 
 The provider is currently responsible for running the project's relevant checks through its
 available tools. TasteCode validates the final report shape but does not independently prove that
@@ -675,8 +731,8 @@ real builds to show which cues improve results and which should be retired.
 ### Asset gaps
 
 Asset acquisition currently depends on tools exposed by the selected provider. A provider-neutral
-Harness search and generation tool does not exist yet. Requirements remain free-form strings; add
-typed section, purpose, aspect ratio, composition, dimensions, output path, source, and usage fields
+Harness search and generation tool does not exist yet. The manifest now types section ownership,
+role, aspect ratio, and composition; pixel dimensions and usage variants remain future additions
 only where they prevent bad generation, wrong cropping, or lost provenance.
 
 ### Token and verification gaps

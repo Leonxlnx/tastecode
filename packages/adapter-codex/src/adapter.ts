@@ -488,6 +488,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       turnId?: string
     }
   >()
+  #threadApprovals = new Map<string, ApprovalMode>()
   #userInputs = new Map<string, (result: JsonRpcValue) => void>()
 
   constructor(
@@ -856,6 +857,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       THREAD_START_TIMEOUT_MS,
     )
     this.#threadModels.set(response.thread.id, response.model)
+    if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
       id: response.thread.id,
       provider: 'codex' as const,
@@ -892,6 +894,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ThreadResumeResponseSchema,
     )
     this.#threadModels.set(response.thread.id, response.model)
+    if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
       id: response.thread.id,
       provider: 'codex' as const,
@@ -910,7 +913,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async setApproval(approval: ApprovalMode): Promise<void> {
     const thread = this.#sessionThread
     if (!thread) throw new Error('no active Codex thread')
-    await this.resumeThread(thread.id, thread.workspacePath, { approval })
+    // Resuming an already-loaded thread ignores configuration overrides.
+    // Apply the selected policy on the next turn, including queued turns.
+    this.#threadApprovals.set(thread.id, approval)
   }
 
   async sendTurn(
@@ -919,10 +924,31 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<string> {
+    const mode = this.#threadApprovals.get(threadId)
+    const approval = mode ? CODEX_APPROVAL[mode] : undefined
+    const sandboxPolicy =
+      mode === 'full'
+        ? { type: 'dangerFullAccess' }
+        : mode === 'ask'
+          ? { type: 'readOnly', networkAccess: false }
+          : {
+              type: 'workspaceWrite',
+              writableRoots: [],
+              networkAccess: false,
+              excludeTmpdirEnvVar: false,
+              excludeSlashTmp: false,
+            }
     const response = await this.#callParsed(
       'turn/start',
       {
         threadId,
+        ...(approval
+          ? {
+              approvalPolicy: approval.approvalPolicy,
+              approvalsReviewer: approval.approvalsReviewer,
+              sandboxPolicy,
+            }
+          : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.serviceTier
           ? {
@@ -1018,6 +1044,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
     this.#threadModels.clear()
+    this.#threadApprovals.clear()
     this.#activeTurns.clear()
     this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after

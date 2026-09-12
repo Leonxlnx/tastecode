@@ -555,12 +555,12 @@ describe('Composer queue', () => {
       expect(animate).toHaveBeenNthCalledWith(
         1,
         [{ transform: 'translate3d(0px, 22px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
-        { duration: 180, easing: 'cubic-bezier(0.77, 0, 0.175, 1)' },
+        { duration: 260, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
       )
       expect(animate).toHaveBeenNthCalledWith(
         2,
         [{ transform: 'translate3d(0px, -22px, 0)' }, { transform: 'translate3d(0, 0, 0)' }],
-        { duration: 180, easing: 'cubic-bezier(0.77, 0, 0.175, 1)' },
+        { duration: 260, easing: 'cubic-bezier(0.32, 0.72, 0, 1)' },
       )
     } finally {
       if (originalAnimate) {
@@ -612,8 +612,8 @@ describe('Composer queue', () => {
 
       await waitFor(() => expect(animate).toHaveBeenCalledOnce())
       expect(animate).toHaveBeenCalledWith([{ height: '22px' }, { height: '44px' }], {
-        duration: 180,
-        easing: 'cubic-bezier(0.77, 0, 0.175, 1)',
+        duration: 260,
+        easing: 'cubic-bezier(0.32, 0.72, 0, 1)',
       })
     } finally {
       if (originalAnimate) {
@@ -1401,6 +1401,33 @@ describe('Composer draft replacement', () => {
       target: { value: 'Keep this, edited' },
     })
     expect(onDraftChange).toHaveBeenCalledWith('Keep this, edited')
+  })
+
+  it.each(['send', 'remove'])('clears saved media after %s from an empty draft', async (action) => {
+    const onAttachmentsChange = vi.fn()
+    const onSend = vi.fn()
+    renderComposer(onSend, {
+      draftRequest: { text: '', attachments: [], resources: [], request: 1 },
+      onAttachmentsChange,
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.paste(composer, {
+      clipboardData: { files: [new File(['image'], 'Screenshot.png', { type: 'image/png' })] },
+    })
+    await waitFor(() =>
+      expect(onAttachmentsChange).toHaveBeenLastCalledWith(['/tmp/pasted-image.png']),
+    )
+
+    if (action === 'send') {
+      fireEvent.change(composer, { target: { value: 'Describe this image' } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onSend).toHaveBeenCalledWith('Describe this image', ['/tmp/pasted-image.png'])
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove Screenshot.png' }))
+    }
+
+    expect(screen.queryByRole('button', { name: 'Open Screenshot.png' })).toBeNull()
+    expect(onAttachmentsChange).toHaveBeenLastCalledWith([])
   })
 
   it('replaces resource chips when a draft request includes them', async () => {

@@ -1,5 +1,28 @@
 # PR quality work — 2026-09-09
 
+## Delivery update — 2026-09-12
+
+The local source changes have now shipped through the following focused PRs. Each passed lint, typecheck, tests and build against its current main base. Live UI and Design evidence is attached to the PRs. The release tools also passed the license gate, a fresh unsigned macOS native-module proof, and byte checks for all 132 bundled reference images.
+
+- [build: add local release artifact validation tools](https://github.com/Leonxlnx/tastecode/pull/1095)
+- [feat(desktop): add native image copy menu](https://github.com/Leonxlnx/tastecode/pull/1083)
+- [fix(design): preserve approved references and assets](https://github.com/Leonxlnx/tastecode/pull/1096)
+- [feat(web): open recent sessions with number shortcuts](https://github.com/Leonxlnx/tastecode/pull/1084)
+- [fix(web): cache the complete installed font list](https://github.com/Leonxlnx/tastecode/pull/1085)
+- [fix(web): manage provider updates in the update notice](https://github.com/Leonxlnx/tastecode/pull/1086)
+- [feat(web): show account limit usage in the sidebar](https://github.com/Leonxlnx/tastecode/pull/1087)
+- [fix(web): align queued message reveal timing](https://github.com/Leonxlnx/tastecode/pull/1088)
+- [fix(web): remove mouse press flashes](https://github.com/Leonxlnx/tastecode/pull/1089)
+- [fix(web): show thumbnails while full images load](https://github.com/Leonxlnx/tastecode/pull/1090)
+- [fix(web): clarify expanded activity steps](https://github.com/Leonxlnx/tastecode/pull/1091)
+- [fix(web): hide automatic review cards in chat](https://github.com/Leonxlnx/tastecode/pull/1092)
+- [fix(web): clear saved attachments after sending](https://github.com/Leonxlnx/tastecode/pull/1093)
+- [fix(codex): apply approval changes on each turn](https://github.com/Leonxlnx/tastecode/pull/1094)
+
+Windows, signing, notarization, installer and version-to-version update checks remain release gates. No hosted CI or release publication was started. The record below describes the earlier September 9 snapshot; it is historical evidence, not the latest release status.
+
+## Historical snapshot
+
 Local implementation based on main `210e071588faca59f15a734b4046d45ab79c8103`.
 The existing GitHub PRs have not been pushed, merged, or marked ready by this work.
 

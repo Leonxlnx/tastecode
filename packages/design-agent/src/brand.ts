@@ -1,5 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import { array, fontWeights, list, member, record, string, strings } from './parse.js'
 
 export interface BrandSystem {
@@ -128,7 +127,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
               quality,
               boundary: `not an exaggerated or generic version of ${quality}`,
             }))
-          : array(creativeDirection.traits, 'creativeDirection.traits').map((value, index) => {
+          : list(creativeDirection.traits, 'creativeDirection.traits').map((value, index) => {
               const trait = record(value, `creativeDirection.traits[${index}]`)
               return {
                 quality: string(trait.quality, `creativeDirection.traits[${index}].quality`),
@@ -220,17 +219,11 @@ function parseSignatureDevice(value: unknown): BrandSystem['creativeDirection'][
 }
 
 export function readBrandSystem(workspacePath: string): BrandSystem {
-  return parseBrandSystem(JSON.parse(readFileSync(brandPath(workspacePath), 'utf8')))
+  return parseBrandSystem(readDesignArtifact(workspacePath, 'brand.json'))
 }
 
 export function writeBrandSystem(workspacePath: string, value: unknown): BrandSystem {
   const brand = parseBrandSystem(value)
-  const outputPath = brandPath(workspacePath)
-  mkdirSync(path.dirname(outputPath), { recursive: true })
-  writeFileSync(outputPath, `${JSON.stringify(brand, null, 2)}\n`, 'utf8')
+  writeDesignArtifact(workspacePath, 'brand.json', brand)
   return brand
-}
-
-function brandPath(workspacePath: string): string {
-  return path.join(workspacePath, '.taste', 'brand.json')
 }
