@@ -1295,7 +1295,10 @@ export class Orchestrator {
       autoSettleDays === null ? 'later' : thread.createdAt + autoSettleDays * 24 * 60 * 60 * 1_000,
     )
     this.#attachThread(thread, session, workspacePath, runtime.resume !== undefined, worktree)
-    if (options.approval) this.#threadApprovals.set(thread.id, options.approval)
+    if (options.approval) {
+      this.#threadApprovals.set(thread.id, options.approval)
+      this.#store.setThreadApproval(thread.id, options.approval)
+    }
     return thread
   }
 
@@ -1344,7 +1347,11 @@ export class Orchestrator {
     const provider = parent.provider
     const workspacePath =
       storedParent.worktreePath ?? resolveWorkspacePath(storedParent.projectPath)
-    const approval = options.approval ?? this.#threadApprovals.get(parentThreadId) ?? 'ask'
+    const approval =
+      options.approval ??
+      this.#threadApprovals.get(parentThreadId) ??
+      this.#store.threadApproval(parentThreadId) ??
+      'ask'
     const runtime =
       provider === 'api' && !this.#runtimeForInjected
         ? this.#apiRuntime(parent.connectionId)
@@ -1380,6 +1387,7 @@ export class Orchestrator {
       this.#sideParents.set(thread.id, parentThreadId)
       this.#attachThread(thread, session, storedParent.projectPath, runtime.resume !== undefined)
       this.#threadApprovals.set(thread.id, approval)
+      this.#store.setThreadApproval(thread.id, approval)
       return thread
     } catch (error) {
       await started?.session.dispose()
@@ -2561,6 +2569,7 @@ export class Orchestrator {
         await this.#ensureThread(threadId)
         if (joiningResume) await this.#get(threadId).session.setApproval?.(approval)
       }
+      this.#store.setThreadApproval(threadId, approval)
     } catch (error) {
       if (hadPrevious) this.#threadApprovals.set(threadId, previous!)
       else this.#threadApprovals.delete(threadId)
@@ -2992,14 +3001,11 @@ export class Orchestrator {
       throw new Error(`${stored.provider} sessions cannot resume after TasteCode restarts yet`)
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
+    const approval = this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId)
     const result = await runtime.resume(threadId, workspacePath, {
       ...(stored.agent ? { agent: stored.agent } : {}),
       ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
-      ...(this.#threadApprovals.has(threadId)
-        ? {
-            approval: this.#threadApprovals.get(threadId)!,
-          }
-        : {}),
+      ...(approval ? { approval } : {}),
       instructions: REPLY_STYLE_INSTRUCTIONS,
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
     })
