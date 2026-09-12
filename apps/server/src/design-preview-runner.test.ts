@@ -25,7 +25,7 @@ function serverPort(server: Server): number {
 afterEach(async () => {
   await Promise.all(previews.splice(0).map((preview) => preview.stop()))
   for (const workspace of workspaces.splice(0)) {
-    rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    rmSync(workspace, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })
   }
 })
 

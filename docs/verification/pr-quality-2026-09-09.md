@@ -21,6 +21,17 @@ The local source changes have now shipped through the following focused PRs. Eac
 
 Windows, signing, notarization, installer and version-to-version update checks remain release gates. No hosted CI or release publication was started. The record below describes the earlier September 9 snapshot; it is historical evidence, not the latest release status.
 
+## Remaining PR review — 2026-09-12
+
+Main base: `33d487a40650f43385ba76cbcf8424dc24a883c8`.
+
+- #993 and #1002 are closed as superseded. Fresh malformed-reply and preview-cleanup regressions passed on the current implementation.
+- #1039 is closed as superseded by #1096. Its added Design test cases remain present; the current Design suite passed 114 tests.
+- #994 and #998 are updated with normal main merges and are ready for human review. Each passed lint, typecheck, tests and build. Recorder cancellation/unmount was checked in a real browser with simulated permission. Capture was checked in real macOS Electron against a hostile loopback page.
+- #937 remains draft. Its release workflow and tools are already superseded by #1095; this branch keeps the current implementation and the bounded Windows preview-test cleanup retry. Old cloud handoff additions and obsolete packaging/feed overrides are removed from its diff.
+
+The remaining release proof is physical execution: Windows x64 install/uninstall and native bindings, plus a signed/notarized macOS package and version-to-version update evidence at an approved source SHA. This host has no valid code-signing identity and no available Windows runtime was identified. The checked installer verifier requires an isolated GitHub-hosted Windows runner; hosted Actions still require Leon's explicit request. No hosted run, draft-release upload, publication, or signing-setting change was performed.
+
 ## Historical snapshot
 
 Local implementation based on main `210e071588faca59f15a734b4046d45ab79c8103`.
