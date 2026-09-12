@@ -65,6 +65,47 @@ function renderCompleted(items: Item[]) {
 }
 
 describe('approval queue', () => {
+  it('animates a new call in a reused stack, but not output updates or replay', () => {
+    const animate = vi.fn(() => ({ cancel: vi.fn() }))
+    const original = HTMLElement.prototype.animate
+    HTMLElement.prototype.animate = animate as unknown as typeof original
+    try {
+      const first = turnItem('command-1', 2, { type: 'command', command: 'pwd' })
+      const store = new ThreadFrameStore({
+        ...emptyThread,
+        items: [turnItem('prompt-1', 1, { role: 'user', text: 'Check files' }), first],
+        running: true,
+        activeTurn: { id: 'turn-1', startedAt: 1 },
+      })
+      render(
+        <Thread
+          frameStore={store}
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+      expect(animate).not.toHaveBeenCalled()
+      const second = turnItem('command-2', 3, {
+        type: 'command',
+        command: 'ls',
+        status: 'started',
+      })
+      act(() =>
+        store.publish({ ...store.getSnapshot(), items: [...store.getSnapshot().items, second] }),
+      )
+      expect(animate).toHaveBeenCalledTimes(1)
+      act(() =>
+        store.publish({
+          ...store.getSnapshot(),
+          items: [...store.getSnapshot().items.slice(0, -1), { ...second, text: 'file.txt' }],
+        }),
+      )
+      expect(animate).toHaveBeenCalledTimes(1)
+    } finally {
+      HTMLElement.prototype.animate = original
+    }
+  })
+
   it.each(['in_progress', 'approved', 'denied', 'timed_out', 'aborted'] as const)(
     'keeps automatic %s reviews out of chat while manual requests remain usable',
     (status) => {
@@ -492,7 +533,14 @@ describe('completed activity disclosure', () => {
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(firstNarration.closest('.activity__reveal')).toBe(reveal)
     expect(secondNarration.closest('.activity__reveal')).toBe(reveal)
+    expect(screen.queryByText(/12 passed/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran pnpm test' }))
     expect(screen.getByText(/12 passed/)).toBeTruthy()
+    expect(screen.queryByText('2 lines added')).toBeNull()
+    const fileDisclosure = screen.getByRole('button', { name: 'Edited src/chat.ts' })
+    expect(fileDisclosure.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(fileDisclosure)
+    expect(fileDisclosure.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByText('2 lines added')).toBeTruthy()
     expect(
       firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -1138,8 +1186,12 @@ describe('collapsed row disclosure', () => {
     expect(reveal?.getAttribute('data-open')).toBe('true')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(reveal?.hasAttribute('inert')).toBe(false)
-    expect(container.querySelector('.activity__item-label')?.textContent).toBe('Ran pnpm test')
-    expect(container.querySelector('.activity__detail')?.textContent).toBe('1 failed, 12 passed')
+    const command = screen.getByRole('button', { name: 'Ran pnpm test' })
+    expect(command.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('1 failed, 12 passed')).toBeNull()
+    fireEvent.click(command)
+    expect(command.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('1 failed, 12 passed')).toBeTruthy()
   })
 })
 
