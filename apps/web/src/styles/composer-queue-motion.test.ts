@@ -19,7 +19,7 @@ describe('composer queue motion', () => {
     const row = rule('.queue-row')
 
     expect(panel).toContain(
-      'animation: composer-queue-panel-in var(--dur-fast) var(--ease-out) both;',
+      'animation: composer-queue-panel-in var(--dur-slow) var(--ease-rail) both;',
     )
     expect(appCss).toMatch(
       /@keyframes composer-queue-panel-in \{[\s\S]*?clip-path: inset\(100% 0 0\);[\s\S]*?opacity: 0;[\s\S]*?clip-path: inset\(0 0 0\);[\s\S]*?opacity: 1;/,
@@ -28,7 +28,7 @@ describe('composer queue motion', () => {
     expect(row).toContain('opacity var(--dur-fast) var(--ease-out)')
     expect(row).toContain('transform var(--dur-press) var(--ease-out)')
     expect(appCss).toMatch(
-      /\.queue-row\[data-queue-phase='entering'\] \{[\s\S]*?composer-queue-item-in var\(--dur-fast\) var\(--ease-out\)/,
+      /\.queue-row\[data-queue-phase='entering'\] \{[\s\S]*?composer-queue-item-in var\(--dur-slow\) var\(--ease-in-out\)/,
     )
     expect(appCss).toMatch(
       /\.queue-row\[data-queue-phase='exiting'\] \{[\s\S]*?composer-queue-item-out var\(--dur-fast\) var\(--ease-out\)/,

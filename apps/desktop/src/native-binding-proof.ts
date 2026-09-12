@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { closeSync, openSync, readSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -46,6 +47,7 @@ export interface PackagedNativeModules {
   keyring: KeyringModule
   moduleEntries: string[]
   nativeBindings: string[]
+  designEntry: string
 }
 
 function environment(): Record<string, string> {
@@ -74,6 +76,46 @@ function isInsideArchive(pathname: string, archive: string): boolean {
   const packed = `${canonicalArchive}/`
   const unpacked = `${canonicalArchive}.unpacked/`
   return normalized.startsWith(packed) || normalized.startsWith(unpacked)
+}
+
+export function assertPackagedDesignReferences(proofFile: string, designEntry: string): number {
+  const archive = archiveRoot(proofFile)
+  const referenceRoot = path.resolve(path.dirname(designEntry), '..', 'references', 'directions')
+  if (!archive || !isInsideArchive(referenceRoot, archive)) {
+    throw new Error('Design references must resolve inside the packaged application')
+  }
+  let imageCount = 0
+  let entryCount = 0
+  function visit(directory: string): void {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (++entryCount > 2_048) throw new Error('too many packaged Design reference entries')
+      const filename = path.join(directory, entry.name)
+      if (entry.isDirectory()) {
+        visit(filename)
+        continue
+      }
+      if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.webp') {
+        throw new Error(`unexpected packaged Design reference: ${filename}`)
+      }
+      const descriptor = openSync(filename, 'r')
+      try {
+        const header = Buffer.alloc(12)
+        if (
+          readSync(descriptor, header, 0, header.length, 0) !== header.length ||
+          header.toString('ascii', 0, 4) !== 'RIFF' ||
+          header.toString('ascii', 8, 12) !== 'WEBP'
+        ) {
+          throw new Error(`invalid packaged Design reference image: ${filename}`)
+        }
+      } finally {
+        closeSync(descriptor)
+      }
+      imageCount++
+    }
+  }
+  visit(referenceRoot)
+  if (imageCount === 0) throw new Error('packaged Design references are missing')
+  return imageCount
 }
 
 export function assertPackagedNativeModules(
@@ -111,6 +153,7 @@ function loadPackagedNativeModules(): PackagedNativeModules {
     pty,
     keyring,
     moduleEntries: [serverRequire.resolve('node-pty'), serverRequire.resolve('@napi-rs/keyring')],
+    designEntry: serverRequire.resolve('@harness/design-agent'),
     get nativeBindings() {
       return Object.keys(serverRequire.cache).filter(
         (modulePath) => !before.has(modulePath) && path.extname(modulePath) === '.node',
@@ -198,6 +241,7 @@ export async function runNativeBindingProof(
     throw new Error('native proof is a Windows and macOS release gate')
   }
   const modules = options.modules ?? loadPackagedNativeModules()
+  assertPackagedDesignReferences(proofFile, modules.designEntry)
   await provePtyBinding(modules.pty)
   assertPackagedNativeModules(proofFile, modules)
   proveKeyringBinding(modules.keyring)
