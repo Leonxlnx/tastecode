@@ -557,10 +557,10 @@ function ComposerComponent(props: {
   const pendingQueueLayout = useRef<QueueLayoutSnapshot | null>(null)
   const previousNewSession = useRef(props.newSession)
   const attachmentsChangeReady = useRef(false)
+  const attachmentsEdited = useRef(false)
   const resourcesChangeReady = useRef(false)
   const onReady = useRef(props.onReady)
   onReady.current = props.onReady
-  const attachmentsEdited = useRef(false)
   const draftRequestRef = useRef(props.draftRequest)
   draftRequestRef.current = props.draftRequest
   const previousComposerRect = useRef<DOMRect | null>(null)
@@ -958,10 +958,10 @@ function ComposerComponent(props: {
     if (props.draftRequest.attachments !== undefined) {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
+      attachmentsEdited.current = false
       const paths = props.draftRequest.attachments
       setAttachments(
         paths.map((path) => {
-      attachmentsEdited.current = false
           const name = basename(path)
           const inferredMediaType = previewMediaType('', name)
           return {
