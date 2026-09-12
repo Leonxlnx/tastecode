@@ -88,13 +88,17 @@ const page = {
 
 describe('page phase', () => {
   it('passes both upstream artifacts through clear data boundaries', () => {
-    const prompt = designPagePrompt(brief, brand)
+    const prompt = designPagePrompt(brief, brand, ['/tmp/reference-home.png'])
     expect(prompt).toContain('<design-brief>')
     expect(prompt).toContain('<brand-system>')
     expect(prompt).toContain('<reference-direction-deck>')
-    expect(prompt).toContain('generated and visually inspected reference')
-    expect(prompt).toContain('A cue never overrides the brief, brand system')
-    expect(prompt).not.toContain('"imagePath"')
+    expect(prompt).toContain('<supplied-reference-catalog>')
+    expect(prompt).toContain('user-reference-1')
+    expect(prompt).toContain('Inspect the pixels rather than guessing')
+    expect(prompt).toContain('"imagePath"')
+    expect(prompt).toContain('REFERENCE LOCK')
+    expect(prompt).toContain("Preserve the chosen reference's macro geometry")
+    expect(prompt).toContain('Do not invent a second signature motif')
     expect(prompt).toContain('Do not choose new colors or typefaces')
     expect(prompt).toContain('order sections by information dependencies')
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
@@ -167,6 +171,50 @@ describe('page phase', () => {
       prompt,
     )?.[1]
     expect(JSON.parse(deck ?? '[]')).toHaveLength(11)
+  })
+
+  it('persists and validates the selected visual reference', () => {
+    const prompt = designPagePrompt(brief, brand)
+    const deck = JSON.parse(
+      /<reference-direction-deck>\s*([\s\S]*?)\s*<\/reference-direction-deck>/u.exec(prompt)?.[1] ??
+        '[]',
+    )
+    expect(() => parsePagePhaseOutput(JSON.stringify(page), deck)).toThrow(
+      'referenceDirectionId must identify an attached user reference or internal direction',
+    )
+
+    const internalLocked = parsePagePhaseOutput(
+      JSON.stringify({
+        ...page,
+        sections: [{ ...page.sections[0], referenceDirectionId: deck[0].id }],
+      }),
+      deck,
+    )
+    expect(internalLocked.sections[0]?.referenceDirectionId).toBe(deck[0].id)
+
+    const userLocked = parsePagePhaseOutput(
+      JSON.stringify({
+        ...page,
+        sections: [{ ...page.sections[0], referenceDirectionId: 'user-reference-1' }],
+      }),
+      deck,
+      ['user-reference-1'],
+    )
+    expect(userLocked.sections[0]?.referenceDirectionId).toBe('user-reference-1')
+
+    expect(() => parsePagePhaseOutput(JSON.stringify(page), [], ['user-reference-1'])).toThrow(
+      'referenceDirectionId must identify an attached user reference or internal direction',
+    )
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({
+          ...page,
+          sections: [{ ...page.sections[0], referenceDirectionId: deck[0].id }],
+        }),
+        deck,
+        ['user-reference-1'],
+      ),
+    ).toThrow('page must select at least one attached user reference')
   })
 
   it('parses the final response through the page validator', () => {

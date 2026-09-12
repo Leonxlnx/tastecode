@@ -1,5 +1,10 @@
 import type {
+  AssetManifest,
+  BrandSystem,
   BriefingQuestion,
+  DesignBrief,
+  DesignFileSnapshot,
+  PageBlueprint,
   PreviewPlan,
   ReviewScreenshot,
   VisualReview,
@@ -20,6 +25,7 @@ import { existsSync, realpathSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import {
   changedSince,
   restoreSnapshot,
@@ -179,8 +185,14 @@ const DesignFlowPhaseSchema = z.enum([
   'complete',
 ])
 const DesignBriefInputSchema = z.record(z.string(), JsonValueSchema)
+const DesignFileSnapshotSchema = z
+  .array(z.object({ path: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }))
+  .max(256)
 const StoredDesignFlowSchema = z.object({
   originalRequest: z.string(),
+  referenceAttachments: z.array(z.string()).max(64).optional().default([]),
+  referenceSnapshot: DesignFileSnapshotSchema.optional(),
+  assetSnapshot: DesignFileSnapshotSchema.optional(),
   options: z
     .object({
       model: z.string().optional(),
@@ -210,13 +222,21 @@ const StoredDesignFlowSchema = z.object({
     )
     .optional(),
   review: JsonValueSchema.optional(),
+  approvedBrief: JsonValueSchema.optional(),
+  approvedBrand: JsonValueSchema.optional(),
+  approvedPage: JsonValueSchema.optional(),
+  approvedAssets: JsonValueSchema.optional(),
   buildFileBaseline: z.array(z.string()).optional(),
+  designSourceBaseline: z.array(z.string()).optional(),
   buildSummary: z.string().optional(),
 })
 type DesignBriefInput = z.infer<typeof DesignBriefInputSchema>
 type DesignFlow = {
   workspacePath: string
   originalRequest: string
+  referenceAttachments: string[]
+  referenceSnapshot?: DesignFileSnapshot[]
+  assetSnapshot?: DesignFileSnapshot[]
   options: TurnOptions
   phase: DesignFlowPhase
   askedQuestions: boolean
@@ -231,7 +251,12 @@ type DesignFlow = {
   previewUrl?: string
   screenshots?: ReviewScreenshot[]
   review?: VisualReview
+  approvedBrief?: DesignBrief
+  approvedBrand?: BrandSystem
+  approvedPage?: PageBlueprint
+  approvedAssets?: AssetManifest
   buildFileBaseline?: string[] | undefined
+  designSourceBaseline?: string[] | undefined
   buildSummary?: string
 }
 
@@ -257,12 +282,24 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
 
   let previewPlan: PreviewPlan | undefined
   let review: VisualReview | undefined
+  let approvedBrief: DesignBrief | undefined
+  let approvedBrand: BrandSystem | undefined
+  let approvedPage: PageBlueprint | undefined
+  let approvedAssets: AssetManifest | undefined
   try {
     if (stored.previewPlan !== undefined)
       previewPlan = designAgent().parsePreviewPlan(stored.previewPlan)
     if (stored.review !== undefined) {
       review = designAgent().parseReviewPhaseOutput(JSON.stringify(stored.review))
     }
+    if (stored.approvedBrief !== undefined)
+      approvedBrief = designAgent().parseDesignBrief(stored.approvedBrief)
+    if (stored.approvedBrand !== undefined)
+      approvedBrand = designAgent().parseBrandSystem(stored.approvedBrand)
+    if (stored.approvedPage !== undefined)
+      approvedPage = designAgent().parsePageBlueprint(stored.approvedPage)
+    if (stored.approvedAssets !== undefined)
+      approvedAssets = designAgent().parseAssetManifest(stored.approvedAssets)
   } catch {
     return undefined
   }
@@ -279,6 +316,9 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
   return {
     workspacePath,
     originalRequest: stored.originalRequest,
+    referenceAttachments: stored.referenceAttachments,
+    ...(stored.referenceSnapshot ? { referenceSnapshot: stored.referenceSnapshot } : {}),
+    ...(stored.assetSnapshot ? { assetSnapshot: stored.assetSnapshot } : {}),
     options,
     phase,
     askedQuestions: stored.askedQuestions,
@@ -293,8 +333,13 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
     ...(screenshots ? { screenshots } : {}),
     ...(review ? { review } : {}),
+    ...(approvedBrief ? { approvedBrief } : {}),
+    ...(approvedBrand ? { approvedBrand } : {}),
+    ...(approvedPage ? { approvedPage } : {}),
+    ...(approvedAssets ? { approvedAssets } : {}),
     ...(stored.buildSummary ? { buildSummary: stored.buildSummary } : {}),
     ...(stored.buildFileBaseline ? { buildFileBaseline: stored.buildFileBaseline } : {}),
+    ...(stored.designSourceBaseline ? { designSourceBaseline: stored.designSourceBaseline } : {}),
   }
 }
 
@@ -1403,14 +1448,32 @@ export class Orchestrator {
       const design = attachments.some(isDesignBriefAttachment)
       if (design) {
         await loadDesignAgent()
+        const referenceAttachments = [
+          ...new Set(attachments.filter((attachment) => !isDesignBriefAttachment(attachment))),
+        ]
+        if (referenceAttachments.length > 64)
+          throw new Error('Design mode supports at most 64 supplied references')
+        if (referenceAttachments.length && !this.#get(threadId).session.capabilities.images) {
+          throw new Error(
+            'The selected provider cannot inspect the supplied Design reference images',
+          )
+        }
+        const workspacePath = this.#repoPath(threadId)
+        const referenceSnapshot = designAgent().snapshotDesignFiles(referenceAttachments)
+        const designSourceBaseline = designAgent().designSourceQualityBaseline(workspacePath)
+        const buildFileBaseline = designAgent().designWorkspaceFileBaseline(workspacePath)
         await this.#stopDesignPreview(threadId)
         // The flow keeps the user's own options; only brief-phase turns force
         // low effort (see #designTurnOptions). Storing the lowered options
         // here made Brand, Page, Build, and Review inherit the fast briefing
         // setting for the whole run.
         const flow: DesignFlow = {
-          workspacePath: this.#repoPath(threadId),
+          workspacePath,
           originalRequest: text,
+          referenceAttachments,
+          referenceSnapshot,
+          designSourceBaseline,
+          buildFileBaseline,
           options,
           phase: 'brief',
           askedQuestions: false,
@@ -1426,7 +1489,7 @@ export class Orchestrator {
           turnId = await this.#sendDesignTurn(
             threadId,
             designAgent().designBriefingPrompt(text),
-            attachments.filter((path) => !isDesignBriefAttachment(path)),
+            referenceAttachments,
             this.#designTurnOptions(flow),
             pendingStart,
           )
@@ -2975,8 +3038,20 @@ export class Orchestrator {
 
   #restoreDesignFlow(threadId: string, workspacePath: string, storedDesignFlow: unknown): void {
     const flow = parseStoredDesignFlow(storedDesignFlow, workspacePath)
-    if (!flow) return
+    if (!flow) {
+      this.#failDesignFlow(
+        threadId,
+        new Error('Stored Design state is invalid; restart the Design run'),
+      )
+      return
+    }
     this.#designFlows.set(threadId, flow)
+    try {
+      this.#validateApprovedDesignArtifacts(flow)
+    } catch (error) {
+      this.#failDesignFlow(threadId, error)
+      return
+    }
 
     const { unresolved, openTurnId } = designRecoveryState(this.#store.history(threadId))
     if (unresolved) {
@@ -3035,32 +3110,185 @@ export class Orchestrator {
 
   #designPromptFor(flow: DesignFlow): string {
     if (flow.phase === 'brief') return designAgent().designBriefingPrompt(flow.originalRequest)
-    const brief = designAgent().readDesignBrief(flow.workspacePath)
-    if (flow.phase === 'brand') return designAgent().designBrandPrompt(brief)
-    const brand = designAgent().readBrandSystem(flow.workspacePath)
-    if (flow.phase === 'page') return designAgent().designPagePrompt(brief, brand)
-    const page = designAgent().readPageBlueprint(flow.workspacePath)
-    if (flow.phase === 'assets') return designAgent().designAssetPrompt(brief, brand, page)
+    this.#validateApprovedDesignArtifacts(flow)
+    const brief = flow.approvedBrief!
+    if (flow.phase === 'brand')
+      return designAgent().designBrandPrompt(brief, flow.referenceAttachments)
+    const brand = flow.approvedBrand!
+    if (flow.phase === 'page')
+      return designAgent().designPagePrompt(brief, brand, flow.referenceAttachments)
+    const page = flow.approvedPage!
+    if (flow.phase === 'assets')
+      return designAgent().designAssetPrompt(brief, brand, page, flow.referenceAttachments)
     if (flow.phase === 'build') {
       return designAgent().designBuildPrompt(
         brief,
         brand,
         page,
-        designAgent().readAssetManifest(flow.workspacePath),
+        flow.approvedAssets!,
+        flow.referenceAttachments,
       )
     }
     if (flow.phase === 'preview') return designAgent().designPreviewPrompt()
     if (flow.phase === 'review' && flow.screenshots) {
-      return designAgent().designReviewPrompt(brief, brand, page, flow.screenshots)
+      return designAgent().designReviewPrompt(
+        brief,
+        brand,
+        page,
+        flow.screenshots,
+        flow.referenceAttachments,
+      )
     }
     if (flow.phase === 'repair' && flow.review) {
-      return designAgent().designRepairPrompt(flow.review, flow.repairAttempt, DESIGN_REPAIR_LIMIT)
+      return designAgent().designRepairPrompt(
+        flow.review,
+        flow.repairAttempt,
+        DESIGN_REPAIR_LIMIT,
+        brief,
+        brand,
+        page,
+        flow.approvedAssets!,
+        flow.referenceAttachments,
+        flow.screenshots ?? [],
+      )
     }
     throw new Error(`cannot resume design phase ${flow.phase}`)
   }
 
+  #validateApprovedDesignArtifacts(flow: DesignFlow): void {
+    const phase = [
+      'brief',
+      'brand',
+      'page',
+      'assets',
+      'build',
+      'preview',
+      'review',
+      'repair',
+      'complete',
+    ].indexOf(flow.phase)
+    const artifacts = [
+      {
+        name: 'brief.json',
+        value: flow.approvedBrief,
+        read: designAgent().readDesignBrief,
+        write: designAgent().writeDesignBrief,
+      },
+      {
+        name: 'brand.json',
+        value: flow.approvedBrand,
+        read: designAgent().readBrandSystem,
+        write: designAgent().writeBrandSystem,
+      },
+      {
+        name: 'page.json',
+        value: flow.approvedPage,
+        read: designAgent().readPageBlueprint,
+        write: designAgent().writePageBlueprint,
+      },
+      {
+        name: 'assets.json',
+        value: flow.approvedAssets,
+        read: designAgent().readAssetManifest,
+        write: designAgent().writeAssetManifest,
+      },
+    ]
+    const changed: string[] = []
+    for (const [index, artifact] of artifacts.entries()) {
+      if (index >= phase) break
+      if (!artifact.value)
+        throw new Error('Approved Design artifacts are unavailable; restart the Design run')
+      let matches = false
+      try {
+        matches = isDeepStrictEqual(artifact.read(flow.workspacePath), artifact.value)
+      } catch {
+        /* Restore the trusted snapshot below. */
+      }
+      if (!matches) {
+        artifact.write(flow.workspacePath, artifact.value)
+        changed.push(artifact.name)
+      }
+    }
+    if (changed.length)
+      throw new Error(
+        `Approved Design artifacts changed; TasteCode restored ${changed.join(', ')}. Keep the approved artifacts unchanged`,
+      )
+    if (flow.referenceAttachments.length) {
+      if (
+        !flow.referenceSnapshot ||
+        !isDeepStrictEqual(
+          flow.referenceSnapshot.map(({ path }) => path),
+          flow.referenceAttachments,
+        )
+      ) {
+        throw new Error('Design reference snapshots are unavailable; restart the Design run')
+      }
+      designAgent().validateDesignFileSnapshot(flow.referenceSnapshot)
+    }
+    if (flow.assetSnapshot && flow.approvedAssets) {
+      const current = designAgent().snapshotDesignAssets(flow.workspacePath, flow.approvedAssets)
+      if (!isDeepStrictEqual(current, flow.assetSnapshot)) {
+        throw new Error(
+          'An approved Design asset changed after acquisition; restore the original file or restart Design mode',
+        )
+      }
+    }
+    if (
+      phase >= 4 &&
+      (!flow.assetSnapshot || !flow.designSourceBaseline || !flow.buildFileBaseline)
+    ) {
+      throw new Error('Design validation snapshots are unavailable; restart the Design run')
+    }
+  }
+
+  #validateDesignBuild(flow: DesignFlow, files: readonly string[]): void {
+    this.#validateApprovedDesignArtifacts(flow)
+    designAgent().validateExactBuildFiles(
+      flow.workspacePath,
+      flow.approvedBrief!,
+      flow.buildFileBaseline,
+    )
+    const assets = designAgent().validateAssetManifestForPage(
+      flow.approvedAssets!,
+      flow.approvedPage!,
+      flow.workspacePath,
+      flow.referenceAttachments,
+    )
+    designAgent().validateResolvedDesignAssets(assets)
+    designAgent().validateDesignSourceQuality(
+      flow.workspacePath,
+      files,
+      flow.designSourceBaseline,
+      assets,
+    )
+  }
+
   #designAttachmentsFor(flow: DesignFlow): string[] {
-    return flow.phase === 'review' ? (flow.screenshots?.map(({ path }) => path) ?? []) : []
+    return flow.phase === 'review' || flow.phase === 'repair'
+      ? (flow.screenshots?.map(({ path }) => path) ?? [])
+      : []
+  }
+
+  #designReferenceAttachments(threadId: string, flow: DesignFlow): string[] {
+    if (!this.#get(threadId).session.capabilities.images) {
+      if (flow.referenceAttachments.length)
+        throw new Error('The selected provider cannot inspect required Design reference images')
+      return []
+    }
+    if (flow.phase === 'brief' || flow.phase === 'preview' || flow.phase === 'complete')
+      return flow.referenceAttachments
+    const directions =
+      flow.phase === 'page'
+        ? designAgent().selectReferenceDirectionDeck(flow.approvedBrief!, flow.approvedBrand!)
+        : flow.approvedPage
+          ? designAgent().referenceDirectionsForPage(flow.approvedPage)
+          : []
+    const internal = designAgent().referenceDirectionAttachments(directions)
+    if (internal.some((file) => !existsSync(file)))
+      throw new Error(
+        'Bundled Design reference images are unavailable; repair the app installation',
+      )
+    return [...new Set([...flow.referenceAttachments, ...internal])]
   }
 
   async #sendDesignTurn(
@@ -3071,6 +3299,13 @@ export class Orchestrator {
     pendingStart = this.#beginTurnStart(threadId),
   ): Promise<string> {
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    const designFlow = this.#designFlows.get(threadId)
+    if (designFlow) {
+      this.#validateApprovedDesignArtifacts(designFlow)
+      attachments = [
+        ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
+      ]
+    }
     const panicGeneration = this.#panicGeneration
     this.#checkoutAccess.beginTurn(this.#repoPath(threadId), threadId)
     for (const [turnId, owner] of this.#designTurns) {
@@ -3476,11 +3711,13 @@ export class Orchestrator {
     if (!flow) return
     const saved = designAgent().writeDesignBrief(flow.workspacePath, {
       ...brief,
+      originalRequest: flow.originalRequest,
       explicitAnswers: flow.explicitAnswers,
     })
+    flow.approvedBrief = saved
     this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
-    const prompt = designAgent().designBrandPrompt(saved)
+    const prompt = this.#designPromptFor(flow)
     if (this.#activeTurns.has(threadId)) {
       flow.pendingPrompt = prompt
       this.#saveDesignFlow(threadId)
@@ -3493,46 +3730,44 @@ export class Orchestrator {
   }
 
   #completeDesignPhase(threadId: string, turnId: string, flow: DesignFlow, text: string): void {
+    this.#validateApprovedDesignArtifacts(flow)
     if (flow.phase === 'brand') {
       const output = designAgent().parseBrandPhaseOutput(text)
       flow.correcting = false
       const brand = designAgent().writeBrandSystem(flow.workspacePath, output)
+      flow.approvedBrand = brand
       flow.phase = 'page'
-      flow.pendingPrompt = designAgent().designPagePrompt(
-        designAgent().readDesignBrief(flow.workspacePath),
-        brand,
-      )
+      flow.pendingPrompt = this.#designPromptFor(flow)
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'page') {
-      const output = designAgent().parsePagePhaseOutput(text)
+      const output = designAgent().parsePagePhaseOutput(
+        text,
+        designAgent().selectReferenceDirectionDeck(flow.approvedBrief!, flow.approvedBrand!),
+        flow.referenceAttachments.map((_, index) => `user-reference-${index + 1}`),
+      )
       flow.correcting = false
       const page = designAgent().writePageBlueprint(flow.workspacePath, output)
+      flow.approvedPage = page
       flow.phase = 'assets'
-      flow.pendingPrompt = designAgent().designAssetPrompt(
-        designAgent().readDesignBrief(flow.workspacePath),
-        designAgent().readBrandSystem(flow.workspacePath),
-        page,
-      )
+      flow.pendingPrompt = this.#designPromptFor(flow)
       this.#saveDesignFlow(threadId)
       return
     }
     if (flow.phase === 'assets') {
-      const output = designAgent().parseAssetPhaseOutput(text)
+      const output = designAgent().parseAssetPhaseOutput(
+        text,
+        flow.approvedPage!,
+        flow.workspacePath,
+        flow.referenceAttachments,
+      )
       flow.correcting = false
       const assets = designAgent().writeAssetManifest(flow.workspacePath, output)
-      flow.buildFileBaseline = designAgent().exactBuildFileBaseline(
-        flow.workspacePath,
-        designAgent().readDesignBrief(flow.workspacePath),
-      )
+      flow.approvedAssets = assets
+      flow.assetSnapshot = designAgent().snapshotDesignAssets(flow.workspacePath, assets)
       flow.phase = 'build'
-      flow.pendingPrompt = designAgent().designBuildPrompt(
-        designAgent().readDesignBrief(flow.workspacePath),
-        designAgent().readBrandSystem(flow.workspacePath),
-        designAgent().readPageBlueprint(flow.workspacePath),
-        assets,
-      )
+      flow.pendingPrompt = this.#designPromptFor(flow)
       this.#saveDesignFlow(threadId)
       return
     }
@@ -3544,11 +3779,7 @@ export class Orchestrator {
       } else {
         delete flow.buildSummary
       }
-      designAgent().validateExactBuildFiles(
-        flow.workspacePath,
-        designAgent().readDesignBrief(flow.workspacePath),
-        flow.buildFileBaseline,
-      )
+      this.#validateDesignBuild(flow, output.files)
       flow.correcting = false
       flow.phase = 'preview'
       flow.pendingPrompt = designAgent().designPreviewPrompt()
@@ -3599,6 +3830,7 @@ export class Orchestrator {
       return
     }
     if (flow.phase === 'review') {
+      this.#validateDesignBuild(flow, [])
       const review = designAgent().writeVisualReview(
         flow.workspacePath,
         designAgent().enforceDomAuditFindings(
@@ -3621,11 +3853,7 @@ export class Orchestrator {
       } else {
         flow.phase = 'repair'
         flow.repairAttempt += 1
-        flow.pendingPrompt = designAgent().designRepairPrompt(
-          review,
-          flow.repairAttempt,
-          DESIGN_REPAIR_LIMIT,
-        )
+        flow.pendingPrompt = this.#designPromptFor(flow)
       }
       this.#saveDesignFlow(threadId)
       return
@@ -3634,6 +3862,7 @@ export class Orchestrator {
       const output = designAgent().parseRepairPhaseOutput(text)
       flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
+      this.#validateDesignBuild(flow, output.files)
       void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
         if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
       })
@@ -3728,12 +3957,7 @@ export class Orchestrator {
     }
     flow.phase = 'review'
     flow.screenshots = screenshots
-    flow.pendingPrompt = designAgent().designReviewPrompt(
-      designAgent().readDesignBrief(flow.workspacePath),
-      designAgent().readBrandSystem(flow.workspacePath),
-      designAgent().readPageBlueprint(flow.workspacePath),
-      screenshots,
-    )
+    flow.pendingPrompt = this.#designPromptFor(flow)
     this.#saveDesignFlow(threadId)
     this.#completeDesignActivity(threadId, turnId)
     if (this.#activeTurns.has(threadId)) return
@@ -3782,12 +4006,21 @@ export class Orchestrator {
 
   #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
     if (flow.correcting) return undefined
+    if (
+      error instanceof designAgent().DesignSourceQualityError &&
+      flow.phase !== 'build' &&
+      flow.phase !== 'repair'
+    )
+      return undefined
     flow.correcting = true
     const detail = error instanceof Error ? error.message : String(error)
     const prompt =
-      flow.phase === 'build' && error instanceof designAgent().ExactBuildFilesError
-        ? designAgent().designBuildCorrectionPrompt(detail)
-        : designAgent().designPhaseCorrectionPrompt(detail)
+      error instanceof designAgent().DesignSourceQualityError
+        ? designAgent().designSourceQualityCorrectionPrompt(detail)
+        : (flow.phase === 'build' || flow.phase === 'repair') &&
+            error instanceof designAgent().ExactBuildFilesError
+          ? designAgent().designBuildCorrectionPrompt(detail)
+          : designAgent().designPhaseCorrectionPrompt(detail)
     flow.pendingPrompt = prompt
     this.#saveDesignFlow(threadId)
     return prompt

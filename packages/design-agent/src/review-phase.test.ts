@@ -54,6 +54,9 @@ describe('review and repair phases', () => {
     expect(prompt).toContain('visibly stretched, cropped, cut off, or oversized')
     expect(prompt).toContain('repeatedly uses split heading-and-description introductions')
     expect(prompt).toContain("each section's recorded motion decision")
+    expect(prompt).toContain('referenceDirectionId')
+    expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
+    expect(prompt).toContain('SVG is acceptable only for an explicit functional icon, logo')
   })
 
   it('persists the validated final review artifact', () => {
@@ -77,9 +80,22 @@ describe('review and repair phases', () => {
   })
 
   it('keeps repair bounded to the review and attempt budget', () => {
-    const prompt = designRepairPrompt(review, 1, 2)
+    const prompt = designRepairPrompt(
+      review,
+      1,
+      2,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+      [{ path: 'mobile.png', width: 390, height: 844 }],
+    )
     expect(prompt).toContain('attempt 1 of 2')
     expect(prompt).toContain('Fix only the validated visual findings')
+    expect(prompt).toContain('must remove the substitute itself')
+    expect(prompt).toContain('<screenshots>')
+    expect(prompt).toContain('mobile.png')
   })
 
   it('parses a repair completion report', () => {

@@ -1,4 +1,12 @@
-import { lstatSync, opendirSync, realpathSync } from 'node:fs'
+import {
+  closeSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  opendirSync,
+  readSync,
+  realpathSync,
+} from 'node:fs'
 import path from 'node:path'
 
 const MAX_ENTRIES = 25_000
@@ -62,4 +70,55 @@ export function workspaceEntries(
     }
   }
   return entries.sort((a, b) => (a.relative < b.relative ? -1 : a.relative > b.relative ? 1 : 0))
+}
+
+export function containedWorkspaceFile(
+  workspacePath: string,
+  relativePath: string,
+  label: string,
+): string {
+  const normalized = normalizeWorkspaceFile(relativePath)
+  if (!normalized) throw new Error(`${label} must stay inside the workspace`)
+  const root = realpathSync(workspacePath)
+  let candidate: string
+  try {
+    candidate = realpathSync(path.join(root, normalized))
+  } catch {
+    throw new Error(`${label} does not exist`)
+  }
+  const relative = path.relative(root, candidate)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`${label} must stay inside the workspace after resolving symlinks`)
+  }
+  if (!lstatSync(candidate).isFile()) throw new Error(`${label} must be a regular file`)
+  return candidate
+}
+
+/** Bound allocation and read through one descriptor; a growing file cannot bypass the limit. */
+export function readWorkspaceFile(filePath: string, maxBytes: number): Buffer {
+  const before = lstatSync(filePath)
+  if (!before.isFile())
+    throw new Error(`Design file ${path.basename(filePath)} must be a regular file`)
+  const fd = openSync(filePath, 'r')
+  try {
+    const stat = fstatSync(fd)
+    if (!stat.isFile() || stat.ino !== before.ino || stat.dev !== before.dev) {
+      throw new Error(`Design file ${path.basename(filePath)} changed while opening`)
+    }
+    if (stat.size > maxBytes)
+      throw new Error(`Design file ${path.basename(filePath)} exceeds ${maxBytes} bytes`)
+    const bytes = Buffer.alloc(stat.size + 1)
+    let length = 0
+    while (length < bytes.length) {
+      const read = readSync(fd, bytes, length, bytes.length - length, null)
+      if (!read) break
+      length += read
+    }
+    if (length !== stat.size || fstatSync(fd).mtimeMs !== stat.mtimeMs) {
+      throw new Error(`Design file ${path.basename(filePath)} changed while reading`)
+    }
+    return bytes.subarray(0, length)
+  } finally {
+    closeSync(fd)
+  }
 }
