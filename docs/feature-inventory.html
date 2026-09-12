@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-12 base main 82b32c79 + 1098</span>
+        <span class="meta">2026-09-12 base main 97c3002f + 1100</span>
       </div>
     </div>
 
@@ -1882,8 +1882,9 @@
       </p>
 
       <p class="sub">
-        Hidden capture waits have deadlines and remove pending frame callbacks, timers, and
-        listeners.
+        Hidden capture rejects malformed or unsafe page measurements before bitmap allocation.
+        Recorder cleanup avoids state updates after unmount. Hidden capture waits have deadlines and
+        remove pending frame callbacks, timers, and listeners.
       </p>
 
       <p class="sub">
