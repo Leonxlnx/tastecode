@@ -78,6 +78,40 @@ afterEach(() => {
 })
 
 describe('AppSelect', () => {
+  it('hides partial options while loading and keeps the search when the full list arrives', () => {
+    const onOpen = vi.fn()
+    const onChange = vi.fn()
+    const props = {
+      ariaLabel: 'Font',
+      value: 'alpha',
+      options: [{ value: 'alpha', label: 'Alpha Sans' }],
+      search: { label: 'Search fonts' },
+      onOpen,
+      onChange,
+    }
+    const view = render(<AppSelect {...props} loadingMessage="Loading fonts…" />)
+    const trigger = screen.getByRole('combobox', { name: 'Font' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    expect(onOpen).toHaveBeenCalledOnce()
+    expect(screen.getByRole('listbox').getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByRole('status').textContent).toBe('Loading fonts…')
+    expect(screen.queryAllByRole('option')).toHaveLength(0)
+    fireEvent.keyDown(trigger, { key: 'Enter' })
+    expect(onChange).not.toHaveBeenCalled()
+    const search = screen.getByRole('searchbox')
+    fireEvent.change(search, { target: { value: 'beta' } })
+    view.rerender(
+      <AppSelect {...props} options={[...props.options, { value: 'beta', label: 'Beta Serif' }]} />,
+    )
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Beta Serif',
+    ])
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(onChange).toHaveBeenCalledWith('beta')
+    expect(document.activeElement).toBe(trigger)
+  })
+
   it('applies selection immediately while the old list exits at its original position', async () => {
     const onChange = vi.fn()
     render(<SelectHarness onChange={onChange} />)

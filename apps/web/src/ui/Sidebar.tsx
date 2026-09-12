@@ -202,6 +202,24 @@ function SidebarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim()
+  const usageLimit = (props.usageStates ?? [])
+    .flatMap((state) => {
+      const source = state.summary?.limitSource
+      const limits = source
+        ? source.status === 'ready'
+          ? source.limits
+          : []
+        : (state.summary?.limits ?? [])
+      return limits.map((limit) => ({ ...limit, provider: state.provider }))
+    })
+    .filter((limit) => limit.valueLabel === undefined && Number.isFinite(limit.usedPercent))
+    .reduce<{ usedPercent: number; label: string; provider: string } | undefined>(
+      (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
+      undefined,
+    )
+  const usagePercent = usageLimit
+    ? Math.round(Math.min(100, Math.max(0, usageLimit.usedPercent)))
+    : undefined
   useEffect(() => {
     void loadAccountLimits()
   }, [])
@@ -837,6 +855,15 @@ function SidebarComponent(props: {
                 <span className="account__name">
                   {profileDisplayName || props.account?.email || props.providerName}
                 </span>
+                {usageLimit ? (
+                  <span
+                    className="account__usage"
+                    title={`${usagePercent}% used · ${usageLimit.provider} · ${usageLimit.label}`}
+                    aria-label={`${usagePercent}% of usage limit used`}
+                  >
+                    {usagePercent}%
+                  </span>
+                ) : null}
                 <ChevronUp className="account__chevron" size={13} aria-hidden />
               </span>
             )}

@@ -16,6 +16,7 @@ export type UpdateOperation = {
 type UpdateSnapshot = {
   updates: ProviderUpdate[]
   checking: boolean
+  noticeRevision: number
   operations: Partial<Record<ProviderId, UpdateOperation>>
   error?: string | undefined
 }
@@ -23,7 +24,7 @@ const stores = new WeakMap<Transport, ProviderUpdatesStore>()
 const CHECK_INTERVAL = 60 * 60_000
 
 export class ProviderUpdatesStore {
-  #state: UpdateSnapshot = { updates: [], checking: false, operations: {} }
+  #state: UpdateSnapshot = { updates: [], checking: false, noticeRevision: 0, operations: {} }
   #listeners = new Set<() => void>()
   #request: Promise<void> | undefined
   #checkedAt = 0
@@ -31,6 +32,7 @@ export class ProviderUpdatesStore {
   constructor(private transport: Transport) {}
 
   snapshot = () => this.#state
+  showNotice = () => this.#set({ noticeRevision: this.#state.noticeRevision + 1 })
   subscribe = (listener: () => void) => {
     this.#listeners.add(listener)
     return () => this.#listeners.delete(listener)

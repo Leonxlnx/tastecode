@@ -1244,11 +1244,14 @@ function ActivityStack({
         type="button"
         className="activity__summary"
         aria-expanded={disclosure.expanded}
+        title={label}
         onClick={disclosure.toggle}
       >
-        <span className="activity__glyph" aria-hidden>
-          {glyph(summaryItem)}
-        </span>
+        {live || !hasCommentary ? (
+          <span className="activity__glyph" aria-hidden>
+            {glyph(summaryItem)}
+          </span>
+        ) : null}
         <span className="activity__label" aria-live="polite" aria-atomic="true">
           {label}
         </span>
@@ -1275,13 +1278,26 @@ function ActivityStack({
                   )
                 }
                 const detail = activityDetail(item)
+                const itemLabel = activityItemLabel(item)
                 return (
-                  <div className="activity__item" key={item.id}>
+                  <div
+                    className="activity__item"
+                    data-failed={
+                      item.status === 'failed' ||
+                      (item.exitCode !== undefined && item.exitCode !== 0)
+                    }
+                    key={item.id}
+                  >
                     <div className="activity__file-change">
                       {glyph(item)}
-                      <span className="activity__item-label">{activityItemLabel(item)}</span>
+                      <span className="activity__item-label" title={itemLabel}>
+                        {itemLabel}
+                      </span>
                       {item.exitCode !== undefined && item.exitCode !== 0 ? (
                         <span className="aux__code">exit {item.exitCode}</span>
+                      ) : null}
+                      {item.durationMs !== undefined && item.durationMs >= 1000 ? (
+                        <span className="aux__time">{duration(item.durationMs)}</span>
                       ) : null}
                     </div>
                     {detail ? (
@@ -1567,6 +1583,7 @@ function ViewedImagePreview({
         <Suspense fallback={null}>
           <MediaViewer
             src={preview.previewUrl}
+            thumbnailSrc={inlineSource}
             name={preview.name}
             mediaType="image"
             onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}
