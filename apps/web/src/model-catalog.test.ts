@@ -165,6 +165,7 @@ describe('model catalog', () => {
     ['gpt-5.6-terra', true],
     ['gpt-5.6-luna', true],
     ['gpt-5.3-codex-spark', true],
+    ['gpt-5.2', false],
     ['gpt-5.5', false],
     ['gpt-5.4', false],
     ['gpt-5.4-mini', false],
@@ -172,13 +173,15 @@ describe('model catalog', () => {
     ['opus', true],
     ['sonnet', true],
     ['claude-opus-4-8', true],
-    ['haiku', false],
+    ['haiku', true],
+    ['claude-haiku-4-5', true],
+    ['claude-opus-4-5', false],
     ['claude-opus-4-7', false],
     ['claude-opus-4-6', false],
     ['claude-sonnet-4-6', false],
     ['grok-4.5', true],
     ['grok-4.6', true],
-    ['provider-model-added-tomorrow', true],
+    ['provider-model-added-tomorrow', false],
   ])('defaults %s visibility to %s', (id, visible) => {
     expect(modelVisibleByDefault({ ...model, id })).toBe(visible)
   })

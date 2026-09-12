@@ -1,5 +1,22 @@
 import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { RotateCcw, Search, X } from 'lucide-react'
+import {
+  IconArrowBarToRight as TabKey,
+  IconArrowBigUpLine as ShiftKey,
+  IconArrowDown as ArrowDown,
+  IconArrowLeft as ArrowLeft,
+  IconArrowRight as ArrowRight,
+  IconArrowUp as ArrowUp,
+  IconBackspace as BackspaceKey,
+  IconChevronUp as ControlKey,
+  IconCommand as CommandKey,
+  IconCornerDownLeft as EnterKey,
+  IconOption as OptionKey,
+  IconRotate as RotateCcw,
+  IconSearch as Search,
+  IconSpace as SpaceKey,
+  IconX as X,
+} from '@tabler/icons-react'
+import '../styles/keybinds.css'
 import {
   findKeybindingConflict,
   KEYBINDING_DEFINITIONS,
@@ -18,6 +35,74 @@ const GROUPS = [
   'Workspace',
 ] as const satisfies readonly KeybindingGroup[]
 const MODIFIER_KEYS = new Set(['Alt', 'AltGraph', 'Control', 'Meta', 'Shift'])
+
+function ShortcutKeyGlyph(props: { keyName: string; macOS: boolean }) {
+  const iconProps = {
+    'aria-hidden': true,
+    className: 'keybind-shortcut__icon',
+    size: 14,
+  } as const
+
+  switch (props.keyName) {
+    case 'arrowup':
+      return <ArrowUp {...iconProps} data-shortcut-icon="arrow-up" />
+    case 'arrowdown':
+      return <ArrowDown {...iconProps} data-shortcut-icon="arrow-down" />
+    case 'arrowleft':
+      return <ArrowLeft {...iconProps} data-shortcut-icon="arrow-left" />
+    case 'arrowright':
+      return <ArrowRight {...iconProps} data-shortcut-icon="arrow-right" />
+    case 'backspace':
+      return <BackspaceKey {...iconProps} data-shortcut-icon="backspace" />
+    case 'delete':
+      return (
+        <BackspaceKey
+          {...iconProps}
+          className="keybind-shortcut__icon is-delete"
+          data-shortcut-icon="delete"
+        />
+      )
+    case 'enter':
+      return <EnterKey {...iconProps} data-shortcut-icon="enter" />
+    case 'space':
+      return <SpaceKey {...iconProps} data-shortcut-icon="space" />
+    case 'tab':
+      return <TabKey {...iconProps} data-shortcut-icon="tab" />
+    default:
+      return (
+        <span className="keybind-shortcut__key">
+          {shortcutLabel({ key: props.keyName }, props.macOS)}
+        </span>
+      )
+  }
+}
+
+function ShortcutGlyphs(props: { shortcut: Shortcut; macOS: boolean }) {
+  const iconProps = {
+    'aria-hidden': true,
+    className: 'keybind-shortcut__icon',
+    size: 14,
+  } as const
+
+  return (
+    <kbd
+      className="keybind-shortcut"
+      title={shortcutLabel(props.shortcut, props.macOS)}
+      aria-hidden
+    >
+      {props.shortcut.primary ? (
+        props.macOS ? (
+          <CommandKey {...iconProps} data-shortcut-icon="command" />
+        ) : (
+          <ControlKey {...iconProps} data-shortcut-icon="control" />
+        )
+      ) : null}
+      {props.shortcut.alt ? <OptionKey {...iconProps} data-shortcut-icon="option" /> : null}
+      {props.shortcut.shift ? <ShiftKey {...iconProps} data-shortcut-icon="shift" /> : null}
+      <ShortcutKeyGlyph keyName={props.shortcut.key} macOS={props.macOS} />
+    </kbd>
+  )
+}
 
 export function KeybindSettings(props: {
   keybindings: Keybindings
@@ -190,7 +275,7 @@ export function KeybindSettings(props: {
                         {active ? (
                           <span>Press keys…</span>
                         ) : shortcut ? (
-                          <kbd>{shortcutLabel(shortcut, props.macOS)}</kbd>
+                          <ShortcutGlyphs shortcut={shortcut} macOS={props.macOS} />
                         ) : (
                           <span>Set keybind</span>
                         )}

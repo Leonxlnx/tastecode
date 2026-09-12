@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DiffDecision, DiffHunk, DiffLine, SessionDiff } from '@harness/contracts'
-import { Check, RefreshCw, X } from 'lucide-react'
+import { IconCheck as Check, IconRefresh as RefreshCw, IconX as X } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 
 export function DiffReview({ transport, threadId }: { transport: Transport; threadId: string }) {

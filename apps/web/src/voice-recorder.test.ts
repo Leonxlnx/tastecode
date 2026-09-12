@@ -9,6 +9,8 @@ import {
   useVoiceRecorder,
 } from './voice-recorder.js'
 
+vi.mock('./voice-capability.js', () => ({ canCaptureVoice: () => true }))
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -69,7 +71,9 @@ describe('voice recorder lifecycle', () => {
     let startPromise = Promise.resolve()
 
     act(() => {
-      startPromise = result.current.start()
+      startPromise = result.current.start().catch((error: unknown) => {
+        expect(error).toMatchObject({ name: 'AbortError' })
+      })
     })
     unmount()
     await act(async () => {
@@ -100,7 +104,9 @@ describe('voice recorder lifecycle', () => {
     let startPromise = Promise.resolve()
 
     act(() => {
-      startPromise = result.current.start()
+      startPromise = result.current.start().catch((error: unknown) => {
+        expect(error).toMatchObject({ name: 'AbortError' })
+      })
     })
     await act(async () => {
       await Promise.resolve()

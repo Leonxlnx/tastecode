@@ -20,7 +20,7 @@ const PATHS = {
 
 export function ProviderIcon(props: { mark: ProviderMark; size?: number; className?: string }) {
   const size = props.size ?? 18
-  const path = Object.entries(PATHS).find(([mark]) => mark === props.mark)?.[1]
+  const path: string | undefined = PATHS[props.mark as keyof typeof PATHS]
   if (props.mark === 'kimi') {
     return (
       <svg className={props.className} width={size} height={size} viewBox="0 0 24 25" aria-hidden>

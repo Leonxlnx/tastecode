@@ -1,4 +1,4 @@
-export type PullRequestDiffLine = {
+type PullRequestDiffLine = {
   id: string
   kind: 'context' | 'addition' | 'deletion' | 'meta'
   text: string

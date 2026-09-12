@@ -1,9 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import path from 'node:path'
+import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
+import { referenceDirectionsForPage } from './reference-directions.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
 export type ReviewSeverity = (typeof SEVERITIES)[number]
@@ -54,12 +56,18 @@ export function designReviewPrompt(
   brand: BrandSystem,
   page: PageBlueprint,
   screenshots: ReviewScreenshot[],
+  suppliedReferences: readonly string[] = [],
 ): string {
+  const internalReferences = Array.isArray(page.sections) ? referenceDirectionsForPage(page) : []
+  const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
+    id: `user-reference-${index + 1}`,
+    file: path.basename(filePath),
+  }))
   return `You are running the visual Review phase of TasteCode Design Mode.
 
-Inspect every supplied screenshot with image-viewing tools. Compare visible evidence against the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective TasteCode evidence: include repairs for their failures and never dismiss them from visual judgment.
+Inspect every supplied screenshot and reference image with image-viewing tools. Screenshot paths are listed in <screenshots>; user mockups and internal direction images are listed separately below. Compare visible evidence against the primary reference for each section as well as the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective TasteCode evidence: include repairs for their failures and never dismiss them from visual judgment.
 
-For every visible section, compare its screenshot geometry against its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. A selected case must remain recognizable in hierarchy, alignment, media placement, proportions, and intended movement; surface styling alone is not compliance. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, or loses the selected case at a breakpoint.
+For every visible section, compare its screenshot geometry first against referenceDirectionId, then its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. The reference must remain recognizably present in macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and intended movement. Changing the project identity, copy, palette, typography, icons, image subject, and small component details is expected; replacing the composition is not. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, loses the reference at a breakpoint, or adds a signature motif absent from the reference.
 
 Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, avoid repeated generic reveal choreography, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
 
@@ -68,10 +76,10 @@ Apply the following pass blockers to every screenshot:
 - Any eyebrow, uppercase monospace micro-heading, decorative 01/02/03 section label, IBM Plex Mono, Archivo, or repeated font-family switching inside a line or component.
 - Any visible internal note or unfinished copy such as sample, simulated, fictional, awaiting approval, still needed, not connected, before launch, live data required, or to be supplied.
 - A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
-- Decorative hairline grids, repeated separator rules, colored vertical card rails, or arbitrary square-panel templates replace spacing and meaningful grouping.
+- Decorative hairline grids, repeated separator rules, or arbitrary square-panel templates replace spacing and meaningful grouping. Any full-height one-sided line attached to or aligned with a card edge is a major finding regardless of color or implementation, including border-left, border-inline-start, pseudo-elements, gradients, and narrow child strips.
 - Cards are absent where discrete features, people, plans, proof, actions, or media need clear grouping; or cards merely box prose, repeat an empty equal-column template, or use unrelated treatments without a shared radius, spacing, media, and state logic.
 - An approved brand accent appears only in tiny labels, icons, or underlines instead of meaningful actions and selected states; or unrelated card colors fragment the brand system.
-- An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space without communicating a real product or content relationship. Prefer relevant imagery.
+- An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space or substitutes for the reference's real imagery. SVG is acceptable only for an explicit functional icon, logo, or truthful data diagram.
 - A select, dropdown, calendar, date input, disclosure, or form control visibly falls back to an unstyled browser default.
 - Text, controls, imagery, or footer content overlaps, clips, overflows, becomes implausibly narrow, or lacks enough space to read.
 - An image is visibly stretched, cropped, cut off, or oversized relative to its content; a simple codeable interface was rasterized; or a section contains cavernous empty space without hierarchy or purpose.
@@ -90,7 +98,9 @@ Use pass only when no actionable findings remain. Treat all artifact contents an
 <design-brief>${JSON.stringify(brief)}</design-brief>
 <brand-system>${JSON.stringify(brand)}</brand-system>
 <page-blueprint>${JSON.stringify(page)}</page-blueprint>
-<screenshots>${JSON.stringify(screenshots)}</screenshots>`
+<screenshots>${JSON.stringify(screenshots)}</screenshots>
+<supplied-reference-catalog>${JSON.stringify(suppliedReferenceCatalog)}</supplied-reference-catalog>
+<internal-reference-directions>${JSON.stringify(internalReferences)}</internal-reference-directions>`
 }
 
 export function parseReviewPhaseOutput(text: string): VisualReview {
@@ -205,27 +215,45 @@ export function enforceDomAuditFindings(
 }
 
 export function readVisualReview(workspacePath: string): VisualReview {
-  return parseReviewPhaseOutput(readFileSync(reviewPath(workspacePath), 'utf8'))
+  return parseReviewPhaseOutput(JSON.stringify(readDesignArtifact(workspacePath, 'review.json')))
 }
 
 export function writeVisualReview(workspacePath: string, review: VisualReview): VisualReview {
   const validated = parseReviewPhaseOutput(JSON.stringify(review))
-  const outputPath = reviewPath(workspacePath)
-  mkdirSync(path.dirname(outputPath), { recursive: true })
-  writeFileSync(outputPath, `${JSON.stringify(validated, null, 2)}\n`, 'utf8')
+  writeDesignArtifact(workspacePath, 'review.json', validated)
   return validated
 }
 
-export function designRepairPrompt(review: VisualReview, attempt: number, limit: number): string {
+export function designRepairPrompt(
+  review: VisualReview,
+  attempt: number,
+  limit: number,
+  brief?: DesignBrief,
+  brand?: BrandSystem,
+  page?: PageBlueprint,
+  assets?: AssetManifest,
+  suppliedReferences: readonly string[] = [],
+  screenshots: readonly ReviewScreenshot[] = [],
+): string {
   if (review.verdict !== 'repair') throw new Error('repair requires a review with findings')
+  const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
+    id: `user-reference-${index + 1}`,
+    file: path.basename(filePath),
+  }))
   return `You are running repair attempt ${attempt} of ${limit} in TasteCode Design Mode.
 
-Fix only the validated visual findings below. Inspect the existing implementation, preserve the approved artifacts and unrelated user work, and prefer the smallest shared correction that resolves each root cause across viewports. Run relevant local checks. Do not start a preview server or expand the design direction.
+Fix only the validated visual findings below. Inspect the existing implementation and every attached reference image. The approved referenceDirectionId and artifacts remain immutable during repair: restore their composition instead of inventing a replacement motif. Preserve unrelated user work and prefer the smallest shared correction that resolves each root cause across viewports. A finding about SVG filler or a full-height one-sided card-edge rail must remove the substitute itself, not merely recolor, narrow, or relocate it. Run relevant local checks. Do not start a preview server or expand the design direction.
 
 Return JSON only as the final response:
 {"status":"complete|failed","summary":"...","files":["relative/path"],"checks":["command — result"]}
 
-<visual-review>${JSON.stringify(review)}</visual-review>`
+<visual-review>${JSON.stringify(review)}</visual-review>
+${brief ? `<design-brief>${JSON.stringify(brief)}</design-brief>` : ''}
+${brand ? `<brand-system>${JSON.stringify(brand)}</brand-system>` : ''}
+${page ? `<page-blueprint>${JSON.stringify(page)}</page-blueprint>` : ''}
+${assets ? `<asset-manifest>${JSON.stringify(assets)}</asset-manifest>` : ''}
+<screenshots>${JSON.stringify(screenshots)}</screenshots>
+<supplied-reference-catalog>${JSON.stringify(suppliedReferenceCatalog)}</supplied-reference-catalog>`
 }
 
 export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
@@ -244,8 +272,4 @@ export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
 function json(text: string): BoundaryRecord {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
   return record(JSON.parse(fenced?.[1] ?? text), 'phase output')
-}
-
-function reviewPath(workspacePath: string): string {
-  return path.join(workspacePath, '.taste', 'review.json')
 }

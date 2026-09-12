@@ -9,16 +9,23 @@
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node scripts/build-main.js",
+    "build:main": "node scripts/build-main.js",
+    "benchmark:startup": "node scripts/benchmark-startup.js",
+    "benchmark:startup:compare": "node scripts/compare-startup.js",
+    "verify:performance": "node scripts/verify-performance.js",
+    "verify:preview": "node scripts/verify-preview.js",
+    "test:release-tools": "node --test ../../tools/scripts/release-tools.test.js",
     "typecheck": "tsc -b",
-    "start": "tsc -b && node scripts/build-preload.js && node scripts/start.js",
-    "test": "vitest run --passWithNoTests",
+    "start": "tsc -b && node scripts/build-main.js && node scripts/build-preload.js && node scripts/start.js",
+    "test": "vitest run src --passWithNoTests",
     "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
     "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
     "@harness/contracts": "workspace:*",
+    "@harness/proc": "workspace:*",
     "@harness/server": "workspace:*",
     "electron-updater": "6.8.9",
     "zod": "4.4.3"
@@ -35,6 +42,9 @@
     "appId": "dev.tastecode.desktop",
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
+    "electronLanguages": [
+      "en-US"
+    ],
     "npmRebuild": false,
     "asarUnpack": [
       "node_modules/**/*.node"
@@ -45,7 +55,10 @@
       "package.json",
       "!node_modules/@harness/*/src{,/**/*}",
       "!node_modules/@harness/*/tsconfig*.json",
-      "!node_modules/@harness/*/*.tsbuildinfo"
+      "!node_modules/@harness/*/*.tsbuildinfo",
+      "!node_modules/@harness/*/dist/**/*.d.ts",
+      "!node_modules/@harness/*/dist/**/*.map",
+      "!node_modules/@harness/*/dist/**/*.bench.js"
     ],
     "extraResources": [
       {

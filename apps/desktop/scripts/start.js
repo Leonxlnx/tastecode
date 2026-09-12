@@ -150,9 +150,13 @@ export async function developmentElectronExecutable() {
 
 async function start() {
   const executable = await developmentElectronExecutable()
+  const environment = { ...process.env }
+  if (process.env.HARNESS_STARTUP_BENCHMARK === '1') {
+    environment.HARNESS_STARTUP_STARTED_AT = String(Date.now())
+  }
   const child = spawn(executable, [desktopRoot, ...process.argv.slice(2)], {
     cwd: desktopRoot,
-    env: process.env,
+    env: environment,
     stdio: 'inherit',
   })
 

@@ -44,7 +44,12 @@ describe('mapCodexRateLimits', () => {
       { label: '5 hours', usedPercent: 0, resetsAt: 1_800_000_000_000 },
       { label: 'Weekly Spark', usedPercent: 100 },
       { label: 'Credits', usedPercent: 0, valueLabel: '$1.00 · 25 credits' },
-      { label: 'Rate limit resets', usedPercent: 0, valueLabel: '2 available' },
+      {
+        label: 'Rate limit resets',
+        usedPercent: 0,
+        valueLabel: '2 available',
+        action: 'consume-reset',
+      },
     ])
   })
 

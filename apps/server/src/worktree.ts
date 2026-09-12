@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
+import { listWorkspaceBranches } from './workspace.js'
 
 const run = promisify(execFile)
 
@@ -59,8 +60,12 @@ export async function createWorktree(
   repoPath: string,
   threadId: string,
   root: string,
+  baseRef?: string,
 ): Promise<Worktree> {
   if (!(await isRepository(repoPath))) throw new NotARepository(repoPath)
+  if (baseRef !== undefined && !(await listWorkspaceBranches(repoPath)).includes(baseRef)) {
+    throw new Error(`unknown local branch: ${baseRef}`)
+  }
 
   const branch = `harness/${short(threadId)}`
   const target = path.join(root, short(threadId))
@@ -70,7 +75,14 @@ export async function createWorktree(
   // worktrees whose directory is already gone.
   await git(repoPath, ['worktree', 'prune'])
 
-  const result = await gitOrThrow(repoPath, ['worktree', 'add', '-b', branch, target, 'HEAD'])
+  const result = await gitOrThrow(repoPath, [
+    'worktree',
+    'add',
+    '-b',
+    branch,
+    target,
+    baseRef === undefined ? 'HEAD' : `refs/heads/${baseRef}`,
+  ])
   if (result instanceof Error) throw result
 
   return { path: target, branch, repoPath }

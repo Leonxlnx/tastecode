@@ -1,6 +1,7 @@
+import { fileURLToPath } from 'node:url'
 import type { BrandSystem } from './brand.js'
 import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
+import { PAGE_LAYOUT_FAMILIES, type PageBlueprint, type PageLayoutFamily } from './page.js'
 
 export interface ReferenceDirection {
   id: string
@@ -681,6 +682,72 @@ export const REFERENCE_DIRECTIONS = [
   ),
 ] as const satisfies readonly ReferenceDirection[]
 
+const REFERENCE_DIRECTION_BY_ID = new Map(
+  REFERENCE_DIRECTIONS.map((direction) => [direction.id, direction]),
+)
+
+export function referenceDirectionAttachmentPath(direction: ReferenceDirection): string {
+  return fileURLToPath(new URL(`../${direction.imagePath}`, import.meta.url))
+}
+
+export function referenceDirectionAttachments(directions: readonly ReferenceDirection[]): string[] {
+  return directions.map(referenceDirectionAttachmentPath)
+}
+
+export function referenceDirectionsForPage(page: PageBlueprint): ReferenceDirection[] {
+  return page.sections.flatMap((section, index) => {
+    if (!section.referenceDirectionId) return []
+    if (section.referenceDirectionId.startsWith('user-reference-')) return []
+    const direction = REFERENCE_DIRECTION_BY_ID.get(section.referenceDirectionId)
+    if (!direction) {
+      throw new Error(`sections[${index}].referenceDirectionId is unknown`)
+    }
+    if (direction.family !== section.layoutFamily) {
+      throw new Error(
+        `sections[${index}].referenceDirectionId must belong to ${section.layoutFamily}`,
+      )
+    }
+    return [direction]
+  })
+}
+
+export function lockPageReferenceDirections(
+  page: PageBlueprint,
+  deck: readonly ReferenceDirection[],
+  suppliedReferenceIds: readonly string[] = [],
+): PageBlueprint {
+  const deckIds = new Set(deck.map(({ id }) => id))
+  const suppliedIds = new Set(suppliedReferenceIds)
+  let usesSuppliedReference = false
+  const sections = page.sections.map((section, index) => {
+    if (!section.layoutFamily) throw new Error(`sections[${index}] must select a layoutFamily`)
+    const referenceDirectionId = section.referenceDirectionId
+    if (
+      !referenceDirectionId ||
+      (!deckIds.has(referenceDirectionId) && !suppliedIds.has(referenceDirectionId))
+    ) {
+      throw new Error(
+        `sections[${index}].referenceDirectionId must identify an attached user reference or internal direction`,
+      )
+    }
+    if (suppliedIds.has(referenceDirectionId)) {
+      usesSuppliedReference = true
+      return { ...section, referenceDirectionId }
+    }
+    const direction = REFERENCE_DIRECTION_BY_ID.get(referenceDirectionId)
+    if (!direction || direction.family !== section.layoutFamily) {
+      throw new Error(
+        `sections[${index}].referenceDirectionId must belong to ${section.layoutFamily}`,
+      )
+    }
+    return { ...section, referenceDirectionId }
+  })
+  if (suppliedIds.size && !usesSuppliedReference) {
+    throw new Error('page must select at least one attached user reference')
+  }
+  return { ...page, sections }
+}
+
 function hashSeed(value: string): number {
   let hash = 2_166_136_261
   for (let index = 0; index < value.length; index += 1) {
@@ -692,27 +759,17 @@ function hashSeed(value: string): number {
 
 export function selectReferenceDirectionDeck(
   brief: DesignBrief,
-  brand: BrandSystem,
+  _brand: BrandSystem,
 ): ReferenceDirection[] {
   const seed = JSON.stringify({
-    brief: {
-      subject: brief.subject,
-      pageType: brief.pageType,
-      scope: brief.scope,
-      primaryGoal: brief.primaryGoal,
-      audience: brief.audience,
-      offer: brief.offer,
-      primaryAction: brief.primaryAction,
-      brandInputs: brief.brandInputs,
-      creativeControl: brief.creativeControl,
-    },
-    brand: {
-      creativeDirection: brand.creativeDirection,
-      colorPalette: brand.colorPalette,
-      typefaces: brand.typefaces,
-      interfaceDirection: brand.interfaceDirection,
-      imageDirection: brand.imageDirection,
-    },
+    subject: brief.subject,
+    pageType: brief.pageType,
+    scope: brief.scope,
+    primaryGoal: brief.primaryGoal,
+    audience: brief.audience,
+    offer: brief.offer,
+    primaryAction: brief.primaryAction,
+    requiredContent: brief.requiredContent,
   })
 
   return PAGE_LAYOUT_FAMILIES.map((family) => {

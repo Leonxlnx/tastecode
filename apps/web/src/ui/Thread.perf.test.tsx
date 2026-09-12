@@ -2,9 +2,15 @@
 import { describe, expect, it } from 'vitest'
 import { render, cleanup } from '@testing-library/react'
 import type { DomainEvent, Item } from '@harness/contracts'
+import { ThreadFrameStore } from '../thread-frame-store.js'
 import { Thread, workLabel } from './Thread.js'
 import { makeFixtureThread } from './fixture.js'
-import { activeTurnIsSearching, emptyThread, reduce } from '../thread-store.js'
+import {
+  activeTurnActivityIndices,
+  activeTurnIsSearching,
+  emptyThread,
+  reduce,
+} from '../thread-store.js'
 
 /**
  * Performance budgets, enforced rather than aspired to.
@@ -24,14 +30,7 @@ import { activeTurnIsSearching, emptyThread, reduce } from '../thread-store.js'
 
 const view = (items: ReturnType<typeof makeFixtureThread>) => (
   <Thread
-    items={items}
-    running={false}
-    activeTurn={undefined}
-    plan={[]}
-    diff={undefined}
-    approvals={[]}
-    userInputs={[]}
-    reviews={[]}
+    frameStore={new ThreadFrameStore({ ...emptyThread, items })}
     onDecide={() => {}}
     onAnswerUserInput={() => {}}
   />
@@ -48,24 +47,46 @@ function timeMount(count: number): number {
 
 describe('thread at scale', () => {
   it('shows working and searching states in the activity rail', () => {
-    const props = {
-      items: [],
-      running: true,
-      activeTurn: { id: 'turn-1', startedAt: 0 },
-      plan: [],
-      diff: undefined,
-      approvals: [],
-      userInputs: [],
-      reviews: [],
-      onDecide: () => {},
-      onAnswerUserInput: () => {},
+    const completedPhase: Item = {
+      id: 'phase-1',
+      turnId: 'turn-1',
+      type: 'tool_call',
+      status: 'completed',
+      text: 'design:brief',
+      createdAt: 0,
     }
-    const rendered = render(<Thread {...props} searching={false} />)
+    const view = (items: Item[]) => (
+      <Thread
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items,
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 0 },
+          })
+        }
+        onDecide={() => {}}
+        onAnswerUserInput={() => {}}
+      />
+    )
+    const rendered = render(view([completedPhase]))
     expect(
       document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
     ).toBe('Working…')
 
-    rendered.rerender(<Thread {...props} searching />)
+    rendered.rerender(
+      view([
+        completedPhase,
+        {
+          id: 'search-1',
+          turnId: 'turn-1',
+          type: 'tool_call',
+          status: 'started',
+          text: 'search files',
+          createdAt: 1,
+        },
+      ]),
+    )
     expect(
       document.querySelector('.activity__working-orb canvas')?.getAttribute('aria-label'),
     ).toBe('Searching…')
@@ -73,17 +94,20 @@ describe('thread at scale', () => {
 
   it('hands the placeholder rail to the first visible response without duplication', () => {
     cleanup() // earlier renders would satisfy the queries below with stale DOM
-    const props = {
-      running: true,
-      activeTurn: { id: 'turn-1', startedAt: 0 },
-      plan: [],
-      diff: undefined,
-      approvals: [],
-      userInputs: [],
-      reviews: [],
-      onDecide: () => {},
-      onAnswerUserInput: () => {},
-    }
+    const view = (items: Item[]) => (
+      <Thread
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items,
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 0 },
+          })
+        }
+        onDecide={() => {}}
+        onAnswerUserInput={() => {}}
+      />
+    )
     const asked: Item = {
       id: 'u1',
       turnId: 'turn-1',
@@ -93,7 +117,7 @@ describe('thread at scale', () => {
       text: 'hi',
       createdAt: 1,
     }
-    const rendered = render(<Thread {...props} items={[asked]} />)
+    const rendered = render(view([asked]))
     const orb = rendered.container.querySelector('.activity__working-orb canvas')
     expect(orb).not.toBeNull()
 
@@ -106,7 +130,7 @@ describe('thread at scale', () => {
       text: 'Hello',
       createdAt: 2,
     }
-    rendered.rerender(<Thread {...props} items={[asked, reply]} />)
+    rendered.rerender(view([asked, reply]))
     expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(0)
     expect(rendered.container.querySelector('.activity__working-orb canvas')).toBeNull()
     cleanup()
@@ -139,6 +163,22 @@ describe('thread at scale', () => {
         false,
       ),
     ).toBe('Working')
+    expect(
+      workLabel(
+        [
+          {
+            id: 'reasoning-live',
+            turnId: 'turn-1',
+            type: 'reasoning',
+            text: 'A long chain of thought that must not become the status line',
+            status: 'started',
+            createdAt: 2,
+          },
+        ],
+        'turn-1',
+        false,
+      ),
+    ).toBe('Thinking')
     expect(
       workLabel(
         [
@@ -194,6 +234,33 @@ describe('thread at scale', () => {
       'Future capability',
     )
     expect(workLabel([item('unknown', '[unknown]')], 'turn-1', false)).toBe('Agent activity')
+  })
+
+  it('uses the active activity index for a long completed tool tail', () => {
+    const items: Item[] = [
+      ...Array.from({ length: 10_000 }, (_, index) => ({
+        id: `tool-${index}`,
+        turnId: 'turn-1',
+        type: 'tool_call' as const,
+        status: 'completed' as const,
+        text: 'read file',
+        createdAt: index,
+      })),
+      {
+        id: 'answer',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: 'Answering',
+        createdAt: 10_000,
+      },
+    ]
+    const indices = activeTurnActivityIndices(items, 'turn-1')
+
+    expect(indices).toEqual([])
+    expect(workLabel(items, 'turn-1', false, undefined, 0, indices)).toBe('Working')
+    expect(activeTurnIsSearching(items, 'turn-1', undefined, 0, indices)).toBe(false)
   })
 
   it('costs about the same at a thousand items as at a hundred', () => {

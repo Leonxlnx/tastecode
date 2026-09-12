@@ -1,5 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import { record, string, stringsAllowEmpty } from './parse.js'
 
 export interface ExplicitBriefAnswer {
@@ -45,7 +44,7 @@ const STRING_ARRAY_FIELDS = [
   'unresolved',
 ] as const
 
-function parseDesignBrief(value: unknown): DesignBrief {
+export function parseDesignBrief(value: unknown): DesignBrief {
   const brief = record(value, 'design brief')
   for (const field of STRING_FIELDS) {
     string(brief[field], `design brief field ${field}`)
@@ -95,18 +94,12 @@ function isExplicitBriefAnswer(value: unknown): value is ExplicitBriefAnswer {
   )
 }
 
-function briefPath(workspacePath: string): string {
-  return path.join(workspacePath, '.taste', 'brief.json')
-}
-
 export function readDesignBrief(workspacePath: string): DesignBrief {
-  return parseDesignBrief(JSON.parse(readFileSync(briefPath(workspacePath), 'utf8')))
+  return parseDesignBrief(readDesignArtifact(workspacePath, 'brief.json'))
 }
 
 export function writeDesignBrief(workspacePath: string, value: unknown): DesignBrief {
   const brief = parseDesignBrief(value)
-  const outputPath = briefPath(workspacePath)
-  mkdirSync(path.dirname(outputPath), { recursive: true })
-  writeFileSync(outputPath, `${JSON.stringify(brief, null, 2)}\n`, 'utf8')
+  writeDesignArtifact(workspacePath, 'brief.json', brief)
   return brief
 }

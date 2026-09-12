@@ -27,6 +27,21 @@ class FakeChild extends ChildProcess {
 }
 
 describe('Cursor adapter', () => {
+  it('does not reuse a turn identity when a fresh instance resumes', async () => {
+    const first = new CursorAdapter({ spawn: () => new FakeChild() })
+    const resumed = new CursorAdapter({ spawn: () => new FakeChild() })
+    try {
+      const thread = await first.startThread('/repo')
+      const previous = await first.sendTurn(thread.id, 'One')
+      first.dispose()
+      await resumed.resumeThread(thread.id, '/repo')
+      expect(await resumed.sendTurn(thread.id, 'Two')).not.toBe(previous)
+    } finally {
+      first.dispose()
+      resumed.dispose()
+    }
+  })
+
   it('starts and maps the documented stream-json wire format', async () => {
     const child = new FakeChild()
     let args: string[] = []

@@ -79,7 +79,7 @@
   padding: 3px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
 }
 
@@ -90,7 +90,7 @@
   justify-content: center;
   gap: 6px;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
@@ -151,7 +151,7 @@
   padding: 0 10px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   transition: border-color var(--dur-fast) var(--ease-out);
@@ -183,7 +183,7 @@
   padding: 0 9px;
   background: var(--chrome-raised);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-shadow);
   color: var(--text-3);
 }
@@ -232,7 +232,7 @@
   padding: 4px 6px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -295,11 +295,12 @@
   cursor: pointer;
   font: inherit;
   text-align: left;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 59px;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .pr-list-item:is(:hover, :focus-visible) {
@@ -311,10 +312,6 @@
   background: var(--chrome-raised);
   border-color: var(--chrome-border);
   box-shadow: var(--chrome-shadow);
-}
-
-.pr-list-item:active {
-  transform: scale(0.992);
 }
 
 .pr-state-mark {
@@ -393,6 +390,7 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+  overflow: hidden;
   color: var(--text-3);
   font-size: var(--t-xs);
 }
@@ -407,7 +405,8 @@
   flex: none;
 }
 
-.pr-list-branch {
+.pr-list-meta > .pr-list-branch {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -491,7 +490,7 @@
   height: 42px;
   background: var(--chrome-raised);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-lg);
   box-shadow: var(--chrome-shadow);
   color: var(--text-2);
 }
@@ -576,6 +575,7 @@
 .pr-detail-tabs button {
   min-height: 30px;
   padding: 0 9px;
+  border-radius: var(--r-md);
   background: transparent;
 }
 
@@ -602,8 +602,7 @@
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .pr-icon-button {
@@ -619,14 +618,6 @@
 .pr-toolbar-button:is(:hover, :focus-visible) {
   background: var(--chrome-raised-hover);
   color: var(--text);
-}
-
-.pr-icon-button:active,
-.pr-toolbar-button:active,
-.pr-button:active,
-.pr-send-button:active {
-  box-shadow: var(--chrome-inset-shadow);
-  transform: translateY(1px);
 }
 
 .pr-icon-button:disabled,
@@ -657,9 +648,7 @@
 .pr-toolbar-button.is-primary {
   background: var(--light);
   border-color: var(--light);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, white 36%, transparent),
-    0 1px 2px color-mix(in srgb, black 25%, transparent);
+  box-shadow: none;
   color: var(--on-light);
 }
 
@@ -690,6 +679,24 @@
   opacity: 0.46;
 }
 
+/* These triggers paint on an inner surface that covers the button's fill. */
+@layer button-feedback {
+  .pr-toolbar-menu-trigger > .pr-toolbar-button,
+  .pr-status-menu-trigger > .pr-status-pill {
+    transition: none !important;
+  }
+
+  .pr-toolbar-menu-trigger[aria-expanded='true']:not(:disabled):not([aria-disabled='true'])
+    > .pr-toolbar-button,
+  .pr-status-menu-trigger[aria-expanded='true']:not(:disabled):not([aria-disabled='true'])
+    > .pr-status-pill {
+    background-image: linear-gradient(
+      var(--control-open-overlay),
+      var(--control-open-overlay)
+    ) !important;
+  }
+}
+
 .pr-button {
   display: inline-flex;
   align-items: center;
@@ -706,8 +713,7 @@
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
     box-shadow var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color var(--dur-fast) var(--ease-out);
 }
 
 .pr-button.is-secondary {
@@ -725,9 +731,7 @@
 .pr-button.is-primary {
   background: var(--light);
   border: 1px solid var(--light);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, white 36%, transparent),
-    0 1px 2px color-mix(in srgb, black 25%, transparent);
+  box-shadow: none;
   color: var(--on-light);
 }
 
@@ -789,7 +793,7 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   color: inherit;
   cursor: pointer;
 }
@@ -885,6 +889,7 @@
   width: 25px;
   height: 25px;
   flex: none;
+  border-radius: var(--r-md);
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-3);
@@ -936,7 +941,9 @@
 .pr-fact-menu-trigger {
   display: flex;
   align-items: center;
-  max-width: 100%;
+  width: max-content;
+  /* Include the padding outside the metadata column's negative margins. */
+  max-width: calc(100% + 10px);
   min-width: 0;
   overflow: hidden;
   min-height: 26px;
@@ -1074,10 +1081,12 @@
 }
 
 .pr-metadata-menu {
+  --r-popup: var(--r-lg);
+
   width: min(310px, calc(100vw - 16px));
   min-width: min(310px, calc(100vw - 16px));
   max-height: min(390px, calc(100vh - 16px));
-  padding: 7px;
+  padding: 3px;
   overflow: hidden;
   background: var(--menu-bg);
   border-color: var(--chrome-border);
@@ -1089,19 +1098,19 @@
 
 .pr-picker {
   display: grid;
-  gap: 7px;
+  gap: 4px;
 }
 
 .pr-picker-search {
   display: flex;
   align-items: center;
   gap: 7px;
-  min-height: 34px;
+  min-height: 28px;
   margin: 1px;
   padding: 0 9px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
 }
@@ -1120,7 +1129,7 @@
 
 .pr-picker-options {
   display: grid;
-  gap: 2px;
+  gap: 0;
   max-height: 280px;
   overflow: auto;
 }
@@ -1131,7 +1140,7 @@
   align-items: center;
   gap: 9px;
   width: 100%;
-  min-height: 39px;
+  min-height: 32px;
   padding: 5px 7px;
   background: transparent;
   border: 1px solid transparent;
@@ -1206,7 +1215,7 @@
   background: var(--label-color);
   border: 1px solid color-mix(in srgb, var(--label-color) 70%, var(--line));
   border-radius: var(--r-circle);
-  box-shadow: inset 0 1px color-mix(in srgb, white 28%, transparent);
+  box-shadow: none;
 }
 
 .pr-picker-option-copy {
@@ -1275,7 +1284,7 @@
   padding: 2px 5px;
   background: var(--surface-2);
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: var(--t-xs);
@@ -1478,7 +1487,7 @@
   padding: 6px 9px;
   background: color-mix(in srgb, var(--surface) 72%, var(--bg));
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-3);
   text-decoration: none;
   content-visibility: auto;
@@ -1568,7 +1577,7 @@
   overflow: hidden;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }
@@ -1650,7 +1659,7 @@
   padding: 0 9px 0 11px;
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-md);
   box-shadow: var(--composer-action-shadow);
   color: var(--text-2);
   font: inherit;
@@ -1682,29 +1691,20 @@
   background: color-mix(in srgb, var(--composer-orb) 90%, transparent);
   border: 0;
   border-radius: var(--r-circle);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 16%),
-    0 1px 2px 0 color-mix(in srgb, var(--composer-orb) 24%, transparent);
+  box-shadow: none;
   color: var(--composer-on-orb);
   cursor: pointer;
   font-size: var(--t-sm);
   transition:
     background 150ms var(--ease-out),
     box-shadow 150ms var(--ease-out),
-    color 150ms var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
+    color 150ms var(--ease-out);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .pr-send-button:hover:not(:disabled) {
+  .pr-send-button:hover:not(:disabled):not(.is-approve):not(.is-request_changes) {
     background: var(--composer-orb);
-    transform: scale(1.05);
   }
-}
-
-.pr-send-button:active:not(:disabled) {
-  box-shadow: inset 0 1px 0 rgb(0 0 0 / 8%);
-  transform: scale(0.97);
 }
 
 .pr-send-button.is-approve {
@@ -1897,9 +1897,7 @@
   min-width: 0;
   overflow: visible;
   border-color: var(--line-strong);
-  box-shadow:
-    0 1px 0 color-mix(in srgb, var(--line) 54%, transparent),
-    inset 0 1px var(--chrome-highlight);
+  box-shadow: none;
 }
 
 .pr-activity-comment::before,
@@ -2078,7 +2076,7 @@
   padding: 6px 7px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
@@ -2200,7 +2198,7 @@
   place-items: center;
   width: 23px;
   height: 23px;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-md);
   color: var(--text-3);
 }
 
@@ -2246,7 +2244,7 @@
   padding: 10px 12px 12px;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }
@@ -2383,7 +2381,7 @@
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-2xl);
+  border-radius: var(--r-card);
   box-shadow:
     var(--shadow-modal),
     inset 0 1px var(--chrome-highlight);
@@ -2600,8 +2598,7 @@
       color var(--dur-press) var(--ease-out) !important;
   }
 
-  .pr-send-button:hover:not(:disabled),
-  .pr-send-button:active:not(:disabled) {
+  .pr-send-button:hover:not(:disabled) {
     transform: none !important;
   }
 }

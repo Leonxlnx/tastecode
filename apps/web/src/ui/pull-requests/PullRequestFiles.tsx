@@ -6,19 +6,20 @@ import type {
   PullRequestReviewThread,
 } from '@harness/contracts'
 import {
-  ArrowUpRight,
-  Check,
-  ChevronRight,
-  CircleAlert,
-  Ellipsis,
-  FileCode2,
-  LoaderCircle,
-  Pencil,
-  RotateCcw,
-  Trash2,
-  X,
-} from 'lucide-react'
+  IconArrowUpRight as ArrowUpRight,
+  IconCheck as Check,
+  IconChevronRight as ChevronRight,
+  IconAlertCircle as CircleAlert,
+  IconDots as Ellipsis,
+  IconFileCode2 as FileCode2,
+  IconLoader2 as LoaderCircle,
+  IconPencil as Pencil,
+  IconRotate as RotateCcw,
+  IconTrash as Trash2,
+  IconX as X,
+} from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
+import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { parsePullRequestPatch } from './diff.js'
@@ -399,11 +400,10 @@ function InlineThread(props: {
             })
           }
         >
-          {props.thread.resolved ? (
-            <RotateCcw size={11} aria-hidden />
-          ) : (
+          <IconMorph active={props.thread.resolved ? 1 : 0}>
             <Check size={11} aria-hidden />
-          )}
+            <RotateCcw size={11} aria-hidden />
+          </IconMorph>
           {props.thread.resolved ? 'Reopen' : 'Resolve'}
         </button>
       </header>
