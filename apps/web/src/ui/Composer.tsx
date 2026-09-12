@@ -560,6 +560,7 @@ function ComposerComponent(props: {
   const resourcesChangeReady = useRef(false)
   const onReady = useRef(props.onReady)
   onReady.current = props.onReady
+  const attachmentsEdited = useRef(false)
   const draftRequestRef = useRef(props.draftRequest)
   draftRequestRef.current = props.draftRequest
   const previousComposerRect = useRef<DOMRect | null>(null)
@@ -960,6 +961,7 @@ function ComposerComponent(props: {
       const paths = props.draftRequest.attachments
       setAttachments(
         paths.map((path) => {
+      attachmentsEdited.current = false
           const name = basename(path)
           const inferredMediaType = previewMediaType('', name)
           return {
@@ -1156,7 +1158,11 @@ function ComposerComponent(props: {
     }
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     const hydrated = draftRequestRef.current?.attachments
-    if (hydrated !== undefined && sameDraftPaths(paths, hydrated)) return
+    // Only suppress the initial restore. Returning to that same list after an
+    // edit (including clearing on send) must also update the saved draft.
+    if (!attachmentsEdited.current && hydrated !== undefined && sameDraftPaths(paths, hydrated))
+      return
+    attachmentsEdited.current = true
     props.onAttachmentsChange?.(paths)
   }, [attachments, props.onAttachmentsChange])
 

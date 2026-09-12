@@ -1403,6 +1403,33 @@ describe('Composer draft replacement', () => {
     expect(onDraftChange).toHaveBeenCalledWith('Keep this, edited')
   })
 
+  it.each(['send', 'remove'])('clears saved media after %s from an empty draft', async (action) => {
+    const onAttachmentsChange = vi.fn()
+    const onSend = vi.fn()
+    renderComposer(onSend, {
+      draftRequest: { text: '', attachments: [], resources: [], request: 1 },
+      onAttachmentsChange,
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.paste(composer, {
+      clipboardData: { files: [new File(['image'], 'Screenshot.png', { type: 'image/png' })] },
+    })
+    await waitFor(() =>
+      expect(onAttachmentsChange).toHaveBeenLastCalledWith(['/tmp/pasted-image.png']),
+    )
+
+    if (action === 'send') {
+      fireEvent.change(composer, { target: { value: 'Describe this image' } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      expect(onSend).toHaveBeenCalledWith('Describe this image', ['/tmp/pasted-image.png'])
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove Screenshot.png' }))
+    }
+
+    expect(screen.queryByRole('button', { name: 'Open Screenshot.png' })).toBeNull()
+    expect(onAttachmentsChange).toHaveBeenLastCalledWith([])
+  })
+
   it('replaces resource chips when a draft request includes them', async () => {
     const view = renderComposer(vi.fn(), {
       draftRequest: {
