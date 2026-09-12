@@ -1244,6 +1244,7 @@ function ActivityStack({
     <div
       className={`activity${live ? ' activity--live' : ''}${settling ? ' is-settling' : ''}`}
       data-expanded={disclosure.expanded}
+        title={label}
     >
       <button
         type="button"
@@ -1251,9 +1252,11 @@ function ActivityStack({
         aria-expanded={disclosure.expanded}
         onClick={disclosure.toggle}
       >
-        <span className="activity__glyph" aria-hidden>
-          {glyph(summaryItem)}
-        </span>
+        {live || !hasCommentary ? (
+          <span className="activity__glyph" aria-hidden>
+            {glyph(summaryItem)}
+          </span>
+        ) : null}
         <span className="activity__label" aria-live="polite" aria-atomic="true">
           {label}
         </span>
@@ -1275,16 +1278,29 @@ function ActivityStack({
                 if (item.type === 'message') {
                   return (
                     <div className="activity__message" key={item.id}>
+                const itemLabel = activityItemLabel(item)
                       <Markdown text={item.text ?? ''} projectPath={projectPath} />
                     </div>
                   )
                 }
                 const detail = activityDetail(item)
                 return (
-                  <div className="activity__item" key={item.id}>
+                  <div
+                    className="activity__item"
+                    data-failed={
+                      item.status === 'failed' ||
+                      (item.exitCode !== undefined && item.exitCode !== 0)
+                    }
+                    key={item.id}
+                  >
                     <div className="activity__file-change">
                       {glyph(item)}
-                      <span className="activity__item-label">{activityItemLabel(item)}</span>
+                      <span className="activity__item-label" title={itemLabel}>
+                      {item.durationMs !== undefined && item.durationMs >= 1000 ? (
+                        <span className="aux__time">{duration(item.durationMs)}</span>
+                      ) : null}
+                        {itemLabel}
+                      </span>
                       {item.exitCode !== undefined && item.exitCode !== 0 ? (
                         <span className="aux__code">exit {item.exitCode}</span>
                       ) : null}
