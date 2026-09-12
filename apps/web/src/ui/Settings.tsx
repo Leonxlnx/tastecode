@@ -840,7 +840,6 @@ export function ProviderSettings(props: {
     <SettingsPanel title="Providers" groupClassName="settings__group--providers">
       <header className="provider-settings__header">
         <h2>Accounts</h2>
-        <span>Use your existing subscriptions</span>
       </header>
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
