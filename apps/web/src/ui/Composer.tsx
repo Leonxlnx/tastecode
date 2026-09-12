@@ -1334,24 +1334,46 @@ function ComposerComponent(props: {
                 )}
               </Menu>
 
-              <button
-                type="button"
-                className="shelf-control shelf-control--mode"
-                aria-label="Workspace mode"
-                aria-pressed={props.isolate}
-                aria-keyshortcuts={shortcutAria(keybindings.toggleIsolatedSession)}
-                onClick={() => props.onIsolateChange(!props.isolate)}
-                title="Switch between the project checkout and an isolated worktree"
+              <Menu
+                label="Workspace mode"
+                drop="down"
+                triggerClassName="shelf-control shelf-control--mode"
+                panelClassName="menu--compact"
+                shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
+                trigger={() => (
+                  <span className="shelf-control__content">
+                    {props.isolate ? (
+                      <GitBranch size={15} aria-hidden />
+                    ) : (
+                      <Laptop size={15} aria-hidden />
+                    )}
+                    <span>{props.isolate ? 'Isolated' : 'Local'}</span>
+                  </span>
+                )}
               >
-                <span className="shelf-control__content">
-                  {props.isolate ? (
-                    <GitBranch size={15} aria-hidden />
-                  ) : (
-                    <Laptop size={15} aria-hidden />
-                  )}
-                  <span>{props.isolate ? 'Isolated' : 'Local'}</span>
-                </span>
-              </button>
+                {(close) => (
+                  <>
+                    <MenuItem
+                      title="Local"
+                      icon={<Laptop size={14} aria-hidden />}
+                      checked={!props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(false)
+                        close()
+                      }}
+                    />
+                    <MenuItem
+                      title="Isolated"
+                      icon={<GitBranch size={14} aria-hidden />}
+                      checked={props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(true)
+                        close()
+                      }}
+                    />
+                  </>
+                )}
+              </Menu>
 
               {props.branches.length > 0 ? (
                 <Menu
