@@ -134,10 +134,7 @@ describe('radius system', () => {
       /\.pr-picker-option \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
     expect(workspaceCss).toMatch(
-      /\.workspace-panel__add-menu \{[^}]*border-radius: var\(--r-popup\);/s,
-    )
-    expect(workspaceCss).toMatch(
-      /\.workspace-panel__add-menu button \{[^}]*border-radius: var\(--r-popup-item\);/s,
+      /\.workspace-tabs__add-button \{[^}]*border-radius: var\(--r-md\);/s,
     )
     expect(appCss).toMatch(
       /\.menu--compact \.menu__item \{[^}]*padding: 4px 7px;[^}]*border-radius: var\(--r-md\);/s,

@@ -801,6 +801,35 @@ describe('sidebar status revision', () => {
 })
 
 describe('live access level', () => {
+  it.each(['ask', 'auto', 'auto-review', 'full'] as const)(
+    'restores %s after the database and server reopen',
+    async (mode) => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'approval-restart-'))
+      const database = path.join(directory, 'state.db')
+      let store = new Store(database)
+      try {
+        const first = harness(undefined, store)
+        const thread = await first.orchestrator.startThread('codex', process.cwd(), {
+          approval: mode,
+        })
+        await first.orchestrator.disposeAll()
+        store.close()
+        store = new Store(database)
+        const second = harness(undefined, store)
+        await second.orchestrator.submitTurn(thread.id, 'Continue')
+        expect(second.resumedOptions[0]).toMatchObject({ approval: mode })
+        await second.orchestrator.setThreadApproval(thread.id, 'auto')
+        await second.orchestrator.disposeAll()
+        store.close()
+        store = new Store(database)
+        expect(store.threadApproval(thread.id)).toBe('auto')
+      } finally {
+        store.close()
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+  )
+
   it('records the new mode and forwards it to the session', async () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', process.cwd(), { approval: 'ask' })

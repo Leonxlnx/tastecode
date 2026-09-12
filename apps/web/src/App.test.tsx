@@ -454,7 +454,7 @@ beforeEach(() => {
         return Promise.resolve(serverSidebarSettings)
       }
       case 'thread.history':
-        return Promise.resolve({ events: [], running: false })
+        return Promise.resolve({ events: [], running: false, approval: 'ask' })
       case 'thread.queue':
         return Promise.resolve({ items: [], canSteer: true })
       case 'thread.settle':
@@ -1054,10 +1054,10 @@ describe('web client', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
 
     fireEvent.pointerEnter(launcher)
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     fireEvent.click(launcher)
     await waitFor(() => expect(document.querySelector('.workspace-panel')).toBeTruthy())
 
@@ -1070,10 +1070,10 @@ describe('web client', () => {
     render(<App />)
 
     await screen.findByRole('button', { name: 'Show workspace tools' })
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     fireEvent.keyDown(window, { key: 't', metaKey: true })
 
-    expect(await screen.findByRole('tab', { name: 'Browser' })).toBeTruthy()
+    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
   })
 
@@ -1083,7 +1083,7 @@ describe('web client', () => {
     await waitFor(() => {
       expect(transport.listeners.has('preview.captureRequested')).toBe(true)
     })
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     act(() => {
       transport.listeners.get('preview.captureRequested')?.({
         requestId: '00000000-0000-4000-8000-000000000001',
@@ -1092,7 +1092,7 @@ describe('web client', () => {
       })
     })
 
-    expect(await screen.findByRole('tab', { name: 'Browser' })).toBeTruthy()
+    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
   })
 
@@ -1108,9 +1108,8 @@ describe('web client', () => {
     expect(close).toBe(launcher)
     expect(close.closest('.panel-toggles')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
-    const terminalTab = await screen.findByRole('tab', { name: 'Terminal' })
-    fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
-    expect(document.querySelector('.workspace-layout')?.classList).toContain('is-panel-expanded')
+    const terminalTab = await screen.findByTestId('terminal-pane')
+    expect(screen.queryByRole('button', { name: 'Expand workspace tools' })).toBeNull()
     expect(close.closest('.stage')).toBeNull()
     fireEvent.click(close)
     expect(screen.getByRole('button', { name: 'Show workspace tools' })).toBe(launcher)
@@ -1120,7 +1119,7 @@ describe('web client', () => {
     expect(document.querySelectorAll('.workspace-panel [role="tab"]')).toHaveLength(1)
 
     fireEvent.click(launcher)
-    expect(await screen.findByRole('tab', { name: 'Terminal' })).toBe(terminalTab)
+    expect(await screen.findByTestId('terminal-pane')).toBe(terminalTab)
   })
 
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
@@ -1180,7 +1179,7 @@ describe('web client', () => {
         expect.objectContaining({ threadId: 'side-1', text: 'why did it fail?' }),
       ),
     )
-    expect(screen.getByRole('tab', { name: 'Temporary chat' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Message temporary chat' })).toBeTruthy()
     expect(screen.queryByText('From main chat')).toBeNull()
   })
 
@@ -1323,7 +1322,7 @@ describe('web client', () => {
     const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(true))
     expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
-    expect(await screen.findByRole('tab', { name: scenario.tab })).toBeTruthy()
+    expect(await screen.findByLabelText(`${scenario.tab} terminal`)).toBeTruthy()
     if (scenario.showsCodeInput) {
       expect(await screen.findByLabelText('Login code')).toBeTruthy()
     } else {
@@ -1343,7 +1342,7 @@ describe('web client', () => {
       })
     })
 
-    await waitFor(() => expect(screen.queryByRole('tab', { name: scenario.tab })).toBeNull())
+    await waitFor(() => expect(screen.queryByLabelText(`${scenario.tab} terminal`)).toBeNull())
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
     expect(transport.request).toHaveBeenCalledWith('pullRequests.list', { refresh: true })
     if (scenario.action === 'install') {
@@ -1650,7 +1649,7 @@ describe('web client', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         model: 'gpt-5.6-sol',
         effort: 'high',
       })
@@ -2535,7 +2534,7 @@ describe('new chats', () => {
     const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
     expect(workspace.classList.contains('is-panel-open')).toBe(true)
     expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
-    expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
+    expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
     expect(transport.request).toHaveBeenCalledWith('providers.launch', {
       provider: 'claude-code',
       columns: 320,
@@ -2553,7 +2552,7 @@ describe('new chats', () => {
     await screen.findByRole('dialog', { name: 'Settings' })
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
     expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
-    expect(screen.queryByRole('tab', { name: 'Claude Code login' })).toBeNull()
+    expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
     await waitFor(() =>
       expect(
         screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
@@ -2758,6 +2757,7 @@ describe('new chats', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Work in parallel' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -2767,7 +2767,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         isolate: true,
       })
     })
@@ -2806,6 +2806,7 @@ describe('new chats', () => {
     )
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
     const picker = await screen.findByRole('button', { name: 'Choose branch' })
     await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(picker)
@@ -3390,7 +3391,37 @@ describe('new chats', () => {
     })
     await waitForWorkspace(1)
   })
+  it('offers a top archive toast and restores the chat with Undo', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 1_000
+        return nativeTimeout(...args)
+      },
+    )
+
+    await openNewSession()
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
+    expect(await screen.findByText('Archived chat')).toBeTruthy()
+    expect(screen.getByText('Archived chat').closest('.notice--archive')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Archive New session' })).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByRole('button', { name: 'Archive New session' })).toBeTruthy()
+    await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+  })
+
   it('reconciles workspace ownership when a running session is archived', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
@@ -3941,6 +3972,14 @@ describe('new chats', () => {
   })
 
   it('asks before discarding uncommitted work from an isolated session', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+
     serverProjects = [
       {
         path: '/work/project',
@@ -4448,7 +4487,7 @@ describe('new chats', () => {
   it('starts with the terminal closed even when an older version saved it as open', async () => {
     localStorage.setItem('harness.terminal.open', 'true')
     render(<App />)
-    const openTerminal = await screen.findByRole('button', { name: 'Open terminal' })
+    const openTerminal = await screen.findByRole('button', { name: 'Show bottom panel' })
 
     expect(screen.queryByTestId('bottom-terminal')).toBeNull()
     fireEvent.click(openTerminal)
@@ -4718,6 +4757,64 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
   })
 
+  it.each([true, false])(
+    'defaults from auto-review support (%s) without saving an implicit choice',
+    async (supported) => {
+      serverProviders = serverProviders.map((entry) => ({
+        ...entry,
+        capabilities: { ...entry.capabilities, autoReview: supported },
+      }))
+      const first = render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+          supported ? 'Auto-review' : 'Full access',
+        )
+        expect(transport.request).toHaveBeenCalledWith('providers.list', {})
+      })
+      expect(localStorage.getItem('harness.approval')).toBeNull()
+      expect(localStorage.getItem('harness.approvalByProvider')).toBe('{}')
+      first.unmount()
+      render(<App />)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+          supported ? 'Auto-review' : 'Full access',
+        ),
+      )
+    },
+  )
+
+  it('keeps an explicit Ask first preference', async () => {
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    render(<App />)
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
+    expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
+  })
+
+  it('shows the saved task access mode instead of the provider preference', async () => {
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let resolveHistory:
+      ((value: { events: []; running: false; approval: 'full' }) => void) | undefined
+    const history = new Promise<{ events: []; running: false; approval: 'full' }>((resolve) => {
+      resolveHistory = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.history' ? history : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    expect(permissions.textContent).toContain('Loading…')
+    expect(permissions.hasAttribute('disabled')).toBe(true)
+
+    await act(async () => resolveHistory?.({ events: [], running: false, approval: 'full' }))
+    await waitFor(() => expect(permissions.textContent).toContain('Full access'))
+    expect(localStorage.getItem('harness.approvalByProvider')).toBe('{"codex":"ask"}')
+  })
+
   it('keeps full access selected after the app restarts', () => {
     const first = render(<App />)
 
@@ -4784,7 +4881,9 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Use Grok 4.6 through Grok' }))
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
+      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+        'Full access',
+      )
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
@@ -4954,7 +5053,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
       })
       expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
       expect(screen.getByTestId('thread').textContent).toContain('Fix the sidebar')
@@ -5024,7 +5123,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
@@ -5108,7 +5207,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         model: 'gpt-5.6-mini',
         effort: 'high',
       })
@@ -5427,7 +5526,7 @@ describe('new chats', () => {
         provider: 'claude-code',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'full',
         model: 'opus',
         effort: 'high',
       })
@@ -6098,19 +6197,19 @@ describe('global shortcuts', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
-    await screen.findByRole('button', { name: 'Open terminal' })
+    await screen.findByRole('button', { name: 'Show bottom panel' })
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
 
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
-    expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Hide bottom panel' })).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
 
     const terminalInput = document.createElement('textarea')
     const terminalPane = await screen.findByTestId('terminal-pane')
     terminalPane.append(terminalInput)
     fireEvent.keyDown(terminalInput, { key: 'j', metaKey: true })
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show bottom panel' })).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
   })
 
@@ -6121,24 +6220,24 @@ describe('global shortcuts', () => {
     const composer = screen.getByPlaceholderText('Do anything')
 
     fireEvent.keyDown(window, { key: ',', metaKey: true })
-    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'General' }))
     fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
     fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
     expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
     fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
 
-    const bottomTerminal = screen.getByRole('button', { name: 'Open terminal' })
+    const bottomTerminal = screen.getByRole('button', { name: 'Show bottom panel' })
     expect(bottomTerminal.getAttribute('aria-keyshortcuts')).toBeNull()
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
 
-    const sideTerminal = await screen.findByRole('tab', { name: 'Terminal' })
+    const sideTerminal = await screen.findByTestId('terminal-pane')
     expect(sideTerminal).toBeTruthy()
     await waitFor(() => {
       const workspaceTerminal = document.querySelector('.workspace-terminal')
       expect(workspaceTerminal?.querySelector('.terminal-pane--workspace')).toBeTruthy()
     })
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBe(bottomTerminal)
+    expect(screen.getByRole('button', { name: 'Show bottom panel' })).toBe(bottomTerminal)
 
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
     await waitFor(() =>
@@ -6150,7 +6249,7 @@ describe('global shortcuts', () => {
     await waitFor(() =>
       expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open'),
     )
-    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
   })
 
   it('opens the bottom terminal before a chat starts', async () => {
@@ -6159,7 +6258,7 @@ describe('global shortcuts', () => {
     await screen.findByRole('button', { name: /^New session,/ })
     expect(document.querySelector('.stage__body')?.classList).toContain('is-new-session')
     const composer = screen.getByPlaceholderText('Do anything')
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show bottom panel' })).toBeTruthy()
 
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
 
@@ -6167,7 +6266,7 @@ describe('global shortcuts', () => {
     expect(terminal.textContent).toBe('/work/project')
     expect(terminal.closest('.bottom-terminal')).toBeTruthy()
     expect(document.querySelector('.stage__body')?.classList).toContain('has-terminal')
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
   })
 
   it('opens global app surfaces from the composer', async () => {
@@ -6949,7 +7048,8 @@ describe('live sessions', () => {
       },
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show bottom panel' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }))
     await screen.findByTestId('terminal-pane')
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const palette = await screen.findByRole('dialog', { name: 'Command palette' })
@@ -7027,9 +7127,10 @@ describe('live sessions', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
 
-    const terminalToggle = screen.getByRole('button', { name: 'Open terminal' })
+    const terminalToggle = screen.getByRole('button', { name: 'Show bottom panel' })
     expect(screen.queryByTestId('bottom-terminal')).toBeNull()
     fireEvent.click(terminalToggle)
+    fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }))
     await screen.findByTestId('terminal-pane')
     const bottomTerminal = screen.getByTestId('bottom-terminal')
     const composer = document.querySelector('.stage__conversation > .composer')
@@ -7038,7 +7139,7 @@ describe('live sessions', () => {
       composer!.compareDocumentPosition(bottomTerminal) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide terminal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide bottom panel' }))
     act(() => dispatchTransitionEnd(bottomTerminal, 'transform'))
     await waitFor(() => {
       const terminal = screen.queryByTestId('bottom-terminal')
@@ -7070,10 +7171,14 @@ describe('live sessions', () => {
       render(<App />)
       await screen.findByRole('button', { name: /^New session,/ })
 
-      fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Show bottom panel' }))
       await screen.findByTestId('bottom-terminal')
 
-      expect(animate).not.toHaveBeenCalled()
+      expect(
+        animate.mock.instances.some(
+          (element) => element instanceof Element && element.closest('.composer') !== null,
+        ),
+      ).toBe(false)
     } finally {
       if (originalAnimate) {
         Object.defineProperty(Element.prototype, 'animate', originalAnimate)
