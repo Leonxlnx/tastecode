@@ -454,7 +454,7 @@ beforeEach(() => {
         return Promise.resolve(serverSidebarSettings)
       }
       case 'thread.history':
-        return Promise.resolve({ events: [], running: false })
+        return Promise.resolve({ events: [], running: false, approval: 'ask' })
       case 'thread.queue':
         return Promise.resolve({ items: [], canSteer: true })
       case 'thread.settle':
@@ -1650,7 +1650,7 @@ describe('web client', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         model: 'gpt-5.6-sol',
         effort: 'high',
       })
@@ -2737,7 +2737,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         isolate: true,
       })
     })
@@ -4688,6 +4688,64 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
   })
 
+  it.each([true, false])(
+    'defaults from auto-review support (%s) without saving an implicit choice',
+    async (supported) => {
+      serverProviders = serverProviders.map((entry) => ({
+        ...entry,
+        capabilities: { ...entry.capabilities, autoReview: supported },
+      }))
+      const first = render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+          supported ? 'Auto-review' : 'Full access',
+        )
+        expect(transport.request).toHaveBeenCalledWith('providers.list', {})
+      })
+      expect(localStorage.getItem('harness.approval')).toBeNull()
+      expect(localStorage.getItem('harness.approvalByProvider')).toBe('{}')
+      first.unmount()
+      render(<App />)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+          supported ? 'Auto-review' : 'Full access',
+        ),
+      )
+    },
+  )
+
+  it('keeps an explicit Ask first preference', async () => {
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    render(<App />)
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
+    expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
+  })
+
+  it('shows the saved task access mode instead of the provider preference', async () => {
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let resolveHistory:
+      ((value: { events: []; running: false; approval: 'full' }) => void) | undefined
+    const history = new Promise<{ events: []; running: false; approval: 'full' }>((resolve) => {
+      resolveHistory = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.history' ? history : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    expect(permissions.textContent).toContain('Loading…')
+    expect(permissions.hasAttribute('disabled')).toBe(true)
+
+    await act(async () => resolveHistory?.({ events: [], running: false, approval: 'full' }))
+    await waitFor(() => expect(permissions.textContent).toContain('Full access'))
+    expect(localStorage.getItem('harness.approvalByProvider')).toBe('{"codex":"ask"}')
+  })
+
   it('keeps full access selected after the app restarts', () => {
     const first = render(<App />)
 
@@ -4754,7 +4812,9 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Use Grok 4.6 through Grok' }))
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
+      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+        'Full access',
+      )
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
@@ -4924,7 +4984,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
       })
       expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
       expect(screen.getByTestId('thread').textContent).toContain('Fix the sidebar')
@@ -4994,7 +5054,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
@@ -5078,7 +5138,7 @@ describe('new chats', () => {
         provider: 'codex',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'auto-review',
         model: 'gpt-5.6-mini',
         effort: 'high',
       })
@@ -5397,7 +5457,7 @@ describe('new chats', () => {
         provider: 'claude-code',
         workspacePath: '/work/project',
         baseRef: 'main',
-        approval: 'ask',
+        approval: 'full',
         model: 'opus',
         effort: 'high',
       })

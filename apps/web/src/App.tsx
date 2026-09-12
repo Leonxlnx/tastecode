@@ -643,7 +643,7 @@ export function App() {
   const [approvalByProvider, setApprovalByProvider] = useState<ApprovalPreferences>(() =>
     readApprovalPreferences(provider),
   )
-  const approval = approvalByProvider[provider] ?? 'ask'
+  const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
   )
@@ -904,6 +904,11 @@ export function App() {
       providerStatuses.find((entry) => entry.id === provider)?.capabilities?.autoReview === true,
     [provider, providerStatuses],
   )
+
+  const defaultApproval =
+    approvalByProvider[provider] ?? (autoReviewSupported ? 'auto-review' : 'full')
+  const approval = activeId ? (activeThreadApproval ?? 'ask') : defaultApproval
+  const approvalLoading = Boolean(activeId && activeThreadApproval === undefined)
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -1936,6 +1941,7 @@ export function App() {
       try {
         const loaded = await threadController.loadHistory(threadId, afterSeq)
         if (loaded && activeIdRef.current === threadId) {
+          setActiveThreadApproval(loaded.approval ?? 'ask')
           setProjects((current) => updateSession(current, threadId, markSessionRead))
         }
         return loaded?.authority
@@ -2286,7 +2292,7 @@ export function App() {
     writeSetting(MODEL_BY_SOURCE_KEY, JSON.stringify(selections))
   }, [selectedModelChoice, modelId, selectedEffort, selectedServiceTier, unvalidatedModelKeys])
 
-  usePersistedSettingChange(APPROVAL_KEY, approval)
+  usePersistedSettingChange(APPROVAL_KEY, approvalByProvider[provider])
 
   usePersistedSettingChange(APPROVAL_BY_PROVIDER_KEY, JSON.stringify(approvalByProvider))
 
@@ -2468,7 +2474,7 @@ export function App() {
                 : undefined
         }
         const sessionApproval =
-          approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval
+          approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
           workspacePath: projectPath,
@@ -2539,6 +2545,7 @@ export function App() {
           if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId
           activeIdRef.current = threadId
           setActiveId(threadId)
+          setActiveThreadApproval(sessionApproval)
           setThread(provisional)
         }
         void transport
@@ -2784,6 +2791,9 @@ export function App() {
           ),
         )
         activeIdRef.current = provisionalId
+        setActiveThreadApproval(
+          approval === 'auto-review' && !autoReviewSupported ? 'full' : approval,
+        )
         setActiveId(provisionalId)
         setThread(provisional)
         setThreadRevealRequest((request) => request + 1)
@@ -3177,6 +3187,7 @@ export function App() {
     setActivePath(path)
     activeIdRef.current = undefined
     setActiveId(undefined)
+    setActiveThreadApproval(undefined)
     setThread(emptyThread)
     setUndoRestore(undefined)
     setRollbackOpen(false)
@@ -3260,6 +3271,7 @@ export function App() {
       setUndoRestore(undefined)
       setRollbackOpen(false)
       activeIdRef.current = id
+      setActiveThreadApproval(undefined)
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)
       setThreadRevealRequest((request) => request + 1)
@@ -3330,6 +3342,7 @@ export function App() {
       )
       const threadId = activeIdRef.current
       if (!threadId || threadId.startsWith('pending:')) return
+      setActiveThreadApproval(mode)
       void transport
         .request('thread.setApproval', { threadId, approval: mode })
         .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
@@ -4187,7 +4200,7 @@ export function App() {
         : {}),
       ...(selectedEffort ? { effort: selectedEffort } : {}),
       ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
-      approval: approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval,
+      approval: approval === 'auto-review' && !autoReviewSupported ? 'full' : approval,
     }),
     [
       selectedModelChoice?.model.id,
@@ -4562,8 +4575,9 @@ export function App() {
                       serviceTier={selectedServiceTier}
                       usage={thread.usage}
                       approval={
-                        approval === 'auto-review' && !autoReviewSupported ? 'ask' : approval
+                        approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
                       }
+                      approvalLoading={approvalLoading}
                       autoReviewSupported={autoReviewSupported}
                       attachmentsSupported={attachmentsSupported}
                       voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}

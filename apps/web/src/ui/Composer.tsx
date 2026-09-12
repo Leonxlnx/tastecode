@@ -465,6 +465,7 @@ function ComposerComponent(props: {
   serviceTier: string | undefined
   usage?: Usage | undefined
   approval: ApprovalMode
+  approvalLoading?: boolean | undefined
   autoReviewSupported: boolean
   attachmentsSupported: boolean
   voiceAvailable: boolean
@@ -1772,6 +1773,7 @@ function ComposerComponent(props: {
                     <div className="composer__dictation-options-content">
                       <Menu
                         label="Permissions"
+                        disabled={Boolean(props.approvalLoading)}
                         triggerClassName="composer__permission"
                         panelClassName="menu--compact menu--permissions"
                         trigger={() => (
@@ -1779,7 +1781,7 @@ function ComposerComponent(props: {
                             className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
                           >
                             <ApprovalIcon size={13} aria-hidden />
-                            <span>{approval.short}</span>
+                            <span>{props.approvalLoading ? 'Loading…' : approval.short}</span>
                           </span>
                         )}
                       >

@@ -648,8 +648,8 @@ export function startServer(
         return {
           terminalId:
             'threadId' in p
-              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows)
-              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows),
+              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows, p.terminalKey)
+              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows, p.terminalKey),
         }
       }
 
@@ -741,13 +741,14 @@ export function startServer(
         const p = parseParams(method, params)
         const history = await orchestrator.historyForResponse(p.threadId, p.afterSeq ?? 0)
         const running = orchestrator.isTurnRunning(p.threadId)
-        const result = historyResponse(history.events, running)
+        const approval = store.threadApproval(p.threadId) ?? 'ask'
+        const result = historyResponse(history.events, running, approval)
         orchestrator.markThreadRead(p.threadId)
         return serializeHistory(
           result,
           history.serializedEvents === undefined
             ? undefined
-            : `{"events":${history.serializedEvents},"running":${String(running)}}`,
+            : `{"events":${history.serializedEvents},"running":${String(running)},"approval":${JSON.stringify(approval)}}`,
         )
       }
 
