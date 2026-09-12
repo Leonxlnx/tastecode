@@ -61,7 +61,7 @@ describe('preview capture settling', () => {
         innerHeight: 844,
         Math,
       }),
-    ).toBe(12_000)
+    ).toEqual({ body: 20_000, documentElement: 20_000 })
   })
 
   it('finishes with suspended frames, fonts, and images and releases every wait', async () => {
@@ -105,22 +105,58 @@ describe('preview capture settling', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('clamps a hostile page result again in trusted main-process code', () => {
+  it('ignores hostile page Math and bounds valid raw measurements', () => {
     const value = vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
       document: { body: { scrollHeight: 800 }, documentElement: { scrollHeight: 800 } },
-      innerHeight: 844,
-      Math: { min: () => 100_000_000, max: Math.max },
+      Math: new Proxy(
+        {},
+        {
+          get: () => {
+            throw new Error('Untrusted Math')
+          },
+        },
+      ),
     })
-    expect(value).toBe(100_000_000)
-    expect(previewCaptureHeight(value, 844)).toBe(12_000)
-    expect(previewCaptureHeight(Number.MAX_VALUE, 844)).toBe(12_000)
-    expect(previewCaptureHeight(900.25, 844)).toBe(901)
-    expect(previewCaptureHeight(1, 844)).toBe(844)
+    expect(previewCaptureHeight(value, 844)).toBe(844)
+    expect(previewCaptureHeight({ body: 100_000_000, documentElement: 100_000_000 }, 844)).toBe(
+      12_000,
+    )
+    expect(previewCaptureHeight({ body: 0, documentElement: 1800 }, 844)).toBe(1800)
   })
 
-  it.each([NaN, Infinity, -Infinity, 0, -1, '1200', null, {}, undefined])(
-    'rejects an invalid measurement before native capture: %s',
-    (value) =>
-      expect(() => previewCaptureHeight(value, 844)).toThrow('Invalid preview page height'),
+  it.each([
+    NaN,
+    Infinity,
+    -Infinity,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    '1200',
+    null,
+    undefined,
+  ])('rejects invalid DOM and viewport measurements: %s', (value) => {
+    expect(() => previewCaptureHeight({ body: value, documentElement: 0 }, 844)).toThrow(
+      'Invalid preview page height',
+    )
+    expect(() => previewCaptureHeight({ body: 0, documentElement: value }, 844)).toThrow(
+      'Invalid preview page height',
+    )
+    expect(() => previewCaptureHeight({ body: 0, documentElement: 0 }, value as number)).toThrow(
+      'Invalid preview page height',
+    )
+  })
+
+  it.each([null, undefined, 1000, {}, { body: 0 }, { documentElement: 0 }])(
+    'rejects malformed measurement objects: %s',
+    (value) => {
+      expect(() => previewCaptureHeight(value, 844)).toThrow('Invalid preview page height')
+    },
   )
+
+  it('accepts an empty document but rejects a zero viewport', () => {
+    expect(previewCaptureHeight({ body: 0, documentElement: 0 }, 844)).toBe(844)
+    expect(() => previewCaptureHeight({ body: 0, documentElement: 0 }, 0)).toThrow(
+      'Invalid preview page height',
+    )
+  })
 })
