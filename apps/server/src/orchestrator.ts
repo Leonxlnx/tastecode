@@ -2171,16 +2171,11 @@ export class Orchestrator {
     return lifecycle
   }
 
-  openTerminal(threadId: string, columns: number, rows: number, terminalKey?: string): string {
-    return this.#terminals.open(threadId, this.#repoPath(threadId), columns, rows, terminalKey)
+  openTerminal(threadId: string, columns: number, rows: number): string {
+    return this.#terminals.open(threadId, this.#repoPath(threadId), columns, rows)
   }
 
-  openProjectTerminal(
-    projectPath: string,
-    columns: number,
-    rows: number,
-    terminalKey?: string,
-  ): string {
+  openProjectTerminal(projectPath: string, columns: number, rows: number): string {
     const project = this.#store.project(projectPath)
     if (!project) throw new Error('project is not registered')
     return this.#terminals.open(
@@ -2188,7 +2183,6 @@ export class Orchestrator {
       resolveWorkspacePath(project.path),
       columns,
       rows,
-      terminalKey,
     )
   }
 
