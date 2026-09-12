@@ -614,10 +614,12 @@
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
                   stable slots across loading, ready, setup, busy, and failure states; empty action
-                  slots do not create a second grid row, keeping signed-in rows at 56 px; primary
-                  and secondary actions share the fixed right edge on desktop and narrow layouts;
+                  slots stay hidden, with account details below the provider name in compact rows;
+                  primary and secondary actions share the right edge on desktop and narrow layouts;
                   CLI versions live in the provider-mark tooltip instead of widening account rows;
                   <a href="./screenshots/provider-density-after.png">compact evidence</a>,
+                  account labels use the same email-or-signed-in grammar; error tooltips escape
+                  clipped cards, stay inside the viewport, and support keyboard dismissal;
                   <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                   <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
                 ></span
@@ -636,10 +638,10 @@
               ><input type="checkbox" /><span
                 >Provider update buttons and release notifications
                 <span class="d"
-                  >background checks for Codex, Claude Code, and Grok; current and available
-                  versions in Providers, trusted update commands with live terminal details and
-                  verified completion, setup guides for managed installs, and one dismissible toast
-                  per release</span
+                  >background checks for Codex, Claude Code, and Grok; a compact Providers footer
+                  reopens available updates. The toast shows versions, runs trusted update commands,
+                  and handles progress, verified completion, retry, terminal details, and managed
+                  install guides. Dismissal is remembered per release</span
                 ></span
               ></label
             >

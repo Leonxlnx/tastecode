@@ -4792,8 +4792,8 @@ export function App() {
           stopped, the working rail kept counting, and nothing said why. */}
       <ProviderUpdateNotice
         transport={transport}
-        onOpenProviders={openProviderSetup}
-        suppressed={offline || Boolean(notice) || settingsOpen}
+        onUpdated={refreshCatalog}
+        suppressed={offline || Boolean(notice)}
       />
       <NoticePresence className="notice notice--offline" role="status" visible={offline}>
         <LoaderCircle className="spinner" size={12} aria-hidden />

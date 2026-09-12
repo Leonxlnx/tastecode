@@ -114,7 +114,7 @@ import {
   type Shortcut,
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
-import { ProviderUpdateCheck, ProviderUpdateControl } from './ProviderUpdates.js'
+import { ProviderUpdateCheck } from './ProviderUpdates.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -833,23 +833,22 @@ export function ProviderSettings(props: {
   const renderProviderRow = (status: ProviderStatus) => (
     <div className="provider-settings__entry" key={status.id}>
       {renderAccountRow(status)}
-      <ProviderUpdateControl
-        provider={status}
-        transport={props.transport}
-        onUpdated={props.onConnectionsChanged}
-      />
     </div>
   )
 
   return (
     <SettingsPanel title="Providers" groupClassName="settings__group--providers">
-      <ProviderUpdateCheck transport={props.transport} />
+      <header className="provider-settings__header">
+        <h2>Accounts</h2>
+        <span>Use your existing subscriptions</span>
+      </header>
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
       {direct
         .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
         .map(renderProviderRow)}
+      <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>
   )
 }
