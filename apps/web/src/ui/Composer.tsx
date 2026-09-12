@@ -362,8 +362,8 @@ function QueuedMediaPreviewCard({ reference }: { reference: string }) {
         <Suspense fallback={null}>
           <MediaViewer
             src={preview.previewUrl}
-            name={preview.name}
             thumbnailSrc={inlineSource}
+            name={preview.name}
             mediaType={preview.mediaType}
             onReveal={() => void revealPath(reference)}
             onClose={() => setViewerOpen(false)}
@@ -519,8 +519,8 @@ function ComposerComponent(props: {
   const [attachmentError, setAttachmentError] = useState<string>()
   const [viewingMedia, setViewingMedia] = useState<{
     src: string
-    name: string
     thumbnailSrc?: string | undefined
+    name: string
     mediaType: 'image' | 'video'
     localPath?: string
   }>()
@@ -1527,6 +1527,7 @@ function ComposerComponent(props: {
                           if (!attachment.previewUrl || !attachment.mediaType) return
                           setViewingMedia({
                             src: attachment.previewUrl,
+                            thumbnailSrc: attachmentThumbnailUrl(attachment),
                             name: attachment.name,
                             mediaType: attachment.mediaType,
                             ...(attachment.previewUrl.startsWith('tastecode-attachment:') &&
@@ -1534,7 +1535,6 @@ function ComposerComponent(props: {
                               ? { localPath: attachment.path }
                               : {}),
                           })
-                            thumbnailSrc: attachmentThumbnailUrl(attachment),
                         }}
                         aria-label={
                           attachment.previewUrl
@@ -1918,6 +1918,7 @@ function ComposerComponent(props: {
         <Suspense fallback={null}>
           <MediaViewer
             src={viewingMedia.src}
+            thumbnailSrc={viewingMedia.thumbnailSrc}
             name={viewingMedia.name}
             mediaType={viewingMedia.mediaType}
             onReveal={
@@ -1925,7 +1926,6 @@ function ComposerComponent(props: {
                 ? () => {
                     if (viewingMedia.localPath) void revealPath(viewingMedia.localPath)
                   }
-            thumbnailSrc={viewingMedia.thumbnailSrc}
                 : undefined
             }
             onClose={() => setViewingMedia(undefined)}

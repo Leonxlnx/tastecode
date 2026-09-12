@@ -1572,6 +1572,7 @@ function ViewedImagePreview({
         <Suspense fallback={null}>
           <MediaViewer
             src={preview.previewUrl}
+            thumbnailSrc={inlineSource}
             name={preview.name}
             mediaType="image"
             onReveal={variant === 'message' ? () => void revealPath(reference) : undefined}
@@ -1583,7 +1584,6 @@ function ViewedImagePreview({
   )
 }
 
-            thumbnailSrc={inlineSource}
 const IMAGE_ATTACHMENT_RE = /\.(?:apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 
 function isImageAttachment(reference: string): boolean {
