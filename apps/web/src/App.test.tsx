@@ -3360,7 +3360,37 @@ describe('new chats', () => {
     })
     await waitForWorkspace(1)
   })
+  it('offers a top archive toast and restores the chat with Undo', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 1_000
+        return nativeTimeout(...args)
+      },
+    )
+
+    await openNewSession()
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
+    expect(await screen.findByText('Archived chat')).toBeTruthy()
+    expect(screen.getByText('Archived chat').closest('.notice--archive')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Archive New session' })).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByRole('button', { name: 'Archive New session' })).toBeTruthy()
+    await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+  })
+
   it('reconciles workspace ownership when a running session is archived', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
@@ -3911,6 +3941,14 @@ describe('new chats', () => {
   })
 
   it('asks before discarding uncommitted work from an isolated session', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+
     serverProjects = [
       {
         path: '/work/project',
