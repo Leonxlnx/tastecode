@@ -3126,10 +3126,10 @@
   width: 32px;
   height: 32px;
   margin-left: 2px;
-  background: var(--composer-control-bg);
-  border: 1px solid var(--composer-control-border);
+  background: none;
+  border: 0;
   border-radius: var(--r-circle);
-  box-shadow: var(--composer-control-shadow);
+  box-shadow: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -3188,6 +3188,12 @@
   background: var(--surface-2);
   color: var(--text);
   opacity: 1;
+}
+
+.tools .icon-btn.composer-voice-button:is(:hover, :focus-visible) {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* Some icon buttons are the only affordance in their row, so they cannot be
