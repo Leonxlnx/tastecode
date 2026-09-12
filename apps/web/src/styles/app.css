@@ -3447,6 +3447,15 @@
 }
 
 .notice--provider-update {
+  display: block;
+  width: 360px;
+  max-height: min(520px, calc(100dvh - 36px));
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--menu-bg);
+  border-color: var(--menu-line);
+  border-radius: var(--r-popup);
+  box-shadow: var(--shadow-flyout);
   color: var(--text-2);
 }
 
@@ -3607,15 +3616,6 @@
   }
 }
 
-  display: block;
-  width: 360px;
-  max-height: min(520px, calc(100dvh - 36px));
-  overflow-y: auto;
-  padding: 4px;
-  background: var(--menu-bg);
-  border-color: var(--menu-line);
-  border-radius: var(--r-popup);
-  box-shadow: var(--shadow-flyout);
 @media (max-width: 700px) {
   .shell {
     /* Match the grid row to the 44px touch titlebar so it cannot overlap the drawer. */
