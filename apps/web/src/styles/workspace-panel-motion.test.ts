@@ -33,10 +33,10 @@ describe('workspace panel motion', () => {
     expect(appRule('.stage')).toContain('min-height: 0;')
   })
 
-  it('has transition cancellation and timeout completion guards', () => {
-    expect(component).toContain('WORKSPACE_PANEL_CLOSE_FALLBACK_MS = 340')
-    expect(component).toContain('onTransitionCancel={finishCloseTransition}')
-    expect(component).toContain('globalThis.setTimeout(completeClose')
+  it('keeps the closed panel mounted but inert so tab state survives', () => {
+    expect(component).toContain('aria-hidden={!props.open}')
+    expect(component).toContain('inert={props.open ? undefined : true}')
+    expect(component).not.toContain('onTransitionCancel')
   })
 
   it('removes drawer motion when reduced motion is requested', () => {

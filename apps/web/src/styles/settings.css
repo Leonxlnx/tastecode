@@ -217,14 +217,6 @@
   font-size: var(--t-md);
 }
 
-.profile-identity__plan {
-  min-height: 20px;
-  padding: 1px 7px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--r-pill);
-}
-
 .profile-identity__editor {
   display: grid;
   width: min(360px, 100%);

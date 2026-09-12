@@ -1000,7 +1000,7 @@ function lastActivityItemForRender({
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
   const detail =
-    item.type === 'command' || item.type === 'tool_call'
+    item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
       ? activityDetail(item)
       : isContextCompaction(item)
         ? undefined
@@ -1020,7 +1020,13 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         <span className="aux__glyph" aria-hidden>
           {glyph(item)}
         </span>
-        <span className="aux__label">{live ? summariseLive(item) : summarise(item)}</span>
+        <span className="aux__label">
+          {live
+            ? summariseLive(item)
+            : item.type === 'command' || item.type === 'file_change'
+              ? activityItemLabel(item)
+              : summarise(item)}
+        </span>
         {item.exitCode !== undefined && item.exitCode !== 0 ? (
           <span className="aux__code">exit {item.exitCode}</span>
         ) : null}
@@ -1227,6 +1233,30 @@ function ActivityStack({
         ? `Worked for ${workedFor(activity.group.elapsedMs)}`
         : activityStackLabel(operationalActivity)
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
+  const summaryRef = useRef<HTMLButtonElement>(null)
+  const summaryId = summaryItem?.id
+  const previousSummaryId = useRef(summaryId)
+
+  useLayoutEffect(() => {
+    const previous = previousSummaryId.current
+    previousSummaryId.current = summaryId
+    const node = summaryRef.current
+    // The row owns its first entrance. Only animate a new call in the reused stack.
+    if (!live || !previous || previous === summaryId || !node?.animate) return
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const style = getComputedStyle(node)
+    const animation = node.animate(
+      [
+        { opacity: 0, transform: reduced ? 'none' : 'translateY(5px)' },
+        { opacity: 1, transform: reduced ? 'none' : 'translateY(0)' },
+      ],
+      {
+        duration: Number.parseFloat(style.getPropertyValue('--dur-fast')) || 180,
+        easing: style.getPropertyValue('--ease-out').trim() || 'cubic-bezier(0.23, 1, 0.32, 1)',
+      },
+    )
+    return () => animation.cancel()
+  }, [summaryId, live])
   const visibleActivity = disclosure.contentMounted
     ? activityItemsForRender(activity.group, activity.items, activity.liveItems).filter(
         isWorkDisclosureItem,
@@ -1243,6 +1273,7 @@ function ActivityStack({
       <button
         type="button"
         className="activity__summary"
+        ref={summaryRef}
         aria-expanded={disclosure.expanded}
         title={label}
         onClick={disclosure.toggle}
@@ -1270,6 +1301,9 @@ function ActivityStack({
           <div className="activity__reveal-clip">
             <div className="activity__body">
               {visibleActivity?.map((item) => {
+                if (item.type === 'command' || item.type === 'file_change') {
+                  return <AuxDisclosure key={item.id} item={item} live={false} />
+                }
                 if (item.type === 'message') {
                   return (
                     <div className="activity__message" key={item.id}>

@@ -32,7 +32,7 @@ for (const entry of entries) store.append('thread', entry.event)
 store.saveReplaySnapshot('thread', entries.length, entries)
 const projectHistory = createHistoryResponseProjector()
 const serializeHistory = createSerializedResultCache()
-const retainedHistory = projectHistory(entries, false)
+const retainedHistory = projectHistory(entries, false, 'ask')
 serializeHistory(retainedHistory)
 let requestId = 0
 
@@ -191,7 +191,7 @@ describe('encoding one unchanged compact long-thread replay', () => {
     () => {
       const response = serializeSuccessResponse(
         String((requestId += 1)),
-        serializeHistory(projectHistory(entries, false)),
+        serializeHistory(projectHistory(entries, false, 'ask')),
       )
       if (response.length < 1_000) throw new Error('invalid cached response')
     },

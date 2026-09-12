@@ -1061,8 +1061,20 @@ export const methods = {
   /** Open the platform-selected shell in a session checkout or registered project. */
   'terminal.open': {
     params: z.union([
-      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema['shape'] }).strict(),
-      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema['shape'] }).strict(),
+      z
+        .object({
+          threadId: z.string().min(1),
+          terminalKey: z.string().min(1).max(200).optional(),
+          ...TerminalSizeSchema['shape'],
+        })
+        .strict(),
+      z
+        .object({
+          projectPath: z.string().min(1),
+          terminalKey: z.string().min(1).max(200).optional(),
+          ...TerminalSizeSchema['shape'],
+        })
+        .strict(),
     ]),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -1150,6 +1162,8 @@ export const methods = {
     result: z.object({
       events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
       running: z.boolean(),
+      /** Effective access mode used when this task resumes. */
+      approval: ApprovalModeSchema.optional(),
     }),
   },
   'thread.diff': {

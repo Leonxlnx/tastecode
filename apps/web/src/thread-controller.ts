@@ -1,4 +1,4 @@
-import type { DataOf, DomainEvent, QueuedTurn } from '@harness/contracts'
+import type { ApprovalMode, DataOf, DomainEvent, QueuedTurn } from '@harness/contracts'
 import type { Transport } from './transport.js'
 import { ThreadFrameStore } from './thread-frame-store.js'
 import {
@@ -354,7 +354,10 @@ export class ThreadController {
   async loadHistory(
     id: string,
     afterSeq?: number,
-  ): Promise<{ visible: ThreadState; authority: ThreadState } | undefined> {
+  ): Promise<
+    | { visible: ThreadState; authority: ThreadState; approval?: ApprovalMode | undefined }
+    | undefined
+  > {
     if (afterSeq === undefined) this.#sequences.delete(id)
     const buffer: BufferedEvent[] = []
     const buffers = this.#histories.get(id) ?? new Set()
@@ -363,7 +366,7 @@ export class ThreadController {
     this.#historyOwners.set(id, buffer)
     const base = afterSeq === undefined ? emptyThread : (this.snapshot(id) ?? emptyThread)
     try {
-      const { events, running } = await this.transport.request(
+      const { events, running, approval } = await this.transport.request(
         'thread.history',
         afterSeq === undefined ? { threadId: id } : { threadId: id, afterSeq },
       )
@@ -385,7 +388,7 @@ export class ThreadController {
       this.#deltas.delete(id)
       this.update(id, visible)
       if (id === this.#activeId) this.frames.publish(visible)
-      if (afterSeq === undefined) return { visible, authority: live }
+      if (afterSeq === undefined) return { visible, authority: live, approval }
       const suffix = reduceEventLog(reduceEventLog(emptyThread, events), buffer, lastSeq)
       const crossedBoundary = [...events, ...buffer].some(
         ({ event }) => event.type === 'turn.started' || event.type === 'turn.completed',
@@ -393,6 +396,7 @@ export class ThreadController {
       return {
         visible,
         authority: { ...live, activeTurn: crossedBoundary ? suffix.activeTurn : live.activeTurn },
+        approval,
       }
     } finally {
       buffers.delete(buffer)
