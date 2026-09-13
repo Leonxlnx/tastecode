@@ -23,7 +23,7 @@ Windows, signing, notarization, installer and version-to-version update checks r
 
 ## Release workflow review — 2026-09-13
 
-PR #1101 resolves the remaining source requirements in #966. All release-proof jobs use Node
+PR #1119 replaces #1101 and resolves the remaining source requirements in #966. All release-proof jobs use Node
 24, matching the architecture runtime. Build jobs retain only `contents: read`, checkouts do
 not persist credentials, and only the optional final upload job has `contents: write`. Every
 action remains pinned to a full commit with its version comment; hosted runs remain manual.
@@ -34,6 +34,10 @@ The preview-test cleanup awaits asynchronous deletion with five bounded retries,
 Windows handles to close without blocking the event loop. Its maximum retry delay is 1.5
 seconds, rather than the previous 21 seconds. Current main changes and the release dashboard
 were preserved when resolving the old branch conflict.
+
+GitHub rejected rebase-merging #1101's old history. The replacement branch preserves the
+verified source tree; only these PR references changed after the tree comparison. The
+original published branch remains available.
 
 Local validation used Node 24.14.1 and pnpm 11.8.0: lint, typecheck, the complete test suite
 (2,812 tests), build, and license verification (398 packages) passed. The server suite starts
