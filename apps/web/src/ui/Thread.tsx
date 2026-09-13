@@ -1045,8 +1045,9 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
           data-open={disclosure.dataOpen}
           aria-hidden={!disclosure.expanded}
           inert={!disclosure.expanded}
-          onAnimationEnd={(event) => {
-            if (event.target === event.currentTarget) disclosure.finishClosing()
+          onTransitionEnd={(event) => {
+            if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+              disclosure.finishClosing()
           }}
         >
           {disclosure.contentMounted ? (
@@ -1137,8 +1138,9 @@ function ReasoningDisclosure({
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) disclosure.finishClosing()
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
         }}
       >
         <div className="aux__reveal-clip">
@@ -1186,6 +1188,16 @@ function thoughtDuration(ms: number): string {
 function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
   const expanded = phase === 'open'
+
+  useEffect(() => {
+    if (phase !== 'closing') return
+    // A reversal before the first paint can leave no transition to finish.
+    const timer = window.setTimeout(
+      () => setPhase((current) => (current === 'closing' ? 'closed' : current)),
+      180,
+    )
+    return () => window.clearTimeout(timer)
+  }, [phase])
 
   const toggle = useCallback(() => {
     const reduceMotion =
@@ -1293,8 +1305,9 @@ function ActivityStack({
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) disclosure.finishClosing()
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
         }}
       >
         {disclosure.contentMounted ? (

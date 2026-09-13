@@ -458,10 +458,41 @@ describe('completed activity disclosure', () => {
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
     expect(container.querySelector('.activity__body')).toBeTruthy()
 
-    if (reveal) fireEvent.animationEnd(reveal)
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+      )
+    }
 
     expect(reveal?.getAttribute('data-open')).toBe('false')
     expect(container.querySelector('.activity__body')).toBeNull()
+  })
+
+  it('keeps a reopened disclosure open when its old close timer expires', () => {
+    vi.useFakeTimers()
+    try {
+      renderCompleted([
+        turnItem('prompt', 1, { role: 'user', text: 'Check it' }),
+        turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Checking.' }),
+        turnItem('one', 3, { type: 'command', command: 'one', text: 'output-one' }),
+        turnItem('two', 4, { type: 'command', command: 'two' }),
+        turnItem('answer', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+      ])
+      fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+      const group = screen.getByRole('button', { name: 'Ran one' })
+      fireEvent.click(group)
+      fireEvent.click(group)
+      fireEvent.click(group)
+      act(() => vi.advanceTimersByTime(200))
+      expect(group.getAttribute('aria-expanded')).toBe('true')
+      expect(screen.getByText('output-one')).toBeTruthy()
+      fireEvent.click(group)
+      act(() => vi.advanceTimersByTime(200))
+      expect(screen.queryByText('output-one')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('closes immediately when reduced motion is enabled', () => {
