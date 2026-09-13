@@ -14,6 +14,12 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
+import {
+  getFastModeOffValue,
+  getFastServiceTier,
+  getNextServiceTierForModel,
+  isFastModeEnabled,
+} from './model-selector-utils.js'
 import { IconMorph } from './IconMorph.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
@@ -960,6 +966,10 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const effortOptions =
     selected?.model.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? []
   const selectedEffort = manual?.effort ?? effortOptions[0]?.value ?? ''
+  const fastTier = getFastServiceTier(selected?.model)
+  const selectedSpeed = isFastModeEnabled(selected?.model, manual?.serviceTier)
+    ? 'fast'
+    : 'standard'
 
   return (
     <section className="background-model-settings" aria-label="Background work">
@@ -987,6 +997,11 @@ function BackgroundModelSettings(props: { transport: Transport }) {
               }
               const choice = backgroundModelFromValue(state?.sources ?? [], value)
               if (!choice) return
+              const serviceTier = getNextServiceTierForModel({
+                nextModel: choice.model,
+                currentModel: selected?.model,
+                currentServiceTier: manual?.serviceTier,
+              })
               void update({
                 mode: 'manual',
                 target: {
@@ -1002,6 +1017,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                       }
                     : {}),
                   model: choice.model.id,
+                  ...(serviceTier ? { serviceTier } : {}),
                   ...(choice.model.reasoningEfforts[0]
                     ? {
                         effort: choice.model.reasoningEfforts[0],
@@ -1030,6 +1046,26 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                   target: { ...manual, effort },
                 })
               }
+            />
+          </SettingsRow>
+        ) : null}
+        {manual && selected && fastTier ? (
+          <SettingsRow title="Speed" note="Choose the speed used for background writing.">
+            <AppSelect
+              className="settings__select settings__select--effort"
+              ariaLabel="Background speed"
+              align="right"
+              value={selectedSpeed}
+              options={[
+                { value: 'standard', label: 'Standard' },
+                { value: 'fast', label: 'Fast' },
+              ]}
+              disabled={busy}
+              onChange={(speed) => {
+                const serviceTier =
+                  speed === 'fast' ? fastTier.id : getFastModeOffValue(selected.model)
+                void update({ mode: 'manual', target: { ...manual, serviceTier } })
+              }}
             />
           </SettingsRow>
         ) : null}

@@ -525,7 +525,7 @@ describe('app haptic setting', () => {
 })
 
 describe('model settings', () => {
-  it('shows the automatic Luna policy and persists a manual model and effort', async () => {
+  it('persists background model, effort, and speed without carrying Fast to unsupported models', async () => {
     const sources = [
       {
         id: 'codex',
@@ -537,6 +537,20 @@ describe('model settings', () => {
             displayName: 'GPT-5.6 Luna',
             isDefault: false,
             reasoningEfforts: ['low', 'medium', 'high'],
+            serviceTiers: [{ id: 'priority', name: 'Fast', description: 'Faster responses' }],
+          },
+        ],
+      },
+      {
+        id: 'grok',
+        displayName: 'Grok',
+        provider: 'grok' as const,
+        models: [
+          {
+            id: 'grok-4.6',
+            displayName: 'Grok 4.6',
+            isDefault: true,
+            reasoningEfforts: ['low'],
             serviceTiers: [],
           },
         ],
@@ -583,6 +597,7 @@ describe('model settings', () => {
     const picker = await screen.findByRole('combobox', { name: 'Background model' })
     expect(picker.tagName).toBe('BUTTON')
     expect(screen.getByText(/gpt-5\.6 luna through codex at low effort/i)).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: 'Background speed' })).toBeNull()
     fireEvent.click(picker)
     fireEvent.click(screen.getByRole('option', { name: 'GPT-5.6 Luna' }))
 
@@ -601,6 +616,23 @@ describe('model settings', () => {
     )
     const effort = await screen.findByRole('combobox', { name: 'Background reasoning effort' })
     expect(effort.tagName).toBe('BUTTON')
+    const speed = screen.getByRole('combobox', { name: 'Background speed' })
+    expect(speed.textContent).toContain('Standard')
+    fireEvent.click(speed)
+    fireEvent.click(screen.getByRole('option', { name: 'Fast' }))
+    await waitFor(() => expect(speed.textContent).toContain('Fast'))
+    expect(transport.requests.at(-1)).toEqual({
+      method: 'backgroundModel.updateSettings',
+      params: {
+        mode: 'manual',
+        target: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'low',
+          serviceTier: 'priority',
+        },
+      },
+    })
     fireEvent.click(effort)
     fireEvent.click(screen.getByRole('option', { name: 'high' }))
     await waitFor(() =>
@@ -612,10 +644,43 @@ describe('model settings', () => {
             provider: 'codex',
             model: 'gpt-5.6-luna',
             effort: 'high',
+            serviceTier: 'priority',
           },
         },
       }),
     )
+    await waitFor(() => expect(effort.textContent).toContain('high'))
+    expect(speed.textContent).toContain('Fast')
+    fireEvent.click(speed)
+    fireEvent.click(screen.getByRole('option', { name: 'Standard' }))
+    await waitFor(() => expect(speed.textContent).toContain('Standard'))
+    expect(transport.requests.at(-1)).toEqual({
+      method: 'backgroundModel.updateSettings',
+      params: {
+        mode: 'manual',
+        target: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'high',
+          serviceTier: undefined,
+        },
+      },
+    })
+    fireEvent.click(speed)
+    fireEvent.click(screen.getByRole('option', { name: 'Fast' }))
+    await waitFor(() => expect(speed.textContent).toContain('Fast'))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('option', { name: 'Grok 4.6' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('combobox', { name: 'Background speed' })).toBeNull(),
+    )
+    expect(transport.requests.at(-1)).toEqual({
+      method: 'backgroundModel.updateSettings',
+      params: {
+        mode: 'manual',
+        target: { provider: 'grok', model: 'grok-4.6', effort: 'low' },
+      },
+    })
   })
 
   it('keeps a disconnected manual choice visible so Automatic can replace it', async () => {
