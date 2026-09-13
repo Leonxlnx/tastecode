@@ -3144,9 +3144,14 @@ export function App() {
   )
 
   useEffect(() => {
-    if (!providerLoginTerminal || providerLoginState?.phase !== 'succeeded') return
+    if (!providerLoginTerminal || !providerLoginState) return
+    const succeeded = providerLoginState.phase === 'succeeded'
+    const signInEnded =
+      providerLoginTerminal.operation !== 'install' &&
+      (providerLoginState.phase === 'failed' || providerLoginState.phase === 'canceled')
+    if (!succeeded && !signInEnded) return
     const completed = providerLoginTerminal
-    clearInstall(completed.installKey)
+    if (succeeded) clearInstall(completed.installKey)
     setProviderLoginTerminal(undefined)
     setWorkspacePanelOpen(completed.restorePanelOpen)
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
@@ -3158,6 +3163,7 @@ export function App() {
       setPullRequestSetupRefreshRevision((revision) => revision + 1)
       return
     }
+    if (!succeeded) return
     if (completed.operation === 'install') {
       refreshCatalog()
       return
@@ -4727,7 +4733,7 @@ export function App() {
                         id: providerLoginTerminal.id,
                         title: `${providerLoginTerminal.displayName} ${providerLoginTerminal.operation === 'install' ? 'install' : 'login'}`,
                         installKey: providerLoginTerminal.installKey,
-                        showCodeInput: providerLoginTerminal.operation !== 'install',
+                        canCancelSignIn: providerLoginTerminal.operation !== 'install',
                       }
                     : undefined
                 }

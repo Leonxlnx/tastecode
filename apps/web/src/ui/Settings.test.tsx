@@ -1400,6 +1400,91 @@ describe('provider settings', () => {
     expect(onConnectionsChanged).not.toHaveBeenCalled()
   })
 
+  it('closes failed details and lets Settings cancel a new sign-in', async () => {
+    let attempt = 0
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch') return { terminalId: `settings-login-${++attempt}` }
+      if (method === 'terminal.close') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <ProviderSettings
+        provider="claude-code"
+        account={{ signedIn: false }}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: { installUrl: 'https://example.test', login: 'provider' },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    await screen.findByTestId('install-terminal')
+    act(() => transport.emit('terminal.exit', { terminalId: 'settings-login-1', exitCode: 130 }))
+    await screen.findByRole('button', { name: 'Retry sign-in' })
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sign-in' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
+    await screen.findByText('Sign-in canceled')
+    expect(transport.requests).toContainEqual({
+      method: 'terminal.close',
+      params: { terminalId: 'settings-login-2' },
+    })
+    expect(screen.queryByText('Sign-in failed')).toBeNull()
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+  })
+
+  it('does not open the terminal when a pending sign-in is canceled', async () => {
+    let launch!: (value: { terminalId: string }) => void
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch')
+        return new Promise((resolve) => {
+          launch = resolve
+        })
+      if (method === 'terminal.close') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    const open = vi.fn()
+    render(
+      <ProviderSettings
+        provider="claude-code"
+        account={{ signedIn: false }}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: { installUrl: 'https://example.test', login: 'provider' },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={open}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
+    await act(async () => launch({ terminalId: 'pending-login' }))
+    await screen.findByText('Sign-in canceled')
+    expect(open).not.toHaveBeenCalled()
+    expect(transport.requests).toContainEqual({
+      method: 'terminal.close',
+      params: { terminalId: 'pending-login' },
+    })
+  })
+
   it('hands every provider CLI login to the expanded workspace terminal', async () => {
     const transport = new TestTransport(async (method) => {
       if (method === 'auth.status') return { signedIn: false }

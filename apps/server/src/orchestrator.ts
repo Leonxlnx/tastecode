@@ -2220,10 +2220,8 @@ export class Orchestrator {
     this.#terminals.resize(terminalId, columns, rows)
   }
 
-  closeTerminal(terminalId: string): void {
-    void this.#terminals
-      .close(terminalId)
-      .catch((error) => this.#onLog(`[terminal] close failed: ${errorMessage(error)}`))
+  async closeTerminal(terminalId: string): Promise<void> {
+    await this.#terminals.close(terminalId)
   }
 
   terminalStatus(terminalId: string) {

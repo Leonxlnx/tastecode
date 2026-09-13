@@ -677,7 +677,7 @@ export function startServer(
 
       case 'terminal.close': {
         const p = parseParams(method, params)
-        orchestrator.closeTerminal(p.terminalId)
+        await orchestrator.closeTerminal(p.terminalId)
         return {}
       }
 

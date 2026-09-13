@@ -62,6 +62,7 @@ import {
 import {
   beginInstall,
   beginLogin,
+  cancelInstall,
   clearInstall,
   deviceCode,
   installKey,
@@ -1921,11 +1922,12 @@ function CliSignInRow(props: {
   const key = loginKey(props.target)
   const detailsId = useId()
   const login = useSyncExternalStore(subscribeInstalls, () => installState(key))
-  // The terminal is the fallback, not the flow: it stays hidden until asked
-  // for, and opens itself only when a failure makes it the evidence.
+  // Keep failed output behind Details; the status carries the error.
   const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
   const [copied, setCopied] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [canceling, setCanceling] = useState(false)
   const { onSignedIn } = props
 
   // Latched like InstallableRow: onSignedIn may get a new identity from any
@@ -1950,10 +1952,11 @@ function CliSignInRow(props: {
   }, [login?.phase, key, onSignedIn, props.onOpenExpandedTerminal])
 
   useEffect(() => {
-    if (login?.phase === 'failed') setShowTerminal(true)
+    if (login?.phase && login.phase !== 'running') setShowTerminal(false)
   }, [login?.phase])
 
   const start = () => {
+    setStarting(true)
     setStartError(undefined)
     setShowTerminal(false)
     setCopied(false)
@@ -1967,6 +1970,7 @@ function CliSignInRow(props: {
         : undefined,
     )
       .then(() => {
+        if (installState(key)?.phase !== 'running' || installState(key)?.canceling) return
         props.onOpenExpandedTerminal?.({
           provider: props.provider.id,
           displayName: props.provider.displayName,
@@ -1976,6 +1980,17 @@ function CliSignInRow(props: {
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
       )
+      .finally(() => setStarting(false))
+  }
+
+  const cancel = () => {
+    setCanceling(true)
+    setStartError(undefined)
+    void cancelInstall(props.transport, key)
+      .catch((cause: unknown) =>
+        setStartError(cause instanceof Error ? cause.message : String(cause)),
+      )
+      .finally(() => setCanceling(false))
   }
 
   const running = login?.phase === 'running'
@@ -1994,7 +2009,17 @@ function CliSignInRow(props: {
         : props.provider.problem
           ? { message: props.provider.problem }
           : undefined
-  const status = running ? 'Signing in…' : issue?.announce ? 'Sign-in failed' : 'Not signed in'
+  const busy = running || starting
+  const stopping = canceling || login?.canceling
+  const status = stopping
+    ? 'Canceling sign-in…'
+    : busy
+      ? 'Signing in…'
+      : issue?.announce
+        ? 'Sign-in failed'
+        : login?.phase === 'canceled'
+          ? 'Sign-in canceled'
+          : 'Not signed in'
   const details: ProviderAction | undefined =
     login && (running || login.phase === 'failed')
       ? {
@@ -2010,12 +2035,18 @@ function CliSignInRow(props: {
       <ProviderRow
         provider={props.provider}
         status={status}
-        live={running}
+        live={busy}
         issue={issue}
         primary={{
-          label: running ? 'Signing in…' : login?.phase === 'failed' ? 'Retry sign-in' : 'Sign in',
-          disabled: running,
-          onClick: start,
+          label: stopping
+            ? 'Canceling…'
+            : busy
+              ? 'Cancel sign-in'
+              : issue?.announce
+                ? 'Retry sign-in'
+                : 'Sign in',
+          disabled: stopping,
+          onClick: busy ? cancel : start,
         }}
         secondary={details}
       />
