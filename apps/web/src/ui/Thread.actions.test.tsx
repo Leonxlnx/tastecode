@@ -396,6 +396,25 @@ describe('completed activity disclosure', () => {
     expect(screen.queryByText('output-0')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Ran check-0' }))
     expect(screen.getByText('output-0')).toBeTruthy()
+
+    const reveal = commands.parentElement?.querySelector('.activity__reveal')
+    fireEvent.click(commands)
+    expect(reveal?.getAttribute('data-open')).toBe('closing')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'opacity' }),
+      )
+    }
+    expect(reveal?.getAttribute('data-open')).toBe('closing')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+      )
+    }
+    expect(reveal?.getAttribute('data-open')).toBe('false')
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(0)
   })
 
   it('hides empty reasoning placeholders and keeps real thoughts behind a reveal', () => {
@@ -498,27 +517,27 @@ describe('completed activity disclosure', () => {
     expect(container.querySelector('.activity__body')).toBeNull()
   })
 
-  it('keeps a reopened disclosure open when its old close timer expires', () => {
+  it('keeps a reopened command group open when its old close timer expires', () => {
     vi.useFakeTimers()
     try {
       renderCompleted([
         turnItem('prompt', 1, { role: 'user', text: 'Check it' }),
         turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Checking.' }),
-        turnItem('one', 3, { type: 'command', command: 'one', text: 'output-one' }),
+        turnItem('one', 3, { type: 'command', command: 'one' }),
         turnItem('two', 4, { type: 'command', command: 'two' }),
         turnItem('answer', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
       ])
       fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
-      const group = screen.getByRole('button', { name: 'Ran one' })
+      const group = screen.getByRole('button', { name: 'Ran commands' })
       fireEvent.click(group)
       fireEvent.click(group)
       fireEvent.click(group)
       act(() => vi.advanceTimersByTime(200))
       expect(group.getAttribute('aria-expanded')).toBe('true')
-      expect(screen.getByText('output-one')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Ran one' })).toBeTruthy()
       fireEvent.click(group)
       act(() => vi.advanceTimersByTime(200))
-      expect(screen.queryByText('output-one')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Ran one' })).toBeNull()
     } finally {
       vi.useRealTimers()
     }

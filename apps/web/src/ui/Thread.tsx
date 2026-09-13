@@ -1265,8 +1265,9 @@ function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) disclosure.finishClosing()
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
         }}
       >
         {disclosure.contentMounted ? (
