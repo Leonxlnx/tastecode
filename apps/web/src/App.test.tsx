@@ -1272,7 +1272,7 @@ describe('web client', () => {
       tab: 'GitHub CLI install',
       terminalId: 'term-github-install',
       columns: 100,
-      canCancelSignIn: false,
+      showsCodeInput: false,
     },
     {
       account: { available: true, authenticated: false, error: 'Sign in with gh auth login' },
@@ -1281,7 +1281,7 @@ describe('web client', () => {
       tab: 'GitHub login',
       terminalId: 'term-github-login',
       columns: 320,
-      canCancelSignIn: true,
+      showsCodeInput: true,
     },
   ])('opens GitHub $action in the expanded workspace terminal', async (scenario) => {
     const request = transport.request.getMockImplementation()
@@ -1323,12 +1323,11 @@ describe('web client', () => {
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(true))
     expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
     expect(await screen.findByLabelText(`${scenario.tab} terminal`)).toBeTruthy()
-    if (scenario.canCancelSignIn) {
-      expect(await screen.findByRole('button', { name: 'Cancel sign-in' })).toBeTruthy()
+    if (scenario.showsCodeInput) {
+      expect(await screen.findByLabelText('Login code')).toBeTruthy()
     } else {
-      expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
+      expect(screen.queryByLabelText('Login code')).toBeNull()
     }
-    expect(screen.queryByLabelText('Login code')).toBeNull()
     expect(transport.request).toHaveBeenCalledWith('pullRequests.setup', {
       action: scenario.action,
       columns: scenario.columns,
