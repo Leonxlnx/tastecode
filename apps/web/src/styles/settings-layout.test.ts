@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
+const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
 
 describe('settings viewport CSS', () => {
   it('keeps both panes scrollable inside short windows', () => {
@@ -45,16 +46,13 @@ describe('settings viewport CSS', () => {
     )
   })
 
-  it('crossfades the softer private email blur and swaps its reveal icons', () => {
+  it('crossfades the private email blur and morphs its reveal icon', () => {
     expect(settingsCss).toMatch(
       /\.settings__email-clip::before \{[^}]*backdrop-filter: blur\(2\.75px\);[^}]*opacity: 1;[^}]*transition: opacity var\(--dur-reveal\) var\(--ease-out\);/s,
     )
-    expect(settingsCss).toMatch(
-      /\.settings__email\[data-revealed='true'\] \.settings__email-eye--show \{[^}]*opacity: 0;[^}]*transform: scale\(0\.9\);/s,
-    )
-    expect(settingsCss).toMatch(
-      /\.settings__email\[data-revealed='true'\] \.settings__email-eye--hide \{[^}]*opacity: 1;[^}]*transform: scale\(1\);/s,
-    )
+    expect(settingsSource).toContain('<IconMorph active={revealed ? 1 : 0}>')
+    expect(settingsSource).toContain('className="settings__email-eye--show"')
+    expect(settingsSource).toContain('className="settings__email-eye--hide"')
   })
 
   it('keeps a single provider action at the far edge on wide and narrow rows', () => {

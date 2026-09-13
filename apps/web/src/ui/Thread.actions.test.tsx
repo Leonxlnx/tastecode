@@ -369,6 +369,35 @@ describe('empty thread', () => {
 })
 
 describe('completed activity disclosure', () => {
+  it('groups consecutive commands within commentary and keeps output behind two reveals', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt', 1, { role: 'user', text: 'Check this' }),
+      turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Checking files.' }),
+      ...Array.from({ length: 8 }, (_, index) =>
+        turnItem(`cmd-${index}`, index + 3, {
+          type: 'command',
+          command: `check-${index}`,
+          text: `output-${index}`,
+        }),
+      ),
+      turnItem('update', 11, { role: 'assistant', phase: 'commentary', text: 'Now test.' }),
+      turnItem('test-1', 12, { type: 'command', command: 'test-one' }),
+      turnItem('test-2', 13, { type: 'command', command: 'test-two', exitCode: 1 }),
+      turnItem('answer', 14, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByText('Checking files.')).toBeTruthy()
+    expect(screen.getByText('Now test.')).toBeTruthy()
+    const commands = screen.getByRole('button', { name: 'Ran commands' })
+    expect(screen.getByRole('button', { name: 'Ran commands (1 failed)' })).toBeTruthy()
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(0)
+    fireEvent.click(commands)
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(8)
+    expect(screen.queryByText('output-0')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran check-0' }))
+    expect(screen.getByText('output-0')).toBeTruthy()
+  })
+
   it('hides empty reasoning placeholders and keeps real thoughts behind a reveal', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Build a website' }),
@@ -673,6 +702,7 @@ describe('completed activity disclosure', () => {
 
     fireEvent.click(stack)
 
+    fireEvent.click(screen.getByRole('button', { name: 'Ran commands' }))
     const firstCommand = screen.getByText('Ran git status --short')
     expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('false')
     expect(screen.getByText('Ran pnpm test')).toBeTruthy()

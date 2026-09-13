@@ -14,6 +14,7 @@ import { providerMark } from '../model-catalog.js'
 import type { Transport } from '../transport.js'
 import { NoticePresence } from './NoticePresence.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { IconMorph } from './IconMorph.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -150,8 +151,12 @@ function ProviderUpdateItem(props: {
         <div className="provider-toast__copy">
           <span className="provider-toast__name">{update.displayName}</span>
           <span className="provider-toast__status" data-failed={failed || undefined}>
-            {busy ? <Loader className="provider-update-spinner" size={12} aria-hidden /> : null}
-            {succeeded ? <Check size={12} aria-hidden /> : null}
+            <IconMorph active={busy ? 1 : succeeded ? 2 : failed ? 3 : 0}>
+              <ArrowUp size={12} aria-hidden />
+              <Loader className="provider-update-spinner" size={12} aria-hidden />
+              <Check size={12} aria-hidden />
+              <X size={12} aria-hidden />
+            </IconMorph>
             {status}
           </span>
         </div>
@@ -232,11 +237,10 @@ export function ProviderUpdateCheck(props: { transport: Transport }) {
           type="button"
           onClick={store.showNotice}
         >
-          {busy ? (
-            <Loader className="provider-update-spinner" size={13} aria-hidden />
-          ) : (
+          <IconMorph active={busy ? 1 : 0}>
             <ArrowUp size={13} aria-hidden />
-          )}
+            <Loader className="provider-update-spinner" size={13} aria-hidden />
+          </IconMorph>
           {summary}
           <ArrowUpRight size={12} aria-hidden />
         </button>
@@ -255,11 +259,10 @@ export function ProviderUpdateCheck(props: { transport: Transport }) {
         disabled={state.checking}
         onClick={() => void store.refresh(true)}
       >
-        <Refresh
-          size={13}
-          className={state.checking ? 'provider-update-spinner' : undefined}
-          aria-hidden
-        />
+        <IconMorph active={state.checking ? 1 : 0}>
+          <Refresh size={13} aria-hidden />
+          <Loader className="provider-update-spinner" size={13} aria-hidden />
+        </IconMorph>
         Check for updates
       </button>
     </div>
