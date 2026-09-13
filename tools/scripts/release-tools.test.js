@@ -807,15 +807,14 @@ test('upload response bytes and local source mutations cannot pass on size alone
 })
 
 test('workflow is manual, pinned, read-only by default, and has one optional writer', async () => {
-  const workflow = load(
-    await readFile(
-      path.join(repositoryRoot, '.github', 'workflows', 'release-artifact-proof.yml'),
-      'utf8',
-    ),
+  const source = await readFile(
+    path.join(repositoryRoot, '.github', 'workflows', 'release-artifact-proof.yml'),
+    'utf8',
   )
+  const workflow = load(source)
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch'])
   assert.equal(workflow.on.workflow_dispatch.inputs.upload_draft.default, false)
-  assert.equal(workflow.permissions.contents, 'read')
+  assert.deepEqual(workflow.permissions, { contents: 'read' })
   assert.deepEqual(workflow.concurrency, {
     group: 'release-artifact-proof',
     'cancel-in-progress': false,
@@ -840,8 +839,11 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
     1,
   )
   for (const [name, job] of Object.entries(workflow.jobs)) {
+    assert.deepEqual(job.permissions, { contents: name === writerName ? 'write' : 'read' })
+    assert.equal(job.steps.filter((step) => step.uses?.startsWith('actions/setup-node@')).length, 1)
     for (const step of job.steps) {
       if (step.uses) assert.match(step.uses, /^[\w/-]+@[a-f0-9]{40}$/)
+      if (step.uses?.startsWith('actions/setup-node@')) assert.equal(step.with['node-version'], 24)
       if (step.uses?.startsWith('actions/checkout@'))
         assert.equal(step.with['persist-credentials'], false)
       if (name !== writerName)
@@ -851,6 +853,9 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
         assert.match(step.with.name, /github\.run_id.*github\.run_attempt.*inputs\.approved_sha/)
       }
     }
+  }
+  for (const line of source.split('\n').filter((line) => /^\s*- uses:/.test(line))) {
+    assert.match(line, /^\s*- uses: [\w/-]+@[a-f0-9]{40} # v\d+\.\d+\.\d+\s*$/)
   }
   const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
   assert.deepEqual(desktop.build.publish, [
