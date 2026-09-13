@@ -2087,11 +2087,12 @@ function AccountIdentity(props: { provider: ProviderId; account: Account }) {
   const email = props.account.email ?? savedEmail
 
   return (
-    <>
+    <span className="settings__account">
       {email ? <AccountEmail email={email} /> : 'Signed in'}
-      {props.account.plan ? ' · ' : null}
-      {props.account.plan}
-    </>
+      {props.account.plan ? (
+        <span className="settings__account-plan"> · {props.account.plan}</span>
+      ) : null}
+    </span>
   )
 }
 
