@@ -1054,3 +1054,34 @@ describe('overnight regression pins', () => {
     expect(threadItems(delta)[0]?.text).toBe('Hello')
   })
 })
+
+describe('composer error state', () => {
+  it('keeps live and replayed errors equal and clears the error for a new turn', () => {
+    const events: DomainEvent[] = [
+      { type: 'thread.error', threadId: 'th1', message: 'Connection failed' },
+      {
+        type: 'item.completed',
+        item: item({
+          id: 'provider-error',
+          type: 'error',
+          status: 'completed',
+          text: 'Model not found',
+        }),
+      },
+    ]
+    const live = events.reduce(reduce, emptyThread)
+    const replay = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+    expect(live.error).toEqual({ id: 'provider-error', message: 'Model not found' })
+    expect(replay.error).toEqual(live.error)
+    expect(appendUserMessage(live, 'Try again').error).toBeUndefined()
+    const turn: DomainEvent = {
+      type: 'turn.started',
+      turn: { id: 't2', threadId: 'th1', status: 'running', createdAt: 1 },
+    }
+    expect(reduce(live, turn).error).toBeUndefined()
+    expect(reduceEventLog(replay, [{ seq: 3, event: turn }]).error).toBeUndefined()
+  })
+})

@@ -99,6 +99,7 @@ import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { NoticePresence } from './ui/NoticePresence.js'
+import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
@@ -138,6 +139,7 @@ import type { ComposerResource } from './ui/ComposerResourcePicker.js'
 import {
   clearInstall,
   installState,
+  loginKey,
   subscribeInstalls,
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
@@ -304,7 +306,12 @@ type CustomModel = {
 }
 
 type CatalogAvailability = 'loading' | 'ready' | 'failed'
-type AccountCheck = { provider: ProviderId; state: CatalogAvailability; account?: Account }
+type AccountCheck = {
+  provider: ProviderId
+  state: CatalogAvailability
+  account?: Account
+  error?: ComposerError
+}
 
 type WorkspaceIdleProbe = {
   inFlight: Promise<void> | undefined
@@ -594,6 +601,8 @@ export function App() {
     { transport: Transport; request: number } | undefined
   >()
   const [catalogAvailability, setCatalogAvailability] = useState<CatalogAvailability>('loading')
+  const [catalogError, setCatalogError] = useState<ComposerError>()
+  const [modelErrors, setModelErrors] = useState<Record<string, ComposerError>>({})
   const startupMilestones = useRef({
     projectsRequested: false,
     projectsReceived: false,
@@ -701,6 +710,10 @@ export function App() {
   // session becoming durable keeps this key and preserves its live view.
   const [threadEntryKey, setThreadEntryKey] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
+  const [actionError, setActionError] = useState<ComposerError>()
+  const reportError = useCallback((message: string) => {
+    setActionError({ id: crypto.randomUUID(), message })
+  }, [])
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
   const {
     hiddenIds: archivingIds,
@@ -781,6 +794,9 @@ export function App() {
     providerLoginTerminal ? installState(providerLoginTerminal.installKey) : undefined,
   )
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
+  const providerSignInState = useSyncExternalStore(subscribeInstalls, () =>
+    installState(loginKey({ provider, ...(acpAgent ? { agent: acpAgent } : {}) })),
+  )
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
   const models = useMemo(
@@ -1507,6 +1523,8 @@ export function App() {
   // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
+    setCatalogError(undefined)
+    const discoveryErrors: Record<string, ComposerError> = {}
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
       const connectionsCatalog = transport
@@ -1572,7 +1590,11 @@ export function App() {
               return models.length > 0
                 ? { provider: entry.id, discovered: true, models }
                 : preserveCatalog()
-            } catch {
+            } catch (cause) {
+              discoveryErrors[sourceKey({ provider: entry.id })] = {
+                id: `models:${entry.id}:${catalogRequest}`,
+                message: `Could not load ${entry.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
+              }
               return preserveCatalog()
             }
           }),
@@ -1595,7 +1617,11 @@ export function App() {
               agent: harness.id,
             })
             return { source, discovered: true, models: choicesFor(input, result.models, true) }
-          } catch {
+          } catch (cause) {
+            discoveryErrors[source] = {
+              id: `models:${source}:${catalogRequest}`,
+              message: `Could not load ${harness.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
+            }
             const preserved = catalogModelsRef.current.filter(
               (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
             )
@@ -1622,6 +1648,7 @@ export function App() {
       const publicCatalogReady =
         publicDiscoveries.length > 0 && publicDiscoveries.every((entry) => entry.discovered)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
+      setModelErrors(discoveryErrors)
       // A synthetic cache-miss entry has no tier metadata. Do not persist it
       // as an authoritative snapshot after a transient discovery failure.
       if (unknownKeys.size === 0 && direct.every((entry) => entry.discovered)) {
@@ -1767,8 +1794,12 @@ export function App() {
           nextModel: selected.model,
         })
       })
-    })().catch(() => {
+    })().catch((cause) => {
       if (!cancelled) {
+        setCatalogError({
+          id: `catalog:${catalogRequest}`,
+          message: `Could not load providers. ${cause instanceof Error ? cause.message : String(cause)}`,
+        })
         setProviderCatalogSource((current) =>
           current?.transport === transport && current.request === catalogRequest
             ? current
@@ -1900,10 +1931,17 @@ export function App() {
         setAccount(nextAccount)
         setAccountCheck({ provider, state: 'ready', account: nextAccount })
       })
-      .catch(() => {
+      .catch((cause) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(undefined)
-        setAccountCheck({ provider, state: 'failed' })
+        setAccountCheck({
+          provider,
+          state: 'failed',
+          error: {
+            id: `account:${provider}:${revision}`,
+            message: `Could not check this account. ${cause instanceof Error ? cause.message : String(cause)}`,
+          },
+        })
       })
     return () => {
       cancelled = true
@@ -2466,6 +2504,7 @@ export function App() {
       const choice = selectedModelChoice
       if (!choice) return undefined
       setNotice(undefined)
+      setActionError(undefined)
       setUndoRestore(undefined)
       setRollbackOpen(false)
       setActivePath(projectPath)
@@ -2580,7 +2619,7 @@ export function App() {
           setActiveId(undefined)
           setThread(emptyThread)
         }
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
         return undefined
       }
     },
@@ -2645,6 +2684,7 @@ export function App() {
         await refreshProjects().catch(() => undefined)
       })()
       setNotice(undefined)
+      setActionError(undefined)
       setActivePath(projectPath)
       activeIdRef.current = undefined
       setActiveId(undefined)
@@ -2678,7 +2718,7 @@ export function App() {
       setStoppingThreadId(threadId)
       void transport.request('thread.interrupt', { threadId }).catch((error) => {
         setStoppingThreadId((current) => (current === threadId ? undefined : current))
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
       })
     },
     [transport],
@@ -2700,16 +2740,17 @@ export function App() {
       if (sideChatCommand) {
         if (!activeId || activeId.startsWith('pending:')) {
           restoreDraft()
-          setNotice('Start the main chat before opening a side chat.')
+          reportError('Start the main chat before opening a side chat.')
           return
         }
         const parent = threadController.snapshot(activeId)
         if (!parent?.items.some((item) => item.type === 'message' && item.role === 'user')) {
           restoreDraft()
-          setNotice('Send a message in the main chat before opening a side chat.')
+          reportError('Send a message in the main chat before opening a side chat.')
           return
         }
         setNotice(undefined)
+        setActionError(undefined)
         setWorkspacePanelHasMounted(true)
         setWorkspacePanelOpen(true)
         setSideChatPromptRequest((current) => ({
@@ -2858,6 +2899,7 @@ export function App() {
       }
 
       setNotice(undefined)
+      setActionError(undefined)
       setUndoRestore(undefined)
 
       const before = threadController.snapshot(threadId) ?? emptyThread
@@ -3060,7 +3102,7 @@ export function App() {
             if (threadId === activeIdRef.current) setThread(next)
           }
         }
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
       }
     },
     [
@@ -3178,7 +3220,7 @@ export function App() {
   ])
 
   // prettier-ignore
-  const deleteQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'delete', error instanceof IndeterminateRequestError); setNotice(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
+  const deleteQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'delete', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
   const moveQueuedTurn = useCallback(
     (queuedTurnId: string, direction: 'up' | 'down') => {
@@ -3187,7 +3229,7 @@ export function App() {
         .request('thread.moveQueuedTurn', { threadId: activeId, queuedTurnId, direction })
         .then(() => true)
         .catch((error) => {
-          setNotice(error instanceof Error ? error.message : String(error))
+          reportError(error instanceof Error ? error.message : String(error))
           return false
         })
     },
@@ -3195,7 +3237,7 @@ export function App() {
   )
 
   // prettier-ignore
-  const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', error instanceof IndeterminateRequestError); setNotice(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
+  const steerQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'steer'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.steerQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'steer'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'steer', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
   const selectProject = useCallback((path: string) => {
     setSurface('chat')
@@ -3213,6 +3255,7 @@ export function App() {
     async (branch: string) => {
       if (!activePath || activeId) return
       setNotice(undefined)
+      setActionError(undefined)
       try {
         const info = isolateSession
           ? undefined
@@ -3226,7 +3269,7 @@ export function App() {
         setWorkspace((current) => info ?? (current ? { ...current, branch } : current))
         setBranches((current) => [branch, ...current.filter((item) => item !== branch)])
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
       }
     },
     [transport, activePath, activeId, isolateSession],
@@ -3236,7 +3279,7 @@ export function App() {
   // arrow on every streamed frame — memo compares props shallowly, and an
   // inline arrow fails that comparison every single time.
   const changeBranch = useCallback((branch: string) => void selectBranch(branch), [selectBranch])
-  const requireProject = useCallback(() => setNotice('Choose a project before sending.'), [])
+  const requireProject = useCallback(() => reportError('Choose a project before sending.'), [])
   const sendTurn = useCallback((text: string, files: string[]) => void send(text, files), [send])
   const steerTurn = useCallback(
     (text: string, files: string[]) => void send(text, files, 'steer'),
@@ -3284,6 +3327,7 @@ export function App() {
         }
       }
       setNotice(undefined)
+      setActionError(undefined)
       setUndoRestore(undefined)
       setRollbackOpen(false)
       activeIdRef.current = id
@@ -3311,7 +3355,7 @@ export function App() {
       try {
         await loadHistory(id, cached ? threadController.cursor(id) : undefined)
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
       } finally {
         setLoadingThreadId((current) => (current === id ? undefined : current))
       }
@@ -3330,7 +3374,7 @@ export function App() {
         })
         setRollbackInspection({ checkpoint, files })
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
       } finally {
         setRollbackLoadingId(undefined)
       }
@@ -3361,7 +3405,7 @@ export function App() {
       setActiveThreadApproval(mode)
       void transport
         .request('thread.setApproval', { threadId, approval: mode })
-        .catch((error) => setNotice(error instanceof Error ? error.message : String(error)))
+        .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
     },
     [provider, transport],
   )
@@ -3392,6 +3436,7 @@ export function App() {
   const undoTurnChanges = useCallback(
     async (threadId: string, turnId: string, expectedDiff: string) => {
       setNotice(undefined)
+      setActionError(undefined)
       await transport.request('thread.undoTurnChanges', { threadId, turnId, expectedDiff })
       if (activeIdRef.current !== threadId) return
       setNotice('Changes undone.')
@@ -3419,7 +3464,7 @@ export function App() {
       setRollbackOpen(false)
       setRollbackInspection(undefined)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      reportError(error instanceof Error ? error.message : String(error))
     } finally {
       setRollbackRestoring(false)
     }
@@ -3439,7 +3484,7 @@ export function App() {
       setUndoRestore(undefined)
       setNotice('Restore undone.')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      reportError(error instanceof Error ? error.message : String(error))
     }
   }, [transport, undoRestore, activePath, loadHistory, refreshCheckpoints])
 
@@ -3468,7 +3513,7 @@ export function App() {
         try {
           await commit()
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : String(error))
+          reportError(error instanceof Error ? error.message : String(error))
           await refreshProjects().catch(() => undefined)
         }
       })
@@ -3509,7 +3554,7 @@ export function App() {
         })
         return true
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
         return false
       }
@@ -3529,7 +3574,7 @@ export function App() {
       })
       setCheckoutDelete(undefined)
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
+      reportError(error instanceof Error ? error.message : String(error))
       await refreshProjects().catch(() => undefined)
     } finally {
       setCheckoutDeleteBusy(false)
@@ -3569,7 +3614,7 @@ export function App() {
         .catch((error) => {
           sidebarSettingsUpdates.current.delete(revision)
           reconcileSidebarSettings()
-          setNotice(error instanceof Error ? error.message : String(error))
+          reportError(error instanceof Error ? error.message : String(error))
         })
     },
     [transport, reconcileSidebarSettings],
@@ -3612,7 +3657,7 @@ export function App() {
         if (next) await selectSession(next.id)
         else if (current) beginSession(current.project.path)
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
       }
     },
@@ -3648,7 +3693,7 @@ export function App() {
           })),
         )
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
       }
     },
@@ -3672,7 +3717,7 @@ export function App() {
           updateSession(current, id, (session) => ({ ...session, lifecycle })),
         )
       } catch (error) {
-        setNotice(error instanceof Error ? error.message : String(error))
+        reportError(error instanceof Error ? error.message : String(error))
       }
     },
     [transport],
@@ -3743,7 +3788,7 @@ export function App() {
     },
     [beginSession],
   )
-  const [sidebarMutations] = useState(() => new OptimisticMutations(setNotice))
+  const [sidebarMutations] = useState(() => new OptimisticMutations(reportError))
   useEffect(
     () =>
       transport.onState((state) => {
@@ -3803,7 +3848,7 @@ export function App() {
         .request('projects.remove', { path })
         .then(refreshProjects)
         .catch((error) => {
-          setNotice(error instanceof Error ? error.message : String(error))
+          reportError(error instanceof Error ? error.message : String(error))
           // Put the selection back too, not just the list. Removal can now be
           // refused, and refreshProjects would otherwise fill the cleared
           // selection with an arbitrary other project while the open session
@@ -4455,6 +4500,53 @@ export function App() {
 
   const RenderedWorkspacePanel = resolvedWorkspacePanel ?? WorkspacePanel
 
+  const offlineError = useMemo<ComposerError | undefined>(
+    () =>
+      offline
+        ? { id: crypto.randomUUID(), message: 'Reconnecting to the server…', role: 'status' }
+        : undefined,
+    [offline],
+  )
+
+  const currentModelError =
+    modelErrors[selectedModelChoice ? modelSource(selectedModelChoice) : sourceKey({ provider })]
+  const providerProblem = providerStatuses.find((status) => status.id === provider)?.problem
+  const composerProviderError = catalogError
+    ? { ...catalogError, action: { label: 'Retry', run: refreshCatalog } }
+    : accountCheck.provider === provider && accountCheck.error
+      ? { ...accountCheck.error, action: { label: 'Check setup', run: openProviderSetup } }
+      : providerSignInState?.phase === 'failed'
+        ? {
+            id: `sign-in:${providerSignInState.terminalId}`,
+            message: `${providerName(provider, acpAgentName)} sign-in failed. Try signing in again.`,
+            action: { label: 'Sign in', run: openProviderSetup },
+          }
+        : providerProblem
+          ? {
+              id: `provider:${provider}:${catalogRequest}:${providerProblem}`,
+              message: providerProblem,
+              action: {
+                label:
+                  sendAvailability === 'setup-required'
+                    ? providerStatuses.find((status) => status.id === provider)?.installed
+                      ? 'Sign in'
+                      : 'Set up provider'
+                    : 'Check setup',
+                run: openProviderSetup,
+              },
+            }
+          : undefined
+  const composerErrors: ComposerError[] = [
+    ...(actionError ? [{ ...actionError, dismiss: () => setActionError(undefined) }] : []),
+    ...(thread.error && activeId
+      ? [{ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }]
+      : []),
+    ...(currentModelError
+      ? [{ ...currentModelError, action: { label: 'Retry models', run: refreshCatalog } }]
+      : []),
+    ...(offlineError ? [offlineError] : []),
+  ]
+
   return (
     <div
       className={`shell ${collapsed ? 'is-narrow' : ''}${isDesktop && macOS ? ' is-macos' : ''}`}
@@ -4559,6 +4651,7 @@ export function App() {
                         <LazyThread
                           key={threadEntryKey}
                           frameStore={threadFrameStore}
+                          errorsInComposer
                           stopping={stopping}
                           loading={loadingThreadId === activeId}
                           projectPath={activePath}
@@ -4614,6 +4707,12 @@ export function App() {
                       voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
                       disabled={stopping}
                       sendAvailability={sendAvailability}
+                      errors={composerErrors}
+                      errorsVisible={!settingsOpen && surface === 'chat'}
+                      providerError={composerProviderError}
+                      providerSignInRequired={providerStatuses.some(
+                        (status) => status.id === provider && status.installed,
+                      )}
                       running={visibleRunning}
                       newSession={!activeId}
                       isolate={active?.session.worktreeBranch ? true : isolateSession}
@@ -4862,7 +4961,7 @@ export function App() {
       <ProviderUpdateNotice
         transport={transport}
         onUpdated={refreshCatalog}
-        suppressed={offline || Boolean(notice)}
+        suppressed={offline || Boolean(notice) || Boolean(actionError)}
       />
       {pendingArchives.length > 0 ? (
         <Suspense fallback={null}>
@@ -4878,9 +4977,24 @@ export function App() {
           />
         </Suspense>
       ) : null}
-      <NoticePresence className="notice notice--offline" role="status" visible={offline}>
+      <NoticePresence
+        className="notice notice--offline"
+        role="status"
+        visible={offline && (settingsOpen || surface !== 'chat')}
+      >
         <LoaderCircle className="spinner" size={12} aria-hidden />
         <span className="notice__text">Reconnecting to the server…</span>
+      </NoticePresence>
+
+      <NoticePresence
+        className="notice"
+        role="alert"
+        visible={Boolean(actionError) && (settingsOpen || surface !== 'chat')}
+      >
+        <span className="notice__text">{actionError?.message}</span>
+        <button className="ghost" onClick={() => setActionError(undefined)}>
+          Dismiss
+        </button>
       </NoticePresence>
 
       <NoticePresence
