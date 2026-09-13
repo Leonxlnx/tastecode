@@ -65,6 +65,47 @@ function renderCompleted(items: Item[]) {
 }
 
 describe('approval queue', () => {
+  it('animates a new call in a reused stack, but not output updates or replay', () => {
+    const animate = vi.fn(() => ({ cancel: vi.fn() }))
+    const original = HTMLElement.prototype.animate
+    HTMLElement.prototype.animate = animate as unknown as typeof original
+    try {
+      const first = turnItem('command-1', 2, { type: 'command', command: 'pwd' })
+      const store = new ThreadFrameStore({
+        ...emptyThread,
+        items: [turnItem('prompt-1', 1, { role: 'user', text: 'Check files' }), first],
+        running: true,
+        activeTurn: { id: 'turn-1', startedAt: 1 },
+      })
+      render(
+        <Thread
+          frameStore={store}
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+      expect(animate).not.toHaveBeenCalled()
+      const second = turnItem('command-2', 3, {
+        type: 'command',
+        command: 'ls',
+        status: 'started',
+      })
+      act(() =>
+        store.publish({ ...store.getSnapshot(), items: [...store.getSnapshot().items, second] }),
+      )
+      expect(animate).toHaveBeenCalledTimes(1)
+      act(() =>
+        store.publish({
+          ...store.getSnapshot(),
+          items: [...store.getSnapshot().items.slice(0, -1), { ...second, text: 'file.txt' }],
+        }),
+      )
+      expect(animate).toHaveBeenCalledTimes(1)
+    } finally {
+      HTMLElement.prototype.animate = original
+    }
+  })
+
   it.each(['in_progress', 'approved', 'denied', 'timed_out', 'aborted'] as const)(
     'keeps automatic %s reviews out of chat while manual requests remain usable',
     (status) => {
@@ -328,6 +369,54 @@ describe('empty thread', () => {
 })
 
 describe('completed activity disclosure', () => {
+  it('groups consecutive commands within commentary and keeps output behind two reveals', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt', 1, { role: 'user', text: 'Check this' }),
+      turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Checking files.' }),
+      ...Array.from({ length: 8 }, (_, index) =>
+        turnItem(`cmd-${index}`, index + 3, {
+          type: 'command',
+          command: `check-${index}`,
+          text: `output-${index}`,
+        }),
+      ),
+      turnItem('update', 11, { role: 'assistant', phase: 'commentary', text: 'Now test.' }),
+      turnItem('test-1', 12, { type: 'command', command: 'test-one' }),
+      turnItem('test-2', 13, { type: 'command', command: 'test-two', exitCode: 1 }),
+      turnItem('answer', 14, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByText('Checking files.')).toBeTruthy()
+    expect(screen.getByText('Now test.')).toBeTruthy()
+    const commands = screen.getByRole('button', { name: 'Ran commands' })
+    expect(screen.getByRole('button', { name: 'Ran commands (1 failed)' })).toBeTruthy()
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(0)
+    fireEvent.click(commands)
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(8)
+    expect(screen.queryByText('output-0')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran check-0' }))
+    expect(screen.getByText('output-0')).toBeTruthy()
+
+    const reveal = commands.parentElement?.querySelector('.activity__reveal')
+    fireEvent.click(commands)
+    expect(reveal?.getAttribute('data-open')).toBe('closing')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'opacity' }),
+      )
+    }
+    expect(reveal?.getAttribute('data-open')).toBe('closing')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+      )
+    }
+    expect(reveal?.getAttribute('data-open')).toBe('false')
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(0)
+  })
+
   it('hides empty reasoning placeholders and keeps real thoughts behind a reveal', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Build a website' }),
@@ -417,10 +506,41 @@ describe('completed activity disclosure', () => {
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
     expect(container.querySelector('.activity__body')).toBeTruthy()
 
-    if (reveal) fireEvent.animationEnd(reveal)
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+      )
+    }
 
     expect(reveal?.getAttribute('data-open')).toBe('false')
     expect(container.querySelector('.activity__body')).toBeNull()
+  })
+
+  it('keeps a reopened command group open when its old close timer expires', () => {
+    vi.useFakeTimers()
+    try {
+      renderCompleted([
+        turnItem('prompt', 1, { role: 'user', text: 'Check it' }),
+        turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Checking.' }),
+        turnItem('one', 3, { type: 'command', command: 'one' }),
+        turnItem('two', 4, { type: 'command', command: 'two' }),
+        turnItem('answer', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+      ])
+      fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+      const group = screen.getByRole('button', { name: 'Ran commands' })
+      fireEvent.click(group)
+      fireEvent.click(group)
+      fireEvent.click(group)
+      act(() => vi.advanceTimersByTime(200))
+      expect(group.getAttribute('aria-expanded')).toBe('true')
+      expect(screen.getByRole('button', { name: 'Ran one' })).toBeTruthy()
+      fireEvent.click(group)
+      act(() => vi.advanceTimersByTime(200))
+      expect(screen.queryByRole('button', { name: 'Ran one' })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('closes immediately when reduced motion is enabled', () => {
@@ -492,7 +612,14 @@ describe('completed activity disclosure', () => {
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(firstNarration.closest('.activity__reveal')).toBe(reveal)
     expect(secondNarration.closest('.activity__reveal')).toBe(reveal)
+    expect(screen.queryByText(/12 passed/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran pnpm test' }))
     expect(screen.getByText(/12 passed/)).toBeTruthy()
+    expect(screen.queryByText('2 lines added')).toBeNull()
+    const fileDisclosure = screen.getByRole('button', { name: 'Edited src/chat.ts' })
+    expect(fileDisclosure.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(fileDisclosure)
+    expect(fileDisclosure.getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByText('2 lines added')).toBeTruthy()
     expect(
       firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -594,6 +721,7 @@ describe('completed activity disclosure', () => {
 
     fireEvent.click(stack)
 
+    fireEvent.click(screen.getByRole('button', { name: 'Ran commands' }))
     const firstCommand = screen.getByText('Ran git status --short')
     expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('false')
     expect(screen.getByText('Ran pnpm test')).toBeTruthy()
@@ -1138,8 +1266,12 @@ describe('collapsed row disclosure', () => {
     expect(reveal?.getAttribute('data-open')).toBe('true')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(reveal?.hasAttribute('inert')).toBe(false)
-    expect(container.querySelector('.activity__item-label')?.textContent).toBe('Ran pnpm test')
-    expect(container.querySelector('.activity__detail')?.textContent).toBe('1 failed, 12 passed')
+    const command = screen.getByRole('button', { name: 'Ran pnpm test' })
+    expect(command.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByText('1 failed, 12 passed')).toBeNull()
+    fireEvent.click(command)
+    expect(command.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('1 failed, 12 passed')).toBeTruthy()
   })
 })
 

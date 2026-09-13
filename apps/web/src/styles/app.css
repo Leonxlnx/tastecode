@@ -1540,7 +1540,8 @@
   z-index: 30;
   inset: 0 auto auto 0;
   width: var(--rail-w);
-  height: var(--titlebar-h);
+  height: 42px;
+  padding-bottom: 1px;
   background: transparent;
 }
 
@@ -2344,6 +2345,13 @@
   text-transform: capitalize;
 }
 
+.composer__dictation-options-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+}
+
 .tools__spacer {
   flex: 1;
 }
@@ -3119,10 +3127,10 @@
   width: 32px;
   height: 32px;
   margin-left: 2px;
-  background: var(--composer-control-bg);
-  border: 1px solid var(--composer-control-border);
+  background: none;
+  border: 0;
   border-radius: var(--r-circle);
-  box-shadow: var(--composer-control-shadow);
+  box-shadow: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -3181,6 +3189,12 @@
   background: var(--surface-2);
   color: var(--text);
   opacity: 1;
+}
+
+.tools .icon-btn.composer-voice-button:is(:hover, :focus-visible) {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 /* Some icon buttons are the only affordance in their row, so they cannot be

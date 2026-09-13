@@ -19,7 +19,7 @@ export type VoiceTranscriptionInput = {
   durationMs: number
 }
 
-type VoiceHttpResponse = {
+export type VoiceHttpResponse = {
   status: number
   body: string
 }
@@ -83,10 +83,11 @@ export class OpenAiVoiceTranscriber {
   }
 }
 
-async function requestOpenAiTranscription(
+export async function requestOpenAiTranscription(
   audio: Buffer,
   apiKey: string,
   signal?: AbortSignal,
+  account = false,
 ): Promise<VoiceHttpResponse> {
   const boundary = `TasteCode-${randomUUID()}`
   const body = Buffer.concat([
@@ -96,7 +97,9 @@ async function requestOpenAiTranscription(
     ),
     audio,
     Buffer.from(
-      `\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${OPENAI_TRANSCRIPTION_MODEL}\r\n--${boundary}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\njson\r\n--${boundary}--\r\n`,
+      account
+        ? `\r\n--${boundary}--\r\n`
+        : `\r\n--${boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n${OPENAI_TRANSCRIPTION_MODEL}\r\n--${boundary}\r\nContent-Disposition: form-data; name="response_format"\r\n\r\njson\r\n--${boundary}--\r\n`,
       'utf8',
     ),
   ])
@@ -111,7 +114,7 @@ async function requestOpenAiTranscription(
       else resolve(response ?? { status: 0, body: '' })
     }
     const request = httpsRequest(
-      OPENAI_TRANSCRIPTION_URL,
+      account ? 'https://chatgpt.com/backend-api/transcribe' : OPENAI_TRANSCRIPTION_URL,
       {
         method: 'POST',
         headers: {
@@ -119,6 +122,7 @@ async function requestOpenAiTranscription(
           'Content-Type': `multipart/form-data; boundary=${boundary}`,
           'Content-Length': String(body.byteLength),
           Accept: 'application/json',
+          ...(account ? { 'User-Agent': 'TasteCode/0.1.0' } : {}),
           'Accept-Encoding': 'identity',
         },
         signal: requestSignal,
@@ -256,3 +260,5 @@ export function validateVoiceClip(input: VoiceTranscriptionInput): Buffer {
 function cancelled(): VoiceTranscriptionError {
   return new VoiceTranscriptionError('cancelled', 'Voice transcription was cancelled.')
 }
+
+export { CodexVoiceTranscriber } from './account-voice.js'

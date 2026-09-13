@@ -12,6 +12,7 @@ import {
 import path from 'node:path'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import {
+  ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
   DiffDecisionSchema,
   DomainEventSchema,
@@ -20,6 +21,7 @@ import {
   ThreadLifecycleSchema,
 } from '@harness/contracts'
 import type {
+  ApprovalMode,
   BackgroundModelPreference,
   DiffDecision,
   DomainEvent,
@@ -420,6 +422,11 @@ CREATE TABLE IF NOT EXISTS diff_decisions (
 CREATE TABLE IF NOT EXISTS design_runs (
   thread_id TEXT PRIMARY KEY,
   payload   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS thread_approvals (
+  thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -1562,6 +1569,22 @@ export class Store {
     this.#writeSidebarSettings.run(next.mode, next.autoSettleDays)
     this.#sidebarSettingsCache = next
     return this.#sidebarSettingsCache
+  }
+
+  threadApproval(threadId: string): ApprovalMode | undefined {
+    const row = this.#db
+      .prepare('SELECT mode FROM thread_approvals WHERE thread_id = ?')
+      .get(threadId)
+    return ApprovalModeSchema.safeParse(row?.['mode']).data
+  }
+
+  setThreadApproval(threadId: string, mode: ApprovalMode): void {
+    this.#db
+      .prepare(
+        `INSERT INTO thread_approvals (thread_id, mode) VALUES (?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET mode = excluded.mode`,
+      )
+      .run(threadId, mode)
   }
 
   backgroundModelPreference(): BackgroundModelPreference {

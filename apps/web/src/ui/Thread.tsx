@@ -1000,7 +1000,7 @@ function lastActivityItemForRender({
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
   const detail =
-    item.type === 'command' || item.type === 'tool_call'
+    item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
       ? activityDetail(item)
       : isContextCompaction(item)
         ? undefined
@@ -1020,7 +1020,13 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         <span className="aux__glyph" aria-hidden>
           {glyph(item)}
         </span>
-        <span className="aux__label">{live ? summariseLive(item) : summarise(item)}</span>
+        <span className="aux__label">
+          {live
+            ? summariseLive(item)
+            : item.type === 'command' || item.type === 'file_change'
+              ? activityItemLabel(item)
+              : summarise(item)}
+        </span>
         {item.exitCode !== undefined && item.exitCode !== 0 ? (
           <span className="aux__code">exit {item.exitCode}</span>
         ) : null}
@@ -1039,8 +1045,9 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
           data-open={disclosure.dataOpen}
           aria-hidden={!disclosure.expanded}
           inert={!disclosure.expanded}
-          onAnimationEnd={(event) => {
-            if (event.target === event.currentTarget) disclosure.finishClosing()
+          onTransitionEnd={(event) => {
+            if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+              disclosure.finishClosing()
           }}
         >
           {disclosure.contentMounted ? (
@@ -1131,8 +1138,9 @@ function ReasoningDisclosure({
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) disclosure.finishClosing()
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
         }}
       >
         <div className="aux__reveal-clip">
@@ -1181,6 +1189,16 @@ function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
   const expanded = phase === 'open'
 
+  useEffect(() => {
+    if (phase !== 'closing') return
+    // A reversal before the first paint can leave no transition to finish.
+    const timer = window.setTimeout(
+      () => setPhase((current) => (current === 'closing' ? 'closed' : current)),
+      180,
+    )
+    return () => window.clearTimeout(timer)
+  }, [phase])
+
   const toggle = useCallback(() => {
     const reduceMotion =
       globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
@@ -1198,6 +1216,72 @@ function useDisclosure() {
     toggle,
     finishClosing,
   } as const
+}
+
+function groupCommandRuns(items: Item[]): (Item | Item[])[] {
+  if (items.every((item) => item.type === 'command')) return items
+  const rows: (Item | Item[])[] = []
+  for (const item of items) {
+    const previous = rows.at(-1)
+    if (item.type === 'command' && Array.isArray(previous)) {
+      previous.push(item)
+    } else if (
+      item.type === 'command' &&
+      !Array.isArray(previous) &&
+      previous?.type === 'command'
+    ) {
+      rows[rows.length - 1] = [previous, item]
+    } else {
+      rows.push(item)
+    }
+  }
+  return rows
+}
+
+function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
+  const disclosure = useDisclosure()
+  const failed = items.filter(
+    (item) => item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0),
+  ).length
+  const pending = items.some((item) => item.status === 'started')
+  const label = `${live && pending ? 'Running commands' : 'Ran commands'}${failed ? ` (${failed} failed)` : ''}${!live && pending ? ' (interrupted)' : ''}`
+
+  return (
+    <div className="activity" data-expanded={disclosure.expanded}>
+      <button
+        type="button"
+        className="activity__summary"
+        aria-expanded={disclosure.expanded}
+        onClick={disclosure.toggle}
+      >
+        <span className="activity__glyph" aria-hidden>
+          {glyph(items[0]!)}
+        </span>
+        <span className="activity__label">{label}</span>
+        <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
+      </button>
+      <div
+        className="activity__reveal"
+        data-open={disclosure.dataOpen}
+        aria-hidden={!disclosure.expanded}
+        inert={!disclosure.expanded}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
+        }}
+      >
+        {disclosure.contentMounted ? (
+          <div className="activity__reveal-clip">
+            <div className="activity__body">
+              {items.map((item) => (
+                <AuxDisclosure key={item.id} item={item} live={live && item.status === 'started'} />
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 function ActivityStack({
@@ -1227,6 +1311,30 @@ function ActivityStack({
         ? `Worked for ${workedFor(activity.group.elapsedMs)}`
         : activityStackLabel(operationalActivity)
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
+  const summaryRef = useRef<HTMLButtonElement>(null)
+  const summaryId = summaryItem?.id
+  const previousSummaryId = useRef(summaryId)
+
+  useLayoutEffect(() => {
+    const previous = previousSummaryId.current
+    previousSummaryId.current = summaryId
+    const node = summaryRef.current
+    // The row owns its first entrance. Only animate a new call in the reused stack.
+    if (!live || !previous || previous === summaryId || !node?.animate) return
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const style = getComputedStyle(node)
+    const animation = node.animate(
+      [
+        { opacity: 0, transform: reduced ? 'none' : 'translateY(5px)' },
+        { opacity: 1, transform: reduced ? 'none' : 'translateY(0)' },
+      ],
+      {
+        duration: Number.parseFloat(style.getPropertyValue('--dur-fast')) || 180,
+        easing: style.getPropertyValue('--ease-out').trim() || 'cubic-bezier(0.23, 1, 0.32, 1)',
+      },
+    )
+    return () => animation.cancel()
+  }, [summaryId, live])
   const visibleActivity = disclosure.contentMounted
     ? activityItemsForRender(activity.group, activity.items, activity.liveItems).filter(
         isWorkDisclosureItem,
@@ -1243,6 +1351,7 @@ function ActivityStack({
       <button
         type="button"
         className="activity__summary"
+        ref={summaryRef}
         aria-expanded={disclosure.expanded}
         title={label}
         onClick={disclosure.toggle}
@@ -1262,14 +1371,21 @@ function ActivityStack({
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) disclosure.finishClosing()
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
         }}
       >
         {disclosure.contentMounted ? (
           <div className="activity__reveal-clip">
             <div className="activity__body">
-              {visibleActivity?.map((item) => {
+              {(visibleActivity ? groupCommandRuns(visibleActivity) : []).map((item) => {
+                if (Array.isArray(item)) {
+                  return <CommandRun key={item[0]!.id} items={item} live={live} />
+                }
+                if (item.type === 'command' || item.type === 'file_change') {
+                  return <AuxDisclosure key={item.id} item={item} live={false} />
+                }
                 if (item.type === 'message') {
                   return (
                     <div className="activity__message" key={item.id}>

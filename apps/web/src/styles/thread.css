@@ -184,7 +184,10 @@
   background: var(--surface-2);
   border-radius: var(--r-md);
   padding: 7px 11px;
+  color: var(--response-text);
+  font-family: var(--font-ui);
   font-size: var(--t-md);
+  font-weight: 400;
   line-height: 1.45;
 }
 
@@ -320,8 +323,9 @@
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-md);
-  letter-spacing: -0.012em;
+  font-size: var(--t-sm);
+  font-weight: 400;
+  letter-spacing: normal;
   list-style: none;
   text-align: left;
   user-select: none;
@@ -390,10 +394,17 @@
    ResizeObserver remeasure the virtual row throughout the transition. */
 .activity__reveal {
   display: none;
+  clip-path: inset(0 0 100%);
+  transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .activity__reveal[data-open='true'] {
   display: block;
+  clip-path: inset(0);
+
+  @starting-style {
+    clip-path: inset(0 0 100%);
+  }
 }
 
 .activity__reveal[data-open='closing'] {
@@ -405,11 +416,7 @@
   display: block;
   background: var(--bg);
   pointer-events: none;
-  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
-}
-
-.activity__reveal[data-open='true'] > .activity__reveal-clip {
-  animation: disclosure-reveal-in var(--dur-fast) var(--ease-out);
+  transition-duration: 120ms;
 }
 
 .activity__reveal-clip {
@@ -417,24 +424,10 @@
   overflow: hidden;
 }
 
-@keyframes disclosure-reveal-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
-@keyframes disclosure-reveal-out {
-  to {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
-/* Closing details leave flow once, then the virtualizer moves the measured
-   rows with compositor-only transforms while the old details fade above them. */
+/* Closing details leave flow once. The reveal retracts toward its trigger while
+   the virtualizer moves the following rows without repeated height measurement. */
 .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
-  transition: transform var(--dur-slow) var(--ease-out);
+  transition: transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .thread__row:has(> :is(.activity, .aux) [data-open='closing']) {
@@ -557,11 +550,6 @@
     animation: none;
     background: none;
     color: var(--text-2);
-  }
-
-  .activity__reveal[data-open='true'] > .activity__reveal-clip,
-  .aux__reveal[data-open='true'] > .aux__reveal-clip {
-    animation: none;
   }
 
   .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
@@ -779,10 +767,17 @@
 /* Match the completion rail: one virtual-row resize, then compositor-only motion. */
 .aux__reveal {
   display: none;
+  clip-path: inset(0 0 100%);
+  transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .aux__reveal[data-open='true'] {
   display: block;
+  clip-path: inset(0);
+
+  @starting-style {
+    clip-path: inset(0 0 100%);
+  }
 }
 
 .aux__reveal[data-open='closing'] {
@@ -794,16 +789,19 @@
   display: block;
   background: var(--bg);
   pointer-events: none;
-  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
-}
-
-.aux__reveal[data-open='true'] > .aux__reveal-clip {
-  animation: disclosure-reveal-in var(--dur-fast) var(--ease-out);
+  transition-duration: 120ms;
 }
 
 .aux__reveal-clip {
   min-height: 0;
   overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity__reveal,
+  .aux__reveal {
+    transition: none;
+  }
 }
 
 .aux--live .aux__row {
@@ -881,7 +879,10 @@
   min-height: 28px;
   margin-top: 4px;
   color: var(--text-3);
-  font-size: var(--t-sm);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   opacity: 0;
   pointer-events: none;

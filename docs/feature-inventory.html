@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-12 base main 82b32c79 + 1098</span>
+        <span class="meta">2026-09-12 base main 97c3002f + 1100</span>
       </div>
     </div>
 
@@ -263,7 +263,10 @@
             <label
               ><input type="checkbox" /><span
                 >Sign in with real ChatGPT OAuth, shows email and plan in Settings
-                <span class="d">codex login runs in the expanded setup terminal card</span></span
+                <span class="d"
+                  >codex login runs in the expanded setup terminal card; Pro plans show their real
+                  x5 or x20 multiplier without a duplicate subscription label</span
+                ></span
               ></label
             >
           </li>
@@ -327,9 +330,10 @@
               ><input type="checkbox" /><span
                 >Voice dictation in the composer
                 <span class="d"
-                  >Codex-only UI exception backed by an explicit OpenAI API connection; the key
-                  stays in the OS credential store, and the recorder can discard a capture
-                  locally</span
+                  >Codex account dictation beside Send, with a flat idle button, a smooth voice
+                  curve, morphing Tabler icons, a starting state, and Escape to cancel. Ask first
+                  and Design hide while Plus keeps accepting files. Account credentials stay inside
+                  the adapter</span
                 ></span
               ></label
             >
@@ -861,7 +865,8 @@
                 and an app-native full-window viewer that opens without a reveal delay or photo size
                 animation; desktop image previews and browser images offer a native Copy Image
                 context menu; selected images reach ACP image blocks only after the agent advertises
-                image prompts, while rejected sends restore the original draft and attachment
+                image prompts; attachments can send without typed text and name a new session from
+                their filenames, while rejected sends restore the original draft and attachment
                 set</span
               ></label
             >
@@ -1001,7 +1006,8 @@
                 <span class="d"
                   >each completed model reply compacts all activity into one Worked disclosure;
                   repeated settled reasoning-only histories with no answer do the same; commands
-                  stay summarized until opened, with exact command and output inside the compact
+                  group consecutive runs under Ran commands inside the work disclosure, with
+                  failures marked on the group and each exact command and output inside the compact
                   reveal; an arrow beside the label opens aligned steps with quiet output surfaces,
                   elapsed times, and visible failure marks in both themes</span
                 ></span
@@ -1112,7 +1118,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Auto-review mode where the provider supports it</span
+                >Auto-review by default where supported; Full access otherwise. Saved choices take
+                priority.</span
               ></label
             >
           </li>
@@ -1282,18 +1289,22 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Resizable right-side workspace with persistent tool tabs
+                >Resizable bottom and right tool panels
                 <span class="d"
-                  >compact 2-by-2-plus-one icon launcher, Review, independent Terminal, Browser, and
-                  Files tabs with middle-click closing, CSP-safe compact terminals with link
+                  >compact 2-by-2-plus-one picker for Review, Terminal, Browser, Files, and
+                  Temporary chat. Each panel has independent tool tabs, a + menu, and an upper-right
+                  close button. Tabs fade on add and close; neighbouring tabs slide into place. Tabs
+                  support drag reordering and Alt+Left/Right with the app haptic preference. Closing
+                  the panel returns to the picker. No manual expansion. Bottom and right terminals
+                  have separate shells. Edge resizing remains. CSP-safe compact terminals with link
                   detection, distinct desktop/tablet/mobile Browser controls, lazy file trees and
                   side chat; New chat terminals use the selected project's current checkout, while
                   active chats use their exact session checkout; one fixed in-chat toggle opens and
                   closes the panel by swapping its icon in place, staying visible throughout the
-                  closing transition. Aligned square dividers stay below native window chrome,
-                  resizing keeps at least 360 px for the center chat with or without the left
-                  sidebar, missing workspace items fail without raw paths, and 390 px layouts do not
-                  overflow</span
+                  closing transition. Aligned square dividers and the 42 px sidebar titlebar edge
+                  stay below native window chrome, resizing keeps at least 360 px for the center
+                  chat with or without the left sidebar, missing workspace items fail without raw
+                  paths, and 390 px layouts do not overflow</span
                 ></span
               ></label
             >
@@ -1343,6 +1354,18 @@
             <label
               ><input type="checkbox" /><span
                 >Pin projects and pin sessions, pinned float to the top</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Undo recently archived chats
+                <span class="d"
+                  >sidebar archive actions show a top toast with a white Undo button for 10 seconds,
+                  and fade and slide visible rows before removal. Reduced motion skips these
+                  effects</span
+                ></span
               ></label
             >
           </li>
@@ -1410,7 +1433,10 @@
                   >rapid reopening reverses the same surface; all buttons and popup triggers share
                   steady hover feedback without press flashes or scaling; open popup triggers keep
                   their fill; keyboard menus are instant, reduced motion uses a fade, and centered
-                  dialogs share one entrance</span
+                  dialogs share one entrance. Workspace and permission modes, account email
+                  visibility, and provider update states use the same reversible icon morph as copy
+                  confirmation; reduced motion keeps a short fade and hidden loading icons stay
+                  paused</span
                 ></span
               ></label
             >
@@ -1872,8 +1898,8 @@
       </p>
 
       <p class="sub">
-        Provider account labels use consistent email, plan, and signed-in text with the existing
-        privacy controls.
+        Provider account labels use consistent email and signed-in text with the existing privacy
+        controls. Codex Pro plans show their real x5 or x20 multiplier.
       </p>
 
       <p class="sub">
@@ -1882,8 +1908,9 @@
       </p>
 
       <p class="sub">
-        Hidden capture waits have deadlines and remove pending frame callbacks, timers, and
-        listeners.
+        Hidden capture rejects malformed or unsafe page measurements before bitmap allocation.
+        Recorder cleanup avoids state updates after unmount. Hidden capture waits have deadlines and
+        remove pending frame callbacks, timers, and listeners.
       </p>
 
       <p class="sub">

@@ -6,11 +6,10 @@ import {
   useVoiceRecorder,
 } from '../voice-recorder.js'
 import type { VoiceRecording } from '../voice-capability.js'
-import { ComposerVoiceButton } from './ComposerVoiceButton.js'
 import { ComposerVoiceRecorderBar } from './ComposerVoiceRecorderBar.js'
 import '../styles/composer-voice-control.css'
 
-export type ComposerVoiceState = 'idle' | 'recording' | 'transcribing'
+export type ComposerVoiceState = 'idle' | 'starting' | 'recording' | 'transcribing'
 
 export function ComposerVoiceControl(props: {
   disabled: boolean
@@ -23,6 +22,7 @@ export function ComposerVoiceControl(props: {
   onCancelVoice: (requestId: string) => void
 }) {
   const [state, setState] = useState<ComposerVoiceState>('idle')
+  const stateRef = useRef<ComposerVoiceState>('idle')
   const recorder = useVoiceRecorder()
   const request = useRef<string | undefined>(undefined)
   const operation = useRef(0)
@@ -31,6 +31,7 @@ export function ComposerVoiceControl(props: {
   cancelRequest.current = props.onCancelVoice
 
   const updateState = (next: ComposerVoiceState) => {
+    stateRef.current = next
     setState(next)
     props.onStateChange(next)
   }
@@ -46,13 +47,14 @@ export function ComposerVoiceControl(props: {
   }, [recorder.cancel])
 
   const start = async () => {
+    if (stateRef.current !== 'idle') return
+    updateState('starting')
     const generation = operation.current + 1
     operation.current = generation
     props.onError(undefined)
     try {
       await recorder.start()
       if (mounted.current && operation.current === generation) updateState('recording')
-      else await recorder.cancel()
     } catch (error) {
       if (mounted.current && operation.current === generation) {
         updateState('idle')
@@ -62,21 +64,20 @@ export function ComposerVoiceControl(props: {
   }
 
   const transcribe = async (sendAfter = false) => {
-    if (state !== 'recording') return
+    if (stateRef.current !== 'recording') return
     const generation = operation.current
     const cursor = props.getCursor()
     updateState('transcribing')
     props.onError(undefined)
-    const recording = await recorder.stop()
-    if (!mounted.current || operation.current !== generation) return
-    if (!recording) {
-      updateState('idle')
-      props.onError('No audio was captured. Check the selected microphone and try again.')
-      return
-    }
     const requestId = crypto.randomUUID()
     request.current = requestId
     try {
+      const recording = await recorder.stop()
+      if (!mounted.current || operation.current !== generation) return
+      if (!recording) {
+        props.onError('No audio was captured. Check the selected microphone and try again.')
+        return
+      }
       const transcript = await props.onTranscribeVoice(requestId, recording)
       if (mounted.current && operation.current === generation && request.current === requestId) {
         props.onTranscript(transcript, cursor, sendAfter)
@@ -110,22 +111,26 @@ export function ComposerVoiceControl(props: {
     }
   }, [state, recorder.durationMs])
 
-  if (state === 'idle') {
-    if (props.running) return null
-    return (
-      <ComposerVoiceButton
-        disabled={props.disabled}
-        isRecording={false}
-        isTranscribing={false}
-        durationLabel={formatRecordingDuration(recorder.durationMs)}
-        onClick={() => void start()}
-      />
-    )
-  }
+  useEffect(() => {
+    if (state === 'idle') return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        cancel()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [state])
+
+  if (state === 'idle' && props.running) return null
 
   return (
     <ComposerVoiceRecorderBar
+      idle={state === 'idle'}
+      onStart={() => void start()}
       disabled={props.disabled || props.running}
+      isStarting={state === 'starting'}
       isTranscribing={state === 'transcribing'}
       durationLabel={formatRecordingDuration(recorder.durationMs)}
       waveformLevels={recorder.levels}

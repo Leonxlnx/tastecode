@@ -207,25 +207,22 @@ _Rejected:_ ACP-only (gives up Codex's richest-in-class surface) · native-only 
 4 engines) · a TasteCode agent loop as the only integration path (throws away richer vendor
 agent features) · a `switch` on provider in the orchestrator.
 
-### Voice dictation uses an explicit OpenAI API connection
+### Voice dictation uses the signed-in Codex account
 
-Voice dictation remains the explicit provider-name exception in the renderer: it is offered for a
-Codex chat, but it never extracts or reuses a ChatGPT or provider-CLI session credential.
+Desktop Codex chats offer dictation immediately to the left of Send. The renderer records
+bounded mono 24 kHz PCM WAV and sends audio through the existing local voice protocol.
+The Codex adapter obtains account authorization through app-server `getAuthStatus` and
+uploads the clip to the fixed ChatGPT transcription endpoint. It refreshes authorization
+once after a 401/403. Credentials remain in adapter memory, never in the renderer,
+configuration, database, logs, or protocol responses. No separate API key is required.
 
-The shared renderer records mono 24 kHz PCM WAV, then sends the bounded clip through the
-local server. The server resolves an enabled official OpenAI connection, reads its explicit API
-key from the operating-system credential store, and uploads the clip to OpenAI's documented
-audio-transcription API. The key never crosses the server protocol or renderer bridge and is not
-stored in the database, configuration file, or logs.
+Recording shows live audio levels, a timer, cancel, transcribe, and transcribe-and-send.
+Escape cancels; cancellation closes the microphone and aborts uploads. The transport and
+response sizes are bounded. This account endpoint is not a public API contract, so failures
+must remain visible and must not silently switch to a billed API connection.
 
-The mic is capability-gated to Codex chats with a configured OpenAI API connection. Other
-providers and installations without that key hide it rather than falling back to browser
-`SpeechRecognition`, which is unreliable in packaged Electron and inconsistent across web
-clients.
-
-_Rejected:_ exporting a ChatGPT subscription token from Codex app-server to an undocumented
-ChatGPT backend · Web Speech API (unreliable in packaged Electron and inconsistent across web
-clients).
+_Rejected:_ browser SpeechRecognition (unreliable in packaged Electron) and requiring an
+extra OpenAI API key for account-backed dictation.
 
 ---
 

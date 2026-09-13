@@ -5,7 +5,7 @@ export type { VoiceRecording } from './voice-capability.js'
 
 const VOICE_SAMPLE_RATE = 24_000
 export const MAX_RECORDING_MS = 120_000
-const BUFFER_SIZE = 4_096
+const BUFFER_SIZE = 1_024
 const MAX_WAVEFORM_LEVELS = 160
 const WAVEFORM_EMIT_INTERVAL_MS = 45
 
@@ -35,6 +35,7 @@ async function releaseStart(start: RecorderStart): Promise<void> {
 
 export function useVoiceRecorder() {
   const runtime = useRef<RecorderRuntime | null>(null)
+  const mounted = useRef(true)
   /** Set synchronously, before the permission prompt can be awaited twice. */
   const starting = useRef<RecorderStart | undefined>(undefined)
   const timer = useRef<number | undefined>(undefined)
@@ -53,8 +54,10 @@ export function useVoiceRecorder() {
     runtime.current = null
     if (timer.current !== undefined) window.clearInterval(timer.current)
     timer.current = undefined
-    setRecording(false)
-    setDurationMs(0)
+    if (mounted.current) {
+      setRecording(false)
+      setDurationMs(0)
+    }
 
     if (!current) {
       await releasedStart
@@ -188,10 +191,16 @@ export function useVoiceRecorder() {
     await teardown()
     levelsRef.current = []
     lastLevelEmitAt.current = 0
-    setLevels([])
+    if (mounted.current) setLevels([])
   }, [teardown])
 
-  useEffect(() => () => void teardown(), [teardown])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      void teardown()
+    }
+  }, [teardown])
   return { recording, durationMs, levels, start, stop, cancel }
 }
 

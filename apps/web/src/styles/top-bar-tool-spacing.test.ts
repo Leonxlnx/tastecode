@@ -56,9 +56,10 @@ describe('top-bar tool spacing', () => {
     )
   })
 
-  it('pins the workspace expand button to the panel corner', () => {
-    expect(rule(workspacePanelCss, '.workspace-panel__chrome')).toContain('padding: 4px 8px;')
-    expect(rule(workspacePanelCss, '.workspace-panel__controls')).toContain('padding-left: 74px;')
-    expect(rule(workspacePanelCss, '.workspace-panel__controls')).toContain('margin-right: 0;')
+  it('pins the workspace close button to the upper-right corner', () => {
+    const close = rule(workspacePanelCss, '.workspace-panel__close')
+    expect(close).toContain('position: absolute;')
+    expect(close).toContain('top: 8px;')
+    expect(close).toContain('right: 8px;')
   })
 })

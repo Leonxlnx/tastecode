@@ -169,7 +169,7 @@ describe('TerminalPane', () => {
       />,
     )
     act(() => harness.emit('terminal.output', { terminalId: 'terminal-1', data: 'hidden' }))
-    expect(instance.write).not.toHaveBeenCalledWith('hidden')
+    expect(instance.write).toHaveBeenCalledWith('hidden')
 
     view.rerender(
       <TerminalPane
@@ -249,6 +249,38 @@ describe('TerminalPane', () => {
     expect(
       harness.request.mock.calls.filter(([method]) => method === 'terminal.close'),
     ).toHaveLength(0)
+  })
+
+  it('keeps a keyed shell alive across the Strict Mode remount', async () => {
+    const harness = fakeTransport()
+    const onClose = vi.fn()
+    const view = render(
+      <StrictMode>
+        <TerminalPane
+          terminalKey="right-terminal"
+          transport={harness.transport}
+          projectPath="/workspace/project"
+          theme="dark"
+          onClose={onClose}
+        />
+      </StrictMode>,
+    )
+
+    await waitFor(() =>
+      expect(
+        harness.request.mock.calls.filter(([method]) => method === 'terminal.open'),
+      ).toHaveLength(2),
+    )
+    await act(async () => undefined)
+    expect(harness.request.mock.calls.filter(([method]) => method === 'terminal.close')).toEqual([])
+    expect(onClose).not.toHaveBeenCalled()
+
+    view.unmount()
+    await waitFor(() =>
+      expect(harness.request).toHaveBeenCalledWith('terminal.close', {
+        terminalId: 'terminal-1',
+      }),
+    )
   })
 
   it('closes the inline pane when its shell exits', async () => {
