@@ -21,6 +21,43 @@ The local source changes have now shipped through the following focused PRs. Eac
 
 Windows, signing, notarization, installer and version-to-version update checks remain release gates. No hosted CI or release publication was started. The record below describes the earlier September 9 snapshot; it is historical evidence, not the latest release status.
 
+## Release workflow review — 2026-09-13
+
+PR #1101 resolves the remaining source requirements in #966. All release-proof jobs use Node
+24, matching the architecture runtime. Build jobs retain only `contents: read`, checkouts do
+not persist credentials, and only the optional final upload job has `contents: write`. Every
+action remains pinned to a full commit with its version comment; hosted runs remain manual.
+The static regression checks now enforce each job's exact permission map, Node version,
+checkout credential policy, action pin, and version comment.
+
+The preview-test cleanup awaits asynchronous deletion with five bounded retries, allowing
+Windows handles to close without blocking the event loop. Its maximum retry delay is 1.5
+seconds, rather than the previous 21 seconds. Current main changes and the release dashboard
+were preserved when resolving the old branch conflict.
+
+Local validation used Node 24.14.1 and pnpm 11.8.0: lint, typecheck, the complete test suite
+(2,812 tests), build, and license verification (398 packages) passed. The server suite starts
+real loopback previews and checks their shutdown and cleanup. This validates the source on
+macOS arm64; it is not a hosted Windows or signed-artifact run.
+
+This source review does not complete release certification. The signed macOS record below
+belongs only to `33d487a40650f43385ba76cbcf8424dc24a883c8`. Windows installed-app native proof
+remains tracked in #956; final draft reconciliation remains tracked in #954. Notarization and
+a real version-to-version update still need proof at the chosen release SHA. No Windows host
+or notarization environment configuration was available for this review, and no hosted run
+or release publication was started.
+
+## Historical PR review — 2026-09-12
+
+Main base: `33d487a40650f43385ba76cbcf8424dc24a883c8`.
+
+- #993 and #1002 are closed as superseded. Fresh malformed-reply and preview-cleanup regressions passed on the current implementation.
+- #1039 is closed as superseded by #1096. Its added Design test cases remain present; the current Design suite passed 114 tests.
+- #1099 replaces #994 and #1100 replaces #998. GitHub could not rebase-merge the old histories after normal main merges; the replacements preserve identical source trees and are ready for human review. Each passed lint, typecheck, tests and build. Recorder cancellation/unmount was checked in a real browser with simulated permission. Capture was checked in real macOS Electron against a hostile loopback page.
+- #1101 replaces #937 and remains draft. Its release workflow and tools are already superseded by #1095; this branch keeps the current implementation and the bounded Windows preview-test cleanup retry. Old cloud handoff additions and obsolete packaging/feed overrides are removed from its diff.
+
+A fresh macOS arm64 directory package from clean main `33d487a40650f43385ba76cbcf8424dc24a883c8` is now Developer ID signed. Deep/strict signature verification passed, and the packaged PTY and keyring checks passed. No notarization was performed. The remaining release proof is Windows x64 install/uninstall and native bindings, macOS notarization, and version-to-version update evidence at an approved source SHA. No notarization credential configuration or available Windows runtime was identified. The checked installer verifier requires an isolated GitHub-hosted Windows runner; hosted Actions still require Leon's explicit request. No hosted run, draft-release upload, publication, or signing-setting change was performed.
+
 ## Historical snapshot
 
 Local implementation based on main `210e071588faca59f15a734b4046d45ab79c8103`.

@@ -1,0 +1,12 @@
+{
+  "sourceHead": "33d487a40650f43385ba76cbcf8424dc24a883c8",
+  "platform": "darwin",
+  "arch": "arm64",
+  "electron": "43.4.0",
+  "developerIdSigned": true,
+  "deepStrictSignatureVerified": true,
+  "packagedPtyAndKeyringPassed": true,
+  "notarized": false,
+  "windowsProof": false,
+  "published": false
+}
