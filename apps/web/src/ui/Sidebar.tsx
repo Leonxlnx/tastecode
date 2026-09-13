@@ -170,7 +170,11 @@ function SidebarComponent(props: {
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
   onConsumeReset?:
-    | ((provider: ProviderId, idempotencyKey: string) => Promise<ResultOf<'usage.consumeReset'>>)
+    | ((
+        provider: ProviderId,
+        idempotencyKey: string,
+        creditId?: string,
+      ) => Promise<ResultOf<'usage.consumeReset'>>)
     | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined

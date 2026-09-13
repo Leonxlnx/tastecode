@@ -454,11 +454,12 @@ export function App() {
     [usageController],
   )
   const consumeReset = useCallback(
-    async (requestedProvider: ProviderId, idempotencyKey: string) => {
+    async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
       try {
         return await transport.request('usage.consumeReset', {
           provider: requestedProvider,
           idempotencyKey,
+          ...(creditId === undefined ? {} : { creditId }),
         })
       } finally {
         refreshUsage(requestedProvider)
