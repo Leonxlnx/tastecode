@@ -45,7 +45,7 @@
   --queue-line: #2b2b2b;
 
   --text: #ededed;
-  --response-text: #fefefe;
+  --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
   --text-2: #a3a3a3;
   --text-3: #6f6f6f;
   --queue-text: #ededed;
@@ -291,7 +291,7 @@
   --queue-line: #eeeeef;
 
   --text: #27272a;
-  --response-text: #18181b;
+  --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
   --text-2: #52525b;
   --text-3: #71717a;
   --queue-text: #18181b;

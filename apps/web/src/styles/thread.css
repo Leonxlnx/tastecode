@@ -184,7 +184,10 @@
   background: var(--surface-2);
   border-radius: var(--r-md);
   padding: 7px 11px;
+  color: var(--response-text);
+  font-family: var(--font-ui);
   font-size: var(--t-md);
+  font-weight: 400;
   line-height: 1.45;
 }
 
@@ -320,8 +323,9 @@
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-md);
-  letter-spacing: -0.012em;
+  font-size: var(--t-sm);
+  font-weight: 400;
+  letter-spacing: normal;
   list-style: none;
   text-align: left;
   user-select: none;
@@ -881,7 +885,10 @@
   min-height: 28px;
   margin-top: 4px;
   color: var(--text-3);
-  font-size: var(--t-sm);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   opacity: 0;
   pointer-events: none;
