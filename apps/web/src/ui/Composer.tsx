@@ -902,7 +902,6 @@ function ComposerComponent(props: {
   // "Loading models…" forever is the UI lying about what it is doing.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
-  const ApprovalIcon = approval.icon
 
   const grow = () => {
     const el = area.current
@@ -1343,11 +1342,10 @@ function ComposerComponent(props: {
                 shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
                 trigger={() => (
                   <span className="shelf-control__content">
-                    {props.isolate ? (
-                      <GitBranch size={15} aria-hidden />
-                    ) : (
+                    <IconMorph active={props.isolate ? 1 : 0}>
                       <Laptop size={15} aria-hidden />
-                    )}
+                      <GitBranch size={15} aria-hidden />
+                    </IconMorph>
                     <span>{props.isolate ? 'Isolated' : 'Local'}</span>
                   </span>
                 )}
@@ -1802,7 +1800,11 @@ function ComposerComponent(props: {
                           <span
                             className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
                           >
-                            <ApprovalIcon size={13} aria-hidden />
+                            <IconMorph active={APPROVAL_MODES.indexOf(approval)}>
+                              {APPROVAL_MODES.map((mode) => (
+                                <mode.icon key={mode.id} size={13} aria-hidden />
+                              ))}
+                            </IconMorph>
                             <span>{props.approvalLoading ? 'Loading…' : approval.short}</span>
                           </span>
                         )}

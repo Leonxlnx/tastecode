@@ -1466,33 +1466,6 @@
   outline-offset: 1px;
 }
 
-.settings__email-eye {
-  grid-area: 1 / 1;
-  transition:
-    opacity var(--dur-press) var(--ease-out),
-    transform var(--dur-press) var(--ease-out);
-}
-
-.settings__email-eye--show {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.settings__email-eye--hide {
-  opacity: 0;
-  transform: scale(0.9);
-}
-
-.settings__email[data-revealed='true'] .settings__email-eye--show {
-  opacity: 0;
-  transform: scale(0.9);
-}
-
-.settings__email[data-revealed='true'] .settings__email-eye--hide {
-  opacity: 1;
-  transform: scale(1);
-}
-
 .settings__email-clip {
   position: relative;
   display: grid;
@@ -1533,7 +1506,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .settings__email-eye,
   .settings__email-clip::before {
     transition: none;
   }
