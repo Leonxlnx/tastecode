@@ -587,6 +587,7 @@ describe('protocol envelopes', () => {
       usedPercent: 0,
       valueLabel: '1 available',
       action: 'consume-reset' as const,
+      resetCredits: [{ id: 'reset-fixture', expiresAt: 1_791_173_958_000 }, { expiresAt: null }],
     }
     expect(
       methods['usage.summary'].result.parse({
@@ -594,8 +595,8 @@ describe('protocol envelopes', () => {
         today: usage,
         limits: [limit],
         limitSource: { provider: 'codex', status: 'ready', limits: [limit] },
-      }).limits[0]?.action,
-    ).toBe('consume-reset')
+      }).limits[0],
+    ).toEqual(limit)
     expect(() =>
       methods['usage.summary'].result.parse({
         session: usage,
@@ -612,6 +613,11 @@ describe('protocol envelopes', () => {
     ).toThrow()
 
     const key = '8ae96ff3-3425-4f4c-8772-b6fd61502868'
+    const selected = { provider: 'codex', idempotencyKey: key, creditId: 'reset-fixture' }
+    expect(methods['usage.consumeReset'].params.parse(selected)).toEqual(selected)
+    expect(() =>
+      methods['usage.consumeReset'].params.parse({ ...selected, creditId: '' }),
+    ).toThrow()
     expect(
       methods['usage.consumeReset'].params.parse({ provider: 'codex', idempotencyKey: key }),
     ).toEqual({
