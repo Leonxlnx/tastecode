@@ -48,7 +48,7 @@
 }
 
 /* Hidden loading glyphs stay mounted for a clean handoff, but do no work. */
-.icon-morph__layer:not([data-active]) :is(.spinner, .is-spinning) {
+.icon-morph__layer:not([data-active]) :is(.spinner, .is-spinning, .provider-update-spinner) {
   animation-play-state: paused;
 }
 

@@ -1045,8 +1045,9 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
           data-open={disclosure.dataOpen}
           aria-hidden={!disclosure.expanded}
           inert={!disclosure.expanded}
-          onAnimationEnd={(event) => {
-            if (event.target === event.currentTarget) disclosure.finishClosing()
+          onTransitionEnd={(event) => {
+            if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+              disclosure.finishClosing()
           }}
         >
           {disclosure.contentMounted ? (
@@ -1137,8 +1138,9 @@ function ReasoningDisclosure({
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) disclosure.finishClosing()
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
         }}
       >
         <div className="aux__reveal-clip">
@@ -1187,6 +1189,16 @@ function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
   const expanded = phase === 'open'
 
+  useEffect(() => {
+    if (phase !== 'closing') return
+    // A reversal before the first paint can leave no transition to finish.
+    const timer = window.setTimeout(
+      () => setPhase((current) => (current === 'closing' ? 'closed' : current)),
+      180,
+    )
+    return () => window.clearTimeout(timer)
+  }, [phase])
+
   const toggle = useCallback(() => {
     const reduceMotion =
       globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
@@ -1204,6 +1216,72 @@ function useDisclosure() {
     toggle,
     finishClosing,
   } as const
+}
+
+function groupCommandRuns(items: Item[]): (Item | Item[])[] {
+  if (items.every((item) => item.type === 'command')) return items
+  const rows: (Item | Item[])[] = []
+  for (const item of items) {
+    const previous = rows.at(-1)
+    if (item.type === 'command' && Array.isArray(previous)) {
+      previous.push(item)
+    } else if (
+      item.type === 'command' &&
+      !Array.isArray(previous) &&
+      previous?.type === 'command'
+    ) {
+      rows[rows.length - 1] = [previous, item]
+    } else {
+      rows.push(item)
+    }
+  }
+  return rows
+}
+
+function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
+  const disclosure = useDisclosure()
+  const failed = items.filter(
+    (item) => item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0),
+  ).length
+  const pending = items.some((item) => item.status === 'started')
+  const label = `${live && pending ? 'Running commands' : 'Ran commands'}${failed ? ` (${failed} failed)` : ''}${!live && pending ? ' (interrupted)' : ''}`
+
+  return (
+    <div className="activity" data-expanded={disclosure.expanded}>
+      <button
+        type="button"
+        className="activity__summary"
+        aria-expanded={disclosure.expanded}
+        onClick={disclosure.toggle}
+      >
+        <span className="activity__glyph" aria-hidden>
+          {glyph(items[0]!)}
+        </span>
+        <span className="activity__label">{label}</span>
+        <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
+      </button>
+      <div
+        className="activity__reveal"
+        data-open={disclosure.dataOpen}
+        aria-hidden={!disclosure.expanded}
+        inert={!disclosure.expanded}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
+        }}
+      >
+        {disclosure.contentMounted ? (
+          <div className="activity__reveal-clip">
+            <div className="activity__body">
+              {items.map((item) => (
+                <AuxDisclosure key={item.id} item={item} live={live && item.status === 'started'} />
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 function ActivityStack({
@@ -1293,14 +1371,18 @@ function ActivityStack({
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) disclosure.finishClosing()
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            disclosure.finishClosing()
         }}
       >
         {disclosure.contentMounted ? (
           <div className="activity__reveal-clip">
             <div className="activity__body">
-              {visibleActivity?.map((item) => {
+              {(visibleActivity ? groupCommandRuns(visibleActivity) : []).map((item) => {
+                if (Array.isArray(item)) {
+                  return <CommandRun key={item[0]!.id} items={item} live={live} />
+                }
                 if (item.type === 'command' || item.type === 'file_change') {
                   return <AuxDisclosure key={item.id} item={item} live={false} />
                 }
