@@ -14,6 +14,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
+import { IconMorph } from './IconMorph.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
 import type {
@@ -2121,8 +2122,10 @@ function AccountEmail(props: { email: string }) {
         onBlur={() => setPreviewed(false)}
         onClick={togglePinned}
       >
-        <Eye className="settings__email-eye settings__email-eye--show" size={15} aria-hidden />
-        <EyeOff className="settings__email-eye settings__email-eye--hide" size={15} aria-hidden />
+        <IconMorph active={revealed ? 1 : 0}>
+          <Eye className="settings__email-eye--show" size={15} aria-hidden />
+          <EyeOff className="settings__email-eye--hide" size={15} aria-hidden />
+        </IconMorph>
       </button>
       <span className="settings__email-clip">
         <span className="settings__email-value">{props.email}</span>
