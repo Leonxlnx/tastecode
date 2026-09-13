@@ -21,7 +21,33 @@ The local source changes have now shipped through the following focused PRs. Eac
 
 Windows, signing, notarization, installer and version-to-version update checks remain release gates. No hosted CI or release publication was started. The record below describes the earlier September 9 snapshot; it is historical evidence, not the latest release status.
 
-## Remaining PR review — 2026-09-12
+## Release workflow review — 2026-09-13
+
+PR #1101 resolves the remaining source requirements in #966. All release-proof jobs use Node
+24, matching the architecture runtime. Build jobs retain only `contents: read`, checkouts do
+not persist credentials, and only the optional final upload job has `contents: write`. Every
+action remains pinned to a full commit with its version comment; hosted runs remain manual.
+The static regression checks now enforce each job's exact permission map, Node version,
+checkout credential policy, action pin, and version comment.
+
+The preview-test cleanup awaits asynchronous deletion with five bounded retries, allowing
+Windows handles to close without blocking the event loop. Its maximum retry delay is 1.5
+seconds, rather than the previous 21 seconds. Current main changes and the release dashboard
+were preserved when resolving the old branch conflict.
+
+Local validation used Node 24.14.1 and pnpm 11.8.0: lint, typecheck, the complete test suite
+(2,812 tests), build, and license verification (398 packages) passed. The server suite starts
+real loopback previews and checks their shutdown and cleanup. This validates the source on
+macOS arm64; it is not a hosted Windows or signed-artifact run.
+
+This source review does not complete release certification. The signed macOS record below
+belongs only to `33d487a40650f43385ba76cbcf8424dc24a883c8`. Windows installed-app native proof
+remains tracked in #956; final draft reconciliation remains tracked in #954. Notarization and
+a real version-to-version update still need proof at the chosen release SHA. No Windows host
+or notarization environment configuration was available for this review, and no hosted run
+or release publication was started.
+
+## Historical PR review — 2026-09-12
 
 Main base: `33d487a40650f43385ba76cbcf8424dc24a883c8`.
 
