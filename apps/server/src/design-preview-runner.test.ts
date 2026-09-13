@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { createServer, type Server } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -25,7 +26,7 @@ function serverPort(server: Server): number {
 afterEach(async () => {
   await Promise.all(previews.splice(0).map((preview) => preview.stop()))
   for (const workspace of workspaces.splice(0)) {
-    rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    await rm(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
