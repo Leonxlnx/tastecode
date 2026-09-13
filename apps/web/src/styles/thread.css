@@ -560,7 +560,7 @@
 .activity__body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   margin: 4px 0;
   padding: 2px 0 2px 14px;
   border-left: 1px solid var(--line);
@@ -568,7 +568,12 @@
 
 .activity__item {
   min-width: 0;
-  padding-block: 3px;
+  padding-block: 0;
+}
+
+.activity__body .aux__row {
+  min-height: 24px;
+  padding-block: 0;
 }
 
 .activity__message {
