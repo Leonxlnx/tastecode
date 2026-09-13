@@ -1360,6 +1360,17 @@ describe('protocol envelopes', () => {
       },
     }
     expect(methods['backgroundModel.updateSettings'].params.parse(target)).toEqual(target)
+    const fast = {
+      mode: 'manual' as const,
+      target: { provider: 'codex' as const, model: 'gpt-5.6-luna', serviceTier: 'priority' },
+    }
+    expect(methods['backgroundModel.updateSettings'].params.parse(fast)).toEqual(fast)
+    expect(() =>
+      methods['backgroundModel.updateSettings'].params.parse({
+        ...fast,
+        target: { ...fast.target, serviceTier: '' },
+      }),
+    ).toThrow()
     expect(() =>
       methods['backgroundModel.updateSettings'].params.parse({
         mode: 'manual',
