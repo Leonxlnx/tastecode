@@ -89,6 +89,7 @@ export type ProviderControl = {
   useApiKey?: (apiKey: string) => Promise<Account>
   consumeRateLimitReset?: (
     idempotencyKey: string,
+    creditId?: string,
   ) => Promise<{ outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' }>
 }
 
@@ -327,10 +328,10 @@ export class ProviderControls {
             ? { provider, status: 'ready', limits: source.limits }
             : { provider, status: 'unavailable' }
         }),
-      consumeRateLimitReset: async (idempotencyKey) => {
+      consumeRateLimitReset: async (idempotencyKey, creditId) => {
         const generation = this.#generation
         const outcome = await this.#withFresh((adapter) =>
-          adapter.consumeRateLimitReset(idempotencyKey),
+          adapter.consumeRateLimitReset(idempotencyKey, creditId),
         )
         this.#assertOpen(generation)
         this.#options.onUsageChanged?.(provider)

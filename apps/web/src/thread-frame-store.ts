@@ -6,6 +6,7 @@ type ItemRangeSubscription = { first: number; last: number; listener: Listener }
 function hasStructuralChange(previous: ThreadState, next: ThreadState): boolean {
   return (
     previous.items !== next.items ||
+    previous.error !== next.error ||
     previous.liveStart !== next.liveStart ||
     previous.running !== next.running ||
     previous.activeTurn !== next.activeTurn ||

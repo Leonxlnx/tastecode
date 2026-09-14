@@ -157,7 +157,7 @@ describe('WorkspacePanel', () => {
       <WorkspacePanel
         {...props}
         onProviderLoginClose={onProviderLoginClose}
-        providerLogin={{ id: 4, title: 'Codex login', installKey: 'codex', showCodeInput: false }}
+        providerLogin={{ id: 4, title: 'Codex login', installKey: 'codex', canCancelSignIn: false }}
       />,
     )
     await screen.findByTestId('provider-login-terminal')
@@ -173,7 +173,7 @@ describe('WorkspacePanel', () => {
       <WorkspacePanel
         {...props}
         onProviderLoginClose={onProviderLoginClose}
-        providerLogin={{ id: 4, title: 'Codex login', installKey: 'codex', showCodeInput: false }}
+        providerLogin={{ id: 4, title: 'Codex login', installKey: 'codex', canCancelSignIn: false }}
       />,
     )
     await screen.findByTestId('provider-login-terminal')

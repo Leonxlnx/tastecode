@@ -6,6 +6,7 @@ import { AccountLimits, type AccountLimitsState } from './AccountLimits.js'
 
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -33,6 +34,7 @@ function limits(
   onConsumeReset?: (
     provider: AccountLimitsState['provider'],
     idempotencyKey: string,
+    creditId?: string,
   ) => Promise<ResultOf<'usage.consumeReset'>>,
 ) {
   return <AccountLimits states={[state]} onRetry={onRetry} onConsumeReset={onConsumeReset} />
@@ -304,6 +306,99 @@ describe('account limits', () => {
     expect(within(farFuture as HTMLElement).getByText('Reset time unavailable.')).toBeTruthy()
   })
 
+  it('shows every reset expiry soonest first, with dates and a strict 24-hour warning', () => {
+    const now = Date.UTC(2026, 8, 13, 12)
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const credits = [
+      { expiresAt: null },
+      { expiresAt: now + 2 * 86_400_000 },
+      { expiresAt: now + 86_400_000 },
+      { expiresAt: now + 86_400_000 - 1 },
+      { expiresAt: now + 3_600_000 },
+    ]
+    render(
+      limits({
+        status: 'ready',
+        provider: 'codex',
+        summary: summary([{ ...resetLimit, valueLabel: '5 available', resetCredits: credits }]),
+      }),
+    )
+    openUsage()
+
+    expect(
+      within(screen.getByRole('region', { name: 'Codex' })).getByText('5 available'),
+    ).toBeTruthy()
+    const list = screen.getByRole('list', { name: 'Rate limit reset expiries' })
+    expect(within(list).getAllByRole('listitem')).toHaveLength(5)
+    const times = Array.from(list.querySelectorAll('time'))
+    const expected = [now + 3_600_000, now + 86_400_000 - 1, now + 86_400_000, now + 2 * 86_400_000]
+    expect(times.map((time) => time.dateTime)).toEqual(
+      expected.map((at) => new Date(at).toISOString()),
+    )
+    expect(times.map((time) => time.hasAttribute('data-expiring-soon'))).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ])
+    for (const [index, time] of times.entries()) {
+      expect(time.textContent).toBe(
+        `Expires ${new Date(expected[index]!).toLocaleDateString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        })} ${new Date(expected[index]!).toLocaleTimeString(undefined, {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}`,
+      )
+    }
+    expect(list.lastElementChild?.textContent).toBe('No expiry')
+    expect(credits[0]?.expiresAt).toBeNull()
+  })
+
+  it('updates the expiry warning while open and clears its timer on close', () => {
+    vi.useFakeTimers()
+    const now = Date.UTC(2026, 8, 13, 12)
+    vi.setSystemTime(now)
+    render(
+      limits({
+        status: 'ready',
+        provider: 'codex',
+        summary: summary([{ ...resetLimit, resetCredits: [{ expiresAt: now + 86_400_000 }] }]),
+      }),
+    )
+    const trigger = openUsage()
+    const time = screen.getByRole('list').querySelector('time')!
+    expect(time.hasAttribute('data-expiring-soon')).toBe(false)
+
+    act(() => vi.advanceTimersByTime(60_000))
+    expect(time.hasAttribute('data-expiring-soon')).toBe(true)
+    const details = document.getElementById(trigger.getAttribute('aria-controls')!)!
+    fireEvent.click(trigger)
+    act(() => dispatchTransitionEnd(details, 'opacity'))
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('handles expired and invalid dates without inventing an expiry', () => {
+    vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 8, 13))
+    render(
+      limits({
+        status: 'ready',
+        provider: 'codex',
+        summary: summary([
+          {
+            ...resetLimit,
+            resetCredits: [{ expiresAt: 0 }, { expiresAt: Number.MAX_SAFE_INTEGER }],
+          },
+        ]),
+      }),
+    )
+    openUsage()
+    expect(screen.getByText(/^Expired /).hasAttribute('data-expiring-soon')).toBe(false)
+    expect(screen.getByText('Expiry date unavailable')).toBeTruthy()
+  })
+
   it('preserves usable values through a failed refresh and retries', () => {
     const onRetry = vi.fn()
     const view = render(
@@ -381,6 +476,83 @@ describe('account limits', () => {
     expect(screen.getByRole('button', { name: 'Use rate limit reset' })).toBeTruthy()
   })
 
+  it('uses the reset beside the selected expiry and keeps that date visible during confirmation', async () => {
+    const now = Date.UTC(2026, 8, 13, 12)
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    const onConsumeReset = vi.fn(async () => ({ outcome: 'reset' as const }))
+    render(
+      limits(
+        {
+          status: 'ready',
+          provider: 'codex',
+          summary: summary([
+            {
+              ...resetLimit,
+              valueLabel: '2 available',
+              resetCredits: [
+                { id: 'later', expiresAt: now + 2 * 86_400_000 },
+                { id: 'soon', expiresAt: now + 3_600_000 },
+              ],
+            },
+          ]),
+        },
+        () => {},
+        onConsumeReset,
+      ),
+    )
+    openUsage()
+
+    const heading = screen.getByText('Rate limit resets').parentElement!
+    expect(within(heading).queryByRole('button')).toBeNull()
+    const rows = within(screen.getByRole('list')).getAllByRole('listitem')
+    const selected = rows[1]!
+    const expiry = selected.querySelector('time')!
+    expect(expiry.dateTime).toBe(new Date(now + 2 * 86_400_000).toISOString())
+    const use = within(selected).getByRole('button', { name: 'Use rate limit reset' })
+    expect(document.getElementById(use.getAttribute('aria-describedby')!)?.contains(expiry)).toBe(
+      true,
+    )
+    fireEvent.click(use)
+    expect(onConsumeReset).not.toHaveBeenCalled()
+    expect(selected.contains(expiry)).toBe(true)
+    expect(screen.getByText('Rate limit resets')).toBeTruthy()
+    expect(within(heading).getByText('2 available')).toBeTruthy()
+    fireEvent.click(within(selected).getByRole('button', { name: 'Confirm use rate limit reset' }))
+    await waitFor(() =>
+      expect(onConsumeReset).toHaveBeenCalledWith('codex', expect.any(String), 'later'),
+    )
+  })
+
+  it('does not offer a dated reset without an id or after its expiry', () => {
+    const now = Date.UTC(2026, 8, 13, 12)
+    vi.spyOn(Date, 'now').mockReturnValue(now)
+    render(
+      limits(
+        {
+          status: 'ready',
+          provider: 'codex',
+          summary: summary([
+            {
+              ...resetLimit,
+              resetCredits: [
+                { id: 'expired', expiresAt: now - 1 },
+                { expiresAt: now + 86_400_000 },
+                { id: 'no-expiry', expiresAt: null },
+              ],
+            },
+          ]),
+        },
+        () => {},
+        vi.fn(),
+      ),
+    )
+    openUsage()
+    const rows = within(screen.getByRole('list')).getAllByRole('listitem')
+    expect(within(rows[0]!).queryByRole('button')).toBeNull()
+    expect(within(rows[1]!).queryByRole('button')).toBeNull()
+    expect(within(rows[2]!).getByRole('button', { name: 'Use rate limit reset' })).toBeTruthy()
+  })
+
   it('consumes only after Confirm, reuses the attempt key, and ignores a second press while pending', async () => {
     let rejectFirst: ((error: Error) => void) | undefined
     const onConsumeReset = vi.fn()
@@ -402,6 +574,7 @@ describe('account limits', () => {
     expect(onConsumeReset).toHaveBeenCalledWith(
       'codex',
       expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
+      undefined,
     )
     const key = onConsumeReset.mock.calls[0]?.[1]
     rejectFirst?.(new Error('Timed out'))
