@@ -476,6 +476,7 @@ describe('fresh usage controls', () => {
       })
       expect(adapter.consumeRateLimitReset).toHaveBeenCalledExactlyOnceWith(
         'fixture-idempotency-key',
+        undefined,
       )
       expect(adapter.dispose).toHaveBeenCalledOnce()
       expect(hooks.onUsageChanged).toHaveBeenCalledExactlyOnceWith('codex')

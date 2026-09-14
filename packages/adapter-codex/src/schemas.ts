@@ -57,6 +57,12 @@ export const CodexRateLimitResponseSchema = z.object({
 export type CodexRateLimitSnapshot = z.infer<typeof CodexRateLimitSnapshotSchema>
 export type CodexRateLimitResponse = z.infer<typeof CodexRateLimitResponseSchema>
 
+export const CodexResetCreditSchema = z.object({
+  id: z.string().min(1).optional(),
+  status: z.literal('available'),
+  expiresAt: z.number().int().nonnegative().max(8_640_000_000_000).nullable(),
+})
+
 export const ConsumeRateLimitResetResponseSchema = z.object({
   outcome: z.enum(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed']),
 })
