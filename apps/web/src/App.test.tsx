@@ -1272,7 +1272,7 @@ describe('web client', () => {
       tab: 'GitHub CLI install',
       terminalId: 'term-github-install',
       columns: 100,
-      showsCodeInput: false,
+      canCancelSignIn: false,
     },
     {
       account: { available: true, authenticated: false, error: 'Sign in with gh auth login' },
@@ -1281,7 +1281,7 @@ describe('web client', () => {
       tab: 'GitHub login',
       terminalId: 'term-github-login',
       columns: 320,
-      showsCodeInput: true,
+      canCancelSignIn: true,
     },
   ])('opens GitHub $action in the expanded workspace terminal', async (scenario) => {
     const request = transport.request.getMockImplementation()
@@ -1323,11 +1323,12 @@ describe('web client', () => {
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(true))
     expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
     expect(await screen.findByLabelText(`${scenario.tab} terminal`)).toBeTruthy()
-    if (scenario.showsCodeInput) {
-      expect(await screen.findByLabelText('Login code')).toBeTruthy()
+    if (scenario.canCancelSignIn) {
+      expect(await screen.findByRole('button', { name: 'Cancel sign-in' })).toBeTruthy()
     } else {
-      expect(screen.queryByLabelText('Login code')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
     }
+    expect(screen.queryByLabelText('Login code')).toBeNull()
     expect(transport.request).toHaveBeenCalledWith('pullRequests.setup', {
       action: scenario.action,
       columns: scenario.columns,
@@ -2515,76 +2516,106 @@ describe('new chats', () => {
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('opens Claude login in the expanded workspace and restores Settings after success', async () => {
-    serverProviders = [
-      ...serverProviders,
-      {
-        id: 'claude-code',
-        displayName: 'Claude Code',
-        installed: true,
-        auth: 'unknown',
-        setup: {
-          installUrl: 'https://code.claude.com/docs/en/getting-started',
-          login: 'provider',
+  it.each(['success', 'failure', 'cancel'] as const)(
+    'restores Settings after Claude sign-in ends with %s',
+    async (outcome) => {
+      serverProviders = [
+        ...serverProviders,
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: true,
+          auth: 'unknown',
+          setup: {
+            installUrl: 'https://code.claude.com/docs/en/getting-started',
+            login: 'provider',
+          },
         },
-      },
-    ]
-    let claudeSignedIn = false
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'auth.status') {
-        const provider = methods['auth.status'].params.parse(params).provider
-        return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
-      }
-      if (method === 'providers.launch') {
-        return Promise.resolve({ terminalId: 'term-claude-login' })
-      }
-      return request(method, params)
-    })
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe(): void {}
-        unobserve(): void {}
-        disconnect(): void {}
-      },
-    )
-
-    render(<App />)
-    openSettings()
-    await screen.findByText('Claude Code')
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
-    const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
-    expect(workspace.classList.contains('is-panel-open')).toBe(true)
-    expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
-    expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
-    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-      provider: 'claude-code',
-      columns: 320,
-      rows: 30,
-    })
-
-    claudeSignedIn = true
-    act(() => {
-      transport.listeners.get('terminal.exit')!({
-        terminalId: 'term-claude-login',
-        exitCode: 0,
+      ]
+      let claudeSignedIn = false
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'auth.status') {
+          const provider = methods['auth.status'].params.parse(params).provider
+          return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
+        }
+        if (method === 'providers.launch') {
+          return Promise.resolve({ terminalId: 'term-claude-login' })
+        }
+        if (method === 'terminal.close') return Promise.resolve({})
+        return request(method, params)
       })
-    })
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          observe(): void {}
+          unobserve(): void {}
+          disconnect(): void {}
+        },
+      )
 
-    await screen.findByRole('dialog', { name: 'Settings' })
-    await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
-    expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
-    expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
-    await waitFor(() =>
-      expect(
-        screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
-      ).toContain('Signed in'),
-    )
-  })
+      render(<App />)
+      openSettings()
+      await screen.findByText('Claude Code')
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+      const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
+      expect(workspace.classList.contains('is-panel-open')).toBe(true)
+      expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
+      expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
+      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+        provider: 'claude-code',
+        columns: 320,
+        rows: 30,
+      })
+
+      expect(screen.queryByLabelText('Login code')).toBeNull()
+      if (outcome === 'cancel') {
+        fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith('terminal.close', {
+            terminalId: 'term-claude-login',
+          }),
+        )
+      } else {
+        claudeSignedIn = outcome === 'success'
+        act(() => {
+          transport.listeners.get('terminal.exit')!({
+            terminalId: 'term-claude-login',
+            exitCode: outcome === 'success' ? 0 : 130,
+          })
+        })
+      }
+
+      await screen.findByRole('dialog', { name: 'Settings' })
+      await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
+      expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
+      expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
+      await waitFor(() =>
+        expect(
+          screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
+        ).toContain(
+          outcome === 'success'
+            ? 'Signed in'
+            : outcome === 'failure'
+              ? 'Sign-in failed'
+              : 'Sign-in canceled',
+        ),
+      )
+      if (outcome === 'failure') {
+        expect(screen.getByRole('button', { name: 'Retry sign-in' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
+          'false',
+        )
+        const issue = screen.getByRole('button', { name: 'Problem details' })
+        expect(issue.closest('.provider-row')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+        expect(await screen.findByLabelText('Install terminal')).toBeTruthy()
+      }
+    },
+  )
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
     const parked = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'

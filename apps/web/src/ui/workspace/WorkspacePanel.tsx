@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type FormEvent,
   type PointerEvent,
 } from 'react'
 import {
@@ -22,7 +21,7 @@ import {
   type TablerIcon,
 } from '@tabler/icons-react'
 import { prepareAppHaptics } from '../../haptics.js'
-import { installState, subscribeInstalls } from '../../provider-install.js'
+import { cancelInstall, installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
 import { beginPanelResize } from '../panel-resize.js'
 import type {
@@ -33,6 +32,7 @@ import type {
 import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
 import { Menu, MenuItem } from '../Menu.js'
+import { RowIssue } from '../RowIssue.js'
 import '../workspace-panel.css'
 
 const WorkspaceReview = lazy(() =>
@@ -58,7 +58,7 @@ export type WorkspaceProviderLoginRequest = {
   id: number
   title: string
   installKey: string
-  showCodeInput?: boolean
+  canCancelSignIn?: boolean
 }
 
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
@@ -71,7 +71,7 @@ type WorkspaceTab =
       requestId: number
       title: string
       installKey: string
-      showCodeInput: boolean
+      canCancelSignIn: boolean
     }
 
 const TOOLS: Array<{
@@ -236,7 +236,7 @@ function WorkspacePanelComponent(props: {
       requestId: request.id,
       title: request.title,
       installKey: request.installKey,
-      showCodeInput: request.showCodeInput !== false,
+      canCancelSignIn: request.canCancelSignIn !== false,
     })
     props.onOpen()
   }, [
@@ -245,7 +245,7 @@ function WorkspacePanelComponent(props: {
     props.providerLogin?.id,
     props.providerLogin?.title,
     props.providerLogin?.installKey,
-    props.providerLogin?.showCodeInput,
+    props.providerLogin?.canCancelSignIn,
   ])
 
   useEffect(() => {
@@ -353,6 +353,9 @@ function WorkspacePanelComponent(props: {
             </>
           )}
         </Menu>
+        {tool?.kind === 'provider-login' && tool.canCancelSignIn ? (
+          <ProviderLoginCancel transport={props.transport} installKey={tool.installKey} />
+        ) : null}
       </WorkspaceTabs>
       <div className="workspace-panel__body">
         {tabs.length ? (
@@ -412,9 +415,6 @@ function WorkspaceToolSurface(props: {
           ariaLabel={`${props.tab.title} terminal`}
           profile="workspace"
         />
-        {props.tab.showCodeInput ? (
-          <ProviderLoginCodeInput transport={props.transport} installKey={props.tab.installKey} />
-        ) : null}
       </div>
     )
   }
@@ -468,55 +468,26 @@ function WorkspaceToolSurface(props: {
   )
 }
 
-function ProviderLoginCodeInput(props: { transport: Transport; installKey: string }) {
+function ProviderLoginCancel(props: { transport: Transport; installKey: string }) {
   const login = useSyncExternalStore(subscribeInstalls, () => installState(props.installKey))
-  const [code, setCode] = useState('')
-  const [sending, setSending] = useState(false)
   const [error, setError] = useState<string>()
 
   if (login?.phase !== 'running') return null
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    const submittedCode = code
-    const value = submittedCode.trim()
-    if (!value || sending) return
-    const terminalId = login.terminalId
-    setSending(true)
+  const cancel = () => {
     setError(undefined)
-    void props.transport
-      .request('terminal.input', { terminalId, data: `${value}\r` })
-      .then(() =>
-        setCode((current) =>
-          current === submittedCode && installState(props.installKey)?.terminalId === terminalId
-            ? ''
-            : current,
-        ),
-      )
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
-      .finally(() => setSending(false))
+    void cancelInstall(props.transport, props.installKey).catch((cause: unknown) =>
+      setError(cause instanceof Error ? cause.message : String(cause)),
+    )
   }
 
   return (
-    <form className="workspace-provider-login__code" onSubmit={submit}>
-      <label className="visually-hidden" htmlFor={`${props.installKey}-code`}>
-        Login code
-      </label>
-      <input
-        id={`${props.installKey}-code`}
-        type="text"
-        autoComplete="one-time-code"
-        spellCheck={false}
-        maxLength={2_048}
-        placeholder="Paste code here if prompted"
-        value={code}
-        onChange={(event) => setCode(event.currentTarget.value)}
-      />
-      <button type="submit" disabled={!code.trim() || sending}>
-        {sending ? 'Submitting…' : 'Submit code'}
+    <div className="workspace-provider-login__actions">
+      {error ? <RowIssue message={error} announce /> : null}
+      <button type="button" disabled={login.canceling} onClick={cancel}>
+        {login.canceling ? 'Canceling…' : 'Cancel sign-in'}
       </button>
-      {error ? <span role="alert">{error}</span> : null}
-    </form>
+    </div>
   )
 }
 
