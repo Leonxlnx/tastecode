@@ -803,7 +803,7 @@ export function startServer(
 
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
-        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey)
+        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
       }
 
       case 'sideChat.start': {

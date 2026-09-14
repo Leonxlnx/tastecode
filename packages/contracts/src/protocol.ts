@@ -485,6 +485,15 @@ export const ProviderLimitSchema = z.object({
   valueLabel: z.string().min(1).max(160).optional(),
   /** Present when this row can be spent as a one-shot quota reset. */
   action: z.literal('consume-reset').optional(),
+  /** Available reset details, when reported. Expiry is Unix milliseconds; null means no expiry. */
+  resetCredits: z
+    .array(
+      z.object({
+        id: z.string().min(1).optional(),
+        expiresAt: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .optional(),
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
@@ -1215,6 +1224,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       idempotencyKey: z.string().uuid(),
+      creditId: z.string().min(1).optional(),
     }),
     result: z.object({
       outcome: z.enum(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed']),
