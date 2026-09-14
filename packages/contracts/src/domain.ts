@@ -297,6 +297,7 @@ export const BackgroundModelTargetSchema = z
     agent: z.string().min(1).optional(),
     model: z.string().min(1),
     effort: z.string().min(1).optional(),
+    serviceTier: z.string().min(1).optional(),
   })
   .superRefine((target, context) => {
     if ((target.provider === 'api') !== Boolean(target.connectionId)) {
