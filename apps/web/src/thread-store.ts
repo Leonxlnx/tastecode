@@ -243,6 +243,7 @@ function createThreadErrorItem(message: string): Item {
 function settleThreadError(state: ThreadState, items: Item[]): ThreadState {
   return {
     ...state,
+    error: { id: `thread-error:${items.length}`, message: items.at(-1)?.text ?? 'Chat failed' },
     running: false,
     activeTurn: undefined,
     approvals: [],
@@ -261,6 +262,7 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return {
         ...current,
         running: true,
+        error: undefined,
         liveStart: current.items.length,
         activeTurn: {
           id: event.turn.id,
@@ -357,6 +359,12 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       return reduceDeltas(state, [event])
 
     case 'item.completed': {
+      if (event.item.type === 'error') {
+        state = {
+          ...state,
+          error: { id: event.item.id, message: event.item.text ?? 'Chat failed' },
+        }
+      }
       if (event.item.text === LEGACY_DESIGN_APPROVAL_WARNING) return settleLiveItems(state)
       const index = itemIndex(state.items, event.item.id)
       const items = copyMaterializedItems(state)
@@ -795,6 +803,9 @@ export function reduceEventLog(
     if (event.type === 'item.completed') {
       if (event.item.text === LEGACY_DESIGN_APPROVAL_WARNING) continue
       mutableItems().complete(event.item)
+      if (event.item.type === 'error') {
+        mutableState().error = { id: event.item.id, message: event.item.text ?? 'Chat failed' }
+      }
       continue
     }
     if (event.type === 'thread.error') {
@@ -811,6 +822,7 @@ export function reduceEventLog(
       timing[event.turn.id] = { ...previous, startedAt }
       const mutable = mutableState()
       mutable.running = true
+      mutable.error = undefined
       mutable.liveStart = mutable.items.length
       mutable.activeTurn = { id: event.turn.id, startedAt }
       mutable.turnTiming = timing
@@ -950,6 +962,7 @@ export function appendUserMessage(
   recordAppendedItem(items, item)
   return {
     ...state,
+    error: undefined,
     items,
     liveItems: EMPTY_LIVE_ITEMS,
   }

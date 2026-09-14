@@ -16,6 +16,8 @@ export type LiveItemUpdate = {
 }
 
 export type ThreadState = {
+  /** Latest user-facing failure, derived at lifecycle boundaries rather than during streaming. */
+  error?: { id: string; message: string } | undefined
   items: Item[]
   liveItems: ReadonlyMap<number, LiveItemUpdate>
   itemVersion: number

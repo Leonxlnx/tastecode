@@ -10,7 +10,8 @@ import type { Transport } from './transport.js'
  */
 
 export type InstallState = {
-  phase: 'running' | 'succeeded' | 'failed'
+  phase: 'running' | 'succeeded' | 'failed' | 'canceled'
+  canceling?: boolean
   terminalId: string
   /** Raw pty output so an attached terminal can replay the whole run. */
   log: string
@@ -60,6 +61,7 @@ const LOG_CAP = 200_000
 
 const installs = new Map<string, InstallState>()
 const starts = new Map<string, Promise<void>>()
+const cancellations = new Map<string, Promise<void>>()
 const reconcilers = new Map<string, () => Promise<void>>()
 const listeners = new Set<() => void>()
 
@@ -77,11 +79,47 @@ export function clearInstall(key: string): void {
   if (installs.delete(key)) notify()
 }
 
+/** Stop the owned PTY before releasing the sign-in session. */
+export function cancelInstall(transport: Transport, key: string): Promise<void> {
+  const pending = cancellations.get(key)
+  if (pending) return pending
+  const operation = (async () => {
+    await starts.get(key)
+    const state = installs.get(key)
+    if (state?.phase !== 'running') return
+    installs.set(key, { ...state, canceling: true })
+    notify()
+    try {
+      await transport.request('terminal.close', { terminalId: state.terminalId })
+      const current = installs.get(key)
+      if (current?.terminalId !== state.terminalId) return
+      detachTransportListeners(key)
+      installs.set(key, { ...current, phase: 'canceled', canceling: false })
+      notify()
+    } catch (cause) {
+      const current = installs.get(key)
+      if (current?.terminalId === state.terminalId && current.phase === 'running') {
+        installs.set(key, { ...current, canceling: false })
+        notify()
+      }
+      throw cause
+    }
+  })()
+  cancellations.set(key, operation)
+  void operation
+    .finally(() => {
+      if (cancellations.get(key) === operation) cancellations.delete(key)
+    })
+    .catch(() => undefined)
+  return operation
+}
+
 /** Test isolation only: module state must not leak between test cases. */
 export function resetInstalls(): void {
   for (const key of transportListeners.keys()) detachTransportListeners(key)
   installs.clear()
   starts.clear()
+  cancellations.clear()
   notify()
 }
 
@@ -213,6 +251,8 @@ function begin(
   openTerminal: () => Promise<{ terminalId: string }>,
   openUrl?: (url: string) => void,
 ): Promise<void> {
+  const canceling = cancellations.get(key)
+  if (canceling) return canceling.then(() => begin(transport, key, openTerminal, openUrl))
   const starting = starts.get(key)
   if (starting) return starting
   const operation = attachJob(transport, key, openTerminal, openUrl)
@@ -270,6 +310,7 @@ async function attachJob(
 
   const state: InstallState = {
     phase: 'running',
+    canceling: cancellations.has(key),
     terminalId,
     log: '',
     logOffset: 0,
@@ -292,7 +333,7 @@ async function attachJob(
     const log = combined.slice(-LOG_CAP)
     const logOffset = start + event.data.length - log.length
     let openedAuthUrl = current.openedAuthUrl
-    if (openUrl && !openedAuthUrl) {
+    if (openUrl && !openedAuthUrl && !cancellations.has(key)) {
       const url = firstAuthUrl(log)
       if (url) {
         openedAuthUrl = url
@@ -315,7 +356,7 @@ async function attachJob(
     if (!current) return
     installs.set(key, {
       ...current,
-      phase: event.exitCode === 0 ? 'succeeded' : 'failed',
+      phase: current.canceling ? 'canceled' : event.exitCode === 0 ? 'succeeded' : 'failed',
       exitCode: event.exitCode,
     })
     notify()
@@ -355,7 +396,9 @@ async function attachJob(
           currentEnd > snapshotEnd ? current.log.slice(snapshotEnd - current.logOffset) : ''
         const combined = status.output + suffix
         const log = combined.slice(-LOG_CAP)
-        const openedAuthUrl = current.openedAuthUrl ?? (openUrl ? firstAuthUrl(log) : undefined)
+        const openedAuthUrl =
+          current.openedAuthUrl ??
+          (openUrl && !cancellations.has(key) ? firstAuthUrl(log) : undefined)
         installs.set(key, {
           ...current,
           log,

@@ -27,7 +27,6 @@ describe('provider row grammar', () => {
       'provider-row__mark',
       'provider-row__identity',
       'provider-row__status',
-      'provider-row__issue',
       'provider-row__secondary',
       'provider-row__primary',
     ])
@@ -36,6 +35,7 @@ describe('provider row grammar', () => {
     expect(within(row).queryByText('codex-cli 1.4.0')).toBeNull()
     expect(within(row).getByRole('status').getAttribute('aria-atomic')).toBe('true')
     const issue = within(row).getByRole('button', { name: 'Problem details' })
+    expect(issue.closest('.provider-row__status')).toBeTruthy()
     fireEvent.focus(issue)
     expect(issue.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id)
     expect(within(row).getByRole('alert').textContent).toBe('Status unavailable')
