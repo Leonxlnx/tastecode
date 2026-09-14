@@ -1136,10 +1136,11 @@ export class Orchestrator {
   async consumeRateLimitReset(
     provider: ProviderId,
     idempotencyKey: string,
+    creditId?: string,
   ): Promise<{ outcome: 'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed' }> {
     const consume = this.#controls.forProvider(provider).consumeRateLimitReset
     if (!consume) throw new Error(`provider "${provider}" cannot consume a rate-limit reset`)
-    return consume(idempotencyKey)
+    return consume(idempotencyKey, creditId)
   }
 
   async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
@@ -2220,10 +2221,8 @@ export class Orchestrator {
     this.#terminals.resize(terminalId, columns, rows)
   }
 
-  closeTerminal(terminalId: string): void {
-    void this.#terminals
-      .close(terminalId)
-      .catch((error) => this.#onLog(`[terminal] close failed: ${errorMessage(error)}`))
+  async closeTerminal(terminalId: string): Promise<void> {
+    await this.#terminals.close(terminalId)
   }
 
   terminalStatus(terminalId: string) {

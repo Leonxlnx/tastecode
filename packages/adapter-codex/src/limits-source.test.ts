@@ -157,6 +157,54 @@ describe('Codex rate-limit source', () => {
     adapter.dispose()
   })
 
+  it('preserves available reset expiries through the provider response parser', async () => {
+    const { adapter } = sourceAdapter({
+      account: { type: 'chatgpt', email: null, planType: 'pro' },
+      rateLimitsResponse: {
+        ...emptyRateLimits,
+        rateLimitResetCredits: {
+          availableCount: 5,
+          credits: [
+            {
+              id: 'reset-fixture',
+              resetType: 'codexRateLimits',
+              status: 'available',
+              grantedAt: 1_788_581_958,
+              expiresAt: 1_791_173_958,
+              title: 'Full reset',
+              description: 'One free rate limit reset.',
+            },
+            { status: 'available', expiresAt: null },
+            { status: 'available', expiresAt: 1_790_000_000 },
+            { status: 'redeemed', expiresAt: 1_788_000_000 },
+            { status: 'redeeming', expiresAt: 1_788_000_000 },
+            { status: 'available', expiresAt: 'unknown' },
+            { status: 'available', expiresAt: Number.MAX_SAFE_INTEGER },
+          ],
+        },
+      },
+    })
+    await adapter.start()
+
+    await expect(adapter.rateLimitSource()).resolves.toEqual({
+      status: 'ready',
+      limits: [
+        {
+          label: 'Rate limit resets',
+          usedPercent: 0,
+          valueLabel: '5 available',
+          action: 'consume-reset',
+          resetCredits: [
+            { id: 'reset-fixture', expiresAt: 1_791_173_958_000 },
+            { expiresAt: null },
+            { expiresAt: 1_790_000_000_000 },
+          ],
+        },
+      ],
+    })
+    adapter.dispose()
+  })
+
   it.each(['account/read', 'account/rateLimits/read'])(
     'propagates a failed %s request',
     async (method) => {
@@ -198,6 +246,18 @@ describe('Codex rate-limit source', () => {
 })
 
 describe('Codex rate-limit reset consume', () => {
+  it('passes the selected credit id to the provider', async () => {
+    const { adapter, rpc } = sourceAdapter()
+    await adapter.start()
+    await expect(
+      adapter.consumeRateLimitReset('8ae96ff3-3425-4f4c-8772-b6fd61502868', 'reset-fixture'),
+    ).resolves.toBe('reset')
+    expect(rpc.calls.at(-1)?.params).toEqual({
+      idempotencyKey: '8ae96ff3-3425-4f4c-8772-b6fd61502868',
+      creditId: 'reset-fixture',
+    })
+    adapter.dispose()
+  })
   it('redeems the next available credit with the caller-supplied key', async () => {
     const { adapter, rpc } = sourceAdapter()
     await adapter.start()

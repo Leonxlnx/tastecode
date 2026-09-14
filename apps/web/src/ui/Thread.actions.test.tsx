@@ -1276,6 +1276,23 @@ describe('collapsed row disclosure', () => {
 })
 
 describe('thread error surface', () => {
+  it('keeps errors out of the transcript when the composer shows them', () => {
+    const items: Item[] = [
+      turnItem('error-1', 1, { type: 'error', text: 'Request failed' }),
+      turnItem('answer-1', 2, { role: 'assistant', text: 'Existing reply' }),
+    ]
+    render(
+      <Thread
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
+        errorsInComposer
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    expect(screen.queryByText('Request failed')).toBeNull()
+    expect(screen.getByText('Existing reply')).toBeTruthy()
+  })
+
   it('states the failure as text instead of a collapsible tool row', () => {
     const items: Item[] = [
       {
