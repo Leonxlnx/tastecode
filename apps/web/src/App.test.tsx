@@ -1439,6 +1439,29 @@ describe('web client', () => {
     })
   })
 
+  it('shows model discovery failures with a retry that preserves the draft', async () => {
+    let failing = true
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list' && failing)
+        return Promise.reject(new Error('Model service is offline'))
+      return request(method, params)
+    })
+    render(<App />)
+    const composer = (await screen.findByPlaceholderText('Do anything')) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep my model draft' } })
+    const error = await screen.findByText('Could not load Codex models. Model service is offline')
+    expect(error.closest('.composer__provider-shelf')).toBeTruthy()
+    failing = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry models' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Could not load Codex models. Model service is offline'),
+      ).toBeNull(),
+    )
+    expect(composer.value).toBe('Keep my model draft')
+  })
+
   it('restores the selected model immediately on the first cache-enabled launch', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -2415,7 +2438,7 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
   })
 
-  it('auto-dismisses notifications after five seconds', async () => {
+  it('keeps composer errors until dismissed and shows a later failure again', async () => {
     serverProjects = []
     render(<App />)
 
@@ -2426,15 +2449,15 @@ describe('new chats', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
       expect(screen.getByRole('alert').textContent).toContain('Choose a project before sending.')
-      act(() => vi.advanceTimersByTime(4_999))
-      expect(screen.getByRole('alert')).toBeTruthy()
-      act(() => vi.advanceTimersByTime(1))
-      const notice = screen.getByRole('alert')
-      expect(notice.getAttribute('data-state')).toBe('closing')
-      act(() => {
-        dispatchTransitionEnd(notice, 'opacity')
-      })
+      act(() => vi.advanceTimersByTime(10_000))
+      expect(screen.getByRole('alert').closest('.composer__provider-shelf')).toBeTruthy()
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Dismiss error: Choose a project before sending.' }),
+      )
       expect(screen.queryByRole('alert')).toBeNull()
+      expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(screen.getByRole('alert').textContent).toContain('Choose a project before sending.')
     } finally {
       vi.useRealTimers()
     }
@@ -2453,7 +2476,7 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Send after setup' } })
-    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    const setup = await screen.findByRole('button', { name: 'Set up provider' })
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(setup)
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
@@ -2480,12 +2503,15 @@ describe('new chats', () => {
     fireEvent.change(composer, { target: { value: 'Stay blocked' } })
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
-    await screen.findByRole('button', { name: 'Sign in' })
+    await within(screen.getByRole('dialog', { name: 'Settings' })).findByRole('button', {
+      name: 'Sign in',
+    })
     await act(async () => finishInitial({ signedIn: true }))
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(
       screen
         .getAllByRole('status')
-        .some((status) => status.textContent?.includes('Provider setup required')),
+        .some((status) => status.textContent?.includes('Sign in to use this provider.')),
     ).toBe(true)
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
@@ -2624,8 +2650,10 @@ describe('new chats', () => {
     render(<App />)
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Recover this draft' } })
-    await screen.findByRole('button', { name: 'Set up a provider' })
-    expect(screen.getByRole('status').textContent).toContain('Provider unavailable')
+    await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Could not load providers. provider discovery unavailable',
+    )
     failing = false
     act(() => {
       setConnectionState('reconnecting')
@@ -3299,6 +3327,30 @@ describe('new chats', () => {
       await waitForWorkspace(1)
     },
   )
+  it('shows active chat errors in the composer and keeps dismissal scoped to that failure', async () => {
+    await openNewSession()
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+    emitThreadEvent('untouched-thread', {
+      type: 'thread.error',
+      threadId: 'untouched-thread',
+      message: 'Model request timed out',
+    })
+    const error = await screen.findByRole('alert')
+    expect(error.closest('.composer__provider-shelf')).toBeTruthy()
+    expect(error.textContent).toBe('Model request timed out')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error: Model request timed out' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(composer.value).toBe('Keep this draft')
+    expect(document.activeElement).toBe(composer)
+    emitThreadEvent('untouched-thread', {
+      type: 'thread.error',
+      threadId: 'untouched-thread',
+      message: 'Model request timed out',
+    })
+    expect(await screen.findByRole('alert')).toBeTruthy()
+  })
+
   it('refreshes after terminal thread errors', async () => {
     await openNewSession()
     transport.request.mockClear()

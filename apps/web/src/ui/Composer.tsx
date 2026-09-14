@@ -61,6 +61,7 @@ import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { preloadThread } from './LazyThread.js'
 import { ModelSearchField } from './ModelSearchField.js'
+import { ComposerErrors, useComposerError, type ComposerError } from './ComposerErrors.js'
 
 const ComposerResourcePicker = lazy(() =>
   import('./ComposerResourcePicker.js').then((module) => ({
@@ -471,6 +472,10 @@ function ComposerComponent(props: {
   voiceAvailable: boolean
   disabled: boolean
   sendAvailability: SendAvailability
+  providerSignInRequired?: boolean
+  errors?: readonly ComposerError[] | undefined
+  errorsVisible?: boolean
+  providerError?: ComposerError | undefined
   running: boolean
   newSession: boolean
   isolate: boolean
@@ -518,7 +523,7 @@ function ComposerComponent(props: {
   // boundary, so ordinary typing does not rerender the complete composer.
   const [hasDraftText, setHasDraftText] = useState(false)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
-  const [attachmentError, setAttachmentError] = useState<string>()
+  const [attachmentError, setAttachmentError] = useComposerError()
   const [viewingMedia, setViewingMedia] = useState<{
     src: string
     thumbnailSrc?: string | undefined
@@ -527,7 +532,7 @@ function ComposerComponent(props: {
     localPath?: string
   }>()
   const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
-  const [voiceError, setVoiceError] = useState<string>()
+  const [voiceError, setVoiceError] = useComposerError()
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
   const [queueDropTarget, setQueueDropTarget] = useState<{
@@ -1261,8 +1266,46 @@ function ComposerComponent(props: {
     props.disabled ||
     props.sendAvailability !== 'ready' ||
     (!props.attachmentsSupported && attachments.length > 0)
-  const visibleAttachmentError =
-    !props.attachmentsSupported && attachments.length > 0 ? ATTACHMENTS_BLOCK_SEND : attachmentError
+  const unsupportedAttachmentIssue = useMemo<ComposerError | undefined>(
+    () =>
+      !props.attachmentsSupported && attachments.length > 0
+        ? { id: crypto.randomUUID(), message: ATTACHMENTS_BLOCK_SEND }
+        : undefined,
+    [props.attachmentsSupported, attachments.length],
+  )
+
+  const setupError = useMemo<
+    (Omit<ComposerError, 'action'> & { action: { label: string } }) | undefined
+  >(() => {
+    if (props.sendAvailability === 'ready' || props.sendAvailability === 'loading') return undefined
+    return {
+      id: crypto.randomUUID(),
+      role: 'status',
+      message:
+        props.sendAvailability === 'unavailable'
+          ? 'Provider unavailable'
+          : props.providerSignInRequired
+            ? 'Sign in to use this provider.'
+            : 'Set up this provider to start chatting.',
+      action: {
+        label:
+          props.sendAvailability === 'unavailable'
+            ? 'Check setup'
+            : props.providerSignInRequired
+              ? 'Sign in'
+              : 'Set up provider',
+      },
+    }
+  }, [props.provider, props.sendAvailability, props.providerSignInRequired])
+  const composerErrors = [
+    ...(props.errors ?? []),
+    props.providerError ??
+      (setupError
+        ? { ...setupError, action: { ...setupError.action, run: props.onSetupProvider } }
+        : undefined),
+    unsupportedAttachmentIssue ?? attachmentError,
+    voiceError,
+  ].filter((error): error is ComposerError => error !== undefined)
 
   const selectResource = (resource: ComposerResource) => {
     const trigger = resourceTrigger
@@ -1301,6 +1344,11 @@ function ComposerComponent(props: {
             addDroppedFiles(Array.from(e.dataTransfer.files))
           }}
         >
+          <ComposerErrors
+            errors={composerErrors}
+            visible={props.errorsVisible ?? true}
+            onDismiss={() => area.current?.focus()}
+          />
           {props.newSession ? (
             <div className="composer__shelf">
               <Menu
@@ -1651,11 +1699,6 @@ function ComposerComponent(props: {
                     </span>
                   )
                 })}
-                {visibleAttachmentError ? (
-                  <span className="chip chip--error" role="alert">
-                    {visibleAttachmentError}
-                  </span>
-                ) : null}
               </div>
 
               <div className="composer__field">
@@ -1754,19 +1797,6 @@ function ComposerComponent(props: {
                   placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
                 />
               </div>
-
-              {props.sendAvailability !== 'ready' && props.sendAvailability !== 'loading' ? (
-                <div className="composer__provider-state">
-                  <span role="status">
-                    {props.sendAvailability === 'setup-required'
-                      ? 'Provider setup required'
-                      : 'Provider unavailable'}
-                  </span>
-                  <button className="ghost" type="button" onClick={props.onSetupProvider}>
-                    Set up a provider
-                  </button>
-                </div>
-              ) : null}
 
               <div className="tools">
                 {props.attachmentsSupported ? (
@@ -1953,11 +1983,6 @@ function ComposerComponent(props: {
           </DesignBeam>
         </div>
       </div>
-      {voiceError ? (
-        <div className="composer__voice-error" role="alert">
-          {voiceError}
-        </div>
-      ) : null}
       {viewingMedia ? (
         <Suspense fallback={null}>
           <MediaViewer

@@ -688,8 +688,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Provider error state as a red dot with hover bubble, never a second row line;
-                app-level failures use a compact bottom-right notice without an accent rail</span
+                >Provider errors use a plain icon next to the status with details on hover or focus;
+                chat, model, account, connection, attachment, and voice errors share a dismissible
+                bar above the composer; contextual dialogs retain their local feedback</span
               ></label
             >
           </li>
@@ -737,6 +738,15 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chat and provider errors appear in a compact red shelf above the project and branch
+                shelf, with a plain icon, a recovery action where available, and a dismiss button;
+                dismissal preserves the draft and send guards, and new failures appear again</span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
