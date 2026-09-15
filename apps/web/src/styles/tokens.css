@@ -43,6 +43,10 @@
   --line: #262626;
   --line-strong: #333333;
   --queue-line: #2b2b2b;
+  /* Loading placeholders: the resting bar and the shine that passes over it.
+     Light themes flip the pair so a bar still reads against a near-white page. */
+  --skeleton: var(--surface-2);
+  --skeleton-shine: color-mix(in srgb, var(--text-3) 18%, var(--surface-2));
 
   --text: #ededed;
   --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
@@ -289,6 +293,8 @@
   --line: #ebebed;
   --line-strong: #dedee2;
   --queue-line: #eeeeef;
+  --skeleton: var(--surface-3);
+  --skeleton-shine: color-mix(in srgb, var(--bg-prompt) 70%, var(--surface-3));
 
   --text: #27272a;
   --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));

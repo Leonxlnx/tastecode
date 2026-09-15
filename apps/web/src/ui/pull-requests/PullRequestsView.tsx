@@ -31,6 +31,7 @@ import {
   type ProviderLoginTerminalTarget,
 } from '../../provider-install.js'
 import { Menu, MenuItem } from '../Menu.js'
+import { Skeleton } from '../Skeleton.js'
 import { PullRequestDetailPane } from './PullRequestDetailPane.js'
 import { countPullRequestFilterValues } from './pull-request-filter-values.js'
 import { comparePullRequestText } from './pull-request-text.js'
@@ -545,12 +546,12 @@ function PullRequestFilterMenu(props: {
 
 function PullRequestListSkeleton() {
   return (
-    <div className="pr-list-skeleton" aria-label="Loading pull requests">
-      <span className="pr-skeleton-title" />
-      {[0, 1, 2, 3].map((index) => (
+    <div className="pr-list-skeleton skeleton-group" aria-label="Loading pull requests">
+      {[0, 1, 2, 3, 4, 5].map((index) => (
         <span className="pr-skeleton-row" key={index}>
-          <span />
-          <span />
+          <Skeleton />
+          <Skeleton />
+          <Skeleton />
         </span>
       ))}
     </div>

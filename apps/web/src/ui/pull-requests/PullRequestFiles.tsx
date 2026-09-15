@@ -22,6 +22,7 @@ import type { Transport } from '../../transport.js'
 import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
+import { Skeleton, SkeletonCode, SkeletonStatus } from '../Skeleton.js'
 import { parsePullRequestPatch } from './diff.js'
 import type { PullRequestDiffAnnotation, PullRequestDiffSide } from './PullRequestDiffRenderer.js'
 
@@ -96,6 +97,17 @@ export function PullRequestFiles(props: {
           </div>
         </header>
         <div className="pr-files-nav-scroll">
+          {loading && files.length === 0
+            ? Array.from({ length: Math.min(Math.max(props.detail.changedFiles, 1), 6) }).map(
+                (_, index) => (
+                  <span className="pr-files-skeleton-row skeleton-group" key={index}>
+                    <Skeleton />
+                    <Skeleton />
+                    <Skeleton />
+                  </span>
+                ),
+              )
+            : null}
           {files.map((file) => {
             const openThreads = props.detail.reviewThreads.filter(
               (thread) => thread.path === file.path && !thread.resolved,
@@ -135,9 +147,14 @@ export function PullRequestFiles(props: {
 
       <div className="pr-file-stage">
         {loading && files.length === 0 ? (
-          <div className="pr-file-loading">
-            <LoaderCircle size={17} className="is-spinning" aria-hidden /> Loading file changes
-          </div>
+          <SkeletonStatus label="Loading file changes" className="pr-file-skeleton">
+            <header className="pr-file-skeleton-head">
+              <Skeleton className="skeleton--icon" />
+              <Skeleton width={188} height={9} />
+              <Skeleton width={52} height={8} />
+            </header>
+            <SkeletonCode lines={28} gutter />
+          </SkeletonStatus>
         ) : error && files.length === 0 ? (
           <div className="pr-file-loading is-error">
             <CircleAlert size={17} aria-hidden />
@@ -289,9 +306,9 @@ function PullRequestFileDiff(props: {
         ) : (
           <Suspense
             fallback={
-              <div className="pr-diffs-loading">
-                <LoaderCircle size={14} className="is-spinning" aria-hidden /> Preparing diff
-              </div>
+              <SkeletonStatus label="Preparing diff" className="pr-diffs-loading">
+                <SkeletonCode lines={8} gutter />
+              </SkeletonStatus>
             }
           >
             <LazyPullRequestDiffRenderer

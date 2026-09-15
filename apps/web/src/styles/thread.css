@@ -1367,6 +1367,11 @@
   font-size: var(--t-sm);
 }
 
+.diff-review__skeleton {
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+}
+
 .diff-file {
   border-top: 1px solid var(--line);
 }

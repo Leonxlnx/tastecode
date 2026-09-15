@@ -97,6 +97,7 @@ import type { Checkpoint } from './ui/RollbackDialog.js'
 import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchHost.js'
 import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
+import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
@@ -4648,13 +4649,7 @@ export function App() {
                 >
                   <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
                     {activeId ? (
-                      <Suspense
-                        fallback={
-                          <div className="empty" role="status">
-                            Loading conversation…
-                          </div>
-                        }
-                      >
+                      <Suspense fallback={<ThreadSkeleton />}>
                         <LazyThread
                           key={threadEntryKey}
                           frameStore={threadFrameStore}
@@ -5048,9 +5043,9 @@ function Empty(props: {
   // flashing the add-a-project prompt for one round trip reads as a glitch.
   if (props.status === 'loading') {
     return (
-      <div className="empty" role="status">
-        <div className="empty__prompt">Loading projects…</div>
-      </div>
+      <SkeletonStatus label="Loading projects…" className="empty">
+        <Skeleton className="skeleton--block empty__skeleton-prompt" />
+      </SkeletonStatus>
     )
   }
 
