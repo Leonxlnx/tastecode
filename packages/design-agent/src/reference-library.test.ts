@@ -114,6 +114,27 @@ describe('reviewed reference library', () => {
       ).map(({ family }) => family),
     ).toEqual(['hero'])
   })
+  it('keeps requested sections when the preferred collection lacks their family', () => {
+    const root = library()
+    save(root, [
+      entry,
+      {
+        ...entry,
+        id: 'editorial-about',
+        group: 'editorial-about',
+        family: 'about',
+        source: 'https://example.com/editorial',
+        tags: ['serif'],
+      },
+    ])
+    expect(
+      selectReviewedReferences(
+        { ...brief, requiredContent: ['Hero', 'About introduction'] },
+        loadReviewedReferences(root),
+        () => 0,
+      ).map(({ family }) => family),
+    ).toEqual(['hero', 'about'])
+  })
   it('rejects duplicate identifiers and corrupt selected images with actionable errors', () => {
     const root = library()
     save(root, [entry, entry])

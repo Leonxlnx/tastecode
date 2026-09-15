@@ -164,7 +164,12 @@ export function selectReviewedReferences(
       )
     )
       continue
-    const familyEntries = candidates.filter((entry) => entry.family === family)
+    const compatibleEntries = candidates.filter((entry) => entry.family === family)
+    // A style preference must not remove content the user requested. Brand adaptation
+    // unifies a reviewed fallback when that collection has no composition for the family.
+    const familyEntries = compatibleEntries.length
+      ? compatibleEntries
+      : ranked.filter((entry) => entry.family === family)
     if (!familyEntries.length) continue
     const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
     // Revisions share a vote: choose a group first, then its reviewed revision.
