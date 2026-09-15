@@ -4671,23 +4671,27 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).toBe('light')
   })
 
-  it('persists the Codex theme across app restarts', async () => {
+  it('replaces the removed Codex theme with system across app restarts', async () => {
+    localStorage.setItem('harness.theme', 'codex')
     const first = render(<App />)
 
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'Codex' }))
+    expect(screen.queryByRole('radio', { name: 'Codex' })).toBeNull()
+    expect((screen.getByRole('radio', { name: 'System' }) as HTMLInputElement).checked).toBe(true)
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.theme')).toBe('codex')
-      expect(document.documentElement.dataset.theme).toBe('codex')
-      expect(document.documentElement.classList.contains('dark')).toBe(true)
+      expect(localStorage.getItem('harness.theme')).toBe('system')
+      expect(document.documentElement.dataset.theme).toBe(
+        window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+      )
     })
 
     first.unmount()
     render(<App />)
 
-    expect(document.documentElement.dataset.theme).toBe('codex')
+    expect(localStorage.getItem('harness.theme')).toBe('system')
+    expect(document.documentElement.dataset.theme).not.toBe('codex')
   })
 
   it('persists the selected interface font', async () => {

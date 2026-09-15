@@ -141,7 +141,6 @@ describe('settings viewport layout', () => {
       'system',
       'light',
       'dark',
-      'codex',
     ])
 
     const details = screen.getByRole('region', { name: 'Theme details' })

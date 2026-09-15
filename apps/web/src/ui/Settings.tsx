@@ -144,7 +144,6 @@ const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
-  { value: 'codex', label: 'Codex' },
 ] as const satisfies ReadonlyArray<{ value: ThemePreference; label: string }>
 
 const FONT_OPTIONS = [

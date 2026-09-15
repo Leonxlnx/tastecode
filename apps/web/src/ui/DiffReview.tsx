@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { DiffDecision, DiffHunk, DiffLine, SessionDiff } from '@harness/contracts'
 import { IconCheck as Check, IconRefresh as RefreshCw, IconX as X } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import { SkeletonCode, SkeletonStatus } from './Skeleton.js'
 
 export function DiffReview({ transport, threadId }: { transport: Transport; threadId: string }) {
   const [diff, setDiff] = useState<SessionDiff>()
@@ -68,9 +69,9 @@ export function DiffReview({ transport, threadId }: { transport: Transport; thre
   if (!diff && !status) {
     if (!showSlowLoad) return null
     return (
-      <p className="diff-review__status" role="status">
-        Loading review…
-      </p>
+      <SkeletonStatus label="Loading review…" className="diff-review__skeleton">
+        <SkeletonCode lines={8} gutter />
+      </SkeletonStatus>
     )
   }
 

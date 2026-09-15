@@ -56,7 +56,7 @@ const api = {
     ipcRenderer.invoke('harness:writeClipboardText', clipboardText(text)),
   setZoom: (action: 'in' | 'out' | 'reset'): Promise<void> =>
     ipcRenderer.invoke('harness:setZoom', action),
-  setTheme: (preference: 'system' | 'light' | 'dark' | 'codex'): Promise<void> =>
+  setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
     ipcRenderer.invoke('harness:setTheme', preference),
   prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
   performHaptic: (pattern: NativeHapticPattern): void =>
