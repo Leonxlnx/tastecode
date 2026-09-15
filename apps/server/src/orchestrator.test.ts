@@ -2761,6 +2761,8 @@ describe('provider-neutral design briefing', () => {
       path.resolve('../../packages/design-agent/references/directions/hero/direction-001.webp'),
       reference,
     )
+    const mobileReference = path.join(workspace, 'hero-mobile.webp')
+    copyFileSync(reference, mobileReference)
     writeFileSync(
       path.join(workspace, 'catalog.json'),
       JSON.stringify({
@@ -2771,7 +2773,7 @@ describe('provider-neutral design briefing', () => {
             family: 'hero',
             group: 'hero',
             imagePath: 'hero.webp',
-            mobileImagePath: 'hero.webp',
+            mobileImagePath: 'hero-mobile.webp',
             source: 'https://example.com',
             tags: ['calm'],
             cue: 'Test composition',
@@ -2799,7 +2801,7 @@ describe('provider-neutral design briefing', () => {
           audience: 'Small agencies',
           offer: 'Payroll software',
           primaryAction: 'Start free trial',
-          requiredContent: ['Pricing', 'Security'],
+          requiredContent: ['Hero', 'Pricing', 'Security'],
           constraints: ['WCAG 2.2 AA'],
           brandInputs: ['Calm'],
           creativeControl: 'Agent-led',
@@ -2869,7 +2871,7 @@ describe('provider-neutral design briefing', () => {
       await vi.waitFor(() =>
         expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),
       )
-      expect(sessions[0]?.sentAttachments.at(-1)).toEqual([reference])
+      expect(sessions[0]?.sentAttachments.at(-1)).toEqual([reference, mobileReference])
       expect(finalRequests()).toHaveLength(1)
     } finally {
       if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY

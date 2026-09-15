@@ -1,7 +1,7 @@
 # Design Agent v0.5 reference workflow
 
 New Design runs extract the requested sections and existing brand constraints before selecting
-references. The server randomly chooses one reviewed composition group per available section
+references. The server randomly chooses one reviewed composition group per requested section
 family from a suitable collection; alternate revisions do not get extra votes. Explicit reference
 IDs take priority. The page planner uses only sections needed by the brief.
 
@@ -59,4 +59,7 @@ The local initial catalog contains ten individually inspected section pairs from
 Ritovex and Scalient. It intentionally does not claim that the roughly one thousand raw generated
 images have all been reviewed. Runtime unit and orchestration checks cover random selection,
 explicit selection, image attachment transport, catalog validation and persisted selection.
-Four actual TasteCode site runs and their visual evidence are still pending.
+Four actual TasteCode site runs and their visual evidence are in progress. The first run has
+persisted Astra medium, fourteen image hashes and five planned sections using the selected
+Meridian references. The narrower section filter now avoids attaching unused families to new
+runs. The test app uses isolated data, renderer port 5185 and server port 4315.
