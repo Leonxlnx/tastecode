@@ -43,7 +43,19 @@ node apps/desktop/scripts/verify-preview.js
 Reports go to `apps/desktop/performance-results/` and `apps/desktop/preview-results/` by
 default. Both folders are ignored by Git.
 
-## Desktop release size
+## Release size
+
+The window and syntax worker share one build of the shipped grammar data. They still
+load languages on demand and keep separate parser state. The build test compares every
+emitted language with the original module and checks imports from both consumers:
+
+```text
+pnpm --filter @harness/web exec vitest run scripts/shared-grammars.test.ts src/ui/shiki-bundle.test.ts
+```
+
+The theme patch retains the four GitHub themes used by chat and diffs, plus the full
+Pierre default collection. Keep its catalog aligned with actual theme use when updating
+the dependency. Fonts, glyph coverage and design reference images remain complete.
 
 Desktop packaging excludes build inputs, debug maps, type-only generated modules, test
 helpers and unused dependency formats. After changing those exclusions, run the packaged
