@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { closeSync, openSync, readSync, readdirSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -140,19 +140,35 @@ export function assertPackagedNativeModules(
   }
 }
 
-function loadPackagedNativeModules(): PackagedNativeModules {
+async function loadPackagedNativeModules(): Promise<PackagedNativeModules> {
   const desktopRequire = createRequire(import.meta.url)
   // These bindings belong to the packaged server workspace. Resolve from its
   // entry so pnpm's strict dependency layout is exercised exactly as it is by
   // the real server instead of relying on accidental desktop-level hoisting.
-  const serverRequire = createRequire(desktopRequire.resolve('@harness/server'))
+  const serverEntry = desktopRequire.resolve('@harness/server')
+  const serverRequire = createRequire(serverEntry)
   const before = new Set(Object.keys(serverRequire.cache))
+  const serverDirectory = path.dirname(serverEntry)
+  const { dependencies } = JSON.parse(
+    readFileSync(path.join(serverDirectory, '..', 'package.json'), 'utf8'),
+  ) as { dependencies: Record<string, string> }
+  // Exercise the actual ESM entries after release-only files are excluded. This
+  // catches a future adapter importing a removed SDK variant or generated file.
+  const runtimeEntries = Object.keys(dependencies)
+    .filter((name) => name.startsWith('@harness/'))
+    .map((name) => serverRequire.resolve(name))
+  runtimeEntries.push(path.join(serverDirectory, 'design-static-preview.js'))
+  for (const entry of runtimeEntries) await import(pathToFileURL(entry).href)
   const pty: PtyModule = serverRequire('node-pty')
   const keyring: KeyringModule = serverRequire('@napi-rs/keyring')
   return {
     pty,
     keyring,
-    moduleEntries: [serverRequire.resolve('node-pty'), serverRequire.resolve('@napi-rs/keyring')],
+    moduleEntries: [
+      ...runtimeEntries,
+      serverRequire.resolve('node-pty'),
+      serverRequire.resolve('@napi-rs/keyring'),
+    ],
     designEntry: serverRequire.resolve('@harness/design-agent'),
     get nativeBindings() {
       return Object.keys(serverRequire.cache).filter(
@@ -240,7 +256,7 @@ export async function runNativeBindingProof(
   if (process.platform !== 'win32' && process.platform !== 'darwin') {
     throw new Error('native proof is a Windows and macOS release gate')
   }
-  const modules = options.modules ?? loadPackagedNativeModules()
+  const modules = options.modules ?? (await loadPackagedNativeModules())
   assertPackagedDesignReferences(proofFile, modules.designEntry)
   await provePtyBinding(modules.pty)
   assertPackagedNativeModules(proofFile, modules)
