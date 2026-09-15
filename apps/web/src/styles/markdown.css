@@ -324,3 +324,40 @@
   border-radius: var(--r-lg);
   max-width: 100%;
 }
+
+.md .md-resolved-image {
+  height: auto;
+  vertical-align: middle;
+}
+
+.md-image-preview {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.md-image-fallback {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.md-image-skeleton {
+  width: min(100%, 320px);
+  aspect-ratio: 16 / 10;
+  border-radius: var(--r-lg);
+  vertical-align: middle;
+}
+
+.md-image-fallback button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
