@@ -1,25 +1,33 @@
 # Local verification: 2026-09-15
 
-The ten code PRs below were checked separately against main `759d8141ebc8bdd4fe17b3dbaa026fe62a4711b9`. The image server and web branches include the image contracts; the PR loading branch includes the shared loading components. This report records local evidence. The PRs still require protected-branch review before merge.
+The ten code changes below are merged to main. Each final PR head passed all four required checks after taking in fresh main. The merged source matches all 67 starting paths plus the new diff-renderer test, including the reviewed overlay fix, byte for byte. Baseline screenshots use original main `759d8141ebc8bdd4fe17b3dbaa026fe62a4711b9`.
+
+Source main at this report: `89eeb70ce8a64f8ae74495b1e82f515ae4cdc35d`.
 
 ## Required checks
 
 Every listed head passed `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on macOS arm64 with Node 22.22.3 and pnpm 11.8.0. No hosted CI was started.
 
-| PR                                                       | Scope                                                              | Checked head                               | Four checks |
-| -------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------ | ----------- |
-| [#1133](https://github.com/Leonxlnx/tastecode/pull/1133) | feat(contracts): define authenticated pull request images          | `c475e104038c4bd2a693d3c0602ecb43315a4bf4` | Pass        |
-| [#1134](https://github.com/Leonxlnx/tastecode/pull/1134) | feat(server): fetch bounded pull request images through GitHub CLI | `14f5420be979f37b65001b561a3ec0a9601ce2f3` | Pass        |
-| [#1135](https://github.com/Leonxlnx/tastecode/pull/1135) | feat(web): render private pull request images                      | `91afff581d41c8b57a3540fab4e703887f19cbae` | Pass        |
-| [#1136](https://github.com/Leonxlnx/tastecode/pull/1136) | design(web): show content-shaped loading placeholders              | `e43a10a993cbdae90c444dc155cda938d9e92f7c` | Pass        |
-| [#1137](https://github.com/Leonxlnx/tastecode/pull/1137) | design(web): show pull request loading layouts                     | `5e5ae6e3b2e770fe90fd885681eb5fc8087f1170` | Pass        |
-| [#1138](https://github.com/Leonxlnx/tastecode/pull/1138) | fix(web): keep pull request content visible after refresh errors   | `7503ba929bfc5447753bef2aba46238e550d3c13` | Pass        |
-| [#1139](https://github.com/Leonxlnx/tastecode/pull/1139) | design(web): refine pull request layout and labels                 | `e531a36f1c57ed48bdaaeca7b7830becebc17a22` | Pass        |
-| [#1140](https://github.com/Leonxlnx/tastecode/pull/1140) | fix(desktop): migrate removed Codex theme to system                | `f83ae0c2e9172d3697f68282e6348ea76a94a908` | Pass        |
-| [#1141](https://github.com/Leonxlnx/tastecode/pull/1141) | fix(desktop): omit unused vendor binaries from packages            | `b15e10aa2981bfbf82031ad1b7c0e6423a8b22d8` | Pass        |
-| [#1142](https://github.com/Leonxlnx/tastecode/pull/1142) | fix(dev): use the Bun script shell on macOS                        | `be2e6cae375729eecfb12f10baefdbcc3e89f25b` | Pass        |
+| PR                                                       | Scope                                                              | Checked head                               | Merge commit                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------ | ------------------------------------------ |
+| [#1133](https://github.com/Leonxlnx/tastecode/pull/1133) | feat(contracts): define authenticated pull request images          | `c475e104038c4bd2a693d3c0602ecb43315a4bf4` | `6f8959370a9de16f650c54f6d139e9eb37b9a28b` |
+| [#1134](https://github.com/Leonxlnx/tastecode/pull/1134) | feat(server): fetch bounded pull request images through GitHub CLI | `6ec3e5bfdc0411e6391c7d77218bc10e8e6eb6e1` | `d8b90c1d15fbc1f5d81bf7921a90bc444e24b2e0` |
+| [#1135](https://github.com/Leonxlnx/tastecode/pull/1135) | feat(web): render private pull request images                      | `b78f0b98d9b1dd0803b41067be83f6e0ad9a0735` | `c959fa9338a0b4e2dabaa7b92c46fafe6963e3b3` |
+| [#1136](https://github.com/Leonxlnx/tastecode/pull/1136) | design(web): show content-shaped loading placeholders              | `f4bdc463aa71f930e4399135915082f643f5b7a7` | `508af339db118f0492b1acc5c9ebaceb890dcb99` |
+| [#1137](https://github.com/Leonxlnx/tastecode/pull/1137) | design(web): show pull request loading layouts                     | `14ff0ea47ef824fac49f114e81ac8f19f7fa4fb3` | `9a69baf51ca6ff18f1e6e3043434e8bf6f449851` |
+| [#1144](https://github.com/Leonxlnx/tastecode/pull/1144) | fix(web): keep pull request content visible after refresh errors   | `ad6bff4141c56c6ae83f4a7fd4e8c48c70dde3da` | `ba892a87f49c279f717397a3875786608a1f4f41` |
+| [#1145](https://github.com/Leonxlnx/tastecode/pull/1145) | design(web): refine pull request layout and labels                 | `728b8a5f49fbcc7bc8693713d606e4a38670c3e4` | `79df21a6c1a944a24d54a725b8647f4321541a89` |
+| [#1140](https://github.com/Leonxlnx/tastecode/pull/1140) | fix(desktop): migrate removed Codex theme to system                | `7d5ebedbfa8934c9cf48f64209b7235385b675c5` | `ddc923b7f0f2d61bec0d2b4f7bf59ea340f41f60` |
+| [#1146](https://github.com/Leonxlnx/tastecode/pull/1146) | fix(desktop): omit unused vendor binaries from packages            | `f0bfd910ec315502d06a3fe4364f4525628114de` | `45bf6740a69418fe5180e2764943d2b124c40f28` |
+| [#1142](https://github.com/Leonxlnx/tastecode/pull/1142) | fix(dev): use the Bun script shell on macOS                        | `5b582e3c9ea7c8d451f21901101d8abd7cbd8df3` | `89eeb70ce8a64f8ae74495b1e82f515ae4cdc35d` |
 
 The Bun-shell full suite initially hit the existing SessionSearchHost focus-test timeout. Its focused eight tests and a second full suite passed without a source change.
+
+## Replaced PRs
+
+- [#1138](https://github.com/Leonxlnx/tastecode/pull/1138) was replaced by [#1144](https://github.com/Leonxlnx/tastecode/pull/1144) with the exact resolved tree. GitHub could not rebase the original history. The replacement passed all four checks before merge.
+- [#1139](https://github.com/Leonxlnx/tastecode/pull/1139) was replaced by [#1145](https://github.com/Leonxlnx/tastecode/pull/1145) with the exact resolved tree. GitHub could not rebase the original history. The replacement passed all four checks before merge.
+- [#1141](https://github.com/Leonxlnx/tastecode/pull/1141) was replaced by [#1146](https://github.com/Leonxlnx/tastecode/pull/1146) with the exact resolved tree. GitHub could not rebase the original history. The replacement passed all four checks before merge.
 
 ## Live checks
 
@@ -38,9 +46,11 @@ Native screenshots below show the current combined source tree, including the di
 
 ## Mac package
 
-On the exact #1141 head, a fresh isolated `pnpm install --offline --frozen-lockfile --ignore-scripts` completed. License verification checked 397 packages; the full build and preload build passed. An unsigned local arm64 directory package was produced with `electron-builder --mac --arm64 --dir --publish never`.
+On the original #1141 head `b15e10aa2981bfbf82031ad1b7c0e6423a8b22d8`, a fresh isolated `pnpm install --offline --frozen-lockfile --ignore-scripts` completed. License verification checked 397 packages; the full build and preload build passed. An unsigned local arm64 directory package was produced with `electron-builder --mac --arm64 --dir --publish never`.
 
 The finished archive is 20,213,608 bytes with 1,922 entries. Inspection found no platform-specific Claude SDK CLI packages, Windows/Linux node-pty prebuilds, Zod source, or dependency source maps and declaration maps targeted by the new filters. The core Claude SDK, server, Mac arm64 PTY, and license bundle remain present. `node apps/desktop/scripts/run-native-binding-proof.js <packaged-app>` passed both PTY and keyring proofs. Windows packaging, signing, and notarization were not run.
+
+The full merged code was packaged again at checked commit `5b582e3c9ea7c8d451f21901101d8abd7cbd8df3`. The final archive is 20,201,527 bytes with 1,922 entries. The same exclusion checks and packaged PTY/keyring proofs passed again.
 
 ## Images
 
