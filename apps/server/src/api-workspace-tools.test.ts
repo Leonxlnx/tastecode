@@ -63,7 +63,7 @@ describe('direct API workspace tools', () => {
     const ask = createApiWorkspaceTools(root, 'auto')
     expect(ask.reviewTool(call('write_file', { path: 'src/app.ts' }))).toMatchObject({
       kind: 'file_change',
-      path: 'src/app.ts',
+      path: path.join('src', 'app.ts'),
     })
     expect(createApiWorkspaceTools(root, 'full').reviewTool(call('write_file', {}))).toBeUndefined()
   })
