@@ -10,7 +10,6 @@ import {
   writeSync,
 } from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import {
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
@@ -35,6 +34,7 @@ import type {
 import { z } from 'zod'
 import type { TurnOptions } from './adapters.js'
 import { canonicalDataPath } from './data-lease.js'
+import { DatabaseSync, type SQLInputValue, type StatementSync } from './sqlite.js'
 import {
   affectsInboxProjection,
   applyInboxProjectionEvent,
