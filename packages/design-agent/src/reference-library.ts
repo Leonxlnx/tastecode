@@ -130,6 +130,23 @@ export function selectReviewedReferences(
   if (!preferred) throw new Error('No reviewed Design references are available')
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
+  const sectionContent = brief.requiredContent.join(' ').toLowerCase()
+  const requestedFamilies = PAGE_LAYOUT_FAMILIES.filter((family) => {
+    const names = {
+      hero: /\bhero\b/u,
+      about: /\b(?:about|introduction|story)\b/u,
+      feature: /\b(?:features?|services?|capabilities|projects?|products?)\b/u,
+      how_it_works: /\b(?:process|steps|how it works)\b/u,
+      social_proof: /\b(?:testimonials?|clients?|social proof)\b/u,
+      stats: /\b(?:statistics|stats|metrics|numbers)\b/u,
+      faq: /\b(?:faq|frequently asked|questions)\b/u,
+      cta: /\b(?:cta|call to action|contact|invitation)\b/u,
+      pricing: /\b(?:pricing|plans|packages)\b/u,
+      contact: /\b(?:contact form|inquiry form|enquiry form)\b/u,
+      footer: /\bfooter\b/u,
+    }
+    return names[family].test(sectionContent)
+  })
   // A group identifies revisions of one section, not a site. One revision gets one vote.
   const candidates = ranked.filter((entry) => {
     const explicit =
@@ -139,6 +156,14 @@ export function selectReviewedReferences(
     return explicit || entry.source === preferred.source || compatible
   })
   for (const family of PAGE_LAYOUT_FAMILIES) {
+    if (
+      requestedFamilies.length &&
+      !requestedFamilies.includes(family) &&
+      !references.some(
+        (entry) => entry.family === family && request.includes(entry.id.toLowerCase()),
+      )
+    )
+      continue
     const familyEntries = candidates.filter((entry) => entry.family === family)
     if (!familyEntries.length) continue
     const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
@@ -153,6 +178,10 @@ export function selectReviewedReferences(
     groups.add(group)
     selected.push(entry)
   }
+  if (!selected.length)
+    throw new Error(
+      'No reviewed references match the requested sections. Add matching catalog entries or attach your own reference images.',
+    )
   if (selected.length > 24)
     throw new Error(
       'Selected Design reference collection exceeds 24 sections; narrow the catalog collection',

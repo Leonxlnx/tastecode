@@ -104,6 +104,16 @@ describe('reviewed reference library', () => {
     save(root, [{ ...entry, imagePath: 'threshold-hero.png' }])
     expect(() => loadReviewedReferences(root)).toThrow('no visually reviewed references')
   })
+  it('selects only the section families extracted into the brief', () => {
+    const root = library()
+    save(root, [entry, { ...entry, id: 'studio-stats', group: 'studio-stats', family: 'stats' }])
+    expect(
+      selectReviewedReferences(
+        { ...brief, requiredContent: ['Photographic hero'] },
+        loadReviewedReferences(root),
+      ).map(({ family }) => family),
+    ).toEqual(['hero'])
+  })
   it('rejects duplicate identifiers and corrupt selected images with actionable errors', () => {
     const root = library()
     save(root, [entry, entry])

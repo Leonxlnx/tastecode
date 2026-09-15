@@ -1824,47 +1824,66 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it('stops a resumed Design run when a retained reference has changed', async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-reference-change-'))
-    writePreviewArtifacts(workspace)
-    const reference = path.join(workspace, 'reference.png')
-    writeFileSync(reference, 'original')
-    const store = new Store(':memory:')
-    store.addProject(workspace)
-    store.addThread({
-      id: 'changed-reference',
-      projectPath: workspace,
-      provider: 'codex',
-      title: 'Changed reference',
-    })
-    store.setDesignRun('changed-reference', {
-      ...approvalSnapshot(workspace),
-      referenceAttachments: [reference],
-      referenceSnapshot: snapshotDesignFiles([reference]),
-      originalRequest: 'Build a site.',
-      phase: 'build',
-      askedQuestions: false,
-      finalAsked: true,
-      explicitAnswers: [],
-    })
-    writeFileSync(reference, 'modified')
-    const { orchestrator, sessions, received } = harness(undefined, store)
-    try {
-      await orchestrator.submitTurn('changed-reference', 'Continue as a normal task.')
-      expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
-      expect(
-        received.some(
-          ({ event }) =>
-            event.type === 'thread.error' && event.message.includes('changed after approval'),
-        ),
-      ).toBe(true)
-      expect(store.designRun('changed-reference')).toBeUndefined()
-    } finally {
-      await orchestrator.disposeAll()
-      store.close()
-      rmSync(workspace, { recursive: true, force: true })
-    }
-  })
+  it.each(['supplied', 'reviewed', 'replaced-path'])(
+    'stops a resumed Design run when a %s reference has changed',
+    async (kind) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-reference-change-'))
+      writePreviewArtifacts(workspace)
+      const reference = path.join(workspace, 'reference.png')
+      writeFileSync(reference, 'original')
+      const store = new Store(':memory:')
+      store.addProject(workspace)
+      store.addThread({
+        id: 'changed-reference',
+        projectPath: workspace,
+        provider: 'codex',
+        title: 'Changed reference',
+      })
+      store.setDesignRun('changed-reference', {
+        ...approvalSnapshot(workspace),
+        referenceAttachments: kind === 'supplied' ? [reference] : [],
+        ...(kind === 'supplied'
+          ? { referenceSnapshot: snapshotDesignFiles([reference]) }
+          : {
+              referenceDeck: [
+                {
+                  id: 'reviewed-hero',
+                  family: 'hero',
+                  cue: 'Reviewed composition',
+                  imagePath:
+                    kind === 'replaced-path' ? path.join(workspace, 'replacement.png') : reference,
+                },
+              ],
+              referenceDeckSnapshot: snapshotDesignFiles([reference]),
+            }),
+        originalRequest: 'Build a site.',
+        phase: 'build',
+        askedQuestions: false,
+        finalAsked: true,
+        explicitAnswers: [],
+      })
+      writeFileSync(reference, 'modified')
+      const { orchestrator, sessions, received } = harness(undefined, store)
+      try {
+        await orchestrator.submitTurn('changed-reference', 'Continue as a normal task.')
+        expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message.includes(
+                kind === 'replaced-path' ? 'approved snapshot' : 'changed after approval',
+              ),
+          ),
+        ).toBe(true)
+        expect(store.designRun('changed-reference')).toBeUndefined()
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('accepts a Design turn from turn.started while sendTurn is still pending', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-started-'))

@@ -3194,6 +3194,16 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
   }
 
   #validateApprovedDesignArtifacts(flow: DesignFlow): void {
+    if (
+      flow.referenceDeck?.length &&
+      !isDeepStrictEqual(
+        designAgent().referenceDirectionAttachments(flow.referenceDeck).sort(),
+        flow.referenceDeckSnapshot?.map(({ path }) => path).sort(),
+      )
+    )
+      throw new Error(
+        'Saved Design reference files do not match their approved snapshot. Restart Design mode.',
+      )
     if (flow.referenceDeckSnapshot)
       designAgent().validateDesignFileSnapshot(flow.referenceDeckSnapshot)
     const phase = [
