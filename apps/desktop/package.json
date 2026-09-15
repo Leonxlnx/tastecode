@@ -57,8 +57,12 @@
       "!node_modules/@harness/*/tsconfig*.json",
       "!node_modules/@harness/*/*.tsbuildinfo",
       "!node_modules/@harness/*/dist/**/*.d.ts",
-      "!node_modules/@harness/*/dist/**/*.map",
-      "!node_modules/@harness/*/dist/**/*.bench.js"
+      "!node_modules/@harness/*/dist/**/*.bench.js",
+      "!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}",
+      "!node_modules/zod/src{,/**/*}",
+      "!node_modules/**/*.map",
+      "!node_modules/**/*.d.cts",
+      "!node_modules/**/*.d.mts"
     ],
     "extraResources": [
       {
@@ -104,6 +108,9 @@
             "x64"
           ]
         }
+      ],
+      "files": [
+        "!node_modules/node-pty/prebuilds/{darwin,linux}-*{,/**/*}"
       ]
     },
     "nsis": {
@@ -118,6 +125,9 @@
       "target": [
         "dmg",
         "zip"
+      ],
+      "files": [
+        "!node_modules/node-pty/prebuilds/{win32,linux}-*{,/**/*}"
       ],
       "hardenedRuntime": true,
       "extendInfo": {

@@ -74,7 +74,21 @@
 .workspace-panel__loading {
   width: 100%;
   height: 100%;
+  overflow: hidden;
   background: var(--bg);
+}
+
+.workspace-panel__loading-bar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.workspace-panel__loading .skeleton-row {
+  padding-inline: 14px;
 }
 
 .workspace-empty {
@@ -575,6 +589,12 @@
   font-size: var(--t-sm);
 }
 
+/* Stands in the diff column while the first snapshot loads. */
+.workspace-review__skeleton {
+  min-height: 0;
+  overflow: hidden;
+}
+
 @media (max-width: 560px) {
   .workspace-review__generate-label {
     display: none;
@@ -766,19 +786,22 @@
   stroke-width: 1.75;
 }
 
-.workspace-files__tree-loading,
 .workspace-files__tree-error {
   display: flex;
   min-height: 34px;
   align-items: center;
   gap: 7px;
   padding: 7px 10px;
-  color: var(--text-3);
+  color: var(--error);
   font-size: var(--t-xs);
 }
 
-.workspace-files__tree-error {
-  color: var(--error);
+/* Placeholder rows share the entry's height and inset so the listing fills
+   in without shifting. */
+.workspace-files__tree-skeleton .skeleton-row {
+  min-height: 29px;
+  gap: 6px;
+  padding: 0 8px 0 12px;
 }
 
 .workspace-files__document {
@@ -813,6 +836,11 @@
 .workspace-files__document > header > span:not(.md-file-ref__icon) {
   flex: none;
   margin-left: auto;
+}
+
+/* Placeholder icon and name sit where the real ones do, not in the trailing slot. */
+.workspace-files__document-skeleton > header > span.skeleton {
+  margin-left: 0;
 }
 
 .workspace-files__document > header em {

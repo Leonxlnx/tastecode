@@ -182,6 +182,11 @@
   gap: 4px;
 }
 
+.account-menu__limit-skeleton {
+  display: grid;
+  gap: 7px;
+}
+
 .account-menu__limit-row {
   display: flex;
   justify-content: space-between;

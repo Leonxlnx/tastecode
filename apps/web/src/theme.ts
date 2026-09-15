@@ -1,4 +1,4 @@
-export type Theme = 'dark' | 'light' | 'codex'
+export type Theme = 'dark' | 'light'
 export type ThemeColorScheme = 'dark' | 'light'
 export type ThemePreference = Theme | 'system'
 export type FontPreset = 'geist' | 'inter' | 'system' | 'humanist' | 'rounded' | 'serif' | 'mono'
@@ -42,9 +42,7 @@ const FONT_PRESETS = new Set<FontPreset>([
 
 export function readThemePreference(): ThemePreference {
   const stored = readStored(THEME_KEY)
-  return stored === 'dark' || stored === 'light' || stored === 'codex' || stored === 'system'
-    ? stored
-    : 'system'
+  return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system'
 }
 
 export function readSystemTheme(): ThemeColorScheme {
