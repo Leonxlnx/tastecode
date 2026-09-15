@@ -402,13 +402,13 @@ const PullRequestListRow = memo(function PullRequestListRow(props: {
     >
       <span className={`pr-state-mark is-${state}`} aria-label={stateLabel} title={stateLabel}>
         {props.item.isDraft ? (
-          <GitPullRequestDraft size={15} aria-hidden />
+          <GitPullRequestDraft size={16} strokeWidth={1.8} aria-hidden />
         ) : props.item.state === 'MERGED' ? (
-          <GitMerge size={15} aria-hidden />
+          <GitMerge size={16} strokeWidth={1.8} aria-hidden />
         ) : props.item.state === 'CLOSED' ? (
-          <GitPullRequestClosed size={15} aria-hidden />
+          <GitPullRequestClosed size={16} strokeWidth={1.8} aria-hidden />
         ) : (
-          <GitPullRequest size={15} aria-hidden />
+          <GitPullRequest size={16} strokeWidth={1.8} aria-hidden />
         )}
       </span>
       <span className="pr-list-copy">

@@ -53,7 +53,7 @@ import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { PullRequestFiles } from './PullRequestFiles.js'
-import { comparePullRequestText } from './pull-request-text.js'
+import { comparePullRequestText, countLabel } from './pull-request-text.js'
 import { errorMessage as messageOf } from '../../boundary.js'
 
 type DetailTab = 'summary' | 'files'
@@ -733,7 +733,7 @@ function PullRequestSummary(props: {
           </Fact>
 
           <Fact icon={<MessageSquare size={15} aria-hidden />} label="Comments">
-            <span>{detail.comments.length} comments</span>
+            <span>{countLabel(detail.comments.length, 'comment')}</span>
             {detail.reviewThreads.some((thread) => !thread.resolved) ? (
               <span>· {detail.reviewThreads.filter((thread) => !thread.resolved).length} open</span>
             ) : null}
@@ -1544,7 +1544,7 @@ function PullRequestActivity(props: {
       <section className="pr-timeline">
         <div className="pr-section-title">
           <h3>Activity</h3>
-          <span>{timeline.length} events</span>
+          <span>{countLabel(timeline.length, 'event')}</span>
         </div>
         {timeline.length === 0 ? (
           <p className="pr-activity-empty">No comments or reviews yet.</p>
