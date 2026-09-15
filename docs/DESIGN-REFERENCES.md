@@ -4,6 +4,8 @@ New Design runs extract the requested sections and existing brand constraints be
 references. The server randomly chooses one reviewed composition group per requested section
 family from a suitable collection; alternate revisions do not get extra votes. Explicit reference
 IDs take priority. The page planner uses only sections needed by the brief.
+If the preferred collection lacks a requested family, selection falls back to reviewed entries
+of that family. If none exist, the run reports the missing family instead of silently omitting it.
 
 The selected catalog records and file hashes are persisted with the Design run. Brand, page,
 asset, build and visual review turns receive the actual selected desktop and paired mobile
@@ -15,6 +17,10 @@ The implementation preserves reference composition while adapting the project's 
 palette and imagery. It builds real responsive HTML/CSS, acquires suitable image assets where
 needed, and uses the existing source checks, desktop/mobile preview capture, visual review and
 bounded repair loop. Reference images are guidance, not page backgrounds or production assets.
+Native HTML/CSS does not require a downloaded component. Shared brand fonts are validated against
+the page's sections. Required attribution JSON uses asset kind and role `data`, with the same
+path and provenance checks as other assets and a one-megabyte valid-JSON limit. Internal phase
+prompts do not appear as additional user messages in the chat.
 
 ## Local library
 
@@ -59,7 +65,8 @@ The local initial catalog contains ten individually inspected section pairs from
 Ritovex and Scalient. It intentionally does not claim that the roughly one thousand raw generated
 images have all been reviewed. Runtime unit and orchestration checks cover random selection,
 explicit selection, image attachment transport, catalog validation and persisted selection.
-Four actual TasteCode site runs and their visual evidence are in progress. The first run has
-persisted Astra medium, fourteen image hashes and five planned sections using the selected
-Meridian references. The narrower section filter now avoids attaching unused families to new
-runs. The test app uses isolated data, renderer port 5185 and server port 4315.
+Four clean TasteCode site runs and their visual evidence are in progress. Each was started once
+with Astra medium and one user prompt in a fresh project: Fieldwork, Orbit, Atelier Fern and
+Clearpath. The test app uses isolated data, renderer port 5185 and server port 4315. Earlier
+development attempts exposed shared-font, native-component, attribution-data and prompt-echo
+validation gaps; the clean runs use those fixes together.
