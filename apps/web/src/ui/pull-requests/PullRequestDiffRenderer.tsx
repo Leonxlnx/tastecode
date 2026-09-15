@@ -126,7 +126,9 @@ export function PullRequestDiffRenderer(props: PullRequestDiffRendererProps) {
       },
       onPostRender: (node, _instance, phase) => {
         if (phase === 'unmount') return
-        if (node.shadowRoot?.querySelector('pre > *')) setRenderedKey(cacheKeyRef.current)
+        if (node.shadowRoot?.querySelector('pre > *, [data-error-wrapper]')) {
+          setRenderedKey(cacheKeyRef.current)
+        }
       },
     }),
     [props.onCommentLine, themeType],
