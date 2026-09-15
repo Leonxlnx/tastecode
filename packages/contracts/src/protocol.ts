@@ -10,11 +10,12 @@ import {
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
   BackgroundModelSettingsSchema,
-  CustomHarnessSchema,
+  CustomHarnessUpdateSchema,
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
   ProviderIdSchema,
+  PublicCustomHarnessSchema,
   ProviderSetupSchema,
   ProviderStatusSchema,
   ProviderUpdateSchema,
@@ -608,15 +609,15 @@ export const methods = {
   /** User-owned protocol-compatible CLIs. Secrets never belong in these fields. */
   'harnesses.list': {
     params: z.object({}),
-    result: z.object({ harnesses: z.array(CustomHarnessSchema) }),
+    result: z.object({ harnesses: z.array(PublicCustomHarnessSchema) }),
   },
   'harnesses.upsert': {
-    params: CustomHarnessSchema,
-    result: z.object({ harness: CustomHarnessSchema }),
+    params: CustomHarnessUpdateSchema,
+    result: z.object({ harness: PublicCustomHarnessSchema }),
   },
   'harnesses.verify': {
     params: z.object({
-      harness: CustomHarnessSchema,
+      harness: CustomHarnessUpdateSchema,
       workspacePath: z.string().min(1).optional(),
     }),
     result: z.object({ verification: CustomHarnessVerificationSchema }),
