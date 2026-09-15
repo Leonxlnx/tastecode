@@ -428,14 +428,6 @@
   --theme-preview-divider: #29292b;
 }
 
-.theme-preview--codex {
-  --theme-preview-bg: linear-gradient(90deg, #353533 0 28%, #2d2d2b 28%);
-  --theme-preview-panel: #2d2d2b;
-  --theme-preview-line: #dededc;
-  --theme-preview-copy: #dededc;
-  --theme-preview-divider: #353533;
-}
-
 .theme-preview--system {
   --theme-preview-bg: linear-gradient(90deg, #fdfdfd 0 50%, #3a3a3c 50%);
   --theme-preview-panel: linear-gradient(90deg, #ffffff 0 50%, #171717 50%);

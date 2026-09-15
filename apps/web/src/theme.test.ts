@@ -47,7 +47,7 @@ describe('preference readers', () => {
   })
 
   it('accept every advertised value', () => {
-    for (const theme of ['system', 'light', 'dark', 'codex']) {
+    for (const theme of ['system', 'light', 'dark']) {
       localStorage.setItem(THEME_KEY, theme)
       expect(readThemePreference()).toBe(theme)
     }
@@ -55,12 +55,17 @@ describe('preference readers', () => {
     expect(readBackdropPreference()).toBe('midnight')
   })
 
-  it('applies Codex with a dark browser color scheme', () => {
-    applyTheme('codex')
+  it('falls back to system for the removed Codex theme', () => {
+    localStorage.setItem(THEME_KEY, 'codex')
+    expect(readThemePreference()).toBe('system')
+  })
 
-    expect(document.documentElement.dataset['theme']).toBe('codex')
-    expect(document.documentElement.classList.contains('dark')).toBe(true)
-    expect(colorSchemeForTheme('codex')).toBe('dark')
+  it.each(['dark', 'light'] as const)('applies the %s browser color scheme', (theme) => {
+    applyTheme(theme)
+
+    expect(document.documentElement.dataset['theme']).toBe(theme)
+    expect(document.documentElement.classList.contains('dark')).toBe(theme === 'dark')
+    expect(colorSchemeForTheme(theme)).toBe(theme)
   })
 })
 

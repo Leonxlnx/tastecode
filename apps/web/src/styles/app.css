@@ -143,10 +143,6 @@
   --rail-text: var(--text);
 }
 
-:root[data-theme='codex'] .rail {
-  --rail-text: #dededc;
-}
-
 .rail__folder-drop {
   position: absolute;
   z-index: 4;
