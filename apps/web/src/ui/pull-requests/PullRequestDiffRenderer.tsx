@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   parsePatchFiles,
   type DiffLineAnnotation,
@@ -7,6 +7,7 @@ import {
 } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
 import type { PullRequestFile, PullRequestReviewThread } from '@harness/contracts'
+import { SkeletonCode, SkeletonStatus } from '../Skeleton.js'
 import { pullRequestFilePatch } from './diffs-patch.js'
 
 export type PullRequestDiffSide = 'deletions' | 'additions'
@@ -93,6 +94,10 @@ export type PullRequestDiffRendererProps = {
 }
 
 export function PullRequestDiffRenderer(props: PullRequestDiffRendererProps) {
+  const [renderedKey, setRenderedKey] = useState<string>()
+  const cacheKeyRef = useRef(props.cacheKey)
+  cacheKeyRef.current = props.cacheKey
+  const ready = renderedKey === props.cacheKey
   const fileDiff = useMemo(
     () => parseFileDiff(props.file, props.cacheKey),
     [props.cacheKey, props.file],
@@ -119,6 +124,10 @@ export function PullRequestDiffRenderer(props: PullRequestDiffRendererProps) {
           side: range.side === 'deletions' ? 'deletions' : 'additions',
         })
       },
+      onPostRender: (node, _instance, phase) => {
+        if (phase === 'unmount') return
+        if (node.shadowRoot?.querySelector('pre > *')) setRenderedKey(cacheKeyRef.current)
+      },
     }),
     [props.onCommentLine, themeType],
   )
@@ -126,16 +135,23 @@ export function PullRequestDiffRenderer(props: PullRequestDiffRendererProps) {
   if (!fileDiff) return <div className="pr-diffs-error">Diffs could not parse this patch.</div>
 
   return (
-    <FileDiff<PullRequestReviewAnnotation>
-      fileDiff={fileDiff}
-      options={options}
-      // Own the selection so the gutter "+" never stays pinned after a click.
-      selectedLines={null}
-      lineAnnotations={props.annotations}
-      renderAnnotation={props.renderAnnotation}
-      className="pr-diffs-renderer"
-      disableWorkerPool
-    />
+    <div className={ready ? 'pr-diffs-frame is-ready' : 'pr-diffs-frame'}>
+      <FileDiff<PullRequestReviewAnnotation>
+        fileDiff={fileDiff}
+        options={options}
+        // Own the selection so the gutter "+" never stays pinned after a click.
+        selectedLines={null}
+        lineAnnotations={props.annotations}
+        renderAnnotation={props.renderAnnotation}
+        className="pr-diffs-renderer"
+        disableWorkerPool
+      />
+      {ready ? null : (
+        <SkeletonStatus label="Preparing diff" className="pr-diffs-loading">
+          <SkeletonCode lines={5} gutter />
+        </SkeletonStatus>
+      )}
+    </div>
   )
 }
 
