@@ -32,7 +32,10 @@ function fixture() {
           ? { body: 100_000_000, documentElement: 100_000_000 }
           : undefined,
     ),
-    capturePage: vi.fn().mockResolvedValue({ toPNG: () => Buffer.from('png') }),
+    debugger: {
+      attach: vi.fn(),
+      sendCommand: vi.fn().mockResolvedValue({ data: Buffer.from('png').toString('base64') }),
+    },
   }
   const windows: Array<{ destroy: ReturnType<typeof vi.fn>; loadURL: ReturnType<typeof vi.fn> }> =
     []
@@ -246,11 +249,12 @@ describe('desktop preview capture ownership', () => {
     expect(test.contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(3)
     for (const [world] of test.contents.executeJavaScriptInIsolatedWorld.mock.calls)
       expect(world).toBe(1001)
-    expect(test.contents.capturePage).toHaveBeenCalledWith({
-      x: 0,
-      y: 0,
-      width: 1280,
-      height: 12_000,
+    expect(test.contents.debugger.attach).toHaveBeenCalledWith('1.3')
+    expect(test.contents.debugger.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      fromSurface: true,
+      clip: { x: 0, y: 0, width: 1280, height: 12_000, scale: 1 },
     })
     expect(test.windows[0]!.destroy).toHaveBeenCalledOnce()
     expect(test.session.clearCache).toHaveBeenCalledOnce()
@@ -342,7 +346,8 @@ describe('desktop preview capture ownership', () => {
           .mockResolvedValueOnce(undefined)
           .mockResolvedValueOnce(undefined)
           .mockReturnValueOnce(pending.promise)
-      if (stage === 'capture') test.contents.capturePage.mockReturnValueOnce(pending.promise)
+      if (stage === 'capture')
+        test.contents.debugger.sendCommand.mockReturnValueOnce(pending.promise)
       if (stage === 'write') test.files.writeFile.mockReturnValueOnce(pending.promise)
       const result = test.owner.capture(request())
       await vi.advanceTimersByTimeAsync(51)

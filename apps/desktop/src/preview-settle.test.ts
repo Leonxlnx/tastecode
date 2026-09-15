@@ -51,7 +51,7 @@ describe('preview capture settling', () => {
 
     expect(decode).toHaveBeenCalledOnce()
     expect(frame).toHaveBeenCalledTimes(6)
-    expect(scrollTo).toHaveBeenLastCalledWith(0, 120)
+    expect(scrollTo).toHaveBeenLastCalledWith({ left: 0, top: 120, behavior: 'instant' })
   })
 
   it('bounds whole-page captures to a safe bitmap height', () => {
@@ -99,7 +99,7 @@ describe('preview capture settling', () => {
     }) as Promise<void>
     await vi.advanceTimersByTimeAsync(3000)
     await result
-    expect(scrollTo).toHaveBeenLastCalledWith(0, 140)
+    expect(scrollTo).toHaveBeenLastCalledWith({ left: 0, top: 140, behavior: 'instant' })
     expect(listeners.size).toBe(0)
     expect(callbacks.size).toBe(0)
     expect(vi.getTimerCount()).toBe(0)
