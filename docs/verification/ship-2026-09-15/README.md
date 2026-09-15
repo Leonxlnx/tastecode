@@ -56,7 +56,7 @@ Current native app:
 
 ### Loading and loaded content
 
-Baseline detail loading view:
+Baseline PR view while the lazy page loads:
 
 ![Baseline PR loading](pr-loading-before.png)
 
