@@ -727,6 +727,8 @@ function createPreviewWindow(request: PreviewCaptureRequest): BrowserWindow {
       webSecurity: true,
       spellcheck: false,
       backgroundThrottling: false,
+      // Full-document captures must paint while this private window stays hidden.
+      offscreen: true,
       // The capture owner serializes access and refuses reuse after failed cleanup.
       // Per-request partitions would retain an unbounded number of sessions.
       partition: 'preview-capture',
