@@ -14,6 +14,8 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
+import { AppearanceColorPicker } from './AppearanceColorPicker.js'
+import { accentColor, backdropColor } from '../theme-colors.js'
 import {
   getFastModeOffValue,
   getFastServiceTier,
@@ -87,6 +89,7 @@ import {
   type BackdropPreference,
   type FontPreference,
   type ThemePreference,
+  type ThemeColorScheme,
 } from '../theme.js'
 import {
   readModelPickerLayout,
@@ -251,6 +254,7 @@ function SettingsComponent(props: {
   sidebarSettings: SidebarSettings
   onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
   themePreference: ThemePreference
+  themeColorScheme: ThemeColorScheme
   onThemePreferenceChange: (theme: ThemePreference) => void
   fontPreference: FontPreference
   onFontPreferenceChange: (font: FontPreference) => void
@@ -1193,6 +1197,7 @@ function ModelVisibilityGroup(props: {
 
 function AppearanceSettings(props: {
   themePreference: ThemePreference
+  themeColorScheme: ThemeColorScheme
   onThemePreferenceChange: (theme: ThemePreference) => void
   fontPreference: FontPreference
   onFontPreferenceChange: (font: FontPreference) => void
@@ -1236,8 +1241,7 @@ function AppearanceSettings(props: {
       ? candidate
       : best,
   )
-  const selectedThemeLabel =
-    THEME_OPTIONS.find((option) => option.value === props.themePreference)?.label ?? 'Custom'
+  const light = props.themeColorScheme === 'light'
 
   return (
     <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
@@ -1248,44 +1252,30 @@ function AppearanceSettings(props: {
         <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
       </section>
       <AppearanceCodePreview />
-      <section className="appearance-editor" aria-labelledby="appearance-details-heading">
-        <header className="appearance-editor__header">
-          <h2 id="appearance-details-heading">Theme details</h2>
-          <span className="appearance-editor__scope">{selectedThemeLabel}</span>
-        </header>
+      <section className="appearance-editor" aria-label="Appearance controls">
         <SettingsRow className="appearance-editor__row" title="Accent palette">
-          <div className="appearance-control">
-            <span
-              className="appearance-control__swatch appearance-choice__swatch"
-              data-accent-preview={props.accentPreference}
-              aria-hidden
-            />
-            <AppSelect
-              className="settings__select appearance-control__select"
-              ariaLabel="Accent palette"
-              align="right"
-              value={props.accentPreference}
-              options={ACCENT_OPTIONS}
-              onChange={props.onAccentPreferenceChange}
-            />
-          </div>
+          <AppearanceColorPicker
+            label="Accent palette"
+            value={props.accentPreference}
+            color={accentColor(props.accentPreference, light)}
+            options={ACCENT_OPTIONS.map((option) => ({
+              ...option,
+              color: accentColor(option.value, light),
+            }))}
+            onChange={props.onAccentPreferenceChange}
+          />
         </SettingsRow>
         <SettingsRow className="appearance-editor__row" title="Background">
-          <div className="appearance-control">
-            <span
-              className="appearance-control__swatch appearance-choice__swatch"
-              data-backdrop-preview={props.backdropPreference}
-              aria-hidden
-            />
-            <AppSelect
-              className="settings__select appearance-control__select"
-              ariaLabel="Background"
-              align="right"
-              value={props.backdropPreference}
-              options={BACKDROP_OPTIONS}
-              onChange={props.onBackdropPreferenceChange}
-            />
-          </div>
+          <AppearanceColorPicker
+            label="Background"
+            value={props.backdropPreference}
+            color={backdropColor(props.backdropPreference, light)}
+            options={BACKDROP_OPTIONS.map((option) => ({
+              ...option,
+              color: backdropColor(option.value, light),
+            }))}
+            onChange={props.onBackdropPreferenceChange}
+          />
         </SettingsRow>
         <SettingsRow className="appearance-editor__row" title="Interface font">
           <div className="appearance-control">

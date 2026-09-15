@@ -4795,10 +4795,15 @@ describe('new chats', () => {
     const first = render(<App />)
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-    fireEvent.click(screen.getByRole('combobox', { name: 'Accent palette' }))
-    const accentOptions = screen.getByRole('listbox', { name: 'Accent palette' })
-    expect(within(accentOptions).getAllByRole('option')).toHaveLength(7)
-    fireEvent.click(within(accentOptions).getByRole('option', { name: 'Ocean' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Accent palette:/ }))
+    const picker = screen.getByRole('dialog', { name: 'Accent palette color picker', hidden: true })
+    fireEvent(picker, Object.assign(new Event('toggle'), { newState: 'open' }))
+    const accentOptions = within(picker).getByRole('group', {
+      name: 'Accent palette presets',
+      hidden: true,
+    })
+    expect(within(accentOptions).getAllByRole('button', { hidden: true })).toHaveLength(7)
+    fireEvent.click(within(accentOptions).getByRole('button', { name: 'Ocean', hidden: true }))
 
     await waitFor(() => {
       expect(localStorage.getItem('harness.accent')).toBe('ocean')

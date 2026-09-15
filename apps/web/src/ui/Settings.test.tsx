@@ -51,6 +51,7 @@ function renderSettings(
       projectCount={0}
       sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
       onSidebarSettingsChange={() => {}}
+      themeColorScheme="dark"
       themePreference="system"
       onThemePreferenceChange={() => {}}
       fontPreference="geist"
@@ -132,7 +133,7 @@ describe('settings viewport layout', () => {
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
   })
 
-  it('pairs theme previews with one compact details editor', () => {
+  it('pairs theme previews with compact appearance controls', () => {
     renderSettings()
 
     expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
@@ -143,12 +144,14 @@ describe('settings viewport layout', () => {
       'dark',
     ])
 
-    const details = screen.getByRole('region', { name: 'Theme details' })
+    const details = screen.getByRole('region', { name: 'Appearance controls' })
     expect(
       within(details)
         .getAllByRole('combobox')
         .map((control) => control.getAttribute('aria-label')),
-    ).toEqual(['Accent palette', 'Background', 'Interface font', 'Sidebar translucency'])
+    ).toEqual(['Interface font', 'Sidebar translucency'])
+    expect(within(details).getByRole('button', { name: 'Accent palette: #4C9DFF' })).toBeTruthy()
+    expect(within(details).getByRole('button', { name: 'Background: #0F0F0F' })).toBeTruthy()
   })
 
   it('lets the terminal shortcut target the right sidebar', () => {
@@ -769,6 +772,7 @@ describe('model settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -894,6 +898,7 @@ describe('model settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -960,6 +965,7 @@ describe('model settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -1121,6 +1127,7 @@ describe('provider settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -1238,6 +1245,7 @@ describe('provider settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -1396,6 +1404,7 @@ describe('provider settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
