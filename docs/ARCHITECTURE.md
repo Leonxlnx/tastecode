@@ -288,6 +288,21 @@ extra OpenAI API key for account-backed dictation.
 
 ---
 
+## Custom harness environment values are write-only
+
+Custom harness command, argument, working-directory, provider, and configured environment-key
+metadata remain human-readable. Environment values live under opaque references in the existing
+OS credential store. Public reads return only configured key names; updates explicitly set or
+unset values, and omitted updates preserve the existing bindings.
+
+Version 1 custom-harness files migrate atomically. A reference-only recovery record distinguishes
+staged credentials from obsolete credentials after interruption. If the credential store is
+locked or unavailable, migration leaves the original file intact and launch remains blocked;
+there is no plaintext fallback. This applies to every custom environment value rather than trying
+to classify which values are secrets.
+
+---
+
 ## Project-scoped MCP configuration
 
 **TasteCode owns project-scoped MCP configuration; vendor-global configuration is an

@@ -402,6 +402,16 @@ describe('protocol envelopes', () => {
         unset: [],
       },
     })
+    const overlappingUpdate = methods['harnesses.upsert'].params.safeParse({
+      id: 'deepseek-pi',
+      displayName: 'DeepSeek Pi',
+      provider: 'pi',
+      command: 'deepseek-pi',
+      args: [],
+      environmentUpdates: { set: { TOKEN: 'write-only-sentinel' }, unset: ['TOKEN'] },
+    })
+    expect(overlappingUpdate.success).toBe(false)
+    expect(JSON.stringify(overlappingUpdate)).not.toContain('write-only-sentinel')
     expect(() =>
       methods['harnesses.upsert'].params.parse({
         id: 'deepseek-pi',
