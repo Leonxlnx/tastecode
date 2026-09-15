@@ -54,6 +54,7 @@ import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { Skeleton, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
 import { PullRequestFiles } from './PullRequestFiles.js'
+import { PullRequestImages } from './PullRequestImages.js'
 import { comparePullRequestText } from './pull-request-text.js'
 import { errorMessage as messageOf } from '../../boundary.js'
 
@@ -314,33 +315,39 @@ export function PullRequestDetailPane(props: {
       ) : null}
 
       <div className={`pr-detail-body is-${tab}`}>
-        {tab === 'summary' ? (
-          <PullRequestSummary
-            detail={detail}
-            transport={props.transport}
-            pendingKeys={pendingKeys}
-            conversationBusy={conversationBusy}
-            onAction={runAction}
-            onConfirm={setConfirmation}
-          />
-        ) : (
-          <PullRequestFiles
-            key={detail.headRefOid}
-            detail={detail}
-            transport={props.transport}
-            onAction={runAction}
-            actionBusy={conversationBusy}
-            onConfirmAction={(action) =>
-              setConfirmation({
-                title: 'Delete this review comment?',
-                detail: 'This removes the inline comment from GitHub and cannot be undone.',
-                confirmLabel: 'Delete comment',
-                danger: true,
-                action,
-              })
-            }
-          />
-        )}
+        <PullRequestImages
+          transport={props.transport}
+          repository={detail.repository}
+          refOid={detail.headRefOid}
+        >
+          {tab === 'summary' ? (
+            <PullRequestSummary
+              detail={detail}
+              transport={props.transport}
+              pendingKeys={pendingKeys}
+              conversationBusy={conversationBusy}
+              onAction={runAction}
+              onConfirm={setConfirmation}
+            />
+          ) : (
+            <PullRequestFiles
+              key={detail.headRefOid}
+              detail={detail}
+              transport={props.transport}
+              onAction={runAction}
+              actionBusy={conversationBusy}
+              onConfirmAction={(action) =>
+                setConfirmation({
+                  title: 'Delete this review comment?',
+                  detail: 'This removes the inline comment from GitHub and cannot be undone.',
+                  confirmLabel: 'Delete comment',
+                  danger: true,
+                  action,
+                })
+              }
+            />
+          )}
+        </PullRequestImages>
       </div>
 
       {tab === 'summary' && detail.state === 'OPEN' ? (
