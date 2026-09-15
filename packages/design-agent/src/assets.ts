@@ -10,7 +10,7 @@ import { readRasterMetadata } from './raster-metadata.js'
 import type { PageBlueprint } from './page.js'
 import { member, optionalString, record, string, strings } from './parse.js'
 
-const ASSET_KINDS = ['image', 'illustration', 'video', 'icon', 'font', 'component'] as const
+const ASSET_KINDS = ['image', 'illustration', 'video', 'icon', 'font', 'component', 'data'] as const
 const ASSET_STATUSES = ['existing', 'needed', 'ready'] as const
 const SOURCE_KINDS = ['project', 'user', 'origin-kit', 'generated', 'external'] as const
 const ASSET_ROLES = [
@@ -24,6 +24,7 @@ const ASSET_ROLES = [
   'video',
   'font',
   'component',
+  'data',
 ] as const
 
 export type AssetKind = (typeof ASSET_KINDS)[number]
@@ -227,7 +228,10 @@ export function validateAssetManifestForPage(
     } else if (asset.kind === 'component' || asset.role === 'component') {
       throw new Error(`asset need ${asset.id} cannot use kind or role component`)
     }
-    const requiredKind = asset.role === 'font' || asset.role === 'video' ? asset.role : undefined
+    const requiredKind =
+      asset.role === 'font' || asset.role === 'video' || asset.role === 'data'
+        ? asset.role
+        : undefined
     if (
       (requiredKind && asset.kind !== requiredKind) ||
       (RASTER_VISUAL_ROLES.has(asset.role) && !['image', 'illustration'].includes(asset.kind))
@@ -319,6 +323,13 @@ export function validateAssetManifestForPage(
       }
       if (localFile && RASTER_VISUAL_ROLES.has(asset.role)) {
         validateRasterAsset(asset, localFile)
+      }
+      if (localFile && asset.role === 'data') {
+        try {
+          JSON.parse(readWorkspaceFile(localFile, 1_000_000).toString('utf8'))
+        } catch {
+          throw new Error(`data asset ${asset.id} must contain valid JSON within 1 MB`)
+        }
       }
     }
   }

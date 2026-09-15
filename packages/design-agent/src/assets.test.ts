@@ -70,6 +70,41 @@ function crc32(buffer: Buffer): number {
 }
 
 describe('asset manifest', () => {
+  it('validates real attribution JSON as data without treating it as a component', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-data-asset-'))
+    const page = {
+      sections: [{ id: 'footer', assetNeeds: ['credits'], componentNeeds: [] }],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const credits = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'credits',
+          kind: 'data',
+          role: 'data',
+          status: 'ready',
+          purpose: 'Photo credits',
+          requirements: [],
+          sectionIds: ['footer'],
+          source: { kind: 'project', reference: 'credits.json' },
+          destination: 'credits.json',
+        },
+      ],
+    })
+    try {
+      writeFileSync(
+        path.join(workspace, 'credits.json'),
+        JSON.stringify({ creator: 'Photographer', source: 'https://example.com/photo' }),
+      )
+      expect(validateAssetManifestForPage(credits, page, workspace)).toEqual(credits)
+      writeFileSync(path.join(workspace, 'credits.json'), '<html>not data</html>')
+      expect(() => validateAssetManifestForPage(credits, page, workspace)).toThrow(
+        'valid JSON within 1 MB',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
   it('accepts shared brand fonts while rejecting unknown consuming sections and extra visuals', () => {
     const page = {
       sections: [{ id: 'hero', assetNeeds: [], componentNeeds: [] }],
