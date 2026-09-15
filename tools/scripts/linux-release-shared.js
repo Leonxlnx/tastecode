@@ -1,13 +1,8 @@
-// Shared helpers for the Linux updater-metadata gate
-// (tools/scripts/linux-updater-metadata.js) and the release-evidence script
-// (tools/scripts/linux-release-evidence.js). Both scripts import from here;
-// this module imports no sibling scripts, which breaks the former import cycle.
+// Shared naming, hashing, and CLI helpers for Linux release preparation.
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-
-export const UPDATER_YAML_MAX_BYTES = 65_536
 
 export function fail(tag, message) {
   return new Error(`${tag} ${message}`)
@@ -34,36 +29,6 @@ export function assertSafeName(fileName, context, tag) {
   ) {
     throw fail(tag, `unsafe file name ${JSON.stringify(fileName)} (${context})`)
   }
-}
-
-const SEMVER_PATTERN =
-  /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/
-
-// electron-builder channel: stable updates via latest-linux.yml, a prerelease
-// via <first-prerelease-identifier>-linux.yml (0.1.0-beta.1 -> beta-linux.yml).
-export function channelForVersion(version, tag) {
-  const match = typeof version === 'string' ? SEMVER_PATTERN.exec(version) : null
-  if (!match) {
-    throw fail(tag, `invalid semver version: ${JSON.stringify(version)}`)
-  }
-  return match[4] === undefined ? 'latest' : match[4].split('.')[0]
-}
-
-export function channelFileNameForVersion(version, tag) {
-  return `${channelForVersion(version, tag)}-linux.yml`
-}
-
-// x64 `<channel>-linux.yml` plus arch-specific leftovers.
-export function isChannelSidecar(fileName) {
-  return /-linux(-arm64|-arm)?\.yml$/.test(fileName)
-}
-
-export function extraUpdaterSidecars(actualNames, allowed) {
-  const keep = new Set(allowed)
-  return actualNames
-    .filter((name) => !keep.has(name))
-    .filter((name) => name.endsWith('.blockmap') || name.endsWith('.zip') || isChannelSidecar(name))
-    .sort(compareAscii)
 }
 
 // builder-util getArtifactArchName: AppImage uses x86_64, deb uses amd64.
@@ -111,17 +76,17 @@ export function sha256File(filePath) {
   return digestFile('sha256', 'hex', filePath)
 }
 
-export function sha512File(filePath) {
-  return digestFile('sha512', 'base64', filePath)
-}
-
 export async function listReleaseFiles(releaseDirectory, tag, hint = '') {
   try {
     const entries = await readdir(releaseDirectory, { withFileTypes: true })
-    return entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .sort(compareAscii)
+    const nonFiles = entries.filter((entry) => !entry.isFile()).map((entry) => entry.name)
+    if (nonFiles.length > 0) {
+      throw fail(
+        tag,
+        `release directory must contain regular files only; rejected: ${nonFiles.sort(compareAscii).join(', ')}`,
+      )
+    }
+    return entries.map((entry) => entry.name).sort(compareAscii)
   } catch (error) {
     if (error?.code === 'ENOENT') {
       throw fail(tag, `release directory is missing: ${releaseDirectory}${hint}`)

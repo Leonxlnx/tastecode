@@ -103,17 +103,19 @@ Linux delivery is proved in layers:
 2. Unpacked x64 Electron artifact: packaged server starts and renderer connects.
 3. Artifact-native proof: `node-pty` and keyring load from `app.asar`/unpacked resources,
    PTY round-trips, and an isolated credential can be written, read, and deleted.
-4. Native Wayland acceptance on COSMIC and GNOME: window, tray recovery, dialogs, clipboard,
-   PTY, Git/SSH, preview, GPU, second-instance, and quit cleanup.
+4. Native Wayland acceptance on COSMIC and GNOME: window lifecycle, dialogs, clipboard, PTY,
+   Git/SSH, preview, GPU, second-instance, and quit cleanup.
 5. AppImage and deb release candidates built from the same tested commit, with license bundle,
    checksums, artifact inventory, and clean-machine evidence.
 
-AppImage is the portable beta channel, but Linux v1 updates are manual. The About surface links
+AppImage is the portable Linux artifact, but Linux v1 updates are manual. The About surface links
 packaged Linux users to GitHub Releases without loading `electron-updater`; deb installs remain
-package-owned. Automatic AppImage replacement requires a qualified old-to-new shutdown and relaunch
-handoff, and deb updates require a signed APT repository. Windows and macOS retain their existing
-application-owned updater path. Updater behavior is a package policy injected into the shared
-updater state machine rather than scattered platform checks.
+package-owned. Linux packaging sets its publisher to `null`, preventing update metadata generation.
+The curated `release/linux-x64` distribution contains only the AppImage, deb, SHA-256 checksums,
+and source-bound evidence; strict staging also excludes any unexpected private builder output.
+Windows and macOS retain the global generic publisher and their existing application-owned updater
+path. Updater behavior is a package policy injected into the shared updater state machine rather
+than scattered platform checks.
 
 The unpacked artifact and native proof come before AppImage/deb configuration. A package that
 draws a window but cannot open a PTY, use the credential store, or stop descendants is not a
@@ -121,16 +123,17 @@ release candidate. Hosted CI remains manually dispatched while Actions minutes a
 the Linux row is still part of the same platform matrix whenever that workflow is requested.
 
 Local qualification starts with `pnpm linux:acceptance` from a clean checkout on a qualified
-x64 Wayland desktop. The command freezes dependencies, runs every source gate, builds the unpacked
-artifact, proves packaged PTY, SQLite/FTS5 and keyring behavior, verifies release notices, and
-writes `release/linux-acceptance.json`. Environment blockers exit separately from product
-failures. Its result remains `awaiting-manual-desktop-acceptance`; automation cannot certify a
-real compositor, tray or GPU.
+x64 Wayland desktop. The command freezes dependencies, runs every source gate, then invokes one
+preparation that builds once, packages both Linux targets, writes source-bound distribution
+evidence, and retains the unpacked app for native PTY, SQLite/FTS5, keyring, and notice checks. It
+writes `release/linux-acceptance.json`; environment blockers exit separately from product failures.
+Its result remains `awaiting-manual-desktop-acceptance`; automation cannot certify a real
+compositor or GPU.
 
 The manual pass launches the reported executable with the reported isolated XDG profile and must
 prove: visible native-Wayland startup without permanent reconnecting; project open and persistence;
 terminal output, resize, interrupt and descendant cleanup; Git/checkpoint and preview start/stop;
-clipboard, drag/drop, dialogs and external-browser handoff; close-to-tray recovery; second-instance
+clipboard, drag/drop, dialogs and external-browser handoff; close-to-quit cleanup; second-instance
 focus; and Quit releasing server, preview, PTY and ports. Provider-network calls, AppImage/deb,
 updater feeds, KDE/XWayland and framework upgrades are outside this first gate. A failure stops the
 layered release path instead of being converted into a warning.

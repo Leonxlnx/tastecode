@@ -24,7 +24,7 @@
     "test": "vitest run src --passWithNoTests",
     "dist": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder",
     "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder --dir",
-    "dist:linux:dir": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder --linux dir --x64",
+    "dist:linux": "node scripts/prepare-linux-release.js",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
@@ -107,6 +107,7 @@
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
     "linux": {
       "executableName": "tastecode",
+      "publish": null,
       "icon": "assets/tastecode-app-icon.png",
       "category": "Development",
       "synopsis": "Local desktop workspace for coding agents",
