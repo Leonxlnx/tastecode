@@ -130,7 +130,7 @@ export function PullRequestFiles(props: {
               </button>
             )
           })}
-          {hasMore ? (
+          {hasMore && files.length > 0 ? (
             <button
               type="button"
               className="pr-files-load"
@@ -141,6 +141,7 @@ export function PullRequestFiles(props: {
               Load more files
             </button>
           ) : null}
+          {error && files.length > 0 ? <p className="pr-files-nav-error">{error}</p> : null}
         </div>
       </aside>
 

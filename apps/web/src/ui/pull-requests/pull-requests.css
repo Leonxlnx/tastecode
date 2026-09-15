@@ -451,6 +451,31 @@
   font-size: var(--t-xs);
 }
 
+.pr-list-note.is-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0 8px 10px;
+  color: var(--error);
+}
+
+.pr-list-note button {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pr-list-note button:is(:hover, :focus-visible) {
+  color: var(--text);
+}
+
 .pr-list-message,
 .pr-detail-empty,
 .pr-detail-error,
@@ -2460,6 +2485,13 @@
 .pr-files-skeleton-row > span:last-child {
   width: 54%;
   height: 6px;
+}
+
+.pr-files-nav-error {
+  margin: 6px 7px 0;
+  color: var(--error);
+  font-size: var(--t-xs);
+  line-height: 1.4;
 }
 
 .pr-dialog-backdrop {
