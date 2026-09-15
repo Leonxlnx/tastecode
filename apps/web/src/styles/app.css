@@ -1269,6 +1269,7 @@
 }
 
 .stage > .pr-workspace {
+  grid-row: 1 / -1;
   border-top-left-radius: inherit;
 }
 

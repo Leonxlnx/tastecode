@@ -177,6 +177,26 @@
   color: var(--text);
 }
 
+.session-search__skeleton-group {
+  margin: 10px 12px 5px;
+}
+
+.session-search__skeleton-result {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.session-search__skeleton-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-search__skeleton-meta > .skeleton:last-child {
+  margin-left: auto;
+}
+
 .session-search__state {
   display: flex;
   align-items: center;
