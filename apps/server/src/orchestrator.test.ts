@@ -2781,6 +2781,17 @@ describe('provider-neutral design briefing', () => {
             reviewNotes: 'Test catalog fixture',
             pairEvidence: 'Test fixture for paired attachment transport',
           },
+          {
+            id: 'reviewed-pricing',
+            family: 'pricing',
+            group: 'pricing',
+            imagePath: 'hero.webp',
+            source: 'https://example.com',
+            tags: ['calm'],
+            cue: 'Test pricing composition',
+            reviewStatus: 'reviewed',
+            reviewNotes: 'Synthetic catalog fixture',
+          },
         ],
       }),
     )
@@ -2867,7 +2878,9 @@ describe('provider-neutral design briefing', () => {
       sessions[0]?.emit({ type: 'turn.completed', turnId: 'motion-turn', status: 'completed' })
 
       await vi.waitFor(() => expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' }))
-      expect(store.designRun(thread.id)).toMatchObject({ referenceDeck: [{ id: 'reviewed-hero' }] })
+      expect(store.designRun(thread.id)).toMatchObject({
+        referenceDeck: [{ id: 'reviewed-hero' }, { id: 'reviewed-pricing' }],
+      })
       await vi.waitFor(() =>
         expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),
       )
@@ -3391,6 +3404,19 @@ describe('persisted threads', () => {
       projectPath: workspace,
       provider: 'codex',
       title: 'Persisted design',
+    })
+    store.append('persisted-design', {
+      type: 'turn.started',
+      turn: { id: 'old-failed-run', threadId: 'persisted-design', status: 'running', createdAt: 1 },
+    })
+    store.append('persisted-design', {
+      type: 'turn.started',
+      turn: { id: 'latest-run', threadId: 'persisted-design', status: 'running', createdAt: 2 },
+    })
+    store.append('persisted-design', {
+      type: 'turn.completed',
+      turnId: 'latest-run',
+      status: 'interrupted',
     })
     writeDesignBrief(workspace, {
       originalRequest: 'Build a studio site.',

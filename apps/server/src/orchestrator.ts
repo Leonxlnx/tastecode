@@ -384,6 +384,7 @@ function designRecoveryState(history: Array<{ event: DomainEvent }>): DesignReco
   const completedTurns = new Set<string>()
   let unresolved: { id: string; turnId: string; questions: BriefingQuestion[] } | undefined
   let openTurnId: string | undefined
+  let latestTurnSeen = false
 
   // The latest still-open lifecycle wins. Walking backward avoids building
   // full maps for a long completed Design history.
@@ -409,12 +410,11 @@ function designRecoveryState(history: Array<{ event: DomainEvent }>): DesignReco
     }
 
     if (event.type === 'turn.completed') completedTurns.add(event.turnId)
-    if (
-      openTurnId === undefined &&
-      event.type === 'turn.started' &&
-      !completedTurns.has(event.turn.id)
-    ) {
-      openTurnId = event.turn.id
+    if (!latestTurnSeen && event.type === 'turn.started') {
+      latestTurnSeen = true
+      // A failed older run can lack its final lifecycle event. It cannot own a
+      // resumed phase once a newer turn has superseded it.
+      if (!completedTurns.has(event.turn.id)) openTurnId = event.turn.id
     }
     if (unresolved && openTurnId) break
   }

@@ -130,7 +130,10 @@ export function selectReviewedReferences(
   if (!preferred) throw new Error('No reviewed Design references are available')
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
-  const sectionContent = brief.requiredContent.join(' ').toLowerCase()
+  const sectionContent = brief.requiredContent
+    .map((section) => section.split(':')[0])
+    .join(' ')
+    .toLowerCase()
   const requestedFamilies = PAGE_LAYOUT_FAMILIES.filter((family) => {
     const names = {
       hero: /\bhero\b/u,
@@ -170,7 +173,13 @@ export function selectReviewedReferences(
     const familyEntries = compatibleEntries.length
       ? compatibleEntries
       : ranked.filter((entry) => entry.family === family)
-    if (!familyEntries.length) continue
+    if (!familyEntries.length) {
+      if (requestedFamilies.includes(family))
+        throw new Error(
+          `No reviewed reference is available for requested section family ${family}. Add a reviewed catalog entry or attach your own reference images.`,
+        )
+      continue
+    }
     const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
     // Revisions share a vote: choose a group first, then its reviewed revision.
     const pool = explicit.length ? explicit : familyEntries

@@ -135,6 +135,20 @@ describe('reviewed reference library', () => {
       ).map(({ family }) => family),
     ).toEqual(['hero', 'about'])
   })
+  it('reports a missing requested family without treating body copy as extra sections', () => {
+    const root = library()
+    save(root, [entry])
+    const references = loadReviewedReferences(root)
+    expect(
+      selectReviewedReferences(
+        { ...brief, requiredContent: ['Hero: describe the service and process'] },
+        references,
+      ),
+    ).toHaveLength(1)
+    expect(() =>
+      selectReviewedReferences({ ...brief, requiredContent: ['Hero', 'Pricing'] }, references),
+    ).toThrow('requested section family pricing')
+  })
   it('rejects duplicate identifiers and corrupt selected images with actionable errors', () => {
     const root = library()
     save(root, [entry, entry])
