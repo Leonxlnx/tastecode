@@ -59,6 +59,7 @@ describe('asset phase', () => {
     )
     expect(prompt).toContain('use an available image tool with the selected reference composition')
     expect(prompt).not.toContain('frontend image-direction skill')
+    expect(prompt).toContain('use status needed and omit source and destination entirely')
     expect(prompt).toContain('Generate one finished asset per file')
     expect(prompt).toContain('exact subject, art direction, camera or rendering language')
     expect(prompt).toContain('make at most one bounded regeneration')
