@@ -1,0 +1,236 @@
+/* ---------- skeleton ----------
+   Loading placeholders shaped like the content they stand in for. A pane that
+   is still fetching shows its layout arriving instead of a spinner parked in
+   the middle of an empty box. Bars are the app's own surface tones with one
+   shine pass over them.
+
+   The shine is a transformed pseudo-element, not a moving background
+   position: a diff skeleton has dozens of bars, and repainting each of them
+   every frame is the same per-frame tax that made long sessions feel slow.
+   Values come from tokens.css only. */
+
+.skeleton {
+  position: relative;
+  display: block;
+  flex: none;
+  overflow: hidden;
+  background: var(--skeleton);
+  border-radius: var(--r-pill);
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 20%, var(--skeleton-shine) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: skeleton-shine 1.8s linear infinite;
+}
+
+/* One pass, then a beat of rest. A shine that never stops keeps pulling the eye. */
+@keyframes skeleton-shine {
+  55%,
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Corners for placeholders that stand in for boxes rather than text. */
+.skeleton--block {
+  border-radius: var(--r-md);
+}
+
+.skeleton--icon {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-sm);
+}
+
+.skeleton--circle {
+  border-radius: var(--r-circle);
+}
+
+/* A group fades in after a short delay, so a fast (cached) load never flashes
+   a skeleton before the real content. */
+.skeleton-group {
+  animation: skeleton-appear var(--dur-fast) var(--ease-out) 160ms both;
+  pointer-events: none;
+  user-select: none;
+}
+
+@keyframes skeleton-appear {
+  from {
+    opacity: 0;
+  }
+}
+
+/* ---------- lines of copy ---------- */
+
+.skeleton-lines {
+  display: grid;
+  gap: 9px;
+}
+
+.skeleton-lines > .skeleton {
+  height: 10px;
+}
+
+/* ---------- list rows ----------
+   A leading icon, a title and an optional detail line. Menus, pickers, file
+   trees and settings lists all read as this shape. */
+
+.skeleton-rows {
+  display: grid;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.skeleton-row--tall {
+  min-height: 44px;
+}
+
+.skeleton-row--roomy {
+  min-height: 64px;
+  padding: 10px 14px;
+}
+
+.skeleton-row--roomy + .skeleton-row--roomy {
+  border-top: 1px solid var(--line);
+}
+
+.skeleton-row__copy {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 7px;
+}
+
+.skeleton-row--roomy .skeleton-row__copy {
+  gap: 9px;
+}
+
+.skeleton-row__title {
+  height: 9px;
+}
+
+.skeleton-row--roomy .skeleton-row__title {
+  height: 11px;
+}
+
+.skeleton-row__detail {
+  height: 7px;
+}
+
+.skeleton-row__control {
+  width: 34px;
+  height: 18px;
+  margin-left: auto;
+}
+
+/* ---------- code and diffs ---------- */
+
+.skeleton-code {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  padding: 8px 0;
+}
+
+.skeleton-code__line {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  padding-right: 16px;
+}
+
+.skeleton-code__line > .skeleton {
+  height: 9px;
+}
+
+.skeleton-code__line > .skeleton:last-child {
+  margin-left: 14px;
+}
+
+.skeleton-code__gutter {
+  display: flex;
+  flex: none;
+  align-self: stretch;
+  align-items: center;
+  justify-content: flex-end;
+  width: 58px;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.skeleton-code__gutter > .skeleton {
+  width: 18px;
+  height: 8px;
+}
+
+/* ---------- conversation ----------
+   Sits exactly where the transcript column will render, so the switch from
+   placeholder to messages is a fill-in rather than a jump. Mirrors .thread
+   and .thread__col; see thread.css. */
+
+.thread-skeleton {
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  scrollbar-gutter: stable both-edges;
+  padding: 16px 0 0;
+  /* A transcript is taller than the viewport, so its placeholder fades
+     out toward the composer the way scrolled-off messages do. */
+  mask-image: linear-gradient(to bottom, #000 40%, transparent 94%);
+}
+
+.thread-skeleton__col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: calc(var(--chat-w) + 48px);
+  margin: 0 auto;
+  padding: 0 18px;
+}
+
+.thread-skeleton__turn {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A prompt row owns the 27px action strip below it; see .thread__row:has(> .said). */
+.thread-skeleton__said {
+  align-self: flex-end;
+  height: 34px;
+  margin-bottom: 27px;
+  border-radius: var(--r-md);
+}
+
+.thread-skeleton__reply {
+  display: grid;
+  gap: 13px;
+  padding: 2px 0;
+}
+
+.thread-skeleton__reply > .skeleton {
+  height: 11px;
+}
+
+/* ---------- empty-stage heading ---------- */
+
+.empty__skeleton-prompt {
+  width: min(56%, 420px);
+  height: clamp(18px, 2vw, 26px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+}

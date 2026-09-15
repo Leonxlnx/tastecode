@@ -13,7 +13,11 @@ import {
   IconChevronDown as ChevronDown,
   IconSearch as Search,
 } from '@tabler/icons-react'
+import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import { usePopupPresence } from './use-popup-presence.js'
+
+// Label widths for placeholder options; the listbox sizes to its trigger.
+const SELECT_SKELETON_WIDTHS = [104, 76, 128, 92]
 
 export type AppSelectOption<Value extends string = string> = {
   value: Value
@@ -455,9 +459,9 @@ export function AppSelect<Value extends string>(props: {
                 optionNodes
               )}
               {props.loadingMessage ? (
-                <p className="app-select__empty" role="status">
-                  {props.loadingMessage}
-                </p>
+                <SkeletonStatus label={props.loadingMessage}>
+                  <SkeletonRows rows={4} widths={SELECT_SKELETON_WIDTHS} />
+                </SkeletonStatus>
               ) : props.search && visibleOptions.length === 0 ? (
                 <p className="app-select__empty" role="status">
                   {props.search.emptyMessage ?? 'No matching options'}
