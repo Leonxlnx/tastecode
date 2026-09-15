@@ -6,18 +6,18 @@ The ten code PRs below were checked separately against main `759d8141ebc8bdd4fe1
 
 Every listed head passed `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` on macOS arm64 with Node 22.22.3 and pnpm 11.8.0. No hosted CI was started.
 
-| PR | Scope | Checked head | Four checks |
-| --- | --- | --- | --- |
-| [#1133](https://github.com/Leonxlnx/tastecode/pull/1133) | feat(contracts): define authenticated pull request images | `c475e104038c4bd2a693d3c0602ecb43315a4bf4` | Pass |
-| [#1134](https://github.com/Leonxlnx/tastecode/pull/1134) | feat(server): fetch bounded pull request images through GitHub CLI | `14f5420be979f37b65001b561a3ec0a9601ce2f3` | Pass |
-| [#1135](https://github.com/Leonxlnx/tastecode/pull/1135) | feat(web): render private pull request images | `91afff581d41c8b57a3540fab4e703887f19cbae` | Pass |
-| [#1136](https://github.com/Leonxlnx/tastecode/pull/1136) | design(web): show content-shaped loading placeholders | `e43a10a993cbdae90c444dc155cda938d9e92f7c` | Pass |
-| [#1137](https://github.com/Leonxlnx/tastecode/pull/1137) | design(web): show pull request loading layouts | `5e5ae6e3b2e770fe90fd885681eb5fc8087f1170` | Pass |
-| [#1138](https://github.com/Leonxlnx/tastecode/pull/1138) | fix(web): keep pull request content visible after refresh errors | `7503ba929bfc5447753bef2aba46238e550d3c13` | Pass |
-| [#1139](https://github.com/Leonxlnx/tastecode/pull/1139) | design(web): refine pull request layout and labels | `e531a36f1c57ed48bdaaeca7b7830becebc17a22` | Pass |
-| [#1140](https://github.com/Leonxlnx/tastecode/pull/1140) | fix(desktop): migrate removed Codex theme to system | `f83ae0c2e9172d3697f68282e6348ea76a94a908` | Pass |
-| [#1141](https://github.com/Leonxlnx/tastecode/pull/1141) | fix(desktop): omit unused vendor binaries from packages | `b15e10aa2981bfbf82031ad1b7c0e6423a8b22d8` | Pass |
-| [#1142](https://github.com/Leonxlnx/tastecode/pull/1142) | fix(dev): use the Bun script shell on macOS | `be2e6cae375729eecfb12f10baefdbcc3e89f25b` | Pass |
+| PR                                                       | Scope                                                              | Checked head                               | Four checks |
+| -------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------ | ----------- |
+| [#1133](https://github.com/Leonxlnx/tastecode/pull/1133) | feat(contracts): define authenticated pull request images          | `c475e104038c4bd2a693d3c0602ecb43315a4bf4` | Pass        |
+| [#1134](https://github.com/Leonxlnx/tastecode/pull/1134) | feat(server): fetch bounded pull request images through GitHub CLI | `14f5420be979f37b65001b561a3ec0a9601ce2f3` | Pass        |
+| [#1135](https://github.com/Leonxlnx/tastecode/pull/1135) | feat(web): render private pull request images                      | `91afff581d41c8b57a3540fab4e703887f19cbae` | Pass        |
+| [#1136](https://github.com/Leonxlnx/tastecode/pull/1136) | design(web): show content-shaped loading placeholders              | `e43a10a993cbdae90c444dc155cda938d9e92f7c` | Pass        |
+| [#1137](https://github.com/Leonxlnx/tastecode/pull/1137) | design(web): show pull request loading layouts                     | `5e5ae6e3b2e770fe90fd885681eb5fc8087f1170` | Pass        |
+| [#1138](https://github.com/Leonxlnx/tastecode/pull/1138) | fix(web): keep pull request content visible after refresh errors   | `7503ba929bfc5447753bef2aba46238e550d3c13` | Pass        |
+| [#1139](https://github.com/Leonxlnx/tastecode/pull/1139) | design(web): refine pull request layout and labels                 | `e531a36f1c57ed48bdaaeca7b7830becebc17a22` | Pass        |
+| [#1140](https://github.com/Leonxlnx/tastecode/pull/1140) | fix(desktop): migrate removed Codex theme to system                | `f83ae0c2e9172d3697f68282e6348ea76a94a908` | Pass        |
+| [#1141](https://github.com/Leonxlnx/tastecode/pull/1141) | fix(desktop): omit unused vendor binaries from packages            | `b15e10aa2981bfbf82031ad1b7c0e6423a8b22d8` | Pass        |
+| [#1142](https://github.com/Leonxlnx/tastecode/pull/1142) | fix(dev): use the Bun script shell on macOS                        | `be2e6cae375729eecfb12f10baefdbcc3e89f25b` | Pass        |
 
 The Bun-shell full suite initially hit the existing SessionSearchHost focus-test timeout. Its focused eight tests and a second full suite passed without a source change.
 
