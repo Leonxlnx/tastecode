@@ -41,7 +41,8 @@ describe('shiki alias for @pierre/diffs', () => {
     })
     const code = 'const answer = 42;'
     for (const lang of ['cpp', 'tsx']) {
-      const { tokens } = highlighter.codeToTokens(code, { lang, theme })
+      // Check grammar correctness independently of the renderer's 500 ms budget.
+      const { tokens } = highlighter.codeToTokens(code, { lang, theme, tokenizeTimeLimit: 0 })
       expect(tokens[0]?.map((token) => token.content).join('')).toBe(code)
       expect(tokens[0]?.length).toBeGreaterThan(1)
     }
