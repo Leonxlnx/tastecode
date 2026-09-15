@@ -8,6 +8,10 @@ export interface ReferenceDirection {
   family: PageLayoutFamily
   cue: string
   imagePath: string
+  mobileImagePath?: string
+  source?: string
+  group?: string
+  tags?: string[]
 }
 
 function direction(id: string, family: PageLayoutFamily, cue: string): ReferenceDirection {
