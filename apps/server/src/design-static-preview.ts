@@ -55,24 +55,34 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
       response.end('Not found')
     }
   })
-  await listen(server, Number(previewUrl.port))
   try {
-    const response = await fetch(plan.url, {
+    await listen(server, Number(previewUrl.port))
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'EADDRINUSE') throw error
+    // The OS assigns an unused port atomically when concurrent sites choose the same one.
+    await listen(server, 0)
+  }
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Static preview has no TCP address')
+  previewUrl.port = String(address.port)
+  const url = previewUrl.href
+  try {
+    const response = await fetch(url, {
       headers: { connection: 'close' },
       signal: AbortSignal.timeout(1_000),
     })
     if (!response.ok || response.headers.get('x-harness-preview-id') !== previewId) {
       throw new Error('TasteCode static preview ownership check failed')
     }
-    assertMarkupResources(root, plan, await response.text())
+    assertMarkupResources(root, { ...plan, url }, await response.text())
   } catch (error) {
     await close(server)
     throw error
   }
   return {
-    url: plan.url,
+    url,
     viewports: plan.viewports,
-    output: () => `TasteCode static preview at ${plan.url}`,
+    output: () => `TasteCode static preview at ${url}`,
     stop: () => close(server),
   }
 }

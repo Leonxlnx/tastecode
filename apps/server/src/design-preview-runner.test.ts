@@ -147,6 +147,22 @@ describe('design preview runner', () => {
     await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
   })
 
+  it('gives concurrent static previews distinct ports without replacing either site', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    writeFileSync(path.join(workspace, 'index.html'), 'Static site')
+    const staticPlan = staticPreviewPlan(await freePort())
+    const first = await startDesignPreview(workspace, staticPlan)
+    previews.push(first)
+    const second = await startDesignPreview(workspace, staticPlan)
+    previews.push(second)
+    expect(second.url).not.toBe(first.url)
+    for (const preview of [first, second])
+      await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+        'Static site',
+      )
+  })
+
   it('can retry a corrected static preview on the same port', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
