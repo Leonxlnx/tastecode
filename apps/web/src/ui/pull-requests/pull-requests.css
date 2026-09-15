@@ -74,7 +74,7 @@
 
 .pr-segment {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 2px;
   padding: 3px;
   background: var(--chrome-recessed);
@@ -106,7 +106,11 @@
   min-width: 0;
   height: 28px;
   padding: 0 7px;
+  overflow: hidden;
   background: transparent;
+  /* Concentric with the 5px container minus its 3px padding. */
+  border-radius: var(--r-sm);
+  white-space: nowrap;
 }
 
 .pr-segment button:is(:hover, :focus-visible),
@@ -232,7 +236,7 @@
   padding: 4px 6px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -284,10 +288,10 @@
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   width: 100%;
   min-height: 59px;
-  padding: 8px 9px;
+  padding: 8px 10px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--r-lg);
@@ -314,16 +318,18 @@
   box-shadow: var(--chrome-shadow);
 }
 
+/* Flat glyph, no chrome: a bordered tile inside a bordered row reads as a nested
+   button and disappears on the selected row, whose background matches it. */
 .pr-state-mark {
   display: grid;
   place-items: center;
-  width: 25px;
-  height: 25px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  background: var(--surface-2);
-  box-shadow: inset 0 1px var(--chrome-highlight);
-  color: var(--text-3);
+  width: 20px;
+  height: 20px;
+  color: var(--text-2);
+}
+
+.pr-state-mark > svg {
+  display: block;
 }
 
 .pr-state-mark.is-open,
@@ -335,26 +341,14 @@
   color: var(--attention);
 }
 
-.pr-state-mark.is-conflict {
-  color: var(--error);
-}
-
-.pr-state-mark.is-draft,
-.pr-state-mark.is-closed-draft {
-  border-style: dashed;
-  color: var(--attention);
-}
-
+.pr-state-mark.is-conflict,
+.pr-state-mark.is-closed,
 .pr-state-mark.is-closed-draft {
   color: var(--error);
 }
 
-.pr-state-mark.is-merged {
-  color: var(--attention);
-}
-
-.pr-state-mark.is-closed {
-  color: var(--error);
+.pr-state-mark.is-draft {
+  color: var(--text-3);
 }
 
 .pr-list-copy {
@@ -413,9 +407,8 @@
   white-space: nowrap;
 }
 
-.pr-list-state.is-draft,
 .pr-list-state.is-merged {
-  color: var(--attention);
+  color: var(--text-2);
 }
 
 .pr-list-state.is-closed,
@@ -474,6 +467,16 @@
 
 .pr-list-note button:is(:hover, :focus-visible) {
   color: var(--text);
+}
+
+.pr-list-scroll:has(> .pr-list-message) {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.pr-detail-empty,
+.pr-detail-error {
+  height: 100%;
 }
 
 .pr-list-message,
@@ -677,6 +680,7 @@
   box-shadow: var(--chrome-shadow);
   color: var(--text-2);
   font-size: var(--t-sm);
+  white-space: nowrap;
 }
 
 .pr-toolbar-button.is-enabled {
@@ -747,6 +751,7 @@
   font: inherit;
   font-size: var(--t-sm);
   text-decoration: none;
+  white-space: nowrap;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
@@ -2733,6 +2738,10 @@
   .pr-toolbar-button span,
   .pr-chat-button {
     font-size: 0;
+  }
+
+  .pr-segment button span {
+    display: none;
   }
 
   .pr-chat-button {

@@ -24,6 +24,7 @@ import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { Skeleton, SkeletonCode, SkeletonStatus } from '../Skeleton.js'
 import { parsePullRequestPatch } from './diff.js'
+import { countLabel } from './pull-request-text.js'
 import type { PullRequestDiffAnnotation, PullRequestDiffSide } from './PullRequestDiffRenderer.js'
 
 const LazyPullRequestDiffRenderer = lazy(() =>
@@ -89,7 +90,7 @@ export function PullRequestFiles(props: {
       <aside className="pr-files-nav">
         <header>
           <div>
-            <strong>{props.detail.changedFiles} files</strong>
+            <strong>{countLabel(props.detail.changedFiles, 'file')}</strong>
             <span>
               <b className="is-addition">+{props.detail.additions.toLocaleString()}</b>
               <b className="is-deletion">−{props.detail.deletions.toLocaleString()}</b>
