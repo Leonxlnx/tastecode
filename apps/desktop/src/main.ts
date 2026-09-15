@@ -9,7 +9,6 @@ import {
   app,
   BrowserWindow,
   clipboard,
-  crashReporter,
   dialog,
   ipcMain,
   Menu,
@@ -48,7 +47,7 @@ import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
-import { LocalDiagnostics } from './local-diagnostics.js'
+import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
 import {
   parseNativeMenuShortcuts,
@@ -875,17 +874,7 @@ if (ownsSingleInstance) {
 
   void app.whenReady().then(async () => {
     logStartupMilestone('app-ready')
-    const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
-    diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
-      app.setPath('crashDumps', diagnosticsDirectory)
-      crashReporter.start({
-        productName: nativeAppName,
-        companyName: 'TasteCode',
-        submitURL: 'https://tastecode.dev/crash-reports-disabled',
-        uploadToServer: false,
-        compress: true,
-      })
-    })
+    diagnostics = new LocalDiagnostics(localDiagnosticsDirectory(app.getPath('userData')))
     process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()

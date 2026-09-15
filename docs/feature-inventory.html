@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-12 base main 97c3002f + 1100</span>
+        <span class="meta">2026-09-15 base main 759d8141 + 1100</span>
       </div>
     </div>
 
@@ -1766,9 +1766,11 @@
                   >roomier action layout also applies to Debug; projects, workspaces, files,
                   history, and provider credentials remain untouched; upgrades move legacy history
                   and config into TasteCode paths without overwriting existing TasteCode data;
-                  bounded local diagnostics can be revealed or copied only by the user after keyed
-                  and standalone credential shapes, private keys, emails, project paths, and
-                  cross-platform home paths are scrubbed;
+                  opt-in diagnostics retain at most two bounded app-error text files that can be
+                  revealed or copied only by the user after keyed and standalone credential shapes,
+                  private keys, emails, project paths, and cross-platform home paths are scrubbed;
+                  TasteCode does not start Electron crash reporting or include native dumps in this
+                  diagnostics folder;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span

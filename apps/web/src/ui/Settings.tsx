@@ -1546,7 +1546,7 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
       {isDesktop ? (
         <SettingsRow
           title="Local diagnostics"
-          note="Off by default. Stores app errors and crash dumps only on this device. Nothing is uploaded. Turning it off fully applies after restart."
+          note="Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off."
           className="settings__row--roomy"
         >
           {diagnosticsError ? <RowIssue message={diagnosticsError} /> : null}
