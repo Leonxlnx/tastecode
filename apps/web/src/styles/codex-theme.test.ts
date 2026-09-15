@@ -14,7 +14,7 @@ describe('removed Codex theme', () => {
 
   it('preserves the original card size for the three remaining theme options', () => {
     expect(settingsCss).toMatch(
-      /\.theme-picker \{[^}]*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/s,
+      /\.theme-picker \{[^}]*grid-template-columns: repeat\(3, minmax\(0, calc\(\(100% - 48px\) \/ 4\)\)\);[^}]*justify-content: center;/s,
     )
   })
 })

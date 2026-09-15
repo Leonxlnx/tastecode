@@ -350,7 +350,8 @@
 
 .theme-picker {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, calc((100% - 48px) / 4)));
+  justify-content: center;
   gap: 16px;
   min-width: 0;
   margin: 0;
@@ -591,33 +592,6 @@
   background: var(--bg-rail);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-lg);
-}
-
-.appearance-editor__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 40px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.appearance-editor__header h2 {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 500;
-}
-
-.appearance-editor__scope {
-  padding: 2px 6px;
-  background: var(--surface);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  line-height: 1.4;
 }
 
 .appearance-editor__row {

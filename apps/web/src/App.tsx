@@ -151,6 +151,7 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
+import { backdropColorScheme } from './theme-colors.js'
 import {
   readProfileIdentityPreferences,
   writeProfileIdentityPreferences,
@@ -762,7 +763,9 @@ export function App() {
     useState<BackdropPreference>(readBackdropPreference)
   const [sidebarGlass, setSidebarGlass] = useState<number>(readGlassPreference)
   const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
-  const theme = themePreference === 'system' ? systemTheme : themePreference
+  const customColorScheme = backdropColorScheme(backdropPreference)
+  const desktopThemePreference = customColorScheme ?? themePreference
+  const theme = customColorScheme ?? (themePreference === 'system' ? systemTheme : themePreference)
   const themeColorScheme = colorSchemeForTheme(theme)
   const [macOSFontSmoothing, setMacOSFontSmoothing] = useState(
     () => readSetting(MACOS_FONT_SMOOTHING_KEY) !== 'false',
@@ -955,8 +958,8 @@ export function App() {
 
   useLayoutEffect(() => {
     applyTheme(theme)
-    void setDesktopTheme(themePreference)
-  }, [theme, themePreference])
+    void setDesktopTheme(desktopThemePreference)
+  }, [theme, desktopThemePreference])
 
   usePersistedSettingChange(THEME_KEY, themePreference)
 
@@ -4862,6 +4865,7 @@ export function App() {
             sidebarSettings={sidebarSettings}
             onSidebarSettingsChange={updateSidebarSettings}
             themePreference={themePreference}
+            themeColorScheme={themeColorScheme}
             onThemePreferenceChange={setThemePreference}
             fontPreference={fontPreference}
             onFontPreferenceChange={setFontPreference}

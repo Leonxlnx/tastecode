@@ -587,3 +587,33 @@ html.is-macos-font-smoothing {
   --surface-2: #eae2ec;
   --surface-3: #ded4e0;
 }
+
+:root[data-accent='custom'] {
+  --attention: var(--custom-accent);
+  --file-reference: var(--custom-accent);
+  --effort: var(--custom-accent);
+}
+
+:root[data-backdrop='custom'] {
+  --backdrop-shade: #fff;
+  --bg: var(--custom-backdrop);
+  --bg-rail: color-mix(in srgb, var(--bg) 97%, var(--backdrop-shade));
+  --bg-rail-tint: var(--bg-rail);
+  --bg-prompt: var(--surface);
+  --bg-shelf: var(--surface-2);
+  --bg-queue: var(--surface);
+  --surface: color-mix(in srgb, var(--bg) 94%, var(--backdrop-shade));
+  --surface-2: color-mix(in srgb, var(--bg) 90%, var(--backdrop-shade));
+  --surface-3: color-mix(in srgb, var(--bg) 85%, var(--backdrop-shade));
+  --control-hover: var(--surface-2);
+  --line: color-mix(in srgb, var(--bg) 86%, var(--backdrop-shade));
+  --line-strong: color-mix(in srgb, var(--bg) 76%, var(--backdrop-shade));
+  --chrome-border: var(--line);
+  --queue-line: var(--line);
+  --queue-hover: var(--surface-3);
+}
+
+:root[data-theme='light'][data-backdrop='custom'] {
+  --backdrop-shade: #000;
+  --terminal-workspace-bg: var(--surface);
+}
