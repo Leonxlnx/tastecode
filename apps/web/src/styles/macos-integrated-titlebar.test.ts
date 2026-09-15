@@ -44,7 +44,7 @@ describe('macOS integrated title bar', () => {
   })
 
   it('keeps the control outside a separate native drag region', () => {
-    expect(rule('.titlebar')).toContain('-webkit-app-region: no-drag;')
+    expect(rule('.titlebar')).not.toContain('-webkit-app-region: no-drag;')
 
     const toggle = rule('.titlebar__toggle')
     const dragRegion = rule('.titlebar__drag-region')
@@ -58,7 +58,8 @@ describe('macOS integrated title bar', () => {
   })
 
   it('does not put the stage drag surface below the sidebar control', () => {
-    expect(rule('.shell.is-macos .stagehead')).toContain('-webkit-app-region: no-drag;')
+    expect(rule('.stagehead')).not.toContain('-webkit-app-region: no-drag;')
+    expect(rule('.shell.is-macos .stagehead')).not.toContain('-webkit-app-region: no-drag;')
 
     const dragRegion = rule('.shell.is-macos .stagehead__drag-region')
     expect(dragRegion).toContain('position: absolute;')
