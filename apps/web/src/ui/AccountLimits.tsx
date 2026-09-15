@@ -9,8 +9,14 @@ import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
+import { Skeleton, SkeletonStatus } from './Skeleton.js'
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
+// Label and value widths for the two placeholder rows a source usually reports.
+const LIMIT_SKELETON_ROWS: readonly (readonly [number, number])[] = [
+  [62, 52],
+  [84, 40],
+]
 type ConsumeReset = (
   provider: ProviderId,
   idempotencyKey: string,
@@ -137,11 +143,25 @@ function LimitSource(props: {
         ))
       )}
       {props.state.status === 'loading' ? (
-        <p className="account-menu__usage-note" role="status">
-          <RefreshCw size={13} aria-hidden />
-          {hasSource ? 'Refreshing plan limits…' : 'Checking plan limits…'}
-          {hasUsableValues ? ' Last known values are shown.' : null}
-        </p>
+        hasSource ? (
+          <p className="account-menu__usage-note" role="status">
+            <RefreshCw size={13} aria-hidden />
+            Refreshing plan limits…
+            {hasUsableValues ? ' Last known values are shown.' : null}
+          </p>
+        ) : (
+          <SkeletonStatus label="Checking plan limits…" className="account-menu__limit-skeleton">
+            {LIMIT_SKELETON_ROWS.map(([label, value], index) => (
+              <div className="account-menu__limit" key={index}>
+                <div className="account-menu__limit-row">
+                  <Skeleton width={label} height={9} />
+                  <Skeleton width={value} height={9} />
+                </div>
+                <Skeleton height={3} />
+              </div>
+            ))}
+          </SkeletonStatus>
+        )
       ) : null}
       {props.state.status === 'error' ? (
         <div className="account-menu__usage-error" role="alert">

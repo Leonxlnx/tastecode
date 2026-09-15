@@ -52,7 +52,9 @@ import { AppSelect } from '../AppSelect.js'
 import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
+import { Skeleton, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
 import { PullRequestFiles } from './PullRequestFiles.js'
+import { PullRequestImages } from './PullRequestImages.js'
 import { comparePullRequestText, countLabel } from './pull-request-text.js'
 import { errorMessage as messageOf } from '../../boundary.js'
 
@@ -116,7 +118,10 @@ export function PullRequestDetailPane(props: {
           return next
         }
       } catch (cause) {
-        if (id === request.current && !silent) setError(messageOf(cause))
+        if (id === request.current && !silent) {
+          if (detailRef.current) setNotice({ kind: 'error', text: messageOf(cause) })
+          else setError(messageOf(cause))
+        }
       } finally {
         if (id === request.current && !silent) {
           setLoading(false)
@@ -313,33 +318,39 @@ export function PullRequestDetailPane(props: {
       ) : null}
 
       <div className={`pr-detail-body is-${tab}`}>
-        {tab === 'summary' ? (
-          <PullRequestSummary
-            detail={detail}
-            transport={props.transport}
-            pendingKeys={pendingKeys}
-            conversationBusy={conversationBusy}
-            onAction={runAction}
-            onConfirm={setConfirmation}
-          />
-        ) : (
-          <PullRequestFiles
-            key={detail.headRefOid}
-            detail={detail}
-            transport={props.transport}
-            onAction={runAction}
-            actionBusy={conversationBusy}
-            onConfirmAction={(action) =>
-              setConfirmation({
-                title: 'Delete this review comment?',
-                detail: 'This removes the inline comment from GitHub and cannot be undone.',
-                confirmLabel: 'Delete comment',
-                danger: true,
-                action,
-              })
-            }
-          />
-        )}
+        <PullRequestImages
+          transport={props.transport}
+          repository={detail.repository}
+          refOid={detail.headRefOid}
+        >
+          {tab === 'summary' ? (
+            <PullRequestSummary
+              detail={detail}
+              transport={props.transport}
+              pendingKeys={pendingKeys}
+              conversationBusy={conversationBusy}
+              onAction={runAction}
+              onConfirm={setConfirmation}
+            />
+          ) : (
+            <PullRequestFiles
+              key={detail.headRefOid}
+              detail={detail}
+              transport={props.transport}
+              onAction={runAction}
+              actionBusy={conversationBusy}
+              onConfirmAction={(action) =>
+                setConfirmation({
+                  title: 'Delete this review comment?',
+                  detail: 'This removes the inline comment from GitHub and cannot be undone.',
+                  confirmLabel: 'Delete comment',
+                  danger: true,
+                  action,
+                })
+              }
+            />
+          )}
+        </PullRequestImages>
       </div>
 
       {tab === 'summary' && detail.state === 'OPEN' ? (
@@ -1047,10 +1058,9 @@ function PullRequestMetadataPickerPanel(
           </button>
         ))}
         {waiting ? (
-          <div className="pr-picker-loading" role="status">
-            <LoaderCircle size={14} className="is-spinning" aria-hidden />
-            Loading from GitHub…
-          </div>
+          <SkeletonStatus label="Loading from GitHub…" className="pr-picker-loading">
+            <SkeletonRows rows={options.length > 0 ? 2 : 4} icon="circle" detail />
+          </SkeletonStatus>
         ) : null}
         {!waiting && options.length === 0 ? (
           <p className="pr-picker-empty">
@@ -2376,13 +2386,36 @@ function GitHubAvatar(props: {
 
 function PullRequestDetailSkeleton() {
   return (
-    <div className="pr-detail-skeleton" aria-label="Loading pull request">
-      <div className="pr-detail-skeleton-bar" />
-      <div className="pr-detail-skeleton-copy">
-        <span />
-        <span />
-        <span />
-        <span />
+    <div
+      className="pr-detail pr-detail-skeleton skeleton-group"
+      aria-label="Loading pull request"
+      aria-busy="true"
+    >
+      <header className="pr-detail-toolbar">
+        <div className="pr-detail-tabs">
+          <Skeleton className="pr-skeleton-block" />
+          <Skeleton className="pr-skeleton-block" />
+        </div>
+        <div className="pr-detail-actions">
+          <Skeleton className="pr-skeleton-block is-square" />
+          <Skeleton className="pr-skeleton-block is-square" />
+          <Skeleton className="pr-skeleton-block" />
+          <Skeleton className="pr-skeleton-block" />
+        </div>
+      </header>
+      <div className="pr-detail-body">
+        <div className="pr-summary">
+          <Skeleton className="pr-detail-skeleton-title" />
+          <Skeleton className="pr-detail-skeleton-meta" />
+          <div className="pr-detail-skeleton-facts">
+            {[0, 1, 2, 3, 4, 5, 6].map((index) => (
+              <div className="pr-detail-skeleton-fact" key={index}>
+                <Skeleton />
+                <Skeleton />
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )
