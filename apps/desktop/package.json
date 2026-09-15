@@ -42,6 +42,7 @@
     "appId": "dev.tastecode.desktop",
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
+    "compression": "maximum",
     "electronLanguages": [
       "en-US"
     ],
@@ -50,16 +51,29 @@
       "node_modules/**/*.node"
     ],
     "files": [
-      "dist/**/*",
-      "assets/**/*",
+      "dist/{main.js,preload.cjs,native-binding-proof.js}",
+      "assets/tastecode-app-icon.png",
       "package.json",
       "!node_modules/@harness/*/src{,/**/*}",
       "!node_modules/@harness/*/tsconfig*.json",
       "!node_modules/@harness/*/*.tsbuildinfo",
       "!node_modules/@harness/*/dist/**/*.d.ts",
       "!node_modules/@harness/*/dist/**/*.bench.js",
+      "!node_modules/@harness/adapter-codex/dist/generated{,/**/*}",
+      "!node_modules/@harness/adapter-api/dist/test-server.js",
       "!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}",
+      "!node_modules/@anthropic-ai/claude-agent-sdk/{bridge.mjs,browser-sdk.js}",
       "!node_modules/zod/src{,/**/*}",
+      "!node_modules/zod/v3{,/**/*}",
+      "!node_modules/zod/**/*.cjs",
+      "!node_modules/node-addon-api{,/**/*}",
+      "!node_modules/argparse{,/**/*}",
+      "!node_modules/js-yaml/{bin,dist}{,/**/*}",
+      "!node_modules/parse5/dist/cjs{,/**/*}",
+      "!node_modules/entities/{src,dist/commonjs}{,/**/*}",
+      "!node_modules/@opencode-ai/sdk/dist/v2{,/**/*}",
+      "!node_modules/node-pty/{src,scripts}{,/**/*}",
+      "!node_modules/node-pty/prebuilds/!(${platform}-*){,/**/*}",
       "!node_modules/**/*.map",
       "!node_modules/**/*.d.cts",
       "!node_modules/**/*.d.mts"
@@ -108,9 +122,6 @@
             "x64"
           ]
         }
-      ],
-      "files": [
-        "!node_modules/node-pty/prebuilds/{darwin,linux}-*{,/**/*}"
       ]
     },
     "nsis": {
@@ -120,14 +131,14 @@
       "allowToChangeInstallationDirectory": true,
       "deleteAppDataOnUninstall": false
     },
+    "dmg": {
+      "format": "UDZO"
+    },
     "mac": {
       "icon": "assets/tastecode-icon.icon",
       "target": [
         "dmg",
         "zip"
-      ],
-      "files": [
-        "!node_modules/node-pty/prebuilds/{win32,linux}-*{,/**/*}"
       ],
       "hardenedRuntime": true,
       "extendInfo": {
