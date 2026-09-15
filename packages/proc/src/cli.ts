@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync } from 'node:fs'
 import path from 'node:path'
 import { desktopPath } from './desktop-path.js'
-import { ownProcessTree, ownedProcessSpawnOptions, terminateTree } from './kill.js'
+import { killTree, spawnOwned } from './kill.js'
 
 /**
  * Spawn a CLI that may have been installed as an npm shim.
@@ -23,18 +23,15 @@ export function spawnCli(
   const spawnOptions = {
     ...(!(options.cwd === undefined) ? { cwd: options.cwd } : {}),
     env: childEnvironment(options),
-    stdio: ['pipe', 'pipe', 'pipe'] satisfies Array<'pipe'>,
+    stdio: ['pipe', 'pipe', 'pipe'] satisfies ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    ...ownedProcessSpawnOptions(),
   }
 
   if (process.platform === 'win32') {
-    if (/\.(?:exe|com)$/i.test(command)) {
-      return ownProcessTree(spawn(command, args, spawnOptions))
-    }
-    return ownProcessTree(spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions))
+    if (/\.(?:exe|com)$/i.test(command)) return spawnOwned(command, args, spawnOptions)
+    return spawnOwned('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions)
   }
-  return ownProcessTree(spawn(command, args, spawnOptions))
+  return spawnOwned(command, args, spawnOptions)
 }
 
 /**
@@ -106,38 +103,27 @@ function spawnCommandVersion(command: string, timeoutMs: number): Promise<string
   return new Promise((resolve) => {
     const child = spawnCli(command, ['--version'])
     let output = ''
-    // Latched synchronously so a racing close/error cannot overwrite the
-    // timeout outcome; the promise settles only after bounded tree cleanup.
-    let latched = false
     let settled = false
-    const doResolve = (value: string | undefined) => {
+    const finish = (value: string | undefined) => {
       if (settled) return
       settled = true
-      resolve(value)
-    }
-    const cleanupAndResolve = (value: string | undefined) => {
-      if (latched) return
-      latched = true
       clearTimeout(timer)
-      // Full-tree shutdown (TERM-to-KILL escalation on Unix, taskkill /T on
-      // Windows via terminateTree) so a stubborn descendant cannot survive
-      // the probe. A cleanup failure still reports the latched version
-      // outcome; this probe never rejects by contract.
-      void terminateTree(child)
-        .catch(() => undefined)
-        .then(() => doResolve(value))
+      void killTree(child).then(
+        () => resolve(value),
+        () => resolve(undefined),
+      )
     }
 
-    const timer = setTimeout(() => cleanupAndResolve(undefined), timeoutMs)
+    const timer = setTimeout(() => finish(undefined), timeoutMs)
 
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       output += chunk
     })
-    child.on('error', () => cleanupAndResolve(undefined))
+    child.on('error', () => finish(undefined))
     child.on('close', () => {
       const line = output.split('\n').find((entry) => /\d+\.\d+/.test(entry))
-      cleanupAndResolve(line?.trim() || undefined)
+      finish(line?.trim() || undefined)
     })
   })
 }
@@ -173,56 +159,21 @@ export function runCli(
     const child = spawnCli(command, args)
     let stdout = ''
     let stderr = ''
-    // Latch the first outcome synchronously so a timeout cannot be
-    // overwritten by a racing close/error. The timeout promise settles only
-    // after bounded tree cleanup; normal close/error settle immediately to
-    // preserve the output contract.
-    let latched = false
     let settled = false
-    const doResolve = (result: {
-      code: number | null
-      stdout: string
-      stderr?: string | undefined
-    }) => {
+    const finish = (
+      result: { code: number | null; stdout: string; stderr?: string | undefined } | Error,
+    ) => {
       if (settled) return
       settled = true
-      resolve(result)
-    }
-    const doReject = (error: Error) => {
-      if (settled) return
-      settled = true
-      reject(error)
-    }
-    const finishResolve = (result: {
-      code: number | null
-      stdout: string
-      stderr?: string | undefined
-    }) => {
-      if (latched) return
-      latched = true
       clearTimeout(timer)
-      doResolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
-    const finishReject = (error: Error) => {
-      if (latched) return
-      latched = true
-      clearTimeout(timer)
-      doReject(error)
-    }
-    const finishTimeout = () => {
-      if (latched) return
-      latched = true
-      clearTimeout(timer)
-      const timeoutError = new Error(`${command} did not respond`)
-      // Full-tree shutdown (TERM-to-KILL escalation on Unix, taskkill /T on
-      // Windows via terminateTree) so stubborn descendants cannot survive a
-      // hung probe. Cleanup failures are swallowed so the actionable timeout
-      // error is what the caller sees.
-      void terminateTree(child)
-        .catch(() => undefined)
-        .then(() => doReject(timeoutError))
-    }
-    const timer = setTimeout(finishTimeout, timeoutMs)
+    const timer = setTimeout(() => {
+      finish(new Error(`${command} did not respond`))
+    }, timeoutMs)
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       stdout += chunk
@@ -231,7 +182,7 @@ export function runCli(
     child.stderr.on('data', (chunk: string) => {
       stderr += chunk
     })
-    child.on('error', finishReject)
-    child.on('close', (code) => finishResolve({ code, stdout, stderr }))
+    child.on('error', finish)
+    child.on('close', (code) => finish({ code, stdout, stderr }))
   })
 }

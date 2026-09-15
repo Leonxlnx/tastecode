@@ -111,7 +111,15 @@ function resolveManual(
   const effort = target.effort
     ? model.reasoningEfforts.find((candidate) => candidate === target.effort)
     : undefined
-  return selection(source, model, effort ?? lowestReasoningEffort(model), false)
+  const serviceTier =
+    target.serviceTier === model.defaultServiceTier ||
+    model.serviceTiers.some((tier) => tier.id === target.serviceTier)
+      ? target.serviceTier
+      : undefined
+  return {
+    ...selection(source, model, effort ?? lowestReasoningEffort(model), false),
+    ...(serviceTier ? { serviceTier } : {}),
+  }
 }
 
 function selection(
@@ -181,6 +189,7 @@ export async function runBackgroundCompletion(input: {
     const started = await input.runtime.start(temporary, {
       model: input.selection.model,
       ...(input.selection.effort ? { effort: input.selection.effort } : {}),
+      ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
       ...(input.selection.agent ? { agent: input.selection.agent } : {}),
       ...(input.selection.connectionId
         ? {
@@ -223,6 +232,7 @@ export async function runBackgroundCompletion(input: {
     const options: TurnOptions = {
       model: input.selection.model,
       ...(input.selection.effort ? { effort: input.selection.effort } : {}),
+      ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
     }
     expectedTurnId = await session.sendTurn(started.thread.id, input.prompt, [], options)
     if (completions.has(expectedTurnId)) settle?.()

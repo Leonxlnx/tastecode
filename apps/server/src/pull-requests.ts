@@ -1453,11 +1453,12 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error('GitHub did not respond in time'))
     }, options.timeoutMs ?? 30_000)
 
@@ -1467,7 +1468,6 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > maxBytes) {
-        killTree(child)
         finish(new Error('GitHub response was too large to display safely'))
         return
       }
@@ -1477,7 +1477,6 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > maxBytes) {
-        killTree(child)
         finish(new Error('GitHub response was too large to display safely'))
         return
       }

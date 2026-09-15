@@ -175,7 +175,7 @@ describe('control adapter startup', () => {
     await orchestrator.disposeAll()
   })
 
-  it('waits for an in-flight control adapter to be disposed', async () => {
+  it('invalidates an in-flight control startup while disposing its adapter', async () => {
     const orchestrator = new Orchestrator(new Store(':memory:'), {
       onEvent: () => {},
       onLog: () => {},
@@ -183,18 +183,13 @@ describe('control adapter startup', () => {
     })
     const started = orchestrator.listModels('codex')
     await vi.waitFor(() => expect(control.releases).toHaveLength(1))
-    let disposed = false
-
-    const disposing = orchestrator.disposeAll().then(() => {
-      disposed = true
-    })
+    const disposing = orchestrator.disposeAll()
     await new Promise<void>((resolve) => setImmediate(resolve))
 
-    expect(disposed).toBe(false)
-    control.releases[0]?.()
-    await expect(started).resolves.toEqual([])
     await disposing
     expect(control.disposed).toBe(1)
+    control.releases[0]?.()
+    await expect(started).rejects.toThrow('reset')
   })
 
   it('waits for idle disposal before starting a replacement', async () => {
@@ -246,7 +241,7 @@ describe('control adapter startup', () => {
     }
   })
 
-  it('logs an idle disposal failure and still starts fresh', async () => {
+  it('logs an idle disposal failure and retries cleanup before starting fresh', async () => {
     const logs: string[] = []
     const orchestrator = new Orchestrator(new Store(':memory:'), {
       onEvent: () => {},
@@ -264,10 +259,14 @@ describe('control adapter startup', () => {
     try {
       await vi.waitFor(() => expect(control.disposeStarts).toBe(1))
       await vi.waitFor(() =>
-        expect(logs.some((line) => line.includes('idle dispose failed'))).toBe(true),
+        expect(logs.some((line) => line.includes('could not stop'))).toBe(true),
       )
       expect(control.disposed).toBe(0)
 
+      await expect(orchestrator.listModels('codex')).rejects.toThrow('idle control close failed')
+      expect(control.constructed).toBe(1)
+
+      control.disposeError = undefined
       const second = orchestrator.listModels('codex')
       await vi.waitFor(() => expect(control.releases).toHaveLength(2))
       control.releases[1]?.()

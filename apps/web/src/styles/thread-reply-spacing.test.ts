@@ -72,7 +72,7 @@ describe('thread reply spacing', () => {
     const activity = css.match(/\.thread__row > :is\(\.activity, \.aux\) \{(?<body>[\s\S]*?)\n\}/)
       ?.groups?.['body']
     const summary = css.match(/\.activity__summary \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
-    const aux = css.match(/\.aux__row \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const aux = css.match(/^\.aux__row \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body']
     const auxGlyph = css.match(/\.aux__glyph \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
     const auxLabel = css.match(/\.aux__label \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
 
@@ -110,7 +110,7 @@ describe('thread reply spacing', () => {
   it('keeps expanded work details close to their summary', () => {
     const body = css.match(/\.activity__body \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
 
-    expect(body).toContain('gap: 6px')
+    expect(body).toContain('gap: 2px')
     expect(body).toContain('margin: 4px 0')
   })
 

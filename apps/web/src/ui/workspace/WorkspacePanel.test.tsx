@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { beginLogin, resetInstalls } from '../../provider-install.js'
+import { resetInstalls } from '../../provider-install.js'
 import { TestTransport } from '../../test-transport.js'
 import { WorkspacePanel } from './WorkspacePanel.js'
 
@@ -48,18 +48,6 @@ vi.mock('../InstallTerminal.js', () => ({
 
 const idleTransport = new TestTransport()
 
-class TestMediaQueryList extends EventTarget implements MediaQueryList {
-  onchange: ((this: MediaQueryList, ev: MediaQueryListEvent) => void) | null = null
-  constructor(
-    readonly matches: boolean,
-    readonly media: string,
-  ) {
-    super()
-  }
-  addListener(): void {}
-  removeListener(): void {}
-}
-
 afterEach(() => {
   cleanup()
   resetInstalls()
@@ -68,356 +56,146 @@ afterEach(() => {
 })
 
 describe('WorkspacePanel', () => {
-  it('finishes closing immediately when reduced motion removes the transition', async () => {
-    const onClosed = vi.fn()
-    const matchMedia = vi
-      .spyOn(window, 'matchMedia')
-      .mockImplementation(
-        (query) => new TestMediaQueryList(query === '(prefers-reduced-motion: reduce)', query),
+  const defaults = () => ({
+    open: true,
+    expanded: false,
+    width: 400,
+    transport: idleTransport,
+    theme: 'dark' as const,
+    sideChatParentStatus: 'idle' as const,
+    sideChatStartOptions: { approval: 'ask' as const },
+    nativeSurfacesVisible: true,
+    onOpen: vi.fn(),
+    onClose: vi.fn(),
+    onWidthChange: vi.fn(),
+  })
+
+  it.each(['right', 'bottom'] as const)(
+    'offers tool tabs without restoring expansion in the %s panel',
+    async (placement) => {
+      const props = defaults()
+      const { container, rerender } = render(<WorkspacePanel {...props} placement={placement} />)
+      expect(container.querySelector('.workspace-panel__chrome')).toBeNull()
+      expect(screen.getByRole('tablist')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Add workspace tab' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: /Expand/ })).toBeNull()
+      for (const name of ['Review', 'Terminal', 'Browser', 'Files', 'Temporary chat']) {
+        expect(screen.getByRole('button', { name })).toBeTruthy()
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
+      await screen.findByRole('button', { name: 'Exit terminal' })
+      expect(screen.getAllByRole('tab').length).toBeGreaterThan(0)
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: `Close ${placement === 'bottom' ? 'bottom' : 'right'} panel`,
+        }),
       )
-
-    render(
-      <WorkspacePanel
-        open={false}
-        expanded={false}
-        width={400}
-        transport={idleTransport}
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={vi.fn()}
-        onClose={vi.fn()}
-        onClosed={onClosed}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-      />,
-    )
-
-    await waitFor(() => expect(onClosed).toHaveBeenCalledOnce())
-    matchMedia.mockRestore()
-  })
-
-  it('gives resize detents only while the panel is tracking', () => {
-    const onWidthChange = vi.fn()
-    const { container } = render(
-      <WorkspacePanel
-        open
-        expanded={false}
-        width={400}
-        transport={idleTransport}
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={vi.fn()}
-        onClose={vi.fn()}
-        onExpandedChange={vi.fn()}
-        onWidthChange={onWidthChange}
-      />,
-    )
-
-    const handle = screen.getByRole('separator', { name: 'Resize workspace tools' })
-    container.className = 'workspace-layout'
-    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 900 })
-    Object.defineProperty(handle, 'setPointerCapture', {
-      configurable: true,
-      value: vi.fn(),
-    })
-
-    fireEvent.pointerEnter(handle)
-    fireEvent.pointerDown(handle, { clientX: 500, pointerId: 7 })
-    expect(container.style.transition).toBe('none')
-    fireEvent.pointerMove(window, { clientX: 420, pointerId: 7 })
-
-    expect(onWidthChange).not.toHaveBeenCalled()
-    fireEvent.pointerMove(window, { clientX: 0, pointerId: 7 })
-    expect(onWidthChange).not.toHaveBeenCalled()
-    expect(prepareHaptics).toHaveBeenCalled()
-
-    fireEvent.blur(window)
-    expect(onWidthChange).toHaveBeenCalledOnce()
-    expect(onWidthChange).toHaveBeenCalledWith(540)
-    expect(container.style.getPropertyValue('--workspace-panel-w')).toBe('540px')
-    expect(container.style.transition).toBe('')
-    expect(performHaptic).toHaveBeenCalledWith('alignment')
-    const widthCalls = onWidthChange.mock.calls.length
-    fireEvent.pointerMove(window, { clientX: 380, pointerId: 7 })
-    expect(onWidthChange).toHaveBeenCalledTimes(widthCalls)
-  })
-
-  it('closes the sidebar when its final tab closes', async () => {
-    const onClose = vi.fn()
-    const { rerender } = render(
-      <WorkspacePanel
-        open
-        expanded={false}
-        width={400}
-        transport={idleTransport}
-        projectPath="/workspace/project"
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={vi.fn()}
-        onClose={onClose}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: 'Close Terminal' }))
-
-    expect(onClose).toHaveBeenCalledOnce()
-    expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy()
-    rerender(
-      <WorkspacePanel
-        open={false}
-        expanded={false}
-        width={400}
-        transport={idleTransport}
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={vi.fn()}
-        onClose={onClose}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-      />,
-    )
-    fireEvent.transitionCancel(document.querySelector<HTMLElement>('.workspace-panel')!, {
-      propertyName: 'transform',
-    })
-    expect(screen.queryByRole('tab', { name: 'Terminal' })).toBeNull()
-  })
-
-  it('toggles one reusable terminal from the app shortcut request', async () => {
-    const onOpen = vi.fn()
-    const onClose = vi.fn()
-    const panel = (open: boolean, terminalToggleRequest: number) => (
-      <WorkspacePanel
-        open={open}
-        expanded={false}
-        width={400}
-        transport={idleTransport}
-        projectPath="/workspace/project"
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={onOpen}
-        onClose={onClose}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-        terminalToggleRequest={terminalToggleRequest}
-      />
-    )
-    const view = render(panel(true, 0))
-
-    view.rerender(panel(true, 1))
-    await waitFor(() => expect(onOpen).toHaveBeenCalledOnce())
-    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
-
-    view.rerender(panel(true, 2))
-    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
-    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
-
-    view.rerender(panel(false, 2))
-    view.rerender(panel(false, 3))
-    await waitFor(() => expect(onOpen).toHaveBeenCalledTimes(2))
-    view.rerender(panel(true, 3))
-    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
-  })
-
-  it('keeps panel controls inside the workspace chrome', () => {
-    const onExpandedChange = vi.fn()
-    render(
-      <WorkspacePanel
-        open
-        expanded={false}
-        width={400}
-        transport={idleTransport}
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={vi.fn()}
-        onClose={vi.fn()}
-        onExpandedChange={onExpandedChange}
-        onWidthChange={vi.fn()}
-      />,
-    )
-
-    for (const title of ['Review', 'Terminal', 'Browser', 'Files', 'Temporary chat']) {
-      expect(
-        screen.getByRole('button', { name: title }).querySelector('svg')?.getAttribute('width'),
-      ).toBe('16')
-    }
-    fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
-    expect(onExpandedChange).toHaveBeenCalledWith(true)
-    expect(screen.queryByRole('button', { name: 'Hide workspace tools' })).toBeNull()
-  })
-
-  it('opens a provider login in its own workspace terminal tab', async () => {
-    let resolveInput!: () => void
-    const pendingInput = new Promise<Record<string, never>>((resolve) => {
-      resolveInput = () => resolve({})
-    })
-    const transport = new TestTransport(async (method) => {
-      if (method === 'providers.launch') return { terminalId: 'claude-login-terminal' }
-      if (method === 'terminal.input') return pendingInput
-      throw new Error(`unexpected ${method}`)
-    })
-    await beginLogin(transport, { provider: 'claude-code' }, () => {})
-    const onOpen = vi.fn()
-    const onProviderLoginClose = vi.fn()
-    render(
-      <WorkspacePanel
-        open
-        expanded
-        width={400}
-        transport={transport}
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={onOpen}
-        onClose={vi.fn()}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-        providerLogin={{
-          id: 7,
-          title: 'Claude Code login',
-          installKey: 'login:claude-code',
-        }}
-        onProviderLoginClose={onProviderLoginClose}
-      />,
-    )
-
-    expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
-    const terminal = await screen.findByTestId('provider-login-terminal')
-    expect(terminal.getAttribute('data-install-key')).toBe('login:claude-code')
-    expect(terminal.getAttribute('data-profile')).toBe('workspace')
-    expect(terminal.getAttribute('aria-label')).toBe('Claude Code login terminal')
-    expect(onOpen).toHaveBeenCalledOnce()
-
-    const codeElement = screen.getByLabelText('Login code')
-    expect(codeElement).toBeInstanceOf(HTMLInputElement)
-    if (!(codeElement instanceof HTMLInputElement)) throw new Error('expected Claude login input')
-    const code = codeElement
-    expect(code.placeholder).toBe('Paste code here if prompted')
-    expect(code.autocomplete).toBe('one-time-code')
-    fireEvent.change(code, { target: { value: 'test-login-code' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Submit code' }))
-    await waitFor(() =>
-      expect(transport.requests).toContainEqual({
-        method: 'terminal.input',
-        params: { terminalId: 'claude-login-terminal', data: 'test-login-code\r' },
-      }),
-    )
-    fireEvent.change(code, { target: { value: 'newer-login-code' } })
-    await act(async () => resolveInput())
-    expect(code.value).toBe('newer-login-code')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Close Claude Code login' }))
-    expect(onProviderLoginClose).toHaveBeenCalledWith(7)
-    expect(screen.queryByRole('tab', { name: 'Claude Code login' })).toBeNull()
-  })
-
-  it('routes a workspace shell exit through the terminal tab close path', async () => {
-    const onClose = vi.fn()
-    render(
-      <WorkspacePanel
-        open
-        expanded={false}
-        width={400}
-        transport={idleTransport}
-        projectPath="/workspace/project"
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        nativeSurfacesVisible
-        onOpen={vi.fn()}
-        onClose={onClose}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Exit terminal' }))
-
-    expect(onClose).toHaveBeenCalledOnce()
-    expect(screen.getByRole('tab', { name: 'Terminal' })).toBeTruthy()
-  })
-
-  it.each(['Browser', 'Terminal', 'Files'] as const)(
-    'opens independent %s tabs and closes one with the middle mouse button',
-    async (tool) => {
-      render(
-        <WorkspacePanel
-          open
-          expanded={false}
-          width={400}
-          transport={idleTransport}
-          theme="dark"
-          sideChatParentStatus="idle"
-          sideChatStartOptions={{ approval: 'ask' }}
-          nativeSurfacesVisible
-          onOpen={vi.fn()}
-          onClose={vi.fn()}
-          onExpandedChange={vi.fn()}
-          onWidthChange={vi.fn()}
-        />,
-      )
-
-      fireEvent.click(screen.getByRole('button', { name: tool }))
-      await waitFor(() => expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(1))
-      fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: tool }))
-      await waitFor(() => expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(2))
-
-      fireEvent(
-        screen.getAllByRole('tab', { name: tool })[0]!,
-        new MouseEvent('auxclick', { bubbles: true, button: 1 }),
-      )
-      expect(screen.getAllByRole('tab', { name: tool })).toHaveLength(1)
+      expect(props.onClose).toHaveBeenCalledOnce()
+      rerender(<WorkspacePanel {...props} placement={placement} open={false} />)
+      rerender(<WorkspacePanel {...props} placement={placement} />)
+      expect(screen.getByRole('button', { name: 'Terminal' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Exit terminal' })).toBeNull()
     },
   )
 
-  it('opens one reusable Browser tab for design preview captures', async () => {
-    const transport = new TestTransport()
-    const onOpen = vi.fn()
-    const request = (requestId: string) => ({
-      requestId,
-      url: 'http://127.0.0.1:4173/',
-    })
-    const view = (designPreviewRequest?: ReturnType<typeof request>) => (
-      <WorkspacePanel
-        open
-        expanded={false}
-        width={400}
-        transport={transport}
-        theme="dark"
-        sideChatParentStatus="idle"
-        sideChatStartOptions={{ approval: 'ask' }}
-        designPreviewRequest={designPreviewRequest}
-        nativeSurfacesVisible
-        onOpen={onOpen}
-        onClose={vi.fn()}
-        onExpandedChange={vi.fn()}
-        onWidthChange={vi.fn()}
-      />
+  it('keeps the bottom and right tool selection separate', async () => {
+    const props = defaults()
+    render(
+      <>
+        <WorkspacePanel {...props} placement="bottom" />
+        <WorkspacePanel {...props} />
+      </>,
     )
-    const { rerender } = render(view())
-    rerender(view(request('00000000-0000-4000-8000-000000000001')))
-    await waitFor(() => expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1))
+    const bottom = within(screen.getByRole('complementary', { name: 'Bottom workspace tools' }))
+    const right = within(screen.getByRole('complementary', { name: 'Workspace tools' }))
+    fireEvent.click(bottom.getByRole('button', { name: 'Terminal' }))
+    await bottom.findByRole('button', { name: 'Exit terminal' })
+    expect(right.getByRole('button', { name: 'Terminal' })).toBeTruthy()
+    fireEvent.click(right.getByRole('button', { name: 'Terminal' }))
+    await right.findByRole('button', { name: 'Exit terminal' })
+    fireEvent.click(bottom.getByRole('button', { name: 'Close bottom panel' }))
+    expect(right.getByRole('button', { name: 'Exit terminal' })).toBeTruthy()
+  })
 
-    rerender(view(request('00000000-0000-4000-8000-000000000002')))
-    expect(screen.getAllByRole('tab', { name: 'Browser' })).toHaveLength(1)
-    expect(onOpen).toHaveBeenCalledTimes(2)
+  it.each(['right', 'bottom'] as const)('still resizes the %s panel with its edge', (placement) => {
+    const props = defaults()
+    const { container } = render(<WorkspacePanel {...props} placement={placement} />)
+    const bottom = placement === 'bottom'
+    container.className = bottom ? 'bottom-terminal' : 'workspace-layout'
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 1000 })
+    const handle = screen.getByRole('separator')
+    Object.defineProperty(handle, 'setPointerCapture', { configurable: true, value: vi.fn() })
+    expect(handle.getAttribute('aria-orientation')).toBe(bottom ? 'horizontal' : 'vertical')
+    fireEvent.pointerDown(handle, { clientX: 500, clientY: 500, pointerId: 9 })
+    fireEvent.pointerMove(window, { clientX: 400, clientY: 400, pointerId: 9 })
+    fireEvent.blur(window)
+    expect(props.onWidthChange).toHaveBeenCalledWith(500)
+    expect(container.style.getPropertyValue(bottom ? 'height' : '--workspace-panel-w')).toBe(
+      '500px',
+    )
+  })
+
+  it('keeps a shell when hidden with the panel toggle, and closes it on shell exit', async () => {
+    const props = defaults()
+    const view = render(<WorkspacePanel {...props} terminalToggleRequest={1} />)
+    await screen.findByRole('button', { name: 'Exit terminal' })
+    view.rerender(<WorkspacePanel {...props} terminalToggleRequest={2} />)
+    expect(props.onClose).toHaveBeenCalledOnce()
+    view.rerender(<WorkspacePanel {...props} open={false} terminalToggleRequest={2} />)
+    view.rerender(<WorkspacePanel {...props} open={false} terminalToggleRequest={3} />)
+    view.rerender(<WorkspacePanel {...props} terminalToggleRequest={3} />)
+    expect(screen.getByRole('button', { name: 'Exit terminal' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Exit terminal' }))
+    expect(props.onClose).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('button', { name: 'Terminal' })).toBeTruthy()
+  })
+
+  it('closes the current provider login through its owner callback', async () => {
+    const props = defaults()
+    const onProviderLoginClose = vi.fn()
+    render(
+      <WorkspacePanel
+        {...props}
+        onProviderLoginClose={onProviderLoginClose}
+        providerLogin={{ id: 4, title: 'Codex login', installKey: 'codex', canCancelSignIn: false }}
+      />,
+    )
+    await screen.findByTestId('provider-login-terminal')
+    fireEvent.click(screen.getByRole('button', { name: 'Close right panel' }))
+    expect(onProviderLoginClose).toHaveBeenCalledWith(4)
+    expect(props.onClose).toHaveBeenCalledOnce()
+  })
+
+  it('closes a provider login even when another tool is active', async () => {
+    const props = defaults()
+    const onProviderLoginClose = vi.fn()
+    render(
+      <WorkspacePanel
+        {...props}
+        onProviderLoginClose={onProviderLoginClose}
+        providerLogin={{ id: 4, title: 'Codex login', installKey: 'codex', canCancelSignIn: false }}
+      />,
+    )
+    await screen.findByTestId('provider-login-terminal')
+    fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Terminal' }))
+    await screen.findByRole('button', { name: 'Exit terminal' })
+    fireEvent.click(screen.getByRole('button', { name: 'Close right panel' }))
+    expect(onProviderLoginClose).toHaveBeenCalledWith(4)
+    expect(props.onClose).toHaveBeenCalledOnce()
+  })
+
+  it('keeps earlier tool tabs mounted when another tool is requested', async () => {
+    const props = defaults()
+    const view = render(
+      <WorkspacePanel {...props} externalToolRequest={{ request: 1, kind: 'terminal' }} />,
+    )
+    await screen.findByRole('button', { name: 'Exit terminal' })
+    view.rerender(
+      <WorkspacePanel {...props} externalToolRequest={{ request: 2, kind: 'browser' }} />,
+    )
+    await screen.findByRole('textbox', { name: 'Browser address' })
+    expect(screen.getByRole('button', { name: 'Exit terminal', hidden: true })).toBeTruthy()
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
   })
 })

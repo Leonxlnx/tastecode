@@ -13,7 +13,7 @@ describe('running command overflow', () => {
   it('truncates a long command before it widens the transcript', () => {
     expect(rule('.activity--live .activity__summary')).toContain('width: 100%')
     expect(rule('.activity--live .activity__summary')).toContain('min-width: 0')
-    expect(rule('.activity--live .activity__label')).toContain('flex: 1 1 0')
+    expect(rule('.activity--live .activity__label')).toContain('flex: 0 1 auto')
     expect(rule('.activity__label')).toContain('text-overflow: ellipsis')
 
     expect(rule('.activity__working-label-swap')).toContain('flex: 1 1 0')

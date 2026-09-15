@@ -138,13 +138,7 @@ export const KEYBINDING_DEFINITIONS = [
     description: 'Show or hide files, review, browser, and side chat.',
     defaultShortcut: { key: 'b', primary: true, shift: true },
   },
-  {
-    id: 'expandWorkspace',
-    group: 'Workspace',
-    label: 'Expand workspace tools',
-    description: 'Open workspace tools or switch their full-width view.',
-    defaultShortcut: null,
-  },
+
   {
     id: 'toggleFastMode',
     group: 'Workspace',

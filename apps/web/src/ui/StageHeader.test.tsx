@@ -87,7 +87,7 @@ describe('StageHeader', () => {
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Toggle sidebar' }))
     expect(stage.menuActions.toggleSidebar).toHaveBeenCalledOnce()
-    expect(screen.queryByRole('button', { name: 'Open terminal' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show bottom panel' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Show workspace tools' })).toBeNull()
   })
 
@@ -109,13 +109,13 @@ describe('PanelToggles', () => {
   it('keeps both controls mounted while their open state changes', () => {
     const panels = panelProps()
     const { rerender } = render(<PanelToggles {...panels} />)
-    const terminal = screen.getByRole('button', { name: 'Open terminal' })
+    const terminal = screen.getByRole('button', { name: 'Show bottom panel' })
     const workspace = screen.getByRole('button', { name: 'Show workspace tools' })
 
     expect(panels.onPrepareTerminal).not.toHaveBeenCalled()
     fireEvent.pointerEnter(terminal)
     expect(panels.onPrepareTerminal).toHaveBeenCalledOnce()
-    expect(terminal.querySelector('.tabler-icon-terminal-2')).not.toBeNull()
+    expect(terminal.querySelector('.tabler-icon-layout-bottombar')).not.toBeNull()
     expect(workspace.querySelector('.tabler-icon-layout-sidebar-right-expand')).not.toBeNull()
     const workspaceLayers = workspace.querySelectorAll('.icon-morph__layer')
     expect(workspaceLayers).toHaveLength(2)
@@ -127,9 +127,9 @@ describe('PanelToggles', () => {
 
     rerender(<PanelToggles {...panels} terminalOpen workspacePanelOpen />)
 
-    expect(screen.getByRole('button', { name: 'Hide terminal' })).toBe(terminal)
+    expect(screen.getByRole('button', { name: 'Hide bottom panel' })).toBe(terminal)
     expect(screen.getByRole('button', { name: 'Hide workspace tools' })).toBe(workspace)
-    expect(terminal.querySelector('.tabler-icon-terminal-2')).not.toBeNull()
+    expect(terminal.querySelector('.tabler-icon-layout-bottombar')).not.toBeNull()
     expect(workspace.querySelector('.tabler-icon-layout-sidebar-right-collapse')).not.toBeNull()
     expect(workspaceLayers[0]?.hasAttribute('data-active')).toBe(false)
     expect(workspaceLayers[1]?.hasAttribute('data-active')).toBe(true)
@@ -139,7 +139,7 @@ describe('PanelToggles', () => {
   it('only advertises the terminal shortcut on its selected surface', () => {
     const panels = panelProps()
     const { rerender } = render(<PanelToggles {...panels} />)
-    const terminal = screen.getByRole('button', { name: 'Open terminal' })
+    const terminal = screen.getByRole('button', { name: 'Show bottom panel' })
 
     expect(terminal.getAttribute('aria-keyshortcuts')).toBe('Meta+J Control+J')
     rerender(<PanelToggles {...panels} terminalShortcutActive={false} />)
@@ -149,7 +149,7 @@ describe('PanelToggles', () => {
   it('keeps workspace controls available without a selected project', () => {
     render(<PanelToggles {...panelProps()} projectPath={undefined} />)
 
-    expect(screen.queryByRole('button', { name: 'Open terminal' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show bottom panel' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Show workspace tools' })).toBeTruthy()
   })
 })

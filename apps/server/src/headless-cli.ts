@@ -1,6 +1,5 @@
 import process from 'node:process'
 import { DEFAULT_PORT } from './server-config.js'
-import { installShutdownHandlers } from './shutdown.js'
 
 type CliOptions = {
   command: 'serve' | 'help'
@@ -11,6 +10,11 @@ export async function runHeadlessCli(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  if (args[0] === 'history') {
+    const { runHistoryCli } = await import('./history-cli.js')
+    await runHistoryCli(args.slice(1), env)
+    return
+  }
   const options = parseCliOptions(args, env)
   if (options.command === 'help') {
     process.stdout.write(helpText())
@@ -66,14 +70,27 @@ function parsePort(value: string, source: string): number {
   return port
 }
 
+function installShutdownHandlers(server: { close(): Promise<void> }): void {
+  let closing = false
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(signal, () => {
+      if (closing) return
+      closing = true
+      void server.close().finally(() => process.exit(0))
+    })
+  }
+}
+
 function helpText(): string {
   return `TasteCode headless CLI
 
 Usage:
   harness serve [--port <port>]
+  harness history --help
 
 Commands:
   serve  Run the core server without Electron or the web renderer.
+  history  Measure, export, or explicitly clean saved task history.
 
 Environment:
   HARNESS_PORT          Local control port (default: ${DEFAULT_PORT})

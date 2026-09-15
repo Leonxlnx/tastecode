@@ -51,9 +51,7 @@ export function ProfileSettings(props: {
         <h2>{identity.name}</h2>
         <div className="profile-identity__meta">
           <span>{identity.handle}</span>
-          {props.account?.plan ? (
-            <span className="profile-identity__plan">{props.account.plan}</span>
-          ) : null}
+          {props.account?.plan ? <span>{props.account.plan}</span> : null}
         </div>
         <div className="profile-identity__editor">
           <label className="profile-identity__field">

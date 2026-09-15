@@ -143,7 +143,7 @@ class FakeAntigravityAdapter extends FakeTurnAdapter {
   }
 }
 
-class FakeClaudeCodeAdapter extends FakeTurnAdapter {
+class FakeClaudeCodeAdapter extends FakeResumableAdapter {
   constructor(options?: Record<string, unknown>) {
     super('claude-code', options)
   }
@@ -209,6 +209,27 @@ afterEach(() => {
 })
 
 describe('resumable provider setup', () => {
+  it.each([false, true])(
+    'passes Claude MCP options and cleans up a failed open (resume: %s)',
+    async (resume) => {
+      const runtime = providerRuntime('claude-code', () => {})
+      const options: StartOptions = {
+        model: 'opus',
+        mcpServers: [{ id: 'hidden', enabled: false }],
+        mcpCredentials: { 'credential-ref': 'fixture-value' },
+      }
+      const open = () =>
+        resume
+          ? runtime.resume!('claude-existing', '/repo', options)
+          : runtime.start('/repo', options)
+      const result = await open()
+      expect(turnAdapters.at(-1)!.startOptions).toMatchObject(options)
+      await result.session.dispose()
+      openingFailure = 'session'
+      await expect(open()).rejects.toThrow('session failed')
+      expect(turnAdapters.at(-1)!.disposed).toBe(true)
+    },
+  )
   it.each(['cursor', 'opencode', 'codex', 'acp'] as const)(
     'preserves %s source, session identity, and option forwarding on start and resume',
     async (provider) => {

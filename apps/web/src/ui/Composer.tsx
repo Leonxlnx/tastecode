@@ -61,6 +61,7 @@ import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { preloadThread } from './LazyThread.js'
 import { ModelSearchField } from './ModelSearchField.js'
+import { ComposerErrors, useComposerError, type ComposerError } from './ComposerErrors.js'
 
 const ComposerResourcePicker = lazy(() =>
   import('./ComposerResourcePicker.js').then((module) => ({
@@ -229,8 +230,9 @@ const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 const COMPOSER_DOCK_MOTION_MS = 320
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 const COMPOSER_QUEUE_ANIMATION_ID = 'harness-composer-queue'
-const COMPOSER_QUEUE_MOTION_MS = 180
-const COMPOSER_QUEUE_EASING = 'cubic-bezier(0.77, 0, 0.175, 1)'
+// Match --dur-slow and --ease-rail so the panel and row reveal settle together.
+const COMPOSER_QUEUE_MOTION_MS = 260
+const COMPOSER_QUEUE_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
 const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
 const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
 const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
@@ -362,6 +364,7 @@ function QueuedMediaPreviewCard({ reference }: { reference: string }) {
         <Suspense fallback={null}>
           <MediaViewer
             src={preview.previewUrl}
+            thumbnailSrc={inlineSource}
             name={preview.name}
             mediaType={preview.mediaType}
             onReveal={() => void revealPath(reference)}
@@ -463,11 +466,16 @@ function ComposerComponent(props: {
   serviceTier: string | undefined
   usage?: Usage | undefined
   approval: ApprovalMode
+  approvalLoading?: boolean | undefined
   autoReviewSupported: boolean
   attachmentsSupported: boolean
   voiceAvailable: boolean
   disabled: boolean
   sendAvailability: SendAvailability
+  providerSignInRequired?: boolean
+  errors?: readonly ComposerError[] | undefined
+  errorsVisible?: boolean
+  providerError?: ComposerError | undefined
   running: boolean
   newSession: boolean
   isolate: boolean
@@ -515,15 +523,16 @@ function ComposerComponent(props: {
   // boundary, so ordinary typing does not rerender the complete composer.
   const [hasDraftText, setHasDraftText] = useState(false)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
-  const [attachmentError, setAttachmentError] = useState<string>()
+  const [attachmentError, setAttachmentError] = useComposerError()
   const [viewingMedia, setViewingMedia] = useState<{
     src: string
+    thumbnailSrc?: string | undefined
     name: string
     mediaType: 'image' | 'video'
     localPath?: string
   }>()
   const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
-  const [voiceError, setVoiceError] = useState<string>()
+  const [voiceError, setVoiceError] = useComposerError()
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
   const [queueDropTarget, setQueueDropTarget] = useState<{
@@ -557,6 +566,7 @@ function ComposerComponent(props: {
   const pendingQueueLayout = useRef<QueueLayoutSnapshot | null>(null)
   const previousNewSession = useRef(props.newSession)
   const attachmentsChangeReady = useRef(false)
+  const attachmentsEdited = useRef(false)
   const resourcesChangeReady = useRef(false)
   const onReady = useRef(props.onReady)
   onReady.current = props.onReady
@@ -897,7 +907,6 @@ function ComposerComponent(props: {
   // "Loading models…" forever is the UI lying about what it is doing.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
-  const ApprovalIcon = approval.icon
 
   const grow = () => {
     const el = area.current
@@ -957,6 +966,7 @@ function ComposerComponent(props: {
     if (props.draftRequest.attachments !== undefined) {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
+      attachmentsEdited.current = false
       const paths = props.draftRequest.attachments
       setAttachments(
         paths.map((path) => {
@@ -1156,7 +1166,11 @@ function ComposerComponent(props: {
     }
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     const hydrated = draftRequestRef.current?.attachments
-    if (hydrated !== undefined && sameDraftPaths(paths, hydrated)) return
+    // Only suppress the initial restore. Returning to that same list after an
+    // edit (including clearing on send) must also update the saved draft.
+    if (!attachmentsEdited.current && hydrated !== undefined && sameDraftPaths(paths, hydrated))
+      return
+    attachmentsEdited.current = true
     props.onAttachmentsChange?.(paths)
   }, [attachments, props.onAttachmentsChange])
 
@@ -1174,7 +1188,7 @@ function ComposerComponent(props: {
     const trimmed = composerPromptWithResources(content, selectedResources)
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (
-      trimmed === '' ||
+      (trimmed === '' && paths.length === 0) ||
       paths.length !== attachments.length ||
       props.disabled ||
       sendAvailabilityRef.current !== 'ready' ||
@@ -1247,13 +1261,51 @@ function ComposerComponent(props: {
     props.running && !hasDraftText && attachments.length === 0 && selectedResources.length === 0
   const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
-    (!hasDraftText && selectedResources.length === 0) ||
+    (!hasDraftText && selectedResources.length === 0 && attachments.length === 0) ||
     attachments.some((attachment) => !attachment.path) ||
     props.disabled ||
     props.sendAvailability !== 'ready' ||
     (!props.attachmentsSupported && attachments.length > 0)
-  const visibleAttachmentError =
-    !props.attachmentsSupported && attachments.length > 0 ? ATTACHMENTS_BLOCK_SEND : attachmentError
+  const unsupportedAttachmentIssue = useMemo<ComposerError | undefined>(
+    () =>
+      !props.attachmentsSupported && attachments.length > 0
+        ? { id: crypto.randomUUID(), message: ATTACHMENTS_BLOCK_SEND }
+        : undefined,
+    [props.attachmentsSupported, attachments.length],
+  )
+
+  const setupError = useMemo<
+    (Omit<ComposerError, 'action'> & { action: { label: string } }) | undefined
+  >(() => {
+    if (props.sendAvailability === 'ready' || props.sendAvailability === 'loading') return undefined
+    return {
+      id: crypto.randomUUID(),
+      role: 'status',
+      message:
+        props.sendAvailability === 'unavailable'
+          ? 'Provider unavailable'
+          : props.providerSignInRequired
+            ? 'Sign in to use this provider.'
+            : 'Set up this provider to start chatting.',
+      action: {
+        label:
+          props.sendAvailability === 'unavailable'
+            ? 'Check setup'
+            : props.providerSignInRequired
+              ? 'Sign in'
+              : 'Set up provider',
+      },
+    }
+  }, [props.provider, props.sendAvailability, props.providerSignInRequired])
+  const composerErrors = [
+    ...(props.errors ?? []),
+    props.providerError ??
+      (setupError
+        ? { ...setupError, action: { ...setupError.action, run: props.onSetupProvider } }
+        : undefined),
+    unsupportedAttachmentIssue ?? attachmentError,
+    voiceError,
+  ].filter((error): error is ComposerError => error !== undefined)
 
   const selectResource = (resource: ComposerResource) => {
     const trigger = resourceTrigger
@@ -1292,6 +1344,11 @@ function ComposerComponent(props: {
             addDroppedFiles(Array.from(e.dataTransfer.files))
           }}
         >
+          <ComposerErrors
+            errors={composerErrors}
+            visible={props.errorsVisible ?? true}
+            onDismiss={() => area.current?.focus()}
+          />
           {props.newSession ? (
             <div className="composer__shelf">
               <Menu
@@ -1325,24 +1382,45 @@ function ComposerComponent(props: {
                 )}
               </Menu>
 
-              <button
-                type="button"
-                className="shelf-control shelf-control--mode"
-                aria-label="Workspace mode"
-                aria-pressed={props.isolate}
-                aria-keyshortcuts={shortcutAria(keybindings.toggleIsolatedSession)}
-                onClick={() => props.onIsolateChange(!props.isolate)}
-                title="Switch between the project checkout and an isolated worktree"
+              <Menu
+                label="Workspace mode"
+                drop="down"
+                triggerClassName="shelf-control shelf-control--mode"
+                panelClassName="menu--compact"
+                shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
+                trigger={() => (
+                  <span className="shelf-control__content">
+                    <IconMorph active={props.isolate ? 1 : 0}>
+                      <Laptop size={15} aria-hidden />
+                      <GitBranch size={15} aria-hidden />
+                    </IconMorph>
+                    <span>{props.isolate ? 'Isolated' : 'Local'}</span>
+                  </span>
+                )}
               >
-                <span className="shelf-control__content">
-                  {props.isolate ? (
-                    <GitBranch size={15} aria-hidden />
-                  ) : (
-                    <Laptop size={15} aria-hidden />
-                  )}
-                  <span>{props.isolate ? 'Isolated' : 'Local'}</span>
-                </span>
-              </button>
+                {(close) => (
+                  <>
+                    <MenuItem
+                      title="Local"
+                      icon={<Laptop size={14} aria-hidden />}
+                      checked={!props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(false)
+                        close()
+                      }}
+                    />
+                    <MenuItem
+                      title="Isolated"
+                      icon={<GitBranch size={14} aria-hidden />}
+                      checked={props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(true)
+                        close()
+                      }}
+                    />
+                  </>
+                )}
+              </Menu>
 
               {props.branches.length > 0 ? (
                 <Menu
@@ -1525,6 +1603,7 @@ function ComposerComponent(props: {
                           if (!attachment.previewUrl || !attachment.mediaType) return
                           setViewingMedia({
                             src: attachment.previewUrl,
+                            thumbnailSrc: attachmentThumbnailUrl(attachment),
                             name: attachment.name,
                             mediaType: attachment.mediaType,
                             ...(attachment.previewUrl.startsWith('tastecode-attachment:') &&
@@ -1620,11 +1699,6 @@ function ComposerComponent(props: {
                     </span>
                   )
                 })}
-                {visibleAttachmentError ? (
-                  <span className="chip chip--error" role="alert">
-                    {visibleAttachmentError}
-                  </span>
-                ) : null}
               </div>
 
               <div className="composer__field">
@@ -1724,19 +1798,6 @@ function ComposerComponent(props: {
                 />
               </div>
 
-              {props.sendAvailability !== 'ready' && props.sendAvailability !== 'loading' ? (
-                <div className="composer__provider-state">
-                  <span role="status">
-                    {props.sendAvailability === 'setup-required'
-                      ? 'Provider setup required'
-                      : 'Provider unavailable'}
-                  </span>
-                  <button className="ghost" type="button" onClick={props.onSetupProvider}>
-                    Set up a provider
-                  </button>
-                </div>
-              ) : null}
-
               <div className="tools">
                 {props.attachmentsSupported ? (
                   <button
@@ -1752,63 +1813,79 @@ function ComposerComponent(props: {
                   </button>
                 ) : null}
 
-                <Menu
-                  label="Permissions"
-                  triggerClassName="composer__permission"
-                  panelClassName="menu--compact menu--permissions"
-                  trigger={() => (
-                    <span
-                      className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
-                    >
-                      <ApprovalIcon size={13} aria-hidden />
-                      <span>{approval.short}</span>
-                    </span>
-                  )}
+                <div
+                  className="composer__dictation-options"
+                  data-hidden={voiceState !== 'idle' ? '' : undefined}
+                  inert={voiceState !== 'idle'}
+                  aria-hidden={voiceState !== 'idle'}
                 >
-                  {(close) => (
-                    <>
-                      {APPROVAL_MODES.filter(
-                        (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
-                      ).map((mode) => {
-                        const ModeIcon = mode.icon
-                        return (
-                          <MenuItem
-                            key={mode.id}
-                            title={mode.title}
-                            detail={mode.detail}
-                            icon={<ModeIcon size={14} aria-hidden />}
-                            className={`composer__permission-option composer__permission-option--${mode.id}`}
-                            active={mode.id === props.approval}
-                            onClick={() => {
-                              props.onApprovalChange(mode.id)
-                              close()
-                            }}
-                          />
-                        )
-                      })}
-                    </>
-                  )}
-                </Menu>
+                  <div className="composer__dictation-options-clip">
+                    <div className="composer__dictation-options-content">
+                      <Menu
+                        label="Permissions"
+                        disabled={Boolean(props.approvalLoading)}
+                        triggerClassName="composer__permission"
+                        panelClassName="menu--compact menu--permissions"
+                        trigger={() => (
+                          <span
+                            className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
+                          >
+                            <IconMorph active={APPROVAL_MODES.indexOf(approval)}>
+                              {APPROVAL_MODES.map((mode) => (
+                                <mode.icon key={mode.id} size={13} aria-hidden />
+                              ))}
+                            </IconMorph>
+                            <span>{props.approvalLoading ? 'Loading…' : approval.short}</span>
+                          </span>
+                        )}
+                      >
+                        {(close) => (
+                          <>
+                            {APPROVAL_MODES.filter(
+                              (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
+                            ).map((mode) => {
+                              const ModeIcon = mode.icon
+                              return (
+                                <MenuItem
+                                  key={mode.id}
+                                  title={mode.title}
+                                  detail={mode.detail}
+                                  icon={<ModeIcon size={14} aria-hidden />}
+                                  className={`composer__permission-option composer__permission-option--${mode.id}`}
+                                  active={mode.id === props.approval}
+                                  onClick={() => {
+                                    props.onApprovalChange(mode.id)
+                                    close()
+                                  }}
+                                />
+                              )
+                            })}
+                          </>
+                        )}
+                      </Menu>
 
-                <DesignBeam
-                  className="composer__design-button-beam"
-                  strength={0.58}
-                  active={props.designMode}
-                >
-                  <button
-                    type="button"
-                    className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
-                    aria-pressed={props.designMode}
-                    aria-keyshortcuts={shortcutAria(keybindings.toggleDesignMode)}
-                    onFocus={preloadDesignBeamStyles}
-                    onPointerEnter={preloadDesignBeamStyles}
-                    onClick={() => props.onDesignModeChange(!props.designMode)}
-                    title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
-                  >
-                    <Palette size={13} aria-hidden />
-                    <span>Design</span>
-                  </button>
-                </DesignBeam>
+                      <DesignBeam
+                        className="composer__design-button-beam"
+                        strength={0.58}
+                        active={props.designMode}
+                      >
+                        <button
+                          type="button"
+                          className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
+                          aria-pressed={props.designMode}
+                          aria-keyshortcuts={shortcutAria(keybindings.toggleDesignMode)}
+                          onFocus={preloadDesignBeamStyles}
+                          onPointerEnter={preloadDesignBeamStyles}
+                          onClick={() => props.onDesignModeChange(!props.designMode)}
+                          title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+                        >
+                          <Palette size={13} aria-hidden />
+                          <span>Design</span>
+                        </button>
+                      </DesignBeam>
+                    </div>
+                  </div>
+                </div>
 
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
@@ -1906,15 +1983,11 @@ function ComposerComponent(props: {
           </DesignBeam>
         </div>
       </div>
-      {voiceError ? (
-        <div className="composer__voice-error" role="alert">
-          {voiceError}
-        </div>
-      ) : null}
       {viewingMedia ? (
         <Suspense fallback={null}>
           <MediaViewer
             src={viewingMedia.src}
+            thumbnailSrc={viewingMedia.thumbnailSrc}
             name={viewingMedia.name}
             mediaType={viewingMedia.mediaType}
             onReveal={

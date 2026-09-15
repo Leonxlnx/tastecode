@@ -1,11 +1,27 @@
-import { spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import {
+  spawn,
+  spawnSync,
+  ChildProcess,
+  type ChildProcessWithoutNullStreams,
+  type SpawnOptions,
+} from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 
 export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'kill'>
+type OwnedPipeSpawnOptions = Omit<SpawnOptions, 'cwd' | 'stdio'> & {
+  cwd?: string
+  stdio: ['pipe', 'pipe', 'pipe']
+  windowsHide: boolean
+  detached?: boolean
+}
+type ProcessSpawner = (
+  command: string,
+  args: string[],
+  options: OwnedPipeSpawnOptions,
+) => ChildProcessWithoutNullStreams
 
-export const OWNED_PROCESS_SHUTDOWN_MESSAGE = 'harness:shutdown'
-
-const ownedUnixProcessGroups = new WeakMap<object, number>()
+const groups = new WeakMap<KillableProcess, number>()
+const stopping = new WeakMap<KillableProcess, Promise<void>>()
 const ownedLinuxPtySessions = new WeakMap<object, Promise<LinuxPtySessionOwnership>>()
 const PTY_SESSION_SETUP_TIMEOUT_MS = 250
 const PTY_SESSION_SETUP_POLL_MS = 5
@@ -28,28 +44,50 @@ type LinuxProcessIdentity = {
 type LinuxPtySessionOwnership =
   { kind: 'owned'; owner: LinuxProcessIdentity } | { kind: 'failed'; error: unknown }
 
-/**
- * Spawn options for a process tree that TasteCode owns.
- *
- * A detached Unix child becomes the leader of a new process group. Keeping the
- * ownership marker separate prevents negative-PID signals from ever targeting
- * an arbitrary child that joined the app's own group.
- */
-export function ownedProcessSpawnOptions(
-  platform: NodeJS.Platform = process.platform,
-): Pick<SpawnOptions, 'detached'> {
-  return { detached: platform !== 'win32' }
-}
-
-export function ownProcessTree<T extends KillableProcess>(
-  child: T,
-  platform: NodeJS.Platform = process.platform,
-): T {
-  // Snapshot the group id now. The leader may exit after SIGTERM while
-  // descendants keep the group alive; re-reading child.pid at escalate time
-  // would lose the group (or follow a mutated pid onto an arbitrary group).
-  if (platform !== 'win32' && validProcessGroupId(child.pid))
-    ownedUnixProcessGroups.set(child, child.pid)
+/** Native executable spawn with a private process group on POSIX. */
+export function spawnOwned(
+  command: string,
+  args: readonly string[],
+  options: OwnedPipeSpawnOptions,
+  spawnProcess: ProcessSpawner,
+): ChildProcessWithoutNullStreams
+export function spawnOwned(
+  command: string,
+  args: readonly string[],
+  options?: SpawnOptions & { stdio?: 'pipe' | ['pipe', 'pipe', 'pipe'] },
+): ChildProcessWithoutNullStreams
+export function spawnOwned(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+): ChildProcess
+export function spawnOwned(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions = {},
+  spawnProcess?: ProcessSpawner,
+): ChildProcess {
+  const detached = process.platform !== 'win32'
+  let child: ChildProcess
+  if (spawnProcess) {
+    const { cwd, stdio: _stdio, ...rest } = options
+    child = spawnProcess(command, [...args], {
+      ...rest,
+      ...(typeof cwd === 'string' ? { cwd } : {}),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: options.windowsHide ?? true,
+      detached,
+    })
+  } else {
+    child = spawn(command, args, { ...options, detached })
+  }
+  if (process.platform !== 'win32' && child.pid) {
+    const group = child.pid
+    groups.set(child, group)
+    child.once('exit', () => {
+      void killTree(child).catch(() => undefined)
+    })
+  }
   return child
 }
 
@@ -68,33 +106,128 @@ export function ownPtySession<T extends PtyProcess>(pty: T): T {
   return pty
 }
 
-/**
- * Kill a spawned CLI and everything it started.
- *
- * On Windows a `spawnCli` child is a cmd.exe shim, so `child.kill()` removes
- * only the shim while the real agent binary keeps running — the reason
- * "stop" used to leave work happening invisibly in the background. taskkill
- * /T takes the whole tree down.
- */
-export function killTree(child: KillableProcess): void {
-  const groupId = ownedUnixProcessGroup(child)
-  if (groupId !== undefined) {
-    // The leader may have exited while its descendants still keep the group alive.
-    signalProcessGroup(groupId, 'SIGTERM')
+/** Terminate only a tree we own, then wait for bounded TERM/KILL escalation. */
+export function killTree(child: KillableProcess): Promise<void> {
+  const existing = stopping.get(child)
+  if (existing) return existing
+  const done = terminate(child).catch((error: unknown) => {
+    stopping.delete(child)
+    throw error
+  })
+  // Some lifecycle hooks initiate cleanup without an await; callers that do
+  // await still receive the failure and can retry with ownership preserved.
+  void done.catch(() => undefined)
+  stopping.set(child, done)
+  return done
+}
+
+async function terminate(child: KillableProcess): Promise<void> {
+  const group = groups.get(child)
+  if (group) {
+    // Keep the group after its leader exits: children can still be alive.
+    // Never derive a group from an arbitrary pid supplied by a caller.
+    if ((await signalGroup(group, 'SIGTERM')) && !(await waitForGroupExit(group, 500))) {
+      await signalGroup(group, 'SIGKILL')
+      if (!(await waitForGroupExit(group, 1_000)) && !onlyZombiesRemain(group)) {
+        throw new Error('Owned process group did not stop after forced termination')
+      }
+    }
+    groups.delete(child)
     return
   }
-  // Loose != so test doubles without the fields count as still running.
   if (child.exitCode != null || child.signalCode != null) return
+  // A failed spawn has no process to signal. Its native handle may still
+  // contain pid 0, which means the caller's own process group on POSIX.
+  if (!child.pid && child.kill === ChildProcess.prototype.kill) return
   if (process.platform === 'win32' && child.pid) {
     const result = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
       windowsHide: true,
+      timeout: 1_500,
     })
     if (!result.error && result.status === 0) return
   }
+  // Unregistered children and test doubles have no group ownership. Never
+  // signal a guessed group, which could include the app or another task.
   child.kill()
+  if (!child.pid) return
+  if (await waitUntil(() => child.exitCode != null || child.signalCode != null, 500)) return
+  child.kill('SIGKILL')
+  if (!(await waitUntil(() => child.exitCode != null || child.signalCode != null, 1_000))) {
+    throw new Error('Child process did not exit after forced termination')
+  }
 }
 
-export type TerminateTreeOptions = {
+async function signalGroup(pid: number, signal: NodeJS.Signals): Promise<boolean> {
+  try {
+    process.kill(-pid, signal)
+    return true
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false
+    // macOS can report EPERM while the last group member is disappearing.
+    // A new ESRCH probe, not EPERM itself, must confirm that it is gone.
+    if (error instanceof Error && 'code' in error && error.code === 'EPERM') {
+      if (await waitForGroupExit(pid, 100)) return false
+    }
+    throw error
+  }
+}
+
+function groupExists(pid: number): boolean {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+async function waitForGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  let denied: Error | undefined
+  while (true) {
+    try {
+      if (!groupExists(pid)) return true
+      denied = undefined
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'EPERM') throw error
+      denied = error
+    }
+    if (Date.now() >= deadline) {
+      if (denied) throw denied
+      return false
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+function onlyZombiesRemain(group: number): boolean {
+  // kill(pid, 0) includes zombies. They cannot run code or hold open files,
+  // but only their parent/init can reap them. Verify that distinction instead
+  // of declaring a surviving, possibly live group stopped after a timeout.
+  const result = spawnSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], {
+    encoding: 'utf8',
+    timeout: 500,
+    maxBuffer: 1024 * 1024,
+  })
+  if (result.error || result.status !== 0) return false
+  const members = result.stdout.split('\n').flatMap((line) => {
+    const row = /^\s*\d+\s+(\d+)\s+(\S+)/.exec(line)
+    return row && Number(row[1]) === group ? [row[2]!] : []
+  })
+  return members.length > 0 ? members.every((state) => state.startsWith('Z')) : !groupExists(group)
+}
+
+async function waitUntil(done: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (!done()) {
+    if (Date.now() >= deadline) return false
+    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+  }
+  return true
+}
+
+export type TerminatePtySessionOptions = {
   gracePeriodMs?: number
   killWaitMs?: number
   pollIntervalMs?: number
@@ -110,7 +243,7 @@ export type TerminateTreeOptions = {
  */
 export async function terminatePtySession(
   pty: PtyProcess,
-  options: TerminateTreeOptions = {},
+  options: TerminatePtySessionOptions = {},
 ): Promise<void> {
   const ownership = ownedLinuxPtySessions.get(pty)
   if (!ownership) {
@@ -151,7 +284,7 @@ export async function terminatePtySession(
 /** Clean descendants after node-pty has already reported the leader's exit. */
 export async function cleanupExitedPtySession(
   pty: PtyProcess,
-  options: TerminateTreeOptions = {},
+  options: TerminatePtySessionOptions = {},
 ): Promise<void> {
   const ownership = ownedLinuxPtySessions.get(pty)
   if (!ownership) return
@@ -162,7 +295,7 @@ export async function cleanupExitedPtySession(
 
 async function terminateExitedPtySession(
   owner: LinuxProcessIdentity,
-  options: TerminateTreeOptions,
+  options: TerminatePtySessionOptions,
 ): Promise<void> {
   const signalled = new Set<string>()
   const members = signalNewPtySessionMembers(owner, 'SIGTERM', signalled, linuxPtySessionMembers)
@@ -171,35 +304,10 @@ async function terminateExitedPtySession(
   }
 }
 
-/** Gracefully stop an owned tree, then bound shutdown with SIGKILL on Unix. */
-export async function terminateTree(
-  child: KillableProcess,
-  options: TerminateTreeOptions = {},
-): Promise<void> {
-  const groupId = ownedUnixProcessGroup(child)
-  if (groupId === undefined) {
-    killTree(child)
-    return
-  }
-
-  const gracePeriodMs = options.gracePeriodMs ?? 1_500
-  const killWaitMs = options.killWaitMs ?? 1_500
-  const pollIntervalMs = options.pollIntervalMs ?? 50
-  // groupId is the snapshot from ownProcessTree, so SIGKILL below escalates
-  // the same group even when the leader exits after SIGTERM. Signalling is
-  // idempotent: an already-reaped group reports ESRCH and reads as exited.
-  signalProcessGroup(groupId, 'SIGTERM')
-  if (await waitForProcessGroupExit(groupId, gracePeriodMs, pollIntervalMs)) return
-  signalProcessGroup(groupId, 'SIGKILL')
-  if (!(await waitForProcessGroupExit(groupId, killWaitMs, pollIntervalMs))) {
-    throw new Error(`process group ${groupId} survived SIGKILL`)
-  }
-}
-
 async function finishPtySessionTermination(
   owner: LinuxProcessIdentity,
   signalled: Set<string>,
-  options: TerminateTreeOptions,
+  options: TerminatePtySessionOptions,
   readMembers: (owner: LinuxProcessIdentity) => LinuxProcessIdentity[] = ownedPtySessionMembers,
 ): Promise<void> {
   const gracePeriodMs = options.gracePeriodMs ?? 1_500
@@ -448,52 +556,8 @@ function sameLinuxProcessInstance(
   return left.pid === right.pid && left.startTime === right.startTime && left.uid === right.uid
 }
 
-function ownedUnixProcessGroup(child: KillableProcess): number | undefined {
-  // Owner-safe lookup: only a group TasteCode snapshotted in ownProcessTree
-  // may receive a negative-PID signal. The stored id — not the live
-  // child.pid — survives leader exit so SIGKILL escalates the same group that
-  // received SIGTERM. Anything unowned falls through to the single-PID /
-  // taskkill paths below and never sends a group signal.
-  if (process.platform === 'win32') return undefined
-  const groupId = ownedUnixProcessGroups.get(child)
-  return groupId !== undefined && validProcessGroupId(groupId) ? groupId : undefined
-}
-
 function validProcessGroupId(pid: number | undefined): pid is number {
   return Number.isInteger(pid) && (pid ?? 0) > 0
-}
-
-async function waitForProcessGroupExit(
-  pid: number,
-  timeoutMs: number,
-  pollIntervalMs: number,
-): Promise<boolean> {
-  const startedAt = Date.now()
-  do {
-    if (!processGroupAlive(pid)) return true
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
-  } while (Date.now() - startedAt < timeoutMs)
-  return false
-}
-
-function processGroupAlive(pid: number): boolean {
-  try {
-    process.kill(-pid, 0)
-    return true
-  } catch (error) {
-    const code = errorCode(error)
-    if (code === 'ESRCH') return false
-    if (code === 'EPERM') return true
-    throw error
-  }
-}
-
-function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, signal)
-  } catch (error) {
-    if (errorCode(error) !== 'ESRCH') throw error
-  }
 }
 
 function errorCode(error: unknown): string | undefined {

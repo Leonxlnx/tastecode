@@ -1,11 +1,10 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { spawn } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
 import { spawnCli } from '@harness/proc/cli'
-import { ownProcessTree, ownedProcessSpawnOptions, terminateTree } from '@harness/proc'
+import { killTree, spawnOwned } from '@harness/proc'
 import { z } from 'zod'
 import { existingWorkspacePath } from './api-workspace-paths.js'
 import { startStaticDesignPreview } from './design-static-preview.js'
@@ -62,14 +61,11 @@ export async function startDesignPreview(
     child =
       process.platform === 'win32'
         ? spawnCli(plan.command, commandArgs, { cwd, replaceEnv: true, env: environment })
-        : ownProcessTree(
-            spawn(plan.command, commandArgs, {
-              cwd,
-              env: environment,
-              stdio: ['pipe', 'pipe', 'pipe'],
-              ...ownedProcessSpawnOptions(),
-            }),
-          )
+        : spawnOwned(plan.command, commandArgs, {
+            cwd,
+            env: environment,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
     const childFailure = watchPreviewChild(child)
     child.stdin.end()
     const append = (chunk: string) => {
@@ -244,7 +240,7 @@ async function pollForPreview(
 
 async function stopProcess(child: ChildProcessWithoutNullStreams, url: string): Promise<void> {
   if (child.pid === undefined) return
-  await terminateTree(child)
+  await killTree(child)
   if (!(await waitForPortRelease(url, 500))) {
     throw new Error(`preview port ${new URL(url).port} remained in use after stop`)
   }

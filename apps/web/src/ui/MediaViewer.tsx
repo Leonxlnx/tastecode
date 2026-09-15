@@ -31,6 +31,7 @@ const SEEK_STEP_SECONDS = 5
 
 export function MediaViewer(props: {
   src: string
+  thumbnailSrc?: string | undefined
   name: string
   mediaType: 'image' | 'video'
   onReveal?: (() => void) | undefined
@@ -45,6 +46,7 @@ export function MediaViewer(props: {
   const [videoError, setVideoError] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
   const [imageSize, setImageSize] = useState<{ width: number; height: number }>()
+  const [loadedImageSrc, setLoadedImageSrc] = useState<string>()
   const dialog = useRef<HTMLDivElement>(null)
   const viewport = useRef<HTMLDivElement>(null)
   const image = useRef<HTMLImageElement>(null)
@@ -280,13 +282,28 @@ export function MediaViewer(props: {
               if (zoom <= 1 && event.target === event.currentTarget) onClose.current()
             }}
           >
+            {props.thumbnailSrc && loadedImageSrc !== props.src ? (
+              <img
+                className="media-viewer__thumbnail"
+                src={props.thumbnailSrc}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+              />
+            ) : null}
             <img
               ref={image}
               src={props.src}
               alt={props.name}
               draggable={false}
               decoding="async"
-              onLoad={fitImageToViewport}
+              style={
+                props.thumbnailSrc && loadedImageSrc !== props.src ? { opacity: 0 } : undefined
+              }
+              onLoad={() => {
+                setLoadedImageSrc(props.src)
+                fitImageToViewport()
+              }}
             />
           </div>
         ) : (
@@ -300,6 +317,7 @@ export function MediaViewer(props: {
               <video
                 ref={video}
                 src={props.src}
+                poster={props.thumbnailSrc}
                 aria-label={props.name}
                 playsInline
                 preload="metadata"

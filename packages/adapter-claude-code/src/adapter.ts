@@ -17,13 +17,16 @@ import type {
   Capabilities,
   DomainEvent,
   Item,
+  McpServerConfig,
   Model,
   Thread,
   UserInputQuestion,
 } from '@harness/contracts'
-import { JsonRpcValueSchema, spawnCli } from '@harness/proc'
+import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
+import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
+import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
 import {
   claudeSdkSpawner,
@@ -160,6 +163,8 @@ export type ClaudeStartOptions = {
   effort?: string | undefined
   approval?: ApprovalMode | undefined
   ephemeral?: boolean | undefined
+  mcpServers?: McpServerConfig[] | undefined
+  mcpCredentials?: Record<string, string> | undefined
 }
 
 export type ClaudeTurnOptions = Pick<ClaudeStartOptions, 'model' | 'effort'>
@@ -290,15 +295,22 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #createQuery: ClaudeQueryFactory
   readonly #spawn: ClaudeSpawn
   readonly #environment: NodeJS.ProcessEnv
+  readonly #startupTimeoutMs: number
   #workspacePath = ''
   #threadId = ''
   #options: ClaudeStartOptions = {}
   #reportedModel: string | undefined
   #sessionId: string | undefined
   #query: ClaudeQueryRuntime | undefined
+  #queryAbort: AbortController | undefined
+  #bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
+  #redactor = new ClaudeMcpRedactor()
   #promptQueue: PromptQueue | undefined
   #queryGeneration = 0
-  #turnCounter = 0
+  #sessionGeneration = 0
+  #configuration: Promise<void> = Promise.resolve()
+  #starting: Promise<void> | undefined
+  readonly #processes = new Set<ReturnType<ClaudeSpawn>>()
   #activeTurnId: string | undefined
   #interruptRequested = false
   #disposed = false
@@ -314,12 +326,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       createQuery?: ClaudeQueryFactory
       spawn?: ClaudeSpawn
       environment?: NodeJS.ProcessEnv
+      startupTimeoutMs?: number
     } = {},
   ) {
     super()
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = options.environment ?? process.env
+    this.#startupTimeoutMs = options.startupTimeoutMs ?? 15_000
+    if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
+      throw new Error('Claude startup timeout must be a positive number')
   }
 
   get capabilities(): Capabilities {
@@ -329,7 +345,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   async startThread(workspacePath: string, options: ClaudeStartOptions = {}): Promise<Thread> {
     const sessionId = crypto.randomUUID()
     const threadId = `claude-${sessionId}`
-    this.#openSession(threadId, sessionId, workspacePath, options, false)
+    await this.#openSession(threadId, sessionId, workspacePath, options, false)
     return {
       id: threadId,
       provider: 'claude-code',
@@ -344,7 +360,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     options: ClaudeStartOptions = {},
   ): Promise<Thread> {
     const sessionId = threadId.startsWith('claude-') ? threadId.slice('claude-'.length) : threadId
-    this.#openSession(threadId, sessionId, workspacePath, options, true)
+    await this.#openSession(threadId, sessionId, workspacePath, options, true)
     return {
       id: threadId,
       provider: 'claude-code',
@@ -359,20 +375,32 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     attachments: string[] = [],
     options: ClaudeTurnOptions = {},
   ): Promise<string> {
+    return this.#configure(async () => this.#sendTurn(threadId, text, attachments, options))
+  }
+
+  async #sendTurn(
+    threadId: string,
+    text: string,
+    attachments: string[],
+    options: ClaudeTurnOptions,
+  ): Promise<string> {
     this.#assertThread(threadId)
     if (this.#activeTurnId) throw new Error('Claude already has a running turn')
 
     const previous = this.#options
     const next = applyClaudeTurnOptions(previous, options)
-    this.#options = next
     if (previous.effort !== next.effort) {
-      this.#restartSession()
+      await this.#restartSession(next)
     } else if (previous.model !== next.model) {
-      await this.#requireQuery().setModel(next.model)
+      const query = this.#requireQuery()
+      await query.setModel(next.model)
+      if (query !== this.#query) throw new Error('Claude session changed during model selection')
     }
+    this.#assertThread(threadId)
+    this.#options = next
 
     const queue = this.#requirePromptQueue()
-    const turnId = `${threadId}-turn-${++this.#turnCounter}`
+    const turnId = `${threadId}-turn-${crypto.randomUUID()}`
     queue.push(claudeUserMessage(text, attachments, this.#sessionId))
     this.#activeTurnId = turnId
     this.#interruptRequested = false
@@ -394,13 +422,47 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   async interrupt(): Promise<void> {
     if (!this.#activeTurnId || !this.#query) return
+    const query = this.#query
+    const redactor = this.#redactor
     this.#interruptRequested = true
-    await this.#query.interrupt()
+    try {
+      await query.interrupt()
+    } catch (error) {
+      throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    }
   }
 
   async setApproval(approval: ApprovalMode): Promise<void> {
-    this.#options = { ...this.#options, approval }
-    if (this.#query) await this.#query.setPermissionMode(PERMISSION_MODE[approval])
+    return this.#configure(async () => {
+      this.#assertThread(this.#threadId)
+      const query = this.#requireQuery()
+      await query.setPermissionMode(PERMISSION_MODE[approval])
+      if (query !== this.#query)
+        throw new Error('Claude session changed during permission selection')
+      this.#assertThread(this.#threadId)
+      this.#options = { ...this.#options, approval }
+    })
+  }
+
+  #configure<T>(operation: () => Promise<T>): Promise<T> {
+    const generation = this.#sessionGeneration
+    const redactor = this.#redactor
+    const result = this.#configuration
+      .then(async () => {
+        if (generation !== this.#sessionGeneration) throw new Error('Claude session is closed')
+        await this.#starting
+        if (generation !== this.#sessionGeneration) throw new Error('Claude session is closed')
+        return operation()
+      })
+      .catch((error: unknown) => {
+        throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+      })
+    // A rejected transition must not prevent a retry or a later control call.
+    this.#configuration = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
 
   respondToApproval(approvalId: string, decision: ApprovalDecision): void {
@@ -477,7 +539,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       )
       return models.length > 0 ? mergeClaudeModels(models) : CLAUDE_MODELS
     } catch (error) {
-      this.emit('log', `Claude model discovery fell back to known values: ${String(error)}`)
+      this.#log(`Claude model discovery fell back to known values: ${String(error)}`)
       return CLAUDE_MODELS
     } finally {
       abort.abort()
@@ -485,96 +547,206 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
-  dispose(): void {
-    if (this.#disposed) return
+  dispose(): Promise<void> {
+    const cleanup = () =>
+      Promise.all([
+        ...[...this.#processes].map((child) => killTree(child)),
+        this.#bootstrapReady?.then(
+          (bootstrap) => bootstrap.close(),
+          () => undefined,
+        ),
+      ]).then(() => undefined)
+    if (this.#disposed) return cleanup()
     this.#disposed = true
+    this.#sessionGeneration += 1
     this.#queryGeneration += 1
     this.#settlePending('Claude session closed.')
+    this.#queryAbort?.abort()
     this.#promptQueue?.close()
-    this.#query?.close()
+    let closeError: Error | undefined
+    try {
+      this.#query?.close()
+    } catch (error) {
+      closeError = new Error(
+        this.#redactor.redact(error instanceof Error ? error.message : String(error)),
+      )
+    }
+    this.#queryAbort = undefined
     this.#promptQueue = undefined
     this.#query = undefined
     this.#completeStreamingItems('failed')
     this.#activeTurnId = undefined
     this.#clearStreamingState()
+    this.#options = {}
+    this.#redactor = new ClaudeMcpRedactor()
     this.removeAllListeners()
+    return cleanup().then(() => {
+      if (closeError) throw closeError
+    })
   }
 
-  #openSession(
+  async #openSession(
     threadId: string,
     sessionId: string,
     workspacePath: string,
     options: ClaudeStartOptions,
     resume: boolean,
-  ): void {
-    if (this.#query || this.#promptQueue) throw new Error('Claude adapter already has a session')
+  ): Promise<void> {
+    if (this.#query || this.#promptQueue || this.#starting)
+      throw new Error('Claude adapter already has a session')
     this.#disposed = false
+    this.#sessionGeneration += 1
     this.#threadId = threadId
     this.#sessionId = sessionId
     this.#workspacePath = workspacePath
     this.#options = options
     this.#reportedModel = options.model
-    this.#startQuery(resume ? sessionId : undefined)
+    const starting = this.#startQuery(resume ? sessionId : undefined).catch(
+      async (error: unknown) => {
+        const message = this.#redactor.redact(
+          error instanceof Error ? error.message : String(error),
+        )
+        await this.dispose()
+        throw new Error(message)
+      },
+    )
+    this.#starting = starting
+    try {
+      await starting
+    } finally {
+      if (this.#starting === starting) this.#starting = undefined
+    }
   }
 
-  #startQuery(resume?: string): void {
+  async #startQuery(resume?: string, options = this.#options): Promise<void> {
+    const mcp = prepareClaudeMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {})
+    const redactor = new ClaudeMcpRedactor(mcp.secrets)
+    this.#redactor = redactor
     const promptQueue = new PromptQueue()
+    const abort = new AbortController()
+    this.#queryAbort = abort
     const effort =
-      this.#options.effort === undefined
-        ? undefined
-        : ClaudeEffortSchema.parse(this.#options.effort)
-    const query = this.#createQuery({
-      prompt: promptQueue,
-      options: this.#queryOptions({
-        cwd: this.#workspacePath,
-        ...(this.#options.model ? { model: this.#options.model } : {}),
-        ...(effort ? { effort: effort } : {}),
-        systemPrompt: {
-          type: 'preset',
-          preset: 'claude_code',
-          ...(this.#options.instructions
-            ? {
-                append: this.#options.instructions,
-              }
-            : {}),
-        },
-        settingSources: ['user', 'project', 'local'],
-        persistSession: !this.#options.ephemeral,
-        permissionMode: PERMISSION_MODE[this.#options.approval ?? 'ask'],
-        allowDangerouslySkipPermissions: true,
-        includePartialMessages: true,
-        canUseTool: this.#canUseTool,
-        additionalDirectories: [this.#workspacePath],
-        ...(resume ? { resume } : this.#sessionId ? { sessionId: this.#sessionId } : {}),
-      }),
-    })
-    const generation = ++this.#queryGeneration
-    this.#promptQueue = promptQueue
-    this.#query = query
-    void this.#consume(query, generation)
+      options.effort === undefined ? undefined : ClaudeEffortSchema.parse(options.effort)
+    let bootstrap: Awaited<ReturnType<typeof createClaudeMcpBootstrap>> | undefined
+    let bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
+    try {
+      await withTimeout(
+        (async () => {
+          if (Object.keys(mcp.servers).length) {
+            bootstrapReady = createClaudeMcpBootstrap(Object.keys(mcp.servers), abort.signal)
+            this.#bootstrapReady = bootstrapReady
+            bootstrap = await bootstrapReady
+          }
+          abort.signal.throwIfAborted()
+          const query = this.#createQuery({
+            prompt: promptQueue,
+            options: this.#queryOptions(
+              {
+                cwd: this.#workspacePath,
+                abortController: abort,
+                ...(bootstrap ? { mcpServers: bootstrap.servers } : {}),
+                ...(options.model ? { model: options.model } : {}),
+                ...(effort ? { effort: effort } : {}),
+                systemPrompt: {
+                  type: 'preset',
+                  preset: 'claude_code',
+                  ...(options.instructions
+                    ? {
+                        append: options.instructions,
+                      }
+                    : {}),
+                },
+                settingSources: ['user', 'project', 'local'],
+                persistSession: !options.ephemeral,
+                permissionMode: PERMISSION_MODE[options.approval ?? 'ask'],
+                allowDangerouslySkipPermissions: true,
+                includePartialMessages: true,
+                canUseTool: this.#canUseTool,
+                additionalDirectories: [this.#workspacePath],
+                ...(resume ? { resume } : this.#sessionId ? { sessionId: this.#sessionId } : {}),
+              },
+              redactor,
+            ),
+          })
+          const generation = ++this.#queryGeneration
+          this.#promptQueue = promptQueue
+          this.#query = query
+          void this.#consume(query, generation)
+          await query.initializationResult()
+          if (bootstrap)
+            await activateClaudeMcpServers(query, bootstrap.servers, mcp.servers, abort.signal)
+          if (this.#query !== query || abort.signal.aborted)
+            throw new Error('Claude session is closed')
+        })(),
+        this.#startupTimeoutMs,
+        'Claude session startup timed out. Check Claude Code and the project MCP servers, then retry.',
+        abort.signal,
+      )
+    } catch (error) {
+      abort.abort()
+      throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    } finally {
+      try {
+        await bootstrapReady?.then(
+          (value) => value.close(),
+          () => undefined,
+        )
+      } finally {
+        if (this.#bootstrapReady === bootstrapReady) this.#bootstrapReady = undefined
+      }
+    }
   }
 
-  #queryOptions(overrides: ClaudeQueryOptions): ClaudeQueryOptions {
+  #queryOptions(
+    overrides: ClaudeQueryOptions,
+    redactor = new ClaudeMcpRedactor(),
+  ): ClaudeQueryOptions {
+    const log = (chunk: string) => {
+      const line = chunk.trimEnd()
+      if (line) this.emit('log', line)
+    }
     return {
       pathToClaudeCodeExecutable: 'claude',
       env: { ...this.#environment },
-      spawnClaudeCodeProcess: claudeSdkSpawner(this.#spawn, (chunk) => {
-        const line = chunk.trimEnd()
-        if (line) this.emit('log', line)
-      }),
+      spawnClaudeCodeProcess: claudeSdkSpawner(
+        this.#spawn,
+        (chunk) => log(redactor.push(chunk)),
+        undefined,
+        (child) => {
+          this.#processes.add(child)
+          child.once('exit', () => {
+            void killTree(child).then(
+              () => this.#processes.delete(child),
+              () => undefined,
+            )
+          })
+        },
+        () => log(redactor.finish()),
+      ),
       ...overrides,
     }
   }
 
-  #restartSession(): void {
+  async #restartSession(options: ClaudeStartOptions): Promise<void> {
     if (this.#activeTurnId) throw new Error('Claude effort cannot change during a running turn')
     this.#queryGeneration += 1
+    this.#queryAbort?.abort()
     this.#promptQueue?.close()
     this.#query?.close()
     this.#promptQueue = undefined
     this.#query = undefined
     this.#clearStreamingState()
-    this.#startQuery(this.#sessionId)
+    try {
+      await this.#startQuery(this.#sessionId, options)
+    } catch (error) {
+      const message = this.#redactor.redact(error instanceof Error ? error.message : String(error))
+      await this.dispose()
+      throw new Error(message)
+    }
+  }
+
+  #log(message: string): void {
+    this.emit('log', this.#redactor.redact(message))
   }
 
   async #consume(query: ClaudeQueryRuntime, generation: number): Promise<void> {
@@ -611,10 +783,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.emit('log', 'ignored Claude assistant replay outside an active turn')
         return
       }
-      if (message.error) this.emit('log', `Claude assistant error: ${message.error}`)
+      if (message.error) this.#log(`Claude assistant error: ${message.error}`)
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
-        this.emit('log', `ignored malformed Claude assistant event: ${parsed.error.message}`)
+        this.#log(`ignored malformed Claude assistant event: ${parsed.error.message}`)
         return
       }
       const event = parsed.data
@@ -641,7 +813,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       if (!this.#activeTurnId) return
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
-        this.emit('log', `ignored malformed Claude user event: ${parsed.error.message}`)
+        this.#log(`ignored malformed Claude user event: ${parsed.error.message}`)
         return
       }
       this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId))
@@ -665,7 +837,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.emit('event', {
           type: 'thread.error',
           threadId: this.#threadId,
-          message: message.errors.join('\n'),
+          message: this.#redactor.redact(message.errors.join('\n')),
         })
       }
       const status = this.#interruptRequested
@@ -698,7 +870,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'auth_status' && message.error) {
-      this.emit('log', `Claude authentication: ${message.error}`)
+      this.#log(`Claude authentication: ${message.error}`)
       return
     }
 
@@ -962,6 +1134,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #failActiveTurn(message: string): void {
+    message = this.#redactor.redact(message)
     const turnId = this.#activeTurnId
     if (!turnId) {
       this.emit('log', message)
@@ -1186,16 +1359,28 @@ function versionedClaudeModelName(id: string): string | undefined {
   return `Claude ${family} ${version}`
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  signal?: AbortSignal,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+        if (signal) {
+          onAbort = () => reject(new Error('Claude session is closed'))
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        }
       }),
     ])
   } finally {
     if (timer) clearTimeout(timer)
+    if (onAbort) signal?.removeEventListener('abort', onAbort)
   }
 }

@@ -8,7 +8,7 @@ describe.skipIf(process.platform === 'win32')('runCli timeout teardown', () => {
   it('SIGKILLs stubborn descendants before rejecting', async () => {
     // Audit regression: a SIGTERM-only killTree leaves a descendant that
     // ignores SIGTERM heartbeating forever. runCli must escalate through
-    // terminateTree and reject only after bounded cleanup completes.
+    // killTree and reject only after bounded cleanup completes.
     const beat = path.join(os.tmpdir(), `harness-runcli-timeout-${Date.now()}-${process.pid}.txt`)
     const grandchild = [
       "process.on('SIGTERM', () => {})",

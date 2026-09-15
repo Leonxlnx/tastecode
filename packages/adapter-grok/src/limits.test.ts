@@ -22,15 +22,12 @@ const fake = vi.hoisted<GrokTestState>(() => ({
   hangs: new Set(),
 }))
 
-vi.mock('node:child_process', () => ({
-  spawn: vi.fn((command: string, args: string[], options: unknown) => {
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
+  spawnOwned: vi.fn((command: string, args: string[], options: unknown) => {
     fake.spawns.push({ command, args, options })
     return { pid: 1 }
   }),
-}))
-
-vi.mock('@harness/proc', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@harness/proc')>()),
   killTree: vi.fn(),
   readNdjson: vi.fn(),
   StdioJsonRpc: class {

@@ -6,9 +6,15 @@
 }
 
 .reply > .md {
+  font-family: var(--font-ui);
   font-size: var(--t-md);
+  font-weight: 400;
   line-height: 1.52;
   max-width: 72ch;
+}
+
+.reply > .md :is(strong, b) {
+  font-weight: 550;
 }
 
 .reply > .md :is(p, ul, ol, blockquote) {

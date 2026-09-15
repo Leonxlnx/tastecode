@@ -1,5 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import { array, integer, list, member, record, string, strings } from './parse.js'
 
 export interface PageLink {
@@ -91,6 +90,7 @@ export interface PageBlueprint {
     id: string
     layoutFamily?: PageLayoutFamily
     layoutCases?: string[]
+    referenceDirectionId?: string
     purpose: string
     userQuestion: string
     stage: 'orient' | 'qualify' | 'evaluate' | 'prove' | 'explain' | 'de_risk' | 'act' | 'continue'
@@ -145,6 +145,14 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
       ...(!(section.layoutCases === undefined)
         ? {
             layoutCases: strings(section.layoutCases, `sections[${index}].layoutCases`),
+          }
+        : {}),
+      ...(!(section.referenceDirectionId === undefined)
+        ? {
+            referenceDirectionId: string(
+              section.referenceDirectionId,
+              `sections[${index}].referenceDirectionId`,
+            ),
           }
         : {}),
       purpose: string(section.purpose, `sections[${index}].purpose`),
@@ -321,19 +329,13 @@ function parseMotion(value: unknown, index: number): PageSectionMotion {
 }
 
 export function readPageBlueprint(workspacePath: string): PageBlueprint {
-  return parsePageBlueprint(JSON.parse(readFileSync(pagePath(workspacePath), 'utf8')))
+  return parsePageBlueprint(readDesignArtifact(workspacePath, 'page.json'))
 }
 
 export function writePageBlueprint(workspacePath: string, value: unknown): PageBlueprint {
   const blueprint = parsePageBlueprint(value)
-  const outputPath = pagePath(workspacePath)
-  mkdirSync(path.dirname(outputPath), { recursive: true })
-  writeFileSync(outputPath, `${JSON.stringify(blueprint, null, 2)}\n`, 'utf8')
+  writeDesignArtifact(workspacePath, 'page.json', blueprint)
   return blueprint
-}
-
-function pagePath(workspacePath: string): string {
-  return path.join(workspacePath, '.taste', 'page.json')
 }
 
 function links(value: unknown, field: string): PageLink[] {

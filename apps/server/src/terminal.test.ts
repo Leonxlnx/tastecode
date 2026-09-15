@@ -12,6 +12,51 @@ import {
 } from './terminal.js'
 
 describe('TerminalManager', () => {
+  it('retains bounded output and exit state for a reconnect without relaunching', () => {
+    const pty = controlledPty()
+    const spawn = vi.fn(() => pty)
+    const chunks: number[] = []
+    const manager = new TerminalManager(
+      { onOutput: (_id, _data, offset) => chunks.push(offset), onExit: () => {} },
+      { spawnPty: spawn },
+    )
+    const id = manager.run('install-test', 'test-command', os.tmpdir(), 80, 24)
+    pty.emitData('a'.repeat(200_000))
+    pty.emitData('last prompt')
+    expect(manager.status(id)).toEqual({
+      status: 'running',
+      output: 'a'.repeat(199_989) + 'last prompt',
+      outputOffset: 11,
+      exitCode: null,
+    })
+    pty.emitExit(7)
+    expect(manager.status(id)).toMatchObject({ status: 'exited', outputOffset: 11, exitCode: 7 })
+    expect(chunks).toEqual([0, 200_000])
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(manager.status('missing').status).toBe('unknown')
+  })
+
+  it('expires old completed jobs without dropping a running terminal', () => {
+    vi.useFakeTimers()
+    try {
+      const first = controlledPty()
+      const second = controlledPty()
+      const ptys = [first, second]
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        { spawnPty: () => ptys.shift()! },
+      )
+      const done = manager.run('done', 'test', os.tmpdir(), 80, 24)
+      first.emitExit(0)
+      const running = manager.run('running', 'test', os.tmpdir(), 80, 24)
+      vi.advanceTimersByTime(60 * 60 * 1000 + 1)
+      expect(manager.status(done).status).toBe('unknown')
+      expect(manager.status(running).status).toBe('running')
+      second.emitExit(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('selects a native shell without imposing a POSIX model', () => {
     expect(platformShell('win32', { ComSpec: 'C:\\Windows\\System32\\cmd.exe' })).toBe(
       'C:\\Windows\\System32\\cmd.exe',
@@ -123,6 +168,30 @@ describe('TerminalManager', () => {
     expect(kill).not.toHaveBeenCalled()
     second.emitExit(0)
     await manager.closeAll()
+  })
+
+  it('keeps tab shells separate and closes every shell owned by a thread', async () => {
+    const shells: ReturnType<typeof controlledPty>[] = []
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      {
+        spawnPty: () => {
+          const shell = controlledPty()
+          shells.push(shell)
+          return shell
+        },
+      },
+    )
+    const bottom = manager.open('thread-tabs', os.tmpdir(), 80, 24, 'bottom-1')
+    const right = manager.open('thread-tabs', os.tmpdir(), 80, 24, 'right-1')
+    const second = manager.open('thread-tabs', os.tmpdir(), 80, 24, 'bottom-2')
+    expect(new Set([bottom, right, second]).size).toBe(3)
+    expect(manager.open('thread-tabs', os.tmpdir(), 80, 24, 'bottom-1')).toBe(bottom)
+    const closing = manager.closeThread('thread-tabs')
+    expect(() => manager.open('thread-tabs', os.tmpdir(), 80, 24, 'right-2')).toThrow(/closing/)
+    for (const shell of shells) shell.emitExit(0)
+    await closing
+    for (const id of [bottom, right, second]) expect(manager.status(id).status).toBe('exited')
   })
 
   it('bounds shutdown when a PTY never reports its exit', async () => {

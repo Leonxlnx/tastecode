@@ -6,17 +6,24 @@ import type {
   ProviderId,
   ResultOf,
 } from '@harness/contracts'
-import { McpTransportSchema } from '@harness/contracts'
+import { McpServerConfigSchema, McpTransportSchema } from '@harness/contracts'
 import {
   IconAlertTriangle as AlertTriangle,
   IconPlus as Plus,
   IconTrash as Trash2,
 } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import { useProviderWatch } from '../provider-watch.js'
 import { AppSelect } from './AppSelect.js'
 
 type Inventory = ResultOf<'mcp.list'>
-type Editor = { mode: 'add' | 'edit'; id: string; displayName: string; transport: string }
+type Editor = {
+  mode: 'add' | 'edit' | 'hide'
+  id: string
+  displayName: string
+  transport: string
+  opener: HTMLButtonElement
+}
 type OAuthCompletion = {
   serverId: string
   loginId: string
@@ -88,6 +95,7 @@ function ProviderMcpSettings(props: {
   projectName: string | undefined
   providerPicker?: ReactNode
 }) {
+  useProviderWatch(props.transport, props.provider, props.projectPath, 'mcp')
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
   const [editor, setEditor] = useState<Editor>()
@@ -242,6 +250,7 @@ function ProviderMcpSettings(props: {
         }
       }
       await refresh()
+      if (!isCurrentContext()) return false
       return true
     } catch (cause) {
       if (isCurrentContext()) setError(message(cause))
@@ -253,33 +262,48 @@ function ProviderMcpSettings(props: {
 
   async function save(event: FormEvent): Promise<void> {
     event.preventDefault()
-    if (!editor || !props.projectPath) return
+    if (!editor || !props.projectPath || busy !== undefined) return
     const projectPath = props.projectPath
     let server: McpServerConfig
     try {
-      server = {
-        id: editor.id.trim(),
-        enabled: true,
-        ...(editor.displayName.trim()
+      server = McpServerConfigSchema.parse(
+        editor.mode === 'hide'
           ? {
-              displayName: editor.displayName.trim(),
+              id: editor.id.trim(),
+              enabled: false,
             }
-          : {}),
-        transport: McpTransportSchema.parse(JSON.parse(editor.transport)),
-      }
+          : {
+              id: editor.id.trim(),
+              enabled: true,
+              ...(editor.displayName.trim()
+                ? {
+                    displayName: editor.displayName.trim(),
+                  }
+                : {}),
+              transport: McpTransportSchema.parse(JSON.parse(editor.transport)),
+            },
+      )
     } catch {
-      setError('Transport must be valid JSON.')
+      setError(
+        editor.mode === 'hide'
+          ? 'Enter a server ID.'
+          : 'Enter a server ID and valid transport JSON.',
+      )
       return
     }
     setBusy('editor')
     const saved = await applyChange(
       () =>
-        props.transport.request(editor.mode === 'add' ? 'mcp.add' : 'mcp.update', {
+        props.transport.request(editor.mode === 'edit' ? 'mcp.update' : 'mcp.add', {
           provider: props.provider,
           projectPath,
           server,
         }),
-      editor.mode === 'add' ? 'Server added.' : 'Server updated.',
+      editor.mode === 'hide'
+        ? 'Server hidden for this project.'
+        : editor.mode === 'add'
+          ? 'Server added.'
+          : 'Server updated.',
     )
     if (saved) setEditor(undefined)
   }
@@ -393,14 +417,35 @@ function ProviderMcpSettings(props: {
         </div>
         <div className="mcp-settings__actions">
           {props.providerPicker}
+          {props.projectPath &&
+          currentInventory?.capabilities.add &&
+          currentInventory.capabilities.inventory ? (
+            <button
+              className="settings__action is-secondary"
+              type="button"
+              disabled={busy !== undefined}
+              onClick={(event) =>
+                setEditor({
+                  mode: 'hide',
+                  id: '',
+                  displayName: '',
+                  transport: '',
+                  opener: event.currentTarget,
+                })
+              }
+            >
+              Hide server by ID
+            </button>
+          ) : null}
           {props.projectPath && currentInventory?.capabilities.add ? (
             <button
               className="settings__action"
               type="button"
               disabled={busy !== undefined}
-              onClick={() =>
+              onClick={(event) =>
                 setEditor({
                   mode: 'add',
+                  opener: event.currentTarget,
                   id: '',
                   displayName: '',
                   transport: '{\n  "type": "http",\n  "url": "https://example.com/mcp"\n}',
@@ -423,9 +468,15 @@ function ProviderMcpSettings(props: {
         </p>
       ) : null}
       {notice ? <p className="mcp-settings__message">{notice}</p> : null}
+      {currentInventory?.capabilities.add && !currentInventory.capabilities.reload ? (
+        <p className="mcp-settings__scope-note">
+          Changes apply when you start or resume a session.
+        </p>
+      ) : null}
       {status ? <p className="mcp-settings__empty">{status}</p> : null}
       {editor ? (
         <ServerEditor
+          key={editor.mode === 'edit' ? `edit:${editor.id}` : editor.mode}
           editor={editor}
           busy={busy === 'editor'}
           onChange={setEditor}
@@ -443,9 +494,10 @@ function ProviderMcpSettings(props: {
               busy={busy === server.id}
               onSignIn={() => void signIn(server)}
               onToggle={() => toggle(server)}
-              onEdit={() =>
+              onEdit={(opener) =>
                 setEditor({
                   mode: 'edit',
+                  opener,
                   id: server.id,
                   displayName: server.displayName ?? '',
                   transport: JSON.stringify(server.transport, null, 2),
@@ -466,7 +518,7 @@ function ServerRow(props: {
   busy: boolean
   onSignIn: () => void
   onToggle: () => void
-  onEdit: () => void
+  onEdit: (opener: HTMLButtonElement) => void
   onRemove: () => void
 }) {
   const auth = props.server.auth
@@ -476,7 +528,7 @@ function ServerRow(props: {
   const canToggle =
     props.capabilities.remove &&
     ((!props.server.enabled && props.server.scope === 'project') ||
-      (props.capabilities.add && props.server.scope === 'global'))
+      (props.capabilities.add && props.capabilities.inventory && props.server.scope === 'global'))
   const canEdit =
     props.capabilities.update && props.server.scope === 'project' && props.server.transport
   const canRemove =
@@ -546,7 +598,7 @@ function ServerRow(props: {
             className="settings__action"
             type="button"
             disabled={props.busy}
-            onClick={props.onEdit}
+            onClick={(event) => props.onEdit(event.currentTarget)}
           >
             Edit
           </button>
@@ -575,41 +627,67 @@ function ServerEditor(props: {
   onSubmit: (event: FormEvent) => void
 }) {
   const update = (change: Partial<Editor>) => props.onChange({ ...props.editor, ...change })
+  const field = useRef<HTMLInputElement>(null)
+  const hiding = props.editor.mode === 'hide'
+  const opener = props.editor.opener
+  useEffect(() => {
+    field.current?.form?.querySelector<HTMLInputElement>('input:not(:disabled)')?.focus()
+    return () => {
+      if (document.contains(opener)) opener.focus()
+    }
+  }, [opener])
   return (
     <form
       className="mcp-editor"
-      aria-label={`${props.editor.mode === 'add' ? 'Add' : 'Edit'} MCP server`}
+      aria-label={`${hiding ? 'Hide inherited' : props.editor.mode === 'add' ? 'Add' : 'Edit'} MCP server`}
       onSubmit={props.onSubmit}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && !props.busy) {
+          event.stopPropagation()
+          props.onCancel()
+        }
+      }}
     >
-      <label>
+      {hiding ? (
+        <p className="mcp-editor__wide mcp-settings__scope-note">
+          Enter the ID from your provider's MCP settings. This hides the server in this project and
+          keeps the provider's own settings unchanged.
+        </p>
+      ) : null}
+      <label className={hiding ? 'mcp-editor__wide' : undefined}>
         Server ID
         <input
+          ref={field}
           required
           disabled={props.editor.mode === 'edit'}
           value={props.editor.id}
           onChange={(event) => update({ id: event.target.value })}
         />
       </label>
-      <label>
-        Display name
-        <input
-          value={props.editor.displayName}
-          onChange={(event) => update({ displayName: event.target.value })}
-        />
-      </label>
-      <label className="mcp-editor__wide">
-        Transport JSON
-        <textarea
-          required
-          spellCheck={false}
-          value={props.editor.transport}
-          onChange={(event) => update({ transport: event.target.value })}
-        />
-        <small>
-          Use stdio or HTTP transport fields. Reference secrets as
-          {' { "source": "credential", "credentialRef": "…" }'}.
-        </small>
-      </label>
+      {!hiding ? (
+        <label>
+          Display name
+          <input
+            value={props.editor.displayName}
+            onChange={(event) => update({ displayName: event.target.value })}
+          />
+        </label>
+      ) : null}
+      {!hiding ? (
+        <label className="mcp-editor__wide">
+          Transport JSON
+          <textarea
+            required
+            spellCheck={false}
+            value={props.editor.transport}
+            onChange={(event) => update({ transport: event.target.value })}
+          />
+          <small>
+            Use stdio or HTTP transport fields. Reference secrets as
+            {' { "source": "credential", "credentialRef": "…" }'}.
+          </small>
+        </label>
+      ) : null}
       <footer>
         <button
           className="settings__action"
@@ -620,7 +698,7 @@ function ServerEditor(props: {
           Cancel
         </button>
         <button className="settings__action" type="submit" disabled={props.busy}>
-          {props.busy ? 'Saving…' : 'Save server'}
+          {props.busy ? 'Saving…' : hiding ? 'Hide server' : 'Save server'}
         </button>
       </footer>
     </form>

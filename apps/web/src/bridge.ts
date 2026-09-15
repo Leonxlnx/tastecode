@@ -35,6 +35,7 @@ type Bridge = {
   prepareHaptics?: () => void
   performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
+  cancelPreviewCapture?: (requestId: string) => Promise<void>
   openExternal: (url: string) => Promise<void>
   getDiagnosticsEnabled?: () => Promise<boolean>
   setDiagnosticsEnabled?: (enabled: boolean) => Promise<boolean>
@@ -92,7 +93,6 @@ const NATIVE_MENU_ACTION_IDS = [
   'openPullRequests',
   'toggleTerminal',
   'toggleWorkspace',
-  'expandWorkspace',
   'toggleFastMode',
   'toggleDesignMode',
   'toggleIsolatedSession',
@@ -298,6 +298,10 @@ export async function capturePreview(
       error: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+export async function cancelPreviewCapture(requestId: string): Promise<void> {
+  await bridge?.cancelPreviewCapture?.(requestId)
 }
 
 export function openExternalUrl(url: string): Promise<void> {

@@ -1,14 +1,34 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
 import {
+  assertPackagedDesignReferences,
   assertPackagedNativeModules,
   isNativeBindingProofPlatform,
   proveKeyringBinding,
   provePtyBinding,
   proveSqliteRuntime,
 } from './native-binding-proof.js'
+
+const fixtures: string[] = []
+afterEach(() => {
+  for (const fixture of fixtures.splice(0)) rmSync(fixture, { recursive: true, force: true })
+})
+
+function referenceFixture() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'packaged-reference-proof-'))
+  fixtures.push(root)
+  const archive = path.join(root, 'app.asar')
+  const packageRoot = path.join(archive, 'node_modules', '@harness', 'design-agent')
+  const references = path.join(packageRoot, 'references', 'directions', 'product')
+  mkdirSync(references, { recursive: true })
+  return {
+    proof: path.join(archive, 'dist', 'native-binding-proof.js'),
+    entry: path.join(packageRoot, 'dist', 'index.js'),
+    image: path.join(references, 'product.webp'),
+  }
+}
 
 function fakePty() {
   const resize = vi.fn()
@@ -47,6 +67,21 @@ describe('packaged native binding proof', () => {
     expect(isNativeBindingProofPlatform('darwin')).toBe(true)
     expect(isNativeBindingProofPlatform('linux')).toBe(true)
     expect(isNativeBindingProofPlatform('freebsd')).toBe(false)
+  })
+
+  it('requires packaged reference files with WebP signatures', () => {
+    const fixture = referenceFixture()
+    expect(() => assertPackagedDesignReferences(fixture.proof, fixture.entry)).toThrow('missing')
+    writeFileSync(fixture.image, 'not a WebP image')
+    expect(() => assertPackagedDesignReferences(fixture.proof, fixture.entry)).toThrow('invalid')
+    writeFileSync(
+      fixture.image,
+      Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP')]),
+    )
+    expect(assertPackagedDesignReferences(fixture.proof, fixture.entry)).toBe(1)
+    expect(() =>
+      assertPackagedDesignReferences(fixture.proof, path.resolve('dist', 'index.js')),
+    ).toThrow('inside the packaged application')
   })
 
   it('requires module entries and both bindings from the packaged archive', () => {

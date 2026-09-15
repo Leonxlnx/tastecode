@@ -54,14 +54,10 @@ describe('startup CSS budget', () => {
 
   it('reuses prepared terminal and workspace modules without eager runtime imports', () => {
     const app = readSource('../App.tsx')
+    const workspaceTerminal = readSource('../ui/workspace/WorkspaceTerminal.tsx')
 
-    expect(app).toContain("typeof import('./ui/TerminalPane.js')")
-    expect(app).toMatch(/terminalPanePromise \?\?= import\('\.\/ui\/TerminalPane\.js'\)\.then/s)
-    expect(app).toContain('let resolvedTerminalPane: TerminalPaneComponent')
-    expect(app).toContain('resolvedTerminalPane = module.TerminalPane')
-    expect(app).toContain('const RenderedTerminalPane = resolvedTerminalPane ?? TerminalPane')
-    expect(app).toContain('<RenderedTerminalPane')
     expect(app).not.toContain("from './ui/TerminalPane.js'")
+    expect(workspaceTerminal).toContain("from '../TerminalPane.js'")
 
     expect(app).toContain("typeof import('./ui/workspace/WorkspacePanel.js')")
     expect(app).toMatch(

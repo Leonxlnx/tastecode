@@ -832,7 +832,7 @@ describe('Grok adapter', () => {
 
     expect(captured).toBeDefined()
     // Direct spawn, never cmd.exe; the shared boundary marks the group so
-    // terminateTree reaches the tree.
+    // killTree reaches the tree.
     expect(captured!.command).not.toMatch(/cmd\.exe/i)
     expect(captured!.options).toMatchObject({
       stdio: ['pipe', 'pipe', 'pipe'],

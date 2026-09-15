@@ -29,8 +29,8 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
       rateLimitSource(): Promise<unknown> {
         return sources.codex()
       }
-      consumeRateLimitReset(idempotencyKey: string): Promise<unknown> {
-        return sources.consume(idempotencyKey)
+      consumeRateLimitReset(idempotencyKey: string, creditId?: string): Promise<unknown> {
+        return sources.consume(idempotencyKey, creditId)
       }
     },
   }
@@ -147,9 +147,16 @@ describe('rate-limit reset consume', () => {
     })
 
     await expect(
-      instance.consumeRateLimitReset('codex', '8ae96ff3-3425-4f4c-8772-b6fd61502868'),
+      instance.consumeRateLimitReset(
+        'codex',
+        '8ae96ff3-3425-4f4c-8772-b6fd61502868',
+        'reset-fixture',
+      ),
     ).resolves.toEqual({ outcome: 'reset' })
-    expect(sources.consume).toHaveBeenCalledWith('8ae96ff3-3425-4f4c-8772-b6fd61502868')
+    expect(sources.consume).toHaveBeenCalledWith(
+      '8ae96ff3-3425-4f4c-8772-b6fd61502868',
+      'reset-fixture',
+    )
     expect(sources.disposed).toEqual([1])
     expect(onUsageChanged).toHaveBeenCalledWith('codex')
     await instance.disposeAll()

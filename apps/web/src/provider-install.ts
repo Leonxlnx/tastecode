@@ -1,4 +1,4 @@
-import type { ProviderId } from '@harness/contracts'
+import type { DataOf, ProviderId } from '@harness/contracts'
 import type { Transport } from './transport.js'
 
 /**
@@ -10,10 +10,13 @@ import type { Transport } from './transport.js'
  */
 
 export type InstallState = {
-  phase: 'running' | 'succeeded' | 'failed'
+  phase: 'running' | 'succeeded' | 'failed' | 'canceled'
+  canceling?: boolean
   terminalId: string
   /** Raw pty output so an attached terminal can replay the whole run. */
   log: string
+  /** Absolute character position of the first retained character. */
+  logOffset: number
   /** Last printable line, for the settings row note. */
   lastLine: string
   /** Auth URL detected in a sign-in session and already opened for the user. */
@@ -44,9 +47,22 @@ export function loginKey(target: InstallTarget): string {
   return `login:${installKey(target)}`
 }
 
+export function updateKey(provider: ProviderId): string {
+  return `update:${provider}`
+}
+
+export function beginUpdate(transport: Transport, provider: ProviderId): Promise<void> {
+  return begin(transport, updateKey(provider), () =>
+    transport.request('providers.update', { provider, columns: 100, rows: 30 }),
+  )
+}
+
 const LOG_CAP = 200_000
 
 const installs = new Map<string, InstallState>()
+const starts = new Map<string, Promise<void>>()
+const cancellations = new Map<string, Promise<void>>()
+const reconcilers = new Map<string, () => Promise<void>>()
 const listeners = new Set<() => void>()
 
 export function subscribeInstalls(listener: () => void): () => void {
@@ -63,10 +79,47 @@ export function clearInstall(key: string): void {
   if (installs.delete(key)) notify()
 }
 
+/** Stop the owned PTY before releasing the sign-in session. */
+export function cancelInstall(transport: Transport, key: string): Promise<void> {
+  const pending = cancellations.get(key)
+  if (pending) return pending
+  const operation = (async () => {
+    await starts.get(key)
+    const state = installs.get(key)
+    if (state?.phase !== 'running') return
+    installs.set(key, { ...state, canceling: true })
+    notify()
+    try {
+      await transport.request('terminal.close', { terminalId: state.terminalId })
+      const current = installs.get(key)
+      if (current?.terminalId !== state.terminalId) return
+      detachTransportListeners(key)
+      installs.set(key, { ...current, phase: 'canceled', canceling: false })
+      notify()
+    } catch (cause) {
+      const current = installs.get(key)
+      if (current?.terminalId === state.terminalId && current.phase === 'running') {
+        installs.set(key, { ...current, canceling: false })
+        notify()
+      }
+      throw cause
+    }
+  })()
+  cancellations.set(key, operation)
+  void operation
+    .finally(() => {
+      if (cancellations.get(key) === operation) cancellations.delete(key)
+    })
+    .catch(() => undefined)
+  return operation
+}
+
 /** Test isolation only: module state must not leak between test cases. */
 export function resetInstalls(): void {
   for (const key of transportListeners.keys()) detachTransportListeners(key)
   installs.clear()
+  starts.clear()
+  cancellations.clear()
   notify()
 }
 
@@ -80,6 +133,7 @@ const transportListeners = new Map<string, Array<() => void>>()
 function detachTransportListeners(key: string): void {
   for (const off of transportListeners.get(key) ?? []) off()
   transportListeners.delete(key)
+  reconcilers.delete(key)
 }
 
 /**
@@ -191,21 +245,75 @@ export function deviceCode(log: string): string | undefined {
 /** Wide enough that no OAuth URL soft-wraps; an attached terminal resizes. */
 const LOGIN_COLUMNS = 320
 
-async function begin(
+function begin(
+  transport: Transport,
+  key: string,
+  openTerminal: () => Promise<{ terminalId: string }>,
+  openUrl?: (url: string) => void,
+): Promise<void> {
+  const canceling = cancellations.get(key)
+  if (canceling) return canceling.then(() => begin(transport, key, openTerminal, openUrl))
+  const starting = starts.get(key)
+  if (starting) return starting
+  const operation = attachJob(transport, key, openTerminal, openUrl)
+  starts.set(key, operation)
+  void operation
+    .finally(() => {
+      if (starts.get(key) === operation) starts.delete(key)
+    })
+    .catch(() => undefined)
+  return operation
+}
+
+async function attachJob(
   transport: Transport,
   key: string,
   openTerminal: () => Promise<{ terminalId: string }>,
   openUrl?: (url: string) => void,
 ): Promise<void> {
   const existing = installs.get(key)
-  if (existing?.phase === 'running') return
+  if (existing?.phase === 'running') return reconcilers.get(key)?.()
 
-  const { terminalId } = await openTerminal()
+  // A fast updater can exit before the RPC response names its terminal.
+  // Subscribe first, then replay only that terminal's bounded early output.
+  const earlyOutput = new Map<string, { data: string; outputOffset: number }>()
+  const earlyExit = new Map<string, DataOf<'terminal.exit'>>()
+  let buffered = 0
+  const stopEarlyOutput = transport.on('terminal.output', (event) => {
+    const previous = earlyOutput.get(event.terminalId)
+    if (!previous && earlyOutput.size >= 100) return
+    const end = (previous?.outputOffset ?? 0) + (previous?.data.length ?? 0)
+    const start = event.outputOffset ?? end
+    if (start + event.data.length <= end) return
+    const combined =
+      start > end ? event.data : (previous?.data ?? '') + event.data.slice(Math.max(0, end - start))
+    const data = combined.slice(-LOG_CAP)
+    const outputOffset = start + event.data.length - data.length
+    buffered += data.length - (previous?.data.length ?? 0)
+    earlyOutput.set(event.terminalId, { data, outputOffset })
+    while (buffered > LOG_CAP && earlyOutput.size > 1) {
+      const first = earlyOutput.keys().next().value!
+      buffered -= earlyOutput.get(first)!.data.length
+      earlyOutput.delete(first)
+    }
+  })
+  const stopEarlyExit = transport.on('terminal.exit', (event) => {
+    if (earlyExit.size < 100) earlyExit.set(event.terminalId, event)
+  })
+  let terminalId: string
+  try {
+    ;({ terminalId } = await openTerminal())
+  } finally {
+    stopEarlyOutput()
+    stopEarlyExit()
+  }
 
   const state: InstallState = {
     phase: 'running',
+    canceling: cancellations.has(key),
     terminalId,
     log: '',
+    logOffset: 0,
     lastLine: '',
     exitCode: null,
   }
@@ -214,13 +322,18 @@ async function begin(
 
   // A retry replaces the session; the old session's listeners go with it.
   detachTransportListeners(key)
-  const offOutput = transport.on('terminal.output', (event) => {
+  const onOutput = (event: DataOf<'terminal.output'>) => {
     const current = installs.get(key)
-    if (!current || event.terminalId !== terminalId) return
-    let log = current.log + event.data
-    if (log.length > LOG_CAP) log = log.slice(log.length - LOG_CAP)
+    if (!current || current.terminalId !== terminalId || event.terminalId !== terminalId) return
+    const end = current.logOffset + current.log.length
+    const start = event.outputOffset ?? end
+    if (start + event.data.length <= end) return
+    const combined =
+      start > end ? event.data : current.log + event.data.slice(Math.max(0, end - start))
+    const log = combined.slice(-LOG_CAP)
+    const logOffset = start + event.data.length - log.length
     let openedAuthUrl = current.openedAuthUrl
-    if (openUrl && !openedAuthUrl) {
+    if (openUrl && !openedAuthUrl && !cancellations.has(key)) {
       const url = firstAuthUrl(log)
       if (url) {
         openedAuthUrl = url
@@ -230,24 +343,98 @@ async function begin(
     installs.set(key, {
       ...current,
       log,
+      logOffset,
       lastLine: lastPrintableLine(log),
       ...(openedAuthUrl ? { openedAuthUrl } : {}),
     })
     notify()
-  })
-  const offExit = transport.on('terminal.exit', (event) => {
+  }
+  const onExit = (event: DataOf<'terminal.exit'>, recoverOutput = true) => {
     if (event.terminalId !== terminalId) return
     detachTransportListeners(key)
     const current = installs.get(key)
     if (!current) return
     installs.set(key, {
       ...current,
-      phase: event.exitCode === 0 ? 'succeeded' : 'failed',
+      phase: current.canceling ? 'canceled' : event.exitCode === 0 ? 'succeeded' : 'failed',
       exitCode: event.exitCode,
     })
     notify()
+    if (recoverOutput) void reconcile(true)
+  }
+  const offOutput = transport.on('terminal.output', onOutput)
+  const offExit = transport.on('terminal.exit', onExit)
+  let revision = 0
+  const reconcile = async (allowFinished = false) => {
+    const mine = ++revision
+    try {
+      const status = await transport.request('terminal.status', { terminalId })
+      const current = installs.get(key)
+      if (
+        mine !== revision ||
+        current?.terminalId !== terminalId ||
+        (current.phase !== 'running' && !allowFinished)
+      )
+        return
+      if (status.status === 'unknown') {
+        if (allowFinished) return
+        installs.set(key, {
+          ...current,
+          phase: 'failed',
+          lastLine: 'This terminal is no longer available. Start again.',
+        })
+        detachTransportListeners(key)
+        notify()
+        return
+      }
+      // A live push can arrive while this read is in flight. Merge the snapshot
+      // and its newer suffix using server positions, so no text is repeated.
+      const snapshotEnd = status.outputOffset + status.output.length
+      const currentEnd = current.logOffset + current.log.length
+      if (snapshotEnd >= current.logOffset) {
+        const suffix =
+          currentEnd > snapshotEnd ? current.log.slice(snapshotEnd - current.logOffset) : ''
+        const combined = status.output + suffix
+        const log = combined.slice(-LOG_CAP)
+        const openedAuthUrl =
+          current.openedAuthUrl ??
+          (openUrl && !cancellations.has(key) ? firstAuthUrl(log) : undefined)
+        installs.set(key, {
+          ...current,
+          log,
+          logOffset: Math.max(snapshotEnd, currentEnd) - log.length,
+          lastLine: lastPrintableLine(log),
+          ...(openedAuthUrl ? { openedAuthUrl } : {}),
+        })
+        if (openedAuthUrl && !current.openedAuthUrl) openUrl?.(openedAuthUrl)
+        notify()
+      }
+      if (status.status === 'exited') onExit({ terminalId, exitCode: status.exitCode }, false)
+    } catch {
+      // Keep ownership during an outage. The next open or gap retries only
+      // this read; it never launches a second installer or login process.
+    }
+  }
+  const offState = transport.onState((connection) => {
+    revision += 1
+    if (connection === 'open') void reconcile()
   })
-  transportListeners.set(key, [offOutput, offExit])
+  const offGap = transport.onSequenceGap(() => void reconcile())
+  transportListeners.set(key, [
+    offOutput,
+    offExit,
+    offState,
+    offGap,
+    () => {
+      revision += 1
+    },
+  ])
+  reconcilers.set(key, reconcile)
+  const output = earlyOutput.get(terminalId)
+  if (output) onOutput({ terminalId, ...output })
+  const exited = earlyExit.get(terminalId)
+  if (exited) onExit(exited)
+  else void reconcile()
 }
 
 function notify(): void {

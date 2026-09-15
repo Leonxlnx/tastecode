@@ -184,7 +184,10 @@
   background: var(--surface-2);
   border-radius: var(--r-md);
   padding: 7px 11px;
+  color: var(--response-text);
+  font-family: var(--font-ui);
   font-size: var(--t-md);
+  font-weight: 400;
   line-height: 1.45;
 }
 
@@ -312,15 +315,17 @@
   align-items: center;
   gap: 6px;
   min-height: 30px;
+  max-width: 100%;
   margin-left: -3.5px;
   padding: 0 2px 4px;
   background: none;
   border: 0;
-  color: var(--text-3);
+  color: var(--text-2);
   cursor: pointer;
   font: inherit;
-  font-size: var(--t-md);
-  letter-spacing: -0.012em;
+  font-size: var(--t-sm);
+  font-weight: 400;
+  letter-spacing: normal;
   list-style: none;
   text-align: left;
   user-select: none;
@@ -329,7 +334,7 @@
 
 /* Only the summaries that actually open respond to hover. */
 .activity:not(.activity--working) > .activity__summary:hover {
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .activity__glyph {
@@ -343,6 +348,7 @@
 .activity__chevron {
   width: 15px;
   height: 15px;
+  color: var(--text-3);
 }
 
 .activity__label {
@@ -353,7 +359,7 @@
 }
 
 .activity--live .activity__label {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   background: linear-gradient(100deg, var(--text-2) 20%, var(--text) 48%, var(--text-2) 76%);
   background-clip: text;
   background-size: 220% 100%;
@@ -388,10 +394,17 @@
    ResizeObserver remeasure the virtual row throughout the transition. */
 .activity__reveal {
   display: none;
+  clip-path: inset(0 0 100%);
+  transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .activity__reveal[data-open='true'] {
   display: block;
+  clip-path: inset(0);
+
+  @starting-style {
+    clip-path: inset(0 0 100%);
+  }
 }
 
 .activity__reveal[data-open='closing'] {
@@ -403,11 +416,7 @@
   display: block;
   background: var(--bg);
   pointer-events: none;
-  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
-}
-
-.activity__reveal[data-open='true'] > .activity__reveal-clip {
-  animation: disclosure-reveal-in var(--dur-fast) var(--ease-out);
+  transition-duration: 120ms;
 }
 
 .activity__reveal-clip {
@@ -415,24 +424,10 @@
   overflow: hidden;
 }
 
-@keyframes disclosure-reveal-in {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
-@keyframes disclosure-reveal-out {
-  to {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-}
-
-/* Closing details leave flow once, then the virtualizer moves the measured
-   rows with compositor-only transforms while the old details fade above them. */
+/* Closing details leave flow once. The reveal retracts toward its trigger while
+   the virtualizer moves the following rows without repeated height measurement. */
 .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
-  transition: transform var(--dur-slow) var(--ease-out);
+  transition: transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .thread__row:has(> :is(.activity, .aux) [data-open='closing']) {
@@ -557,11 +552,6 @@
     color: var(--text-2);
   }
 
-  .activity__reveal[data-open='true'] > .activity__reveal-clip,
-  .aux__reveal[data-open='true'] > .aux__reveal-clip {
-    animation: none;
-  }
-
   .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
     transition: none;
   }
@@ -570,8 +560,30 @@
 .activity__body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   margin: 4px 0;
+  padding: 2px 0 2px 14px;
+  border-left: 1px solid var(--line);
+}
+
+.activity__item {
+  min-width: 0;
+  padding-block: 0;
+}
+
+.activity__body .aux__row {
+  min-height: 24px;
+  padding-block: 0;
+}
+
+.activity__message {
+  padding: 2px 0;
+  color: var(--text-2);
+  font-size: var(--t-md);
+}
+
+.activity__message .md > :last-child {
+  margin-bottom: 0;
 }
 
 .activity__file-change {
@@ -580,7 +592,7 @@
   gap: 8px;
   min-width: 0;
   min-height: 24px;
-  color: var(--text-3);
+  color: var(--text-2);
   font-family: var(--font-ui);
   font-size: var(--t-md);
   letter-spacing: -0.012em;
@@ -588,6 +600,22 @@
 
 .activity__file-change svg {
   flex: none;
+  width: 13px;
+  height: 13px;
+  color: var(--text-3);
+  stroke-width: 1.6;
+}
+
+.activity__item[data-failed='true'] .activity__file-change svg {
+  color: var(--error);
+}
+
+.activity__file-change :is(.aux__code, .aux__time) {
+  flex: none;
+}
+
+.activity__file-change .aux__time {
+  margin-left: auto;
 }
 
 .activity__item-label {
@@ -601,10 +629,18 @@
   max-height: 180px;
   overflow: auto;
   margin: 5px 0 0 21px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--surface) 45%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  border-radius: var(--r-md);
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: var(--t-sm);
+  line-height: 1.6;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+  user-select: text;
 }
 
 .viewed-image-preview {
@@ -736,10 +772,17 @@
 /* Match the completion rail: one virtual-row resize, then compositor-only motion. */
 .aux__reveal {
   display: none;
+  clip-path: inset(0 0 100%);
+  transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .aux__reveal[data-open='true'] {
   display: block;
+  clip-path: inset(0);
+
+  @starting-style {
+    clip-path: inset(0 0 100%);
+  }
 }
 
 .aux__reveal[data-open='closing'] {
@@ -751,16 +794,19 @@
   display: block;
   background: var(--bg);
   pointer-events: none;
-  animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both;
-}
-
-.aux__reveal[data-open='true'] > .aux__reveal-clip {
-  animation: disclosure-reveal-in var(--dur-fast) var(--ease-out);
+  transition-duration: 120ms;
 }
 
 .aux__reveal-clip {
   min-height: 0;
   overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity__reveal,
+  .aux__reveal {
+    transition: none;
+  }
 }
 
 .aux--live .aux__row {
@@ -838,7 +884,10 @@
   min-height: 28px;
   margin-top: 4px;
   color: var(--text-3);
-  font-size: var(--t-sm);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   opacity: 0;
   pointer-events: none;
@@ -1065,33 +1114,6 @@
   border-color: var(--composer-action-border-hover);
   box-shadow: var(--composer-action-shadow-hover);
   color: var(--text);
-}
-
-.approval--review .approval__head {
-  margin-bottom: 6px;
-}
-
-.approval-review__risk {
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  margin-left: auto;
-}
-
-.approval-review__description,
-.approval-review__rationale {
-  font-size: var(--t-sm);
-  line-height: 1.5;
-  margin: 0;
-}
-
-.approval-review__description {
-  font-family: var(--font-mono);
-  word-break: break-word;
-}
-
-.approval-review__rationale {
-  color: var(--text-2);
-  margin-top: 6px;
 }
 
 /* ---------- diff ---------- */

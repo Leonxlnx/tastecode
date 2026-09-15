@@ -35,8 +35,7 @@
   --surface-3: #2b2b2b;
   --control-hover: #222222;
   --control-pressed: color-mix(in srgb, var(--text) 8%, var(--surface-2));
-  --control-press-overlay: color-mix(in srgb, currentColor 12%, transparent);
-  --control-pressed-image-opacity: 0.8;
+  --control-open-overlay: color-mix(in srgb, currentColor 12%, transparent);
   --menu-bg: var(--surface);
   --menu-hover: var(--surface-3);
   --menu-line: var(--chrome-border);
@@ -46,7 +45,7 @@
   --queue-line: #2b2b2b;
 
   --text: #ededed;
-  --response-text: #fefefe;
+  --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
   --text-2: #a3a3a3;
   --text-3: #6f6f6f;
   --queue-text: #ededed;
@@ -292,7 +291,7 @@
   --queue-line: #eeeeef;
 
   --text: #27272a;
-  --response-text: #18181b;
+  --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
   --text-2: #52525b;
   --text-3: #71717a;
   --queue-text: #18181b;

@@ -20,13 +20,14 @@ import {
   session,
   shell,
   systemPreferences,
+  Tray,
+  utilityProcess,
   type Event as ElectronEvent,
   type OpenDialogOptions,
   type OpenDialogReturnValue,
-  type Tray,
   type WebContents,
 } from 'electron'
-import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
+import type { PreviewCaptureRequest } from '@harness/contracts'
 import { applyDesktopPath, desktopPath } from '@harness/proc/desktop-path'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
@@ -35,7 +36,6 @@ import {
   pickedAttachment,
 } from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
-import { tryCreateBackgroundTray } from './background-tray.js'
 import {
   appUpdateMode,
   createAppUpdateController,
@@ -45,8 +45,8 @@ import {
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
-import { configureEmbeddedBrowser } from './embedded-browser.js'
-import { assertSupportedExternalUrl, isSupportedExternalUrl } from './external-urls.js'
+import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
@@ -59,12 +59,10 @@ import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
-import { PREVIEW_DOM_AUDIT_SCRIPT } from './preview-dom-audit.js'
-import { clearPreviewSession } from './preview-session.js'
-import { PREVIEW_PAGE_HEIGHT_SCRIPT, PREVIEW_SETTLE_SCRIPT } from './preview-settle.js'
-import { ServerSupervisor } from './server-supervisor.js'
+import { PreviewCaptureOwner } from './preview-capture.js'
+import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
-import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
+import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
   loadMainWindowState,
@@ -108,6 +106,12 @@ const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
 const startupSettledMetricsDelayMs = startupSettleDelay(process.env['HARNESS_STARTUP_SETTLE_MS'])
+const startupRendererPath =
+  Number.isFinite(startupStartedAt) &&
+  startupStartedAt > 0 &&
+  process.env['HARNESS_STARTUP_RENDERER']
+    ? path.resolve(process.env['HARNESS_STARTUP_RENDERER'])
+    : undefined
 
 function logStartupMilestone(name: string): void {
   if (!Number.isFinite(startupStartedAt) || startupStartedAt <= 0) return
@@ -120,6 +124,14 @@ logStartupMilestone('main-module')
 app.setPath('userData', productDataPath)
 app.setPath('sessionData', productDataPath)
 
+function isWebUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
 function sameOrigin(url: string, base: string): boolean {
   try {
     return new URL(url).origin === new URL(base).origin
@@ -157,8 +169,19 @@ function finishStartupBenchmarkIfReady(): void {
   // both values since the previous read; memory is sampled at the end.
   app.getAppMetrics()
   setTimeout(() => {
-    console.log(`[startup] settled ${JSON.stringify(summarizeAppMetrics(app.getAppMetrics()))}`)
-    app.quit()
+    const metrics = app.getAppMetrics()
+    void import('./performance-memory.js')
+      .then(async ({ collectSettledBenchmarkMemory }) => {
+        const memory = await collectSettledBenchmarkMemory(() => app.getAppMetrics())
+        console.log(
+          '[startup] settled ' + JSON.stringify({ ...summarizeAppMetrics(metrics), memory }),
+        )
+        app.quit()
+      })
+      .catch((error: unknown) => {
+        console.error('[startup] memory measurement failed', error)
+        app.exit(1)
+      })
   }, startupSettledMetricsDelayMs)
 }
 
@@ -168,6 +191,18 @@ const MAX_ATTACHMENT_THUMBNAILS = 64
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
  *  "the app's windows" must not count them. */
 const captureWindows = new Set<BrowserWindow>()
+const previewCaptures = new PreviewCaptureOwner({
+  createWindow: createPreviewWindow,
+  releaseWindow: (window) => {
+    captureWindows.delete(window)
+  },
+  directory: (requestId) =>
+    path.join(app.getPath('temp'), 'TasteCode', 'preview-captures', requestId),
+  parseAudit: async (value) => {
+    const { PreviewDomAuditSchema } = await import('@harness/contracts')
+    return PreviewDomAuditSchema.parse(value)
+  },
+})
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -190,8 +225,6 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
-let serverShutdown: Promise<void> | undefined
-let serverShutdownFinished = false
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
@@ -253,8 +286,9 @@ if (!ownsSingleInstance) {
  * permanent "Reconnecting…". In dev, dev.js runs the server with a watcher and
  * signals that through HARNESS_DEV_SERVER.
  *
- * The server runs as an owned Node-mode child. IPC requests graceful async
- * cleanup on every platform; the supervisor escalates only when it hangs.
+ * Packaged builds use Electron's Node utility process so the service stays
+ * isolated without paying for a second full app executable launch. The legacy
+ * Node-mode child remains available as a field fallback.
  */
 function startOwnedServer(): void {
   if (devServer || serverSupervisor) return
@@ -281,14 +315,43 @@ function startOwnedServer(): void {
       }
     },
   }
-  serverSupervisor = new ServerSupervisor({
-    command: process.execPath,
-    args: [serverEntry],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
-    ...supervisorCallbacks,
-  })
+  serverSupervisor =
+    process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
+      ? new ServerSupervisor({
+          command: process.execPath,
+          args: [serverEntry],
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          ...supervisorCallbacks,
+        })
+      : new ServerSupervisor({
+          launch: () => launchUtilityServer(serverEntry),
+          ...supervisorCallbacks,
+        })
   serverSupervisor.start()
   logStartupMilestone('server-spawned')
+}
+
+function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
+  const child = utilityProcess.fork(serverEntry, [], {
+    env: { ...process.env },
+    serviceName: 'Taste Code Core Server',
+    stdio: 'pipe',
+  })
+  return {
+    get stdout() {
+      return child.stdout
+    },
+    get stderr() {
+      return child.stderr
+    },
+    kill: () => child.kill(),
+    onError: (listener) => {
+      child.on('error', (type, location) => listener(new Error(`${type} at ${location}`)))
+    },
+    onExit: (listener) => {
+      child.on('exit', (code) => listener(code, null))
+    },
+  }
 }
 
 function createWindow(): void {
@@ -356,6 +419,10 @@ function createWindow(): void {
     window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
   )
   configureEmbeddedBrowser(window.webContents)
+  configureImageContextMenu(window.webContents, window)
+  window.webContents.on('did-attach-webview', (_event, guest) => {
+    configureImageContextMenu(guest, window)
+  })
   restoreMainWindowPresence(process.platform, app, window)
   const windowStatePersistence = persistMainWindowState(
     window,
@@ -376,16 +443,12 @@ function createWindow(): void {
   if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
   window.on('close', (event) => {
-    if (!shouldHideWindowOnClose(process.platform, appIsQuitting, tray !== undefined)) return
+    if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
     event.preventDefault()
     window.hide()
   })
   window.on('closed', () => {
     if (mainWindow === window) mainWindow = undefined
-    if (process.platform !== 'darwin' && !tray && !appIsQuitting) {
-      appIsQuitting = true
-      app.quit()
-    }
   })
   window.on('focus', () => restoreMainWindowPresence(process.platform, app, window))
   window.on('show', () => restoreMainWindowPresence(process.platform, app, window))
@@ -420,7 +483,7 @@ function createWindow(): void {
   // Web links only: renderer content includes agent- and vendor-authored
   // URLs, and handing a file:/smb:/ms-*: URL to the OS is code execution.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isSupportedExternalUrl(url)) openExternalLink(url)
+    if (isWebUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -430,7 +493,7 @@ function createWindow(): void {
     const allowed = devServer !== undefined && sameOrigin(url, devServer)
     if (!allowed) {
       event.preventDefault()
-      if (isSupportedExternalUrl(url)) openExternalLink(url)
+      if (isWebUrl(url)) void shell.openExternal(url)
     }
   })
 
@@ -446,7 +509,7 @@ function createWindow(): void {
   // flight, the app must still quit/reset — transient windows don't get a vote.
   window.on('closed', () => {
     if (appWindows().length === 0) {
-      for (const capture of captureWindows) capture.destroy()
+      previewCaptures.cancelAll()
     }
   })
 
@@ -454,20 +517,12 @@ function createWindow(): void {
     void window.loadURL(devServer)
   } else {
     void window.loadFile(
-      app.isPackaged
-        ? path.join(process.resourcesPath, 'web', 'index.html')
-        : path.join(here, '../../web/dist/index.html'),
+      startupRendererPath ??
+        (app.isPackaged
+          ? path.join(process.resourcesPath, 'web', 'index.html')
+          : path.join(here, '../../web/dist/index.html')),
     )
   }
-}
-
-/** Fire-and-forget external opens stay denied-safe: the scheme was already
- *  validated by the caller, and a missing Linux browser must warn, not crash. */
-function openExternalLink(url: string): void {
-  void shell.openExternal(url).catch((error) => {
-    console.warn('[desktop] failed to open the link in the system browser', error)
-    void diagnostics?.record('openExternal', error)
-  })
 }
 
 function appWindows(): BrowserWindow[] {
@@ -480,7 +535,25 @@ function showMainWindow(): void {
     createWindow()
     return
   }
-  presentMainWindow(process.platform, app, window)
+  restoreMainWindowPresence(process.platform, app, window)
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
+function createBackgroundTray(): void {
+  if (process.platform === 'darwin' || tray) return
+  const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
+  tray = new Tray(icon)
+  tray.setToolTip(nativeAppName)
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: `Open ${nativeAppName}`, click: showMainWindow },
+      { type: 'separator' },
+      { label: `Quit ${nativeAppName}`, click: () => app.quit() },
+    ]),
+  )
+  tray.on('click', showMainWindow)
 }
 
 function installApplicationMenu(): void {
@@ -606,24 +679,30 @@ ipcMain.handle('harness:writeClipboardText', (event, value: unknown) => {
   clipboard.writeText(clipboardText(value))
 })
 
-ipcMain.handle('harness:capturePreview', async (event, value: unknown) => {
-  if (!isOwnRenderer(event.sender)) throw new Error('Preview capture requires the app renderer')
-  const { PreviewCaptureRequestSchema } = await import('@harness/contracts')
-  const parsed = PreviewCaptureRequestSchema.safeParse(value)
-  if (!parsed.success) throw new Error('Invalid preview capture request')
-  return capturePreview(parsed.data)
+ipcMain.handle('harness:capturePreview', (event, value: unknown) =>
+  previewCaptures.captureAfterValidation(
+    value,
+    async () => {
+      const { PreviewCaptureRequestSchema } = await import('@harness/contracts')
+      return (input) => {
+        const parsed = PreviewCaptureRequestSchema.safeParse(input)
+        if (!parsed.success) throw new Error('Invalid preview capture request')
+        return parsed.data
+      }
+    },
+    () => !appIsQuitting && !event.sender.isDestroyed() && isOwnRenderer(event.sender),
+  ),
+)
+
+ipcMain.handle('harness:cancelPreviewCapture', (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (typeof value !== 'string' || value.length > 64) throw new Error('Invalid preview capture id')
+  previewCaptures.cancel(value)
 })
 
 ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
   requireOwnRenderer(event.sender)
-  const target = assertSupportedExternalUrl(url)
-  try {
-    await shell.openExternal(target)
-  } catch (error) {
-    throw new Error(
-      `Could not open the link in the system browser: ${error instanceof Error ? error.message : String(error)}`,
-    )
-  }
+  await shell.openExternal(browserGuestUrl(url))
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {
@@ -638,14 +717,7 @@ async function openDiagnosticsDirectory(): Promise<boolean> {
   return (await shell.openPath(diagnostics.directory)) === ''
 }
 
-async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCaptureResult> {
-  const { PreviewDomAuditSchema } = await import('@harness/contracts')
-  const directory = path.join(
-    app.getPath('temp'),
-    'TasteCode',
-    'preview-captures',
-    request.requestId,
-  )
+function createPreviewWindow(request: PreviewCaptureRequest): BrowserWindow {
   const preview = new BrowserWindow({
     width: request.viewports[0]!.width,
     height: request.viewports[0]!.height,
@@ -658,9 +730,9 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
       sandbox: true,
       webSecurity: true,
       spellcheck: false,
-      // One fixed partition, cleared after every run. A partition per request
-      // would leave Electron's session registry holding a live session (and
-      // its network stack) per capture for the life of the process.
+      backgroundThrottling: false,
+      // The capture owner serializes access and refuses reuse after failed cleanup.
+      // Per-request partitions would retain an unbounded number of sessions.
       partition: 'preview-capture',
     },
   })
@@ -676,82 +748,7 @@ async function capturePreview(request: PreviewCaptureRequest): Promise<PreviewCa
   preview.webContents.on('will-navigate', restrictNavigation)
   preview.webContents.on('will-redirect', restrictNavigation)
 
-  // A pending webfont or a throttled hidden renderer can stall the settle
-  // script forever; the whole capture races a hard deadline instead of
-  // leaving a hidden BrowserWindow alive and the caller's promise pending.
-  let deadlineTimer: NodeJS.Timeout | undefined
-  const deadline = new Promise<never>((_, reject) => {
-    deadlineTimer = setTimeout(() => reject(new Error('preview capture timed out')), 30_000)
-    deadlineTimer.unref?.()
-  })
-  // Until the first race attaches a handler, a firing deadline would be an
-  // unhandled rejection — fatal in the main process — e.g. when mkdir throws.
-  deadline.catch(() => undefined)
-  try {
-    await mkdir(directory, { recursive: true, mode: 0o700 })
-    await Promise.race([preview.loadURL(request.url), deadline])
-    if (!allowsPreviewNavigation(request.url, preview.webContents.getURL())) {
-      throw new Error('preview navigated outside its local origin')
-    }
-    const screenshots = []
-    // Duplicate viewports would collide on the wx-flagged filename and fail
-    // the entire request.
-    const seen = new Set<string>()
-    for (const viewport of request.viewports) {
-      const key = `${viewport.width}x${viewport.height}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      preview.setContentSize(viewport.width, viewport.height)
-      await Promise.race([preview.webContents.executeJavaScript(PREVIEW_SETTLE_SCRIPT), deadline])
-      const domAudit = PreviewDomAuditSchema.parse(
-        await Promise.race([
-          preview.webContents.executeJavaScriptInIsolatedWorld(1001, [
-            { code: PREVIEW_DOM_AUDIT_SCRIPT },
-          ]),
-          deadline,
-        ]),
-      )
-      const destination = path.join(directory, `${key}.png`)
-      const pageHeight = await Promise.race([
-        preview.webContents.executeJavaScript(PREVIEW_PAGE_HEIGHT_SCRIPT),
-        deadline,
-      ])
-      await writeFile(
-        destination,
-        (
-          await preview.webContents.capturePage({
-            x: 0,
-            y: 0,
-            width: viewport.width,
-            height: Number(pageHeight),
-          })
-        ).toPNG(),
-        {
-          flag: 'wx',
-          mode: 0o600,
-        },
-      )
-      screenshots.push({ path: destination, ...viewport, domAudit })
-    }
-    return { status: 'completed', requestId: request.requestId, screenshots }
-  } catch (error) {
-    // Nothing consumes a failed capture's directory; leaving it accumulates.
-    await rm(directory, { recursive: true, force: true }).catch(() => undefined)
-    return {
-      status: 'failed',
-      requestId: request.requestId,
-      error: error instanceof Error ? error.message : String(error),
-    }
-  } finally {
-    clearTimeout(deadlineTimer)
-    // The closed-last-window handler may have destroyed us already; touching
-    // a destroyed webContents throws, which would eat a successful result.
-    if (!preview.isDestroyed() && !preview.webContents.isDestroyed()) preview.destroy()
-    captureWindows.delete(preview)
-    // The fixed partition is shared by every capture, so the IPC must not
-    // resolve until both browser storage and the HTTP cache are clean.
-    await clearPreviewSession(previewSession)
-  }
+  return preview
 }
 
 /** Screenshot directories older than a day have no consumer left — the design
@@ -775,9 +772,6 @@ async function sweepStaleCaptures(): Promise<void> {
  * itself — the user's own picker or operating-system drop is the only way a
  * path enters the app.
  */
-// Parent the chooser to the requesting window: on Wayland the file portal
-// needs the parent handle for modality, otherwise the dialog can open
-// detached or behind the window.
 async function showOpenDialogForSender(
   sender: WebContents,
   options: OpenDialogOptions,
@@ -864,35 +858,17 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
-  app.on('before-quit', (event) => {
+  app.on('before-quit', () => {
     appIsQuitting = true
+    previewCaptures.cancelAll()
     mainWindowStatePersistence?.saveAndStop()
-    if (serverShutdownFinished) return
-    if (serverShutdown) {
-      event.preventDefault()
-      return
-    }
-    const supervisor = serverSupervisor
-    if (!supervisor) return
-    // Electron does not await event listeners. Hold the first quit until the
-    // owned server group has completed its bounded TERM-to-KILL shutdown.
-    event.preventDefault()
-    serverSupervisor = undefined
-    serverShutdown = supervisor
-      .stop()
-      .catch((error) => {
-        console.error('[desktop] core server cleanup failed during quit', error)
-        void diagnostics?.record('core server cleanup failed during quit', error)
-      })
-      .finally(() => {
-        serverShutdownFinished = true
-        app.quit()
-      })
   })
   app.on('will-quit', () => {
     appUpdater?.dispose()
     appUpdater = undefined
     macOSHaptics.stop()
+    serverSupervisor?.stop()
+    serverSupervisor = undefined
     tray?.destroy()
     tray = undefined
   })
@@ -936,18 +912,7 @@ if (ownsSingleInstance) {
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()
-    if (process.platform !== 'darwin') {
-      tray = tryCreateBackgroundTray({
-        appName: nativeAppName,
-        iconPath: productIconPath,
-        onOpen: showMainWindow,
-        onQuit: () => app.quit(),
-        onUnavailable: (error) => {
-          console.warn('[desktop] tray unavailable; close will leave the window recoverable', error)
-          void diagnostics?.record('tray', error)
-        },
-      })
-    }
+    if (process.platform === 'win32') createBackgroundTray()
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
       app.on('did-become-active', () => {

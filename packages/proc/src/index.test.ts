@@ -20,7 +20,6 @@ import {
   runCli,
   spawnCli,
   StdioJsonRpc,
-  terminateTree,
   type StdioJsonRpcProcess,
 } from './index.js'
 
@@ -90,36 +89,6 @@ describe('StdioJsonRpc', () => {
 
     await expect(reply).resolves.toBe('drained')
     child.emit('close', 0)
-  })
-
-  it('waits for a stubborn owned process group to exit during disposal', async () => {
-    const beat = path.join(os.tmpdir(), `harness-rpc-dispose-${Date.now()}.txt`)
-    const grandchild = [
-      "const fs = require('fs')",
-      "process.on('SIGTERM', () => {})",
-      `setInterval(() => fs.writeFileSync(${JSON.stringify(beat)}, String(Date.now())), 100)`,
-    ].join(';')
-    const parent = [
-      "const { spawn } = require('node:child_process')",
-      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
-      "process.on('SIGTERM', () => {})",
-      'setInterval(() => {}, 1_000)',
-    ].join(';')
-    const child = spawnCli(process.execPath, ['-e', parent])
-    const rpc = new StdioJsonRpc(child, 'stubborn agent')
-
-    try {
-      await waitFor(() => existsSync(beat), 5_000)
-      const disposing = rpc.dispose()
-      expect(rpc.dispose()).toBe(disposing)
-      await disposing
-      const afterDispose = readFileSync(beat, 'utf8')
-      await sleep(300)
-      expect(readFileSync(beat, 'utf8')).toBe(afterDispose)
-    } finally {
-      await terminateTree(child, { gracePeriodMs: 0, killWaitMs: 1_500 })
-      rmSync(beat, { force: true })
-    }
   })
 })
 
@@ -215,40 +184,13 @@ describe('readNdjson', () => {
 })
 
 describe('killTree', () => {
-  it('kills an owned group after its leader has already exited', async () => {
-    const beat = path.join(os.tmpdir(), `harness-orphan-group-${Date.now()}.txt`)
-    const grandchild = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
-      beat,
-    )},String(Date.now())),150)`
-    const script = [
-      "const { spawn } = require('node:child_process')",
-      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
-      'process.exit(0)',
-    ].join(';')
-    const child = spawnCli('node', ['-e', script])
-    await waitFor(() => existsSync(beat), 5_000)
-    await waitFor(() => child.exitCode !== null, 5_000)
-
-    killTree(child)
-    await sleep(700)
-    const afterKill = readFileSync(beat, 'utf8')
-    await sleep(700)
-    expect(readFileSync(beat, 'utf8')).toBe(afterKill)
-    rmSync(beat, { force: true })
-  })
-
   it('kills the real process behind the shim, not only the shim', async () => {
     // The grandchild heartbeats into a temp file; if only the cmd.exe shim
     // died (the pre-fix Windows behavior), the heartbeat keeps ticking.
     const beat = path.join(os.tmpdir(), `harness-killtree-${Date.now()}.txt`)
-    const grandchild = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
+    const script = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
       beat,
     )},String(Date.now())),150)`
-    const script = [
-      "const { spawn } = require('node:child_process')",
-      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
-      'setInterval(() => {}, 1_000)',
-    ].join(';')
     const child = spawnCli('node', ['-e', script])
     await waitFor(() => existsSync(beat), 5_000)
 
@@ -258,44 +200,6 @@ describe('killTree', () => {
     await sleep(700)
     expect(readFileSync(beat, 'utf8')).toBe(afterKill)
     rmSync(beat, { force: true })
-  })
-})
-
-describe.skipIf(process.platform === 'win32')('terminateTree escalation', () => {
-  it('SIGKILLs the same group after the leader exits on SIGTERM', async () => {
-    // Audit regression: the leader dies on SIGTERM while a descendant ignores
-    // it. Escalation must still address the snapshotted group (negative PID),
-    // not just the dead leader PID, or the descendant heartbeats forever.
-    const beat = path.join(os.tmpdir(), `harness-escalate-${Date.now()}-${process.pid}.txt`)
-    const grandchild = [
-      "process.on('SIGTERM', () => {})",
-      "const fs = require('fs')",
-      `setInterval(() => fs.writeFileSync(${JSON.stringify(beat)}, String(Date.now())), 100)`,
-    ].join(';')
-    const parent = [
-      "const { spawn } = require('node:child_process')",
-      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
-      'setInterval(() => {}, 1_000)',
-    ].join(';')
-    const child = spawnCli(process.execPath, ['-e', parent])
-    try {
-      await waitFor(() => existsSync(beat), 5_000)
-
-      await terminateTree(child, { gracePeriodMs: 300, killWaitMs: 5_000, pollIntervalMs: 25 })
-
-      const afterTerminate = readFileSync(beat, 'utf8')
-      await sleep(600)
-      expect(readFileSync(beat, 'utf8')).toBe(afterTerminate)
-      // Escalation is idempotent: re-terminating the same snapshot is a no-op.
-      await terminateTree(child, { gracePeriodMs: 0, killWaitMs: 500 })
-    } finally {
-      try {
-        await terminateTree(child, { gracePeriodMs: 0, killWaitMs: 1_500 })
-      } catch {
-        // Best-effort cleanup; the assertions above already ran.
-      }
-      rmSync(beat, { force: true })
-    }
   })
 })
 

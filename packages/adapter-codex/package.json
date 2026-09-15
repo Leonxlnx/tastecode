@@ -19,6 +19,10 @@
     "./voice": {
       "types": "./dist/voice.d.ts",
       "default": "./dist/voice.js"
+    },
+    "./updates": {
+      "types": "./dist/updates.d.ts",
+      "default": "./dist/updates.js"
     }
   },
   "main": "./dist/index.js",

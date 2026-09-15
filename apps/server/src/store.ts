@@ -1,8 +1,19 @@
-import { createCipheriv, randomBytes, randomUUID } from 'node:crypto'
-import { chmodSync, mkdirSync } from 'node:fs'
+import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto'
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  rmSync,
+  statSync,
+  writeSync,
+} from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import {
+  ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
   DiffDecisionSchema,
   DomainEventSchema,
@@ -11,6 +22,7 @@ import {
   ThreadLifecycleSchema,
 } from '@harness/contracts'
 import type {
+  ApprovalMode,
   BackgroundModelPreference,
   DiffDecision,
   DomainEvent,
@@ -23,6 +35,7 @@ import type {
 } from '@harness/contracts'
 import { z } from 'zod'
 import type { TurnOptions } from './adapters.js'
+import { canonicalDataPath } from './data-lease.js'
 import {
   affectsInboxProjection,
   applyInboxProjectionEvent,
@@ -368,6 +381,10 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   created_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS checkpoint_repositories (
+  path TEXT PRIMARY KEY
+);
+
 CREATE TABLE IF NOT EXISTS restore_undos (
   token            TEXT PRIMARY KEY,
   thread_id        TEXT NOT NULL UNIQUE,
@@ -406,6 +423,11 @@ CREATE TABLE IF NOT EXISTS diff_decisions (
 CREATE TABLE IF NOT EXISTS design_runs (
   thread_id TEXT PRIMARY KEY,
   payload   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS thread_approvals (
+  thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS app_settings (
@@ -589,6 +611,8 @@ type CheckpointRow = {
   created_at: SqliteInteger
 }
 type RestoreUndoRow = {
+  thread_id: string
+  snapshot_commit: string
   checkpoint_seq: SqliteInteger
   events_json: string
   checkpoints_json: string
@@ -633,6 +657,8 @@ const SearchCursorSchema = z.object({
 })
 
 export class Store {
+  readonly checkpointNamespace: string
+  readonly location: string
   #db: DatabaseSync
   #insertEvent: StatementSync
   #insertSearchEntry: StatementSync
@@ -726,23 +752,21 @@ export class Store {
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
-    if (location !== ':memory:') {
-      // Mode covers newly created directories; the explicit chmod also tightens
-      // a data directory left readable by an older build. Only the managed leaf
-      // is touched, never its ancestors.
-      mkdirSync(path.dirname(location), { recursive: true, mode: 0o700 })
-      if (process.platform !== 'win32') chmodSync(path.dirname(location), 0o700)
-    }
-    // SQLite births the database and its WAL/SHM sidecars with the process
-    // umask, so a default umask leaves them briefly world-readable. The guarded
-    // span is fully synchronous (open plus the first writes), so the
-    // process-global change cannot leak into concurrent work, and every file
-    // SQLite creates here is owner-only from birth. Later writes reuse them.
-    const restoreUmask = withPrivateUmask()
-    let openedDb: DatabaseSync | undefined
+    const previousUmask = process.platform === 'win32' ? undefined : process.umask(0o077)
+    let openedDatabase: DatabaseSync | undefined
     try {
+      if (location !== ':memory:') location = canonicalDataPath(location)
+      this.location = location
+      this.checkpointNamespace = createHash('sha256')
+        .update(location === ':memory:' ? randomUUID() : path.resolve(location))
+        .digest('hex')
+        .slice(0, 32)
+      if (location !== ':memory:') {
+        mkdirSync(path.dirname(location), { recursive: true, mode: 0o700 })
+        if (process.platform !== 'win32') chmodSync(path.dirname(location), 0o700)
+      }
       this.#db = new DatabaseSync(location)
-      openedDb = this.#db
+      openedDatabase = this.#db
       // Without WAL a reader blocks a writer, and we do both on every turn.
       this.#db.exec('PRAGMA journal_mode = WAL')
       // Search and history are read-heavy once the event log grows. Mapping the
@@ -756,77 +780,68 @@ export class Store {
       this.#db.exec('PRAGMA synchronous = NORMAL')
       this.#db.exec('PRAGMA foreign_keys = ON')
       this.#db.exec(SCHEMA)
-    } catch (error) {
-      // An open or first-write failure must not leak the handle.
-      try {
-        openedDb?.close()
-      } catch {
-        // The open itself failed, so there is nothing to close.
-      }
-      throw error
-    } finally {
-      restoreUmask?.()
-    }
-    this.#readSidebarSettings = this.#prepare(
-      `SELECT mode, auto_settle_days FROM sidebar_settings WHERE id = 1`,
-    )
-    this.#writeSidebarSettings = this.#prepare(
-      `UPDATE sidebar_settings SET mode = ?, auto_settle_days = ? WHERE id = 1`,
-    )
-    this.#readAppSetting = this.#prepare(`SELECT value FROM app_settings WHERE key = ?`)
-    this.#writeAppSetting = this.#prepare(
-      `INSERT INTO app_settings (key, value) VALUES (?, ?)
+      this.#readSidebarSettings = this.#db.prepare(
+        `SELECT mode, auto_settle_days FROM sidebar_settings WHERE id = 1`,
+      )
+      this.#writeSidebarSettings = this.#db.prepare(
+        `UPDATE sidebar_settings SET mode = ?, auto_settle_days = ? WHERE id = 1`,
+      )
+      this.#readAppSetting = this.#db.prepare(`SELECT value FROM app_settings WHERE key = ?`)
+      this.#writeAppSetting = this.#db.prepare(
+        `INSERT INTO app_settings (key, value) VALUES (?, ?)
        ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-    )
-    this.#searchResultKey = this.#setup(() => this.#loadSearchResultKey())
-    // These statements run for every persisted event. Preparing them once
-    // keeps SQLite compilation off the streamed-delta path.
-    this.#insertEvent = this.#prepare(
-      `INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`,
-    )
-    this.#insertSearchEntry = this.#prepare(
-      `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
+      )
+      this.#searchResultKey = this.#loadSearchResultKey()
+      // These statements run for every persisted event. Preparing them once
+      // keeps SQLite compilation off the streamed-delta path.
+      this.#insertEvent = this.#db.prepare(
+        `INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`,
+      )
+      this.#insertSearchEntry = this.#db.prepare(
+        `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
        VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    this.#insertUsageEvent = this.#prepare(
-      `INSERT OR REPLACE INTO usage_events (event_seq, thread_id, at, payload)
+      )
+      this.#insertUsageEvent = this.#db.prepare(
+        `INSERT OR REPLACE INTO usage_events (event_seq, thread_id, at, payload)
        VALUES (?, ?, ?, ?)`,
-    )
-    this.#insertInboxEvent = this.#prepare(
-      `INSERT OR REPLACE INTO inbox_events (event_seq, thread_id, payload) VALUES (?, ?, ?)`,
-    )
-    this.#deleteInboxStatus = this.#prepare(
-      `DELETE FROM inbox_events
+      )
+      this.#insertInboxEvent = this.#db.prepare(
+        `INSERT OR REPLACE INTO inbox_events (event_seq, thread_id, payload) VALUES (?, ?, ?)`,
+      )
+      this.#deleteInboxStatus = this.#db.prepare(
+        `DELETE FROM inbox_events
        WHERE thread_id = ?
          AND json_extract(payload, '$.type') IN ('thread.error', 'turn.completed')`,
-    )
-    this.#deleteInboxRequest = this.#prepare(
-      `DELETE FROM inbox_events
+      )
+      this.#deleteInboxRequest = this.#db.prepare(
+        `DELETE FROM inbox_events
        WHERE thread_id = ?
          AND json_extract(payload, '$.type') = ?
          AND json_extract(payload, '$.request.id') = ?`,
-    )
-    this.#deleteThreadInboxEvents = this.#prepare(`DELETE FROM inbox_events WHERE thread_id = ?`)
-    this.#insertUserSubmission = this.#prepare(
-      `INSERT OR IGNORE INTO user_submission_items (thread_id, item_id, event_seq)
+      )
+      this.#deleteThreadInboxEvents = this.#db.prepare(
+        `DELETE FROM inbox_events WHERE thread_id = ?`,
+      )
+      this.#insertUserSubmission = this.#db.prepare(
+        `INSERT OR IGNORE INTO user_submission_items (thread_id, item_id, event_seq)
        VALUES (?, ?, ?)`,
-    )
-    this.#hasUserSubmission = this.#prepare(
-      `SELECT 1 FROM user_submission_items WHERE thread_id = ? AND item_id = ?`,
-    )
-    this.#insertTurnDiffEvent = this.#prepare(
-      `INSERT OR REPLACE INTO turn_diff_events (event_seq, thread_id, turn_id)
+      )
+      this.#hasUserSubmission = this.#db.prepare(
+        `SELECT 1 FROM user_submission_items WHERE thread_id = ? AND item_id = ?`,
+      )
+      this.#insertTurnDiffEvent = this.#db.prepare(
+        `INSERT OR REPLACE INTO turn_diff_events (event_seq, thread_id, turn_id)
        VALUES (?, ?, ?)`,
-    )
-    this.#readTurnDiff = this.#prepare(
-      `SELECT events.payload
+      )
+      this.#readTurnDiff = this.#db.prepare(
+        `SELECT events.payload
        FROM turn_diff_events
        INNER JOIN events ON events.seq = turn_diff_events.event_seq
        WHERE turn_diff_events.thread_id = ? AND turn_diff_events.turn_id = ?
        ORDER BY turn_diff_events.event_seq DESC LIMIT 1`,
-    )
-    this.#upsertRecoveryStart = this.#prepare(
-      `INSERT INTO recovery_lifecycles
+      )
+      this.#upsertRecoveryStart = this.#db.prepare(
+        `INSERT INTO recovery_lifecycles
          (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
        VALUES (?, ?, ?, ?, NULL, ?)
        ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
@@ -834,9 +849,9 @@ export class Store {
          started_seq = excluded.started_seq,
          payload = excluded.payload
        WHERE recovery_lifecycles.terminal_seq IS NULL`,
-    )
-    this.#settleRecoveryLifecycle = this.#prepare(
-      `INSERT INTO recovery_lifecycles
+      )
+      this.#settleRecoveryLifecycle = this.#db.prepare(
+        `INSERT INTO recovery_lifecycles
          (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
        VALUES (?, ?, NULL, NULL, ?, NULL)
        ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
@@ -844,13 +859,13 @@ export class Store {
          started_seq = NULL,
          terminal_seq = excluded.terminal_seq,
          payload = NULL`,
-    )
-    this.#upsertRecoveryError = this.#prepare(
-      `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
+      )
+      this.#upsertRecoveryError = this.#db.prepare(
+        `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
        ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
-    )
-    this.#readInterruptedThreads = this.#prepare(
-      `SELECT recovery.thread_id, recovery.payload,
+      )
+      this.#readInterruptedThreads = this.#db.prepare(
+        `SELECT recovery.thread_id, recovery.payload,
               CASE WHEN recovery.event_type = 'user_input.requested'
                 AND EXISTS (
                   SELECT 1 FROM design_runs
@@ -867,123 +882,129 @@ export class Store {
          AND (recovery.event_type <> 'turn.started' OR errors.event_seq IS NULL
               OR errors.event_seq < recovery.started_seq)
        ORDER BY recovery.started_seq`,
-    )
-    this.#insertQueuedTurnEvent = this.#prepare(
-      `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
+      )
+      this.#insertQueuedTurnEvent = this.#db.prepare(
+        `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
        VALUES (?, ?, ?, ?, ?)`,
-    )
-    this.#listQueuedTurns = this.#prepare(
-      `SELECT queued_turns.* FROM queued_turns
+      )
+      this.#listQueuedTurns = this.#db.prepare(
+        `SELECT queued_turns.* FROM queued_turns
        INNER JOIN threads ON threads.id = queued_turns.thread_id
        WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
          AND threads.closed_at IS NULL
        ORDER BY queued_turns.position`,
-    )
-    this.#hasQueuedSubmission = this.#prepare(
-      `SELECT 1 FROM queued_turns
+      )
+      this.#hasQueuedSubmission = this.#db.prepare(
+        `SELECT 1 FROM queued_turns
        WHERE thread_id = ? AND client_submission_id = ? LIMIT 1`,
-    )
-    this.#openThread = this.#prepare(`SELECT 1 FROM threads WHERE id = ? AND closed_at IS NULL`)
-    this.#nextQueuedPosition = this.#prepare(
-      `SELECT COALESCE(MAX(position), -1) + 1 AS position
+      )
+      this.#openThread = this.#db.prepare(
+        `SELECT 1 FROM threads WHERE id = ? AND closed_at IS NULL`,
+      )
+      this.#nextQueuedPosition = this.#db.prepare(
+        `SELECT COALESCE(MAX(position), -1) + 1 AS position
        FROM queued_turns WHERE thread_id = ?`,
-    )
-    this.#insertQueuedTurn = this.#prepare(
-      `INSERT INTO queued_turns
+      )
+      this.#insertQueuedTurn = this.#db.prepare(
+        `INSERT INTO queued_turns
          (thread_id, queue_id, client_submission_id, position, state, intent, payload, created_at)
        VALUES (?, ?, ?, ?, 'queued', 'normal', ?, ?)`,
-    )
-    this.#deleteQueuedTurn = this.#prepare(
-      `DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`,
-    )
-    this.#queuedTurnPosition = this.#prepare(
-      `SELECT position FROM queued_turns
+      )
+      this.#deleteQueuedTurn = this.#db.prepare(
+        `DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`,
+      )
+      this.#queuedTurnPosition = this.#db.prepare(
+        `SELECT position FROM queued_turns
        WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
-    )
-    this.#previousQueuedTurn = this.#prepare(
-      `SELECT queue_id, position FROM queued_turns
+      )
+      this.#previousQueuedTurn = this.#db.prepare(
+        `SELECT queue_id, position FROM queued_turns
        WHERE thread_id = ? AND state = 'queued' AND position < ?
        ORDER BY position DESC LIMIT 1`,
-    )
-    this.#nextQueuedTurn = this.#prepare(
-      `SELECT queue_id, position FROM queued_turns
+      )
+      this.#nextQueuedTurn = this.#db.prepare(
+        `SELECT queue_id, position FROM queued_turns
        WHERE thread_id = ? AND state = 'queued' AND position > ?
        ORDER BY position ASC LIMIT 1`,
-    )
-    this.#swapQueuedTurnPositions = this.#prepare(
-      `UPDATE queued_turns SET position = CASE queue_id WHEN ? THEN ? WHEN ? THEN ? END
+      )
+      this.#swapQueuedTurnPositions = this.#db.prepare(
+        `UPDATE queued_turns SET position = CASE queue_id WHEN ? THEN ? WHEN ? THEN ? END
        WHERE thread_id = ? AND queue_id IN (?, ?)`,
-    )
-    this.#findQueuedTurn = this.#prepare(
-      `SELECT * FROM queued_turns
+      )
+      this.#findQueuedTurn = this.#db.prepare(
+        `SELECT * FROM queued_turns
        WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
-    )
-    this.#dispatchQueuedTurn = this.#prepare(
-      `UPDATE queued_turns SET state = 'dispatching', intent = ?
+      )
+      this.#dispatchQueuedTurn = this.#db.prepare(
+        `UPDATE queued_turns SET state = 'dispatching', intent = ?
        WHERE thread_id = ? AND queue_id = ?`,
-    )
-    this.#restoreQueuedTurn = this.#prepare(
-      `UPDATE queued_turns SET state = 'queued', intent = 'normal'
+      )
+      this.#restoreQueuedTurn = this.#db.prepare(
+        `UPDATE queued_turns SET state = 'queued', intent = 'normal'
        WHERE thread_id = ? AND queue_id = ?`,
-    )
-    this.#claimedQueuedTurn = this.#prepare(
-      `SELECT 1 FROM queued_turns
+      )
+      this.#claimedQueuedTurn = this.#db.prepare(
+        `SELECT 1 FROM queued_turns
        WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
-    )
-    this.#deleteClaimedQueuedTurn = this.#prepare(
-      `DELETE FROM queued_turns
+      )
+      this.#deleteClaimedQueuedTurn = this.#db.prepare(
+        `DELETE FROM queued_turns
        WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
-    )
-    this.#queuedTurnInState = this.#prepare(
-      `SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ? AND state = ?`,
-    )
-    this.#hasQueuedTurn = this.#prepare(`SELECT 1 FROM queued_turns WHERE thread_id = ? LIMIT 1`)
-    this.#clearQueuedTurnsStatement = this.#prepare(`DELETE FROM queued_turns WHERE thread_id = ?`)
-    this.#setup(() => this.#migrate())
-    this.#setup(() => this.#db.exec(LIFECYCLE_INDEXES))
-    this.#insertProject = this.#prepare(
-      `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
+      )
+      this.#queuedTurnInState = this.#db.prepare(
+        `SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ? AND state = ?`,
+      )
+      this.#hasQueuedTurn = this.#db.prepare(
+        `SELECT 1 FROM queued_turns WHERE thread_id = ? LIMIT 1`,
+      )
+      this.#clearQueuedTurnsStatement = this.#db.prepare(
+        `DELETE FROM queued_turns WHERE thread_id = ?`,
+      )
+      this.#migrate()
+      this.#db.exec(LIFECYCLE_INDEXES)
+      this.#insertProject = this.#db.prepare(
+        `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
        ON CONFLICT (path) DO NOTHING`,
-    )
-    this.#findProject = this.#prepare(`SELECT * FROM projects WHERE path = ?`)
-    this.#insertThread = this.#prepare(
-      `INSERT INTO threads
+      )
+      this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
+      this.#insertThread = this.#db.prepare(
+        `INSERT INTO threads
         (id, project_path, provider, agent, provider_session_id, title, created_at,
           worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
-    )
-    this.#listProjects = this.#prepare(`SELECT * FROM projects ORDER BY created_at`)
-    this.#listProjectThreads = this.#prepare(
-      `SELECT * FROM threads WHERE project_path = ? AND ephemeral = 0 ORDER BY created_at DESC`,
-    )
-    this.#listThreads = this.#prepare(
-      `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
-    )
-    this.#listSidebarThreads = this.#prepare(
-      `SELECT id, project_path, provider, agent, title, pinned, created_at, closed_at,
+      )
+      this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
+      this.#listProjectThreads = this.#db.prepare(
+        `SELECT * FROM threads WHERE project_path = ? AND ephemeral = 0 ORDER BY created_at DESC`,
+      )
+      this.#listThreads = this.#db.prepare(
+        `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
+      )
+      this.#listSidebarThreads = this.#db.prepare(
+        `SELECT id, project_path, provider, agent, title, pinned, created_at, closed_at,
               worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
               keep_active, woke_at, unread
        FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
-    )
-    for (let mask = 0; mask < 4; mask += 1) {
-      const clauses = ['session_search MATCH ?']
-      const threadFilters: string[] = []
-      // Build the small eligible-thread set once instead of probing the thread
-      // primary key for every FTS match. The visible page still joins metadata.
-      if ((mask & 1) !== 0) threadFilters.push('threads.project_path = ?')
-      if ((mask & 2) !== 0) threadFilters.push('threads.provider = ?')
-      if (threadFilters.length > 0) {
-        clauses.push(
-          `session_search.thread_id IN (
+      )
+      for (let mask = 0; mask < 4; mask += 1) {
+        const clauses = ['session_search MATCH ?']
+        const threadFilters: string[] = []
+        // Build the small eligible-thread set once instead of probing the thread
+        // primary key for every FTS match. The visible page still joins metadata.
+        if ((mask & 1) !== 0) threadFilters.push('threads.project_path = ?')
+        if ((mask & 2) !== 0) threadFilters.push('threads.provider = ?')
+        if (threadFilters.length > 0) {
+          clauses.push(
+            `session_search.thread_id IN (
              SELECT threads.id FROM threads WHERE ${threadFilters.join(' AND ')}
            )`,
-        )
-      }
-      this.#selectSearchSnapshot.set(
-        mask,
-        this.#prepare(
-          `SELECT json_group_array(search_rowid) AS search_rowids
+          )
+        }
+        this.#selectSearchSnapshot.set(
+          mask,
+          this.#db.prepare(
+            `SELECT json_group_array(search_rowid) AS search_rowids
            FROM (
              SELECT session_search.rowid AS search_rowid
              FROM session_search
@@ -991,11 +1012,11 @@ export class Store {
              ORDER BY rank, session_search.created_at DESC,
                       session_search.rowid DESC
            )`,
-        ),
-      )
-    }
-    this.#readSearchResults = this.#prepare(
-      `SELECT projects.path AS project_path, projects.name AS project_name,
+          ),
+        )
+      }
+      this.#readSearchResults = this.#db.prepare(
+        `SELECT projects.path AS project_path, projects.name AS project_name,
               threads.id AS thread_id, threads.title AS thread_title,
               threads.provider, session_search.event_seq, session_search.turn_id,
               session_search.created_at,
@@ -1007,141 +1028,128 @@ export class Store {
        JOIN projects ON projects.path = threads.project_path
        ORDER BY CAST(page.key AS INTEGER)
        `,
-    )
-    this.#findThread = this.#prepare(`SELECT * FROM threads WHERE id = ?`)
-    this.#threadHistory = this.#prepare(
-      `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
-    )
-    this.#threadInboxEvents = this.#prepare(
-      `SELECT thread_id, payload FROM inbox_events ORDER BY event_seq`,
-    )
-    this.#queuedThreadIds = this.#prepare(
-      `SELECT DISTINCT queued_turns.thread_id
+      )
+      this.#findThread = this.#db.prepare(`SELECT * FROM threads WHERE id = ?`)
+      this.#threadHistory = this.#db.prepare(
+        `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
+      )
+      this.#threadInboxEvents = this.#db.prepare(
+        `SELECT thread_id, payload FROM inbox_events ORDER BY event_seq`,
+      )
+      this.#queuedThreadIds = this.#db.prepare(
+        `SELECT DISTINCT queued_turns.thread_id
        FROM queued_turns
        INNER JOIN threads ON threads.id = queued_turns.thread_id
        WHERE queued_turns.state = 'queued' AND threads.closed_at IS NULL`,
-    )
-    this.#settleThreadStatement = this.#prepare(
-      `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
+      )
+      this.#settleThreadStatement = this.#db.prepare(
+        `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
        wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ?`,
-    )
-    this.#settleInactiveThreadStatement = this.#prepare(
-      `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?,
+      )
+      this.#settleInactiveThreadStatement = this.#db.prepare(
+        `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?,
        lifecycle_reason = 'inactivity', wake_at = NULL, keep_active = 0, woke_at = NULL
        WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'active'
        AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?`,
-    )
-    this.#activateThreadStatement = this.#prepare(
-      `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
+      )
+      this.#activateThreadStatement = this.#db.prepare(
+        `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
        lifecycle_reason = NULL, wake_at = NULL,
        woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END
        WHERE id = ? RETURNING woke_at, keep_active`,
-    )
-    this.#wakeSnoozedThreadStatement = this.#prepare(
-      `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
+      )
+      this.#wakeSnoozedThreadStatement = this.#db.prepare(
+        `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
        lifecycle_reason = NULL, wake_at = NULL, woke_at = ?, last_active_at = ?
        WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'snoozed'
          AND ephemeral = 0 AND wake_at <= ? RETURNING woke_at, keep_active`,
-    )
-    this.#touchActiveThreadStatement = this.#prepare(
-      `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`,
-    )
-    this.#touchThreadStatement = this.#prepare(
-      `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
+      )
+      this.#touchActiveThreadStatement = this.#db.prepare(
+        `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`,
+      )
+      this.#touchThreadStatement = this.#db.prepare(
+        `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
        lifecycle_reason = NULL, wake_at = NULL,
        woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END,
        last_active_at = ?, unread = MAX(unread, ?)
        WHERE id = ? RETURNING woke_at, keep_active`,
-    )
-    this.#dueSnoozedThreadIds = this.#prepare(
-      `SELECT id FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
+      )
+      this.#dueSnoozedThreadIds = this.#db.prepare(
+        `SELECT id FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
        AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
-    )
-    this.#nextSnoozedThread = this.#prepare(
-      `SELECT MIN(wake_at) AS at FROM threads
+      )
+      this.#nextSnoozedThread = this.#db.prepare(
+        `SELECT MIN(wake_at) AS at FROM threads
        WHERE closed_at IS NULL AND lifecycle_state = 'snoozed' AND ephemeral = 0`,
-    )
-    this.#oldestActiveThread = this.#prepare(
-      `SELECT MIN(last_active_at) AS at FROM threads
+      )
+      this.#oldestActiveThread = this.#db.prepare(
+        `SELECT MIN(last_active_at) AS at FROM threads
        WHERE closed_at IS NULL AND lifecycle_state = 'active'
          AND ephemeral = 0 AND keep_active = 0`,
-    )
-    this.#inactiveThreadCandidates = this.#prepare(
-      `SELECT id, unread FROM threads
+      )
+      this.#inactiveThreadCandidates = this.#db.prepare(
+        `SELECT id, unread FROM threads
        WHERE closed_at IS NULL AND lifecycle_state = 'active'
          AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?
        ORDER BY last_active_at`,
-    )
-    this.#readReplaySnapshotBase = this.#prepare(
-      `SELECT seq, payload FROM thread_replay_snapshots WHERE thread_id = ?`,
-    )
-    this.#readTailReplaySnapshot = this.#prepare(
-      `SELECT snapshot.seq, snapshot.payload
+      )
+      this.#readReplaySnapshotBase = this.#db.prepare(
+        `SELECT seq, payload FROM thread_replay_snapshots WHERE thread_id = ?`,
+      )
+      this.#readTailReplaySnapshot = this.#db.prepare(
+        `SELECT snapshot.seq, snapshot.payload
        FROM thread_replay_snapshots AS snapshot
        WHERE snapshot.thread_id = ?
          AND snapshot.seq = COALESCE(
            (SELECT MAX(events.seq) FROM events WHERE events.thread_id = snapshot.thread_id),
            0
          )`,
-    )
-    this.#writeReplaySnapshot = this.#prepare(
-      `INSERT INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)
+      )
+      this.#writeReplaySnapshot = this.#db.prepare(
+        `INSERT INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)
        ON CONFLICT (thread_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload`,
-    )
-    this.#deleteReplaySnapshot = this.#prepare(
-      `DELETE FROM thread_replay_snapshots WHERE thread_id = ?`,
-    )
-    this.#lastSequence = this.#prepare(`SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`)
-    this.#setup(() => this.#purgeEphemeralThreads())
-    this.#setup(() => this.#recoverQueuedTurnClaims())
-    const completedMigrations = new Set(
-      sqliteRows<MigrationRow>(this.#prepare(`SELECT name FROM schema_migrations`)).map(
-        ({ name }) => name,
-      ),
-    )
-    const rebuild: DerivedIndexRebuild = {
-      search: !completedMigrations.has(SEARCH_INDEX_VERSION),
-      usage: !completedMigrations.has(USAGE_INDEX_VERSION),
-      inbox: !completedMigrations.has(INBOX_INDEX_VERSION),
-      userSubmission: !completedMigrations.has(USER_SUBMISSION_INDEX_VERSION),
-      turnDiff: !completedMigrations.has(TURN_DIFF_INDEX_VERSION),
-      recovery: !completedMigrations.has(RECOVERY_STATE_VERSION),
-    }
-    if (Object.values(rebuild).some(Boolean))
-      this.#setup(() => this.#rebuildDerivedIndexes(rebuild))
-    // Belt and braces over the private umask above: tightens files left
-    // readable by an older build. A failure here must not leak the open handle.
-    if (location !== ':memory:') {
-      try {
-        hardenDatabaseFiles(location)
-      } catch (error) {
-        this.#db.close()
-        throw error
+      )
+      this.#deleteReplaySnapshot = this.#db.prepare(
+        `DELETE FROM thread_replay_snapshots WHERE thread_id = ?`,
+      )
+      this.#lastSequence = this.#db.prepare(
+        `SELECT MAX(seq) AS seq FROM events WHERE thread_id = ?`,
+      )
+      this.#purgeEphemeralThreads()
+      this.#recoverQueuedTurnClaims()
+      const completedMigrations = new Set(
+        sqliteRows<MigrationRow>(this.#db.prepare(`SELECT name FROM schema_migrations`)).map(
+          ({ name }) => name,
+        ),
+      )
+      const rebuild: DerivedIndexRebuild = {
+        search: !completedMigrations.has(SEARCH_INDEX_VERSION),
+        usage: !completedMigrations.has(USAGE_INDEX_VERSION),
+        inbox: !completedMigrations.has(INBOX_INDEX_VERSION),
+        userSubmission: !completedMigrations.has(USER_SUBMISSION_INDEX_VERSION),
+        turnDiff: !completedMigrations.has(TURN_DIFF_INDEX_VERSION),
+        recovery: !completedMigrations.has(RECOVERY_STATE_VERSION),
       }
-    }
-  }
-
-  /**
-   * Runs one startup step against the just-opened database. Any failure during
-   * construction must not leak the open handle, so close it before rethrowing.
-   * Startup-only: steady-state paths manage their own transactions.
-   */
-  #setup<T>(step: () => T): T {
-    try {
-      return step()
+      if (Object.values(rebuild).some(Boolean)) this.#rebuildDerivedIndexes(rebuild)
+      if (location !== ':memory:' && process.platform !== 'win32') {
+        for (const [file, mode] of [
+          [location, 0o600],
+          [`${location}-wal`, 0o600],
+          [`${location}-shm`, 0o600],
+        ] as const) {
+          if (existsSync(file)) chmodSync(file, mode)
+        }
+      }
     } catch (error) {
       try {
-        this.#db.close()
-      } catch {
-        // Best effort: report the setup failure, not a cleanup failure.
+        openedDatabase?.close()
+      } catch (closeError) {
+        throw new AggregateError([error, closeError], 'Store initialization and cleanup failed')
       }
       throw error
+    } finally {
+      if (previousUmask !== undefined) process.umask(previousUmask)
     }
-  }
-
-  /** Startup-only prepare; routes failures through the handle cleanup above. */
-  #prepare(sql: string): StatementSync {
-    return this.#setup(() => this.#db.prepare(sql))
   }
 
   /** Bring a database written by an older build up to the current shape. */
@@ -1598,6 +1606,22 @@ export class Store {
     return this.#sidebarSettingsCache
   }
 
+  threadApproval(threadId: string): ApprovalMode | undefined {
+    const row = this.#db
+      .prepare('SELECT mode FROM thread_approvals WHERE thread_id = ?')
+      .get(threadId)
+    return ApprovalModeSchema.safeParse(row?.['mode']).data
+  }
+
+  setThreadApproval(threadId: string, mode: ApprovalMode): void {
+    this.#db
+      .prepare(
+        `INSERT INTO thread_approvals (thread_id, mode) VALUES (?, ?)
+      ON CONFLICT(thread_id) DO UPDATE SET mode = excluded.mode`,
+      )
+      .run(threadId, mode)
+  }
+
   backgroundModelPreference(): BackgroundModelPreference {
     if (this.#backgroundModelPreferenceCache) return this.#backgroundModelPreferenceCache
     const row = sqliteRow<StringValueRow>(this.#readAppSetting, BACKGROUND_MODEL_SETTING)
@@ -1720,6 +1744,119 @@ export class Store {
     } catch (error) {
       this.#db.exec('ROLLBACK')
       throw error
+    }
+  }
+
+  historyStorage() {
+    const count = (sql: string) => Number((this.#db.prepare(sql).get() as { count: number }).count)
+    const size = (file: string) =>
+      file !== ':memory:' && existsSync(file) ? statSync(file).size : 0
+    return {
+      databaseBytes: size(this.location),
+      walBytes: size(`${this.location}-wal`),
+      reclaimableBytes:
+        count('SELECT freelist_count AS count FROM pragma_freelist_count') *
+        count('SELECT page_size AS count FROM pragma_page_size'),
+      threads: count('SELECT count(*) AS count FROM threads'),
+      closedThreads: count('SELECT count(*) AS count FROM threads WHERE closed_at IS NOT NULL'),
+      events: count('SELECT count(*) AS count FROM events'),
+    }
+  }
+
+  exportHistory(destination: string): void {
+    this.#transaction(() => this.#writeHistoryArchive(destination))
+  }
+
+  /** No automatic retention: preview the exact eligible closed tasks before applying. */
+  historyCleanupCandidates(before: number): string[] {
+    if (!Number.isFinite(before) || before <= 0) throw new Error('cleanup requires a valid date')
+    return sqliteRows<{ id: string }>(
+      this.#db.prepare(
+        'SELECT id FROM threads WHERE closed_at < ? AND worktree_path IS NULL ORDER BY closed_at, id',
+      ),
+      before,
+    ).map((row) => row.id)
+  }
+
+  pruneHistory(before: number, archive: string): number {
+    let ids: string[] = []
+    this.#transaction(() => {
+      ids = this.historyCleanupCandidates(before)
+      // The archive is flushed to disk while the transaction still holds the
+      // selected state. A failed write cannot erase even one conversation.
+      this.#writeHistoryArchive(archive, ids)
+      for (const id of ids) {
+        this.#db.prepare('DELETE FROM session_search WHERE thread_id = ?').run(id)
+        for (const table of [
+          'events',
+          'checkpoints',
+          'restore_undos',
+          'diff_decisions',
+          'design_runs',
+        ]) {
+          this.#db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(id)
+        }
+        this.#db.prepare('DELETE FROM threads WHERE id = ?').run(id)
+      }
+    })
+    for (const id of ids) {
+      this.#ephemeralThreads.delete(id)
+      this.#deleteCachedReplaySnapshot(id)
+      this.#cacheThread(id, undefined)
+    }
+    this.#searchRevision += 1
+    this.#searchSnapshots.clear()
+    this.#queuedThreadIdsCache = undefined
+    this.#invalidateSidebarThreads()
+    return ids.length
+  }
+
+  reclaimHistorySpace(): void {
+    // Explicit maintenance only; VACUUM is never on the streaming path.
+    this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    this.#db.exec('VACUUM')
+    this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  }
+
+  #writeHistoryArchive(destination: string, ids?: readonly string[]): void {
+    const descriptor = openSync(destination, 'wx', 0o600)
+    let complete = false
+    try {
+      const write = (value: unknown) => {
+        const bytes = Buffer.from(`${JSON.stringify(value)}\n`)
+        let offset = 0
+        while (offset < bytes.length)
+          offset += writeSync(descriptor, bytes, offset, bytes.length - offset)
+      }
+      write({
+        format: 'tastecode-history',
+        version: 1,
+        exportedAt: Date.now(),
+        checkpointNamespace: this.checkpointNamespace,
+      })
+      const tables = [
+        'threads',
+        'events',
+        'checkpoints',
+        'restore_undos',
+        'diff_decisions',
+        'design_runs',
+      ] as const
+      for (const table of tables) {
+        const key = table === 'threads' ? 'id' : 'thread_id'
+        if (ids) {
+          const query = this.#db.prepare(`SELECT * FROM ${table} WHERE ${key} = ?`)
+          for (const id of ids) for (const row of query.iterate(id)) write({ table, row })
+        } else {
+          for (const row of this.#db.prepare(`SELECT * FROM ${table}`).iterate())
+            write({ table, row })
+        }
+      }
+      fsyncSync(descriptor)
+      complete = true
+    } finally {
+      closeSync(descriptor)
+      if (!complete) rmSync(destination, { force: true })
     }
   }
 
@@ -2756,6 +2893,52 @@ export class Store {
 
   // ---- checkpoints -------------------------------------------------------
 
+  recordCheckpointRepository(repoPath: string): void {
+    this.#db.prepare('INSERT OR IGNORE INTO checkpoint_repositories(path) VALUES (?)').run(repoPath)
+  }
+
+  checkpointRepositories(): string[] {
+    return sqliteRows<{ path: string }>(
+      this.#db.prepare('SELECT path FROM checkpoint_repositories'),
+    ).map((row) => row.path)
+  }
+
+  /** Include the hidden conversation tail needed to undo a restore. */
+  checkpointReferences(): Array<{
+    threadId: string
+    projectPath: string
+    worktreePath?: string
+    commits: Set<string>
+  }> {
+    const result = new Map<
+      string,
+      { threadId: string; projectPath: string; worktreePath?: string; commits: Set<string> }
+    >()
+    const add = (threadId: string, commit: string) => {
+      const thread = this.thread(threadId)
+      if (!thread) return
+      let entry = result.get(threadId)
+      if (!entry) {
+        entry = {
+          threadId,
+          projectPath: thread.projectPath,
+          ...(thread.worktreePath ? { worktreePath: thread.worktreePath } : {}),
+          commits: new Set(),
+        }
+        result.set(threadId, entry)
+      }
+      entry.commits.add(commit)
+    }
+    for (const row of sqliteRows<CheckpointRow>(this.#db.prepare('SELECT * FROM checkpoints')))
+      add(row.thread_id, row.commit_sha)
+    for (const row of sqliteRows<RestoreUndoRow>(this.#db.prepare('SELECT * FROM restore_undos'))) {
+      add(row.thread_id, row.snapshot_commit)
+      for (const checkpoint of StoredCheckpointRowsSchema.parse(JSON.parse(row.checkpoints_json)))
+        add(row.thread_id, checkpoint.commit_sha)
+    }
+    return [...result.values()]
+  }
+
   addCheckpoint(entry: {
     threadId: string
     seq: number
@@ -3553,36 +3736,6 @@ function requiredSqliteRow<Row>(statement: StatementSync, ...params: SQLInputVal
   const row = sqliteRow<Row>(statement, ...params)
   if (!row) throw new Error('SQLite query returned no row')
   return row
-}
-
-/**
- * Restricts the main database file and its WAL/SHM sidecars to user-only
- * access on POSIX. A missing sidecar (clean shutdown removes them) is not an
- * error. No-op on Windows, where POSIX permission bits do not apply.
- */
-function hardenDatabaseFiles(location: string): void {
-  if (process.platform === 'win32') return
-  for (const file of [location, `${location}-wal`, `${location}-shm`]) {
-    try {
-      chmodSync(file, 0o600)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue
-      throw error
-    }
-  }
-}
-
-/**
- * Restricts file creation to owner-only while SQLite creates the database and
- * its WAL/SHM sidecars, which otherwise inherit the process umask (usually
- * 0644) and are briefly world-readable. Synchronous use only.
- */
-function withPrivateUmask(): (() => void) | undefined {
-  if (process.platform === 'win32') return undefined
-  const previous = process.umask(0o077)
-  return () => {
-    process.umask(previous)
-  }
 }
 
 function queuedTurnIntent(value: string): StoredQueuedTurn['intent'] {

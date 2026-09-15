@@ -1,17 +1,16 @@
 import { parseJsonValue, type JsonRpcValue } from './jsonrpc.js'
+import { LineBuffer } from './frames.js'
+export { LineBuffer, MAX_PROTOCOL_FRAME_BYTES, ProtocolFrameError, readSseData } from './frames.js'
 
 export { applyDesktopPath, desktopPath } from './desktop-path.js'
 export type { DesktopPathOptions } from './desktop-path.js'
 export {
   cleanupExitedPtySession,
   killTree,
-  OWNED_PROCESS_SHUTDOWN_MESSAGE,
-  ownProcessTree,
   ownPtySession,
-  ownedProcessSpawnOptions,
+  spawnOwned,
   terminatePtySession,
-  terminateTree,
-  type TerminateTreeOptions,
+  type TerminatePtySessionOptions,
 } from './kill.js'
 export { commandVersion, isInstalled, runCli, spawnCli } from './cli.js'
 
@@ -40,32 +39,33 @@ export function readNdjson(
   stream: NodeJS.ReadableStream,
   onValue: (value: JsonRpcValue) => void,
   onUnparsable?: (line: string) => void,
+  options: { maxFrameBytes?: number; onError?: (error: Error) => void } = {},
 ): void {
-  let buffer = ''
-  stream.setEncoding('utf8')
-  stream.on('data', (chunk: string) => {
-    buffer += chunk
-    let newline: number
-    while ((newline = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, newline).trim()
-      buffer = buffer.slice(newline + 1)
-      if (line === '') continue
-      try {
-        onValue(parseJsonValue(line))
-      } catch {
-        onUnparsable?.(line)
-      }
-    }
-  })
-  // A final line without a trailing newline would otherwise vanish when the
-  // process exits — for CLIs whose last write is the result, deterministically.
-  stream.on('end', () => {
-    const line = buffer.trim()
+  const buffer = new LineBuffer(options.maxFrameBytes)
+  let failed = false
+  const onLine = (raw: string) => {
+    const line = raw.trim()
     if (line === '') return
     try {
       onValue(parseJsonValue(line))
     } catch {
       onUnparsable?.(line)
     }
+  }
+  stream.setEncoding('utf8')
+  stream.on('data', (chunk: string) => {
+    if (failed) return
+    try {
+      buffer.write(chunk, onLine)
+    } catch (error) {
+      failed = true
+      buffer.clear()
+      const failure = error instanceof Error ? error : new Error('Provider stream failed')
+      if (options.onError) options.onError(failure)
+      else onUnparsable?.(failure.message)
+    }
+  })
+  stream.on('end', () => {
+    if (!failed) buffer.end(onLine)
   })
 }

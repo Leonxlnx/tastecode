@@ -1,3 +1,4 @@
+import { useArchiveMotion } from './useArchiveMotion.js'
 import {
   lazy,
   memo,
@@ -169,7 +170,11 @@ function SidebarComponent(props: {
   usageStates?: AccountLimitsState[] | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
   onConsumeReset?:
-    | ((provider: ProviderId, idempotencyKey: string) => Promise<ResultOf<'usage.consumeReset'>>)
+    | ((
+        provider: ProviderId,
+        idempotencyKey: string,
+        creditId?: string,
+      ) => Promise<ResultOf<'usage.consumeReset'>>)
     | undefined
   mode?: 'classic' | 'inbox'
   inbox?: InboxActions | undefined
@@ -202,6 +207,24 @@ function SidebarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim()
+  const usageLimit = (props.usageStates ?? [])
+    .flatMap((state) => {
+      const source = state.summary?.limitSource
+      const limits = source
+        ? source.status === 'ready'
+          ? source.limits
+          : []
+        : (state.summary?.limits ?? [])
+      return limits.map((limit) => ({ ...limit, provider: state.provider }))
+    })
+    .filter((limit) => limit.valueLabel === undefined && Number.isFinite(limit.usedPercent))
+    .reduce<{ usedPercent: number; label: string; provider: string } | undefined>(
+      (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
+      undefined,
+    )
+  const usageRemaining = usageLimit
+    ? Math.min(100, Math.max(0, 100 - usageLimit.usedPercent))
+    : undefined
   useEffect(() => {
     void loadAccountLimits()
   }, [])
@@ -432,10 +455,19 @@ function SidebarComponent(props: {
     (id: string) => actionsRef.current.onToggleSessionPin?.(id),
     [],
   )
-  const deleteSession = useCallback((id: string) => actionsRef.current.onDeleteSession(id), [])
+  const animateArchive = useArchiveMotion()
+  const deleteSession = useCallback(
+    (id: string) => {
+      animateArchive([id], (ids) => {
+        for (const sessionId of ids) actionsRef.current.onDeleteSession(sessionId)
+      })
+    },
+    [animateArchive],
+  )
   const archiveProject = useCallback(
-    (sessionIds: string[]) => actionsRef.current.onArchiveProject(sessionIds),
-    [],
+    (sessionIds: string[]) =>
+      animateArchive(sessionIds, (ids) => actionsRef.current.onArchiveProject(ids)),
+    [animateArchive],
   )
   const reorderSession = useCallback(
     (projectPath: string, sourceId: string, targetId: string, position: DropPosition) =>
@@ -837,6 +869,15 @@ function SidebarComponent(props: {
                 <span className="account__name">
                   {profileDisplayName || props.account?.email || props.providerName}
                 </span>
+                {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
+                  <span
+                    className="account__usage"
+                    title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
+                    aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
+                  >
+                    {Math.round(usageRemaining)}%
+                  </span>
+                ) : null}
                 <ChevronUp className="account__chevron" size={13} aria-hidden />
               </span>
             )}
@@ -1640,6 +1681,7 @@ function SessionRow(props: {
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
       } ${props.dragging ? 'is-dragging' : ''}`}
+      data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
       onDragStart={props.onDragStart}

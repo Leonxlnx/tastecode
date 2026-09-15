@@ -74,6 +74,7 @@ const utilityRenders = vi.hoisted(() => ({
 const appRenders = vi.hoisted(() => vi.fn())
 const highlighterHighlight = vi.hoisted(() => vi.fn(() => ({ tokens: [] })))
 const desktopShell = vi.hoisted(() => ({ enabled: false }))
+const shortcutPlatform = vi.hoisted(() => ({ macOS: true }))
 const nativeMenu = vi.hoisted(() => ({
   listener: undefined as ((action: NativeMenuAction) => void) | undefined,
   syncShortcuts: vi.fn(),
@@ -196,7 +197,7 @@ vi.mock('./ui/Composer.js', async (importOriginal) => {
   return {
     ...original,
     Composer: memo((props: ComponentProps<typeof original.Composer>) => {
-      shellRenders.composer()
+      shellRenders.composer(props)
       return <original.Composer {...props} />
     }),
   }
@@ -286,7 +287,7 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
   isMacOS: () => {
     appRenders()
-    return true
+    return shortcutPlatform.macOS
   },
 }))
 
@@ -355,6 +356,7 @@ function contractValidServerProviders(): ServerProvider[] {
 }
 
 beforeEach(() => {
+  shortcutPlatform.macOS = true
   desktopShell.enabled = false
   pickFolder.mockReset().mockResolvedValue(undefined)
   droppedProjectFolderPaths.mockReset().mockResolvedValue([])
@@ -452,7 +454,7 @@ beforeEach(() => {
         return Promise.resolve(serverSidebarSettings)
       }
       case 'thread.history':
-        return Promise.resolve({ events: [], running: false })
+        return Promise.resolve({ events: [], running: false, approval: 'ask' })
       case 'thread.queue':
         return Promise.resolve({ items: [], canSteer: true })
       case 'thread.settle':
@@ -1052,10 +1054,10 @@ describe('web client', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
 
     fireEvent.pointerEnter(launcher)
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     fireEvent.click(launcher)
     await waitFor(() => expect(document.querySelector('.workspace-panel')).toBeTruthy())
 
@@ -1068,10 +1070,10 @@ describe('web client', () => {
     render(<App />)
 
     await screen.findByRole('button', { name: 'Show workspace tools' })
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     fireEvent.keyDown(window, { key: 't', metaKey: true })
 
-    expect(await screen.findByRole('tab', { name: 'Browser' })).toBeTruthy()
+    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
   })
 
@@ -1081,7 +1083,7 @@ describe('web client', () => {
     await waitFor(() => {
       expect(transport.listeners.has('preview.captureRequested')).toBe(true)
     })
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     act(() => {
       transport.listeners.get('preview.captureRequested')?.({
         requestId: '00000000-0000-4000-8000-000000000001',
@@ -1090,7 +1092,7 @@ describe('web client', () => {
       })
     })
 
-    expect(await screen.findByRole('tab', { name: 'Browser' })).toBeTruthy()
+    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
   })
 
@@ -1106,9 +1108,8 @@ describe('web client', () => {
     expect(close).toBe(launcher)
     expect(close.closest('.panel-toggles')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Terminal' }))
-    const terminalTab = await screen.findByRole('tab', { name: 'Terminal' })
-    fireEvent.click(screen.getByRole('button', { name: 'Expand workspace tools' }))
-    expect(document.querySelector('.workspace-layout')?.classList).toContain('is-panel-expanded')
+    const terminalTab = await screen.findByTestId('terminal-pane')
+    expect(screen.queryByRole('button', { name: 'Expand workspace tools' })).toBeNull()
     expect(close.closest('.stage')).toBeNull()
     fireEvent.click(close)
     expect(screen.getByRole('button', { name: 'Show workspace tools' })).toBe(launcher)
@@ -1118,7 +1119,7 @@ describe('web client', () => {
     expect(document.querySelectorAll('.workspace-panel [role="tab"]')).toHaveLength(1)
 
     fireEvent.click(launcher)
-    expect(await screen.findByRole('tab', { name: 'Terminal' })).toBe(terminalTab)
+    expect(await screen.findByTestId('terminal-pane')).toBe(terminalTab)
   })
 
   it('routes /side with an inline prompt into an ephemeral Side chat', async () => {
@@ -1178,7 +1179,7 @@ describe('web client', () => {
         expect.objectContaining({ threadId: 'side-1', text: 'why did it fail?' }),
       ),
     )
-    expect(screen.getByRole('tab', { name: 'Temporary chat' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Message temporary chat' })).toBeTruthy()
     expect(screen.queryByText('From main chat')).toBeNull()
   })
 
@@ -1271,7 +1272,7 @@ describe('web client', () => {
       tab: 'GitHub CLI install',
       terminalId: 'term-github-install',
       columns: 100,
-      showsCodeInput: false,
+      canCancelSignIn: false,
     },
     {
       account: { available: true, authenticated: false, error: 'Sign in with gh auth login' },
@@ -1280,7 +1281,7 @@ describe('web client', () => {
       tab: 'GitHub login',
       terminalId: 'term-github-login',
       columns: 320,
-      showsCodeInput: true,
+      canCancelSignIn: true,
     },
   ])('opens GitHub $action in the expanded workspace terminal', async (scenario) => {
     const request = transport.request.getMockImplementation()
@@ -1321,12 +1322,13 @@ describe('web client', () => {
     const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(true))
     expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
-    expect(await screen.findByRole('tab', { name: scenario.tab })).toBeTruthy()
-    if (scenario.showsCodeInput) {
-      expect(await screen.findByLabelText('Login code')).toBeTruthy()
+    expect(await screen.findByLabelText(`${scenario.tab} terminal`)).toBeTruthy()
+    if (scenario.canCancelSignIn) {
+      expect(await screen.findByRole('button', { name: 'Cancel sign-in' })).toBeTruthy()
     } else {
-      expect(screen.queryByLabelText('Login code')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
     }
+    expect(screen.queryByLabelText('Login code')).toBeNull()
     expect(transport.request).toHaveBeenCalledWith('pullRequests.setup', {
       action: scenario.action,
       columns: scenario.columns,
@@ -1341,7 +1343,7 @@ describe('web client', () => {
       })
     })
 
-    await waitFor(() => expect(screen.queryByRole('tab', { name: scenario.tab })).toBeNull())
+    await waitFor(() => expect(screen.queryByLabelText(`${scenario.tab} terminal`)).toBeNull())
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
     expect(transport.request).toHaveBeenCalledWith('pullRequests.list', { refresh: true })
     if (scenario.action === 'install') {
@@ -1435,6 +1437,29 @@ describe('web client', () => {
         'I wanted to work on https://github.com/Blueemi/harness/pull/1 (Add the parser).',
       )
     })
+  })
+
+  it('shows model discovery failures with a retry that preserves the draft', async () => {
+    let failing = true
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list' && failing)
+        return Promise.reject(new Error('Model service is offline'))
+      return request(method, params)
+    })
+    render(<App />)
+    const composer = (await screen.findByPlaceholderText('Do anything')) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep my model draft' } })
+    const error = await screen.findByText('Could not load Codex models. Model service is offline')
+    expect(error.closest('.composer__provider-shelf')).toBeTruthy()
+    failing = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry models' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Could not load Codex models. Model service is offline'),
+      ).toBeNull(),
+    )
+    expect(composer.value).toBe('Keep my model draft')
   })
 
   it('restores the selected model immediately on the first cache-enabled launch', async () => {
@@ -1647,7 +1672,8 @@ describe('web client', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        approval: 'ask',
+        baseRef: 'main',
+        approval: 'auto-review',
         model: 'gpt-5.6-sol',
         effort: 'high',
       })
@@ -2294,6 +2320,36 @@ describe('new chats', () => {
     )
   })
 
+  it('names an attachment-only session from its files', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    const props = shellRenders.composer.mock.lastCall?.[0] as ComponentProps<
+      typeof import('./ui/Composer.js').Composer
+    >
+    act(() => props.onSend('', ['/work/reference.png', 'C:\\work\\brief.pdf']))
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.rename', {
+        threadId: 'thread-1',
+        title: 'reference.png, brief.pdf',
+      })
+      expect(transport.request).toHaveBeenCalledWith('backgroundModel.generateTitle', {
+        threadId: 'thread-1',
+        prompt: 'reference.png, brief.pdf',
+        expectedTitle: 'reference.png, brief.pdf',
+      })
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({
+          text: '',
+          attachments: ['/work/reference.png', 'C:\\work\\brief.pdf'],
+        }),
+      )
+    })
+  })
+
   it('replaces the prompt fallback with a generated session title', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
@@ -2382,7 +2438,7 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
   })
 
-  it('auto-dismisses notifications after five seconds', async () => {
+  it('keeps composer errors until dismissed and shows a later failure again', async () => {
     serverProjects = []
     render(<App />)
 
@@ -2393,15 +2449,15 @@ describe('new chats', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
       expect(screen.getByRole('alert').textContent).toContain('Choose a project before sending.')
-      act(() => vi.advanceTimersByTime(4_999))
-      expect(screen.getByRole('alert')).toBeTruthy()
-      act(() => vi.advanceTimersByTime(1))
-      const notice = screen.getByRole('alert')
-      expect(notice.getAttribute('data-state')).toBe('closing')
-      act(() => {
-        dispatchTransitionEnd(notice, 'opacity')
-      })
+      act(() => vi.advanceTimersByTime(10_000))
+      expect(screen.getByRole('alert').closest('.composer__provider-shelf')).toBeTruthy()
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Dismiss error: Choose a project before sending.' }),
+      )
       expect(screen.queryByRole('alert')).toBeNull()
+      expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(screen.getByRole('alert').textContent).toContain('Choose a project before sending.')
     } finally {
       vi.useRealTimers()
     }
@@ -2420,7 +2476,7 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Send after setup' } })
-    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    const setup = await screen.findByRole('button', { name: 'Set up provider' })
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(setup)
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
@@ -2447,82 +2503,119 @@ describe('new chats', () => {
     fireEvent.change(composer, { target: { value: 'Stay blocked' } })
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
-    await screen.findByRole('button', { name: 'Sign in' })
+    await within(screen.getByRole('dialog', { name: 'Settings' })).findByRole('button', {
+      name: 'Sign in',
+    })
     await act(async () => finishInitial({ signedIn: true }))
-    expect(screen.getByRole('status').textContent).toContain('Provider setup required')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(
+      screen
+        .getAllByRole('status')
+        .some((status) => status.textContent?.includes('Sign in to use this provider.')),
+    ).toBe(true)
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('opens Claude login in the expanded workspace and restores Settings after success', async () => {
-    serverProviders = [
-      ...serverProviders,
-      {
-        id: 'claude-code',
-        displayName: 'Claude Code',
-        installed: true,
-        auth: 'unknown',
-        setup: {
-          installUrl: 'https://code.claude.com/docs/en/getting-started',
-          login: 'provider',
+  it.each(['success', 'failure', 'cancel'] as const)(
+    'restores Settings after Claude sign-in ends with %s',
+    async (outcome) => {
+      serverProviders = [
+        ...serverProviders,
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: true,
+          auth: 'unknown',
+          setup: {
+            installUrl: 'https://code.claude.com/docs/en/getting-started',
+            login: 'provider',
+          },
         },
-      },
-    ]
-    let claudeSignedIn = false
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'auth.status') {
-        const provider = methods['auth.status'].params.parse(params).provider
-        return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
-      }
-      if (method === 'providers.launch') {
-        return Promise.resolve({ terminalId: 'term-claude-login' })
-      }
-      return request(method, params)
-    })
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe(): void {}
-        unobserve(): void {}
-        disconnect(): void {}
-      },
-    )
-
-    render(<App />)
-    openSettings()
-    await screen.findByText('Claude Code')
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
-    const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
-    expect(workspace.classList.contains('is-panel-open')).toBe(true)
-    expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
-    expect(await screen.findByRole('tab', { name: 'Claude Code login' })).toBeTruthy()
-    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-      provider: 'claude-code',
-      columns: 320,
-      rows: 30,
-    })
-
-    claudeSignedIn = true
-    act(() => {
-      transport.listeners.get('terminal.exit')!({
-        terminalId: 'term-claude-login',
-        exitCode: 0,
+      ]
+      let claudeSignedIn = false
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'auth.status') {
+          const provider = methods['auth.status'].params.parse(params).provider
+          return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
+        }
+        if (method === 'providers.launch') {
+          return Promise.resolve({ terminalId: 'term-claude-login' })
+        }
+        if (method === 'terminal.close') return Promise.resolve({})
+        return request(method, params)
       })
-    })
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          observe(): void {}
+          unobserve(): void {}
+          disconnect(): void {}
+        },
+      )
 
-    await screen.findByRole('dialog', { name: 'Settings' })
-    await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
-    expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
-    expect(screen.queryByRole('tab', { name: 'Claude Code login' })).toBeNull()
-    await waitFor(() =>
-      expect(
-        screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
-      ).toContain('Authenticated'),
-    )
-  })
+      render(<App />)
+      openSettings()
+      await screen.findByText('Claude Code')
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+      const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
+      expect(workspace.classList.contains('is-panel-open')).toBe(true)
+      expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
+      expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
+      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+        provider: 'claude-code',
+        columns: 320,
+        rows: 30,
+      })
+
+      expect(screen.queryByLabelText('Login code')).toBeNull()
+      if (outcome === 'cancel') {
+        fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith('terminal.close', {
+            terminalId: 'term-claude-login',
+          }),
+        )
+      } else {
+        claudeSignedIn = outcome === 'success'
+        act(() => {
+          transport.listeners.get('terminal.exit')!({
+            terminalId: 'term-claude-login',
+            exitCode: outcome === 'success' ? 0 : 130,
+          })
+        })
+      }
+
+      await screen.findByRole('dialog', { name: 'Settings' })
+      await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
+      expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
+      expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
+      await waitFor(() =>
+        expect(
+          screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
+        ).toContain(
+          outcome === 'success'
+            ? 'Signed in'
+            : outcome === 'failure'
+              ? 'Sign-in failed'
+              : 'Sign-in canceled',
+        ),
+      )
+      if (outcome === 'failure') {
+        expect(screen.getByRole('button', { name: 'Retry sign-in' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
+          'false',
+        )
+        const issue = screen.getByRole('button', { name: 'Problem details' })
+        expect(issue.closest('.provider-row')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+        expect(await screen.findByLabelText('Install terminal')).toBeTruthy()
+      }
+    },
+  )
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
     const parked = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
@@ -2557,8 +2650,10 @@ describe('new chats', () => {
     render(<App />)
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Recover this draft' } })
-    await screen.findByRole('button', { name: 'Set up a provider' })
-    expect(screen.getByRole('status').textContent).toContain('Provider unavailable')
+    await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Could not load providers. provider discovery unavailable',
+    )
     failing = false
     act(() => {
       setConnectionState('reconnecting')
@@ -2721,6 +2816,7 @@ describe('new chats', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Work in parallel' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
@@ -2729,7 +2825,8 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        approval: 'ask',
+        baseRef: 'main',
+        approval: 'auto-review',
         isolate: true,
       })
     })
@@ -2740,6 +2837,49 @@ describe('new chats', () => {
     )
     expect(await screen.findByText('harness/thread-1')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Choose project' })).toBeNull()
+  })
+
+  it('selects an isolated base branch while a shared task runs without switching its checkout', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'shared-thread',
+            title: 'Shared work',
+            provider: 'codex',
+            createdAt: 0,
+            running: true,
+          },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.switchBranch'
+        ? Promise.reject(new Error('The shared checkout is busy'))
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Workspace mode' }))
+    fireEvent.click(await screen.findByRole('menuitemradio', { name: 'Isolated' }))
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(picker)
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'feature/shelf' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+    submitTurn('Work independently')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ baseRef: 'feature/shelf', isolate: true }),
+      ),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+    expect(screen.queryByText('The shared checkout is busy')).toBeNull()
   })
 
   it('switches the project checkout from the branch shelf before starting a chat', async () => {
@@ -2763,6 +2903,75 @@ describe('new chats', () => {
       )
     })
   })
+  it('remembers the selected branch after reopening the project', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const app = render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect((picker as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'feature/shelf' }))
+    await waitFor(() => expect(picker.textContent).toContain('feature/shelf'))
+    app.unmount()
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Choose branch' }).textContent).toContain(
+        'feature/shelf',
+      ),
+    )
+    submitTurn('Use the saved branch')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith('workspace.switchBranch', {
+      path: '/work/project',
+      branch: 'feature/shelf',
+    })
+  })
+
+  it('passes main to atomic task start without switching the shared checkout first', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'workspace.info'
+        ? Promise.resolve({ branch: 'feature/shelf', added: 0, removed: 0, dirtyFiles: 0 })
+        : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Choose branch' }).textContent).toContain('main'),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+    submitTurn('Start on main')
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.start', expect.anything()),
+    )
+    expect(transport.request).toHaveBeenCalledWith(
+      'thread.start',
+      expect.objectContaining({ baseRef: 'main' }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('workspace.switchBranch', expect.anything())
+  })
+  it.each([
+    ['other project', 'harness.branch:/work/other', 'feature/shelf', 'main'],
+    ['deleted branch', 'harness.branch:/work/project', 'deleted', 'main'],
+    ['new choice', 'harness.branch:/work/project', 'feature/shelf', 'feature/shelf'],
+  ])('handles a saved branch for %s', async (_case, key, value, expected) => {
+    localStorage.setItem(key, value)
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    render(<App />)
+    const picker = await screen.findByRole('button', { name: 'Choose branch' })
+    await waitFor(() => expect(picker.textContent).toContain(expected))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'main' }))
+    await waitFor(() => expect(localStorage.getItem('harness.branch:/work/project')).toBe('main'))
+  })
+
   it('starts workspace info and branch reads together', async () => {
     const request = transport.request.getMockImplementation()!
     let resolveInfo!: (value: ResultOf<'workspace.info'>) => void
@@ -3118,6 +3327,30 @@ describe('new chats', () => {
       await waitForWorkspace(1)
     },
   )
+  it('shows active chat errors in the composer and keeps dismissal scoped to that failure', async () => {
+    await openNewSession()
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+    emitThreadEvent('untouched-thread', {
+      type: 'thread.error',
+      threadId: 'untouched-thread',
+      message: 'Model request timed out',
+    })
+    const error = await screen.findByRole('alert')
+    expect(error.closest('.composer__provider-shelf')).toBeTruthy()
+    expect(error.textContent).toBe('Model request timed out')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error: Model request timed out' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(composer.value).toBe('Keep this draft')
+    expect(document.activeElement).toBe(composer)
+    emitThreadEvent('untouched-thread', {
+      type: 'thread.error',
+      threadId: 'untouched-thread',
+      message: 'Model request timed out',
+    })
+    expect(await screen.findByRole('alert')).toBeTruthy()
+  })
+
   it('refreshes after terminal thread errors', async () => {
     await openNewSession()
     transport.request.mockClear()
@@ -3241,7 +3474,37 @@ describe('new chats', () => {
     })
     await waitForWorkspace(1)
   })
+  it('offers a top archive toast and restores the chat with Undo', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 1_000
+        return nativeTimeout(...args)
+      },
+    )
+
+    await openNewSession()
+    transport.request.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
+    expect(await screen.findByText('Archived chat')).toBeTruthy()
+    expect(screen.getByText('Archived chat').closest('.notice--archive')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Archive New session' })).toBeNull()
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    expect(await screen.findByRole('button', { name: 'Archive New session' })).toBeTruthy()
+    await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+  })
+
   it('reconciles workspace ownership when a running session is archived', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
@@ -3792,6 +4055,14 @@ describe('new chats', () => {
   })
 
   it('asks before discarding uncommitted work from an isolated session', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+
     serverProjects = [
       {
         path: '/work/project',
@@ -3863,6 +4134,71 @@ describe('new chats', () => {
     })
     expect(screen.getByText('Pinned')).toBeTruthy()
   })
+
+  it.each(['project rename', 'project pin', 'chat rename', 'chat pin'])(
+    'restores saved values and reports a refused %s',
+    async (operation) => {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'Project name',
+          pinned: false,
+          createdAt: 0,
+          sessions: [
+            {
+              id: 'saved-thread',
+              title: 'Saved title',
+              provider: 'codex',
+              createdAt: 0,
+              running: false,
+            },
+          ],
+        },
+      ]
+      const request = transport.request.getMockImplementation()!
+      const method =
+        operation === 'project rename'
+          ? 'projects.rename'
+          : operation === 'project pin'
+            ? 'projects.pin'
+            : operation === 'chat rename'
+              ? 'thread.rename'
+              : 'thread.pin'
+      transport.request.mockImplementation((name: string, params: unknown) =>
+        name === method ? Promise.reject(new Error('Save was refused')) : request(name, params),
+      )
+      render(<App />)
+      if (operation.startsWith('project')) {
+        fireEvent.contextMenu(await screen.findByRole('button', { name: 'Project name' }))
+        fireEvent.click(
+          await screen.findByRole('menuitem', {
+            name: operation.endsWith('pin') ? 'Pin to top' : 'Edit name',
+          }),
+        )
+      } else if (operation.endsWith('pin')) {
+        fireEvent.contextMenu(await screen.findByRole('button', { name: /^Saved title,/ }))
+        fireEvent.click(await screen.findByRole('menuitem', { name: 'Pin chat' }))
+      } else fireEvent.click(await screen.findByRole('button', { name: 'Rename Saved title' }))
+      if (operation.endsWith('rename')) {
+        const input = screen.getByDisplayValue(
+          operation.startsWith('project') ? 'Project name' : 'Saved title',
+        )
+        fireEvent.change(input, { target: { value: 'Unsaved name' } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+      }
+      expect(await screen.findByText('Save was refused')).toBeTruthy()
+      await waitFor(() => {
+        expect(screen.queryByText('Unsaved name')).toBeNull()
+        expect(screen.getByRole('button', { name: 'Project name' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: /^Saved title,/ })).toBeTruthy()
+      })
+      if (operation === 'chat pin') expect(screen.queryByText('Pinned')).toBeNull()
+      if (operation === 'project pin') {
+        fireEvent.contextMenu(screen.getByRole('button', { name: 'Project name' }))
+        expect(await screen.findByRole('menuitem', { name: 'Pin to top' })).toBeTruthy()
+      }
+    },
+  )
 
   it('shows changed files before restoring and offers undo afterwards', async () => {
     serverProjects = [
@@ -4234,7 +4570,7 @@ describe('new chats', () => {
   it('starts with the terminal closed even when an older version saved it as open', async () => {
     localStorage.setItem('harness.terminal.open', 'true')
     render(<App />)
-    const openTerminal = await screen.findByRole('button', { name: 'Open terminal' })
+    const openTerminal = await screen.findByRole('button', { name: 'Show bottom panel' })
 
     expect(screen.queryByTestId('bottom-terminal')).toBeNull()
     fireEvent.click(openTerminal)
@@ -4382,11 +4718,18 @@ describe('new chats', () => {
 
   it('loads, applies, and persists an installed interface font', async () => {
     const originalQuery = Object.getOwnPropertyDescriptor(globalThis, 'queryLocalFonts')
-    const queryLocalFonts = vi.fn().mockResolvedValue([
+    const records = [
       { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Regular' },
       { family: 'Atkinson Hyperlegible', fullName: 'Atkinson Hyperlegible Bold' },
       { family: 'Zilla Slab', fullName: 'Zilla Slab Regular' },
-    ])
+    ]
+    let finishScan!: (value: typeof records) => void
+    const queryLocalFonts = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishScan = resolve
+        }),
+    )
     Object.defineProperty(globalThis, 'queryLocalFonts', {
       configurable: true,
       value: queryLocalFonts,
@@ -4399,6 +4742,9 @@ describe('new chats', () => {
       fireEvent.click(screen.getByRole('combobox', { name: 'Interface font' }))
 
       expect(queryLocalFonts).toHaveBeenCalledOnce()
+      expect(screen.getByRole('status').textContent).toBe('Loading fonts…')
+      expect(screen.queryAllByRole('option')).toHaveLength(0)
+      await act(async () => finishScan(records))
       const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
       expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
         'Atkinson Hyperlegible',
@@ -4427,6 +4773,14 @@ describe('new chats', () => {
       render(<App />)
       expect(screen.queryByRole('combobox', { name: 'Interface font' })).toBeNull()
       expect(document.documentElement.dataset.font).toBe('local')
+      openSettings()
+      fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Interface font' }), {
+        key: 'ArrowDown',
+      })
+      expect(screen.getByRole('option', { name: 'Atkinson Hyperlegible' })).toBeTruthy()
+      expect(screen.getAllByRole('option')).toHaveLength(6)
+      expect(queryLocalFonts).toHaveBeenCalledOnce()
     } finally {
       if (originalQuery) Object.defineProperty(globalThis, 'queryLocalFonts', originalQuery)
       else Reflect.deleteProperty(globalThis, 'queryLocalFonts')
@@ -4484,6 +4838,64 @@ describe('new chats', () => {
     })
 
     expect(document.documentElement.dataset.theme).toBe('dark')
+  })
+
+  it.each([true, false])(
+    'defaults from auto-review support (%s) without saving an implicit choice',
+    async (supported) => {
+      serverProviders = serverProviders.map((entry) => ({
+        ...entry,
+        capabilities: { ...entry.capabilities, autoReview: supported },
+      }))
+      const first = render(<App />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+          supported ? 'Auto-review' : 'Full access',
+        )
+        expect(transport.request).toHaveBeenCalledWith('providers.list', {})
+      })
+      expect(localStorage.getItem('harness.approval')).toBeNull()
+      expect(localStorage.getItem('harness.approvalByProvider')).toBe('{}')
+      first.unmount()
+      render(<App />)
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+          supported ? 'Auto-review' : 'Full access',
+        ),
+      )
+    },
+  )
+
+  it('keeps an explicit Ask first preference', async () => {
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    render(<App />)
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
+    expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
+  })
+
+  it('shows the saved task access mode instead of the provider preference', async () => {
+    localStorage.setItem('harness.approvalByProvider', JSON.stringify({ codex: 'ask' }))
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let resolveHistory:
+      ((value: { events: []; running: false; approval: 'full' }) => void) | undefined
+    const history = new Promise<{ events: []; running: false; approval: 'full' }>((resolve) => {
+      resolveHistory = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.history' ? history : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    expect(permissions.textContent).toContain('Loading…')
+    expect(permissions.hasAttribute('disabled')).toBe(true)
+
+    await act(async () => resolveHistory?.({ events: [], running: false, approval: 'full' }))
+    await waitFor(() => expect(permissions.textContent).toContain('Full access'))
+    expect(localStorage.getItem('harness.approvalByProvider')).toBe('{"codex":"ask"}')
   })
 
   it('keeps full access selected after the app restarts', () => {
@@ -4552,7 +4964,9 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Use Grok 4.6 through Grok' }))
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
+      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+        'Full access',
+      )
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
@@ -4594,6 +5008,7 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
+        baseRef: 'main',
         approval: 'auto-review',
       })
     })
@@ -4720,7 +5135,8 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        approval: 'ask',
+        baseRef: 'main',
+        approval: 'auto-review',
       })
       expect(screen.getByRole('button', { name: /^Fix the sidebar,/ })).toBeTruthy()
       expect(screen.getByTestId('thread').textContent).toContain('Fix the sidebar')
@@ -4789,7 +5205,8 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        approval: 'ask',
+        baseRef: 'main',
+        approval: 'auto-review',
         model: 'gpt-5.6-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
@@ -4872,7 +5289,8 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'codex',
         workspacePath: '/work/project',
-        approval: 'ask',
+        baseRef: 'main',
+        approval: 'auto-review',
         model: 'gpt-5.6-mini',
         effort: 'high',
       })
@@ -5190,7 +5608,8 @@ describe('new chats', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.start', {
         provider: 'claude-code',
         workspacePath: '/work/project',
-        approval: 'ask',
+        baseRef: 'main',
+        approval: 'full',
         model: 'opus',
         effort: 'high',
       })
@@ -5619,6 +6038,62 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
+  it.each([true, false])(
+    'opens newest sessions with platform shortcuts (macOS: %s)',
+    async (macOS) => {
+      shortcutPlatform.macOS = macOS
+      const modifier = macOS ? { metaKey: true } : { ctrlKey: true }
+      serverProjects = [
+        {
+          path: '/work/other',
+          name: 'Other',
+          pinned: false,
+          createdAt: 0,
+          sessions: [{ id: 'other', title: 'Other session', createdAt: 100 }],
+        },
+        {
+          path: '/work/top',
+          name: 'Top',
+          pinned: true,
+          createdAt: 1,
+          sessions: Array.from({ length: 9 }, (_, index) => ({
+            id: `recent-${index}`,
+            title: `Recent ${index}`,
+            createdAt: index,
+          })),
+        },
+      ]
+      render(<App />)
+      await screen.findByRole('button', { name: 'Top' })
+      for (const [key, id] of [
+        ['1', 'recent-8'],
+        ['9', 'recent-0'],
+      ]) {
+        fireEvent.keyDown(window, { key, ...modifier })
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith(
+            'thread.history',
+            expect.objectContaining({ threadId: id }),
+          ),
+        )
+      }
+      transport.request.mockClear()
+      fireEvent.keyDown(window, { key: '2', metaKey: !macOS, ctrlKey: macOS })
+      fireEvent.keyDown(window, { key: '2', ...modifier, shiftKey: true })
+      expect(transport.request).not.toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-7' }),
+      )
+      fireEvent.keyDown(window, { key: ',', metaKey: true })
+      await screen.findByRole('dialog', { name: 'Settings' })
+      fireEvent.keyDown(window, { key: '2', ...modifier })
+      expect(transport.request).not.toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-7' }),
+      )
+    },
+  )
+
   it('runs sidebar and terminal actions from the native menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
@@ -5805,19 +6280,19 @@ describe('global shortcuts', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
-    await screen.findByRole('button', { name: 'Open terminal' })
+    await screen.findByRole('button', { name: 'Show bottom panel' })
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
 
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
-    expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Hide bottom panel' })).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
 
     const terminalInput = document.createElement('textarea')
     const terminalPane = await screen.findByTestId('terminal-pane')
     terminalPane.append(terminalInput)
     fireEvent.keyDown(terminalInput, { key: 'j', metaKey: true })
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show bottom panel' })).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('Keep this draft intact')
   })
 
@@ -5828,24 +6303,24 @@ describe('global shortcuts', () => {
     const composer = screen.getByPlaceholderText('Do anything')
 
     fireEvent.keyDown(window, { key: ',', metaKey: true })
-    fireEvent.click(screen.getByRole('button', { name: 'General' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'General' }))
     fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
     fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
     expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
     fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
 
-    const bottomTerminal = screen.getByRole('button', { name: 'Open terminal' })
+    const bottomTerminal = screen.getByRole('button', { name: 'Show bottom panel' })
     expect(bottomTerminal.getAttribute('aria-keyshortcuts')).toBeNull()
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
 
-    const sideTerminal = await screen.findByRole('tab', { name: 'Terminal' })
+    const sideTerminal = await screen.findByTestId('terminal-pane')
     expect(sideTerminal).toBeTruthy()
     await waitFor(() => {
       const workspaceTerminal = document.querySelector('.workspace-terminal')
       expect(workspaceTerminal?.querySelector('.terminal-pane--workspace')).toBeTruthy()
     })
     expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBe(bottomTerminal)
+    expect(screen.getByRole('button', { name: 'Show bottom panel' })).toBe(bottomTerminal)
 
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
     await waitFor(() =>
@@ -5857,7 +6332,7 @@ describe('global shortcuts', () => {
     await waitFor(() =>
       expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open'),
     )
-    expect(screen.getAllByRole('tab', { name: 'Terminal' })).toHaveLength(1)
+    expect(screen.getAllByTestId('terminal-pane')).toHaveLength(1)
   })
 
   it('opens the bottom terminal before a chat starts', async () => {
@@ -5866,7 +6341,7 @@ describe('global shortcuts', () => {
     await screen.findByRole('button', { name: /^New session,/ })
     expect(document.querySelector('.stage__body')?.classList).toContain('is-new-session')
     const composer = screen.getByPlaceholderText('Do anything')
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Show bottom panel' })).toBeTruthy()
 
     fireEvent.keyDown(composer, { key: 'j', metaKey: true })
 
@@ -5874,7 +6349,7 @@ describe('global shortcuts', () => {
     expect(terminal.textContent).toBe('/work/project')
     expect(terminal.closest('.bottom-terminal')).toBeTruthy()
     expect(document.querySelector('.stage__body')?.classList).toContain('has-terminal')
-    expect(document.querySelector('.workspace-panel')).toBeNull()
+    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
   })
 
   it('opens global app surfaces from the composer', async () => {
@@ -6656,7 +7131,8 @@ describe('live sessions', () => {
       },
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show bottom panel' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }))
     await screen.findByTestId('terminal-pane')
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const palette = await screen.findByRole('dialog', { name: 'Command palette' })
@@ -6734,9 +7210,10 @@ describe('live sessions', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     await screen.findByTestId('thread')
 
-    const terminalToggle = screen.getByRole('button', { name: 'Open terminal' })
+    const terminalToggle = screen.getByRole('button', { name: 'Show bottom panel' })
     expect(screen.queryByTestId('bottom-terminal')).toBeNull()
     fireEvent.click(terminalToggle)
+    fireEvent.click(await screen.findByRole('button', { name: 'Terminal' }))
     await screen.findByTestId('terminal-pane')
     const bottomTerminal = screen.getByTestId('bottom-terminal')
     const composer = document.querySelector('.stage__conversation > .composer')
@@ -6745,7 +7222,7 @@ describe('live sessions', () => {
       composer!.compareDocumentPosition(bottomTerminal) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide terminal' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide bottom panel' }))
     act(() => dispatchTransitionEnd(bottomTerminal, 'transform'))
     await waitFor(() => {
       const terminal = screen.queryByTestId('bottom-terminal')
@@ -6777,10 +7254,14 @@ describe('live sessions', () => {
       render(<App />)
       await screen.findByRole('button', { name: /^New session,/ })
 
-      fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Show bottom panel' }))
       await screen.findByTestId('bottom-terminal')
 
-      expect(animate).not.toHaveBeenCalled()
+      expect(
+        animate.mock.instances.some(
+          (element) => element instanceof Element && element.closest('.composer') !== null,
+        ),
+      ).toBe(false)
     } finally {
       if (originalAnimate) {
         Object.defineProperty(Element.prototype, 'animate', originalAnimate)

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
+const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
 
 describe('settings viewport CSS', () => {
   it('keeps both panes scrollable inside short windows', () => {
@@ -45,16 +46,13 @@ describe('settings viewport CSS', () => {
     )
   })
 
-  it('crossfades the softer private email blur and swaps its reveal icons', () => {
+  it('crossfades the private email blur and morphs its reveal icon', () => {
     expect(settingsCss).toMatch(
       /\.settings__email-clip::before \{[^}]*backdrop-filter: blur\(2\.75px\);[^}]*opacity: 1;[^}]*transition: opacity var\(--dur-reveal\) var\(--ease-out\);/s,
     )
-    expect(settingsCss).toMatch(
-      /\.settings__email\[data-revealed='true'\] \.settings__email-eye--show \{[^}]*opacity: 0;[^}]*transform: scale\(0\.9\);/s,
-    )
-    expect(settingsCss).toMatch(
-      /\.settings__email\[data-revealed='true'\] \.settings__email-eye--hide \{[^}]*opacity: 1;[^}]*transform: scale\(1\);/s,
-    )
+    expect(settingsSource).toContain('<IconMorph active={revealed ? 1 : 0}>')
+    expect(settingsSource).toContain('className="settings__email-eye--show"')
+    expect(settingsSource).toContain('className="settings__email-eye--hide"')
   })
 
   it('keeps a single provider action at the far edge on wide and narrow rows', () => {
@@ -62,13 +60,13 @@ describe('settings viewport CSS', () => {
       /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty \{[^}]*display: none;/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row__primary \{[^}]*grid-column: 6;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 6;/s,
+      /\.provider-row__primary \{[^}]*grid-column: 4;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 4;/s,
     )
     expect(settingsCss).toMatch(
-      /@container \(max-width: 514px\) \{[\s\S]*?grid-template-areas:[^;]*'secondary secondary primary';[^}]*grid-template-columns: 20px minmax\(0, 1fr\) minmax\(88px, max-content\);[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-area: primary;/s,
+      /\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*min-width: 0;/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row \.settings__action \{[^}]*width: auto;[^}]*min-width: 78px;[^}]*min-height: 30px;/s,
+      /\.provider-row \.settings__action \{[^}]*min-width: 70px;[^}]*min-height: 28px;/s,
     )
   })
 })

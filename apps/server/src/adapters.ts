@@ -60,6 +60,7 @@ export type StartOptions = {
    * folder itself, so two agents cannot overwrite each other.
    */
   isolate?: boolean | undefined
+  baseRef?: string | undefined
   /** Internal project overrides and their already-resolved OS credentials. */
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
@@ -366,7 +367,7 @@ async function probeCustomHarnessProtocol(
         const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
         return modelProbeCheck(label, models, 'HTTP protocol detected')
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'pi': {
@@ -383,7 +384,7 @@ async function probeCustomHarnessProtocol(
         const models = await customHarnessDeadline(harness, 'complete Pi RPC', adapter.listModels())
         return modelProbeCheck(label, models, 'RPC handshake completed')
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'acp': {
@@ -430,7 +431,7 @@ async function probeCustomHarnessProtocol(
         const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
         return modelProbeCheck(label, models, 'Streaming CLI model command responded')
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'cursor': {
@@ -444,7 +445,7 @@ async function probeCustomHarnessProtocol(
         const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
         return modelProbeCheck(label, models, 'Stream-json CLI model command responded')
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
     case 'antigravity': {
@@ -455,7 +456,7 @@ async function probeCustomHarnessProtocol(
         const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
         return modelProbeCheck(label, models, 'Streaming CLI model command responded')
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     }
   }
@@ -806,7 +807,7 @@ function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
       const listing = adapter.listModels()
       return harness ? await customHarnessOperation(harness, 'list models', listing) : await listing
     } finally {
-      adapter.dispose()
+      await adapter.dispose()
     }
   })().finally(() => {
     openCodeModelListings.delete(key)
@@ -964,31 +965,37 @@ function claudeRuntime(
   return {
     async start(workspacePath, options) {
       const adapter = await adapterFor(options.agent, workspacePath)
-      const thread = await adapter.startThread(workspacePath, {
-        model: options.model,
-        effort: options.effort,
-        approval: options.approval,
-        instructions: options.instructions,
-        ephemeral: options.ephemeral,
-      })
-      return { thread, session: sessionFor(adapter) }
+      return startedSession(sessionFor(adapter), () =>
+        adapter.startThread(workspacePath, {
+          model: options.model,
+          effort: options.effort,
+          approval: options.approval,
+          instructions: options.instructions,
+          ephemeral: options.ephemeral,
+          mcpServers: options.mcpServers,
+          mcpCredentials: options.mcpCredentials,
+        }),
+      )
     },
     async resume(threadId, workspacePath, options) {
       const adapter = await adapterFor(options.agent, workspacePath)
-      const thread = await adapter.resumeThread(threadId, workspacePath, {
-        model: options.model,
-        effort: options.effort,
-        approval: options.approval,
-        instructions: options.instructions,
-      })
-      return { thread, session: sessionFor(adapter) }
+      return startedSession(sessionFor(adapter), () =>
+        adapter.resumeThread(threadId, workspacePath, {
+          model: options.model,
+          effort: options.effort,
+          approval: options.approval,
+          instructions: options.instructions,
+          mcpServers: options.mcpServers,
+          mcpCredentials: options.mcpCredentials,
+        }),
+      )
     },
     async listModels(agent) {
       const adapter = await adapterFor(agent)
       try {
         return await adapter.listModels()
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     },
   }
@@ -1031,7 +1038,7 @@ function piRuntime(
       try {
         return await customHarnessOperation(harness, 'list Pi models', adapter.listModels())
       } finally {
-        adapter.dispose()
+        await adapter.dispose()
       }
     },
   }

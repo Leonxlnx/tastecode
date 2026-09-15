@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-09 main 797db3c6</span>
+        <span class="meta">2026-09-12 base main 97c3002f + 1100</span>
       </div>
     </div>
 
@@ -263,7 +263,10 @@
             <label
               ><input type="checkbox" /><span
                 >Sign in with real ChatGPT OAuth, shows email and plan in Settings
-                <span class="d">codex login runs in the expanded setup terminal card</span></span
+                <span class="d"
+                  >codex login runs in the expanded setup terminal card; Pro plans show their real
+                  x5 or x20 multiplier without a duplicate subscription label</span
+                ></span
               ></label
             >
           </li>
@@ -300,7 +303,8 @@
                 user
                 <span class="d"
                   >permission-profile requests show the requested access and answer with Codex's
-                  grant-and-scope wire shape; Stop uses the original thread and turn IDs</span
+                  grant-and-scope wire shape; Stop uses the original thread and turn IDs; automatic
+                  review runs without status or result cards in the chat</span
                 ></span
               ></label
             >
@@ -314,9 +318,11 @@
                 >Rate limit windows in the account popup
                 <span class="d"
                   >clear dividers separate provider groups without splitting their windows; 5 hour
-                  and weekly reset times; earned resets offer a hover Use control that confirms on
-                  the opposite side so a second click cannot spend them; non-ChatGPT accounts are
-                  honestly unavailable and malformed provider responses stay errors</span
+                  and weekly reset times; earned resets show each expiry date, soonest first and red
+                  within 24 hours, with a Use control beside each selectable expiry that spends that
+                  reset; confirmation keeps the date visible and moves Confirm away from Use so a
+                  second click cannot spend it; non-ChatGPT accounts are honestly unavailable and
+                  malformed provider responses stay errors</span
                 ></span
               ></label
             >
@@ -326,9 +332,10 @@
               ><input type="checkbox" /><span
                 >Voice dictation in the composer
                 <span class="d"
-                  >Codex-only UI exception backed by an explicit OpenAI API connection; the key
-                  stays in the OS credential store, and the recorder can discard a capture
-                  locally</span
+                  >Codex account dictation beside Send, with a flat idle button, a smooth voice
+                  curve, morphing Tabler icons, a starting state, and Escape to cancel. Ask first
+                  and Design hide while Plus keeps accepting files. Account credentials stay inside
+                  the adapter</span
                 ></span
               ></label
             >
@@ -614,9 +621,11 @@
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
                   stable slots across loading, ready, setup, busy, and failure states; empty action
-                  slots do not create a second grid row, keeping signed-in rows at 56 px; primary
-                  and secondary actions share the fixed right edge on desktop and narrow layouts;
+                  slots stay hidden, with account details below the provider name in compact rows;
+                  primary and secondary actions share the right edge on desktop and narrow layouts;
                   CLI versions live in the provider-mark tooltip instead of widening account rows;
+                  account labels use the same email-or-signed-in grammar; error tooltips escape
+                  clipped cards, stay inside the viewport, and support keyboard dismissal;
                   <a href="./screenshots/provider-density-after.png">compact evidence</a>,
                   <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
                   <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
@@ -628,6 +637,19 @@
             <label
               ><input type="checkbox" /><span
                 >Auto-detect installed CLIs with version check and mismatch warning</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Provider update buttons and release notifications
+                <span class="d"
+                  >background checks for Codex, Claude Code, and Grok; a compact Providers footer
+                  reopens available updates. The toast shows versions, runs trusted update commands,
+                  and handles progress, verified completion, retry, terminal details, and managed
+                  install guides. Dismissal is remembered per release</span
+                ></span
               ></label
             >
           </li>
@@ -656,8 +678,9 @@
                 >Expanded setup terminal card
                 <span class="d"
                   >provider installs and sign-ins plus GitHub CLI install and login share one live
-                  workspace terminal; browser handoff, device code copy, live status, and the
-                  one-time-code field stay scoped to the active setup terminal</span
+                  workspace terminal; codes are entered directly in the CLI. Sign-ins can be
+                  canceled from the terminal or Settings; failure closes the terminal and keeps its
+                  log behind Details</span
                 ></span
               ></label
             >
@@ -665,8 +688,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Provider error state as a red dot with hover bubble, never a second row line;
-                app-level failures use a compact bottom-right notice without an accent rail</span
+                >Provider errors use a plain icon next to the status with details on hover or focus;
+                chat, model, account, connection, attachment, and voice errors share a dismissible
+                bar above the composer; contextual dialogs retain their local feedback</span
               ></label
             >
           </li>
@@ -714,6 +738,15 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chat and provider errors appear in a compact red shelf above the project and branch
+                shelf, with a plain icon, a recovery action where available, and a dismiss button;
+                dismissal preserves the draft and send guards, and new failures appear again</span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -843,8 +876,10 @@
                 and Grok receive their native image and file-reference formats; raster images and
                 videos get lightweight composer previews, sent image previews above their message,
                 and an app-native full-window viewer that opens without a reveal delay or photo size
-                animation; selected images reach ACP image blocks only after the agent advertises
-                image prompts, while rejected sends restore the original draft and attachment
+                animation; desktop image previews and browser images offer a native Copy Image
+                context menu; selected images reach ACP image blocks only after the agent advertises
+                image prompts; attachments can send without typed text and name a new session from
+                their filenames, while rejected sends restore the original draft and attachment
                 set</span
               ></label
             >
@@ -873,29 +908,33 @@
                   before-and-after tree; new page artifacts record a validated beta layout family
                   and exact human-authored case IDs for every section, reject missing, cross-family,
                   or adjacent duplicate compositions, and carry those decisions into Build and
-                  Review; 132 generated-only direction references deterministically contribute one
-                  bounded geometry cue per family, while brand palettes supply optional
-                  dependency-free card, section, and page gradient recipes; page validation rejects
-                  eyebrows, internal placeholders, overlong headings, and redundant Hero support
-                  copy; Brand limits typography to two approved families; every section records
-                  purposeful motion plus its reduced-motion equivalent; Page, Build, and Review
-                  require coherent card systems and meaningful brand-accent use; Asset actively
-                  reuses, generates, or searches for real imagery through available provider tools
-                  and records external reuse terms; the same phases reject ornamental SVG filler,
-                  divider-grid templates, colored card rails, unstyled controls, overflow, and
-                  headings beyond three lines; representative content stays out of page disclaimers
-                  and reaches the final Harness response as a publishing verification note;
-                  TasteCode-owned static previews reject occupied ports and clean up child trees;
-                  rendered Chromium audits require exactly one h1 and at least 44 by 44 CSS-pixel
-                  interaction targets across the whole document, and model review cannot erase those
-                  findings; capture opens or reuses one dedicated Browser tab and same-URL repair
-                  passes reload it after the Electron guest is ready; serialized hidden capture
-                  remains the evidence authority, scrolls through lazy content, and waits within
-                  fixed deadlines for animations, fonts, and images before bounded whole-page
-                  desktop and mobile PNGs, then clears shared browser storage and cache before the
-                  next capture; a successful preview remains reachable until thread close or a
-                  replacement Design run, with process and port release awaited before cleanup;
-                  completed queued phases remain idle when their provider promise settles late</span
+                  Review; supplied reference pixels and locked direction IDs persist across phases;
+                  approved artifacts and assets are checked before reuse, duplicate briefing IDs
+                  fail validation, and exact output rules inspect nested files; 132 generated-only
+                  direction references contribute a bounded image deck; brand palettes supply
+                  optional dependency-free card, section, and page gradient recipes; page validation
+                  rejects eyebrows, internal placeholders, overlong headings, and redundant Hero
+                  support copy; Brand limits typography to two approved families; every section
+                  records purposeful motion plus its reduced-motion equivalent; Page, Build, and
+                  Review require coherent card systems and meaningful brand-accent use; Asset
+                  actively reuses, generates, or searches for real imagery through available
+                  provider tools and records external reuse terms; the same phases reject ornamental
+                  SVG filler, divider-grid templates, colored card rails, unstyled controls,
+                  overflow, and headings beyond three lines; representative content stays out of
+                  page disclaimers and reaches the final Harness response as a publishing
+                  verification note; TasteCode-owned static previews reject occupied ports and
+                  missing local markup resources, including srcset candidates, and clean up child
+                  trees; rendered Chromium audits require exactly one h1 and at least 44 by 44
+                  CSS-pixel interaction targets across the whole document, and model review cannot
+                  erase those findings; capture opens or reuses one dedicated Browser tab and
+                  same-URL repair passes reload it after the Electron guest is ready; serialized
+                  hidden capture remains the evidence authority, scrolls through lazy content, and
+                  waits within fixed deadlines for animation frames, animations, fonts, and images
+                  before bounded whole-page desktop and mobile PNGs, then clears shared browser
+                  storage and cache before the next capture; a successful preview remains reachable
+                  until thread close or a replacement Design run, with process and port release
+                  awaited before cleanup; completed queued phases remain idle when their provider
+                  promise settles late</span
                 ></span
               ></label
             >
@@ -980,8 +1019,10 @@
                 <span class="d"
                   >each completed model reply compacts all activity into one Worked disclosure;
                   repeated settled reasoning-only histories with no answer do the same; commands
-                  stay summarized until opened, with exact command and output inside the compact
-                  reveal</span
+                  group consecutive runs under Ran commands inside the work disclosure, with
+                  failures marked on the group and each exact command and output inside the compact
+                  reveal; an arrow beside the label opens aligned steps with quiet output surfaces,
+                  elapsed times, and visible failure marks in both themes</span
                 ></span
               ></label
             >
@@ -1090,7 +1131,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Auto-review mode where the provider supports it</span
+                >Auto-review by default where supported; Full access otherwise. Saved choices take
+                priority.</span
               ></label
             >
           </li>
@@ -1098,7 +1140,10 @@
             <label
               ><input type="checkbox" /><span
                 >Checkpoint every turn, reversible rollback with changed-file inspection
-                <span class="d">missing and cross-thread checkpoints fail closed</span></span
+                <span class="d"
+                  >Git refs protect saved states; shared-checkout guards wait for active and
+                  stopping agents; nested project restore stays in scope</span
+                ></span
               ></label
             >
           </li>
@@ -1118,6 +1163,17 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >History size report, NDJSON export, previewed cleanup with an archive, and database
+                space reclamation
+                <span class="d"
+                  >explicit local maintenance; active tasks and private checkouts remain</span
+                ></span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -1190,7 +1246,8 @@
               ><input type="checkbox" /><span
                 >Git branch and diff stats detected live for the context chip
                 <span class="d"
-                  >agent turns refresh them only after the project becomes idle</span
+                  >agent turns refresh them only after the project becomes idle; new chats default
+                  to main and remember the last branch picked for each project</span
                 ></span
               ></label
             >
@@ -1226,7 +1283,9 @@
                 >Per-session and per-day usage summaries
                 <span class="d"
                   >provider-neutral server-owned totals feed the live session and today summaries;
-                  money only appears when the provider reports real cost</span
+                  money only appears when the provider reports real cost; the account footer shows
+                  the highest reported limit percentage used, with the provider and window on
+                  hover</span
                 ></span
               ></label
             >
@@ -1243,18 +1302,22 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Resizable right-side workspace with persistent tool tabs
+                >Resizable bottom and right tool panels
                 <span class="d"
-                  >compact 2-by-2-plus-one icon launcher, Review, independent Terminal, Browser, and
-                  Files tabs with middle-click closing, CSP-safe compact terminals with link
+                  >compact 2-by-2-plus-one picker for Review, Terminal, Browser, Files, and
+                  Temporary chat. Each panel has independent tool tabs, a + menu, and an upper-right
+                  close button. Tabs fade on add and close; neighbouring tabs slide into place. Tabs
+                  support drag reordering and Alt+Left/Right with the app haptic preference. Closing
+                  the panel returns to the picker. No manual expansion. Bottom and right terminals
+                  have separate shells. Edge resizing remains. CSP-safe compact terminals with link
                   detection, distinct desktop/tablet/mobile Browser controls, lazy file trees and
                   side chat; New chat terminals use the selected project's current checkout, while
                   active chats use their exact session checkout; one fixed in-chat toggle opens and
                   closes the panel by swapping its icon in place, staying visible throughout the
-                  closing transition. Aligned square dividers stay below native window chrome,
-                  resizing keeps at least 360 px for the center chat with or without the left
-                  sidebar, missing workspace items fail without raw paths, and 390 px layouts do not
-                  overflow</span
+                  closing transition. Aligned square dividers and the 42 px sidebar titlebar edge
+                  stay below native window chrome, resizing keeps at least 360 px for the center
+                  chat with or without the left sidebar, missing workspace items fail without raw
+                  paths, and 390 px layouts do not overflow</span
                 ></span
               ></label
             >
@@ -1304,6 +1367,18 @@
             <label
               ><input type="checkbox" /><span
                 >Pin projects and pin sessions, pinned float to the top</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Undo recently archived chats
+                <span class="d"
+                  >sidebar archive actions show a top toast with a white Undo button for 10 seconds,
+                  and fade and slide visible rows before removal. Reduced motion skips these
+                  effects</span
+                ></span
               ></label
             >
           </li>
@@ -1369,9 +1444,12 @@
                 exit
                 <span class="d"
                   >rapid reopening reverses the same surface; all buttons and popup triggers share
-                  instant press feedback with no scaling; open popup triggers keep their fill;
-                  keyboard menus are instant, reduced motion uses a fade, and centered dialogs share
-                  one entrance</span
+                  steady hover feedback without press flashes or scaling; open popup triggers keep
+                  their fill; keyboard menus are instant, reduced motion uses a fade, and centered
+                  dialogs share one entrance. Workspace and permission modes, account email
+                  visibility, and provider update states use the same reversible icon morph as copy
+                  confirmation; reduced motion keeps a short fade and hidden loading icons stay
+                  paused</span
                 ></span
               ></label
             >
@@ -1435,7 +1513,8 @@
                   modal dialogs; the always-available top-row Options menu exposes common sidebar,
                   terminal, workspace, chat, search, pull request, and settings actions, while the
                   desktop File, View, Chat, Workspace, Window, and Help menus mirror the same
-                  actions and current custom accelerators</span
+                  actions and current custom accelerators. Cmd+1–9 on macOS and Ctrl+1–9 on
+                  Windows/Linux open the nine newest sessions in the first sidebar project</span
                 ></span
               ></label
             >
@@ -1455,9 +1534,12 @@
                 >MCP servers: empty project view until explicitly added, then enable and disable,
                 inspect, per-project scope
                 <span class="d"
-                  >a provider selector manages separate Codex and Grok project inventories; Codex
-                  can hot-reload compatible changes, while Grok receives its selected servers over
-                  ACP when a new session starts</span
+                  >a provider selector manages separate Codex, Claude Code, and Grok project
+                  definitions; Codex can hot-reload compatible changes, Grok receives selected
+                  servers through ACP, and Claude receives enabled definitions on start and resume
+                  with credentials kept out of process arguments; controls follow the available
+                  capabilities, and Claude rejects unsupported inherited-server hiding before
+                  saving</span
                 ></span
               ></label
             >
@@ -1522,7 +1604,9 @@
                 >Installed interface font selector
                 <span class="d"
                   >System default, bundled font families, and every installed font family appear in
-                  one deduplicated alphabetical list with name search</span
+                  one deduplicated alphabetical list with name search. The complete list is cached
+                  across app restarts, refreshes after 24 hours, and replaces the first-load message
+                  only when ready</span
                 ></span
               ></label
             >
@@ -1668,7 +1752,8 @@
                   >without that subscription, Grok 4.6 at low when Grok is connected, otherwise the
                   newest cost-oriented model at its lowest advertised effort across connected
                   subscription, custom harness, and direct API providers; Models settings exposes an
-                  explicit model and effort override</span
+                  explicit model and effort override, plus Standard/Fast speed for models that
+                  support Fast, including Codex</span
                 ></span
               ></label
             >
@@ -1823,9 +1908,49 @@
         </ul>
       </section>
 
+      <p class="sub">
+        Settings error tooltips remain inside the viewport and support keyboard dismissal.
+      </p>
+
+      <p class="sub">
+        Provider account labels use consistent email and signed-in text with the existing privacy
+        controls. Codex Pro plans show their real x5 or x20 multiplier.
+      </p>
+
+      <p class="sub">
+        Static previews reject missing local HTML resources, including responsive images and preload
+        candidates.
+      </p>
+
+      <p class="sub">
+        Hidden capture rejects malformed or unsafe page measurements before bitmap allocation.
+        Recorder cleanup avoids state updates after unmount. Hidden capture waits have deadlines and
+        remove pending frame callbacks, timers, and listeners.
+      </p>
+
+      <p class="sub">
+        Workspace paths also protect the remaining cloud and command-line credential filenames.
+      </p>
+
+      <p class="sub">
+        Design briefing rejects duplicate question IDs before answers are collected.
+      </p>
+
+      <p class="sub">
+        Exact Design output rules inspect nested folders and reject unexpected files and linked
+        deliverables.
+      </p>
+
+      <p class="sub">
+        Claude project MCP settings apply on start and resume with credentials scoped to each
+        server.
+      </p>
+
       <footer>
-        Companion to docs/dashboard.html. Everything listed is implemented on main as of the commit
-        in the top bar. Ticks live in your browser's local storage, nothing is sent anywhere.
+        Companion to docs/dashboard.html. Everything listed is implemented in this source snapshot.
+        See
+        <a href="./verification/pr-quality-2026-09-09.md">verification and release limits</a>. Ticks
+        live in your browser's local storage, nothing is sent anywhere.
       </footer>
     </div>
 

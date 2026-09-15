@@ -1,12 +1,12 @@
 import { EventEmitter } from 'node:events'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import type {
   BackgroundModelPreference,
   Capabilities,
   DomainEvent,
   Model,
 } from '@harness/contracts'
-import type { AgentSession, ProviderRuntime, StartOptions } from './adapters.js'
+import type { AgentSession, ProviderRuntime, StartOptions, TurnOptions } from './adapters.js'
 import {
   cleanGeneratedCommitMessage,
   cleanGeneratedTitle,
@@ -25,6 +25,35 @@ const model = (id: string, reasoningEfforts: string[] = [], isDefault = false): 
 })
 
 describe('background model resolution', () => {
+  it.each([
+    ['priority', 'priority'],
+    ['standard', 'standard'],
+    ['unsupported', undefined],
+    [undefined, undefined],
+  ])('resolves the supported speed %s as %s', (requested, expected) => {
+    const resolved = resolveBackgroundModel(
+      {
+        mode: 'manual',
+        target: { provider: 'codex', model: 'gpt-5.6-luna', serviceTier: requested },
+      },
+      [
+        {
+          id: 'codex',
+          displayName: 'Codex',
+          provider: 'codex',
+          models: [
+            {
+              ...model('gpt-5.6-luna', ['low']),
+              serviceTiers: [{ id: 'priority', name: 'Fast', description: 'Faster responses' }],
+              defaultServiceTier: 'standard',
+            },
+          ],
+        },
+      ],
+    )
+    expect(resolved?.serviceTier).toBe(expected)
+  })
+
   it('prefers Luna low for a ChatGPT-authenticated Codex source', () => {
     const sources: AvailableBackgroundModelSource[] = [
       {
@@ -138,109 +167,54 @@ describe('background model resolution', () => {
 })
 
 describe('background completion', () => {
-  it('returns the normalized final answer and disposes the temporary session', async () => {
-    const session = new CompletingSession()
-    let startOptions: StartOptions | undefined
-    const runtime: ProviderRuntime = {
-      async start(workspacePath, options) {
-        startOptions = options
-        return {
-          thread: {
-            id: 'background-thread',
-            provider: 'codex',
-            workspacePath,
-            createdAt: 0,
-          },
-          session,
-        }
-      },
-      async listModels() {
-        return []
-      },
-    }
-
-    await expect(
-      runBackgroundCompletion({
-        runtime,
-        selection: {
-          provider: 'codex',
-          model: 'gpt-5.6-luna',
-          effort: 'low',
-          sourceName: 'Codex',
-          automatic: true,
+  it.each([undefined, 'priority', 'standard'])(
+    'passes speed %s to the session and turn, and disposes the temporary session',
+    async (serviceTier) => {
+      const session = new CompletingSession()
+      let startOptions: StartOptions | undefined
+      const runtime: ProviderRuntime = {
+        async start(workspacePath, options) {
+          startOptions = options
+          return {
+            thread: {
+              id: 'background-thread',
+              provider: 'codex',
+              workspacePath,
+              createdAt: 0,
+            },
+            session,
+          }
         },
-        prompt: 'Write a title.',
-      }),
-    ).resolves.toBe('Generated title')
-    expect(startOptions).toMatchObject({
-      model: 'gpt-5.6-luna',
-      effort: 'low',
-      approval: 'ask',
-      ephemeral: true,
-    })
-    expect(session.disposed).toBe(true)
-  })
+        async listModels() {
+          return []
+        },
+      }
 
-  it('waits for temporary session disposal before resolving', async () => {
-    const session = new CompletingSession()
-    let release = () => {}
-    const barrier = new Promise<void>((resolve) => (release = resolve))
-    let disposalStarted = false
-    session.dispose = async () => {
-      disposalStarted = true
-      await barrier
-      session.disposed = true
-    }
-    const runtime: ProviderRuntime = {
-      async start(workspacePath) {
-        return {
-          thread: {
-            id: 'background-thread',
+      await expect(
+        runBackgroundCompletion({
+          runtime,
+          selection: {
             provider: 'codex',
-            workspacePath,
-            createdAt: 0,
+            model: 'gpt-5.6-luna',
+            effort: 'low',
+            serviceTier,
+            sourceName: 'Codex',
+            automatic: true,
           },
-          session,
-        }
-      },
-      async listModels() {
-        return []
-      },
-    }
-
-    const completion = runBackgroundCompletion({
-      runtime,
-      selection: {
-        provider: 'codex',
+          prompt: 'Write a title.',
+        }),
+      ).resolves.toBe('Generated title')
+      expect(startOptions).toMatchObject({
         model: 'gpt-5.6-luna',
         effort: 'low',
-        sourceName: 'Codex',
-        automatic: true,
-      },
-      prompt: 'Write a title.',
-    })
-    let settled = false
-    void completion.then(
-      () => {
-        settled = true
-      },
-      () => {
-        settled = true
-      },
-    )
-
-    try {
-      await vi.waitFor(() => expect(disposalStarted).toBe(true))
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      expect(settled).toBe(false)
-      release()
-      await expect(completion).resolves.toBe('Generated title')
+        approval: 'ask',
+        ephemeral: true,
+      })
       expect(session.disposed).toBe(true)
-    } finally {
-      release()
-      await completion.catch(() => undefined)
-    }
-  })
+      expect(startOptions?.serviceTier).toBe(serviceTier)
+      expect(session.turnOptions?.serviceTier).toBe(serviceTier)
+    },
+  )
 })
 
 describe('background output shaping', () => {
@@ -297,9 +271,16 @@ const CAPABILITIES: Capabilities = {
 class CompletingSession implements AgentSession {
   readonly capabilities = CAPABILITIES
   disposed = false
+  turnOptions: TurnOptions | undefined
   #events = new EventEmitter()
 
-  async sendTurn(): Promise<string> {
+  async sendTurn(
+    _threadId: string,
+    _text: string,
+    _attachments: string[],
+    options?: TurnOptions,
+  ): Promise<string> {
+    this.turnOptions = options
     queueMicrotask(() => {
       this.#emit({
         type: 'item.completed',

@@ -128,7 +128,7 @@ function mebibytes(kibibytes) {
   return (kibibytes / 1024).toFixed(1)
 }
 
-export async function measure(executable, index, environment = {}) {
+export async function measure(executable, index, environment = {}, arguments_ = []) {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), `tastecode-startup-${index}-`))
   let output = ''
   let timeout
@@ -155,7 +155,7 @@ export async function measure(executable, index, environment = {}) {
     if (threadCount !== undefined && projectCount !== undefined) {
       await seedStartupFixture(dataRoot, threadCount, projectCount)
     }
-    child = spawn(executable, [], {
+    child = spawn(executable, arguments_, {
       cwd: path.dirname(executable),
       env: {
         ...process.env,

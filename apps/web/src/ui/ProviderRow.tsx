@@ -1,9 +1,7 @@
-import { useId, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { ProviderStatus } from '@harness/contracts'
-import {
-  IconAlertCircle as CircleAlert,
-  IconExternalLink as ExternalLink,
-} from '@tabler/icons-react'
+import { IconExternalLink as ExternalLink } from '@tabler/icons-react'
+import { RowIssue } from './RowIssue.js'
 import { providerMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
 
@@ -39,10 +37,8 @@ export function ProviderRow(props: {
         role={props.live ? 'status' : undefined}
         aria-atomic={props.live || undefined}
       >
-        {props.status}
-      </div>
-      <div className="provider-row__issue">
-        {props.issue ? <ProviderRowIssue {...props.issue} /> : null}
+        {props.issue ? <RowIssue {...props.issue} label="Problem details" /> : null}
+        <span className="provider-row__status-text">{props.status}</span>
       </div>
       <div className="provider-row__secondary">
         <ProviderRowAction action={props.secondary} tone="secondary" />
@@ -77,29 +73,5 @@ function ProviderRowAction(props: {
     >
       {action.label}
     </button>
-  )
-}
-
-function ProviderRowIssue(props: ProviderIssue) {
-  const tooltipId = useId()
-  return (
-    <span className="row-issue">
-      {props.announce ? (
-        <span className="visually-hidden" role="alert">
-          {props.message}
-        </span>
-      ) : null}
-      <button
-        type="button"
-        className="row-issue__dot"
-        aria-label="Problem details"
-        aria-describedby={tooltipId}
-      >
-        <CircleAlert size={14} aria-hidden />
-      </button>
-      <span id={tooltipId} role="tooltip" className="row-issue__bubble">
-        {props.message}
-      </span>
-    </span>
   )
 }

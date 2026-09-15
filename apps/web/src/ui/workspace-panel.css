@@ -34,194 +34,8 @@
   overflow: hidden;
 }
 
-.workspace-panel:not(.is-open) .workspace-panel__controls {
-  visibility: hidden;
-}
-
 .workspace-panel.is-expanded {
   border-left: 0;
-}
-
-.workspace-panel__chrome {
-  position: relative;
-  z-index: 5;
-  display: flex;
-  height: 42px;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--line);
-  -webkit-app-region: no-drag;
-}
-
-.workspace-panel__tabs {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 4px;
-  overflow: visible;
-}
-
-.workspace-panel__controls {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-  padding-left: 74px;
-  margin-left: auto;
-  margin-right: 0;
-}
-
-.workspace-panel__controls button {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-md);
-  color: var(--text-3);
-  cursor: pointer;
-}
-
-.workspace-panel__controls button:hover,
-.workspace-panel__controls button:focus-visible {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
-.workspace-panel__tab-shell {
-  display: flex;
-  min-width: 0;
-  max-width: 190px;
-  height: 28px;
-  align-items: center;
-  background: transparent;
-  border-radius: var(--r-md);
-  color: var(--text-3);
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.workspace-panel__tab-shell:hover,
-.workspace-panel__tab-shell.is-active {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.workspace-panel__tab {
-  display: flex;
-  min-width: 0;
-  height: 28px;
-  flex: 1;
-  align-items: center;
-  gap: 7px;
-  padding: 0 4px 0 9px;
-  background: transparent;
-  border: 0;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-}
-
-.workspace-panel__tab > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-panel__tab-close {
-  display: grid;
-  flex: none;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  margin-right: 5px;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-md);
-  color: var(--text-3);
-  cursor: pointer;
-  opacity: 0.72;
-  transition: opacity var(--dur-fast) var(--ease-out);
-}
-
-.workspace-panel__tab-close:hover,
-.workspace-panel__tab-close:focus-visible {
-  background: var(--control-hover);
-  color: var(--text);
-  outline: 0;
-  opacity: 1;
-}
-
-.workspace-panel__add-wrap {
-  position: relative;
-  flex: none;
-}
-
-.workspace-panel__add {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  padding: 0;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-md);
-  color: var(--text-3);
-  cursor: pointer;
-}
-
-.workspace-panel__add:hover,
-.workspace-panel__add[aria-expanded='true'] {
-  background: var(--surface-2);
-  color: var(--text);
-}
-
-.workspace-panel__add-menu {
-  position: absolute;
-  z-index: 80;
-  top: calc(100% + 5px);
-  left: 0;
-  display: grid;
-  width: 250px;
-  padding: 3px;
-  background: var(--menu-bg);
-  border: 1px solid var(--menu-line);
-  border-radius: var(--r-popup);
-  box-shadow: var(--shadow-flyout);
-}
-
-.workspace-panel__add-menu button {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
-  min-height: 28px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px;
-  background: transparent;
-  border: 0;
-  border-radius: var(--r-popup-item);
-  color: var(--text-2);
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.workspace-panel__add-menu button:hover {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
-.workspace-panel__add-menu kbd {
-  color: var(--text-3);
-  font: inherit;
-  font-size: var(--t-xs);
 }
 
 .workspace-panel__resize {
@@ -294,7 +108,7 @@
 
 .workspace-provider-login {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   background: var(--terminal-workspace-bg);
@@ -313,54 +127,44 @@
   box-shadow: none;
 }
 
-.workspace-provider-login__code {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 9px 12px 10px;
-  border-top: 1px solid var(--line);
+.workspace-provider-login__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-inline: 8px;
 }
 
-.workspace-provider-login__code input,
-.workspace-provider-login__code button {
-  min-height: 32px;
-  border: 1px solid var(--line-strong);
+.workspace-tabs__add:has(.workspace-provider-login__actions) {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.workspace-provider-login__actions > button {
+  padding: 5px 8px;
+  border: 0;
   border-radius: var(--r-md);
-  background: var(--surface);
-  color: var(--text);
+  background: transparent;
+  color: var(--text-2);
   font: inherit;
-}
-
-.workspace-provider-login__code input {
-  min-width: 0;
-  padding: 5px 9px;
-  font-family: var(--font-mono);
-}
-
-.workspace-provider-login__code button {
-  padding: 5px 11px;
+  font-size: var(--t-xs);
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.workspace-provider-login__code input:focus-visible,
-.workspace-provider-login__code button:focus-visible {
+.workspace-provider-login__actions > button:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.workspace-provider-login__actions > button:focus-visible {
   outline: 1px solid var(--text-2);
   outline-offset: 1px;
 }
 
-.workspace-provider-login__code button:hover:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.workspace-provider-login__code button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.workspace-provider-login__code [role='alert'] {
-  grid-column: 1 / -1;
-  color: var(--error);
-  font-size: var(--t-xs);
+.workspace-provider-login__actions > button:disabled {
+  opacity: 0.5;
 }
 
 .terminal-pane--workspace {
@@ -1449,5 +1253,172 @@
 
   .workspace-side-chat__composer button:not(:disabled):hover {
     transform: none !important;
+  }
+}
+
+/* The bottom host uses the same tools and tab lifecycle as the right host. */
+.workspace-panel.workspace-panel--bottom {
+  width: 100%;
+  height: 100%;
+  border-left: 0;
+  transform: none;
+}
+
+.workspace-panel--bottom > .workspace-panel__resize {
+  top: 0;
+  right: 0;
+  bottom: auto;
+  left: 0;
+  width: 100%;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.stage__body.is-new-session > .bottom-terminal {
+  max-height: calc(100% - 80px);
+}
+
+.bottom-terminal.is-open {
+  contain: layout;
+  overflow: visible;
+}
+
+.workspace-panel--bottom .workspace-selector {
+  overflow-y: auto;
+}
+
+.workspace-panel__close {
+  position: absolute;
+  z-index: 9;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: var(--bg);
+  color: var(--text-3);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.workspace-panel__close:hover,
+.workspace-panel__close:focus-visible {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.workspace-tabs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+  padding: 6px 42px 6px 8px;
+  min-height: 40px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.workspace-tabs__tab {
+  display: flex;
+  align-items: center;
+  flex: none;
+  max-width: 190px;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+}
+.workspace-tabs__tab.is-active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.workspace-tabs__tab button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+}
+.workspace-tabs__tab button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-tabs__tab button svg {
+  flex: none;
+}
+.workspace-tabs__tab .workspace-tabs__close {
+  padding: 0 5px;
+}
+.workspace-tabs__add {
+  flex: none;
+}
+.workspace-tabs__add-button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+@media (hover: hover) and (pointer: fine) {
+  .workspace-tabs__tab:hover,
+  .workspace-tabs__add-button:hover {
+    background: var(--control-hover);
+    color: var(--text);
+  }
+}
+
+.workspace-tabs {
+  position: relative;
+}
+.workspace-tabs__tab {
+  touch-action: pan-y;
+}
+.workspace-tabs.is-tab-reordering {
+  user-select: none;
+  cursor: grabbing;
+}
+.workspace-tabs__tab.is-tab-dragging {
+  position: relative;
+  z-index: 2;
+  background: var(--surface-2);
+  box-shadow: 0 2px 8px #0003;
+  transition: none;
+}
+.workspace-tabs__tab.is-tab-dragging button {
+  cursor: grabbing;
+}
+.workspace-tabs__tab.is-tab-shifting {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.workspace-tabs__landing {
+  position: absolute;
+  left: 0;
+  top: 6px;
+  height: 28px;
+  border: 1px dashed var(--text-3);
+  border-radius: var(--r-md);
+  background: var(--control-hover);
+  pointer-events: none;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tabs__tab.is-tab-shifting,
+  .workspace-tabs__landing {
+    transition: none;
   }
 }

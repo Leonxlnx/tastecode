@@ -12,13 +12,7 @@ import type {
   Model,
   Thread,
 } from '@harness/contracts'
-import {
-  JsonRpcValueSchema,
-  ownProcessTree,
-  ownedProcessSpawnOptions,
-  readNdjson,
-  terminateTree,
-} from '@harness/proc'
+import { JsonRpcValueSchema, killTree, spawnOwned, readNdjson } from '@harness/proc'
 import { z } from 'zod'
 import { GROK_CAPABILITIES } from './capabilities.js'
 
@@ -54,15 +48,7 @@ export { GROK_CAPABILITIES } from './capabilities.js'
  * unparsable lines to the log callback, so it is tolerated by construction.
  *
  * `grok.exe` is a real executable, not a .cmd shim, so it is spawned
- * directly rather than through `spawnCli`'s cmd.exe route (no shell, no
- * cmd.exe argv truncation). Ownership still goes through the shared proc
- * boundary: every spawn carries `ownedProcessSpawnOptions()` and is wrapped
- * with `ownProcessTree`, so Unix children run in their own process group and
- * `terminateTree` shuts the whole tree down with a bounded TERM-to-KILL
- * escalation (taskkill /T on Windows). Every teardown path — interrupt,
- * turn replacement, dispose, and discovery timeout — goes through that
- * bounded shutdown instead of a SIGTERM-only kill.
- * Prompts still do
+ * directly rather than through `spawnCli`'s cmd.exe route. Prompts still do
  * not belong on argv: CreateProcess rejects long command lines even without
  * cmd.exe. Grok's `--prompt-file` keeps the exact UTF-8 text off argv.
  *
@@ -213,13 +199,6 @@ export function grokCommand(): string {
   return existsSync(installed) ? installed : 'grok'
 }
 
-type GrokSpawnOptions = {
-  cwd?: string | undefined
-  stdio: ['pipe', 'pipe', 'pipe']
-  windowsHide: boolean
-  detached?: boolean | undefined
-}
-
 const GrokFrameSchema = z.object({
   type: z.string().optional(),
   data: z.string().optional(),
@@ -274,10 +253,24 @@ export type GrokAdapterEvents = {
 type SpawnFn = (
   command: string,
   args: string[],
-  options: GrokSpawnOptions,
+  options: {
+    cwd?: string
+    stdio: ['pipe', 'pipe', 'pipe']
+    windowsHide: boolean
+    detached?: boolean
+  },
 ) => ChildProcessWithoutNullStreams
 
+function spawnDirect(
+  command: string,
+  args: string[],
+  options: Parameters<SpawnFn>[2],
+): ChildProcessWithoutNullStreams {
+  return spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] })
+}
+
 export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: SpawnFn
   #workspacePath = ''
   #options: GrokStartOptions = {}
@@ -304,28 +297,24 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
 
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawn
+    this.#spawn = options.spawn ?? spawnDirect
   }
 
-  /**
-   * The one canonical owned spawn. Stays off cmd.exe and shell (the prompt
-   * travels via --prompt-file); the detached group plus the ownership record
-   * let terminateTree shut the whole tree down. The injected spawn may be a
-   * test double or a custom-harness spawn that ignores `detached` — ownership
-   * of whatever it returns is still recorded here, exactly once per child.
-   */
-  #spawnOwned(
+  #spawnDirect(
     command: string,
     args: string[],
-    options: { cwd?: string | undefined },
+    options: { cwd?: string } = {},
   ): ChildProcessWithoutNullStreams {
-    return ownProcessTree(
-      this.#spawn(command, args, {
-        ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    return spawnOwned(
+      command,
+      args,
+      {
+        ...options,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        ...ownedProcessSpawnOptions(),
-      }),
+        detached: process.platform !== 'win32',
+      },
+      this.#spawn,
     )
   }
 
@@ -432,16 +421,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       : undefined
     const args = grokTurnArgs(promptFile, this.#options, session)
 
-    // A turn already in flight is replaced: its tree keeps a bounded shutdown
-    // in the background (tracked inside #stop, so no unhandled rejection)
-    // while the new turn starts immediately.
-    if (this.#child) {
-      const previous = this.#child
-      void this.#stop(previous)
-    }
+    // A turn already in flight would be orphaned by the reassignment below.
+    if (this.#child) await this.#stop(this.#child)
     let child: ChildProcessWithoutNullStreams
     try {
-      child = this.#spawnOwned(grokCommand(), args, { cwd: this.#workspacePath })
+      child = this.#spawnDirect(grokCommand(), args, { cwd: this.#workspacePath })
     } catch (error) {
       rmSync(promptDirectory, { recursive: true, force: true })
       throw error
@@ -626,6 +610,12 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         // usage snapshots and available_commands are noise between turns.
       },
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
+      {
+        onError: (error) => {
+          finishProcess(error.message)
+          void killTree(child)
+        },
+      },
     )
 
     child.stderr.setEncoding('utf8')
@@ -664,11 +654,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   }
 
   async interrupt(): Promise<void> {
-    // Clear synchronously so a second interrupt (or a racing close) cannot
-    // re-stop the same child; the bounded shutdown is still awaited below.
-    const child = this.#child
-    this.#child = undefined
-    if (child) await this.#stop(child, 'interrupt')
+    if (this.#child) await this.#stop(this.#child, 'interrupt')
   }
 
   /** `grok models` prints a default line plus an "Available models:" list. */
@@ -676,10 +662,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     return parseGrokModels(await this.#capture(['models']))
   }
 
-  async dispose(): Promise<void> {
-    const child = this.#child
+  dispose(): Promise<void> {
+    const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
-    if (child) await this.#stop(child)
+    this.#processStop = stopped
+    return stopped
   }
 
   #announceProviderSessionId(id: string | undefined): void {
@@ -689,17 +676,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     this.emit('providerSessionId', id)
   }
 
-  async #stop(
+  #stop(
     child: ChildProcessWithoutNullStreams,
     reason: 'interrupt' | 'silent' = 'silent',
   ): Promise<void> {
     if (reason === 'interrupt' || !this.#killReasons.has(child))
       this.#killReasons.set(child, reason)
-    try {
-      await terminateTree(child)
-    } catch (error) {
-      this.emit('log', `Grok stop failed: ${String(error)}`)
-    }
+    this.#processStop = killTree(child)
+    return this.#processStop
   }
 
   #cleanupPrompt(child: ChildProcessWithoutNullStreams): void {
@@ -714,53 +698,29 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   }
 
   #capture(args: string[], timeoutMs = 15000): Promise<string> {
-    return captureGrok(
-      (command, argv) => this.#spawnOwned(command, argv, {}),
-      args,
-      timeoutMs,
-      (line) => this.emit('log', line),
-    )
+    return captureGrok((command, argv) => this.#spawnDirect(command, argv), args, timeoutMs)
   }
 }
 
-/**
- * Static-context canonical spawn (auth probe, logout): the same owned direct
- * spawn as turns, without an adapter instance to carry #spawnOwned.
- */
-function spawnGrokOwned(command: string, args: string[]): ChildProcessWithoutNullStreams {
-  return ownProcessTree(
-    spawn(command, args, {
+function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawnFn(grokCommand(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      ...ownedProcessSpawnOptions(),
-    }),
-  )
-}
-
-function captureGrok(
-  spawnOwned: (command: string, args: string[]) => ChildProcessWithoutNullStreams,
-  args: string[],
-  timeoutMs = 15000,
-  log: (line: string) => void = () => {},
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawnOwned(grokCommand(), args)
+    })
     let stdout = ''
     let settled = false
     const finish = (result: string | Error) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      if (result instanceof Error) reject(result)
-      else resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      // Latch the timeout first so a concurrent close cannot report success;
-      // then shut the hung tree down in the background, logging failures.
       finish(new Error('grok did not answer in time'))
-      void terminateTree(child).catch((error: unknown) =>
-        log(`Grok discovery stop failed: ${String(error)}`),
-      )
     }, timeoutMs)
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => (stdout += chunk))
@@ -875,6 +835,14 @@ export async function grokAccount(): Promise<GrokAccount> {
 /** `grok logout` clears the CLI's own cached credentials. */
 export async function signOutGrok(): Promise<void> {
   await captureGrok(spawnGrokOwned, ['logout'])
+}
+
+function spawnGrokOwned(
+  command: string,
+  args: string[],
+  options: Parameters<SpawnFn>[2],
+): ChildProcessWithoutNullStreams {
+  return spawnOwned(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
 /** One streamed text item (message or reasoning): started lazily on the

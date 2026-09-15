@@ -297,6 +297,7 @@ export const BackgroundModelTargetSchema = z
     agent: z.string().min(1).optional(),
     model: z.string().min(1),
     effort: z.string().min(1).optional(),
+    serviceTier: z.string().min(1).optional(),
   })
   .superRefine((target, context) => {
     if ((target.provider === 'api') !== Boolean(target.connectionId)) {
@@ -478,3 +479,16 @@ export const ProviderStatusSchema = z.object({
   problem: z.string().optional(),
 })
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
+
+/** Public release metadata; update commands remain on the server. */
+export const ProviderUpdateSchema = z.object({
+  provider: ProviderIdSchema,
+  displayName: z.string(),
+  currentVersion: z.string().optional(),
+  latestVersion: z.string().optional(),
+  updateAvailable: z.boolean(),
+  canUpdate: z.boolean(),
+  updateUrl: z.url(),
+  error: z.string().optional(),
+})
+export type ProviderUpdate = z.infer<typeof ProviderUpdateSchema>

@@ -42,6 +42,7 @@ import {
   AccountResponseSchema,
   ApprovalParamsSchema,
   CodexRateLimitResponseSchema,
+  CodexResetCreditSchema,
   ConsumeRateLimitResetResponseSchema,
   CommandOutputDeltaNotificationSchema,
   ErrorNotificationSchema,
@@ -196,6 +197,7 @@ export type ProviderLimit = {
   resetsAt?: number | undefined
   valueLabel?: string | undefined
   action?: 'consume-reset' | undefined
+  resetCredits?: { id?: string | undefined; expiresAt: number | null }[] | undefined
 }
 
 export type CodexLimitSource =
@@ -294,8 +296,8 @@ const PLAN_LABELS = [
   ['free', 'Free'],
   ['go', 'Go'],
   ['plus', 'Plus'],
-  ['pro', 'Pro'],
-  ['prolite', 'Pro Lite'],
+  ['pro', 'Pro x20'],
+  ['prolite', 'Pro x5'],
   ['team', 'Team'],
   ['business', 'Business'],
   ['enterprise', 'Enterprise'],
@@ -461,6 +463,7 @@ export type CodexAdapterEvents = {
 }
 
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
   #rpc: CodexRpc | undefined
   #started = false
@@ -487,6 +490,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       turnId?: string
     }
   >()
+  #threadApprovals = new Map<string, ApprovalMode>()
   #userInputs = new Map<string, (result: JsonRpcValue) => void>()
 
   constructor(
@@ -518,6 +522,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       this.#spawn('codex', ['app-server', '--enable', 'default_mode_request_user_input'], {
         env: this.#mcpEnvironment,
       }),
+      'Codex',
+      {
+        onProtocolError: (error) => {
+          const turns = [...this.#activeTurns]
+          this.#activeTurns.clear()
+          for (const [threadId, turnId] of turns) {
+            this.emit('event', { type: 'thread.error', threadId, message: error.message })
+            this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+          }
+        },
+      },
     )
     this.#rpc = rpc
 
@@ -533,8 +548,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         { timeoutMs: CONTROL_READ_TIMEOUT_MS },
       )
     } catch (error) {
-      this.#rpc = undefined
       await rpc.dispose()
+      this.#rpc = undefined
       throw error
     }
     rpc.notify('initialized', {})
@@ -598,10 +613,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * Spend one earned reset. The caller owns the idempotency key so a retry of
    * the same attempt cannot redeem a second credit.
    */
-  async consumeRateLimitReset(idempotencyKey: string): Promise<CodexResetOutcome> {
+  async consumeRateLimitReset(
+    idempotencyKey: string,
+    creditId?: string,
+  ): Promise<CodexResetOutcome> {
     const response = await this.#callParsed(
       'account/rateLimitResetCredit/consume',
-      { idempotencyKey },
+      { idempotencyKey, ...(creditId === undefined ? {} : { creditId }) },
       ConsumeRateLimitResetResponseSchema,
       CONTROL_READ_TIMEOUT_MS,
     ).catch((cause) => {
@@ -844,6 +862,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       THREAD_START_TIMEOUT_MS,
     )
     this.#threadModels.set(response.thread.id, response.model)
+    if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
       id: response.thread.id,
       provider: 'codex' as const,
@@ -880,6 +899,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ThreadResumeResponseSchema,
     )
     this.#threadModels.set(response.thread.id, response.model)
+    if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
       id: response.thread.id,
       provider: 'codex' as const,
@@ -898,7 +918,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async setApproval(approval: ApprovalMode): Promise<void> {
     const thread = this.#sessionThread
     if (!thread) throw new Error('no active Codex thread')
-    await this.resumeThread(thread.id, thread.workspacePath, { approval })
+    // Resuming an already-loaded thread ignores configuration overrides.
+    // Apply the selected policy on the next turn, including queued turns.
+    this.#threadApprovals.set(thread.id, approval)
   }
 
   async sendTurn(
@@ -907,10 +929,31 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     attachments: string[] = [],
     options: TurnOptions = {},
   ): Promise<string> {
+    const mode = this.#threadApprovals.get(threadId)
+    const approval = mode ? CODEX_APPROVAL[mode] : undefined
+    const sandboxPolicy =
+      mode === 'full'
+        ? { type: 'dangerFullAccess' }
+        : mode === 'ask'
+          ? { type: 'readOnly', networkAccess: false }
+          : {
+              type: 'workspaceWrite',
+              writableRoots: [],
+              networkAccess: false,
+              excludeTmpdirEnvVar: false,
+              excludeSlashTmp: false,
+            }
     const response = await this.#callParsed(
       'turn/start',
       {
         threadId,
+        ...(approval
+          ? {
+              approvalPolicy: approval.approvalPolicy,
+              approvalsReviewer: approval.approvalsReviewer,
+              sandboxPolicy,
+            }
+          : {}),
         ...(options.model ? { model: options.model } : {}),
         ...(options.serviceTier
           ? {
@@ -998,14 +1041,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     })
   }
 
-  async dispose(): Promise<void> {
-    const disposing = this.#rpc?.dispose()
+  dispose(): Promise<void> {
+    const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#started = false
     this.#mcpStartup.clear()
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
     this.#threadModels.clear()
+    this.#threadApprovals.clear()
     this.#activeTurns.clear()
     this.#sessionThread = undefined
     // Held responders close over the dead transport; answering one after
@@ -1014,7 +1058,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#userInputs.clear()
     this.#mcpLogins.clear()
     this.removeAllListeners()
-    await disposing
+    this.#processStop = stopped
+    return stopped
   }
 
   #call(method: string, params: object | undefined): Promise<JsonRpcValue | undefined> {
@@ -1390,11 +1435,23 @@ export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLi
   const resets = response.rateLimitResetCredits
   const availableResets = Number(resets?.availableCount)
   if (Number.isFinite(availableResets) && availableResets > 0) {
+    const resetCredits = resets?.credits?.flatMap((credit) => {
+      const parsed = CodexResetCreditSchema.safeParse(credit)
+      if (!parsed.success) return []
+      const { id, expiresAt } = parsed.data
+      return [
+        {
+          ...(id === undefined ? {} : { id }),
+          expiresAt: expiresAt === null ? null : expiresAt * 1000,
+        },
+      ]
+    })
     rows.push({
       label: 'Rate limit resets',
       usedPercent: 0,
       valueLabel: `${Math.floor(availableResets)} available`,
       action: 'consume-reset',
+      ...(resetCredits?.length ? { resetCredits } : {}),
     })
   }
   return rows

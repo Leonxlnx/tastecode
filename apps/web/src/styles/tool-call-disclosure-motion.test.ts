@@ -19,18 +19,17 @@ describe('tool-call disclosure motion', () => {
     (kind) => {
       const reveal = rule(`.${kind}__reveal`)
       const openReveal = rule(`.${kind}__reveal[data-open='true']`)
-      const openClip = rule(`.${kind}__reveal[data-open='true'] > .${kind}__reveal-clip`)
       const closingReveal = rule(`.${kind}__reveal[data-open='closing']`)
 
       expect(reveal).toContain('display: none')
+      expect(reveal).toContain('clip-path: inset(0 0 100%)')
+      expect(reveal).toContain('transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1)')
       expect(reveal).not.toContain('grid-template-rows')
-      expect(reveal).not.toContain('transition:')
       expect(openReveal).toContain('display: block')
-      expect(openClip).toContain('animation: disclosure-reveal-in var(--dur-fast) var(--ease-out)')
+      expect(openReveal).toContain('clip-path: inset(0)')
+      expect(openReveal).toContain('@starting-style')
       expect(closingReveal).toContain('position: absolute')
-      expect(closingReveal).toContain(
-        'animation: disclosure-reveal-out var(--dur-slow) var(--ease-out) both',
-      )
+      expect(closingReveal).toContain('transition-duration: 120ms')
     },
   )
 
@@ -39,12 +38,15 @@ describe('tool-call disclosure motion', () => {
       ".thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row",
     )
 
-    expect(rows).toContain('transition: transform var(--dur-slow) var(--ease-out)')
-    expect(css).toContain('@keyframes disclosure-reveal-out')
+    expect(rows).toContain('transition: transform 120ms cubic-bezier(0.32, 0.72, 0, 1)')
+    expect(css).not.toContain('@keyframes disclosure-reveal-out')
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.(?:activity|aux)__reveal,[\s\S]*?transition: none/,
+    )
   })
 
   it('keeps completed work close to its summary and neighboring items', () => {
-    expect(rule('.activity__body')).toContain('gap: 6px')
+    expect(rule('.activity__body')).toContain('gap: 2px')
     expect(rule('.activity__body')).toContain('margin: 4px 0')
     expect(rule('.activity__detail')).toContain('margin: 5px 0 0 21px')
     expect(rule('.reply > .activity')).toContain('margin-bottom: 8px')

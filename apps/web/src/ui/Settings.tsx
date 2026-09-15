@@ -13,6 +13,14 @@ import {
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { RowIssue } from './RowIssue.js'
+import {
+  getFastModeOffValue,
+  getFastServiceTier,
+  getNextServiceTierForModel,
+  isFastModeEnabled,
+} from './model-selector-utils.js'
+import { IconMorph } from './IconMorph.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
 import type {
@@ -30,7 +38,6 @@ import type {
 import { z } from 'zod'
 import {
   IconArrowLeft as ArrowLeft,
-  IconAlertCircle as CircleAlert,
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
   IconDatabase as Database,
@@ -46,7 +53,7 @@ import {
   IconUser as UserRound,
 } from '@tabler/icons-react'
 import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
-import { listInstalledFontFamilies } from '../local-fonts.js'
+import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-fonts.js'
 import {
   appUpdateState,
   checkForAppUpdates,
@@ -61,6 +68,7 @@ import {
 import {
   beginInstall,
   beginLogin,
+  cancelInstall,
   clearInstall,
   deviceCode,
   installKey,
@@ -114,6 +122,7 @@ import {
   type Shortcut,
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
+import { ProviderUpdateCheck } from './ProviderUpdates.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -209,6 +218,7 @@ const TERMINAL_PLACEMENT_OPTIONS = [
 
 const MCP_PROVIDER_OPTIONS = [
   { provider: 'codex', providerName: 'Codex' },
+  { provider: 'claude-code', providerName: 'Claude Code' },
   { provider: 'grok', providerName: 'Grok' },
 ] satisfies Array<{ provider: ProviderId; providerName: string }>
 
@@ -718,7 +728,7 @@ export function ProviderSettings(props: {
     }
   }
 
-  const renderProviderRow = (status: ProviderStatus) => {
+  const renderAccountRow = (status: ProviderStatus) => {
     const authState =
       authStates[status.id] ??
       (status.id === props.provider && props.account
@@ -828,15 +838,24 @@ export function ProviderSettings(props: {
   // and API-connection surfaces are parked, not deleted — see AGENTS.md.
   const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
   const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
+  const renderProviderRow = (status: ProviderStatus) => (
+    <div className="provider-settings__entry" key={status.id}>
+      {renderAccountRow(status)}
+    </div>
+  )
 
   return (
     <SettingsPanel title="Providers" groupClassName="settings__group--providers">
+      <header className="provider-settings__header">
+        <h2>Accounts</h2>
+      </header>
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
       {direct
         .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
         .map(renderProviderRow)}
+      <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>
   )
 }
@@ -948,6 +967,10 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const effortOptions =
     selected?.model.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? []
   const selectedEffort = manual?.effort ?? effortOptions[0]?.value ?? ''
+  const fastTier = getFastServiceTier(selected?.model)
+  const selectedSpeed = isFastModeEnabled(selected?.model, manual?.serviceTier)
+    ? 'fast'
+    : 'standard'
 
   return (
     <section className="background-model-settings" aria-label="Background work">
@@ -975,6 +998,11 @@ function BackgroundModelSettings(props: { transport: Transport }) {
               }
               const choice = backgroundModelFromValue(state?.sources ?? [], value)
               if (!choice) return
+              const serviceTier = getNextServiceTierForModel({
+                nextModel: choice.model,
+                currentModel: selected?.model,
+                currentServiceTier: manual?.serviceTier,
+              })
               void update({
                 mode: 'manual',
                 target: {
@@ -990,6 +1018,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                       }
                     : {}),
                   model: choice.model.id,
+                  ...(serviceTier ? { serviceTier } : {}),
                   ...(choice.model.reasoningEfforts[0]
                     ? {
                         effort: choice.model.reasoningEfforts[0],
@@ -1018,6 +1047,26 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                   target: { ...manual, effort },
                 })
               }
+            />
+          </SettingsRow>
+        ) : null}
+        {manual && selected && fastTier ? (
+          <SettingsRow title="Speed" note="Choose the speed used for background writing.">
+            <AppSelect
+              className="settings__select settings__select--effort"
+              ariaLabel="Background speed"
+              align="right"
+              value={selectedSpeed}
+              options={[
+                { value: 'standard', label: 'Standard' },
+                { value: 'fast', label: 'Fast' },
+              ]}
+              disabled={busy}
+              onChange={(speed) => {
+                const serviceTier =
+                  speed === 'fast' ? fastTier.id : getFastModeOffValue(selected.model)
+                void update({ mode: 'manual', target: { ...manual, serviceTier } })
+              }}
             />
           </SettingsRow>
         ) : null}
@@ -1159,16 +1208,13 @@ function AppearanceSettings(props: {
   onMacOSFontSmoothingChange: (enabled: boolean) => void
   showMacOSHaptics?: boolean | undefined
 }) {
-  const [installedFontFamilies, setInstalledFontFamilies] = useState<readonly string[]>([])
-  const fontFamiliesRequested = useRef(false)
+  const [installedFontFamilies, setInstalledFontFamilies] = useState(readInstalledFontFamilies)
   const requestInstalledFontFamilies = useCallback(() => {
-    if (fontFamiliesRequested.current) return
-    fontFamiliesRequested.current = true
     void listInstalledFontFamilies().then(setInstalledFontFamilies)
   }, [])
   const fontOptions = useMemo(() => {
     const optionsByLabel = new Map<string, { value: FontPreference; label: string }>()
-    for (const family of installedFontFamilies) {
+    for (const family of installedFontFamilies ?? []) {
       const value = fontPreferenceForFamily(family)
       if (!value) continue
       optionsByLabel.set(fontOptionKey(family), { value, label: family })
@@ -1243,11 +1289,7 @@ function AppearanceSettings(props: {
           </div>
         </SettingsRow>
         <SettingsRow className="appearance-editor__row" title="Interface font">
-          <div
-            className="appearance-control"
-            onClickCapture={requestInstalledFontFamilies}
-            onKeyDownCapture={requestInstalledFontFamilies}
-          >
+          <div className="appearance-control">
             <span className="appearance-control__type" aria-hidden>
               Aa
             </span>
@@ -1257,6 +1299,8 @@ function AppearanceSettings(props: {
               align="right"
               value={props.fontPreference}
               options={fontOptions}
+              onOpen={requestInstalledFontFamilies}
+              loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
               search={FONT_SEARCH}
               onChange={props.onFontPreferenceChange}
             />
@@ -1928,11 +1972,12 @@ function CliSignInRow(props: {
   const key = loginKey(props.target)
   const detailsId = useId()
   const login = useSyncExternalStore(subscribeInstalls, () => installState(key))
-  // The terminal is the fallback, not the flow: it stays hidden until asked
-  // for, and opens itself only when a failure makes it the evidence.
+  // Keep failed output behind Details; the status carries the error.
   const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
   const [copied, setCopied] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [canceling, setCanceling] = useState(false)
   const { onSignedIn } = props
 
   // Latched like InstallableRow: onSignedIn may get a new identity from any
@@ -1957,10 +2002,11 @@ function CliSignInRow(props: {
   }, [login?.phase, key, onSignedIn, props.onOpenExpandedTerminal])
 
   useEffect(() => {
-    if (login?.phase === 'failed') setShowTerminal(true)
+    if (login?.phase && login.phase !== 'running') setShowTerminal(false)
   }, [login?.phase])
 
   const start = () => {
+    setStarting(true)
     setStartError(undefined)
     setShowTerminal(false)
     setCopied(false)
@@ -1974,6 +2020,7 @@ function CliSignInRow(props: {
         : undefined,
     )
       .then(() => {
+        if (installState(key)?.phase !== 'running' || installState(key)?.canceling) return
         props.onOpenExpandedTerminal?.({
           provider: props.provider.id,
           displayName: props.provider.displayName,
@@ -1983,6 +2030,17 @@ function CliSignInRow(props: {
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
       )
+      .finally(() => setStarting(false))
+  }
+
+  const cancel = () => {
+    setCanceling(true)
+    setStartError(undefined)
+    void cancelInstall(props.transport, key)
+      .catch((cause: unknown) =>
+        setStartError(cause instanceof Error ? cause.message : String(cause)),
+      )
+      .finally(() => setCanceling(false))
   }
 
   const running = login?.phase === 'running'
@@ -2001,7 +2059,17 @@ function CliSignInRow(props: {
         : props.provider.problem
           ? { message: props.provider.problem }
           : undefined
-  const status = running ? 'Signing in…' : issue?.announce ? 'Sign-in failed' : 'Not signed in'
+  const busy = running || starting
+  const stopping = canceling || login?.canceling
+  const status = stopping
+    ? 'Canceling sign-in…'
+    : busy
+      ? 'Signing in…'
+      : issue?.announce
+        ? 'Sign-in failed'
+        : login?.phase === 'canceled'
+          ? 'Sign-in canceled'
+          : 'Not signed in'
   const details: ProviderAction | undefined =
     login && (running || login.phase === 'failed')
       ? {
@@ -2017,12 +2085,18 @@ function CliSignInRow(props: {
       <ProviderRow
         provider={props.provider}
         status={status}
-        live={running}
+        live={busy}
         issue={issue}
         primary={{
-          label: running ? 'Signing in…' : login?.phase === 'failed' ? 'Retry sign-in' : 'Sign in',
-          disabled: running,
-          onClick: start,
+          label: stopping
+            ? 'Canceling…'
+            : busy
+              ? 'Cancel sign-in'
+              : issue?.announce
+                ? 'Retry sign-in'
+                : 'Sign in',
+          disabled: stopping,
+          onClick: busy ? cancel : start,
         }}
         secondary={details}
       />
@@ -2092,23 +2166,14 @@ function providerEmailKey(provider: ProviderId): string {
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {
   const [savedEmail] = useState(() => localStorage.getItem(providerEmailKey(props.provider)))
   const email = props.account.email ?? savedEmail
-  const claude = props.provider === 'claude-code'
 
   return (
-    <>
-      {email ? (
-        <>
-          {claude ? 'Authenticated as ' : null}
-          <AccountEmail email={email} />
-        </>
-      ) : claude ? (
-        'Authenticated'
-      ) : (
-        'Signed in'
-      )}
-      {props.account.plan ? ' · ' : null}
-      {props.account.plan}
-    </>
+    <span className="settings__account">
+      {email ? <AccountEmail email={email} /> : 'Signed in'}
+      {props.account.plan ? (
+        <span className="settings__account-plan"> · {props.account.plan}</span>
+      ) : null}
+    </span>
   )
 }
 
@@ -2139,30 +2204,13 @@ function AccountEmail(props: { email: string }) {
         onBlur={() => setPreviewed(false)}
         onClick={togglePinned}
       >
-        <Eye className="settings__email-eye settings__email-eye--show" size={15} aria-hidden />
-        <EyeOff className="settings__email-eye settings__email-eye--hide" size={15} aria-hidden />
+        <IconMorph active={revealed ? 1 : 0}>
+          <Eye className="settings__email-eye--show" size={15} aria-hidden />
+          <EyeOff className="settings__email-eye--hide" size={15} aria-hidden />
+        </IconMorph>
       </button>
       <span className="settings__email-clip">
         <span className="settings__email-value">{props.email}</span>
-      </span>
-    </span>
-  )
-}
-
-/**
- * Errors never grow a second line: every row keeps one height, and problems
- * live behind a red dot whose bubble carries the message plus a tip. Hover
- * or focus opens it — it is a real button so keyboards reach it too.
- */
-function RowIssue(props: { message: string; tip?: string | undefined }) {
-  return (
-    <span className="row-issue">
-      <button type="button" className="row-issue__dot" aria-label={'Problem: ' + props.message}>
-        <CircleAlert size={14} aria-hidden />
-      </button>
-      <span role="tooltip" className="row-issue__bubble">
-        {props.message}
-        {props.tip ? <span className="row-issue__tip">{props.tip}</span> : null}
       </span>
     </span>
   )

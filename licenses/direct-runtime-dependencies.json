@@ -147,6 +147,13 @@
       "source": "https://github.com/microsoft/node-pty"
     },
     {
+      "name": "parse5",
+      "use": "Static preview HTML parsing",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/inikulin/parse5"
+    },
+    {
       "name": "react",
       "use": "Renderer UI",
       "license": "MIT",

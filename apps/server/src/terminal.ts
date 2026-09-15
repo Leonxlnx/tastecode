@@ -7,6 +7,15 @@ import { cleanupExitedPtySession, ownPtySession, terminatePtySession } from '@ha
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
+const RETAINED_OUTPUT_SIZE = 200_000
+const RETAINED_EXIT_LIMIT = 64
+const RETAINED_EXIT_TTL_MS = 60 * 60 * 1000
+export type TerminalStatus = {
+  status: 'running' | 'exited' | 'unknown'
+  output: string
+  outputOffset: number
+  exitCode: number | null
+}
 type SpawnPty = typeof NodePtySpawn
 type TerminatePty = (process: IPty) => Promise<void>
 
@@ -33,6 +42,7 @@ const spawnPty: SpawnPty = (file, args, options) => {
 }
 
 type TerminalEntry = {
+  key: string
   threadId: string
   process: IPty
   output: { dispose(): void }
@@ -132,20 +142,21 @@ export class TerminalManager {
   #byId = new Map<string, TerminalEntry>()
   #byThread = new Map<string, string>()
   #closingById = new Map<string, Promise<void>>()
+  #closingByThread = new Map<string, Set<Promise<void>>>()
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
-  #isClosing = false
-  #onOutput: (terminalId: string, data: string) => void
+  #onOutput: (terminalId: string, data: string, outputOffset: number) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
   #terminatePty: TerminatePty
   #cleanupExitedPty: TerminatePty
   #closeTimeoutMs: number
   readonly #outputScheduler = new TerminalOutputScheduler()
+  #status = new Map<string, TerminalStatus & { finishedAt?: number }>()
 
   constructor(
     handlers: {
-      onOutput: (terminalId: string, data: string) => void
+      onOutput: (terminalId: string, data: string, outputOffset: number) => void
       onExit: (terminalId: string, exitCode: number | null) => void
     },
     options: {
@@ -163,8 +174,9 @@ export class TerminalManager {
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
-  open(threadId: string, cwd: string, columns: number, rows: number): string {
-    return this.#spawn(threadId, [], cwd, columns, rows)
+  open(threadId: string, cwd: string, columns: number, rows: number, terminalKey?: string): string {
+    const key = terminalKey ? JSON.stringify([threadId, terminalKey]) : threadId
+    return this.#spawn(key, [], cwd, columns, rows, threadId)
   }
 
   /**
@@ -180,9 +192,16 @@ export class TerminalManager {
     return this.#spawn(key, args, cwd, columns, rows)
   }
 
-  #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
-    if (this.#isClosing) throw new Error('terminal manager is closing')
-    if (this.#closingThreads.has(key)) throw new Error(`terminal is closing: ${key}`)
+  #spawn(
+    key: string,
+    args: string[],
+    cwd: string,
+    columns: number,
+    rows: number,
+    threadId = key,
+  ): string {
+    if (this.#closingAll) throw new Error('terminal manager is closing')
+    if (this.#closingThreads.has(threadId)) throw new Error(`terminal is closing: ${key}`)
 
     const currentId = this.#byThread.get(key)
     if (currentId) {
@@ -195,6 +214,7 @@ export class TerminalManager {
     }
 
     const terminalId = randomUUID()
+    this.#pruneStatuses()
     const process = this.#spawnPty(platformShell(), args, {
       name: 'xterm-256color',
       cols: columns,
@@ -202,8 +222,22 @@ export class TerminalManager {
       cwd,
       env: terminalEnvironment(),
     })
+    const status: TerminalStatus = {
+      status: 'running',
+      output: '',
+      outputOffset: 0,
+      exitCode: null,
+    }
+    this.#status.set(terminalId, status)
     const outputBuffer = new TerminalOutputBuffer(
-      (data) => this.#onOutput(terminalId, data),
+      (data) => {
+        const offset = status.outputOffset + status.output.length
+        const next = status.output + data
+        const removed = Math.max(0, next.length - RETAINED_OUTPUT_SIZE)
+        status.outputOffset += removed
+        status.output = next.slice(removed)
+        this.#onOutput(terminalId, data, offset)
+      },
       DEFAULT_OUTPUT_BATCH_DELAY_MS,
       DEFAULT_OUTPUT_BATCH_SIZE,
       this.#outputScheduler,
@@ -213,7 +247,7 @@ export class TerminalManager {
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve
     })
-    const entry = { threadId: key, process, output, outputBuffer, exited, hasExited: false }
+    const entry = { key, threadId, process, output, outputBuffer, exited, hasExited: false }
     this.#byId.set(terminalId, entry)
     this.#byThread.set(key, terminalId)
 
@@ -225,7 +259,11 @@ export class TerminalManager {
       entry.hasExited = true
       void this.#cleanupExitedTerminal(terminalId)
       resolveExited()
-      this.#onExit(terminalId, Number.isInteger(exitCode) ? exitCode : null)
+      status.status = 'exited'
+      status.exitCode = Number.isInteger(exitCode) ? exitCode : null
+      this.#status.set(terminalId, { ...status, finishedAt: Date.now() })
+      this.#pruneStatuses()
+      this.#onExit(terminalId, status.exitCode)
     })
 
     return terminalId
@@ -233,6 +271,34 @@ export class TerminalManager {
 
   write(terminalId: string, data: string): void {
     this.#get(terminalId).process.write(data)
+  }
+
+  status(terminalId: string): TerminalStatus {
+    // Include native output queued for the next short broadcast window.
+    this.#byId.get(terminalId)?.outputBuffer.flush()
+    this.#pruneStatuses()
+    const status = this.#status.get(terminalId)
+    return status
+      ? {
+          status: status.status,
+          output: status.output,
+          outputOffset: status.outputOffset,
+          exitCode: status.exitCode,
+        }
+      : { status: 'unknown', output: '', outputOffset: 0, exitCode: null }
+  }
+
+  #pruneStatuses(): void {
+    const now = Date.now()
+    const finished: string[] = []
+    for (const [id, entry] of this.#status) {
+      if (entry.finishedAt === undefined) continue
+      if (now - entry.finishedAt > RETAINED_EXIT_TTL_MS) this.#status.delete(id)
+      else finished.push(id)
+    }
+    for (const id of finished.slice(0, Math.max(0, finished.length - RETAINED_EXIT_LIMIT))) {
+      this.#status.delete(id)
+    }
   }
 
   resize(terminalId: string, columns: number, rows: number): void {
@@ -259,6 +325,9 @@ export class TerminalManager {
       return this.#boundedExit(terminalId, entry.exited)
     })
     this.#closingById.set(terminalId, closing)
+    const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
+    threadClosings.add(closing)
+    this.#closingByThread.set(entry.threadId, threadClosings)
     // A timeout is a failed close, not evidence that the native process is
     // gone. Keep that generation tracked until its real exit arrives so a
     // retry cannot delete the cwd underneath it.
@@ -266,15 +335,15 @@ export class TerminalManager {
     void closing.then(
       () => {
         if (this.#byId.get(terminalId) === entry) this.#byId.delete(terminalId)
-        if (this.#byThread.get(entry.threadId) === terminalId) {
-          this.#byThread.delete(entry.threadId)
+        if (this.#byThread.get(entry.key) === terminalId) {
+          this.#byThread.delete(entry.key)
         }
-        this.#forgetClosing(terminalId, closing)
+        this.#forgetClosing(terminalId, entry.threadId, closing)
       },
       () => {
         // The entry remains the thread's tombstone, but the rejected promise
         // must not be: a later close can retry cleanup of the same generation.
-        this.#forgetClosing(terminalId, closing)
+        this.#forgetClosing(terminalId, entry.threadId, closing)
       },
     )
     return closing
@@ -295,7 +364,6 @@ export class TerminalManager {
 
   closeAll(): Promise<void> {
     if (this.#closingAll) return this.#closingAll
-    this.#isClosing = true
     const closing = this.#drainAll()
     this.#closingAll = closing
     void closing.catch(() => {
@@ -305,9 +373,16 @@ export class TerminalManager {
   }
 
   async #drainThread(threadId: string): Promise<void> {
-    const terminalId = this.#byThread.get(threadId)
-    if (!terminalId) return
-    await settleAll([this.close(terminalId)], `terminal shutdown failed for ${threadId}`)
+    const waits = new Set(this.#closingByThread.get(threadId) ?? [])
+    for (const [terminalId, entry] of this.#byId) {
+      if (entry.threadId !== threadId) continue
+      try {
+        waits.add(this.close(terminalId))
+      } catch (error) {
+        waits.add(Promise.reject(error))
+      }
+    }
+    await settleAll(waits, `terminal shutdown failed for ${threadId}`)
   }
 
   async #drainAll(): Promise<void> {
@@ -336,8 +411,11 @@ export class TerminalManager {
     })
   }
 
-  #forgetClosing(terminalId: string, closing: Promise<void>): void {
+  #forgetClosing(terminalId: string, threadId: string, closing: Promise<void>): void {
     if (this.#closingById.get(terminalId) === closing) this.#closingById.delete(terminalId)
+    const threadClosings = this.#closingByThread.get(threadId)
+    threadClosings?.delete(closing)
+    if (threadClosings?.size === 0) this.#closingByThread.delete(threadId)
   }
 
   async #cleanupExitedTerminal(terminalId: string): Promise<void> {

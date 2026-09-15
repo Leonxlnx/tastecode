@@ -19,6 +19,138 @@ function client(request: (method: string, params: unknown) => Promise<unknown>):
 }
 
 describe('MCP settings', () => {
+  it('offers project setup without inherited controls when live inventory is unavailable', async () => {
+    const transport = client(async () => ({
+      capabilities: {
+        inventory: false,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id: 'docs',
+          scope: 'project',
+          enabled: true,
+          transport: { type: 'http', url: 'https://docs.example.test/mcp' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="claude-code"
+        providerName="Claude Code"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    expect(await screen.findByRole('button', { name: 'Add server' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Hide server by ID' })).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.getByText('Changes apply when you start or resume a session.')).toBeTruthy()
+  })
+
+  it('hides an inherited server by ID without inventing transport or changing global settings', async () => {
+    const requests: unknown[] = []
+    const transport = client(async (method, params) => {
+      if (method === 'mcp.list')
+        return {
+          capabilities: {
+            inventory: true,
+            add: true,
+            update: true,
+            remove: true,
+            reload: false,
+            startOAuth: false,
+            cancelOAuth: false,
+          },
+          servers: [],
+        }
+      if (method === 'mcp.add') {
+        requests.push(params)
+        return {}
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Hide server by ID' }))
+    const field = screen.getByLabelText('Server ID')
+    expect(document.activeElement).toBe(field)
+    expect(screen.queryByLabelText('Transport JSON')).toBeNull()
+    fireEvent.change(field, { target: { value: ' inherited-docs ' } })
+    fireEvent.submit(screen.getByRole('form', { name: 'Hide inherited MCP server' }))
+    await screen.findByText('Server hidden for this project.')
+    expect(requests).toEqual([
+      {
+        provider: 'codex',
+        projectPath: '/work/project',
+        server: { id: 'inherited-docs', enabled: false },
+      },
+    ])
+    expect(screen.getByText('Changes apply when you start or resume a session.')).toBeTruthy()
+  })
+
+  it('cancels a hide form with Escape and restores keyboard focus', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: true },
+      servers: [],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="grok"
+        providerName="Grok"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    const action = await screen.findByRole('button', { name: 'Hide server by ID' })
+    act(() => action.focus())
+    fireEvent.click(action)
+    fireEvent.keyDown(screen.getByLabelText('Server ID'), { key: 'Escape' })
+    expect(screen.queryByRole('form')).toBeNull()
+    expect(document.activeElement).toBe(action)
+  })
+
+  it('returns focus to the last action when switching between editor modes', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: true },
+      servers: [],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    const hide = await screen.findByRole('button', { name: 'Hide server by ID' })
+    const add = screen.getByRole('button', { name: 'Add server' })
+    fireEvent.click(hide)
+    act(() => add.focus())
+    fireEvent.click(add)
+    fireEvent.keyDown(screen.getByLabelText('Server ID'), { key: 'Escape' })
+    expect(document.activeElement).toBe(add)
+  })
   it('shows live inventory, failures, tools, and starts OAuth', async () => {
     const transport = client(async (method) => {
       if (method === 'mcp.list') {

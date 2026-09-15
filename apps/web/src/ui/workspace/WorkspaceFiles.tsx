@@ -18,6 +18,7 @@ import {
   IconLoader2 as LoaderCircle,
   IconLock as LockKeyhole,
   IconSearch as Search,
+  IconRefresh as Refresh,
 } from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
@@ -80,6 +81,9 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   const [error, setError] = useState<string>()
   const [fileSelection] = useState(() => new FileSelectionStore())
   const directoryGeneration = useRef(0)
+  const directoryRequests = useRef(new Map<string, number>())
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
   const fileGeneration = useRef(0)
 
   const context = useCallback(
@@ -94,21 +98,25 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     async (directory: string) => {
       if (!props.projectPath) return
       const mine = directoryGeneration.current
+      const request = (directoryRequests.current.get(directory) ?? 0) + 1
+      directoryRequests.current.set(directory, request)
+      const isCurrent = () =>
+        directoryGeneration.current === mine && directoryRequests.current.get(directory) === request
       setLoadingDirectories((current) => new Set(current).add(directory))
       try {
         const result = await props.transport.request('workspace.listDirectory', {
           ...context(),
           ...(directory ? { directory } : {}),
         })
-        if (directoryGeneration.current === mine) {
+        if (isCurrent()) {
           setDirectories((current) => new Map(current).set(directory, result.entries))
         }
       } catch (cause) {
-        if (directoryGeneration.current === mine) {
+        if (isCurrent()) {
           setError(cause instanceof Error ? cause.message : String(cause))
         }
       } finally {
-        if (directoryGeneration.current === mine) {
+        if (isCurrent()) {
           setLoadingDirectories((current) => {
             const next = new Set(current)
             next.delete(directory)
@@ -122,6 +130,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
 
   useEffect(() => {
     directoryGeneration.current += 1
+    directoryRequests.current.clear()
     fileGeneration.current += 1
     setDirectories(new Map())
     setLoadingDirectories(new Set())
@@ -147,10 +156,37 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
         else next.delete(entry.path)
         return next
       })
-      if (opening && !directories.has(entry.path)) void loadDirectory(entry.path)
+      if (opening) void loadDirectory(entry.path)
     },
-    [directories, expanded, loadDirectory],
+    [expanded, loadDirectory],
   )
+
+  const refreshDirectories = useCallback(() => {
+    setError(undefined)
+    for (const directory of expandedRef.current) void loadDirectory(directory)
+  }, [loadDirectory])
+
+  useEffect(() => {
+    let refresh: ReturnType<typeof setTimeout> | undefined
+    const schedule = () => {
+      refresh ??= setTimeout(() => {
+        refresh = undefined
+        refreshDirectories()
+      }, 200)
+    }
+    const offEvent = props.transport.on('thread.event', ({ threadId, event }) => {
+      if (event.type === 'turn.completed' && (!props.threadId || threadId === props.threadId))
+        schedule()
+    })
+    const offState = props.transport.onState((state) => {
+      if (state === 'open') schedule()
+    })
+    return () => {
+      clearTimeout(refresh)
+      offEvent()
+      offState()
+    }
+  }, [props.threadId, props.transport, refreshDirectories])
 
   const selectFile = useCallback(
     async (entry: Entry) => {
@@ -213,6 +249,14 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
         <FolderOpen size={15} aria-hidden />
         <span>{props.projectName ?? lastPathPart(props.projectPath)}</span>
         {selectedPath ? <span className="workspace-files__crumb">› {selectedPath}</span> : null}
+        <button
+          type="button"
+          className="icon-btn icon-btn--always"
+          aria-label="Refresh files"
+          onClick={refreshDirectories}
+        >
+          <Refresh size={14} aria-hidden />
+        </button>
       </header>
 
       <div className="workspace-files__split">

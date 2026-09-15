@@ -1,5 +1,3 @@
-import os from 'node:os'
-import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -9,7 +7,8 @@ import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
 import { PushBus } from './push-bus.js'
-import { migrateProductFile } from './product-paths.js'
+import { storeLocation } from './data-location.js'
+import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 import type { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
@@ -17,7 +16,7 @@ import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
-import { listWorkspaceBranches, readWorkspace, switchWorkspaceBranch } from './workspace.js'
+import { listWorkspaceBranches, readWorkspace } from './workspace.js'
 import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
@@ -36,37 +35,6 @@ function reportStartupMilestone(name: string): void {
   }
   startupMilestones.add(name)
   console.log(`[startup] ${name} ${Date.now() - startupStartedAt}ms`)
-}
-
-/**
- * Where the database lives.
- *
- * Under the platform's own per-user data directory rather than beside the
- * binary, so an update or a reinstall does not take someone's history with it.
- * `HARNESS_DATA_DIR` overrides it, which is what the tests and a portable
- * install use.
- */
-function storeLocation(): string {
-  const override = process.env['HARNESS_DATA_DIR']
-  if (override) {
-    return migrateProductFile(
-      path.join(override, 'tastecode.db'),
-      path.join(override, 'harness.db'),
-    )
-  }
-
-  const home = os.homedir()
-  const base =
-    process.platform === 'win32'
-      ? (process.env['APPDATA'] ?? path.join(home, 'AppData', 'Roaming'))
-      : process.platform === 'darwin'
-        ? path.join(home, 'Library', 'Application Support')
-        : (process.env['XDG_DATA_HOME'] ?? path.join(home, '.local', 'share'))
-
-  return migrateProductFile(
-    path.join(base, 'TasteCode', 'tastecode.db'),
-    path.join(base, 'PersonalHarness', 'harness.db'),
-  )
 }
 
 /**
@@ -89,22 +57,41 @@ export async function startServer(
   assertSafeBind(host, options.accessToken)
   const wss = new WebSocketServer({ port, host })
   await waitForListening(wss, port)
+
+  const databasePath = storeLocation()
+  let releaseDataLease: (() => void) | undefined
+  let store: Store
+  try {
+    releaseDataLease = acquireDataLease(databasePath)
+    store = new Store(databasePath)
+  } catch (error) {
+    releaseDataLease?.()
+    await closeWebSocketServer(wss)
+    throw error
+  }
   const push = new PushBus()
   const providerService = import('./providers.js')
+  let updatesService: Promise<import('./provider-updates.js').ProviderUpdateService> | undefined
+  const providerUpdates = () =>
+    (updatesService ??= import('./provider-updates.js').then(
+      ({ ProviderUpdateService }) => new ProviderUpdateService(),
+    ))
   void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
-  const previewCapture = new PreviewCaptureCoordinator((socket, request) =>
-    push.send(socket, 'preview.captureRequested', request),
+  const previewCapture = new PreviewCaptureCoordinator(
+    (socket, request) => push.send(socket, 'preview.captureRequested', request),
+    35_000,
+    (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
   )
 
-  // Startup errors reject before profile state is opened. Runtime server errors
-  // remain fatal because the process can no longer guarantee socket ownership.
+  // Startup errors reject startServer. Errors after readiness are fatal because
+  // the long-lived local server can no longer honor its client connection.
   wss.on('error', (error: NodeJS.ErrnoException) => {
-    console.error(`[server] ${describeListenError(error, port).message}`)
+    console.error(`[server] ${error.message}`)
     process.exit(1)
   })
 
-  const store = await initializeStore(wss)
   reportStartupMilestone('server-store-ready')
+  store.recoverInterruptedThreads()
   reportStartupMilestone('server-recovery-ready')
   let pullRequests: Promise<PullRequestService> | undefined
   const pullRequestService = () =>
@@ -140,7 +127,8 @@ export async function startServer(
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
-    onTerminalOutput: (terminalId, data) => push.broadcast('terminal.output', { terminalId, data }),
+    onTerminalOutput: (terminalId, data, outputOffset) =>
+      push.broadcast('terminal.output', { terminalId, data, outputOffset }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
     capturePreview: (url, viewports) =>
@@ -149,6 +137,7 @@ export async function startServer(
         : Promise.resolve(undefined),
   })
   reportStartupMilestone('server-orchestrator-ready')
+  const checkpointProtection = orchestrator.protectStoredCheckpoints()
   const projectList = createProjectListProjector({
     includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
   })
@@ -238,7 +227,7 @@ export async function startServer(
     try {
       const result = await route(socket, method, params)
       if (socket.readyState === socket.OPEN) {
-        socket.send(serializeSuccessResponse(id, result))
+        push.reply(socket, serializeSuccessResponse(id, result))
         if (method === 'projects.list') reportStartupMilestone('server-projects-sent')
       }
     } catch (error) {
@@ -333,6 +322,24 @@ export async function startServer(
 
       case 'providers.list':
         return { providers: await (await providerService).detectProviders() }
+
+      case 'providers.updates':
+        return {
+          updates: await (await providerUpdates()).list(parseParams(method, params).refresh),
+        }
+
+      case 'providers.update': {
+        const p = parseParams(method, params)
+        const command = await (await providerUpdates()).commandFor(p.provider)
+        return {
+          terminalId: orchestrator.installProvider(
+            `update:${p.provider}`,
+            command,
+            p.columns,
+            p.rows,
+          ),
+        }
+      }
 
       case 'harnesses.list':
         return { harnesses: orchestrator.listCustomHarnesses() }
@@ -500,13 +507,7 @@ export async function startServer(
 
       case 'workspace.switchBranch': {
         const p = parseParams(method, params)
-        const localSessionRunning = store
-          .threads(p.path)
-          .some((thread) => !thread.worktreePath && orchestrator.isRunning(thread.id))
-        if (localSessionRunning) {
-          throw new Error('stop local sessions in this project before switching branches')
-        }
-        return switchWorkspaceBranch(resolveWorkspacePath(p.path), p.branch)
+        return orchestrator.switchBranch(p.path, p.branch)
       }
 
       case 'workspace.diff': {
@@ -633,8 +634,8 @@ export async function startServer(
         return {
           terminalId:
             'threadId' in p
-              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows)
-              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows),
+              ? orchestrator.openTerminal(p.threadId, p.columns, p.rows, p.terminalKey)
+              : orchestrator.openProjectTerminal(p.projectPath, p.columns, p.rows, p.terminalKey),
         }
       }
 
@@ -642,6 +643,16 @@ export async function startServer(
         const p = parseParams(method, params)
         orchestrator.writeTerminal(p.terminalId, p.data)
         return {}
+      }
+
+      case 'terminal.status': {
+        const p = parseParams(method, params)
+        return orchestrator.terminalStatus(p.terminalId)
+      }
+
+      case 'providers.watch': {
+        const p = parseParams(method, params)
+        return orchestrator.watchProvider(p.provider, p.projectPath, p.targets)
       }
 
       case 'terminal.resize': {
@@ -716,13 +727,14 @@ export async function startServer(
         const p = parseParams(method, params)
         const history = await orchestrator.historyForResponse(p.threadId, p.afterSeq ?? 0)
         const running = orchestrator.isTurnRunning(p.threadId)
-        const result = historyResponse(history.events, running)
+        const approval = store.threadApproval(p.threadId) ?? 'ask'
+        const result = historyResponse(history.events, running, approval)
         orchestrator.markThreadRead(p.threadId)
         return serializeHistory(
           result,
           history.serializedEvents === undefined
             ? undefined
-            : `{"events":${history.serializedEvents},"running":${String(running)}}`,
+            : `{"events":${history.serializedEvents},"running":${String(running)},"approval":${JSON.stringify(approval)}}`,
         )
       }
 
@@ -777,7 +789,7 @@ export async function startServer(
 
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
-        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey)
+        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
       }
 
       case 'sideChat.start': {
@@ -800,6 +812,7 @@ export async function startServer(
       case 'thread.start': {
         const p = parseParams(method, params)
         const thread = await orchestrator.startThread(p.provider, p.workspacePath, {
+          baseRef: p.baseRef,
           model: p.model,
           serviceTier: p.serviceTier,
           effort: p.effort,
@@ -948,7 +961,8 @@ export async function startServer(
     detail?: string,
   ): void {
     if (socket.readyState !== socket.OPEN) return
-    socket.send(
+    push.reply(
+      socket,
       JSON.stringify({
         id,
         error: { code, message, ...(detail ? { detail } : {}) },
@@ -964,60 +978,48 @@ export async function startServer(
       lifecycleScheduler.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
-      const results = await Promise.allSettled([orchestratorClosed, closeWebSocketServer(wss)])
-      store.close()
+      const results = await Promise.allSettled([
+        orchestratorClosed,
+        checkpointProtection,
+        new Promise<void>((resolve) => wss.close(() => resolve())),
+      ])
+      try {
+        store.close()
+      } finally {
+        releaseDataLease()
+      }
       const errors = results
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
         .map((result) => result.reason)
-      if (errors.length === 1) throw errors[0]
       if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }
 }
 
-async function initializeStore(wss: WebSocketServer): Promise<Store> {
-  let store: Store | undefined
-  try {
-    store = new Store(storeLocation())
-    store.recoverInterruptedThreads()
-    return store
-  } catch (error) {
-    store?.close()
-    await closeWebSocketServer(wss)
-    throw error
-  }
-}
-
-function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
-  return new Promise((resolve) => wss.close(() => resolve()))
-}
-
 function waitForListening(wss: WebSocketServer, port: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const onListening = (): void => {
+    const onListening = () => {
       wss.off('error', onError)
       resolve()
     }
-    const onError = (error: NodeJS.ErrnoException): void => {
+    const onError = (error: NodeJS.ErrnoException) => {
       wss.off('listening', onListening)
-      reject(describeListenError(error, port))
+      if (error.code === 'EADDRINUSE') {
+        error.message =
+          `port ${port} is already in use — another TasteCode server is probably ` +
+          'still running. Stop it, or set HARNESS_PORT to a free port.'
+      }
+      reject(error)
     }
-
     wss.once('listening', onListening)
     wss.once('error', onError)
   })
 }
 
-function describeListenError(error: NodeJS.ErrnoException, port: number): NodeJS.ErrnoException {
-  if (error.code !== 'EADDRINUSE') return error
-  return Object.assign(
-    new Error(
-      `port ${port} is already in use — another TasteCode server is probably still running. ` +
-        'Stop it, or set HARNESS_PORT to a free port.',
-      { cause: error },
-    ),
-    { code: error.code },
-  )
+function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    wss.close((error) => (error ? reject(error) : resolve()))
+  })
 }
 
 /**

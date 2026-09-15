@@ -11,7 +11,7 @@
     "harness": "tsc -b apps/server && node apps/server/dist/cli.js",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "node --test tools/scripts/release-licenses.test.js tools/scripts/linux-acceptance-environment.test.js tools/scripts/linux-updater-metadata.test.js tools/scripts/linux-release-evidence.test.js && pnpm -r test",
+    "test": "node --test tools/scripts/release-licenses.test.js tools/scripts/release-tools.test.js tools/scripts/linux-acceptance-environment.test.js tools/scripts/linux-updater-metadata.test.js tools/scripts/linux-release-evidence.test.js && pnpm -r test",
     "licenses:verify": "node tools/scripts/release-licenses.js",
     "licenses:report": "node tools/scripts/release-licenses.js --output release/license-metadata.json",
     "linux:acceptance": "node tools/scripts/linux-acceptance.js",

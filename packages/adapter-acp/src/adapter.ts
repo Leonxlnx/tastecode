@@ -185,6 +185,7 @@ export function acpPromptContent(
 }
 
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   #spec: AcpLaunchSpec
   readonly #spawn: typeof spawnCli
   readonly #provider: ProviderId
@@ -416,15 +417,16 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     }
   }
 
-  async dispose(): Promise<void> {
-    const disposing = this.#rpc?.dispose()
+  dispose(): Promise<void> {
+    const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
-    await disposing
+    this.#processStop = stopped
+    return stopped
   }
 
   async #connect(workspacePath: string, model: string | undefined): Promise<AcpRpc> {
@@ -434,9 +436,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
         : this.#spec.args
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
-    const previousRpc = this.#rpc
-    this.#rpc = undefined
-    await previousRpc?.dispose()
+    await this.#rpc?.dispose()
     const rpc = new StdioJsonRpc(
       this.#spawn(this.#spec.command, args, { cwd: workspacePath }),
       this.#spec.name,

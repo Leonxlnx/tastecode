@@ -1,10 +1,4 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import {
-  OWNED_PROCESS_SHUTDOWN_MESSAGE,
-  ownProcessTree,
-  ownedProcessSpawnOptions,
-  terminateTree,
-} from '@harness/proc'
 
 /**
  * The packaged app owns its core server. In development tools/scripts/dev.js
@@ -26,10 +20,6 @@ export function restartDelayMs(consecutiveFailures: number): number {
 /** A run that survived this long counts as healthy and resets the backoff. */
 const HEALTHY_RUN_MS = 30_000
 
-/** Terminal cleanup has a 10s deadline; the server gets that full window. */
-const SERVER_SHUTDOWN_TIMEOUT_MS = 12_000
-const SERVER_EXIT_TIMEOUT_AFTER_KILL_MS = 1_500
-
 /** After this many failures in a row the server is not coming back on its own. */
 export const MAX_CONSECUTIVE_FAILURES = 8
 
@@ -47,35 +37,34 @@ type CommandSupervisorOptions = {
   spawnFn?: typeof spawn
 }
 
-export type SupervisorOptions = SupervisorCallbacks & CommandSupervisorOptions
-
-type ServerExit =
-  | { kind: 'exit'; code: number | null; signal: NodeJS.Signals | null }
-  | { kind: 'error'; error: unknown }
-
-function waitForServerExit(lifetime: Promise<ServerExit>, timeoutMs: number) {
-  return new Promise<ServerExit | undefined>((resolve) => {
-    const timer = setTimeout(() => resolve(undefined), timeoutMs)
-    void lifetime.then((result) => {
-      clearTimeout(timer)
-      resolve(result)
-    })
-  })
+export type SupervisedServerProcess = {
+  stdout: NodeJS.ReadableStream | null
+  stderr: NodeJS.ReadableStream | null
+  kill: () => boolean
+  onError: (listener: (error: unknown) => void) => void
+  onExit: (listener: (code: number | null, signal: NodeJS.Signals | null) => void) => void
 }
 
-function assertCleanServerExit(result: ServerExit): void {
-  if (result.kind === 'error') throw result.error
-  if (result.code !== 0) {
-    throw new Error(
-      `core server exited during shutdown (code ${result.code ?? 'null'}, signal ${result.signal ?? 'null'})`,
-    )
+type ProcessSupervisorOptions = {
+  launch: () => SupervisedServerProcess
+}
+
+export type SupervisorOptions = SupervisorCallbacks &
+  (CommandSupervisorOptions | ProcessSupervisorOptions)
+
+function supervisedChildProcess(child: ChildProcess): SupervisedServerProcess {
+  return {
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: () => child.kill(),
+    onError: (listener) => child.on('error', listener),
+    onExit: (listener) => child.on('exit', listener),
   }
 }
 
 export class ServerSupervisor {
   readonly #options: SupervisorOptions
-  #child: ChildProcess | undefined
-  #lifetime: Promise<ServerExit> | undefined
+  #child: SupervisedServerProcess | undefined
   #stopped = false
   #failures = 0
   #startedAt = 0
@@ -88,18 +77,18 @@ export class ServerSupervisor {
   start(): void {
     if (this.#stopped || this.#child) return
     this.#startedAt = Date.now()
-    const child = this.#spawnOwned()
+    const child =
+      'launch' in this.#options
+        ? this.#options.launch()
+        : supervisedChildProcess(
+            (this.#options.spawnFn ?? spawn)(this.#options.command, this.#options.args, {
+              env: this.#options.env,
+              ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
+              stdio: ['ignore', 'pipe', 'pipe'],
+              windowsHide: true,
+            }),
+          )
     this.#child = child
-    let settleLifetime: (result: ServerExit) => void
-    let lifetimeSettled = false
-    this.#lifetime = new Promise((resolve) => {
-      settleLifetime = resolve
-    })
-    const settle = (result: ServerExit) => {
-      if (lifetimeSettled) return
-      lifetimeSettled = true
-      settleLifetime(result)
-    }
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
     const forward = (chunk: string) => {
@@ -107,57 +96,28 @@ export class ServerSupervisor {
     }
     child.stdout?.on('data', forward)
     child.stderr?.on('data', forward)
-    child.on('error', (error) => {
-      settle({ kind: 'error', error })
+    child.onError((error) => {
       this.#options.onLog(`server failed to start: ${String(error)}`)
       this.#onExit(child)
     })
-    child.on('exit', (code, signal) => {
-      settle({ kind: 'exit', code, signal })
+    child.onExit((code, signal) => {
       this.#options.onLog(`server exited (code ${code ?? 'null'}, signal ${signal ?? 'null'})`)
       this.#onExit(child)
     })
   }
 
-  async stop(): Promise<void> {
+  stop(): void {
     this.#stopped = true
     if (this.#restartTimer) clearTimeout(this.#restartTimer)
     this.#restartTimer = undefined
     const child = this.#child
-    const lifetime = this.#lifetime
     this.#child = undefined
-    this.#lifetime = undefined
-    if (!child || !lifetime) return
-
-    if (child.connected) child.send(OWNED_PROCESS_SHUTDOWN_MESSAGE)
-    else child.kill()
-    const result = await waitForServerExit(lifetime, SERVER_SHUTDOWN_TIMEOUT_MS)
-    if (result) {
-      assertCleanServerExit(result)
-      return
-    }
-
-    await terminateTree(child)
-    await waitForServerExit(lifetime, SERVER_EXIT_TIMEOUT_AFTER_KILL_MS)
-    throw new Error('core server did not exit after its shutdown request')
+    child?.kill()
   }
 
-  #spawnOwned(): ChildProcess {
-    return ownProcessTree(
-      (this.#options.spawnFn ?? spawn)(this.#options.command, this.#options.args, {
-        env: this.#options.env,
-        ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
-        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-        windowsHide: true,
-        ...ownedProcessSpawnOptions(),
-      }),
-    )
-  }
-
-  #onExit(child: ChildProcess): void {
+  #onExit(child: SupervisedServerProcess): void {
     if (this.#child !== child) return
     this.#child = undefined
-    this.#lifetime = undefined
     if (this.#stopped) return
     const healthy = Date.now() - this.#startedAt >= HEALTHY_RUN_MS
     this.#failures = healthy ? 1 : this.#failures + 1
