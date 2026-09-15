@@ -350,7 +350,8 @@
 
 .theme-picker {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, calc((100% - 48px) / 4)));
+  justify-content: center;
   gap: 16px;
   min-width: 0;
   margin: 0;
