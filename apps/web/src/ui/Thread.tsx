@@ -47,6 +47,7 @@ import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
+import { ThreadSkeleton } from './Skeleton.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -359,9 +360,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       ) : null}
       {thread.items.length === 0 && !running ? (
         props.loading ? (
-          <div className="empty thread__empty" role="status">
-            Loading conversation…
-          </div>
+          <ThreadSkeleton className="thread__empty" />
         ) : (
           <div className="empty thread__empty">
             <div className="empty__prompt" role="heading" aria-level={1}>

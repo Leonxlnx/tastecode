@@ -647,8 +647,7 @@ ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for theme change')
   nativeTheme.themeSource = windowThemeSource(preference)
-  const theme =
-    preference === 'codex' ? 'codex' : nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   const options = windowThemeOptions(theme)
   // Repainting an opaque background would sit on top of the acrylic/vibrancy
   // material and kill the sidebar glass; on those platforms the material owns

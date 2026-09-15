@@ -12,6 +12,7 @@ import {
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { AppSelect } from './AppSelect.js'
+import { Skeleton, SkeletonStatus } from './Skeleton.js'
 import {
   createSessionTitleIndexer,
   searchSessionTitles,
@@ -48,6 +49,29 @@ type DisplaySearchResult = {
   turnId: string | undefined
   titleParts: SearchSnippetPart[]
   snippet: SearchSnippetPart[] | undefined
+}
+
+const SKELETON_RESULT_TITLES = ['58%', '42%', '66%']
+
+/** Result-shaped rows: a title, the project and source line, two lines of snippet. */
+function SessionSearchSkeleton() {
+  return (
+    <SkeletonStatus label="Searching…">
+      <Skeleton className="session-search__skeleton-group" width={38} height={8} />
+      {SKELETON_RESULT_TITLES.map((width, index) => (
+        <div className="session-search__skeleton-result" key={index}>
+          <Skeleton width={width} height={10} />
+          <span className="session-search__skeleton-meta">
+            <Skeleton width={64} height={7} />
+            <Skeleton width={44} height={7} />
+            <Skeleton width={36} height={7} />
+          </span>
+          <Skeleton width="96%" height={8} />
+          <Skeleton width={index === 1 ? '54%' : '78%'} height={8} />
+        </div>
+      ))}
+    </SkeletonStatus>
+  )
 }
 
 function SessionSearchComponent(props: {
@@ -407,11 +431,7 @@ function SessionSearchComponent(props: {
                   </div>
                 )
               })}
-              {searching && displayResults.length === 0 ? (
-                <p className="command-palette__empty" role="status">
-                  Searching…
-                </p>
-              ) : null}
+              {searching && displayResults.length === 0 ? <SessionSearchSkeleton /> : null}
               {!searching && !error && displayResults.length === 0 ? (
                 <p className="command-palette__empty" role="status">
                   No matches found.

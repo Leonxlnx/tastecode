@@ -43,6 +43,10 @@
   --line: #262626;
   --line-strong: #333333;
   --queue-line: #2b2b2b;
+  /* Loading placeholders: the resting bar and the shine that passes over it.
+     Light themes flip the pair so a bar still reads against a near-white page. */
+  --skeleton: var(--surface-2);
+  --skeleton-shine: color-mix(in srgb, var(--text-3) 18%, var(--surface-2));
 
   --text: #ededed;
   --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
@@ -289,6 +293,8 @@
   --line: #ebebed;
   --line-strong: #dedee2;
   --queue-line: #eeeeef;
+  --skeleton: var(--surface-3);
+  --skeleton-shine: color-mix(in srgb, var(--bg-prompt) 70%, var(--surface-3));
 
   --text: #27272a;
   --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
@@ -580,55 +586,4 @@ html.is-macos-font-smoothing {
   --surface: #f3eef4;
   --surface-2: #eae2ec;
   --surface-3: #ded4e0;
-}
-
-/* Codex is an exact three-color neutral theme. Keep this block after backdrop
-   palettes so a saved tint cannot replace the colors the user selected. */
-:root[data-theme='codex'] {
-  color-scheme: dark;
-
-  --bg: #2d2d2b;
-  --terminal-workspace-bg: #2d2d2b;
-  --bg-rail: #353533;
-  --bg-rail-tint: #353533;
-  --rail-glass-fade: 0%;
-  --bg-prompt: #353533;
-  --bg-shelf: #40403d;
-  --bg-queue: #353533;
-  --surface: #353533;
-  --surface-2: #3b3b39;
-  --surface-3: #444442;
-  --control-hover: #41413f;
-  --menu-bg: #353533;
-  --menu-hover: #41413f;
-  --menu-line: #4b4b48;
-
-  --line: #4a4a47;
-  --line-strong: #5c5c58;
-  --queue-line: #4b4b48;
-
-  --text: #dededc;
-  --response-text: #dededc;
-  --text-2: #a8a8a5;
-  --text-3: #7c7c78;
-  --queue-text: #dededc;
-  --queue-action: #a8a8a5;
-  --queue-hover: #41413f;
-  --composer-placeholder: #a0a09c;
-  --composer-shadow: 0 16px 36px -18px rgb(0 0 0 / 60%), 0 2px 6px rgb(0 0 0 / 18%);
-  --composer-orb: #dededc;
-  --composer-on-orb: #2d2d2b;
-  --composer-stop: #dededc;
-
-  --chrome-raised: var(--control-hover);
-  --chrome-raised-hover: var(--menu-hover);
-  --chrome-recessed: #292927;
-  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237c7c78' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
-  --chrome-border: #4b4b48;
-  --chrome-highlight: transparent;
-  --titlebar-bg: #353533;
-  --titlebar-symbol: #dededc;
-
-  --on-light: #2d2d2b;
-  --light: #dededc;
 }

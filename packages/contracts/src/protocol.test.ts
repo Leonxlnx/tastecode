@@ -1305,6 +1305,49 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('loads bounded image bytes only from GitHub file and upload URLs', () => {
+    const blob = {
+      url: 'https://github.com/Blueemi/harness/blob/abc123/docs/before.png?raw=true',
+    }
+    const raw = { url: 'https://raw.githubusercontent.com/Blueemi/harness/main/docs/after.png' }
+    expect(methods['pullRequests.image'].params.parse(blob)).toEqual(blob)
+    expect(methods['pullRequests.image'].params.parse(raw)).toEqual(raw)
+    for (const url of [
+      'https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc',
+      'https://private-user-images.githubusercontent.com/123/456-12345678-1234-1234-1234-123456789abc.png',
+    ])
+      expect(methods['pullRequests.image'].params.parse({ url })).toEqual({ url })
+    expect(() =>
+      methods['pullRequests.image'].params.parse({ url: 'https://example.com/image.png' }),
+    ).toThrow()
+    expect(() =>
+      methods['pullRequests.image'].params.parse({ url: 'http://github.com/o/r/blob/x/a.png' }),
+    ).toThrow()
+    expect(() =>
+      methods['pullRequests.image'].params.parse({ url: 'https://github.com.evil.test/a.png' }),
+    ).toThrow()
+
+    const image = { mediaType: 'image/png', data: 'iVBORw0KGgo=' }
+    expect(methods['pullRequests.image'].result.parse(image)).toEqual(image)
+    expect(() =>
+      methods['pullRequests.image'].result.parse({ mediaType: 'text/html', data: 'PGh0bWw+' }),
+    ).toThrow()
+    expect(() =>
+      methods['pullRequests.image'].result.parse({ mediaType: 'image/png', data: '' }),
+    ).toThrow()
+    for (const data of ['not base64!', 'AAA', 'A'.repeat(14 * 1024 * 1024)]) {
+      expect(
+        methods['pullRequests.image'].result.safeParse({ mediaType: 'image/png', data }).success,
+      ).toBe(false)
+    }
+    expect(
+      methods['pullRequests.image'].result.safeParse({
+        mediaType: 'image/svg+xml',
+        data: 'PHN2Zy8+',
+      }).success,
+    ).toBe(true)
+  })
+
   it('validates data for every declared channel', () => {
     expect(
       channels['thread.event'].parse({

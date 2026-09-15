@@ -334,6 +334,9 @@ export function startServer(
         return (await pullRequestService()).action(p.repository, p.number, p.action)
       }
 
+      case 'pullRequests.image':
+        return (await pullRequestService()).images.image(parseParams(method, params).url)
+
       case 'providers.list':
         return { providers: await (await providerService).detectProviders() }
 
