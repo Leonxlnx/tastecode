@@ -70,6 +70,39 @@ function crc32(buffer: Buffer): number {
 }
 
 describe('asset manifest', () => {
+  it('accepts shared brand fonts while rejecting unknown consuming sections and extra visuals', () => {
+    const page = {
+      sections: [{ id: 'hero', assetNeeds: [], componentNeeds: [] }],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const fonts = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'brand-font',
+          kind: 'font',
+          role: 'font',
+          status: 'needed',
+          purpose: 'Approved heading typography',
+          requirements: [],
+          sectionIds: ['hero'],
+        },
+      ],
+    })
+    expect(validateAssetManifestForPage(fonts, page)).toEqual(fonts)
+    expect(() =>
+      validateAssetManifestForPage(
+        { version: 1, assets: [{ ...fonts.assets[0]!, sectionIds: ['missing'] }] },
+        page,
+      ),
+    ).toThrow('existing consuming')
+    expect(() =>
+      validateAssetManifestForPage(
+        { version: 1, assets: [{ ...fonts.assets[0]!, kind: 'image', role: 'photography' }] },
+        page,
+      ),
+    ).toThrow('extra: brand-font')
+  })
+
   it('rejects malformed ratios and credential-bearing external source URLs', () => {
     const asset = { ...manifest.assets[0], aspectRatio: `${'9'.repeat(400)}:1` }
     expect(() => parseAssetManifest({ version: 1, assets: [asset] })).toThrow(

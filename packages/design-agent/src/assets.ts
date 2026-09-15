@@ -166,6 +166,16 @@ export function validateAssetManifestForPage(
     }
   }
 
+  // Brand fonts can serve several sections without a separate page-level asset need.
+  const pageSectionIds = new Set(page.sections.map(({ id }) => id))
+  for (const asset of manifest.assets) {
+    if (asset.kind !== 'font' || asset.role !== 'font' || expected.has(asset.id)) continue
+    if (!asset.sectionIds?.length || asset.sectionIds.some((id) => !pageSectionIds.has(id))) {
+      throw new Error(`font asset ${asset.id} must name existing consuming page sections`)
+    }
+    expected.set(asset.id, { kind: 'asset', sectionIds: new Set(asset.sectionIds) })
+  }
+
   const actualIds = new Set(manifest.assets.map(({ id }) => id))
   const missing = [...expected.keys()].filter((id) => !actualIds.has(id)).sort()
   const extra = manifest.assets
