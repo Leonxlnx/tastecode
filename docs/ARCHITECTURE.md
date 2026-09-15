@@ -131,6 +131,9 @@ a user override. Claude Code now runs through Anthropic's Agent SDK while keepin
 installed `claude` executable and account, so the adapter gets a persistent prompt stream,
 interactive permissions and questions, and live control calls without making shared behavior
 depend on that vendor. A different Claude surface can still replace it without touching the UI.
+Because the adapter always names that executable, the SDK's optional per-platform CLI packages
+(about 290 MB each) are removed from the dependency graph in `pnpm-workspace.yaml` and excluded
+from the desktop package; the app ships no Claude binary of its own.
 
 **Users may register protocol-compatible executables as separate harness sources.** Each
 entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
@@ -460,3 +463,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-08-22 | Applied the desktop-safe PATH to provider detection, CLI spawns, and the PTY.                                                                                                  |
 | 2026-09-08 | Added checkpoint reachability and checkout guards, explicit history maintenance, provider controls, task-state ownership, bounded leases and local Electron performance gates. |
 | 2026-09-15 | Added authenticated repository and upload image previews, isolated SVG rendering, lazy loading, and byte-bounded caches for pull-request Markdown.                             |
+| 2026-09-15 | Dropped the Claude Agent SDK's bundled per-platform CLI from the dependency graph and the desktop package; the adapter always spawns the user's `claude`.                      |
