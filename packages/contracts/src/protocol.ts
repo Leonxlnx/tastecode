@@ -26,6 +26,8 @@ import {
   PullRequestActionSchema,
   PullRequestDetailSchema,
   PullRequestFilesResultSchema,
+  PullRequestImageSchema,
+  PullRequestImageUrlSchema,
   PullRequestListResultSchema,
   PullRequestMetadataOptionsSchema,
 } from './pull-requests.js'
@@ -821,6 +823,15 @@ export const methods = {
       action: PullRequestActionSchema,
     }),
     result: PullRequestActionResultSchema,
+  },
+  /**
+   * Load a repository file or upload embedded as an image. The
+   * renderer has no GitHub session, so the server fetches the bytes through
+   * the authenticated CLI and private repositories render like public ones.
+   */
+  'pullRequests.image': {
+    params: z.object({ url: PullRequestImageUrlSchema }),
+    result: PullRequestImageSchema,
   },
   'auth.status': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
