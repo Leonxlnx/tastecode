@@ -385,7 +385,7 @@ export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
  * fixed argv entries stay separate so paths and values containing spaces are
  * never re-parsed through a shell.
  */
-export const CustomHarnessSchema = z.object({
+const CustomHarnessMetadataSchema = z.object({
   id: z.string().trim().min(1).max(128),
   displayName: z.string().trim().min(1).max(80),
   provider: z.enum([
@@ -424,27 +424,65 @@ export const CustomHarnessSchema = z.object({
     .max(4096)
     .refine((value) => !value.includes('\0'), 'working directory cannot contain a null byte')
     .optional(),
-  /** Non-secret process settings such as an isolated state/config directory. */
-  environment: z
-    .record(
-      z
-        .string()
-        .trim()
-        .min(1)
-        .max(128)
-        .refine(
-          (value) => !value.includes('=') && !value.includes('\0'),
-          'invalid environment key',
-        ),
-      z
-        .string()
-        .max(8192)
-        .refine((value) => !value.includes('\0'), 'environment value cannot contain a null byte'),
-    )
-    .refine((value) => Object.keys(value).length <= 64, 'too many environment entries')
-    .optional(),
+})
+
+export const CustomHarnessEnvironmentKeySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .refine((value) => !value.includes('=') && !value.includes('\0'), 'invalid environment key')
+
+const CustomHarnessEnvironmentValueSchema = z
+  .string()
+  .max(8192)
+  .refine((value) => !value.includes('\0'), 'environment value cannot contain a null byte')
+
+const CustomHarnessEnvironmentSchema = z
+  .record(CustomHarnessEnvironmentKeySchema, CustomHarnessEnvironmentValueSchema)
+  .refine((value) => Object.keys(value).length <= 64, 'too many environment entries')
+
+/** In-memory launch shape. Never use this schema for an RPC result. */
+export const CustomHarnessSchema = CustomHarnessMetadataSchema.extend({
+  environment: CustomHarnessEnvironmentSchema.optional(),
 })
 export type CustomHarness = z.infer<typeof CustomHarnessSchema>
+
+/** Public metadata for a custom harness. Configured values are intentionally write-only. */
+export const PublicCustomHarnessSchema = CustomHarnessMetadataSchema.extend({
+  environmentKeys: z
+    .array(CustomHarnessEnvironmentKeySchema)
+    .max(64)
+    .refine((keys) => new Set(keys).size === keys.length, 'duplicate environment key'),
+}).strict()
+export type PublicCustomHarness = z.infer<typeof PublicCustomHarnessSchema>
+
+export const CustomHarnessEnvironmentUpdatesSchema = z
+  .object({
+    set: CustomHarnessEnvironmentSchema,
+    unset: z
+      .array(CustomHarnessEnvironmentKeySchema)
+      .max(64)
+      .refine((keys) => new Set(keys).size === keys.length, 'duplicate environment key'),
+  })
+  .strict()
+  .superRefine(({ set, unset }, context) => {
+    const setKeys = new Set(Object.keys(set))
+    if (unset.some((key) => setKeys.has(key))) {
+      context.addIssue({
+        code: 'custom',
+        path: ['unset'],
+        message: 'environment key cannot be both set and unset',
+      })
+    }
+  })
+export type CustomHarnessEnvironmentUpdates = z.infer<typeof CustomHarnessEnvironmentUpdatesSchema>
+
+/** Write-only input. Omitting environmentUpdates preserves configured values. */
+export const CustomHarnessUpdateSchema = CustomHarnessMetadataSchema.extend({
+  environmentUpdates: CustomHarnessEnvironmentUpdatesSchema.optional(),
+}).strict()
+export type CustomHarnessUpdate = z.infer<typeof CustomHarnessUpdateSchema>
 
 export const CustomHarnessVerificationCheckSchema = z.object({
   label: z.string().min(1),
