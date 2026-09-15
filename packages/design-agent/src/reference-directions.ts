@@ -686,23 +686,31 @@ export const REFERENCE_DIRECTIONS = [
   ),
 ] as const satisfies readonly ReferenceDirection[]
 
-const REFERENCE_DIRECTION_BY_ID = new Map(
-  REFERENCE_DIRECTIONS.map((direction) => [direction.id, direction]),
-)
-
 export function referenceDirectionAttachmentPath(direction: ReferenceDirection): string {
+  if (/^(?:[A-Za-z]:[\\/]|\/|\\\\)/u.test(direction.imagePath)) return direction.imagePath
   return fileURLToPath(new URL(`../${direction.imagePath}`, import.meta.url))
 }
 
 export function referenceDirectionAttachments(directions: readonly ReferenceDirection[]): string[] {
-  return directions.map(referenceDirectionAttachmentPath)
+  return [
+    ...new Set(
+      directions.flatMap((direction) => [
+        referenceDirectionAttachmentPath(direction),
+        ...(direction.mobileImagePath ? [direction.mobileImagePath] : []),
+      ]),
+    ),
+  ]
 }
 
-export function referenceDirectionsForPage(page: PageBlueprint): ReferenceDirection[] {
+export function referenceDirectionsForPage(
+  page: PageBlueprint,
+  deck: readonly ReferenceDirection[] = REFERENCE_DIRECTIONS,
+): ReferenceDirection[] {
+  const byId = new Map(deck.map((direction) => [direction.id, direction]))
   return page.sections.flatMap((section, index) => {
     if (!section.referenceDirectionId) return []
     if (section.referenceDirectionId.startsWith('user-reference-')) return []
-    const direction = REFERENCE_DIRECTION_BY_ID.get(section.referenceDirectionId)
+    const direction = byId.get(section.referenceDirectionId)
     if (!direction) {
       throw new Error(`sections[${index}].referenceDirectionId is unknown`)
     }
@@ -738,7 +746,7 @@ export function lockPageReferenceDirections(
       usesSuppliedReference = true
       return { ...section, referenceDirectionId }
     }
-    const direction = REFERENCE_DIRECTION_BY_ID.get(referenceDirectionId)
+    const direction = deck.find((entry) => entry.id === referenceDirectionId)
     if (!direction || direction.family !== section.layoutFamily) {
       throw new Error(
         `sections[${index}].referenceDirectionId must belong to ${section.layoutFamily}`,

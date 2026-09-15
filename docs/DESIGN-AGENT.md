@@ -10,6 +10,10 @@ It is not a live ownership tracker. Before changing code, read `AGENTS.md`, the 
 
 ## Product goal
 
+The v0.5 implementation and local catalog configuration are documented in
+[Design references](./DESIGN-REFERENCES.md). This reference-first workflow supersedes the
+bundled direction selection described below for new runs; older persisted runs remain compatible.
+
 Design Mode should turn a useful but incomplete website request into a distinctive, implemented,
 visually reviewed result without forcing the user to become a creative director or fill out a
 long specification first.

@@ -50,7 +50,7 @@ describe('reviewed reference library', () => {
       { ...entry, id: 'bad', reviewStatus: 'rejected', imagePath: 'missing.png' },
     ])
     expect(
-      selectReviewedReferences(brief, loadReviewedReferences(root)).map((item) => item.id),
+      selectReviewedReferences(brief, loadReviewedReferences(root), () => 0).map((item) => item.id),
     ).toEqual(['studio-hero'])
     const shop = {
       ...entry,
@@ -72,6 +72,22 @@ describe('reviewed reference library', () => {
         loadReviewedReferences(root),
       )[0]?.id,
     ).toBe('shop-hero')
+  })
+  it('randomly chooses suitable groups while honoring an explicitly requested reference', () => {
+    const root = library()
+    save(root, [entry, { ...entry, id: 'second-hero', group: 'second-hero' }])
+    const references = loadReviewedReferences(root)
+    const first = selectReviewedReferences(brief, references, () => 0)[0]?.id
+    const last = selectReviewedReferences(brief, references, (length) => length - 1)[0]?.id
+    expect(first).not.toBe(last)
+    expect(
+      selectReviewedReferences(
+        { ...brief, originalRequest: 'Use studio-hero' },
+        references,
+        (length) => length - 1,
+      )[0]?.id,
+    ).toBe('studio-hero')
+    expect(() => selectReviewedReferences(brief, [])).toThrow('No reviewed')
   })
   it('requires real reviewed files and pairing evidence; threshold files stay excluded', () => {
     const root = library()

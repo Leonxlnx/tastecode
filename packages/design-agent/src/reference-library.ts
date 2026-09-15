@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -113,6 +114,7 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
 export function selectReviewedReferences(
   brief: DesignBrief,
   references = loadReviewedReferences(),
+  chooseIndex: (length: number) => number = randomInt,
 ): ReferenceDirection[] {
   const request = JSON.stringify(brief).toLowerCase()
   const words = new Set(request.match(/[\p{L}\p{N}]+/gu) ?? [])
@@ -121,27 +123,34 @@ export function selectReviewedReferences(
     (entry.source && request.includes(entry.source.toLowerCase()) ? 500 : 0) +
     (entry.tags ?? []).reduce((total, tag) => total + (words.has(tag.toLowerCase()) ? 1 : 0), 0)
   const ranked = [...references].sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id))
-  const preferred = ranked[0]
+  if (!ranked.length) throw new Error('No reviewed Design references are available')
+  const best = score(ranked[0]!)
+  const preferredPool = ranked.filter((entry) => score(entry) === best)
+  const preferred = preferredPool[chooseIndex(preferredPool.length)]
   if (!preferred) throw new Error('No reviewed Design references are available')
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
-  const families = new Set<string>()
   // A group identifies revisions of one section, not a site. One revision gets one vote.
-  for (const entry of ranked) {
+  const candidates = ranked.filter((entry) => {
     const explicit =
       request.includes(entry.id.toLowerCase()) ||
       !!(entry.source && request.includes(entry.source.toLowerCase()))
     const compatible = (entry.tags ?? []).filter((tag) => preferred.tags?.includes(tag)).length >= 2
-    if (
-      entry.source !== preferred.source &&
-      !explicit &&
-      (!compatible || families.has(entry.family))
-    )
-      continue
+    return explicit || entry.source === preferred.source || compatible
+  })
+  for (const family of PAGE_LAYOUT_FAMILIES) {
+    const familyEntries = candidates.filter((entry) => entry.family === family)
+    if (!familyEntries.length) continue
+    const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
+    // Revisions share a vote: choose a group first, then its reviewed revision.
+    const pool = explicit.length ? explicit : familyEntries
+    const groupNames = [...new Set(pool.map((entry) => entry.group ?? entry.id))]
+    const chosenGroup = groupNames[chooseIndex(groupNames.length)]
+    const revisions = pool.filter((entry) => (entry.group ?? entry.id) === chosenGroup)
+    const entry = revisions[chooseIndex(revisions.length)]!
     const group = entry.group ?? entry.id
     if (groups.has(group)) continue
     groups.add(group)
-    families.add(entry.family)
     selected.push(entry)
   }
   if (selected.length > 24)

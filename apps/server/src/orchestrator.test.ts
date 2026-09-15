@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -2526,7 +2527,7 @@ describe('provider-neutral design briefing', () => {
         expect(sessions[0]?.sent[4]).toContain('Page Blueprint phase')
         expect(sessions[0]?.sent[4]).toContain('user-reference-1')
         expect(sessions[0]?.sentAttachments[4]?.[0]).toBe(referencePath)
-        expect(sessions[0]?.sentAttachments[4]).toHaveLength(12)
+        expect(sessions[0]?.sentAttachments[4]).toEqual([referencePath])
 
         sessions[0]?.emit(
           message(
@@ -2734,6 +2735,34 @@ describe('provider-neutral design briefing', () => {
 
   it('asks the final note once before locking an initially complete brief', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-complete-'))
+    const priorLibrary = process.env.TASTECODE_REFERENCE_LIBRARY
+    process.env.TASTECODE_REFERENCE_LIBRARY = workspace
+    const reference = path.join(workspace, 'hero.webp')
+    copyFileSync(
+      path.resolve('../../packages/design-agent/references/directions/hero/direction-001.webp'),
+      reference,
+    )
+    writeFileSync(
+      path.join(workspace, 'catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          {
+            id: 'reviewed-hero',
+            family: 'hero',
+            group: 'hero',
+            imagePath: 'hero.webp',
+            mobileImagePath: 'hero.webp',
+            source: 'https://example.com',
+            tags: ['calm'],
+            cue: 'Test composition',
+            reviewStatus: 'reviewed',
+            reviewNotes: 'Test catalog fixture',
+            pairEvidence: 'Test fixture for paired attachment transport',
+          },
+        ],
+      }),
+    )
     const { orchestrator, sessions, received, store } = harness()
     try {
       const request =
@@ -2817,8 +2846,15 @@ describe('provider-neutral design briefing', () => {
       sessions[0]?.emit({ type: 'turn.completed', turnId: 'motion-turn', status: 'completed' })
 
       await vi.waitFor(() => expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' }))
+      expect(store.designRun(thread.id)).toMatchObject({ referenceDeck: [{ id: 'reviewed-hero' }] })
+      await vi.waitFor(() =>
+        expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),
+      )
+      expect(sessions[0]?.sentAttachments.at(-1)).toEqual([reference])
       expect(finalRequests()).toHaveLength(1)
     } finally {
+      if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY
+      else process.env.TASTECODE_REFERENCE_LIBRARY = priorLibrary
       await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }

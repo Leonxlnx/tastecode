@@ -18,8 +18,11 @@ export function designPagePrompt(
   brief: DesignBrief,
   brand: BrandSystem,
   suppliedReferences: readonly string[] = [],
+  referenceDirectionDeck: readonly ReferenceDirection[] = selectReferenceDirectionDeck(
+    brief,
+    brand,
+  ),
 ): string {
-  const referenceDirectionDeck = selectReferenceDirectionDeck(brief, brand)
   const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
     id: `user-reference-${index + 1}`,
     file: path.basename(filePath),

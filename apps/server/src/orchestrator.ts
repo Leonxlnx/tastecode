@@ -7,6 +7,7 @@ import type {
   PageBlueprint,
   PreviewPlan,
   ReviewScreenshot,
+  ReferenceDirection,
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
@@ -192,6 +193,8 @@ const StoredDesignFlowSchema = z.object({
   originalRequest: z.string(),
   referenceAttachments: z.array(z.string()).max(64).optional().default([]),
   referenceSnapshot: DesignFileSnapshotSchema.optional(),
+  referenceDeck: JsonValueSchema.optional(),
+  referenceDeckSnapshot: DesignFileSnapshotSchema.optional(),
   assetSnapshot: DesignFileSnapshotSchema.optional(),
   options: z
     .object({
@@ -236,6 +239,8 @@ type DesignFlow = {
   originalRequest: string
   referenceAttachments: string[]
   referenceSnapshot?: DesignFileSnapshot[]
+  referenceDeck?: ReferenceDirection[]
+  referenceDeckSnapshot?: DesignFileSnapshot[]
   assetSnapshot?: DesignFileSnapshot[]
   options: TurnOptions
   phase: DesignFlowPhase
@@ -318,6 +323,12 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     originalRequest: stored.originalRequest,
     referenceAttachments: stored.referenceAttachments,
     ...(stored.referenceSnapshot ? { referenceSnapshot: stored.referenceSnapshot } : {}),
+    ...(stored.referenceDeck
+      ? { referenceDeck: designAgent().parseReferenceDeck(stored.referenceDeck) }
+      : {}),
+    ...(stored.referenceDeckSnapshot
+      ? { referenceDeckSnapshot: stored.referenceDeckSnapshot }
+      : {}),
     ...(stored.assetSnapshot ? { assetSnapshot: stored.assetSnapshot } : {}),
     options,
     phase,
@@ -3116,6 +3127,20 @@ export class Orchestrator {
   }
 
   #designPromptFor(flow: DesignFlow): string {
+    const prompt = this.#designPhasePrompt(flow)
+    if (!flow.referenceDeck?.length) return prompt
+    return `${prompt}
+
+<selected-reference-workflow version="0.5">
+The following references were randomly selected from visually reviewed, suitable section groups and are fixed for this run. Inspect their attached desktop and mobile images before making design decisions. Use only the sections the brief actually needs; this catalog is not a required page sequence. Do not add sections or invent business claims just to use a reference.
+Preserve each selected composition's geometry, hierarchy, spacing, imagery placement and responsive intent. Apply the user's existing style, logo, brand colors, content and business needs. Derive any missing brand decisions from these references. Reference fidelity takes precedence over generic layout examples or decorative signature requirements elsewhere in this prompt.
+Build real accessible HTML and CSS for both desktop and mobile, not screenshot backgrounds. Acquire suitable project imagery using available image generation or image search when needed; keep substitutions close to the reference's visual role and document their source. Never use a reference screenshot as the finished website.
+Review the rendered desktop and mobile result against the same images, run the existing anti-slop checks, polish failures and check again. Report unresolved failures honestly.
+${JSON.stringify(flow.referenceDeck, null, 2)}
+</selected-reference-workflow>`
+  }
+
+  #designPhasePrompt(flow: DesignFlow): string {
     if (flow.phase === 'brief') return designAgent().designBriefingPrompt(flow.originalRequest)
     this.#validateApprovedDesignArtifacts(flow)
     const brief = flow.approvedBrief!
@@ -3123,7 +3148,12 @@ export class Orchestrator {
       return designAgent().designBrandPrompt(brief, flow.referenceAttachments)
     const brand = flow.approvedBrand!
     if (flow.phase === 'page')
-      return designAgent().designPagePrompt(brief, brand, flow.referenceAttachments)
+      return designAgent().designPagePrompt(
+        brief,
+        brand,
+        flow.referenceAttachments,
+        flow.referenceDeck,
+      )
     const page = flow.approvedPage!
     if (flow.phase === 'assets')
       return designAgent().designAssetPrompt(brief, brand, page, flow.referenceAttachments)
@@ -3144,6 +3174,7 @@ export class Orchestrator {
         page,
         flow.screenshots,
         flow.referenceAttachments,
+        flow.referenceDeck,
       )
     }
     if (flow.phase === 'repair' && flow.review) {
@@ -3163,6 +3194,8 @@ export class Orchestrator {
   }
 
   #validateApprovedDesignArtifacts(flow: DesignFlow): void {
+    if (flow.referenceDeckSnapshot)
+      designAgent().validateDesignFileSnapshot(flow.referenceDeckSnapshot)
     const phase = [
       'brief',
       'brand',
@@ -3278,18 +3311,22 @@ export class Orchestrator {
 
   #designReferenceAttachments(threadId: string, flow: DesignFlow): string[] {
     if (!this.#get(threadId).session.capabilities.images) {
-      if (flow.referenceAttachments.length)
+      if (flow.referenceAttachments.length || flow.referenceDeck?.length)
         throw new Error('The selected provider cannot inspect required Design reference images')
       return []
     }
     if (flow.phase === 'brief' || flow.phase === 'preview' || flow.phase === 'complete')
       return flow.referenceAttachments
     const directions =
-      flow.phase === 'page'
-        ? designAgent().selectReferenceDirectionDeck(flow.approvedBrief!, flow.approvedBrand!)
-        : flow.approvedPage
-          ? designAgent().referenceDirectionsForPage(flow.approvedPage)
-          : []
+      flow.referenceDeck !== undefined
+        ? flow.approvedPage
+          ? designAgent().referenceDirectionsForPage(flow.approvedPage, flow.referenceDeck)
+          : flow.referenceDeck
+        : flow.phase === 'page'
+          ? designAgent().selectReferenceDirectionDeck(flow.approvedBrief!, flow.approvedBrand!)
+          : flow.approvedPage
+            ? designAgent().referenceDirectionsForPage(flow.approvedPage)
+            : []
     const internal = designAgent().referenceDirectionAttachments(directions)
     if (internal.some((file) => !existsSync(file)))
       throw new Error(
@@ -3722,6 +3759,12 @@ export class Orchestrator {
       explicitAnswers: flow.explicitAnswers,
     })
     flow.approvedBrief = saved
+    flow.referenceDeck = flow.referenceAttachments.length
+      ? []
+      : designAgent().selectReviewedReferences(saved)
+    flow.referenceDeckSnapshot = designAgent().snapshotDesignFiles(
+      designAgent().referenceDirectionAttachments(flow.referenceDeck),
+    )
     this.#recordDesignNote(threadId, turnId, 'Brief locked in. Starting the design.')
     flow.phase = 'brand'
     const prompt = this.#designPromptFor(flow)
@@ -3751,7 +3794,8 @@ export class Orchestrator {
     if (flow.phase === 'page') {
       const output = designAgent().parsePagePhaseOutput(
         text,
-        designAgent().selectReferenceDirectionDeck(flow.approvedBrief!, flow.approvedBrand!),
+        flow.referenceDeck ??
+          designAgent().selectReferenceDirectionDeck(flow.approvedBrief!, flow.approvedBrand!),
         flow.referenceAttachments.map((_, index) => `user-reference-${index + 1}`),
       )
       flow.correcting = false

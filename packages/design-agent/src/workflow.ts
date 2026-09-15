@@ -38,7 +38,7 @@ const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one o
 export function designBriefingPrompt(request: string): string {
   return `You are running TasteCode Design Briefing mode.
 
-This is a fast text-only classification and extraction step. Answer immediately from the supplied request. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
+This is a focused classification and extraction step. Read the supplied request first. For an existing website, inspect only the relevant project files, brand tokens, assets and current page structure needed to identify existing style and constraints. Do not browse or invoke external design skills. For a new site, extract the brief directly without unnecessary tool work. Do not describe your reasoning.
 
 This turn may only advance a design brief. Do not build, scaffold, edit, or generate a website, brand system, asset set, component, or implementation. TasteCode owns the question UI and persists the final brief.
 
@@ -46,7 +46,7 @@ First decide whether the request is primarily about designing or redesigning a w
 
 For a valid design request:
 1. Infer everything reasonably supported before asking anything.
-2. Complete subject, page type, scope, primary goal, audience, offer or USP, primary action, required content, constraints, existing brand inputs, and desired creative control. Brand inputs and constraints may be empty; do not force font, color, or visual choices that the later Brand skill should make.
+2. Complete subject, page type, scope, primary goal, audience, offer or USP, primary action, required content, constraints, existing brand inputs, and desired creative control. In requiredContent, identify the sections explicitly requested or needed for that goal, using descriptive section names and their actual content. Do not impose a fixed section count or generic landing-page sequence. Record existing colors, typography, logos and visual style in brandInputs when known, with their source. Brand inputs and constraints may be empty; do not invent brand decisions before seeing the selected reference images.
 3. If material information is missing, return every currently useful question in the "questions" response. If requirements conflict, ask the smallest question that resolves the contradiction; never silently choose one side or return "complete". There is no total question limit, but ask only questions whose answer materially changes the result — a simple request deserves a handful of questions, not a survey. TasteCode presents them one at a time.
 4. Options must fit the question: a yes/no question gets exactly two, most questions two to four real choices, listed with the strongest default first. Add "Decide for me" only when a safe assumption exists. Never add an option that means the user will type the answer themselves — the UI always shows a free-text field, so such an option is a duplicate. Never suffix a label with "(Recommended)" or similar tags. Never ask for information already present or reasonably inferable.
 5. Do not include the final open-ended check yourself. TasteCode guarantees that after all material questions are resolved.

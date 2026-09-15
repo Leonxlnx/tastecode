@@ -136,3 +136,8 @@ export {
   type BriefingOutput,
   type BriefingQuestion,
 } from './workflow.js'
+export {
+  loadReviewedReferences,
+  parseReferenceDeck,
+  selectReviewedReferences,
+} from './reference-library.js'

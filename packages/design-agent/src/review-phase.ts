@@ -5,7 +5,7 @@ import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
-import { referenceDirectionsForPage } from './reference-directions.js'
+import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
 export type ReviewSeverity = (typeof SEVERITIES)[number]
@@ -57,8 +57,11 @@ export function designReviewPrompt(
   page: PageBlueprint,
   screenshots: ReviewScreenshot[],
   suppliedReferences: readonly string[] = [],
+  referenceDeck?: readonly ReferenceDirection[],
 ): string {
-  const internalReferences = Array.isArray(page.sections) ? referenceDirectionsForPage(page) : []
+  const internalReferences = Array.isArray(page.sections)
+    ? referenceDirectionsForPage(page, referenceDeck)
+    : []
   const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
     id: `user-reference-${index + 1}`,
     file: path.basename(filePath),
