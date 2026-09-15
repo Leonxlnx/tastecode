@@ -80,18 +80,18 @@ Apply the following pass blockers to every screenshot:
 - Any visible internal note or unfinished copy such as sample, simulated, fictional, awaiting approval, still needed, not connected, before launch, live data required, or to be supplied.
 - A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
 - Decorative hairline grids, repeated separator rules, or arbitrary square-panel templates replace spacing and meaningful grouping. Any full-height one-sided line attached to or aligned with a card edge is a major finding regardless of color or implementation, including border-left, border-inline-start, pseudo-elements, gradients, and narrow child strips.
-- Cards are absent where discrete features, people, plans, proof, actions, or media need clear grouping; or cards merely box prose, repeat an empty equal-column template, or use unrelated treatments without a shared radius, spacing, media, and state logic.
+- Grouping loses the reference composition: open editorial content becomes boxed, distinct media layouts become equal-column templates, or related controls and cards use inconsistent spacing and states.
 - An approved brand accent appears only in tiny labels, icons, or underlines instead of meaningful actions and selected states; or unrelated card colors fragment the brand system.
 - An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space or substitutes for the reference's real imagery. SVG is acceptable only for an explicit functional icon, logo, or truthful data diagram.
 - A select, dropdown, calendar, date input, disclosure, or form control visibly falls back to an unstyled browser default.
 - Text, controls, imagery, or footer content overlaps, clips, overflows, becomes implausibly narrow, or lacks enough space to read.
-- An image is visibly stretched, cropped, cut off, or oversized relative to its content; a simple codeable interface was rasterized; or a section contains cavernous empty space without hierarchy or purpose.
-- The page repeatedly uses split heading-and-description introductions, drifts centered Hero support or actions to an unrelated edge, duplicates the same CTA in one section or viewport, or changes between unrelated light and dark themes.
+- An image is visibly stretched, cropped, cut off, or oversized in a way that loses the reference subject or focal placement; a simple codeable interface was rasterized; or a section contains cavernous empty space without hierarchy or purpose.
+- The page replaces the reference alignment, heading placement or negative space with a generic pattern, duplicates actions without purpose, or introduces unrelated palette changes.
 - A page toggles serif and sans repeatedly, uses improvised icons, or leaves a section as a flat color field with only a heading and sentence when meaningful content is available.
 
 Treat these as major findings, or blocking when they prevent reading or operation. Do not waive them because they match brand.json or page.json; repair the upstream interpretation.
 
-Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use an available visual-review skill when exposed by the session without assuming a provider, model, skill name, or private API.
+Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use these checks and the actual reference images; do not invoke external design skills.
 
 Return JSON only:
 {"version":1,"verdict":"pass|repair","summary":"...","findings":[{"id":"stable_snake_case","severity":"blocking|major|minor","area":"viewport or section","evidenceType":"automated|visual_inspection","confidence":"high|medium|low|unknown","evidence":"what is visibly wrong","repair":"specific bounded correction"}]}

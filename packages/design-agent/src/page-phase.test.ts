@@ -102,14 +102,14 @@ describe('page phase', () => {
     expect(prompt).toContain('Do not choose new colors or typefaces')
     expect(prompt).toContain('order sections by information dependencies')
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
-    expect(prompt).toContain('Treat the selected layout cases as composition requirements')
-    expect(prompt).toContain('Never collapse a selected case into the default centered heading')
+    expect(prompt).toContain('Treat the selected reference images as composition requirements')
+    expect(prompt).toContain('Do not add a section to use an available reference')
     expect(prompt).toContain('one related base card language and at most one emphasized variant')
     expect(prompt).toContain('record stable assetNeeds for every meaningful image')
     expect(prompt).toContain('Carry the approved brand accent into primary actions')
     expect(prompt).toContain('Give every section one explicit motion decision')
-    expect(prompt).toContain('Default section introductions to one clear stacked heading')
-    expect(prompt).toContain('do not repeat that split-intro pattern elsewhere')
+    expect(prompt).toContain('Derive heading placement, scale, image proportions')
+    expect(prompt).toContain('Unify typography, spacing tokens, buttons and section transitions')
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain('Do not write eyebrow copy')
     expect(prompt).toContain(
@@ -219,6 +219,48 @@ describe('page phase', () => {
 
   it('parses the final response through the page validator', () => {
     expect(parsePagePhaseOutput(JSON.stringify(page))).toEqual(page)
+  })
+  it('uses reviewed image IDs instead of imposing legacy layout recipes on new runs', () => {
+    const deck = [
+      {
+        id: 'studio-hero',
+        family: 'hero' as const,
+        imagePath: '/library/desktop.png',
+        mobileImagePath: '/library/mobile.png',
+        cue: 'Large editorial composition',
+      },
+    ]
+    const prompt = designPagePrompt(brief, brand, [], deck)
+    expect(prompt).toContain('/library/mobile.png')
+    expect(prompt).not.toContain('Use the following beta layout cases')
+    const result = parsePagePhaseOutput(
+      JSON.stringify({
+        ...page,
+        navigationDesign: { ...page.navigationDesign, layoutCase: 'reference-navigation' },
+        sections: [
+          {
+            ...page.sections[0],
+            referenceDirectionId: 'studio-hero',
+            layoutCases: ['studio-hero'],
+          },
+        ],
+      }),
+      deck,
+      [],
+      true,
+    )
+    expect(result.sections[0]?.layoutCases).toEqual(['studio-hero'])
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({
+          ...result,
+          sections: [{ ...result.sections[0], referenceDirectionId: 'unknown' }],
+        }),
+        deck,
+        [],
+        true,
+      ),
+    ).toThrow('must identify')
   })
 
   it('rejects page-phase output without a concrete layout selection', () => {

@@ -368,10 +368,11 @@ The Page phase writes actual concise copy before implementation. It must use the
 system and must not choose replacement colors, fonts, or sources.
 
 New Page-phase outputs must map every section to Hero, About, Feature, How It Works, Social Proof,
-Stats, FAQ, CTA, Pricing, Contact, or Footer and select the exact human-authored beta cases they
-apply. A custom-named section such as Showcase may reuse the compatible Feature family. Unknown,
-cross-family, missing, duplicated, and directly repeated compositions fail the Page phase before
-Build. The model must explicitly return every `referenceDirectionId`; TasteCode does not silently
+Stats, FAQ, CTA, Pricing, Contact, or Footer and select a reviewed reference from the persisted
+deck. New v0.5 runs record that reference ID in `layoutCases`; legacy runs retain the beta case
+validation. A custom-named section such as Showcase may reuse the compatible Feature family.
+Unknown, cross-family, and missing reference IDs fail the Page phase before Build.
+The model must explicitly return every `referenceDirectionId`; TasteCode does not silently
 fill an omitted choice, and a run with supplied user mockups must select at least one of them. Build
 treats the reference as the primary composition contract; family and cases classify and support
 it. Page, Build, and Review preserve its macro geometry, hierarchy, proportions, alignment,
@@ -727,9 +728,9 @@ them.
 ### Page gaps
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
-selected beta layout cases, responsive behavior, interactions, acceptance criteria, and one
-purposeful motion decision per section. The current catalog combines the human-reviewed website
-section cases with 132 generated direction variants. It still needs scored evidence from varied
+selected reference IDs, responsive behavior, interactions, acceptance criteria, and one
+purposeful motion decision per section. New runs use the configured reviewed image library;
+the 132 legacy direction variants remain available only for older saved runs. It still needs evidence from varied
 real builds to show which cues improve results and which should be retired.
 
 ### Asset gaps

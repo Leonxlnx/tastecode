@@ -34,7 +34,7 @@ For paletteRecipe, choose one evidence-based accent seed and one temperature-com
 
 Make motionDirection operational. Return each motionDirection.principles entry as one string, not an object. Every principle string must name a purpose, trigger, affected relationship, timing range, and easing character. Use motion for feedback, state change, spatial continuity, explanation, or status; reject motion that merely decorates. Favor direct responses around 100-300ms, transform and opacity, and strong ease-out curves such as cubic-bezier(0.23, 1, 0.32, 1). Reserve longer narrative movement for content that needs explanation, use spring behavior only for interruptible direct manipulation, and require a reduced-motion equivalent that preserves state and meaning. Ban universal fade-up choreography, transition: all, scale-from-zero entrances, perpetual floating, scroll-jacking, and hover-only information.
 
-You may inspect existing project brand files when they are relevant. Use an available design or brand skill when the session exposes one, but do not assume a particular provider, model, skill name, or private API. If no such skill is available, complete the same artifact from this prompt.
+Use the selected reference images and existing project brand files. Do not invoke external design or brand skills. Derive signatureDevice from an observable reference composition or existing brand treatment; do not invent a motif to fill this field.
 
 ${BRAND_PROTOCOL}
 
