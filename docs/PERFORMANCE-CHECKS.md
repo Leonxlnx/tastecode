@@ -57,6 +57,22 @@ The theme patch retains the four GitHub themes used by chat and diffs, plus the 
 Pierre default collection. Keep its catalog aligned with actual theme use when updating
 the dependency. Fonts, glyph coverage and design reference images remain complete.
 
+Desktop packaging excludes build inputs, debug maps, type-only generated modules, test
+helpers and unused dependency formats. After changing those exclusions, run the packaged
+native proof on each release OS. It imports every adapter and the HTML preview parser
+before checking the terminal and keyring, so source tests alone cannot hide a missing
+release dependency:
+
+```text
+node apps/desktop/scripts/run-native-binding-proof.js <app-or-exe>
+```
+
+Keep the platform's terminal prebuilds: pruning by architecture also changes the inputs
+to universal Mac packaging. Keep Electron's GPU fallback, media, locale data and startup
+files. Installer compression changes download size, not installed size.
+ZIP files use maximum compression; DMGs keep the existing UDZO format so the size setting
+does not switch disk-image opening to bzip2 decompression.
+
 ## Pull-request image previews
 
 Targeted regressions cover authenticated uploads, binary output limits, image formats,
