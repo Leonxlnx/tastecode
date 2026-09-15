@@ -3456,6 +3456,26 @@ describe('persisted threads', () => {
       // lowered briefing setting.
       expect(sessions[0]?.sentOptions[0]).toEqual({ model: 'shared-model', effort: 'high' })
       expect(orchestrator.queue('persisted-design').items[0]?.text).toBe('Do this after design.')
+      const session = sessions[0]!
+      const turnId = `${session.id}-turn`
+      session.emit(userMessage('internal-brand-prompt', 'Brand phase', turnId, 'started'))
+      session.emit({
+        type: 'item.delta',
+        turnId,
+        itemId: 'internal-brand-prompt',
+        textDelta: 'Brand phase',
+      })
+      session.emit(userMessage('internal-brand-prompt', 'Brand phase', turnId))
+      expect(
+        store
+          .history('persisted-design')
+          .some(
+            ({ event }) =>
+              ((event.type === 'item.started' || event.type === 'item.completed') &&
+                event.item.role === 'user') ||
+              (event.type === 'item.delta' && event.itemId === 'internal-brand-prompt'),
+          ),
+      ).toBe(false)
     } finally {
       await orchestrator.disposeAll()
       store.close()

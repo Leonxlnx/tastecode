@@ -3568,8 +3568,14 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       event.item.role === 'user'
     ) {
       const flow = this.#designFlows.get(threadId)
-      if (flow && !flow.askedQuestions) {
+      if (flow?.phase === 'brief' && !flow.askedQuestions && !flow.correcting) {
         this.#record(threadId, { ...event, item: { ...event.item, text: flow.originalRequest } })
+      } else if (event.type === 'item.started') {
+        const itemIds = suppressedUserItems ?? new Set<string>()
+        itemIds.add(event.item.id)
+        this.#suppressedUserItems.set(threadId, itemIds)
+      } else {
+        suppressedUserItems?.delete(event.item.id)
       }
       return
     }
