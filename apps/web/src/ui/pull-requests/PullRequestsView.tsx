@@ -320,6 +320,14 @@ export function PullRequestsView(props: {
             />
           ) : (
             <>
+              {error ? (
+                <p className="pr-list-note is-error" role="status">
+                  {error}
+                  <button type="button" onClick={() => void load(true)}>
+                    Try again
+                  </button>
+                </p>
+              ) : null}
               <PullRequestGroup
                 title={filter === 'all' ? undefined : capitalize(filter)}
                 items={visible}
@@ -337,7 +345,7 @@ export function PullRequestsView(props: {
       </aside>
 
       <div className="pr-detail-pane">
-        {selected ? (
+        {loading && !result ? null : selected ? (
           <PullRequestDetailPane
             key={pullRequestKey(selected)}
             item={selected}

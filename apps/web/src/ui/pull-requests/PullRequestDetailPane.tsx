@@ -116,7 +116,10 @@ export function PullRequestDetailPane(props: {
           return next
         }
       } catch (cause) {
-        if (id === request.current && !silent) setError(messageOf(cause))
+        if (id === request.current && !silent) {
+          if (detailRef.current) setNotice({ kind: 'error', text: messageOf(cause) })
+          else setError(messageOf(cause))
+        }
       } finally {
         if (id === request.current && !silent) {
           setLoading(false)
