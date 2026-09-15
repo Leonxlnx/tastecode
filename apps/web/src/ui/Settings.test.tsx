@@ -136,7 +136,7 @@ describe('settings viewport layout', () => {
     renderSettings()
 
     expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
-    expect(screen.getByRole('img', { name: /code sample preview/i })).toBeTruthy()
+    expect(screen.getByRole('img', { name: /code.*preview/i })).toBeTruthy()
     expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
       'system',
       'light',

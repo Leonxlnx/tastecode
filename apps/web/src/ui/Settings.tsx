@@ -1413,67 +1413,88 @@ function AppearanceCodePreview() {
     <div
       className="appearance-code-preview"
       role="img"
-      aria-label="Code sample preview using the current appearance settings"
+      aria-label="TasteCode thread.start code preview changing approval from ask to auto-review"
     >
       <div className="appearance-code-preview__pane" aria-hidden>
         <span className="appearance-code-preview__line">
           <span className="appearance-code-preview__number">1</span>
           <code>
-            <span className="appearance-code-preview__keyword">const</span> themePreview = {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            surface: <span className="appearance-code-preview__string">&quot;sidebar&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            accent: <span className="appearance-code-preview__string">&quot;neutral&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">4</span>
-          <code>
-            contrast: <span className="appearance-code-preview__number-value">42</span>,
+            <span className="appearance-code-preview__keyword">await</span> transport.request(
           </code>
         </span>
         <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">2</span>
+          <code>
+            {'  '}
+            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">3</span>
+          <code>
+            {'    '}provider:{' '}
+            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">4</span>
+          <code>{'    '}workspacePath: projectPath,</code>
+        </span>
+        <span className="appearance-code-preview__line" data-change="removed">
           <span className="appearance-code-preview__number">5</span>
-          <code>{'}'};</code>
+          <code>
+            {'    '}approval:{' '}
+            <span className="appearance-code-preview__string">&quot;ask&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">6</span>
+          <code>{'  }'},</code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">7</span>
+          <code>);</code>
         </span>
       </div>
       <div className="appearance-code-preview__pane" aria-hidden>
         <span className="appearance-code-preview__line">
           <span className="appearance-code-preview__number">1</span>
           <code>
-            <span className="appearance-code-preview__keyword">const</span> themePreview = {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            surface:{' '}
-            <span className="appearance-code-preview__string">&quot;sidebar-raised&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            accent: <span className="appearance-code-preview__string">&quot;focused&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">4</span>
-          <code>
-            contrast: <span className="appearance-code-preview__number-value">68</span>,
+            <span className="appearance-code-preview__keyword">await</span> transport.request(
           </code>
         </span>
         <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">2</span>
+          <code>
+            {'  '}
+            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">3</span>
+          <code>
+            {'    '}provider:{' '}
+            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">4</span>
+          <code>{'    '}workspacePath: projectPath,</code>
+        </span>
+        <span className="appearance-code-preview__line" data-change="added">
           <span className="appearance-code-preview__number">5</span>
-          <code>{'}'};</code>
+          <code>
+            {'    '}approval:{' '}
+            <span className="appearance-code-preview__string">&quot;auto-review&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">6</span>
+          <code>{'  }'},</code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">7</span>
+          <code>);</code>
         </span>
       </div>
     </div>
