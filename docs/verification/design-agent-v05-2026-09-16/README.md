@@ -1,7 +1,7 @@
 # Design Agent v0.5 validation — 2026-09-16
 
-Branch: `codex/design-agent-v05`, based on main `8d9ac8d1`.
-Draft PR: [#1159](https://github.com/Leonxlnx/tastecode/pull/1159).
+Branch: `codex/design-agent-v05`, originally based on main `8d9ac8d1`, synchronized with `40f4580c`.
+PR: [#1159](https://github.com/Leonxlnx/tastecode/pull/1159).
 
 ## Integration review
 
@@ -15,6 +15,8 @@ from Medium to Ultra and back to Medium in the Windows desktop application. No p
 
 PR #1153 remains pending a successful physical macOS window-drag check. The document-only
 proposal in PR #1132 fails `prettier --check gpt-6-defacto.md` and was excluded from the candidate.
+PRs #1129 and #1130 are merged; the final synchronized source matches the tested integration
+candidate. Shared-checkout work belonging to other sessions was not included.
 
 ## Four single-prompt runs
 
@@ -30,8 +32,8 @@ re-prompted. The server used port 4315 and the renderer used port 5185.
 | Atelier Fern | Built; preview stage failed          | Requested port 4174 was already occupied. The corrected static preview selected an available port and served this site successfully. Full desktop/mobile captures were subsequently inspected; the original task did not reach automated review.           |
 | Clearpath    | Completed after one automatic repair | Preserved the existing brand and explicit hero reference. The repair supplied supplemental full-page screenshots before its final review passed.                                                                                                           |
 
-These are not four uninterrupted passing runs. The PR remains draft because the asset clarification
-and preview recovery have not been exercised by another complete Design run. Mobile menu interaction
+These are not four uninterrupted passing runs. The asset clarification and preview recovery have
+not been exercised by another complete Design run. Mobile menu interaction
 and motion behavior were not independently verified in the final manual review.
 
 ## Reference and asset evidence
