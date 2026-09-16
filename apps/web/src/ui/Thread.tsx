@@ -669,7 +669,11 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   )
   const compactToNext =
     !suppressed &&
-    nextVisibleItem?.turnId === item.turnId &&
+    nextVisibleItem !== undefined &&
+    (nextVisibleItem.turnId === item.turnId ||
+      (item.type === 'message' &&
+        item.role === 'assistant' &&
+        item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
   const settling = settlingTurnId === item.turnId
