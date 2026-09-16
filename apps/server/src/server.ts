@@ -44,7 +44,7 @@ function reportStartupMilestone(name: string): void {
  * it reaches any logic, and the failure is reported as structured data rather
  * than a stack trace — "invalid message" in a log tells you nothing at 2am.
  */
-export function startServer(
+export async function startServer(
   options: {
     port?: number
     host?: string
@@ -55,24 +55,18 @@ export function startServer(
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
+  const wss = new WebSocketServer({ port, host })
+  await waitForListening(wss, port)
+
   const databasePath = storeLocation()
-  const releaseDataLease = acquireDataLease(databasePath)
+  let releaseDataLease: (() => void) | undefined
   let store: Store
   try {
+    releaseDataLease = acquireDataLease(databasePath)
     store = new Store(databasePath)
   } catch (error) {
-    releaseDataLease()
-    throw error
-  }
-  let wss: WebSocketServer
-  try {
-    wss = new WebSocketServer({ port, host })
-  } catch (error) {
-    try {
-      store.close()
-    } finally {
-      releaseDataLease()
-    }
+    releaseDataLease?.()
+    await closeWebSocketServer(wss)
     throw error
   }
   const push = new PushBus()
@@ -89,17 +83,9 @@ export function startServer(
     (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
   )
 
-  // A port clash is the most likely startup failure — a previous run that did
-  // not shut down cleanly. An unhandled 'error' event crashes the process with
-  // a stack trace that tells the user nothing.
+  // Startup errors reject startServer. Errors after readiness are fatal because
+  // the long-lived local server can no longer honor its client connection.
   wss.on('error', (error: NodeJS.ErrnoException) => {
-    if (error.code === 'EADDRINUSE') {
-      console.error(
-        `[server] port ${port} is already in use — another TasteCode server is ` +
-          `probably still running. Stop it, or set HARNESS_PORT to a free port.`,
-      )
-      process.exit(1)
-    }
     console.error(`[server] ${error.message}`)
     process.exit(1)
   })
@@ -1011,6 +997,32 @@ export function startServer(
       if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
     },
   }
+}
+
+function waitForListening(wss: WebSocketServer, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onListening = () => {
+      wss.off('error', onError)
+      resolve()
+    }
+    const onError = (error: NodeJS.ErrnoException) => {
+      wss.off('listening', onListening)
+      if (error.code === 'EADDRINUSE') {
+        error.message =
+          `port ${port} is already in use — another TasteCode server is probably ` +
+          'still running. Stop it, or set HARNESS_PORT to a free port.'
+      }
+      reject(error)
+    }
+    wss.once('listening', onListening)
+    wss.once('error', onError)
+  })
+}
+
+function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
+  return new Promise((resolve, reject) => {
+    wss.close((error) => (error ? reject(error) : resolve()))
+  })
 }
 
 /**
