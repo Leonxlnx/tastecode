@@ -65,8 +65,11 @@ The local initial catalog contains ten individually inspected section pairs from
 Ritovex and Scalient. It intentionally does not claim that the roughly one thousand raw generated
 images have all been reviewed. Runtime unit and orchestration checks cover random selection,
 explicit selection, image attachment transport, catalog validation and persisted selection.
-Four clean TasteCode site runs and their visual evidence are in progress. Each was started once
+Four clean TasteCode site runs have finished. Each was started once
 with Astra medium and one user prompt in a fresh project: Fieldwork, Orbit, Atelier Fern and
 Clearpath. The test app uses isolated data, renderer port 5185 and server port 4315. Earlier
 development attempts exposed shared-font, native-component, attribution-data and prompt-echo
-validation gaps; the clean runs use those fixes together.
+validation gaps; the clean runs use those fixes together. Orbit and Clearpath completed the flow;
+Atelier Fern built but encountered a preview-port collision; Fieldwork stopped at asset validation.
+Subsequent port and full-page capture fixes have regression coverage. See the
+[validation report](verification/design-agent-v05-2026-09-16/README.md) for evidence and remaining gaps.
