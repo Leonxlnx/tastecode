@@ -61,10 +61,14 @@ async function readArtifactProvenance(artifactPath, artifactName, desktopPackage
       execFileSync(artifactPath, ['--appimage-extract', resourcePath], {
         cwd: extractionRoot,
         stdio: 'ignore',
+        timeout: 120_000,
       })
       provenancePath = path.join(extractionRoot, 'squashfs-root', resourcePath)
     } else if (artifactName.endsWith('.deb')) {
-      execFileSync('dpkg-deb', ['--extract', artifactPath, extractionRoot], { stdio: 'ignore' })
+      execFileSync('dpkg-deb', ['--extract', artifactPath, extractionRoot], {
+        stdio: 'ignore',
+        timeout: 120_000,
+      })
       provenancePath = path.join(
         extractionRoot,
         'opt',
@@ -113,6 +117,12 @@ function configuredDebDependencies(debConfig) {
         throw new Error('[linux-release-evidence] --depends requires a dependency value')
       }
       configured.push(dependency)
+    } else if (argument.startsWith('-d=')) {
+      const dependency = argument.slice('-d='.length)
+      if (dependency.trim() === '') {
+        throw new Error('[linux-release-evidence] -d requires a dependency value')
+      }
+      configured.push(dependency)
     }
   }
   return configured.map(normalizeDebDependency)
@@ -130,7 +140,10 @@ export function assertConfiguredDebDependencies(actualDepends, debConfig = {}) {
   }
 }
 
-function verifyConfiguredDebDependencies(releaseDirectory, desktopPackage) {
+// Exported for programmatic callers — main() runs it, but a library consumer
+// must call it explicitly; collectLinuxReleaseEvidence deliberately stays
+// runnable without dpkg-deb for tests and non-deb environments.
+export function verifyConfiguredDebDependencies(releaseDirectory, desktopPackage) {
   const debConfig = desktopPackage.build?.deb
   if (configuredDebDependencies(debConfig).length === 0) return
   const debName = expectedLinuxArtifactNames(
@@ -151,7 +164,10 @@ function verifyConfiguredDebDependencies(releaseDirectory, desktopPackage) {
   }
   let actualDepends
   try {
-    actualDepends = execFileSync('dpkg-deb', ['--field', debPath, 'Depends'], { encoding: 'utf8' })
+    actualDepends = execFileSync('dpkg-deb', ['--field', debPath, 'Depends'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
   } catch {
     throw new Error(
       '[linux-release-evidence] cannot inspect deb dependencies with dpkg-deb; install dpkg and retry',
@@ -342,6 +358,11 @@ async function main() {
         `Usage: ${USAGE}\n`,
     )
     return
+  }
+  if (process.platform !== 'linux' || process.arch !== 'x64') {
+    throw new Error(
+      `[linux-release-evidence] requires Linux x64, received ${process.platform} ${process.arch}`,
+    )
   }
   const desktopPackage = await readDesktopPackage(workspaceRoot, TAG)
   const version = desktopPackage.version

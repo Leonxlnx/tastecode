@@ -71,6 +71,29 @@ test('requires configured FPM dependencies in the built deb', () => {
     () => assertConfiguredDebDependencies('libgtk-3-0', { fpm: ['--depends'] }),
     /--depends requires a dependency value/,
   )
+  assert.doesNotThrow(() =>
+    assertConfiguredDebDependencies('libgtk-3-0, libsecret-1-0', { fpm: ['-d=libsecret-1-0'] }),
+  )
+  assert.throws(
+    () => assertConfiguredDebDependencies('libgtk-3-0', { fpm: ['-d='] }),
+    /-d requires a dependency value/,
+  )
+})
+
+test('rejects artifact templates that collapse AppImage and deb to one name', () => {
+  assert.throws(
+    () =>
+      expectedLinuxArtifactNames({ version: '1.0.0', artifactName: 'TasteCode-${version}.pkg' }),
+    /collapses both targets/,
+  )
+  assert.throws(
+    () =>
+      expectedLinuxArtifactNames({
+        version: '1.0.0',
+        artifactName: 'TasteCode-${version}-${os}',
+      }),
+    /collapses both targets/,
+  )
 })
 
 test('records a deterministic manual-only distribution manifest', () =>

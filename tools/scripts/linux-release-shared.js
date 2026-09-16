@@ -53,7 +53,7 @@ export function expectedLinuxArtifactNames({ version, artifactName, productName,
   }
   const template = artifactName ?? 'TasteCode-${version}-${os}-${arch}.${ext}'
   const base = { version, os: 'linux', productName: productName ?? '', name: name ?? '' }
-  return ['AppImage', 'deb']
+  const names = ['AppImage', 'deb']
     .map((extension) => {
       const fileName = expandArtifactName(
         template,
@@ -64,6 +64,16 @@ export function expectedLinuxArtifactNames({ version, artifactName, productName,
       return fileName
     })
     .sort(compareAscii)
+  // A template without ${arch} or ${ext} collapses both targets to one name —
+  // a single artifact would then satisfy "both" and the deb never required.
+  if (new Set(names).size !== names.length) {
+    throw fail(
+      tag,
+      `artifactName template ${template} collapses both targets to ${names[0]}; ` +
+        'it must include ${arch} or ${ext}',
+    )
+  }
+  return names
 }
 
 async function digestFile(algorithm, encoding, filePath) {

@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import {
   createReadStream,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -28,6 +27,15 @@ function block(message) {
 
 function fail(message) {
   throw new Error(`[linux-acceptance] ${message}`)
+}
+
+// A missing tool is an environment blocker (exit 2), not a product failure.
+function probe(commandName, args) {
+  try {
+    return command(commandName, args)
+  } catch {
+    block(`${commandName} is required on PATH`)
+  }
 }
 
 function command(commandName, args, options = {}) {
@@ -68,10 +76,22 @@ async function main() {
   }
   const [nodeMajor, nodeMinor] = process.versions.node.split('.').map(Number)
   if (nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 18)) block('Node >=22.18.0 is required')
-  if (command('pnpm', ['--version']) !== '11.8.0') block('pnpm 11.8.0 is required')
-  if (command('git', ['status', '--porcelain'])) block('commit or stash changes before acceptance')
+  const expectedPnpm = JSON.parse(
+    readFileSync(path.join(workspaceRoot, 'package.json'), 'utf8'),
+  ).packageManager?.replace(/^pnpm@/, '')
+  if (!expectedPnpm) fail('root package.json must declare a pinned packageManager pnpm@<version>')
+  const pnpmVersion = probe('pnpm', ['--version'])
+  if (pnpmVersion !== expectedPnpm) {
+    block(`pnpm ${expectedPnpm} is required, received ${pnpmVersion}`)
+  }
+  if (probe('git', ['status', '--porcelain'])) block('commit or stash changes before acceptance')
 
-  const osRelease = readFileSync('/etc/os-release', 'utf8')
+  let osRelease
+  try {
+    osRelease = readFileSync('/etc/os-release', 'utf8')
+  } catch {
+    block('/etc/os-release is required to identify the distribution')
+  }
   const distribution = /^(?:ID)=(?:"?)([^"\n]+)/m.exec(osRelease)?.[1] ?? 'unknown'
   const distributionVersion = /^(?:VERSION_ID)=(?:"?)([^"\n]+)/m.exec(osRelease)?.[1] ?? 'unknown'
   if (!['pop', 'ubuntu'].includes(distribution) || distributionVersion !== '24.04') {
@@ -89,10 +109,10 @@ async function main() {
     distributionVersion,
     desktop,
     session: process.env['XDG_SESSION_TYPE'],
-    kernel: command('uname', ['-a']),
-    glibc: command('getconf', ['GNU_LIBC_VERSION']),
+    kernel: probe('uname', ['-a']),
+    glibc: probe('getconf', ['GNU_LIBC_VERSION']),
     node: process.version,
-    pnpm: '11.8.0',
+    pnpm: pnpmVersion,
   }
   process.stdout.write(`[linux-acceptance] ${JSON.stringify(identity)}\n`)
 
@@ -125,7 +145,8 @@ async function main() {
     'THIRD_PARTY_LICENSES.txt',
     'licenses/npm/napi-keyring-linux-x64-gnu-1.3.0-MIT.txt',
   ]) {
-    if (!existsSync(path.join(resources, relativePath))) fail(`missing packaged ${relativePath}`)
+    const resource = statSync(path.join(resources, relativePath), { throwIfNoEntry: false })
+    if (!resource?.isFile()) fail(`missing packaged ${relativePath}`)
   }
   run('pnpm', ['--filter', '@harness/desktop', 'verify:native-bindings', '--', executable])
   run('pnpm', [
@@ -149,6 +170,33 @@ async function main() {
     'linux-release-evidence.json',
   )
   const releaseEvidence = JSON.parse(readFileSync(releaseEvidencePath, 'utf8'))
+  // Cross-check the embedded evidence against values measured in this run —
+  // a commit landing between the prepare step and here would otherwise leave
+  // the report silently carrying two different commits.
+  if (releaseEvidence.commit !== identity.commit) {
+    fail(
+      `release evidence commit ${releaseEvidence.commit ?? 'missing'} does not match ` +
+        `HEAD ${identity.commit}; regenerate evidence for this checkout`,
+    )
+  }
+  if (releaseEvidence.version !== desktopPackage.version) {
+    fail(
+      `release evidence version ${releaseEvidence.version ?? 'missing'} does not match ` +
+        `apps/desktop version ${desktopPackage.version}`,
+    )
+  }
+  for (const artifact of releaseEvidence.artifacts ?? []) {
+    const artifactPath = path.join(releaseDirectory, 'linux-x64', artifact.file)
+    const measured = statSync(artifactPath, { throwIfNoEntry: false })?.isFile()
+      ? await sha256(artifactPath)
+      : undefined
+    if (measured === undefined) {
+      fail(`release artifact named by evidence is missing: ${artifact.file}`)
+    }
+    if (measured !== artifact.sha256) {
+      fail(`release artifact bytes changed after evidence was recorded: ${artifact.file}`)
+    }
+  }
   const report = {
     status: 'awaiting-manual-desktop-acceptance',
     createdAt: new Date().toISOString(),
