@@ -111,6 +111,21 @@ Linux delivery is proved in layers:
 AppImage is the portable Linux artifact, but Linux v1 updates are manual. The About surface links
 packaged Linux users to GitHub Releases without loading `electron-updater`; deb installs remain
 package-owned. Linux packaging sets its publisher to `null`, preventing update metadata generation.
+
+**The AppImage carries a sandbox requirement the deb does not.** Its FUSE mount cannot ship a
+setuid `chrome-sandbox`, so the renderer sandbox needs unprivileged user namespaces. Ubuntu
+23.10+ restricts those behind `kernel.apparmor_restrict_unprivileged_userns` and only packaged
+applications can install an AppArmor profile — the deb does (`apparmor-profile` ships in its
+resources), the AppImage cannot. On stock Ubuntu/Pop!_OS 24.04 the AppImage therefore fails at
+launch unless the user disables that restriction; the deb is the primary artifact and the
+AppImage claim stays limited to distributions that leave unprivileged user namespaces open.
+
+Credentials require a Secret Service provider on the session D-Bus (gnome-keyring, KWallet,
+KeePassXC). Minimal or headless desktops may have none, in which case credential-backed features
+fail with an explicit install/unlock message rather than silently storing plaintext. The deb
+declares `libc6 (>= 2.31)`, the glibc floor of the shipped Electron, so apt refuses installs on
+distributions too old to run the binary. musl-based distributions (Alpine) and arm64 are outside
+the x86_64 gnu-only artifact set.
 The curated `release/linux-x64` distribution contains only the AppImage, deb, SHA-256 checksums,
 and source-bound evidence; strict staging also excludes any unexpected private builder output.
 Windows and macOS retain the global generic publisher and their existing application-owned updater
