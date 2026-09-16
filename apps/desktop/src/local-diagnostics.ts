@@ -5,9 +5,13 @@ import path from 'node:path'
 const MAX_LOG_BYTES = 512 * 1024
 const MAX_ENTRY_BYTES = 4 * 1024
 const PRIVATE_KEY =
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|$)/g
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|$)/g
 const STANDALONE_SECRET =
-  /\b(?:sk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})\b/g
+  /(?<![A-Za-z0-9_])(?:sk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{16,}|sk_live_[0-9A-Za-z]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}|https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+){2})(?![A-Za-z0-9_])/g
+const SCHEME_SECRET = /(?<![A-Za-z0-9_])(bearer)(\s+)\S+/gi
+const BASIC_AUTH_SECRET = /(?<![A-Za-z0-9_])(authorization\s*[:=]\s*basic\s+)\S+/gi
+const KEYED_SECRET =
+  /(?<![A-Za-z0-9_])(token|api[_-]?key|password|secret)(?![A-Za-z0-9_])(["']?\s*[:=]\s*["']?)[^\s"']+/gi
 
 export function localDiagnosticsDirectory(userDataDirectory: string): string {
   return path.join(userDataDirectory, 'diagnostics', 'text')
@@ -119,7 +123,7 @@ export class LocalDiagnostics {
   }
 }
 
-function boundedEntry(value: string): string {
+export function boundedEntry(value: string): string {
   const bytes = Buffer.from(value)
   if (bytes.length < MAX_ENTRY_BYTES) return `${value}\n`
   return `${bytes
@@ -132,8 +136,10 @@ export function scrub(value: string): string {
   return value
     .replace(PRIVATE_KEY, '[redacted]')
     .replace(STANDALONE_SECRET, '[redacted]')
-    .replace(/\b[A-Z]:\\Users\\[^\\\r\n]+/gi, '[home]')
-    .replace(/\/(?:Users|home)\/[^/\r\n]+/g, '[home]')
+    .replace(/\b[A-Z]:\\Users\\(?:[^\\\r\n]+(?=\\)|[^\\\s]+)/gi, '[home]')
+    .replace(/\/(?:Users|home)\/(?:[^/\r\n]+(?=\/)|[^/\s]+)/g, '[home]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')
-    .replace(/\b(bearer|token|api[_-]?key)(\s*[:=]?\s*)\S+/gi, '$1$2[redacted]')
+    .replace(BASIC_AUTH_SECRET, '$1[redacted]')
+    .replace(SCHEME_SECRET, '$1$2[redacted]')
+    .replace(KEYED_SECRET, '$1$2[redacted]')
 }
