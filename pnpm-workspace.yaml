@@ -18,7 +18,23 @@ minimumReleaseAgeExclude:
 overrides:
   mermaid: 11.16.1
   dompurify: 3.4.13
+  # The Claude Code adapter always hands the Agent SDK the user's installed `claude`
+  # (`pathToClaudeCodeExecutable`) and spawns it itself through `spawnCli`, so the SDK's
+  # optional per-platform CLI packages (~290 MB each) are never resolved. Removing the
+  # dependency edge keeps them out of every install and out of the packaged app, and
+  # makes a call site that forgets the executable path fail the same way in `pnpm dev`
+  # as it would in a release build instead of silently falling back.
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64-musl': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64': '-'
 patchedDependencies:
   # @pierre/diffs keeps the gutter "+" pinned to the last commented line because
   # it never clears the selection after a gutter-utility click. See the patch.
   '@pierre/diffs@1.3.5': patches/@pierre__diffs@1.3.5.patch
+  # Keep the GitHub themes used by chat/diffs; leave Pierre's default collection intact.
+  '@pierre/theming@1.0.1': patches/@pierre__theming@1.0.1.patch

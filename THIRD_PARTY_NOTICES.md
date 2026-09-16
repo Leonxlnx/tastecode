@@ -21,6 +21,8 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `@napi-rs/keyring` | OS credential-store integration | MIT | [source](https://github.com/Brooooooklyn/keyring-node) |
 | `@opencode-ai/sdk` | OpenCode adapter client | MIT | [source](https://github.com/anomalyco/opencode) |
 | `@pierre/diffs` | Pull-request diff rendering | Apache-2.0 | [source](https://github.com/pierrecomputer/pierre) |
+| `@shikijs/langs` | Syntax highlighting grammars | MIT | [source](https://github.com/shikijs/shiki) |
+| `@shikijs/themes` | Syntax highlighting themes | MIT | [source](https://github.com/shikijs/shiki) |
 | `@tabler/icons-react` | Interface icons | MIT | [source](https://github.com/tabler/tabler-icons) |
 | `@tanstack/react-virtual` | Thread virtualization | MIT | [source](https://github.com/TanStack/virtual) |
 | `@xterm/addon-fit` | Terminal sizing | MIT | [source](https://github.com/xtermjs/xterm.js) |

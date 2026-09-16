@@ -290,13 +290,27 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-13 base main 7ac02ecf + 1119</span>
+        <span class="meta">2026-09-15 main db99155c</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <h2>Public Beta</h2>
+        <p class="sub">
+          Quiet SQLite startup, stronger chat titles, centered theme cards, a real request preview,
+          and custom accent and background colors are merged. Native title-bar drag repair awaits a
+          live window-movement check in PR #1153.
+          <a href="./verification/ship-2026-09-15-evening/README.md"
+            >Evening verification and screenshots</a
+          >.
+        </p>
+        <p class="sub">
+          Private PR images, loading states, refresh errors, PR layout, theme migration, package
+          size and the Bun shell are merged. All four local checks passed after integration with
+          main.
+          <a href="./verification/ship-2026-09-15/README.md">Local verification and screenshots</a>.
+        </p>
         <p class="sub">
           Codex dictation uses the signed-in account without an extra API key. White voice ribbons
           expand as Ask first and Design hide; Plus keeps accepting files during recording.
@@ -776,10 +790,11 @@
                 <span
                   >Packaged release client
                   <span class="d"
-                    >NSIS packaging produces the installer, blockmap, and beta metadata; the About
-                    surface checks, downloads, and installs updates from the TasteCode feed. Public
-                    feed publication, signing, and version-to-version proof remain release
-                    tasks</span
+                    >Release packages omit source files and unused dependency formats; packaged
+                    import, PTY and keyring checks pass on arm64 macOS. NSIS packaging produces the
+                    installer, blockmap, and beta metadata; the About surface checks, downloads, and
+                    installs updates from the TasteCode feed. Public feed publication, signing, and
+                    version-to-version proof remain release tasks</span
                   >
                 </span>
               </li>

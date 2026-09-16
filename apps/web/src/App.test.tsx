@@ -1272,7 +1272,7 @@ describe('web client', () => {
       tab: 'GitHub CLI install',
       terminalId: 'term-github-install',
       columns: 100,
-      showsCodeInput: false,
+      canCancelSignIn: false,
     },
     {
       account: { available: true, authenticated: false, error: 'Sign in with gh auth login' },
@@ -1281,7 +1281,7 @@ describe('web client', () => {
       tab: 'GitHub login',
       terminalId: 'term-github-login',
       columns: 320,
-      showsCodeInput: true,
+      canCancelSignIn: true,
     },
   ])('opens GitHub $action in the expanded workspace terminal', async (scenario) => {
     const request = transport.request.getMockImplementation()
@@ -1323,11 +1323,12 @@ describe('web client', () => {
     await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(true))
     expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
     expect(await screen.findByLabelText(`${scenario.tab} terminal`)).toBeTruthy()
-    if (scenario.showsCodeInput) {
-      expect(await screen.findByLabelText('Login code')).toBeTruthy()
+    if (scenario.canCancelSignIn) {
+      expect(await screen.findByRole('button', { name: 'Cancel sign-in' })).toBeTruthy()
     } else {
-      expect(screen.queryByLabelText('Login code')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
     }
+    expect(screen.queryByLabelText('Login code')).toBeNull()
     expect(transport.request).toHaveBeenCalledWith('pullRequests.setup', {
       action: scenario.action,
       columns: scenario.columns,
@@ -1436,6 +1437,29 @@ describe('web client', () => {
         'I wanted to work on https://github.com/Blueemi/harness/pull/1 (Add the parser).',
       )
     })
+  })
+
+  it('shows model discovery failures with a retry that preserves the draft', async () => {
+    let failing = true
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'models.list' && failing)
+        return Promise.reject(new Error('Model service is offline'))
+      return request(method, params)
+    })
+    render(<App />)
+    const composer = (await screen.findByPlaceholderText('Do anything')) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep my model draft' } })
+    const error = await screen.findByText('Could not load Codex models. Model service is offline')
+    expect(error.closest('.composer__provider-shelf')).toBeTruthy()
+    failing = false
+    fireEvent.click(screen.getByRole('button', { name: 'Retry models' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Could not load Codex models. Model service is offline'),
+      ).toBeNull(),
+    )
+    expect(composer.value).toBe('Keep my model draft')
   })
 
   it('restores the selected model immediately on the first cache-enabled launch', async () => {
@@ -2414,7 +2438,7 @@ describe('new chats', () => {
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
   })
 
-  it('auto-dismisses notifications after five seconds', async () => {
+  it('keeps composer errors until dismissed and shows a later failure again', async () => {
     serverProjects = []
     render(<App />)
 
@@ -2425,15 +2449,15 @@ describe('new chats', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Send' }))
 
       expect(screen.getByRole('alert').textContent).toContain('Choose a project before sending.')
-      act(() => vi.advanceTimersByTime(4_999))
-      expect(screen.getByRole('alert')).toBeTruthy()
-      act(() => vi.advanceTimersByTime(1))
-      const notice = screen.getByRole('alert')
-      expect(notice.getAttribute('data-state')).toBe('closing')
-      act(() => {
-        dispatchTransitionEnd(notice, 'opacity')
-      })
+      act(() => vi.advanceTimersByTime(10_000))
+      expect(screen.getByRole('alert').closest('.composer__provider-shelf')).toBeTruthy()
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Dismiss error: Choose a project before sending.' }),
+      )
       expect(screen.queryByRole('alert')).toBeNull()
+      expect((composer as HTMLTextAreaElement).value).toBe('Start after I choose a project')
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(screen.getByRole('alert').textContent).toContain('Choose a project before sending.')
     } finally {
       vi.useRealTimers()
     }
@@ -2452,7 +2476,7 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Send after setup' } })
-    const setup = await screen.findByRole('button', { name: 'Set up a provider' })
+    const setup = await screen.findByRole('button', { name: 'Set up provider' })
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(setup)
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
@@ -2479,86 +2503,119 @@ describe('new chats', () => {
     fireEvent.change(composer, { target: { value: 'Stay blocked' } })
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
-    await screen.findByRole('button', { name: 'Sign in' })
+    await within(screen.getByRole('dialog', { name: 'Settings' })).findByRole('button', {
+      name: 'Sign in',
+    })
     await act(async () => finishInitial({ signedIn: true }))
+    fireEvent.keyDown(document, { key: 'Escape' })
     expect(
       screen
         .getAllByRole('status')
-        .some((status) => status.textContent?.includes('Provider setup required')),
+        .some((status) => status.textContent?.includes('Sign in to use this provider.')),
     ).toBe(true)
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('opens Claude login in the expanded workspace and restores Settings after success', async () => {
-    serverProviders = [
-      ...serverProviders,
-      {
-        id: 'claude-code',
-        displayName: 'Claude Code',
-        installed: true,
-        auth: 'unknown',
-        setup: {
-          installUrl: 'https://code.claude.com/docs/en/getting-started',
-          login: 'provider',
+  it.each(['success', 'failure', 'cancel'] as const)(
+    'restores Settings after Claude sign-in ends with %s',
+    async (outcome) => {
+      serverProviders = [
+        ...serverProviders,
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: true,
+          auth: 'unknown',
+          setup: {
+            installUrl: 'https://code.claude.com/docs/en/getting-started',
+            login: 'provider',
+          },
         },
-      },
-    ]
-    let claudeSignedIn = false
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'auth.status') {
-        const provider = methods['auth.status'].params.parse(params).provider
-        return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
-      }
-      if (method === 'providers.launch') {
-        return Promise.resolve({ terminalId: 'term-claude-login' })
-      }
-      return request(method, params)
-    })
-    vi.stubGlobal(
-      'ResizeObserver',
-      class {
-        observe(): void {}
-        unobserve(): void {}
-        disconnect(): void {}
-      },
-    )
-
-    render(<App />)
-    openSettings()
-    await screen.findByText('Claude Code')
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
-
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
-    const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
-    expect(workspace.classList.contains('is-panel-open')).toBe(true)
-    expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
-    expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
-    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-      provider: 'claude-code',
-      columns: 320,
-      rows: 30,
-    })
-
-    claudeSignedIn = true
-    act(() => {
-      transport.listeners.get('terminal.exit')!({
-        terminalId: 'term-claude-login',
-        exitCode: 0,
+      ]
+      let claudeSignedIn = false
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method === 'auth.status') {
+          const provider = methods['auth.status'].params.parse(params).provider
+          return Promise.resolve({ signedIn: provider === 'claude-code' ? claudeSignedIn : true })
+        }
+        if (method === 'providers.launch') {
+          return Promise.resolve({ terminalId: 'term-claude-login' })
+        }
+        if (method === 'terminal.close') return Promise.resolve({})
+        return request(method, params)
       })
-    })
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          observe(): void {}
+          unobserve(): void {}
+          disconnect(): void {}
+        },
+      )
 
-    await screen.findByRole('dialog', { name: 'Settings' })
-    await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
-    expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
-    expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
-    await waitFor(() =>
-      expect(
-        screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
-      ).toContain('Signed in'),
-    )
-  })
+      render(<App />)
+      openSettings()
+      await screen.findByText('Claude Code')
+      fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+      const workspace = document.querySelector<HTMLElement>('.workspace-layout')!
+      expect(workspace.classList.contains('is-panel-open')).toBe(true)
+      expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
+      expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
+      expect(transport.request).toHaveBeenCalledWith('providers.launch', {
+        provider: 'claude-code',
+        columns: 320,
+        rows: 30,
+      })
+
+      expect(screen.queryByLabelText('Login code')).toBeNull()
+      if (outcome === 'cancel') {
+        fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith('terminal.close', {
+            terminalId: 'term-claude-login',
+          }),
+        )
+      } else {
+        claudeSignedIn = outcome === 'success'
+        act(() => {
+          transport.listeners.get('terminal.exit')!({
+            terminalId: 'term-claude-login',
+            exitCode: outcome === 'success' ? 0 : 130,
+          })
+        })
+      }
+
+      await screen.findByRole('dialog', { name: 'Settings' })
+      await waitFor(() => expect(workspace.classList.contains('is-panel-open')).toBe(false))
+      expect(workspace.classList.contains('is-panel-expanded')).toBe(false)
+      expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
+      await waitFor(() =>
+        expect(
+          screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
+        ).toContain(
+          outcome === 'success'
+            ? 'Signed in'
+            : outcome === 'failure'
+              ? 'Sign-in failed'
+              : 'Sign-in canceled',
+        ),
+      )
+      if (outcome === 'failure') {
+        expect(screen.getByRole('button', { name: 'Retry sign-in' })).toBeTruthy()
+        expect(screen.getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe(
+          'false',
+        )
+        const issue = screen.getByRole('button', { name: 'Problem details' })
+        expect(issue.closest('.provider-row')).toBeTruthy()
+        fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+        expect(await screen.findByLabelText('Install terminal')).toBeTruthy()
+      }
+    },
+  )
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
     const parked = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
@@ -2593,8 +2650,10 @@ describe('new chats', () => {
     render(<App />)
     const composer = await screen.findByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Recover this draft' } })
-    await screen.findByRole('button', { name: 'Set up a provider' })
-    expect(screen.getByRole('status').textContent).toContain('Provider unavailable')
+    await screen.findByRole('button', { name: 'Retry' })
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Could not load providers. provider discovery unavailable',
+    )
     failing = false
     act(() => {
       setConnectionState('reconnecting')
@@ -3268,6 +3327,30 @@ describe('new chats', () => {
       await waitForWorkspace(1)
     },
   )
+  it('shows active chat errors in the composer and keeps dismissal scoped to that failure', async () => {
+    await openNewSession()
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } })
+    emitThreadEvent('untouched-thread', {
+      type: 'thread.error',
+      threadId: 'untouched-thread',
+      message: 'Model request timed out',
+    })
+    const error = await screen.findByRole('alert')
+    expect(error.closest('.composer__provider-shelf')).toBeTruthy()
+    expect(error.textContent).toBe('Model request timed out')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss error: Model request timed out' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(composer.value).toBe('Keep this draft')
+    expect(document.activeElement).toBe(composer)
+    emitThreadEvent('untouched-thread', {
+      type: 'thread.error',
+      threadId: 'untouched-thread',
+      message: 'Model request timed out',
+    })
+    expect(await screen.findByRole('alert')).toBeTruthy()
+  })
+
   it('refreshes after terminal thread errors', async () => {
     await openNewSession()
     transport.request.mockClear()
@@ -4588,23 +4671,27 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).toBe('light')
   })
 
-  it('persists the Codex theme across app restarts', async () => {
+  it('replaces the removed Codex theme with system across app restarts', async () => {
+    localStorage.setItem('harness.theme', 'codex')
     const first = render(<App />)
 
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'Codex' }))
+    expect(screen.queryByRole('radio', { name: 'Codex' })).toBeNull()
+    expect((screen.getByRole('radio', { name: 'System' }) as HTMLInputElement).checked).toBe(true)
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.theme')).toBe('codex')
-      expect(document.documentElement.dataset.theme).toBe('codex')
-      expect(document.documentElement.classList.contains('dark')).toBe(true)
+      expect(localStorage.getItem('harness.theme')).toBe('system')
+      expect(document.documentElement.dataset.theme).toBe(
+        window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+      )
     })
 
     first.unmount()
     render(<App />)
 
-    expect(document.documentElement.dataset.theme).toBe('codex')
+    expect(localStorage.getItem('harness.theme')).toBe('system')
+    expect(document.documentElement.dataset.theme).not.toBe('codex')
   })
 
   it('persists the selected interface font', async () => {
@@ -4708,10 +4795,15 @@ describe('new chats', () => {
     const first = render(<App />)
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-    fireEvent.click(screen.getByRole('combobox', { name: 'Accent palette' }))
-    const accentOptions = screen.getByRole('listbox', { name: 'Accent palette' })
-    expect(within(accentOptions).getAllByRole('option')).toHaveLength(7)
-    fireEvent.click(within(accentOptions).getByRole('option', { name: 'Ocean' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Accent palette:/ }))
+    const picker = screen.getByRole('dialog', { name: 'Accent palette color picker', hidden: true })
+    fireEvent(picker, Object.assign(new Event('toggle'), { newState: 'open' }))
+    const accentOptions = within(picker).getByRole('group', {
+      name: 'Accent palette presets',
+      hidden: true,
+    })
+    expect(within(accentOptions).getAllByRole('button', { hidden: true })).toHaveLength(7)
+    fireEvent.click(within(accentOptions).getByRole('button', { name: 'Ocean', hidden: true }))
 
     await waitFor(() => {
       expect(localStorage.getItem('harness.accent')).toBe('ocean')

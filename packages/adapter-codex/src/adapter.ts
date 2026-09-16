@@ -42,6 +42,7 @@ import {
   AccountResponseSchema,
   ApprovalParamsSchema,
   CodexRateLimitResponseSchema,
+  CodexResetCreditSchema,
   ConsumeRateLimitResetResponseSchema,
   CommandOutputDeltaNotificationSchema,
   ErrorNotificationSchema,
@@ -196,6 +197,7 @@ export type ProviderLimit = {
   resetsAt?: number | undefined
   valueLabel?: string | undefined
   action?: 'consume-reset' | undefined
+  resetCredits?: { id?: string | undefined; expiresAt: number | null }[] | undefined
 }
 
 export type CodexLimitSource =
@@ -611,10 +613,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * Spend one earned reset. The caller owns the idempotency key so a retry of
    * the same attempt cannot redeem a second credit.
    */
-  async consumeRateLimitReset(idempotencyKey: string): Promise<CodexResetOutcome> {
+  async consumeRateLimitReset(
+    idempotencyKey: string,
+    creditId?: string,
+  ): Promise<CodexResetOutcome> {
     const response = await this.#callParsed(
       'account/rateLimitResetCredit/consume',
-      { idempotencyKey },
+      { idempotencyKey, ...(creditId === undefined ? {} : { creditId }) },
       ConsumeRateLimitResetResponseSchema,
       CONTROL_READ_TIMEOUT_MS,
     ).catch((cause) => {
@@ -1430,11 +1435,23 @@ export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLi
   const resets = response.rateLimitResetCredits
   const availableResets = Number(resets?.availableCount)
   if (Number.isFinite(availableResets) && availableResets > 0) {
+    const resetCredits = resets?.credits?.flatMap((credit) => {
+      const parsed = CodexResetCreditSchema.safeParse(credit)
+      if (!parsed.success) return []
+      const { id, expiresAt } = parsed.data
+      return [
+        {
+          ...(id === undefined ? {} : { id }),
+          expiresAt: expiresAt === null ? null : expiresAt * 1000,
+        },
+      ]
+    })
     rows.push({
       label: 'Rate limit resets',
       usedPercent: 0,
       valueLabel: `${Math.floor(availableResets)} available`,
       action: 'consume-reset',
+      ...(resetCredits?.length ? { resetCredits } : {}),
     })
   }
   return rows

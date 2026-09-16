@@ -51,6 +51,7 @@ function renderSettings(
       projectCount={0}
       sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
       onSidebarSettingsChange={() => {}}
+      themeColorScheme="dark"
       themePreference="system"
       onThemePreferenceChange={() => {}}
       fontPreference="geist"
@@ -132,24 +133,25 @@ describe('settings viewport layout', () => {
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
   })
 
-  it('pairs theme previews with one compact details editor', () => {
+  it('pairs theme previews with compact appearance controls', () => {
     renderSettings()
 
     expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
-    expect(screen.getByRole('img', { name: /code sample preview/i })).toBeTruthy()
+    expect(screen.getByRole('img', { name: /code.*preview/i })).toBeTruthy()
     expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
       'system',
       'light',
       'dark',
-      'codex',
     ])
 
-    const details = screen.getByRole('region', { name: 'Theme details' })
+    const details = screen.getByRole('region', { name: 'Appearance controls' })
     expect(
       within(details)
         .getAllByRole('combobox')
         .map((control) => control.getAttribute('aria-label')),
-    ).toEqual(['Accent palette', 'Background', 'Interface font', 'Sidebar translucency'])
+    ).toEqual(['Interface font', 'Sidebar translucency'])
+    expect(within(details).getByRole('button', { name: 'Accent palette: #4C9DFF' })).toBeTruthy()
+    expect(within(details).getByRole('button', { name: 'Background: #0F0F0F' })).toBeTruthy()
   })
 
   it('lets the terminal shortcut target the right sidebar', () => {
@@ -525,7 +527,7 @@ describe('app haptic setting', () => {
 })
 
 describe('model settings', () => {
-  it('shows the automatic Luna policy and persists a manual model and effort', async () => {
+  it('persists background model, effort, and speed without carrying Fast to unsupported models', async () => {
     const sources = [
       {
         id: 'codex',
@@ -537,6 +539,20 @@ describe('model settings', () => {
             displayName: 'GPT-5.6 Luna',
             isDefault: false,
             reasoningEfforts: ['low', 'medium', 'high'],
+            serviceTiers: [{ id: 'priority', name: 'Fast', description: 'Faster responses' }],
+          },
+        ],
+      },
+      {
+        id: 'grok',
+        displayName: 'Grok',
+        provider: 'grok' as const,
+        models: [
+          {
+            id: 'grok-4.6',
+            displayName: 'Grok 4.6',
+            isDefault: true,
+            reasoningEfforts: ['low'],
             serviceTiers: [],
           },
         ],
@@ -583,6 +599,7 @@ describe('model settings', () => {
     const picker = await screen.findByRole('combobox', { name: 'Background model' })
     expect(picker.tagName).toBe('BUTTON')
     expect(screen.getByText(/gpt-5\.6 luna through codex at low effort/i)).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: 'Background speed' })).toBeNull()
     fireEvent.click(picker)
     fireEvent.click(screen.getByRole('option', { name: 'GPT-5.6 Luna' }))
 
@@ -601,6 +618,23 @@ describe('model settings', () => {
     )
     const effort = await screen.findByRole('combobox', { name: 'Background reasoning effort' })
     expect(effort.tagName).toBe('BUTTON')
+    const speed = screen.getByRole('combobox', { name: 'Background speed' })
+    expect(speed.textContent).toContain('Standard')
+    fireEvent.click(speed)
+    fireEvent.click(screen.getByRole('option', { name: 'Fast' }))
+    await waitFor(() => expect(speed.textContent).toContain('Fast'))
+    expect(transport.requests.at(-1)).toEqual({
+      method: 'backgroundModel.updateSettings',
+      params: {
+        mode: 'manual',
+        target: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'low',
+          serviceTier: 'priority',
+        },
+      },
+    })
     fireEvent.click(effort)
     fireEvent.click(screen.getByRole('option', { name: 'high' }))
     await waitFor(() =>
@@ -612,10 +646,43 @@ describe('model settings', () => {
             provider: 'codex',
             model: 'gpt-5.6-luna',
             effort: 'high',
+            serviceTier: 'priority',
           },
         },
       }),
     )
+    await waitFor(() => expect(effort.textContent).toContain('high'))
+    expect(speed.textContent).toContain('Fast')
+    fireEvent.click(speed)
+    fireEvent.click(screen.getByRole('option', { name: 'Standard' }))
+    await waitFor(() => expect(speed.textContent).toContain('Standard'))
+    expect(transport.requests.at(-1)).toEqual({
+      method: 'backgroundModel.updateSettings',
+      params: {
+        mode: 'manual',
+        target: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'high',
+          serviceTier: undefined,
+        },
+      },
+    })
+    fireEvent.click(speed)
+    fireEvent.click(screen.getByRole('option', { name: 'Fast' }))
+    await waitFor(() => expect(speed.textContent).toContain('Fast'))
+    fireEvent.click(picker)
+    fireEvent.click(screen.getByRole('option', { name: 'Grok 4.6' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('combobox', { name: 'Background speed' })).toBeNull(),
+    )
+    expect(transport.requests.at(-1)).toEqual({
+      method: 'backgroundModel.updateSettings',
+      params: {
+        mode: 'manual',
+        target: { provider: 'grok', model: 'grok-4.6', effort: 'low' },
+      },
+    })
   })
 
   it('keeps a disconnected manual choice visible so Automatic can replace it', async () => {
@@ -705,6 +772,7 @@ describe('model settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -830,6 +898,7 @@ describe('model settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -896,6 +965,7 @@ describe('model settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -1057,6 +1127,7 @@ describe('provider settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -1174,6 +1245,7 @@ describe('provider settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -1332,6 +1404,7 @@ describe('provider settings', () => {
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
         onSidebarSettingsChange={() => {}}
+        themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
         fontPreference="geist"
@@ -1398,6 +1471,91 @@ describe('provider settings', () => {
     expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
     expect(onConnectionsChanged).not.toHaveBeenCalled()
+  })
+
+  it('closes failed details and lets Settings cancel a new sign-in', async () => {
+    let attempt = 0
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch') return { terminalId: `settings-login-${++attempt}` }
+      if (method === 'terminal.close') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <ProviderSettings
+        provider="claude-code"
+        account={{ signedIn: false }}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: { installUrl: 'https://example.test', login: 'provider' },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    await screen.findByTestId('install-terminal')
+    act(() => transport.emit('terminal.exit', { terminalId: 'settings-login-1', exitCode: 130 }))
+    await screen.findByRole('button', { name: 'Retry sign-in' })
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sign-in' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
+    await screen.findByText('Sign-in canceled')
+    expect(transport.requests).toContainEqual({
+      method: 'terminal.close',
+      params: { terminalId: 'settings-login-2' },
+    })
+    expect(screen.queryByText('Sign-in failed')).toBeNull()
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+  })
+
+  it('does not open the terminal when a pending sign-in is canceled', async () => {
+    let launch!: (value: { terminalId: string }) => void
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch')
+        return new Promise((resolve) => {
+          launch = resolve
+        })
+      if (method === 'terminal.close') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    const open = vi.fn()
+    render(
+      <ProviderSettings
+        provider="claude-code"
+        account={{ signedIn: false }}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: { installUrl: 'https://example.test', login: 'provider' },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={open}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
+    await act(async () => launch({ terminalId: 'pending-login' }))
+    await screen.findByText('Sign-in canceled')
+    expect(open).not.toHaveBeenCalled()
+    expect(transport.requests).toContainEqual({
+      method: 'terminal.close',
+      params: { terminalId: 'pending-login' },
+    })
   })
 
   it('hands every provider CLI login to the expanded workspace terminal', async () => {

@@ -182,6 +182,11 @@
   gap: 4px;
 }
 
+.account-menu__limit-skeleton {
+  display: grid;
+  gap: 7px;
+}
+
 .account-menu__limit-row {
   display: flex;
   justify-content: space-between;
@@ -202,16 +207,6 @@
   flex: none;
   color: var(--text-2);
   white-space: nowrap;
-}
-
-.account-menu__limit-slot {
-  display: grid;
-  justify-items: end;
-  align-items: center;
-}
-
-.account-menu__limit-slot > * {
-  grid-area: 1 / 1;
 }
 
 .account-menu__limit-btn {
@@ -240,39 +235,48 @@
   opacity: 0.55;
 }
 
-.account-menu__limit-use,
-.account-menu__limit-value {
-  transition: opacity var(--dur-fast) var(--ease-out);
+.account-menu__reset-credit {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px 8px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.3;
 }
 
-.account-menu__limit-use {
-  opacity: 0;
-  pointer-events: none;
+.account-menu__reset-expiry {
+  grid-area: 1 / 1;
+  min-width: 0;
 }
 
-.account-menu__limit--reset:is(:hover, :focus-within):not(.is-confirming) .account-menu__limit-use {
-  opacity: 1;
-  pointer-events: auto;
+.account-menu__reset-time {
+  display: block;
 }
 
-.account-menu__limit--reset:is(:hover, :focus-within):not(.is-confirming)
-  .account-menu__limit-value {
-  opacity: 0;
+.account-menu__reset-credit .account-menu__limit-use {
+  grid-area: 1 / 2;
 }
 
-@media (hover: none) {
-  .account-menu__limit--reset:not(.is-confirming) .account-menu__limit-use {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .account-menu__limit--reset:not(.is-confirming) .account-menu__limit-value {
-    opacity: 0;
-  }
-}
-
-.account-menu__limit.is-confirming {
+.account-menu__reset-credit.is-confirming {
   outline: none;
+}
+
+.account-menu__reset-credit.is-confirming .account-menu__reset-expiry {
+  grid-column: 1 / -1;
+}
+
+.account-menu__reset-credit .account-menu__limit-confirm {
+  grid-area: 2 / 1;
+  justify-self: start;
+}
+
+.account-menu__reset-credit .account-menu__limit-cancel {
+  grid-area: 2 / 2;
+}
+
+.account-menu__reset-credit .account-menu__limit-note {
+  grid-column: 1 / -1;
 }
 
 .account-menu__limit-note {
@@ -302,4 +306,19 @@
   color: var(--text-3);
   font-size: var(--t-xs);
   line-height: 1.3;
+}
+
+.account-menu__reset-expiries {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.3;
+}
+
+.account-menu__reset-expiries [data-expiring-soon] {
+  color: var(--error);
 }

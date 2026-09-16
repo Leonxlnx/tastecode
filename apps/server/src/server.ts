@@ -334,6 +334,9 @@ export function startServer(
         return (await pullRequestService()).action(p.repository, p.number, p.action)
       }
 
+      case 'pullRequests.image':
+        return (await pullRequestService()).images.image(parseParams(method, params).url)
+
       case 'providers.list':
         return { providers: await (await providerService).detectProviders() }
 
@@ -677,7 +680,7 @@ export function startServer(
 
       case 'terminal.close': {
         const p = parseParams(method, params)
-        orchestrator.closeTerminal(p.terminalId)
+        await orchestrator.closeTerminal(p.terminalId)
         return {}
       }
 
@@ -803,7 +806,7 @@ export function startServer(
 
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
-        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey)
+        return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
       }
 
       case 'sideChat.start': {

@@ -1666,3 +1666,28 @@ function populatedResourceTransport(): Transport {
     throw new Error(`Unexpected request: ${method}`)
   })
 }
+
+describe('Composer error dismissal', () => {
+  it('hides a setup error without changing the draft or allowing a blocked send', () => {
+    const onSend = vi.fn()
+    const view = renderComposer(onSend, {
+      sendAvailability: 'setup-required',
+      providerSignInRequired: true,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Keep my draft' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Dismiss error: Sign in to use this provider.' }),
+    )
+    expect(screen.queryByText('Sign in to use this provider.')).toBeNull()
+    view.rerenderComposer({ onSetupProvider: vi.fn() })
+    expect(screen.queryByText('Sign in to use this provider.')).toBeNull()
+    expect(composer.value).toBe('Keep my draft')
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).not.toHaveBeenCalled()
+    view.rerenderComposer({ sendAvailability: 'ready' })
+    view.rerenderComposer({ sendAvailability: 'setup-required' })
+    expect(screen.getByText('Sign in to use this provider.')).toBeTruthy()
+  })
+})

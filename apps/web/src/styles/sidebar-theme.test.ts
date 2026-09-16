@@ -52,11 +52,12 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.rail__search \{[^}]*width: 26px;[^}]*height: 26px;/s)
   })
 
-  it('softens chat titles only in the default dark theme', () => {
-    expect(appCss).toMatch(/\.sess__title \{[^}]*font-size: 12\.5px;/s)
+  it('uses medium-weight chat titles and softens only their dark-theme color', () => {
+    expect(appCss).toMatch(/\.sess__title \{[^}]*font-size: 12\.5px;[^}]*font-weight: 500;/s)
     expect(appCss).toMatch(
-      /:root\[data-theme='dark'\] \.sess__title \{[^}]*color: color-mix\(in srgb, var\(--rail-text\) 78%, transparent\);[^}]*font-weight: 360;/s,
+      /:root\[data-theme='dark'\] \.sess__title \{[^}]*color: color-mix\(in srgb, var\(--rail-text\) 78%, transparent\);/s,
     )
+    expect(appCss).not.toMatch(/:root\[data-theme='dark'\] \.sess__title \{[^}]*font-weight:/s)
     expect(appCss).not.toMatch(/:root\[data-theme='(?:light|codex)'\] \.sess__title/)
   })
 

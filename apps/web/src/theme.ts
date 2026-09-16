@@ -1,13 +1,18 @@
-export type Theme = 'dark' | 'light' | 'codex'
+import {
+  normalizeHexColor,
+  type AccentPreset,
+  type BackdropPreset,
+  type HexColor,
+} from './theme-colors.js'
+
+export type Theme = 'dark' | 'light'
 export type ThemeColorScheme = 'dark' | 'light'
 export type ThemePreference = Theme | 'system'
 export type FontPreset = 'geist' | 'inter' | 'system' | 'humanist' | 'rounded' | 'serif' | 'mono'
 export type LocalFontPreference = `local:${string}`
 export type FontPreference = FontPreset | LocalFontPreference
-export type AccentPreference =
-  'neutral' | 'ocean' | 'forest' | 'sunset' | 'amber' | 'rose' | 'lavender'
-
-export type BackdropPreference = 'default' | 'slate' | 'mocha' | 'forest' | 'midnight' | 'plum'
+export type AccentPreference = AccentPreset | HexColor
+export type BackdropPreference = BackdropPreset | HexColor
 
 /** With site data blocked, touching localStorage throws SecurityError — and
  *  these run during module init, where a throw is a white screen. */
@@ -42,9 +47,7 @@ const FONT_PRESETS = new Set<FontPreset>([
 
 export function readThemePreference(): ThemePreference {
   const stored = readStored(THEME_KEY)
-  return stored === 'dark' || stored === 'light' || stored === 'codex' || stored === 'system'
-    ? stored
-    : 'system'
+  return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system'
 }
 
 export function readSystemTheme(): ThemeColorScheme {
@@ -104,6 +107,8 @@ export function applyFontPreference(font: FontPreference): void {
 
 export function readAccentPreference(): AccentPreference {
   const stored = readStored(ACCENT_KEY)
+  const custom = stored?.startsWith('#') ? normalizeHexColor(stored) : undefined
+  if (custom) return custom
   return stored === 'ocean' ||
     stored === 'forest' ||
     stored === 'sunset' ||
@@ -115,11 +120,17 @@ export function readAccentPreference(): AccentPreference {
 }
 
 export function applyAccentPreference(accent: AccentPreference): void {
-  document.documentElement.dataset.accent = accent
+  const root = document.documentElement
+  const custom = normalizeHexColor(accent)
+  root.dataset.accent = custom ? 'custom' : accent
+  if (custom) root.style.setProperty('--custom-accent', custom)
+  else root.style.removeProperty('--custom-accent')
 }
 
 export function readBackdropPreference(): BackdropPreference {
   const stored = readStored(BACKDROP_KEY)
+  const custom = stored?.startsWith('#') ? normalizeHexColor(stored) : undefined
+  if (custom) return custom
   return stored === 'slate' ||
     stored === 'mocha' ||
     stored === 'forest' ||
@@ -130,7 +141,11 @@ export function readBackdropPreference(): BackdropPreference {
 }
 
 export function applyBackdropPreference(backdrop: BackdropPreference): void {
-  document.documentElement.dataset.backdrop = backdrop
+  const root = document.documentElement
+  const custom = normalizeHexColor(backdrop)
+  root.dataset.backdrop = custom ? 'custom' : backdrop
+  if (custom) root.style.setProperty('--custom-backdrop', custom)
+  else root.style.removeProperty('--custom-backdrop')
 }
 
 /**

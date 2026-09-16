@@ -318,9 +318,11 @@
                 >Rate limit windows in the account popup
                 <span class="d"
                   >clear dividers separate provider groups without splitting their windows; 5 hour
-                  and weekly reset times; earned resets offer a hover Use control that confirms on
-                  the opposite side so a second click cannot spend them; non-ChatGPT accounts are
-                  honestly unavailable and malformed provider responses stay errors</span
+                  and weekly reset times; earned resets show each expiry date, soonest first and red
+                  within 24 hours, with a Use control beside each selectable expiry that spends that
+                  reset; confirmation keeps the date visible and moves Confirm away from Use so a
+                  second click cannot spend it; non-ChatGPT accounts are honestly unavailable and
+                  malformed provider responses stay errors</span
                 ></span
               ></label
             >
@@ -676,8 +678,9 @@
                 >Expanded setup terminal card
                 <span class="d"
                   >provider installs and sign-ins plus GitHub CLI install and login share one live
-                  workspace terminal; browser handoff, device code copy, live status, and the
-                  one-time-code field stay scoped to the active setup terminal</span
+                  workspace terminal; codes are entered directly in the CLI. Sign-ins can be
+                  canceled from the terminal or Settings; failure closes the terminal and keeps its
+                  log behind Details</span
                 ></span
               ></label
             >
@@ -685,8 +688,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Provider error state as a red dot with hover bubble, never a second row line;
-                app-level failures use a compact bottom-right notice without an accent rail</span
+                >Provider errors use a plain icon next to the status with details on hover or focus;
+                chat, model, account, connection, attachment, and voice errors share a dismissible
+                bar above the composer; contextual dialogs retain their local feedback</span
               ></label
             >
           </li>
@@ -734,6 +738,15 @@
           <span class="count"></span>
         </header>
         <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Chat and provider errors appear in a compact red shelf above the project and branch
+                shelf, with a plain icon, a recovery action where available, and a dismiss button;
+                dismissal preserves the draft and send guards, and new failures appear again</span
+              ></label
+            >
+          </li>
           <li>
             <label
               ><input type="checkbox" /><span
@@ -944,7 +957,8 @@
                   incremental parser; full Markdown and syntax highlighting run from the exact
                   source at completion; patched Mermaid and DOMPurify releases leave the production
                   dependency audit clear; assistant prose uses denser type and spacing without
-                  changing prompts, headings, or code</span
+                  changing prompts, headings, or code; renderer and worker share curated grammars,
+                  with plain-text fallback for other languages</span
                 ></span
               ></label
             >
@@ -1259,7 +1273,9 @@
                 <span class="d"
                   >inline base, reviewer, assignee, label, milestone and status controls; checks,
                   Diffs-powered file review, inline threads, comments, reviews, branch updates,
-                  merge and auto-merge</span
+                  merge and auto-merge; authenticated private image uploads and repository-file
+                  previews, including SVG and animated images up to 10 MiB, relative image paths,
+                  lazy loading, bounded caches and retryable errors</span
                 ></span
               ></label
             >
@@ -1577,7 +1593,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Theme preview: System, Light, Dark, Codex
+                >Theme preview: System, Light, Dark
                 <span class="d"
                   >Large selectable cards and a two-pane code sample expose surface, syntax,
                   semantic color, and contrast differences before customization</span
@@ -1601,10 +1617,12 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Compact theme details editor
+                >Compact appearance controls
                 <span class="d"
                   >Accent, background, installed font, sidebar translucency, and available macOS
-                  controls share one bordered, divided settings card</span
+                  controls share one bordered, divided settings card with no header row. Accent and
+                  background use color pills with hex values, a custom color picker, and saved
+                  presets. Custom backgrounds choose light or dark text for contrast</span
                 ></span
               ></label
             >
@@ -1612,7 +1630,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Seven accents
+                >Seven accents and custom colors
                 <span class="d"
                   ><i class="swatch" style="background: #4c9dff"></i>Neutral
                   <i class="swatch" style="background: #65b8ff"></i>Ocean
@@ -1628,7 +1646,7 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Six backdrops
+                >Six backdrops and custom colors
                 <span class="d">Graphite, Slate, Mocha, Forest, Midnight, Plum</span></span
               ></label
             >
@@ -1739,7 +1757,8 @@
                   >without that subscription, Grok 4.6 at low when Grok is connected, otherwise the
                   newest cost-oriented model at its lowest advertised effort across connected
                   subscription, custom harness, and direct API providers; Models settings exposes an
-                  explicit model and effort override</span
+                  explicit model and effort override, plus Standard/Fast speed for models that
+                  support Fast, including Codex</span
                 ></span
               ></label
             >

@@ -143,10 +143,6 @@
   --rail-text: var(--text);
 }
 
-:root[data-theme='codex'] .rail {
-  --rail-text: #dededc;
-}
-
 .rail__folder-drop {
   position: absolute;
   z-index: 4;
@@ -1068,11 +1064,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12.5px;
+  font-weight: 500;
 }
 
 :root[data-theme='dark'] .sess__title {
   color: color-mix(in srgb, var(--rail-text) 78%, transparent);
-  font-weight: 360;
 }
 
 .sess__unread-dot {
@@ -1273,6 +1269,7 @@
 }
 
 .stage > .pr-workspace {
+  grid-row: 1 / -1;
   border-top-left-radius: inherit;
 }
 
@@ -2092,15 +2089,6 @@
 
 .composer textarea:disabled {
   cursor: not-allowed;
-}
-
-.composer__provider-state {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1px 10px 0;
-  color: var(--text-3);
-  font-size: var(--t-xs);
 }
 
 /* ---------- context chip & tool row ---------- */

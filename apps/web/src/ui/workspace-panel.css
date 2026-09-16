@@ -74,7 +74,21 @@
 .workspace-panel__loading {
   width: 100%;
   height: 100%;
+  overflow: hidden;
   background: var(--bg);
+}
+
+.workspace-panel__loading-bar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.workspace-panel__loading .skeleton-row {
+  padding-inline: 14px;
 }
 
 .workspace-empty {
@@ -108,7 +122,7 @@
 
 .workspace-provider-login {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   background: var(--terminal-workspace-bg);
@@ -127,54 +141,44 @@
   box-shadow: none;
 }
 
-.workspace-provider-login__code {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  padding: 9px 12px 10px;
-  border-top: 1px solid var(--line);
+.workspace-provider-login__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-inline: 8px;
 }
 
-.workspace-provider-login__code input,
-.workspace-provider-login__code button {
-  min-height: 32px;
-  border: 1px solid var(--line-strong);
+.workspace-tabs__add:has(.workspace-provider-login__actions) {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.workspace-provider-login__actions > button {
+  padding: 5px 8px;
+  border: 0;
   border-radius: var(--r-md);
-  background: var(--surface);
-  color: var(--text);
+  background: transparent;
+  color: var(--text-2);
   font: inherit;
-}
-
-.workspace-provider-login__code input {
-  min-width: 0;
-  padding: 5px 9px;
-  font-family: var(--font-mono);
-}
-
-.workspace-provider-login__code button {
-  padding: 5px 11px;
+  font-size: var(--t-xs);
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.workspace-provider-login__code input:focus-visible,
-.workspace-provider-login__code button:focus-visible {
+.workspace-provider-login__actions > button:hover:not(:disabled) {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.workspace-provider-login__actions > button:focus-visible {
   outline: 1px solid var(--text-2);
   outline-offset: 1px;
 }
 
-.workspace-provider-login__code button:hover:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.workspace-provider-login__code button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.workspace-provider-login__code [role='alert'] {
-  grid-column: 1 / -1;
-  color: var(--error);
-  font-size: var(--t-xs);
+.workspace-provider-login__actions > button:disabled {
+  opacity: 0.5;
 }
 
 .terminal-pane--workspace {
@@ -585,6 +589,12 @@
   font-size: var(--t-sm);
 }
 
+/* Stands in the diff column while the first snapshot loads. */
+.workspace-review__skeleton {
+  min-height: 0;
+  overflow: hidden;
+}
+
 @media (max-width: 560px) {
   .workspace-review__generate-label {
     display: none;
@@ -776,19 +786,22 @@
   stroke-width: 1.75;
 }
 
-.workspace-files__tree-loading,
 .workspace-files__tree-error {
   display: flex;
   min-height: 34px;
   align-items: center;
   gap: 7px;
   padding: 7px 10px;
-  color: var(--text-3);
+  color: var(--error);
   font-size: var(--t-xs);
 }
 
-.workspace-files__tree-error {
-  color: var(--error);
+/* Placeholder rows share the entry's height and inset so the listing fills
+   in without shifting. */
+.workspace-files__tree-skeleton .skeleton-row {
+  min-height: 29px;
+  gap: 6px;
+  padding: 0 8px 0 12px;
 }
 
 .workspace-files__document {
@@ -823,6 +836,11 @@
 .workspace-files__document > header > span:not(.md-file-ref__icon) {
   flex: none;
   margin-left: auto;
+}
+
+/* Placeholder icon and name sit where the real ones do, not in the trailing slot. */
+.workspace-files__document-skeleton > header > span.skeleton {
+  margin-left: 0;
 }
 
 .workspace-files__document > header em {

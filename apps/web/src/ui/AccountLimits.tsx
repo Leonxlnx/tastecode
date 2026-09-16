@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import {
   IconAlertCircle as CircleAlert,
@@ -9,11 +9,18 @@ import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
+import { Skeleton, SkeletonStatus } from './Skeleton.js'
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
+// Label and value widths for the two placeholder rows a source usually reports.
+const LIMIT_SKELETON_ROWS: readonly (readonly [number, number])[] = [
+  [62, 52],
+  [84, 40],
+]
 type ConsumeReset = (
   provider: ProviderId,
   idempotencyKey: string,
+  creditId?: string,
 ) => Promise<ResultOf<'usage.consumeReset'>>
 
 export type AccountLimitsState = UsageSummaryState
@@ -136,11 +143,25 @@ function LimitSource(props: {
         ))
       )}
       {props.state.status === 'loading' ? (
-        <p className="account-menu__usage-note" role="status">
-          <RefreshCw size={13} aria-hidden />
-          {hasSource ? 'Refreshing plan limits…' : 'Checking plan limits…'}
-          {hasUsableValues ? ' Last known values are shown.' : null}
-        </p>
+        hasSource ? (
+          <p className="account-menu__usage-note" role="status">
+            <RefreshCw size={13} aria-hidden />
+            Refreshing plan limits…
+            {hasUsableValues ? ' Last known values are shown.' : null}
+          </p>
+        ) : (
+          <SkeletonStatus label="Checking plan limits…" className="account-menu__limit-skeleton">
+            {LIMIT_SKELETON_ROWS.map(([label, value], index) => (
+              <div className="account-menu__limit" key={index}>
+                <div className="account-menu__limit-row">
+                  <Skeleton width={label} height={9} />
+                  <Skeleton width={value} height={9} />
+                </div>
+                <Skeleton height={3} />
+              </div>
+            ))}
+          </SkeletonStatus>
+        )
       ) : null}
       {props.state.status === 'error' ? (
         <div className="account-menu__usage-error" role="alert">
@@ -166,99 +187,16 @@ function LimitRow(props: {
   limit: Limit
   onConsumeReset?: ConsumeReset | undefined
 }) {
-  const row = useRef<HTMLDivElement>(null)
-  const attemptKey = useRef<string | undefined>(undefined)
-  const [confirming, setConfirming] = useState(false)
-  const [pending, setPending] = useState(false)
-  const [message, setMessage] = useState<string>()
   const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
+  const credits = props.limit.resetCredits
+  const hasSelectableCredits = credits?.some((credit) => credit.id !== undefined)
   const value = props.limit.valueLabel ?? `${remaining(props.limit)}% left`
 
-  useLayoutEffect(() => {
-    if (confirming && !pending) row.current?.focus()
-  }, [confirming, pending])
-
-  const cancelConfirm = () => {
-    if (pending) return
-    setConfirming(false)
-  }
-
-  const consume = async () => {
-    if (!props.onConsumeReset || pending) return
-    const key = attemptKey.current ?? crypto.randomUUID()
-    attemptKey.current = key
-    setPending(true)
-    setMessage(undefined)
-    try {
-      const { outcome } = await props.onConsumeReset(props.provider, key)
-      attemptKey.current = undefined
-      setConfirming(false)
-      if (outcome === 'nothingToReset') setMessage('Nothing needed a reset.')
-      else if (outcome === 'noCredit') setMessage('No reset is available.')
-      else if (outcome === 'alreadyRedeemed') setMessage('This reset was already used.')
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Couldn’t use the reset.')
-    } finally {
-      setPending(false)
-    }
-  }
-
   return (
-    <div
-      className={`account-menu__limit${consumable ? ' account-menu__limit--reset' : ''}${confirming ? ' is-confirming' : ''}`}
-      ref={row}
-      tabIndex={confirming ? -1 : undefined}
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape' || !confirming || pending) return
-        event.preventDefault()
-        event.stopPropagation()
-        setConfirming(false)
-      }}
-    >
+    <div className="account-menu__limit">
       <div className="account-menu__limit-row">
-        {confirming ? (
-          <button
-            className="account-menu__limit-btn account-menu__limit-confirm"
-            type="button"
-            disabled={pending}
-            aria-label="Confirm use rate limit reset"
-            onClick={() => void consume()}
-          >
-            Confirm
-          </button>
-        ) : (
-          <span className="account-menu__limit-label">{props.limit.label}</span>
-        )}
-        {confirming ? (
-          <button
-            className="account-menu__limit-btn account-menu__limit-cancel"
-            type="button"
-            disabled={pending}
-            aria-label="Cancel using rate limit reset"
-            onClick={cancelConfirm}
-          >
-            Cancel
-          </button>
-        ) : consumable ? (
-          <span className="account-menu__limit-slot">
-            <span className="account-menu__limit-value">{value}</span>
-            <button
-              className="account-menu__limit-btn account-menu__limit-use"
-              type="button"
-              aria-label="Use rate limit reset"
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                setMessage(undefined)
-                setConfirming(true)
-              }}
-            >
-              Use
-            </button>
-          </span>
-        ) : (
-          <span className="account-menu__limit-value">{value}</span>
-        )}
+        <span className="account-menu__limit-label">{props.limit.label}</span>
+        <span className="account-menu__limit-value">{value}</span>
       </div>
       {props.limit.valueLabel === undefined ? (
         <div
@@ -278,12 +216,177 @@ function LimitRow(props: {
       {props.limit.resetsAt !== undefined ? (
         <span className="account-menu__limit-reset">{resetLabel(props.limit.resetsAt)}</span>
       ) : null}
+      {credits?.length ? (
+        <ResetCreditExpiries
+          credits={credits}
+          provider={props.provider}
+          onConsumeReset={consumable ? props.onConsumeReset : undefined}
+        />
+      ) : null}
+      {consumable && !hasSelectableCredits ? (
+        <ResetCreditRow provider={props.provider} onConsumeReset={props.onConsumeReset}>
+          Next available reset
+        </ResetCreditRow>
+      ) : null}
+    </div>
+  )
+}
+
+function ResetCreditRow(props: {
+  children: ReactNode
+  provider: ProviderId
+  creditId?: string | undefined
+  onConsumeReset?: ConsumeReset | undefined
+}) {
+  const row = useRef<HTMLDivElement>(null)
+  const expiryId = useId()
+  const attemptKey = useRef<string | undefined>(undefined)
+  const [confirming, setConfirming] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [message, setMessage] = useState<string>()
+
+  useLayoutEffect(() => {
+    if (confirming && !pending) row.current?.focus()
+  }, [confirming, pending])
+
+  const consume = async () => {
+    if (!props.onConsumeReset || pending) return
+    const key = attemptKey.current ?? crypto.randomUUID()
+    attemptKey.current = key
+    setPending(true)
+    setMessage(undefined)
+    try {
+      const { outcome } = await props.onConsumeReset(props.provider, key, props.creditId)
+      attemptKey.current = undefined
+      setConfirming(false)
+      if (outcome === 'nothingToReset') setMessage('Nothing needed a reset.')
+      else if (outcome === 'noCredit') setMessage('No reset is available.')
+      else if (outcome === 'alreadyRedeemed') setMessage('This reset was already used.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Couldn’t use the reset.')
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <div
+      className={`account-menu__reset-credit${confirming ? ' is-confirming' : ''}`}
+      ref={row}
+      tabIndex={confirming ? -1 : undefined}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !confirming || pending) return
+        event.preventDefault()
+        event.stopPropagation()
+        setConfirming(false)
+      }}
+    >
+      <span className="account-menu__reset-expiry" id={expiryId}>
+        {props.children}
+      </span>
+      {confirming ? (
+        <>
+          <button
+            className="account-menu__limit-btn account-menu__limit-confirm"
+            type="button"
+            disabled={pending || !props.onConsumeReset}
+            aria-label="Confirm use rate limit reset"
+            aria-describedby={expiryId}
+            onClick={() => void consume()}
+          >
+            {pending ? 'Using…' : 'Confirm'}
+          </button>
+          <button
+            className="account-menu__limit-btn account-menu__limit-cancel"
+            type="button"
+            disabled={pending}
+            aria-label="Cancel using rate limit reset"
+            onClick={() => setConfirming(false)}
+          >
+            Cancel
+          </button>
+        </>
+      ) : props.onConsumeReset ? (
+        <button
+          className="account-menu__limit-btn account-menu__limit-use"
+          type="button"
+          aria-label="Use rate limit reset"
+          aria-describedby={expiryId}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setMessage(undefined)
+            setConfirming(true)
+          }}
+        >
+          Use
+        </button>
+      ) : null}
       {message ? (
         <span className="account-menu__limit-note" role="status">
           {message}
         </span>
       ) : null}
     </div>
+  )
+}
+
+function ResetCreditExpiries(props: {
+  credits: NonNullable<Limit['resetCredits']>
+  provider: ProviderId
+  onConsumeReset?: ConsumeReset | undefined
+}) {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  const ordered = [...props.credits].sort(
+    (a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity),
+  )
+  return (
+    <ul className="account-menu__reset-expiries" aria-label="Rate limit reset expiries">
+      {ordered.map(({ id, expiresAt }, index) => {
+        const date = expiresAt === null ? undefined : new Date(expiresAt)
+        const validDate = date && !Number.isNaN(date.getTime()) ? date : undefined
+        const untilExpiry = expiresAt === null ? Infinity : expiresAt - now
+        const usable = id !== undefined && (expiresAt === null || (validDate && untilExpiry > 0))
+        return (
+          <li key={id ?? `${expiresAt}:${index}`}>
+            <ResetCreditRow
+              provider={props.provider}
+              creditId={id}
+              onConsumeReset={usable ? props.onConsumeReset : undefined}
+            >
+              {validDate ? (
+                <time
+                  dateTime={validDate.toISOString()}
+                  data-expiring-soon={untilExpiry > 0 && untilExpiry < 86_400_000 ? '' : undefined}
+                >
+                  {untilExpiry <= 0 ? 'Expired' : 'Expires'}{' '}
+                  {validDate.toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })}{' '}
+                  <span className="account-menu__reset-time">
+                    {validDate.toLocaleTimeString(undefined, {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+                </time>
+              ) : expiresAt === null ? (
+                'No expiry'
+              ) : (
+                'Expiry date unavailable'
+              )}
+            </ResetCreditRow>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 

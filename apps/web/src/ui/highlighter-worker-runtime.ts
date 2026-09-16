@@ -1,6 +1,10 @@
-import { bundledLanguages, createHighlighter, type BundledLanguage } from 'shiki'
-import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 import { DARK_THEME, LIGHT_THEME } from './highlighter-config.js'
+import {
+  bundledLanguages,
+  createHighlighter,
+  createJavaScriptRegexEngine,
+  type BundledLanguage,
+} from './shiki-bundle.js'
 import type { HighlightResult } from './highlighter-protocol.js'
 
 export type HighlighterWorkerRuntime = {
@@ -25,7 +29,7 @@ export async function createHighlighterWorkerRuntime(): Promise<HighlighterWorke
     if (!isBundledLanguage(language)) return false
 
     const request = highlighter
-      .loadLanguage(bundledLanguages[language])
+      .loadLanguage(language)
       .then(() => {
         loaded.add(language)
         return true

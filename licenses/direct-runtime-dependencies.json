@@ -63,6 +63,20 @@
       "source": "https://github.com/pierrecomputer/pierre"
     },
     {
+      "name": "@shikijs/langs",
+      "use": "Syntax highlighting grammars",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/shikijs/shiki"
+    },
+    {
+      "name": "@shikijs/themes",
+      "use": "Syntax highlighting themes",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/shikijs/shiki"
+    },
+    {
       "name": "@tabler/icons-react",
       "use": "Interface icons",
       "license": "MIT",

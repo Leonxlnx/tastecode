@@ -26,6 +26,8 @@ import {
   PullRequestActionSchema,
   PullRequestDetailSchema,
   PullRequestFilesResultSchema,
+  PullRequestImageSchema,
+  PullRequestImageUrlSchema,
   PullRequestListResultSchema,
   PullRequestMetadataOptionsSchema,
 } from './pull-requests.js'
@@ -485,6 +487,15 @@ export const ProviderLimitSchema = z.object({
   valueLabel: z.string().min(1).max(160).optional(),
   /** Present when this row can be spent as a one-shot quota reset. */
   action: z.literal('consume-reset').optional(),
+  /** Available reset details, when reported. Expiry is Unix milliseconds; null means no expiry. */
+  resetCredits: z
+    .array(
+      z.object({
+        id: z.string().min(1).optional(),
+        expiresAt: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .optional(),
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
@@ -812,6 +823,15 @@ export const methods = {
       action: PullRequestActionSchema,
     }),
     result: PullRequestActionResultSchema,
+  },
+  /**
+   * Load a repository file or upload embedded as an image. The
+   * renderer has no GitHub session, so the server fetches the bytes through
+   * the authenticated CLI and private repositories render like public ones.
+   */
+  'pullRequests.image': {
+    params: z.object({ url: PullRequestImageUrlSchema }),
+    result: PullRequestImageSchema,
   },
   'auth.status': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
@@ -1215,6 +1235,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       idempotencyKey: z.string().uuid(),
+      creditId: z.string().min(1).optional(),
     }),
     result: z.object({
       outcome: z.enum(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed']),

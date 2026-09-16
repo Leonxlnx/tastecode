@@ -37,10 +37,8 @@ export function ProviderRow(props: {
         role={props.live ? 'status' : undefined}
         aria-atomic={props.live || undefined}
       >
-        {props.status}
-      </div>
-      <div className="provider-row__issue">
         {props.issue ? <RowIssue {...props.issue} label="Problem details" /> : null}
+        <span className="provider-row__status-text">{props.status}</span>
       </div>
       <div className="provider-row__secondary">
         <ProviderRowAction action={props.secondary} tone="secondary" />

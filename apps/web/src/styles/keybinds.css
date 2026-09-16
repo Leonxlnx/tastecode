@@ -67,8 +67,15 @@
   margin-top: 24px;
 }
 
+.keybind-settings .settings__group-title {
+  margin-bottom: 8px;
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
 .keybind-settings__group {
   overflow: visible;
+  border-color: var(--line);
 }
 
 .keybind-row {
@@ -99,7 +106,18 @@
 }
 
 .keybind-row + .keybind-row {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+
+.keybind-row .settings__row-title {
+  font-size: var(--t-sm);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.keybind-row .settings__row-note {
+  margin-top: 2px;
+  line-height: 1.4;
 }
 
 .keybind-row__controls {
@@ -141,13 +159,13 @@
 
 .keybind-recorder {
   display: inline-flex;
-  min-width: 112px;
+  min-width: 96px;
   min-height: 28px;
   align-items: center;
   justify-content: center;
   padding: 3px 8px;
-  background: var(--control-hover);
-  border: 1px solid var(--chrome-border);
+  background: transparent;
+  border: 1px solid var(--line);
   border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
@@ -161,7 +179,7 @@
 }
 
 .keybind-recorder:is(:hover, :focus-visible) {
-  background: var(--surface-3);
+  background: var(--control-hover);
   border-color: var(--line-strong);
   color: var(--text);
 }
@@ -175,8 +193,10 @@
 .keybind-recorder kbd,
 .command-palette__shortcut {
   color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
+  font-family: var(--font-ui);
+  font-size: var(--t-sm);
+  font-weight: 400;
+  letter-spacing: normal;
   font-variant-numeric: tabular-nums;
 }
 
@@ -184,12 +204,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   line-height: 1;
 }
 
 .keybind-shortcut__icon {
   flex: none;
+  width: 13px;
+  height: 13px;
   stroke-width: 1.8;
 }
 

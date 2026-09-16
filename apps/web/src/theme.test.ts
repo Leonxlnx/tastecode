@@ -5,6 +5,8 @@ import {
   BACKDROP_KEY,
   GLASS_KEY,
   THEME_KEY,
+  applyAccentPreference,
+  applyBackdropPreference,
   applyFontPreference,
   applyGlassPreference,
   applyTheme,
@@ -30,6 +32,8 @@ afterEach(() => {
   document.documentElement.removeAttribute('data-font')
   document.documentElement.style.removeProperty('--font-ui')
   document.documentElement.classList.remove('dark')
+  applyAccentPreference('neutral')
+  applyBackdropPreference('default')
 })
 
 describe('preference readers', () => {
@@ -47,7 +51,7 @@ describe('preference readers', () => {
   })
 
   it('accept every advertised value', () => {
-    for (const theme of ['system', 'light', 'dark', 'codex']) {
+    for (const theme of ['system', 'light', 'dark']) {
       localStorage.setItem(THEME_KEY, theme)
       expect(readThemePreference()).toBe(theme)
     }
@@ -55,12 +59,53 @@ describe('preference readers', () => {
     expect(readBackdropPreference()).toBe('midnight')
   })
 
-  it('applies Codex with a dark browser color scheme', () => {
-    applyTheme('codex')
+  it('falls back to system for the removed Codex theme', () => {
+    localStorage.setItem(THEME_KEY, 'codex')
+    expect(readThemePreference()).toBe('system')
+  })
 
-    expect(document.documentElement.dataset['theme']).toBe('codex')
-    expect(document.documentElement.classList.contains('dark')).toBe(true)
-    expect(colorSchemeForTheme('codex')).toBe('dark')
+  it.each(['dark', 'light'] as const)('applies the %s browser color scheme', (theme) => {
+    applyTheme(theme)
+
+    expect(document.documentElement.dataset['theme']).toBe(theme)
+    expect(document.documentElement.classList.contains('dark')).toBe(theme === 'dark')
+    expect(colorSchemeForTheme(theme)).toBe(theme)
+  })
+})
+
+describe('custom colors', () => {
+  it('restores normalized custom colors from saved preferences', () => {
+    localStorage.setItem(ACCENT_KEY, '#5e6ad2')
+    localStorage.setItem(BACKDROP_KEY, '#fff')
+    expect(readAccentPreference()).toBe('#5E6AD2')
+    expect(readBackdropPreference()).toBe('#FFFFFF')
+  })
+
+  it.each(['#nope', '#12345678', '#12', '#ff00zz', '#fff; color:red'])(
+    'rejects invalid stored color %s',
+    (color) => {
+      localStorage.setItem(ACCENT_KEY, color)
+      localStorage.setItem(BACKDROP_KEY, color)
+      expect(readAccentPreference()).toBe('neutral')
+      expect(readBackdropPreference()).toBe('default')
+    },
+  )
+
+  it('clears custom overrides when presets are restored', () => {
+    const root = document.documentElement
+    applyAccentPreference('#5E6AD2')
+    applyBackdropPreference('#FFFFFF')
+    expect(root.dataset['accent']).toBe('custom')
+    expect(root.dataset['backdrop']).toBe('custom')
+    expect(root.style.getPropertyValue('--custom-accent')).toBe('#5E6AD2')
+    expect(root.style.getPropertyValue('--custom-backdrop')).toBe('#FFFFFF')
+
+    applyAccentPreference('ocean')
+    applyBackdropPreference('slate')
+    expect(root.dataset['accent']).toBe('ocean')
+    expect(root.dataset['backdrop']).toBe('slate')
+    expect(root.style.getPropertyValue('--custom-accent')).toBe('')
+    expect(root.style.getPropertyValue('--custom-backdrop')).toBe('')
   })
 })
 

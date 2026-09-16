@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from './sqlite.js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
@@ -878,7 +878,12 @@ describe('threads', () => {
     persistent.updateSidebarSettings({ mode: 'classic', autoSettleDays: null })
     persistent.updateBackgroundModelPreference({
       mode: 'manual',
-      target: { provider: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+      target: {
+        provider: 'codex',
+        model: 'gpt-5.6-luna',
+        effort: 'medium',
+        serviceTier: 'priority',
+      },
     })
     persistent.close()
 
@@ -893,7 +898,12 @@ describe('threads', () => {
       expect(reopened.sidebarSettings()).toEqual({ mode: 'classic', autoSettleDays: null })
       expect(reopened.backgroundModelPreference()).toEqual({
         mode: 'manual',
-        target: { provider: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
+        target: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'medium',
+          serviceTier: 'priority',
+        },
       })
       expect(reopened.dueSnoozedThreadIds(99)).toEqual([])
       expect(reopened.dueSnoozedThreadIds(100)).toEqual(['persisted'])

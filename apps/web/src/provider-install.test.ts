@@ -3,6 +3,7 @@ import { TestTransport } from './test-transport.js'
 import {
   beginInstall,
   beginLogin,
+  cancelInstall,
   deviceCode,
   firstAuthUrl,
   installKey,
@@ -202,5 +203,86 @@ describe('signedInEmail', () => {
       'grok.user@example.com',
     )
     expect(signedInEmail('Waiting for authorization...')).toBeUndefined()
+  })
+})
+
+describe('cancelInstall', () => {
+  it('stops the owned sign-in once and ignores late output and exit events', async () => {
+    let finishClose!: () => void
+    let run = 0
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: `login-${++run}` }
+      if (method === 'terminal.close') {
+        await new Promise<void>((resolve) => {
+          finishClose = resolve
+        })
+        return {}
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const open = vi.fn()
+    const target = { provider: 'claude-code' as const }
+    const key = loginKey(target)
+    await beginLogin(transport, target, open)
+    const cancel = cancelInstall(transport, key)
+    expect(cancelInstall(transport, key)).toBe(cancel)
+    await vi.waitFor(() => expect(installState(key)?.canceling).toBe(true))
+    transport.emit('terminal.output', {
+      terminalId: 'login-1',
+      data: 'https://example.test/auth\n',
+    })
+    expect(open).not.toHaveBeenCalled()
+    expect(installState(key)?.phase).toBe('running')
+    finishClose()
+    await cancel
+    expect(installState(key)?.phase).toBe('canceled')
+    await beginLogin(transport, target, open)
+    transport.emit('terminal.exit', { terminalId: 'login-1', exitCode: 130 })
+    expect(installState(key)?.terminalId).toBe('login-2')
+    expect(installState(key)?.phase).toBe('running')
+    expect(transport.requests.filter(({ method }) => method === 'terminal.close')).toEqual([
+      { method: 'terminal.close', params: { terminalId: 'login-1' } },
+    ])
+  })
+
+  it('keeps a failed stop available for retry', async () => {
+    let rejectClose = true
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'login-retry' }
+      if (method === 'terminal.close') {
+        if (rejectClose) throw new Error('Could not stop sign-in')
+        return {}
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const target = { provider: 'codex' as const }
+    await beginLogin(transport, target, () => {})
+    await expect(cancelInstall(transport, loginKey(target))).rejects.toThrow('Could not stop')
+    expect(installState(loginKey(target))).toMatchObject({ phase: 'running', canceling: false })
+    rejectClose = false
+    await cancelInstall(transport, loginKey(target))
+    expect(installState(loginKey(target))?.phase).toBe('canceled')
+  })
+
+  it('cancels a terminal that arrives after cancellation was requested', async () => {
+    let launched!: (value: { terminalId: string }) => void
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch')
+        return new Promise((resolve) => {
+          launched = resolve
+        })
+      if (method === 'terminal.close') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    const target = { provider: 'grok' as const }
+    const start = beginLogin(transport, target, () => {})
+    const cancel = cancelInstall(transport, loginKey(target))
+    launched({ terminalId: 'late-login' })
+    await Promise.all([start, cancel])
+    expect(installState(loginKey(target))?.phase).toBe('canceled')
+    expect(transport.requests).toContainEqual({
+      method: 'terminal.close',
+      params: { terminalId: 'late-login' },
+    })
   })
 })

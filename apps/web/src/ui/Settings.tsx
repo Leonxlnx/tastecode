@@ -14,6 +14,14 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
+import { AppearanceColorPicker } from './AppearanceColorPicker.js'
+import { accentColor, backdropColor } from '../theme-colors.js'
+import {
+  getFastModeOffValue,
+  getFastServiceTier,
+  getNextServiceTierForModel,
+  isFastModeEnabled,
+} from './model-selector-utils.js'
 import { IconMorph } from './IconMorph.js'
 import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
@@ -62,6 +70,7 @@ import {
 import {
   beginInstall,
   beginLogin,
+  cancelInstall,
   clearInstall,
   deviceCode,
   installKey,
@@ -80,6 +89,7 @@ import {
   type BackdropPreference,
   type FontPreference,
   type ThemePreference,
+  type ThemeColorScheme,
 } from '../theme.js'
 import {
   readModelPickerLayout,
@@ -137,7 +147,6 @@ const THEME_OPTIONS = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
   { value: 'dark', label: 'Dark' },
-  { value: 'codex', label: 'Codex' },
 ] as const satisfies ReadonlyArray<{ value: ThemePreference; label: string }>
 
 const FONT_OPTIONS = [
@@ -245,6 +254,7 @@ function SettingsComponent(props: {
   sidebarSettings: SidebarSettings
   onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
   themePreference: ThemePreference
+  themeColorScheme: ThemeColorScheme
   onThemePreferenceChange: (theme: ThemePreference) => void
   fontPreference: FontPreference
   onFontPreferenceChange: (font: FontPreference) => void
@@ -960,6 +970,10 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const effortOptions =
     selected?.model.reasoningEfforts.map((effort) => ({ value: effort, label: effort })) ?? []
   const selectedEffort = manual?.effort ?? effortOptions[0]?.value ?? ''
+  const fastTier = getFastServiceTier(selected?.model)
+  const selectedSpeed = isFastModeEnabled(selected?.model, manual?.serviceTier)
+    ? 'fast'
+    : 'standard'
 
   return (
     <section className="background-model-settings" aria-label="Background work">
@@ -987,6 +1001,11 @@ function BackgroundModelSettings(props: { transport: Transport }) {
               }
               const choice = backgroundModelFromValue(state?.sources ?? [], value)
               if (!choice) return
+              const serviceTier = getNextServiceTierForModel({
+                nextModel: choice.model,
+                currentModel: selected?.model,
+                currentServiceTier: manual?.serviceTier,
+              })
               void update({
                 mode: 'manual',
                 target: {
@@ -1002,6 +1021,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                       }
                     : {}),
                   model: choice.model.id,
+                  ...(serviceTier ? { serviceTier } : {}),
                   ...(choice.model.reasoningEfforts[0]
                     ? {
                         effort: choice.model.reasoningEfforts[0],
@@ -1030,6 +1050,26 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                   target: { ...manual, effort },
                 })
               }
+            />
+          </SettingsRow>
+        ) : null}
+        {manual && selected && fastTier ? (
+          <SettingsRow title="Speed" note="Choose the speed used for background writing.">
+            <AppSelect
+              className="settings__select settings__select--effort"
+              ariaLabel="Background speed"
+              align="right"
+              value={selectedSpeed}
+              options={[
+                { value: 'standard', label: 'Standard' },
+                { value: 'fast', label: 'Fast' },
+              ]}
+              disabled={busy}
+              onChange={(speed) => {
+                const serviceTier =
+                  speed === 'fast' ? fastTier.id : getFastModeOffValue(selected.model)
+                void update({ mode: 'manual', target: { ...manual, serviceTier } })
+              }}
             />
           </SettingsRow>
         ) : null}
@@ -1157,6 +1197,7 @@ function ModelVisibilityGroup(props: {
 
 function AppearanceSettings(props: {
   themePreference: ThemePreference
+  themeColorScheme: ThemeColorScheme
   onThemePreferenceChange: (theme: ThemePreference) => void
   fontPreference: FontPreference
   onFontPreferenceChange: (font: FontPreference) => void
@@ -1200,8 +1241,7 @@ function AppearanceSettings(props: {
       ? candidate
       : best,
   )
-  const selectedThemeLabel =
-    THEME_OPTIONS.find((option) => option.value === props.themePreference)?.label ?? 'Custom'
+  const light = props.themeColorScheme === 'light'
 
   return (
     <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
@@ -1212,44 +1252,30 @@ function AppearanceSettings(props: {
         <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
       </section>
       <AppearanceCodePreview />
-      <section className="appearance-editor" aria-labelledby="appearance-details-heading">
-        <header className="appearance-editor__header">
-          <h2 id="appearance-details-heading">Theme details</h2>
-          <span className="appearance-editor__scope">{selectedThemeLabel}</span>
-        </header>
+      <section className="appearance-editor" aria-label="Appearance controls">
         <SettingsRow className="appearance-editor__row" title="Accent palette">
-          <div className="appearance-control">
-            <span
-              className="appearance-control__swatch appearance-choice__swatch"
-              data-accent-preview={props.accentPreference}
-              aria-hidden
-            />
-            <AppSelect
-              className="settings__select appearance-control__select"
-              ariaLabel="Accent palette"
-              align="right"
-              value={props.accentPreference}
-              options={ACCENT_OPTIONS}
-              onChange={props.onAccentPreferenceChange}
-            />
-          </div>
+          <AppearanceColorPicker
+            label="Accent palette"
+            value={props.accentPreference}
+            color={accentColor(props.accentPreference, light)}
+            options={ACCENT_OPTIONS.map((option) => ({
+              ...option,
+              color: accentColor(option.value, light),
+            }))}
+            onChange={props.onAccentPreferenceChange}
+          />
         </SettingsRow>
         <SettingsRow className="appearance-editor__row" title="Background">
-          <div className="appearance-control">
-            <span
-              className="appearance-control__swatch appearance-choice__swatch"
-              data-backdrop-preview={props.backdropPreference}
-              aria-hidden
-            />
-            <AppSelect
-              className="settings__select appearance-control__select"
-              ariaLabel="Background"
-              align="right"
-              value={props.backdropPreference}
-              options={BACKDROP_OPTIONS}
-              onChange={props.onBackdropPreferenceChange}
-            />
-          </div>
+          <AppearanceColorPicker
+            label="Background"
+            value={props.backdropPreference}
+            color={backdropColor(props.backdropPreference, light)}
+            options={BACKDROP_OPTIONS.map((option) => ({
+              ...option,
+              color: backdropColor(option.value, light),
+            }))}
+            onChange={props.onBackdropPreferenceChange}
+          />
         </SettingsRow>
         <SettingsRow className="appearance-editor__row" title="Interface font">
           <div className="appearance-control">
@@ -1377,67 +1403,88 @@ function AppearanceCodePreview() {
     <div
       className="appearance-code-preview"
       role="img"
-      aria-label="Code sample preview using the current appearance settings"
+      aria-label="TasteCode thread.start code preview changing approval from ask to auto-review"
     >
       <div className="appearance-code-preview__pane" aria-hidden>
         <span className="appearance-code-preview__line">
           <span className="appearance-code-preview__number">1</span>
           <code>
-            <span className="appearance-code-preview__keyword">const</span> themePreview = {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            surface: <span className="appearance-code-preview__string">&quot;sidebar&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            accent: <span className="appearance-code-preview__string">&quot;neutral&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">4</span>
-          <code>
-            contrast: <span className="appearance-code-preview__number-value">42</span>,
+            <span className="appearance-code-preview__keyword">await</span> transport.request(
           </code>
         </span>
         <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">2</span>
+          <code>
+            {'  '}
+            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">3</span>
+          <code>
+            {'    '}provider:{' '}
+            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">4</span>
+          <code>{'    '}workspacePath: projectPath,</code>
+        </span>
+        <span className="appearance-code-preview__line" data-change="removed">
           <span className="appearance-code-preview__number">5</span>
-          <code>{'}'};</code>
+          <code>
+            {'    '}approval:{' '}
+            <span className="appearance-code-preview__string">&quot;ask&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">6</span>
+          <code>{'  }'},</code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">7</span>
+          <code>);</code>
         </span>
       </div>
       <div className="appearance-code-preview__pane" aria-hidden>
         <span className="appearance-code-preview__line">
           <span className="appearance-code-preview__number">1</span>
           <code>
-            <span className="appearance-code-preview__keyword">const</span> themePreview = {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            surface:{' '}
-            <span className="appearance-code-preview__string">&quot;sidebar-raised&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            accent: <span className="appearance-code-preview__string">&quot;focused&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">4</span>
-          <code>
-            contrast: <span className="appearance-code-preview__number-value">68</span>,
+            <span className="appearance-code-preview__keyword">await</span> transport.request(
           </code>
         </span>
         <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">2</span>
+          <code>
+            {'  '}
+            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">3</span>
+          <code>
+            {'    '}provider:{' '}
+            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">4</span>
+          <code>{'    '}workspacePath: projectPath,</code>
+        </span>
+        <span className="appearance-code-preview__line" data-change="added">
           <span className="appearance-code-preview__number">5</span>
-          <code>{'}'};</code>
+          <code>
+            {'    '}approval:{' '}
+            <span className="appearance-code-preview__string">&quot;auto-review&quot;</span>,
+          </code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">6</span>
+          <code>{'  }'},</code>
+        </span>
+        <span className="appearance-code-preview__line">
+          <span className="appearance-code-preview__number">7</span>
+          <code>);</code>
         </span>
       </div>
     </div>
@@ -1921,11 +1968,12 @@ function CliSignInRow(props: {
   const key = loginKey(props.target)
   const detailsId = useId()
   const login = useSyncExternalStore(subscribeInstalls, () => installState(key))
-  // The terminal is the fallback, not the flow: it stays hidden until asked
-  // for, and opens itself only when a failure makes it the evidence.
+  // Keep failed output behind Details; the status carries the error.
   const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
   const [copied, setCopied] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [canceling, setCanceling] = useState(false)
   const { onSignedIn } = props
 
   // Latched like InstallableRow: onSignedIn may get a new identity from any
@@ -1950,10 +1998,11 @@ function CliSignInRow(props: {
   }, [login?.phase, key, onSignedIn, props.onOpenExpandedTerminal])
 
   useEffect(() => {
-    if (login?.phase === 'failed') setShowTerminal(true)
+    if (login?.phase && login.phase !== 'running') setShowTerminal(false)
   }, [login?.phase])
 
   const start = () => {
+    setStarting(true)
     setStartError(undefined)
     setShowTerminal(false)
     setCopied(false)
@@ -1967,6 +2016,7 @@ function CliSignInRow(props: {
         : undefined,
     )
       .then(() => {
+        if (installState(key)?.phase !== 'running' || installState(key)?.canceling) return
         props.onOpenExpandedTerminal?.({
           provider: props.provider.id,
           displayName: props.provider.displayName,
@@ -1976,6 +2026,17 @@ function CliSignInRow(props: {
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
       )
+      .finally(() => setStarting(false))
+  }
+
+  const cancel = () => {
+    setCanceling(true)
+    setStartError(undefined)
+    void cancelInstall(props.transport, key)
+      .catch((cause: unknown) =>
+        setStartError(cause instanceof Error ? cause.message : String(cause)),
+      )
+      .finally(() => setCanceling(false))
   }
 
   const running = login?.phase === 'running'
@@ -1994,7 +2055,17 @@ function CliSignInRow(props: {
         : props.provider.problem
           ? { message: props.provider.problem }
           : undefined
-  const status = running ? 'Signing in…' : issue?.announce ? 'Sign-in failed' : 'Not signed in'
+  const busy = running || starting
+  const stopping = canceling || login?.canceling
+  const status = stopping
+    ? 'Canceling sign-in…'
+    : busy
+      ? 'Signing in…'
+      : issue?.announce
+        ? 'Sign-in failed'
+        : login?.phase === 'canceled'
+          ? 'Sign-in canceled'
+          : 'Not signed in'
   const details: ProviderAction | undefined =
     login && (running || login.phase === 'failed')
       ? {
@@ -2010,12 +2081,18 @@ function CliSignInRow(props: {
       <ProviderRow
         provider={props.provider}
         status={status}
-        live={running}
+        live={busy}
         issue={issue}
         primary={{
-          label: running ? 'Signing in…' : login?.phase === 'failed' ? 'Retry sign-in' : 'Sign in',
-          disabled: running,
-          onClick: start,
+          label: stopping
+            ? 'Canceling…'
+            : busy
+              ? 'Cancel sign-in'
+              : issue?.announce
+                ? 'Retry sign-in'
+                : 'Sign in',
+          disabled: stopping,
+          onClick: busy ? cancel : start,
         }}
         secondary={details}
       />
@@ -2087,11 +2164,12 @@ function AccountIdentity(props: { provider: ProviderId; account: Account }) {
   const email = props.account.email ?? savedEmail
 
   return (
-    <>
+    <span className="settings__account">
       {email ? <AccountEmail email={email} /> : 'Signed in'}
-      {props.account.plan ? ' · ' : null}
-      {props.account.plan}
-    </>
+      {props.account.plan ? (
+        <span className="settings__account-plan"> · {props.account.plan}</span>
+      ) : null}
+    </span>
   )
 }
 

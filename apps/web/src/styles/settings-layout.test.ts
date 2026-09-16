@@ -57,10 +57,10 @@ describe('settings viewport CSS', () => {
 
   it('keeps a single provider action at the far edge on wide and narrow rows', () => {
     expect(settingsCss).toMatch(
-      /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty,\s*\.provider-row__issue:empty \{[^}]*display: none;/s,
+      /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty \{[^}]*display: none;/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row__primary \{[^}]*grid-column: 5;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 5;/s,
+      /\.provider-row__primary \{[^}]*grid-column: 4;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 4;/s,
     )
     expect(settingsCss).toMatch(
       /\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*min-width: 0;/s,

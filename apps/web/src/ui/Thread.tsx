@@ -47,6 +47,7 @@ import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
+import { ThreadSkeleton } from './Skeleton.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -102,6 +103,7 @@ const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
  * not a transcript of every byte.
  */
 export interface ThreadProps {
+  errorsInComposer?: boolean
   frameStore: ThreadFrameStore
   loading?: boolean
   projectPath?: string | undefined
@@ -358,9 +360,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       ) : null}
       {thread.items.length === 0 && !running ? (
         props.loading ? (
-          <div className="empty thread__empty" role="status">
-            Loading conversation…
-          </div>
+          <ThreadSkeleton className="thread__empty" />
         ) : (
           <div className="empty thread__empty">
             <div className="empty__prompt" role="heading" aria-level={1}>
@@ -391,6 +391,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                   presentation={presentation}
                   activityGroup={activityGroup}
                   running={running}
+                  errorsInComposer={props.errorsInComposer ?? false}
                   activeTurnId={thread.activeTurn?.id}
                   repeatedDesignRowAt={repeatedDesignRowAt}
                   entering={enteringItemIds.has(item.id)}
@@ -602,6 +603,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   presentation,
   activityGroup,
   running,
+  errorsInComposer,
   activeTurnId,
   repeatedDesignRowAt,
   entering,
@@ -620,6 +622,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   presentation: TurnPresentation | undefined
   activityGroup: TurnActivityGroup | undefined
   running: boolean
+  errorsInComposer: boolean
   activeTurnId: string | undefined
   repeatedDesignRowAt: (item: Item, index: number) => boolean
   entering: boolean
@@ -655,6 +658,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   const responseLead =
     !live && presentation?.complete === true && presentation.finalAnswerIndex === index
   const suppressed =
+    (errorsInComposer && item.type === 'error') ||
     isBlankReasoning(item) ||
     (compactedActivity && !activityLead) ||
     repeatedDesignRowAt(item, index) ||
@@ -939,8 +943,6 @@ const Row = memo(function Row({
     )
   }
 
-  // A thread-level failure is a statement, not an operational row: the alert
-  // and the reason, without the disclosure affordance tool calls get.
   if (item.type === 'error') {
     return (
       <div className="turn-error">
