@@ -74,6 +74,7 @@ describe('asset phase', () => {
     expect(prompt).toContain('Never invent a component ID')
     expect(prompt).toContain('A footer photo credit does not consume the photograph')
     expect(prompt).toContain('source.reference must contain only an HTTP(S) source-page URL')
+    expect(prompt).toContain('do not invent a public URL for a local generation')
   })
 
   it('parses the final response through the asset validator', () => {
