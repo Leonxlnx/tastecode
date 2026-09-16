@@ -15,9 +15,10 @@ export function readCredential(reference: string): string {
   try {
     const value = entry(reference).getPassword()
     if (value !== null) return value
-  } catch {
+  } catch (cause) {
     throw new Error(
       `credential "${reference}" could not be read from the OS credential store; unlock the store and try again`,
+      { cause },
     )
   }
   throw new Error(`credential "${reference}" was not found in the OS credential store`)
@@ -34,9 +35,10 @@ export function hasCredential(reference: string): boolean {
 export function writeCredential(reference: string, value: string): void {
   try {
     entry(reference).setPassword(value)
-  } catch {
+  } catch (cause) {
     throw new Error(
       `credential "${reference}" could not be written to the OS credential store; unlock the store and try again`,
+      { cause },
     )
   }
 }
@@ -56,17 +58,20 @@ export function removeCredential(reference: string): void {
  * so a failed delete is only acceptable once the credential proves absent.
  */
 export function removeCredentialStrict(reference: string): void {
+  let cause: unknown
   try {
     if (entry(reference).deleteCredential()) return
-  } catch {
-    // fall through to the presence check
+  } catch (error) {
+    cause = error
   }
   try {
     if (entry(reference).getPassword() === null) return
-  } catch {
+  } catch (error) {
     // store error: cannot confirm removal
+    cause = error
   }
   throw new Error(
     `credential "${reference}" could not be removed from the OS credential store; unlock the store and try again`,
+    { cause },
   )
 }
