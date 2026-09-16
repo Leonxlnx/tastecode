@@ -36,6 +36,8 @@ Fresh checkouts and desktop packages use `packages/design-agent/references/libra
 118 composition groups, 15 heroes, and 220 raster files including 102 mobile pairs. The files are
 ordinary Git assets, so another developer can pull and run without a separate library installation.
 The bundled catalog retains source URLs, review status, pairing evidence and original file hashes.
+Desktop packages unpack this library beside `app.asar`, allowing the same real-file identity and
+size checks used for custom libraries. The release verifier checks every catalog and raster byte.
 
 To override the bundled library, set `TASTECODE_REFERENCE_LIBRARY` to an absolute library directory
 before starting TasteCode, or set `libraryPath` in `~/.tastecode/design-references.json`. No
