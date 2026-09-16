@@ -9,6 +9,13 @@ source URLs take priority. The page planner uses only sections needed by the bri
 names never filter out needed compositions. Missing families use available compositions with the
 requested content adapted inside them; section topics do not have to match layout family names.
 
+The bundled selection pools each contain at least ten distinct composition groups and image files.
+Sparse topics use compatible geometry: metrics use proof/about compositions, pricing and process
+can use feature compositions, and contact can use CTA compositions. The actual image family is
+retained; adapting content never authorizes inventing a new layout. Small user-configured libraries
+are not padded with duplicate revisions. The loader recognizes sourceUrl, source and url metadata,
+plus complete desktop captures, so differently labeled collections remain reachable.
+
 The selected catalog records and file hashes are persisted with the Design run. Brand, page,
 asset, build and visual review turns receive the actual selected desktop and paired mobile
 images. Resuming a run retains the selection and rejects changed reference files. Existing
@@ -33,7 +40,7 @@ Motion preserves the selected compositions. Still screenshots alone cannot prove
 ## Bundled library and local overrides
 
 Fresh checkouts and desktop packages use `packages/design-agent/references/library` automatically:
-118 composition groups, 15 heroes, and 220 raster files including 102 mobile pairs. The files are
+172 composition groups, 24 heroes, and 316 raster files including 144 mobile pairs. The files are
 ordinary Git assets, so another developer can pull and run without a separate library installation.
 The bundled catalog retains source URLs, review status, pairing evidence and original file hashes.
 Desktop packages unpack this library beside `app.asar`, allowing the same real-file identity and
@@ -83,8 +90,8 @@ to replace automatic candidates once inspected, and label alternate revisions wi
 ## Validation status
 
 The local initial catalog contains ten individually inspected section pairs from Meridian,
-Ritovex and Scalient. Complete-image discovery expands this installation to 118 composition groups,
-including 15 heroes. The roughly one thousand raw generated images include fragments and revisions;
+Ritovex and Scalient. Complete-image discovery expands this installation to 172 composition groups,
+including 24 heroes. The roughly one thousand raw generated images include fragments and revisions;
 they are not one thousand independent layouts and have not all been visually reviewed. Runtime unit
 and orchestration checks cover equal group eligibility, sampling without replacement,
 explicit selection, image attachment transport, catalog validation and persisted selection.

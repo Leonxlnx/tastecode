@@ -1,7 +1,7 @@
 # Bundled Design reference library
 
-This is the portable runtime selection from the generated reference collection: 118
-composition groups, including 15 heroes, with 220 original raster files and 102 paired
+This is the portable runtime selection from the generated reference collection: 172
+composition groups, including 24 heroes, with 316 original raster files and 144 paired
 mobile views. A normal clone and desktop package include these files; no separate download,
 external drive, Git LFS, or local configuration is required.
 
