@@ -281,7 +281,6 @@ describe('mapGrokBilling', () => {
         options: {
           stdio: ['pipe', 'pipe', 'pipe'],
           windowsHide: true,
-          detached: process.platform !== 'win32',
         },
       },
     ])
@@ -300,7 +299,10 @@ describe('mapGrokBilling', () => {
     const options = fake.spawns[0]!.options as Record<string, unknown>
     expect(options).not.toMatchObject({ shell: true })
     expect(options).not.toHaveProperty('shell')
-    expect(options).toMatchObject({ windowsHide: true, detached: process.platform !== 'win32' })
+    // spawnOwned forces the POSIX process group itself; callers no longer
+    // pass the dead detached option.
+    expect(options).toMatchObject({ windowsHide: true })
+    expect(options).not.toHaveProperty('detached')
   })
 
   it.each(['initialize', '_x.ai/billing'])(

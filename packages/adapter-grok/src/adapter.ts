@@ -312,7 +312,6 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         ...options,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        detached: process.platform !== 'win32',
       },
       this.#spawn,
     )

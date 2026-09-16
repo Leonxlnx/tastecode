@@ -206,7 +206,6 @@ async function readGrokBilling(): Promise<GrokBilling> {
   const child = spawnOwned(grokCommand(), ['agent', '--no-leader', 'stdio'], {
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    detached: process.platform !== 'win32',
   })
   const rpc = new StdioJsonRpc(child, 'grok billing')
   try {

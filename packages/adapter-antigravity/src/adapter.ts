@@ -194,7 +194,6 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
         ...options,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
-        detached: process.platform !== 'win32',
       },
       this.#spawn,
     )

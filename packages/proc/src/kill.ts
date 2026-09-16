@@ -8,16 +8,25 @@ import {
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 
 export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'kill'>
-type OwnedPipeSpawnOptions = Omit<SpawnOptions, 'cwd' | 'stdio'> & {
+
+// Caller-facing spawn options: `detached` is not offerable because the
+// platform forces it (POSIX children always get a private group, Windows
+// never does); `windowsHide` stays optional because it defaults to true.
+type OwnedPipeSpawnOptions = Omit<SpawnOptions, 'cwd' | 'stdio' | 'detached' | 'windowsHide'> & {
   cwd?: string
   stdio: ['pipe', 'pipe', 'pipe']
+  windowsHide?: boolean
+}
+// What an injected spawner always receives: spawnOwned fixes windowsHide and
+// detached itself rather than trusting whatever a caller passed.
+type ProcessSpawnerOptions = Omit<OwnedPipeSpawnOptions, 'windowsHide'> & {
   windowsHide: boolean
-  detached?: boolean
+  detached: boolean
 }
 type ProcessSpawner = (
   command: string,
   args: string[],
-  options: OwnedPipeSpawnOptions,
+  options: ProcessSpawnerOptions,
 ) => ChildProcessWithoutNullStreams
 
 const groups = new WeakMap<KillableProcess, number>()
@@ -54,12 +63,12 @@ export function spawnOwned(
 export function spawnOwned(
   command: string,
   args: readonly string[],
-  options?: SpawnOptions & { stdio?: 'pipe' | ['pipe', 'pipe', 'pipe'] },
+  options?: Omit<SpawnOptions, 'detached'> & { stdio?: 'pipe' | ['pipe', 'pipe', 'pipe'] },
 ): ChildProcessWithoutNullStreams
 export function spawnOwned(
   command: string,
   args: readonly string[],
-  options: SpawnOptions,
+  options: Omit<SpawnOptions, 'detached'>,
 ): ChildProcess
 export function spawnOwned(
   command: string,
