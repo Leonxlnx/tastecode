@@ -784,7 +784,8 @@ describe('sidebar status revision', () => {
     expect(starting).toBeGreaterThan(initial)
     expect(orchestrator.sidebarStatusChangesSince(initial)).toEqual([thread.id])
 
-    await vi.waitFor(() => expect(session.sent).toEqual(['Run']))
+    // A real Git checkpoint precedes sendTurn; allow it to finish under suite load.
+    await vi.waitFor(() => expect(session.sent).toEqual(['Run']), { timeout: 5_000 })
     session.release?.()
     const submitted = await submitting
     if (submitted.queued) throw new Error('expected an immediate turn')
@@ -1715,6 +1716,115 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it.each([false, true])(
+    'replans unavailable product captures before Build (unresolved: %s)',
+    async (stillMissing) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-native-ui-'))
+      writePreviewArtifacts(workspace)
+      const reference = path.resolve(
+        '../../packages/design-agent/references/directions/hero/direction-001.webp',
+      )
+      const page = readPageBlueprint(workspace)
+      const ids = ['response_inspector_capture', 'usage_billing_capture']
+      page.sections[0] = {
+        ...page.sections[0]!,
+        layoutFamily: 'hero',
+        referenceDirectionId: 'user-reference-1',
+        assetNeeds: ids,
+      }
+      writePageBlueprint(workspace, page)
+      const store = new Store(':memory:')
+      store.addProject(workspace)
+      store.addThread({
+        id: 'native-ui',
+        projectPath: workspace,
+        provider: 'codex',
+        title: 'Product interface',
+      })
+      store.setDesignRun('native-ui', {
+        ...approvalSnapshot(workspace),
+        originalRequest: 'Build an LLM gateway landing page with code and billing panels.',
+        phase: 'assets',
+        askedQuestions: false,
+        explicitAnswers: [],
+        referenceDeck: [],
+        referenceAttachments: [reference],
+        referenceSnapshot: snapshotDesignFiles([reference]),
+      })
+      const { orchestrator, sessions, received } = harness(undefined, store)
+      const manifest = {
+        version: 1,
+        assets: ids.map((id) => ({
+          id,
+          kind: 'image',
+          role: 'interface_capture',
+          status: 'needed',
+          purpose: 'Show the product interface',
+          requirements: ['No existing product capture is available.'],
+          sectionIds: ['hero'],
+          aspectRatio: '16:9',
+          composition: 'A readable product panel.',
+        })),
+      }
+      try {
+        const queued = await orchestrator.submitTurn('native-ui', 'Afterward')
+        if (queued.queued) orchestrator.deleteQueuedTurn('native-ui', queued.queuedTurn.id)
+        sessions[0]?.emit(message(JSON.stringify(manifest), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(store.designRun('native-ui')).toMatchObject({ phase: 'page', assetReplanned: true })
+        expect(sessions[0]?.sent.at(-1)).toContain('native HTML/CSS components')
+        expect(sessions[0]?.sent.at(-1)).toContain('response_inspector_capture')
+        if (!stillMissing)
+          page.sections[0] = { ...page.sections[0]!, assetNeeds: [], componentNeeds: ids }
+        sessions[0]?.emit(message(JSON.stringify(page), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
+        const resolved = stillMissing
+          ? manifest
+          : {
+              ...manifest,
+              assets: manifest.assets.map((asset) => ({
+                ...asset,
+                kind: 'component',
+                role: 'component',
+                requirements: ['Implement natively with representative interface content.'],
+              })),
+            }
+        sessions[0]?.emit(message(JSON.stringify(resolved), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
+        if (stillMissing) {
+          expect(store.designRun('native-ui')).toMatchObject({ phase: 'assets', correcting: true })
+          sessions[0]?.emit(message(JSON.stringify(resolved), 's1-turn'))
+          sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          expect(store.designRun('native-ui')).toBeUndefined()
+          expect(
+            sessions[0]?.sent.some((prompt) => prompt.includes('running the Build phase')),
+          ).toBe(false)
+        } else {
+          expect(store.designRun('native-ui')).toMatchObject({ phase: 'build' })
+          expect(readPageBlueprint(workspace).sections[0]?.componentNeeds).toEqual(ids)
+          const error = 'Missing required assets in .taste/assets.json'
+          const failed = JSON.stringify({ status: 'failed', error, files: [], checks: [] })
+          sessions[0]?.emit(message(failed, 's1-turn'))
+          sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
+          sessions[0]?.emit(message(failed, 's1-turn'))
+          sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          expect(
+            received.filter(({ event }) => event.type === 'thread.error').at(-1)?.event,
+          ).toMatchObject({ message: `Design mode failed: ${error}` })
+        }
+        expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
+
   it('rejects duplicate briefing IDs without presenting ambiguous questions', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-duplicate-'))
     const { orchestrator, sessions, received } = harness()
@@ -1950,7 +2060,7 @@ describe('provider-neutral design briefing', () => {
           'design-turn',
         )?.design,
       ).toBe(true)
-      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
       expect(
         history.some(
           ({ event }) =>
@@ -2047,7 +2157,7 @@ describe('provider-neutral design briefing', () => {
         expect(logs.some((line) => line.includes('late start rejection'))).toBe(true),
       )
       expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief' })
-      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
       expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
     } finally {
       await orchestrator.disposeAll()
@@ -2345,7 +2455,7 @@ describe('provider-neutral design briefing', () => {
   })
 
   it.each(ProviderIdSchema.options)(
-    'runs the same adaptive question loop with %s',
+    'builds without questions through the same workflow with %s',
     async (provider) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
@@ -2366,73 +2476,78 @@ describe('provider-neutral design briefing', () => {
         )
 
         expect(sessions[0]?.sent[0]).toContain('TasteCode Design Briefing mode')
+        expect(sessions[0]?.sent[0]).toContain('plain-language progress updates')
         expect(sessions[0]?.sentAttachments[0]).toEqual([referencePath])
-        sessions[0]?.emit(
-          message(
-            JSON.stringify({
-              status: 'questions',
-              message: 'Preparing questions.',
-              questions: Array.from({ length: 5 }, (_, index) => ({
-                id: `field_${index}`,
-                header: `Field ${index + 1}`,
-                question: `What should field ${index + 1} be?`,
+        sessions[0]?.emit({
+          type: 'user_input.requested',
+          request: {
+            id: 'provider-question',
+            turnId: 's1-turn',
+            createdAt: 1,
+            autoResolutionMs: null,
+            questions: [
+              {
+                id: 'audience',
+                header: 'Audience',
+                question: 'Who is it for?',
+                secret: false,
                 allowOther: true,
-                options: [{ label: 'Decide for me', description: 'Let the Design Agent decide.' }],
-              })),
-              brief: null,
-            }),
-            's1-turn',
+                options: [],
+              },
+            ],
+          },
+        })
+        expect(sessions[0]?.userInputs[0]).toMatchObject({
+          requestId: 'provider-question',
+          answers: { audience: [expect.stringContaining('continue without questions')] },
+        })
+        const progress = {
+          id: 'brief-progress',
+          turnId: 's1-turn',
+          type: 'message' as const,
+          role: 'assistant' as const,
+          phase: 'commentary' as const,
+          status: 'started' as const,
+          text: '',
+          createdAt: 1,
+        }
+        sessions[0]?.emit({ type: 'item.started', item: progress })
+        sessions[0]?.emit({
+          type: 'item.delta',
+          itemId: progress.id,
+          turnId: progress.turnId,
+          textDelta: 'I am checking the supplied style and required sections.',
+        })
+        sessions[0]?.emit({
+          type: 'item.completed',
+          item: {
+            ...progress,
+            status: 'completed',
+            text: 'I am checking the supplied style and required sections.',
+          },
+        })
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.id === progress.id,
           ),
-        )
-
-        const firstRequest = received.find(
-          ({ event }) => event.type === 'user_input.requested',
-        )?.event
-        expect(firstRequest?.type).toBe('user_input.requested')
-        if (firstRequest?.type !== 'user_input.requested') throw new Error('missing questions')
-        expect(firstRequest.request.questions).toHaveLength(5)
-        expect(store.designRun(thread.id)).toMatchObject({
-          phase: 'brief',
-          askedQuestions: true,
-          referenceAttachments: [referencePath],
-        })
-
-        orchestrator.respondToUserInput(thread.id, firstRequest.request.id, {
-          field_0: ['Something vague'],
-        })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
-        expect(sessions[0]?.sent[1]).toContain('Something vague')
-
-        sessions[0]?.emit(
-          message(
-            JSON.stringify({
-              status: 'questions',
-              message: 'Preparing questions.',
-              questions: [
-                {
-                  id: 'field_0_clarification',
-                  header: 'Clarify',
-                  question: 'Could you clarify that answer?',
-                  allowOther: true,
-                  options: [
-                    { label: 'Decide for me', description: 'Let the Design Agent decide.' },
-                  ],
-                },
-              ],
-              brief: null,
-            }),
-            's1-turn',
+        ).toBe(true)
+        expect(
+          received.some(({ event }) => event.type === 'item.delta' && event.itemId === progress.id),
+        ).toBe(true)
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.completed' && event.item.id === progress.id,
           ),
-        )
-        const followUp = received
-          .filter(({ event }) => event.type === 'user_input.requested')
-          .at(-1)?.event
-        if (followUp?.type !== 'user_input.requested') throw new Error('missing follow-up')
-        orchestrator.respondToUserInput(thread.id, followUp.request.id, {
-          field_0_clarification: ['Decide for me'],
+        ).toBe(true)
+        const protocol = { ...progress, id: 'brief-json', phase: 'final_answer' as const }
+        sessions[0]?.emit({ type: 'item.started', item: protocol })
+        sessions[0]?.emit({
+          type: 'item.delta',
+          itemId: protocol.id,
+          turnId: protocol.turnId,
+          textDelta: '{"status":"complete"',
         })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
-
+        sessions[0]?.emit(turnStarted(thread.id, 's1-turn'))
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -2460,55 +2575,28 @@ describe('provider-neutral design briefing', () => {
             's1-turn',
           ),
         )
-        const finalRequest = received
-          .filter(({ event }) => event.type === 'user_input.requested')
-          .at(-1)?.event
-        if (finalRequest?.type !== 'user_input.requested') throw new Error('missing final question')
-        expect(finalRequest.request.questions).toHaveLength(1)
-        expect(finalRequest.request.questions[0]?.id).toBe('final_note')
-
-        orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-          final_note: ["No, that's everything"],
-        })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
+        expect(received.filter(({ event }) => event.type === 'user_input.requested')).toHaveLength(
+          0,
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
         const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
         expect(brief.subject).toBe('Independent studio')
-        expect(brief.explicitAnswers).toEqual([
-          { question: 'What should field 1 be?', answer: 'Something vague' },
-          { question: 'Could you clarify that answer?', answer: 'Decide for me' },
-        ])
-        expect(sessions[0]?.userInputs).toEqual([])
-        expect(sessions[0]?.sent[3]).toContain('Brand phase')
-        expect(sessions[0]?.sentAttachments[3]).toEqual([referencePath])
+        expect(brief.explicitAnswers).toEqual([])
+        expect(sessions[0]?.userInputs).toHaveLength(1)
+        expect(sessions[0]?.sent[1]).toContain('Brand phase')
+        expect(sessions[0]?.sentAttachments[1]).toEqual([referencePath])
 
-        // The transcript walks the user through the briefing in plain words:
-        // an invitation, an ack per answer round, a clarify nudge, a close.
-        const notes = received
-          .filter(
+        expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
+        expect(
+          received.some(
             ({ event }) =>
-              event.type === 'item.completed' &&
-              event.item.type === 'message' &&
-              event.item.id.startsWith('design-note-'),
-          )
-          .map(({ event }) =>
-            event.type === 'item.completed' && event.item.type === 'message'
-              ? { text: event.item.text, phase: event.item.phase }
-              : undefined,
-          )
-        expect(notes).toEqual([
-          {
-            text: 'I have a few questions before designing — they are right below.',
-            phase: 'commentary',
-          },
-          { text: 'Got it, thanks.', phase: 'commentary' },
-          {
-            text: 'Some answers need one more pass — please take another look below.',
-            phase: 'commentary',
-          },
-          { text: 'Got it, thanks.', phase: 'commentary' },
-          { text: 'Brief locked in. Starting the design.', phase: 'commentary' },
-        ])
+              (event.type === 'item.started' && event.item.id === protocol.id) ||
+              (event.type === 'item.delta' && event.itemId === protocol.id) ||
+              (event.type === 'item.completed' && event.item.text?.startsWith('{"status"')),
+          ),
+        ).toBe(false)
 
         sessions[0]?.emit(
           message(
@@ -2541,12 +2629,12 @@ describe('provider-neutral design briefing', () => {
           ),
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'page' })
-        expect(sessions[0]?.sent[4]).toContain('Page Blueprint phase')
-        expect(sessions[0]?.sent[4]).toContain('user-reference-1')
-        expect(sessions[0]?.sentAttachments[4]?.[0]).toBe(referencePath)
-        expect(sessions[0]?.sentAttachments[4]).toEqual([referencePath])
+        expect(sessions[0]?.sent[2]).toContain('Page Blueprint phase')
+        expect(sessions[0]?.sent[2]).toContain('user-reference-1')
+        expect(sessions[0]?.sentAttachments[2]?.[0]).toBe(referencePath)
+        expect(sessions[0]?.sentAttachments[2]).toEqual([referencePath])
 
         sessions[0]?.emit(
           message(
@@ -2589,15 +2677,15 @@ describe('provider-neutral design briefing', () => {
           ),
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(6))
-        expect(sessions[0]?.sent[5]).toContain('Asset phase')
-        expect(sessions[0]?.sentAttachments[5]).toEqual([referencePath])
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
+        expect(sessions[0]?.sent[3]).toContain('Asset phase')
+        expect(sessions[0]?.sentAttachments[3]).toEqual([referencePath])
 
         sessions[0]?.emit(message(JSON.stringify({ version: 1, assets: [] }), 's1-turn'))
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
-        expect(sessions[0]?.sent[6]).toContain('Build phase')
-        expect(sessions[0]?.sentAttachments[6]).toEqual([referencePath])
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
+        expect(sessions[0]?.sent[4]).toContain('Build phase')
+        expect(sessions[0]?.sentAttachments[4]).toEqual([referencePath])
         mkdirSync(path.join(workspace, 'src'))
         writeFileSync(
           path.join(workspace, 'src', 'page.tsx'),
@@ -2616,8 +2704,8 @@ describe('provider-neutral design briefing', () => {
           ),
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(8))
-        expect(sessions[0]?.sent[7]).toContain('Preview Setup phase')
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(6))
+        expect(sessions[0]?.sent[5]).toContain('Preview Setup phase')
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -2634,10 +2722,10 @@ describe('provider-neutral design briefing', () => {
             's1-turn',
           ),
         )
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(9))
-        expect(sessions[0]?.sent[8]).toContain('visual Review phase')
-        expect(sessions[0]?.sentAttachments[8]).toHaveLength(3)
-        expect(sessions[0]?.sentAttachments[8]).toContain(referencePath)
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
+        expect(sessions[0]?.sent[6]).toContain('visual Review phase')
+        expect(sessions[0]?.sentAttachments[6]).toHaveLength(3)
+        expect(sessions[0]?.sentAttachments[6]).toContain(referencePath)
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -2658,12 +2746,12 @@ describe('provider-neutral design briefing', () => {
           ),
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(10))
-        expect(sessions[0]?.sent[9]).toContain('repair attempt 1 of 2')
-        expect(sessions[0]?.sent[9]).toContain('<screenshots>')
-        expect(sessions[0]?.sentAttachments[9]).toHaveLength(3)
-        expect(sessions[0]?.sentAttachments[9]).toContain(referencePath)
-        expect(sessions[0]?.sentAttachments[9]).toEqual(
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(8))
+        expect(sessions[0]?.sent[7]).toContain('repair attempt 1 of 2')
+        expect(sessions[0]?.sent[7]).toContain('<screenshots>')
+        expect(sessions[0]?.sentAttachments[7]).toHaveLength(3)
+        expect(sessions[0]?.sentAttachments[7]).toContain(referencePath)
+        expect(sessions[0]?.sentAttachments[7]).toEqual(
           expect.arrayContaining([
             path.join(os.tmpdir(), '1440x1000.png'),
             path.join(os.tmpdir(), '390x844.png'),
@@ -2681,7 +2769,7 @@ describe('provider-neutral design briefing', () => {
           ),
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(11))
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(9))
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -2707,7 +2795,7 @@ describe('provider-neutral design briefing', () => {
         // Qualification and briefing run fast; every phase after the
         // validated brief keeps the user's requested effort.
         expect(sessions[0]?.sentOptions).toEqual([
-          ...Array.from({ length: 3 }, () => ({ model, effort: 'low' })),
+          ...Array.from({ length: 1 }, () => ({ model, effort: 'low' })),
           ...Array.from({ length: 8 }, () => ({ model, effort: 'xhigh' })),
         ])
         expect(readdirSync(path.join(workspace, '.taste')).sort()).toEqual([
@@ -2732,8 +2820,6 @@ describe('provider-neutral design briefing', () => {
             .map(({ event }) => (event.type === 'item.started' ? event.item.text : undefined)),
         ).toEqual([
           'design:brief',
-          'design:brief',
-          'design:brief',
           'design:brand',
           'design:page',
           'design:assets',
@@ -2752,7 +2838,7 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
-  it('asks the final note once before locking an initially complete brief', async () => {
+  it.each([false, true])('continues a complete brief (legacy: %s)', async (legacy) => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-complete-'))
     const priorLibrary = process.env.TASTECODE_REFERENCE_LIBRARY
     process.env.TASTECODE_REFERENCE_LIBRARY = workspace
@@ -2821,71 +2907,66 @@ describe('provider-neutral design briefing', () => {
           unresolved: [],
         },
       })
-      const thread = await orchestrator.startThread('codex', workspace)
-      await orchestrator.sendTurn(thread.id, request, [DESIGN_BRIEF_ATTACHMENT])
-      sessions[0]?.emit(message(completeOutput, 's1-turn'))
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-
-      const finalRequests = () =>
-        received.filter(
-          ({ event }) =>
-            event.type === 'user_input.requested' &&
-            event.request.questions.some(({ id }) => id === 'final_note'),
-        )
-      await vi.waitFor(() => expect(finalRequests()).toHaveLength(1))
-      const finalRequest = finalRequests()[0]?.event
-      if (finalRequest?.type !== 'user_input.requested') throw new Error('missing final note')
-      expect(finalRequest.request.questions[0]).toMatchObject({
-        question: "Before I finalize your brief, is there anything else you'd like me to know?",
-        options: [{ label: "No, that's everything" }],
-      })
-
-      sessions[0]?.turnIds.push('final-note-turn', 'motion-turn', 'brand-turn')
-      orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-        final_note: ["No, that's everything — except keep it motion-free."],
-      })
-      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
-      sessions[0]?.emit(
-        message(
-          JSON.stringify({
-            status: 'questions',
-            message: 'Preparing questions.',
+      let threadId: string
+      if (legacy) {
+        threadId = 'legacy-closing-question'
+        store.addProject(workspace)
+        store.addThread({
+          id: threadId,
+          projectPath: workspace,
+          provider: 'codex',
+          title: 'Legacy brief',
+        })
+        store.setDesignRun(threadId, {
+          originalRequest: request,
+          phase: 'brief',
+          askedQuestions: false,
+          finalAsked: true,
+          pendingBrief: JSON.parse(completeOutput).brief,
+          explicitAnswers: [],
+        })
+        store.append(threadId, {
+          type: 'user_input.requested',
+          request: {
+            id: 'legacy-final-note',
+            turnId: 'old-brief',
+            autoResolutionMs: null,
+            createdAt: 1,
             questions: [
               {
-                id: 'motion',
-                header: 'Motion',
-                question: 'Should every animation be removed?',
+                id: 'final_note',
+                header: 'Final note',
+                question: 'Anything else?',
                 allowOther: true,
-                options: [
-                  { label: 'Yes', description: 'Use no animation.' },
-                  { label: 'No', description: 'Keep restrained feedback.' },
-                ],
+                secret: false,
+                options: [{ label: "No, that's everything", description: 'Continue.' }],
               },
             ],
-            brief: null,
-          }),
-          'final-note-turn',
-        ),
-      )
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 'final-note-turn', status: 'completed' })
-      const motionRequest = received
-        .filter(({ event }) => event.type === 'user_input.requested')
-        .at(-1)?.event
-      if (motionRequest?.type !== 'user_input.requested') throw new Error('missing clarification')
-      orchestrator.respondToUserInput(thread.id, motionRequest.request.id, { motion: ['Yes'] })
-      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
-      sessions[0]?.emit(message(completeOutput, 'motion-turn'))
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 'motion-turn', status: 'completed' })
+          },
+        })
+        await orchestrator.submitTurn(threadId, 'Continue afterward.')
+        expect(
+          received.some(
+            ({ event }) => event.type === 'user_input.resolved' && event.id === 'legacy-final-note',
+          ),
+        ).toBe(true)
+      } else {
+        const thread = await orchestrator.startThread('codex', workspace)
+        threadId = thread.id
+        await orchestrator.sendTurn(threadId, request, [DESIGN_BRIEF_ATTACHMENT])
+        sessions[0]?.emit(message(completeOutput, 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      }
 
-      await vi.waitFor(() => expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' }))
-      expect(store.designRun(thread.id)).toMatchObject({
+      await vi.waitFor(() => expect(store.designRun(threadId)).toMatchObject({ phase: 'brand' }))
+      expect(store.designRun(threadId)).toMatchObject({
         referenceDeck: [{ id: 'reviewed-hero' }, { id: 'reviewed-pricing' }],
       })
       await vi.waitFor(() =>
         expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),
       )
       expect(sessions[0]?.sentAttachments.at(-1)).toEqual([reference, mobileReference])
-      expect(finalRequests()).toHaveLength(1)
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
     } finally {
       if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY
       else process.env.TASTECODE_REFERENCE_LIBRARY = priorLibrary
@@ -2944,42 +3025,47 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it('recovers from one malformed phase response', async () => {
+  it.each([false, true])('requires phase JSON (commentary: %s)', async (commentaryOnly) => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-correction-'))
+    writePreviewArtifacts(workspace)
+    const complete = JSON.stringify({
+      status: 'complete',
+      message: 'Brief complete.',
+      questions: [],
+      brief: readDesignBrief(workspace),
+    })
+    const reference = path.resolve(
+      '../../packages/design-agent/references/directions/hero/direction-001.webp',
+    )
     const { orchestrator, sessions, received, store } = harness()
     try {
       const thread = await orchestrator.startThread('codex', workspace)
-      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
-      sessions[0]?.emit(message('not json', 's1-turn'))
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT, reference])
+      const incomplete = message('I am checking the current files.', 's1-turn')
+      if (incomplete.type !== 'item.completed') throw new Error('Expected a message')
+      sessions[0]?.emit({
+        ...incomplete,
+        item: { ...incomplete.item, ...(commentaryOnly ? { phase: 'commentary' as const } : {}) },
+      })
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
       expect(sessions[0]?.sent[1]).toContain('failed validation')
       sessions[0]?.emit(message('Interim explanation before the JSON report', 's1-turn'))
-      sessions[0]?.emit(
-        message(
-          JSON.stringify({
-            status: 'questions',
-            message: 'Preparing questions.',
-            questions: [
-              {
-                id: 'subject',
-                header: 'Subject',
-                question: 'What should the site present?',
-                allowOther: true,
-                options: [{ label: 'Decide for me', description: 'Choose a suitable subject.' }],
-              },
-            ],
-            brief: null,
-          }),
-          's1-turn',
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' &&
+            event.item.text === 'Interim explanation before the JSON report' &&
+            event.item.phase === 'commentary',
         ),
-      )
+      ).toBe(true)
+      sessions[0]?.emit(message(complete, 's1-turn'))
 
       await vi.waitFor(() =>
-        expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true),
+        expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false),
       )
-      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
+      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand', correcting: false })
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() =>
         expect(
@@ -3152,35 +3238,27 @@ describe('provider-neutral design briefing', () => {
 
   it('accepts final structured output after provider commentary', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-commentary-'))
+    writePreviewArtifacts(workspace)
+    const complete = JSON.stringify({
+      status: 'complete',
+      message: 'Brief complete.',
+      questions: [],
+      brief: readDesignBrief(workspace),
+    })
+    const reference = path.resolve(
+      '../../packages/design-agent/references/directions/hero/direction-001.webp',
+    )
     const { orchestrator, sessions, received, store } = harness()
     try {
       const thread = await orchestrator.startThread('codex', workspace)
-      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT, reference])
       sessions[0]?.emit(message('I will inspect the project first.', 's1-turn'))
-      sessions[0]?.emit(
-        message(
-          JSON.stringify({
-            status: 'questions',
-            message: 'Preparing questions.',
-            questions: [
-              {
-                id: 'subject',
-                header: 'Subject',
-                question: 'What should the site present?',
-                allowOther: true,
-                options: [{ label: 'Decide for me', description: 'Choose a suitable subject.' }],
-              },
-            ],
-            brief: null,
-          }),
-          's1-turn',
-        ),
-      )
+      sessions[0]?.emit(message(complete, 's1-turn'))
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
-      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true)
-      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
-      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
+      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand', correcting: false })
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
     } finally {
       await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
@@ -3353,7 +3431,7 @@ describe('provider-neutral design briefing', () => {
 })
 
 describe('persisted threads', () => {
-  it('restores an unanswered design briefing question', async () => {
+  it('resumes legacy unanswered briefing questions autonomously', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-question-resume-'))
     const store = new Store(':memory:')
     store.addProject(workspace)
@@ -3393,13 +3471,15 @@ describe('persisted threads', () => {
     const { orchestrator, sessions } = harness(undefined, store)
     try {
       await orchestrator.submitTurn('persisted-question', 'Queue this.')
-      expect(sessions[0]?.sent).toEqual([])
-
-      orchestrator.respondToUserInput('persisted-question', 'persisted-input', {
-        audience: ['Independent founders'],
-      })
+      expect(
+        store
+          .history('persisted-question')
+          .some(
+            ({ event }) => event.type === 'user_input.resolved' && event.id === 'persisted-input',
+          ),
+      ).toBe(true)
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
-      expect(sessions[0]?.sent[0]).toContain('Independent founders')
+      expect(sessions[0]?.sent[0]).toContain('Decide for me')
     } finally {
       await orchestrator.disposeAll()
       store.close()

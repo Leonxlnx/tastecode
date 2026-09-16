@@ -661,12 +661,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     (errorsInComposer && item.type === 'error') ||
     isBlankReasoning(item) ||
     (compactedActivity && !activityLead) ||
-    repeatedDesignRowAt(item, index) ||
-    // A design turn tells its story through the phase labels and TasteCode
-    // notes; raw provider work would drown that story in noise.
-    (presentation?.design === true &&
-      !compactedActivity &&
-      ((isActivity(item) && !designPhaseLabel(toolText(item))) || item.type === 'error'))
+    repeatedDesignRowAt(item, index)
   const nextVisibleItem = threadItemAt(
     items,
     liveItems,
@@ -2162,7 +2157,7 @@ function summariseLive(item: Item): string {
 }
 
 function designPhaseLabel(text: string): string | undefined {
-  if (text.includes('design:brief')) return 'Preparing questions'
+  if (text.includes('design:brief')) return 'Understanding the request'
   if (text.includes('design:brand')) return 'Creating brand direction'
   if (text.includes('design:page')) return 'Planning the page'
   if (text.includes('design:assets')) return 'Gathering assets'

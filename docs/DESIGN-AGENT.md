@@ -21,8 +21,8 @@ long specification first.
 The intended experience is:
 
 1. The user selects Design in the normal composer and writes a request.
-2. TasteCode extracts everything it can and asks only questions whose answers materially affect
-   the result. It asks as many questions as necessary.
+2. TasteCode extracts the request, chooses defaults for missing details, and records assumptions.
+   Design briefing never asks questions or waits for a confirmation.
 3. TasteCode records a validated brief before any website implementation begins.
 4. The internal Design Agent makes explicit brand, copy, layout, asset, and motion decisions.
 5. The normal selected agent implements those decisions in the user's existing project.
@@ -53,7 +53,7 @@ output.
 | TasteCode runtime owns                         | Internal design-agent package owns                    |
 | ---------------------------------------------- | ----------------------------------------------------- |
 | Design Mode entry and provider sessions        | Brief, Brand, Page, Asset, Build, and Review prompts  |
-| Question transport and briefing UI             | Artifact contracts and trust-boundary parsers         |
+| Autonomous briefing and progress               | Artifact contracts and trust-boundary parsers         |
 | Durable `.taste` writes and flow recovery      | Creative direction and visual thesis rules            |
 | Provider-neutral orchestration and permissions | Copy, layout, component, image, and motion judgment   |
 | Safe project tools and command boundaries      | Deterministic palette and objective quality checks    |
@@ -77,10 +77,7 @@ Qualify request
         v
 Extract brief facts
         |
-        +-- material gaps --> structured questions --> re-evaluate
-        |
-        v
-Final optional note
+        +-- missing details --> recorded assumptions
         |
         v
 .taste/brief.json
@@ -147,7 +144,7 @@ Implemented mechanics:
 
 - Design entry through the existing composer;
 - fast request qualification and brief extraction;
-- adaptive structured questions and a final optional note;
+- autonomous brief extraction with recorded assumptions and no questions;
 - validated brief, brand, page, asset, preview, and review outputs;
 - automatic phase turns in the same provider session;
 - hidden machine-readable phase responses instead of raw JSON in chat;
@@ -219,60 +216,23 @@ and decisions that later phases must respect.
 All required string fields must be non-empty. All list fields must be string arrays. Unknown model
 keys are stripped rather than persisted and later injected into Build instructions.
 
-### Question behavior
+### Autonomous briefing
 
-The provider first infers everything reasonably supported by the request. If material information
-is missing, it returns every currently useful question in one structured response. TasteCode shows
-the questions one at a time and returns the collected answers together.
+Design runs never present briefing questions. The provider completes the brief using the request,
+existing project evidence, and recorded assumptions. An unexpected question response receives one
+internal correction. Provider-originated input requests receive an instruction to choose defaults;
+permission approvals remain on the normal approval path. No credentials or authorization are invented.
 
-Each question contains:
-
-- a stable snake-case ID;
-- a short header retained in the shared protocol;
-- one concise question;
-- one or more selectable answers;
-- a recommended default where appropriate;
-- `Decide for me` when a safe assumption is possible;
-- an optional custom text answer.
-
-After the answers return, the provider re-evaluates all core fields. Vague or contradictory
-answers produce the smallest useful set of follow-up questions. Resolved questions are not asked
-again. Once the provider returns a complete candidate brief after any question round, TasteCode
-always asks the final optional note:
-
-```text
-Before I finalize your brief, is there anything else you'd like me to know?
-```
-
-Choosing the recommended no-more-details answer writes the pending candidate brief. A custom final
-note goes through one more briefing continuation so it can be incorporated and validated.
-
-### Briefing UI
-
-`UserInput` is a shared structured-input surface rendered through the normal thread store. For the
-briefing it portals into `.composer__box` and appears eight pixels above the composer.
-
-The current behavior includes:
-
-- one visible question at a time;
-- vertical single-line answer choices;
-- a radio selection for every option;
-- `Write your own answer` as a selectable row that becomes a text field;
-- Back and Next or Submit actions;
-- wheel-up to return and wheel-down to advance after a valid answer;
-- preserved answers when navigating backward;
-- disabled forward navigation until the visible question has an answer;
-- a compact submitting state;
-- reduced-motion handling;
-- tactile hover, press, selected, and focus states using the existing token system.
-
-The provider may return any necessary number of questions. The UI counter and local answer state
-handle the returned list without a product-level maximum.
+Older persisted final-note cards resolve against their validated candidate brief. Other saved
+briefing questions resume with autonomous decision instructions. The shared UserInput surface
+remains available to ordinary non-Design tasks.
 
 ## Artifact chain
 
 Artifacts are a chain of evidence and decisions, not copies of one growing object. A later phase
-may consume earlier artifacts but never silently rewrite them.
+may consume earlier artifacts but never silently rewrite them. If visual acquisition fails, the
+server permits one explicit Page revision before Build. New product interfaces use native
+components; photography still requires real files and provenance. Unresolved visuals never enter Build.
 
 | Artifact      | Owns                                                              | Consumes                                       |
 | ------------- | ----------------------------------------------------------------- | ---------------------------------------------- |
@@ -534,7 +494,7 @@ Persisted flow state includes:
 - original request;
 - selected model, service tier, and effort options;
 - current phase;
-- whether material questions and the final note were asked;
+- legacy briefing question state;
 - explicit briefing answers;
 - whether a malformed response is already being corrected;
 - pending candidate brief or next prompt;
@@ -547,18 +507,20 @@ Persisted flow state includes:
 On thread restoration, TasteCode:
 
 1. parses and rejects corrupt stored flow state;
-2. reconstructs unresolved structured questions from `user_input.requested` and
-   `user_input.resolved` events;
+2. resolves legacy unanswered briefing cards and continues autonomously;
 3. reattaches an open provider turn when one exists;
 4. finishes a persisted completion;
 5. otherwise rebuilds the next phase prompt from validated workspace artifacts;
 6. fails visibly and releases the queue if a required artifact was removed.
 
 The current phase prompts are internal provider turns. TasteCode creates a synthetic `tool_call`
-item such as `design:brand`, suppresses internal assistant JSON deltas, parses the completed
-assistant message, and only then advances. The visible activity labels are:
+item such as `design:brand`, suppresses internal final-result JSON deltas, parses the completed
+phase result, and only then advances. Ordinary assistant commentary streams into the normal chat
+alongside tool activity. Providers without commentary metadata expose plain-text updates when
+each message completes. Each phase requests concise updates about checks, changes, and validation;
+commentary alone does not count as a valid phase result. The visible activity labels are:
 
-- Preparing questions;
+- Understanding the request;
 - Creating brand direction;
 - Planning the page;
 - Gathering assets;
@@ -592,9 +554,8 @@ The current product surface is provider-neutral for briefing but capability-gate
 | Direct API runtime | Available         | Skipped                   | Workspace tools exist, but image attachments are not implemented.              |
 | ACP                | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
-TasteCode-owned Design questions need only an ordinary text turn and do not depend on an adapter's
-provider-originated structured-input capability. Provider-originated questions still use the
-adapter's declared `userInput` support.
+Autonomous Design briefing uses ordinary text turns and does not require structured-input support.
+Provider-originated Design questions are answered through the adapter when it supports input responses.
 
 Image support remains truthful end to end. ACP derives its capability from initialization and
 serializes screenshot files as ACP image content blocks only when
@@ -900,7 +861,7 @@ navigation and settle behavior, ACP image prompt blocks, and adapter capability 
 M4 is complete only when:
 
 - Design Mode works through every supported provider path that can perform ordinary text turns;
-- briefing asks only useful questions and produces a complete validated brief;
+- briefing produces a complete validated brief without user questions;
 - the internal design-agent contracts drive Brand, Page, Assets, Build, and Review across
   providers;
 - the artifact schemas carry every decision consumed by implementation and review without becoming

@@ -1,11 +1,11 @@
 # Design Agent v0.5 reference workflow
 
 New Design runs extract the requested sections and existing brand constraints before selecting
-references. The server randomly chooses one reviewed composition group per requested section
+references. The server randomly chooses one reviewed composition group per available layout
 family from a suitable collection; alternate revisions do not get extra votes. Explicit reference
-IDs take priority. The page planner uses only sections needed by the brief.
-If the preferred collection lacks a requested family, selection falls back to reviewed entries
-of that family. If none exist, the run reports the missing family instead of silently omitting it.
+IDs take priority. The page planner uses only sections needed by the brief. Free-form section
+names never filter out needed compositions. Missing families use available compositions with the
+requested content adapted inside them; section topics do not have to match layout family names.
 
 The selected catalog records and file hashes are persisted with the Design run. Brand, page,
 asset, build and visual review turns receive the actual selected desktop and paired mobile

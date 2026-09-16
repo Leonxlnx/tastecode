@@ -104,15 +104,18 @@ describe('reviewed reference library', () => {
     save(root, [{ ...entry, imagePath: 'threshold-hero.png' }])
     expect(() => loadReviewedReferences(root)).toThrow('no visually reviewed references')
   })
-  it('selects only the section families extracted into the brief', () => {
+  it('keeps the composition deck complete for free-form section names', () => {
     const root = library()
     save(root, [entry, { ...entry, id: 'studio-stats', group: 'studio-stats', family: 'stats' }])
     expect(
       selectReviewedReferences(
-        { ...brief, requiredContent: ['Photographic hero'] },
+        {
+          ...brief,
+          requiredContent: ['Opening promise: a studio', 'Closing invitation: get in touch'],
+        },
         loadReviewedReferences(root),
       ).map(({ family }) => family),
-    ).toEqual(['hero'])
+    ).toEqual(['hero', 'stats'])
   })
   it('keeps requested sections when the preferred collection lacks their family', () => {
     const root = library()
@@ -135,7 +138,7 @@ describe('reviewed reference library', () => {
       ).map(({ family }) => family),
     ).toEqual(['hero', 'about'])
   })
-  it('reports a missing requested family without treating body copy as extra sections', () => {
+  it('allows content topics without a dedicated catalog family', () => {
     const root = library()
     save(root, [entry])
     const references = loadReviewedReferences(root)
@@ -145,9 +148,9 @@ describe('reviewed reference library', () => {
         references,
       ),
     ).toHaveLength(1)
-    expect(() =>
+    expect(
       selectReviewedReferences({ ...brief, requiredContent: ['Hero', 'Pricing'] }, references),
-    ).toThrow('requested section family pricing')
+    ).toHaveLength(1)
   })
   it('rejects duplicate identifiers and corrupt selected images with actionable errors', () => {
     const root = library()

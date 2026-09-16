@@ -130,26 +130,6 @@ export function selectReviewedReferences(
   if (!preferred) throw new Error('No reviewed Design references are available')
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
-  const sectionContent = brief.requiredContent
-    .map((section) => section.split(':')[0])
-    .join(' ')
-    .toLowerCase()
-  const requestedFamilies = PAGE_LAYOUT_FAMILIES.filter((family) => {
-    const names = {
-      hero: /\bhero\b/u,
-      about: /\b(?:about|introduction|story)\b/u,
-      feature: /\b(?:features?|services?|capabilities|projects?|products?)\b/u,
-      how_it_works: /\b(?:process|steps|how it works)\b/u,
-      social_proof: /\b(?:testimonials?|clients?|social proof)\b/u,
-      stats: /\b(?:statistics|stats|metrics|numbers)\b/u,
-      faq: /\b(?:faq|frequently asked|questions)\b/u,
-      cta: /\b(?:cta|call to action|contact|invitation)\b/u,
-      pricing: /\b(?:pricing|plans|packages)\b/u,
-      contact: /\b(?:contact form|inquiry form|enquiry form)\b/u,
-      footer: /\bfooter\b/u,
-    }
-    return names[family].test(sectionContent)
-  })
   // A group identifies revisions of one section, not a site. One revision gets one vote.
   const candidates = ranked.filter((entry) => {
     const explicit =
@@ -159,27 +139,15 @@ export function selectReviewedReferences(
     return explicit || entry.source === preferred.source || compatible
   })
   for (const family of PAGE_LAYOUT_FAMILIES) {
-    if (
-      requestedFamilies.length &&
-      !requestedFamilies.includes(family) &&
-      !references.some(
-        (entry) => entry.family === family && request.includes(entry.id.toLowerCase()),
-      )
-    )
-      continue
+    // Section titles are free-form and multilingual. Let Page choose the needed
+    // compositions from a complete deck instead of discarding families by keywords.
     const compatibleEntries = candidates.filter((entry) => entry.family === family)
     // A style preference must not remove content the user requested. Brand adaptation
     // unifies a reviewed fallback when that collection has no composition for the family.
     const familyEntries = compatibleEntries.length
       ? compatibleEntries
       : ranked.filter((entry) => entry.family === family)
-    if (!familyEntries.length) {
-      if (requestedFamilies.includes(family))
-        throw new Error(
-          `No reviewed reference is available for requested section family ${family}. Add a reviewed catalog entry or attach your own reference images.`,
-        )
-      continue
-    }
+    if (!familyEntries.length) continue
     const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
     // Revisions share a vote: choose a group first, then its reviewed revision.
     const pool = explicit.length ? explicit : familyEntries
