@@ -1716,10 +1716,14 @@ function ViewedImagePreview({
 const IMAGE_ATTACHMENT_RE = /\.(?:apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 
 function isImageAttachment(reference: string): boolean {
-  return IMAGE_ATTACHMENT_RE.test(reference)
+  return (
+    IMAGE_ATTACHMENT_RE.test(reference) ||
+    /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/.test(reference)
+  )
 }
 
 function attachmentName(reference: string): string {
+  if (reference.startsWith('data:image/')) return 'Attached image'
   return reference.split(/[\\/]/).filter(Boolean).at(-1) ?? reference
 }
 
