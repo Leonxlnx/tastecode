@@ -73,7 +73,11 @@ export async function verifyBundledDesignReferences(
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const child = path.join(relative, entry.name)
       if (entry.isDirectory()) await collect(path.join(directory, entry.name), child)
-      else if (entry.isFile() && /\.(webp|png|jpe?g|json|md)$/.test(entry.name))
+      else if (
+        entry.isFile() &&
+        (/\.(webp|png|jpe?g|json|md)$/.test(entry.name) ||
+          child === path.join('motion', 'reveal.js'))
+      )
         expected.push(child)
       else throw new Error('Unexpected design reference asset')
     }
