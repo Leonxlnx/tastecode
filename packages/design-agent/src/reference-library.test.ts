@@ -2,16 +2,21 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DesignBrief } from './brief.js'
 import {
   loadReviewedReferences,
   parseReferenceDeck,
+  referenceLibraryRoot,
   selectReviewedReferences,
 } from './reference-library.js'
 
 const roots: string[] = []
-afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))
+afterEach(() => {
+  roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }))
+  vi.unstubAllEnvs()
+  vi.restoreAllMocks()
+})
 function library() {
   const root = mkdtempSync(path.join(os.tmpdir(), 'taste-references-'))
   roots.push(root)
@@ -42,6 +47,32 @@ function save(root: string, references: unknown[]) {
   writeFileSync(path.join(root, 'catalog.json'), JSON.stringify({ version: 1, references }))
 }
 describe('reviewed reference library', () => {
+  it('selects the bundled library on a fresh install without machine-specific configuration', () => {
+    vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', undefined)
+    vi.spyOn(os, 'homedir').mockReturnValue(library())
+    const references = loadReviewedReferences()
+    expect(referenceLibraryRoot()).toBe(
+      fileURLToPath(new URL('../references/library/', import.meta.url)),
+    )
+    expect(references).toHaveLength(118)
+    expect(references.filter(({ family }) => family === 'hero')).toHaveLength(15)
+    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(102)
+    expect(selectReviewedReferences(brief, references)).toHaveLength(13)
+
+    const custom = library()
+    save(custom, [entry])
+    vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', custom)
+    expect(loadReviewedReferences().map(({ id }) => id)).toEqual(['studio-hero'])
+    vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', undefined)
+    const configDirectory = path.join(os.homedir(), '.tastecode')
+    mkdirSync(configDirectory)
+    writeFileSync(
+      path.join(configDirectory, 'design-references.json'),
+      JSON.stringify({ libraryPath: custom }),
+    )
+    expect(loadReviewedReferences().map(({ id }) => id)).toEqual(['studio-hero'])
+  })
+
   it('makes every hero group eligible despite different source sites, styles and revision counts', () => {
     const root = library()
     save(

@@ -30,11 +30,17 @@ The same requirements reach Brand, Page, Build, Review and Repair. Build must wi
 the triggers and reduced-motion states; unused keyframes and button color changes are insufficient.
 Motion preserves the selected compositions. Still screenshots alone cannot prove motion works.
 
-## Local library
+## Bundled library and local overrides
 
-Set `TASTECODE_REFERENCE_LIBRARY` to an absolute library directory before starting TasteCode,
-or set `libraryPath` in `~/.tastecode/design-references.json`. No machine-specific image directory
-is compiled into the application. The directory must contain `catalog.json`:
+Fresh checkouts and desktop packages use `packages/design-agent/references/library` automatically:
+118 composition groups, 15 heroes, and 220 raster files including 102 mobile pairs. The files are
+ordinary Git assets, so another developer can pull and run without a separate library installation.
+The bundled catalog retains source URLs, review status, pairing evidence and original file hashes.
+
+To override the bundled library, set `TASTECODE_REFERENCE_LIBRARY` to an absolute library directory
+before starting TasteCode, or set `libraryPath` in `~/.tastecode/design-references.json`. No
+machine-specific image directory is compiled into the application. The directory must contain
+`catalog.json`:
 
 ```json
 {
