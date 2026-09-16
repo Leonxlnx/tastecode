@@ -648,7 +648,8 @@
                   >background checks for Codex, Claude Code, and Grok; a compact Providers footer
                   reopens available updates. The toast shows versions, runs trusted update commands,
                   and handles progress, verified completion, retry, terminal details, and managed
-                  install guides. Dismissal is remembered per release</span
+                  install guides. Idle toasts close after 5 seconds, pausing on hover or focus and
+                  during updates. Dismissal is remembered per release</span
                 ></span
               ></label
             >
@@ -1398,8 +1399,9 @@
               ><input type="checkbox" /><span
                 >Undo recently archived chats
                 <span class="d"
-                  >sidebar archive actions show a top toast with a white Undo button for 10 seconds,
-                  and fade and slide visible rows before removal. Reduced motion skips these
+                  >sidebar archive actions show a top toast with a white Undo button. The toast
+                  closes after 5 seconds, pausing on hover or focus within the 10-second undo
+                  window, and fade and slide visible rows before removal. Reduced motion skips these
                   effects</span
                 ></span
               ></label
