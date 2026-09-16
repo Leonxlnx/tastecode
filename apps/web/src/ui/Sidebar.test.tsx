@@ -63,7 +63,7 @@ function renderProjectCatalog(
   projects: Array<{ path: string; name: string; sessions: [] }>,
   active?: string,
 ) {
-  return render(
+  const content = (active: string | undefined) => (
     <Sidebar
       projects={projects}
       activeProjectPath={active}
@@ -86,8 +86,10 @@ function renderProjectCatalog(
       onReorderSession={vi.fn()}
       onOpenSearch={vi.fn()}
       onOpenSettings={vi.fn()}
-    />,
+    />
   )
+  const view = render(content(active))
+  return { ...view, navigate: (active?: string) => view.rerender(content(active)) }
 }
 
 function controlledIdleCallbacks() {
@@ -848,6 +850,36 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Quiet' }))
     expect(view.container.querySelectorAll('.sess')).toHaveLength(1)
     vi.useRealTimers()
+  })
+
+  it('keeps opened projects expanded when switching projects or leaving the active chat', () => {
+    const projects = [
+      { path: '/work/first', name: 'First', sessions: [] as [] },
+      { path: '/work/second', name: 'Second', sessions: [] as [] },
+      { path: '/work/third', name: 'Third', sessions: [] as [] },
+    ]
+    const view = renderProjectCatalog(projects, '/work/first')
+    const expanded = (name: string) =>
+      screen.getByRole('button', { name }).getAttribute('aria-expanded')
+    fireEvent.click(screen.getByRole('button', { name: 'Second' }))
+    view.navigate('/work/second')
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Second')).toBe('true')
+    expect(expanded('Third')).toBe('false')
+
+    view.navigate()
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Second')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'First' }))
+    view.navigate('/work/third')
+    expect(expanded('First')).toBe('false')
+    expect(expanded('Second')).toBe('true')
+    expect(expanded('Third')).toBe('true')
+
+    view.navigate('/work/first')
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Third')).toBe('true')
   })
 
   it('reorders chats when one is dragged between sidebar rows', () => {

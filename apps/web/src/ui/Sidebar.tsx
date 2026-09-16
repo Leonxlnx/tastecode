@@ -1226,9 +1226,11 @@ const ProjectRow = memo(function ProjectRow(props: {
     previousCount.current = count
   }, [count, setProjectOpen])
 
-  // Sync the active project before paint. A passive mount effect can run after
-  // an immediate user click and undo that first manual toggle.
-  useLayoutEffect(() => setProjectOpen(props.active), [props.active, setProjectOpen])
+  // Reveal the active project without closing projects the user already opened.
+  // Run before paint so a delayed mount effect cannot undo a manual toggle.
+  useLayoutEffect(() => {
+    if (props.active) setProjectOpen(true)
+  }, [props.active, setProjectOpen])
 
   useEffect(() => cancelSessionUnmount, [cancelSessionUnmount])
 
