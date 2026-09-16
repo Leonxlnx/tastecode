@@ -2,6 +2,7 @@ import { randomInt } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { DesignBrief } from './brief.js'
 import { PAGE_LAYOUT_FAMILIES } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
@@ -48,9 +49,10 @@ export function referenceLibraryRoot(): string {
     if (!path.isAbsolute(root)) throw new Error('Design reference libraryPath must be absolute')
     return root
   }
-  throw new Error(
-    'Design reference library is not configured. Set TASTECODE_REFERENCE_LIBRARY or libraryPath in ~/.tastecode/design-references.json, then restart Design mode. You can also attach your own reference images.',
-  )
+  const bundled = fileURLToPath(new URL('../references/library/', import.meta.url))
+  // Real files retain inode/size checks; Electron's virtual ASAR stats do not.
+  const unpacked = bundled.replace(/\.asar([\\/])/u, '.asar.unpacked$1')
+  return existsSync(unpacked) ? unpacked : bundled
 }
 
 export function loadReviewedReferences(root = referenceLibraryRoot()): ReferenceDirection[] {
