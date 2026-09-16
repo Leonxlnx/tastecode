@@ -669,7 +669,11 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   )
   const compactToNext =
     !suppressed &&
-    nextVisibleItem?.turnId === item.turnId &&
+    nextVisibleItem !== undefined &&
+    (nextVisibleItem.turnId === item.turnId ||
+      (item.type === 'message' &&
+        item.role === 'assistant' &&
+        item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
   const settling = settlingTurnId === item.turnId
@@ -902,8 +906,9 @@ const Row = memo(function Row({
 
   if (item.type === 'message') {
     const text = responseText ?? item.text ?? ''
+    const notice = item.id.startsWith('design-not-applicable-')
     return (
-      <div className={`reply${live ? ' is-streaming' : ''}`}>
+      <div className={`reply${notice ? ' reply--notice' : ''}${live ? ' is-streaming' : ''}`}>
         <Markdown
           text={text}
           projectPath={projectPath}
@@ -911,7 +916,7 @@ const Row = memo(function Row({
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
         />
-        {finalResponse && !live && item.status === 'completed' && text ? (
+        {finalResponse && !notice && !live && item.status === 'completed' && text ? (
           <ResponseActions
             text={text}
             createdAt={item.createdAt}

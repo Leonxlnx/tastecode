@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -59,6 +59,23 @@ function items(events: DomainEvent[]) {
 }
 
 describe('Grok native history', () => {
+  it.skipIf(process.platform === 'win32')(
+    'does not read transcript files linked outside their session folder',
+    async () => {
+      const { source, directory, root } = await fixture()
+      const outside = path.join(root, 'outside.jsonl')
+      await save(root, 'outside.jsonl', [
+        update('user_message_chunk', { content: { type: 'text', text: 'Outside content' } }),
+      ])
+      await symlink(outside, path.join(directory, 'updates.jsonl'))
+      const [session] = await source.list()
+      expect(session).toBeDefined()
+      const events = await source.read(session!)
+      expect(items(events)).toEqual([])
+      expect(JSON.stringify(events)).not.toContain('Outside content')
+    },
+  )
+
   it('discovers all workspace stores, retains metadata, and isolates incomplete summaries', async () => {
     const { source, directory, root, workspace } = await fixture()
     await save(directory, 'updates.jsonl', [
