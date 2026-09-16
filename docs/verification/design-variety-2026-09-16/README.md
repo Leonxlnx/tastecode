@@ -3,6 +3,9 @@
 Code merged in PRs #1202, #1203, #1204 and #1205. Verified runtime source:
 `2d6072e6795f7a465932c5663f22291056d80919`. The repository remains private.
 
+[Earlier same-day checks](./earlier-checks.md) retain the prior model-picker, follow-up,
+security and app-restart evidence. The results below cover the later overnight changes.
+
 ## Changes
 
 - New runs retain reference geometry, line breaks, labels, borders, spacing and media count.
