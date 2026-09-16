@@ -195,6 +195,17 @@ describe('reviewed reference library', () => {
     expect(first).not.toBe(last)
     expect(
       selectReviewedReferences(
+        {
+          ...brief,
+          brandInputs: ['Use studio-hero'],
+          assumptions: ['Use https://example.com/studio'],
+        },
+        references,
+        (length) => length - 1,
+      )[0]?.id,
+    ).toBe(last)
+    expect(
+      selectReviewedReferences(
         { ...brief, originalRequest: 'Use studio-hero' },
         references,
         (length) => length - 1,

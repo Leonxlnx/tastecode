@@ -83,7 +83,7 @@ export function validateTypographySelection(
 ): void {
   if (brand.foundation.strategy !== 'create') return
   const explicit =
-    `${brief.originalRequest} ${JSON.stringify(brief.brandInputs)} ${JSON.stringify(brief.explicitAnswers)}`.toLowerCase()
+    `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
   const drawn = new Set(Object.values(candidates).map((families) => families[0]))
   for (const { family } of brand.typefaces) {
     if (drawn.has(family) || explicit.includes(family.toLowerCase())) continue
