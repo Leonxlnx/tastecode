@@ -87,6 +87,12 @@ type ToolInput = z.infer<typeof ToolInputSchema>
 const FULL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 export const CLAUDE_MODELS: Model[] = [
   claudeModel(
+    'claude-fable-5-1',
+    'Claude Fable 5.1',
+    'Long-horizon reasoning and coding',
+    FULL_EFFORTS,
+  ),
+  claudeModel(
     'claude-fable-5',
     'Claude Fable 5',
     'Most capable — flagship tier',

@@ -1,9 +1,11 @@
 # Design Agent v0.5 reference workflow
 
 New Design runs extract the requested sections and existing brand constraints before selecting
-references. The server randomly chooses one reviewed composition group per available layout
-family from a suitable collection; alternate revisions do not get extra votes. Explicit reference
-IDs take priority. The page planner uses only sections needed by the brief. Free-form section
+references. The server samples composition groups uniformly across the entire eligible library,
+independently for each layout family. Style tags and source sites never narrow the random pool;
+alternate revisions do not get extra votes. It selects up to three feature compositions and two
+about compositions without replacement, and one of each other family. Explicit reference IDs or
+source URLs take priority. The page planner uses only sections needed by the brief. Free-form section
 names never filter out needed compositions. Missing families use available compositions with the
 requested content adapted inside them; section topics do not have to match layout family names.
 
@@ -21,6 +23,12 @@ Native HTML/CSS does not require a downloaded component. Shared brand fonts are 
 the page's sections. Required attribution JSON uses asset kind and role `data`, with the same
 path and provenance checks as other assets and a one-megabyte valid-JSON limit. Internal phase
 prompts do not appear as additional user messages in the chat.
+
+New websites include a visible hero entrance, distinct scroll reveals in at least two later
+sections when present, and interaction feedback unless the user explicitly requests no animation.
+The same requirements reach Brand, Page, Build, Review and Repair. Build must wire and exercise
+the triggers and reduced-motion states; unused keyframes and button color changes are insufficient.
+Motion preserves the selected compositions. Still screenshots alone cannot prove motion works.
 
 ## Local library
 
@@ -51,19 +59,26 @@ is compiled into the application. The directory must contain `catalog.json`:
 
 Paths must stay inside the library, including after resolving symlinks. Paired mobile images
 require pairing evidence. A desktop-only entry must omit `mobileImagePath`; its prompt explicitly
-requires derived and visually tested mobile behavior. Unreviewed/rejected entries and threshold
-variants are excluded. Missing, malformed or corrupt files produce actionable errors. Providers
+requires derived and visually tested mobile behavior. Rejected entries and threshold variants are
+excluded. Missing, malformed or corrupt files produce actionable errors. Providers
 without image inspection cannot execute a run requiring these references.
 
-Add reviewed entries to the catalog to make them available to new runs. Keep original captures,
-generated images and superseded revisions; label revisions with the same `group`. Do not count
-filenames or matching desktop/mobile suffixes as proof of a usable responsive pair.
+The loader also indexes labeled complete images in each site's `generated/` directory, using its
+manifest or README for the source URL. Desktop/mobile, full and versioned filenames represent one
+composition; numbered fragments and known rejected, incomplete or revision-needed sections are
+excluded. Existing catalog IDs, including rejected ones, take precedence over automatic discovery.
+Generated candidates explicitly carry pending visual-review and responsive-pairing notes. Brand and
+Page must inspect the selected pixels before planning; filenames are not proof of a usable pair.
+Keep original captures and superseded revisions. Add reviewed catalog records with the same IDs
+to replace automatic candidates once inspected, and label alternate revisions with the same group.
 
 ## Validation status
 
 The local initial catalog contains ten individually inspected section pairs from Meridian,
-Ritovex and Scalient. It intentionally does not claim that the roughly one thousand raw generated
-images have all been reviewed. Runtime unit and orchestration checks cover random selection,
+Ritovex and Scalient. Complete-image discovery expands this installation to 118 composition groups,
+including 15 heroes. The roughly one thousand raw generated images include fragments and revisions;
+they are not one thousand independent layouts and have not all been visually reviewed. Runtime unit
+and orchestration checks cover equal group eligibility, sampling without replacement,
 explicit selection, image attachment transport, catalog validation and persisted selection.
 Four clean TasteCode site runs have finished. Each was started once
 with Astra medium and one user prompt in a fresh project: Fieldwork, Orbit, Atelier Fern and

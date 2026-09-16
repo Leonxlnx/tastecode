@@ -25,6 +25,7 @@ import type {
   DomainEvent,
   JsonValue,
   ProviderId,
+  ProviderHistorySession,
   SidebarSettings,
   SessionSearchResult,
   ThreadLifecycle,
@@ -286,6 +287,24 @@ CREATE TABLE IF NOT EXISTS sidebar_settings (
   mode             TEXT NOT NULL CHECK (mode IN ('classic', 'inbox')),
   auto_settle_days INTEGER CHECK (auto_settle_days BETWEEN 1 AND 90)
 );
+
+CREATE TABLE IF NOT EXISTS provider_history (
+  provider TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL UNIQUE,
+  metadata TEXT NOT NULL,
+  loaded_revision TEXT,
+  PRIMARY KEY (provider, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS provider_history_events (
+  thread_id TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  event_seq INTEGER NOT NULL REFERENCES events(seq) ON DELETE CASCADE,
+  active INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (thread_id, event_seq)
+);
+CREATE INDEX IF NOT EXISTS provider_history_event_seq ON provider_history_events (event_seq);
 
 INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
@@ -1020,7 +1039,9 @@ export class Store {
     )
     this.#findThread = this.#db.prepare(`SELECT * FROM threads WHERE id = ?`)
     this.#threadHistory = this.#db.prepare(
-      `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
+      `SELECT e.seq, e.payload FROM events e
+       LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+       WHERE e.thread_id = ? AND e.seq > ? AND (p.active IS NULL OR p.active = 1) ORDER BY e.seq`,
     )
     this.#threadInboxEvents = this.#db.prepare(
       `SELECT thread_id, payload FROM inbox_events ORDER BY event_seq`,
@@ -1305,6 +1326,22 @@ export class Store {
     })
   }
 
+  addProviderThread(id: string, provider: ProviderId, session: ProviderHistorySession): void {
+    const thread = this.addThread({
+      id,
+      provider,
+      providerSessionId: session.id,
+      projectPath: session.workspacePath,
+      title: session.title || 'Untitled chat',
+      createdAt: session.createdAt,
+    })
+    const closedAt = session.archived ? session.updatedAt : undefined
+    this.#db
+      .prepare('UPDATE threads SET closed_at = ?, last_active_at = ? WHERE id = ?')
+      .run(closedAt ?? null, session.updatedAt, id)
+    this.#cacheThread(id, { ...thread, closedAt, lastActiveAt: session.updatedAt })
+  }
+
   forgetWorktree(threadId: string): void {
     this.#db
       .prepare(`UPDATE threads SET worktree_path = NULL, worktree_branch = NULL WHERE id = ?`)
@@ -1374,6 +1411,8 @@ export class Store {
         return this.#transaction(operation)
       } catch (error) {
         this.#threadCache.clear()
+        this.#projectCache.clear()
+        this.#projectsCache = undefined
         this.#invalidateSidebarThreads()
         throw error
       }
@@ -1410,6 +1449,156 @@ export class Store {
         thread.providerSessionId === providerSessionId ? thread : { ...thread, providerSessionId },
       providerSessionId,
     )
+  }
+
+  providerHistories(): Array<{
+    provider: ProviderId
+    threadId: string
+    session: ProviderHistorySession
+    loadedRevision: string | null
+  }> {
+    return sqliteRows<{
+      provider: string
+      thread_id: string
+      metadata: string
+      loaded_revision: string | null
+    }>(this.#db.prepare('SELECT * FROM provider_history')).map((row) => ({
+      provider: ProviderIdSchema.parse(row.provider),
+      threadId: row.thread_id,
+      session: JSON.parse(row.metadata) as ProviderHistorySession,
+      loadedRevision: row.loaded_revision,
+    }))
+  }
+
+  providerHistoryChangedAfter(threadId: string, seq: number): boolean {
+    return (
+      this.#db
+        .prepare(
+          'SELECT 1 FROM provider_history_events WHERE thread_id = ? AND event_seq > ? LIMIT 1',
+        )
+        .get(threadId, seq) !== undefined
+    )
+  }
+
+  saveProviderHistory(
+    provider: ProviderId,
+    threadId: string,
+    session: ProviderHistorySession,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_history (provider, session_id, thread_id, metadata)
+      VALUES (?, ?, ?, ?) ON CONFLICT(provider, session_id) DO UPDATE SET metadata = excluded.metadata`,
+      )
+      .run(provider, session.id, threadId, JSON.stringify(session))
+    const thread = this.thread(threadId)
+    if (thread && Number.isFinite(session.updatedAt) && session.updatedAt > thread.lastActiveAt) {
+      this.#db
+        .prepare('UPDATE threads SET last_active_at = ? WHERE id = ?')
+        .run(session.updatedAt, threadId)
+      this.#updateCachedThread(threadId, (current) => ({
+        ...current,
+        lastActiveAt: session.updatedAt,
+      }))
+      this.#updateSidebarThread(threadId, (current) => ({
+        ...current,
+        lastActiveAt: session.updatedAt,
+      }))
+    }
+  }
+
+  /** Only locally recorded events, used to identify provider echoes of our own turns. */
+  localHistory(threadId: string): Array<{ seq: number; event: DomainEvent }> {
+    return sqliteRows<HistoryRow>(
+      this.#db.prepare(`SELECT e.seq, e.payload FROM events e
+      LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+      WHERE e.thread_id = ? AND p.event_seq IS NULL ORDER BY e.seq`),
+      threadId,
+    ).flatMap((row) => {
+      const event = parseDomainEvent(row.payload, `local history for thread ${threadId}`)
+      return event === undefined ? [] : [{ seq: Number(row.seq), event }]
+    })
+  }
+
+  /** Keep stable log positions so imported updates cannot invalidate local checkpoints. */
+  mergeProviderHistory(
+    threadId: string,
+    revision: string,
+    entries: Array<{ key: string; event: DomainEvent }>,
+  ): boolean {
+    const previous = new Map(
+      sqliteRows<{ event_key: string; event_seq: number; payload: string; active: number }>(
+        this.#db
+          .prepare(`SELECT p.event_key, p.event_seq, p.active, e.payload FROM provider_history_events p
+        JOIN events e ON e.seq = p.event_seq WHERE p.thread_id = ? ORDER BY p.event_seq`),
+        threadId,
+      ).map((row) => [row.event_key, row]),
+    )
+    const link = this.#db.prepare(
+      'INSERT INTO provider_history_events (thread_id, event_key, event_seq) VALUES (?, ?, ?)',
+    )
+    let changed = false
+    this.#transaction(() => {
+      const keys = JSON.stringify(entries.map(({ key }) => key))
+      const retired = this.#db
+        .prepare(
+          `UPDATE provider_history_events SET active = 0
+        WHERE thread_id = ? AND active = 1 AND event_key NOT IN (SELECT value FROM json_each(?))`,
+        )
+        .run(threadId, keys).changes
+      if (retired) changed = true
+      let turnAt = this.thread(threadId)?.createdAt ?? 0
+      for (const { key, event } of entries) {
+        const payload = JSON.stringify(event)
+        const existing = previous.get(key)
+        if (event.type === 'turn.started') turnAt = event.turn.createdAt
+        if (
+          existing?.active &&
+          existing.payload === payload &&
+          !(retired && event.type === 'thread.started')
+        )
+          continue
+        if (existing)
+          this.#db
+            .prepare(
+              'UPDATE provider_history_events SET active = 0 WHERE thread_id = ? AND event_key = ?',
+            )
+            .run(threadId, key)
+        const at =
+          event.type === 'item.completed' || event.type === 'item.started'
+            ? event.item.createdAt
+            : event.type === 'turn.started'
+              ? event.turn.createdAt
+              : turnAt
+        const seq = this.#appendEventPayload(threadId, event, at, payload)
+        link.run(threadId, key, seq)
+        previous.set(key, { event_key: key, event_seq: seq, payload, active: 1 })
+        changed = true
+      }
+      this.#db
+        .prepare('UPDATE provider_history SET loaded_revision = ? WHERE thread_id = ?')
+        .run(revision, threadId)
+      if (changed) {
+        this.#db
+          .prepare(
+            `DELETE FROM session_search WHERE rowid IN
+          (SELECT event_seq FROM provider_history_events WHERE thread_id = ? AND active = 0)`,
+          )
+          .run(threadId)
+        this.#db
+          .prepare(
+            `DELETE FROM usage_events WHERE event_seq IN
+          (SELECT event_seq FROM provider_history_events WHERE thread_id = ? AND active = 0)`,
+          )
+          .run(threadId)
+        this.#searchRevision += 1
+        this.#deleteReplaySnapshot.run(threadId)
+        this.#deleteCachedReplaySnapshot(threadId)
+        this.#rebuildThreadInboxState(threadId)
+        this.#rebuildThreadRecoveryState(threadId)
+      }
+    })
+    return changed
   }
 
   settleThread(
@@ -2727,6 +2916,7 @@ export class Store {
       `SELECT seq, thread_id, at, payload FROM events
        WHERE seq > ?
          AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (${placeholders})
+         AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
        ORDER BY seq LIMIT 5000`,
     )
     const saveMigration = this.#db.prepare(
@@ -2800,6 +2990,7 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
+           AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
            AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'turn.started', 'turn.completed', 'thread.error',
              'item.started', 'item.completed',
@@ -2828,6 +3019,7 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
+           AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
            AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'approval.requested', 'approval.resolved',
              'user_input.requested', 'user_input.resolved',
@@ -2868,7 +3060,7 @@ export class Store {
       const rows = sqliteRows<PayloadRow>(
         this.#db.prepare(
           `SELECT payload FROM usage_events
-           WHERE thread_id = ? ORDER BY event_seq`,
+           WHERE thread_id = ? ORDER BY at, event_seq`,
         ),
         threadId,
       )
@@ -2891,11 +3083,11 @@ export class Store {
       const previous = new Map<string, UsageTotal>()
       const seeds = sqliteRows<ThreadPayloadRow>(
         this.#db.prepare(
-          `SELECT u.thread_id, u.payload
-           FROM usage_events u
-           JOIN (SELECT thread_id, MAX(event_seq) AS event_seq FROM usage_events
-                 WHERE at < ? GROUP BY thread_id) last
-             ON u.thread_id = last.thread_id AND u.event_seq = last.event_seq`,
+          `SELECT thread_id, payload FROM (
+             SELECT thread_id, payload,
+               ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY at DESC, event_seq DESC) AS position
+             FROM usage_events WHERE at < ?
+           ) WHERE position = 1`,
         ),
         since,
       )
@@ -2909,7 +3101,7 @@ export class Store {
           `SELECT u.thread_id, u.payload, t.provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
            WHERE u.at >= ?
-           ORDER BY u.thread_id, u.event_seq`,
+           ORDER BY u.thread_id, u.at, u.event_seq`,
         ),
         since,
       )

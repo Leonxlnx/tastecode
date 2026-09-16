@@ -50,14 +50,18 @@ export async function startDesignPreview(
     throw new Error('preview command argument is unsafe')
   }
   assertRunsWorkspaceCode(workspace, cwd, plan)
-  const commandArgs =
-    plan.command === 'node' || plan.args[0] === 'run' ? plan.args : ['run', ...plan.args]
-  const releaseStart = claimPreviewStart(plan.url)
+  const { url, releaseStart } = await claimPreviewStart(plan.url)
+  const port = new URL(url).port
+  const args = plan.args.map((arg, index) => {
+    if (/^--port=\d+$/.test(arg)) return `--port=${port}`
+    if (/^\d+$/.test(arg) && ['--port', '-p'].includes(plan.args[index - 1] ?? '')) return port
+    return arg
+  })
+  const commandArgs = plan.command === 'node' || args[0] === 'run' ? args : ['run', ...args]
   let child: ChildProcessWithoutNullStreams | undefined
   let output = ''
   try {
-    await assertPreviewPortAvailable(plan.url)
-    const environment = safeCommandEnvironment(workspace)
+    const environment = { ...safeCommandEnvironment(workspace), PORT: port }
     child =
       process.platform === 'win32'
         ? spawnCli(plan.command, commandArgs, { cwd, replaceEnv: true, env: environment })
@@ -76,53 +80,60 @@ export async function startDesignPreview(
     child.stderr.setEncoding('utf8')
     child.stdout.on('data', append)
     child.stderr.on('data', append)
-    await waitForPreview(child, plan.url, timeoutMs, () => output, childFailure)
+    await waitForPreview(child, url, timeoutMs, () => output, childFailure)
   } catch (error) {
-    if (child) await stopProcess(child, plan.url)
+    if (child) await stopProcess(child, url)
     throw error
   } finally {
     releaseStart()
   }
 
   return {
-    url: plan.url,
+    url,
     viewports: plan.viewports,
     output: () => output,
-    stop: () => stopProcess(child, plan.url),
+    stop: () => stopProcess(child, url),
   }
 }
 
-function claimPreviewStart(url: string): () => void {
-  const port = Number(new URL(url).port)
-  if (startingPreviewPorts.has(port)) {
-    throw new Error(`preview port ${port} is already being started`)
-  }
-  startingPreviewPorts.add(port)
-  return () => startingPreviewPorts.delete(port)
-}
-
-async function assertPreviewPortAvailable(url: string): Promise<void> {
-  const port = Number(new URL(url).port)
-  if (!(await previewPortAvailable(url))) {
-    throw new Error(
-      `preview port ${port} is already in use; choose another http://127.0.0.1 port and retry`,
+async function claimPreviewStart(url: string) {
+  const previewUrl = new URL(url)
+  let requestedPort = Number(previewUrl.port)
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const port = await availablePreviewPort(
+      startingPreviewPorts.has(requestedPort) ? 0 : requestedPort,
     )
+    if (port !== undefined && !startingPreviewPorts.has(port)) {
+      startingPreviewPorts.add(port)
+      previewUrl.port = String(port)
+      return {
+        url: previewUrl.href,
+        releaseStart: () => startingPreviewPorts.delete(port),
+      }
+    }
+    requestedPort = 0
   }
+  throw new Error('could not allocate a local preview port')
 }
 
-function previewPortAvailable(url: string): Promise<boolean> {
-  const port = Number(new URL(url).port)
-  return new Promise<boolean>((resolve, reject) => {
+async function previewPortAvailable(url: string): Promise<boolean> {
+  return (await availablePreviewPort(Number(new URL(url).port))) !== undefined
+}
+
+function availablePreviewPort(port: number): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
     const reservation = createServer()
     reservation.once('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE') {
-        resolve(false)
+        resolve(undefined)
         return
       }
       reject(error)
     })
     reservation.listen({ host: '127.0.0.1', port, exclusive: true }, () => {
-      reservation.close((error) => (error ? reject(error) : resolve(true)))
+      const address = reservation.address()
+      const assignedPort = address && typeof address !== 'string' ? address.port : undefined
+      reservation.close((error) => (error ? reject(error) : resolve(assignedPort)))
     })
   })
 }

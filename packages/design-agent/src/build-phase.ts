@@ -2,6 +2,8 @@ import path from 'node:path'
 import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
+import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
 import { record, string, strings } from './parse.js'
@@ -55,7 +57,7 @@ Enforce this visual quality floor:
 - Derive heading scale and placement from the selected reference at each viewport. Keep one or two visual lines where possible, with three as the maximum. Adjust copy and responsive sizing without flattening an intentionally large reference headline into generic small type.
 - Render no eyebrow, uppercase monospace micro-label, decorative 01/02/03 section label, IBM Plex Mono, or Archivo. Use at most the two approved typeface families and never switch fonts repeatedly inside one line or component.
 - Keep the Hero to one headline, at most one concise supporting block, and its actions. Do not add a second description, implementation note, prototype disclaimer, or status message.
-- Do not show internal notes such as sample data, simulated data, fictional, awaiting approval, still needed, not connected, before launch, or to be supplied. Representative interface records, weather, dates, inventory, and operational values may be created for a finished one-shot experience. Record every invented value in a Build summary beginning "Verify before publishing:" so TasteCode can show it after Preview; do not disclose it inside the page.
+- Do not show internal notes such as awaiting approval, still needed, not connected, before launch, or to be supplied. Representative interface records, weather, dates, inventory, and operational values may be created for a finished one-shot experience. Preserve the visible identification required by the content-scope rules for concept work and illustrative catalogs. Record every invented value in a Build summary beginning "Verify before publishing:" so TasteCode can show it after Preview.
 - Prefer whitespace, proportion, and content-shaped cards over divider lines. A full-height one-sided line attached to or aligned with a card edge is forbidden regardless of color or implementation, including border-left, border-inline-start, pseudo-elements, gradients, and narrow child strips. Avoid ornamental hairline grids, repeated horizontal or vertical rules, and generic square-panel section backgrounds. Use a short divider only when it clarifies a real data or navigation relationship and is visibly independent of a card edge.
 - Use the reference's grouping: open columns remain open, editorial layouts remain editorial, and cards remain cards. Unify padding, radius, control states and typography where cards actually occur. Do not add boxes to ordinary prose or flatten distinct compositions into equal-column templates.
 - Apply the approved brand accent to the primary action, focus and selected states, and a recurring card, media, or section treatment. The finished page must not become generic gray with the accent confined to tiny labels, icons, or underlines, and it must not become a rainbow of unrelated card colors.
@@ -72,6 +74,10 @@ Enforce this visual quality floor:
 
 Use the existing project implementation and motion tools without invoking external design skills. Do not start a long-running preview server in this phase; TasteCode owns Preview next.
 ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. TasteCode validates the workspace before Preview; do not add helper or configuration files.` : ''}
+
+${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 ${BUILD_PROTOCOL}
 

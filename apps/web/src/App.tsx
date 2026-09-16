@@ -230,7 +230,6 @@ const BOTTOM_TERMINAL_MOTION_MS = 260
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const DEFAULT_RAIL_WIDTH = 256
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
-const NOTICE_AUTO_DISMISS_MS = 5_000
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 type BottomTerminalPhase = 'closed' | 'opening' | 'open' | 'closing'
 const PullRequestsView = lazy(() =>
@@ -559,6 +558,8 @@ export function App() {
     | undefined
   >(undefined)
   const pendingInterruptThreadIds = useRef(new Set<string>())
+  const pendingProviderHistoryIds = useRef(new Set<string>())
+  const providerHistoryReads = useRef(new Map<string, object>())
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
   const [canSteerQueue, setCanSteerQueue] = useState(false)
   const [customModels] = useState<CustomModel[]>(readCustomModels)
@@ -741,14 +742,6 @@ export function App() {
   const [rollbackLoadingId, setRollbackLoadingId] = useState<number | undefined>()
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
   const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
-  useEffect(() => {
-    if (!notice) return
-    const timeout = globalThis.setTimeout(() => {
-      setNotice(undefined)
-      setUndoRestore(undefined)
-    }, NOTICE_AUTO_DISMISS_MS)
-    return () => globalThis.clearTimeout(timeout)
-  }, [notice])
   const [isolateSession, setIsolateSession] = useState(false)
   const [designMode, setDesignMode] = useState(false)
   const [checkoutDelete, setCheckoutDelete] = useState<
@@ -1241,10 +1234,54 @@ export function App() {
   // prettier-ignore
   const releaseDirectStart = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, queued = new Set([...probe.queuedStarts.entriesForThread(threadId)].map(([, owner]) => owner.token)), token = probe.pendingStarts.get(threadId)?.tokens.find((candidate) => !queued.has(candidate)); if (token === undefined) return; for (const [id, start] of probe.submissionStarts.entriesForThread(threadId)) if (start.token === token) probe.submissionStarts.delete(id); releaseWorkspaceStart(threadId, token) }, [releaseWorkspaceStart])
   // prettier-ignore
-  const clearWorkspaceThread = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
+  const clearWorkspaceThread = useCallback((threadId: string) => { pendingProviderHistoryIds.current.delete(threadId); providerHistoryReads.current.delete(threadId); const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
   /** Refetch after an outage. Held in a ref because the transport effect is
    *  set up before the fetchers it needs are declared. */
   const resync = useRef<(retry?: boolean) => void>(() => {})
+  const refreshProviderThreadHistory = useCallback(
+    function replay(threadId: string) {
+      if (
+        threadController.snapshot(threadId)?.running ||
+        providerHistoryReads.current.has(threadId)
+      ) {
+        pendingProviderHistoryIds.current.add(threadId)
+        return
+      }
+      pendingProviderHistoryIds.current.delete(threadId)
+      threadController.invalidateHistory(threadId)
+      if (threadId !== activeIdRef.current) {
+        threadController.discardSnapshot(threadId)
+        return
+      }
+      const owner = {}
+      providerHistoryReads.current.set(threadId, owner)
+      let failed = false
+      void threadController
+        .loadHistory(threadId)
+        .then((loaded) => {
+          if (providerHistoryReads.current.get(threadId) !== owner) return
+          // A queued turn can start before the server reads the native history.
+          if (loaded?.authority.running) pendingProviderHistoryIds.current.add(threadId)
+        })
+        .catch(() => {
+          if (providerHistoryReads.current.get(threadId) !== owner) return
+          failed = true
+          pendingProviderHistoryIds.current.add(threadId)
+        })
+        .finally(() => {
+          if (providerHistoryReads.current.get(threadId) !== owner) return
+          providerHistoryReads.current.delete(threadId)
+          if (
+            !failed &&
+            pendingProviderHistoryIds.current.has(threadId) &&
+            !threadController.snapshot(threadId)?.running
+          ) {
+            replay(threadId)
+          }
+        })
+    },
+    [threadController],
+  )
   const flushPendingLifecyclePushes = useRef<(() => void) | undefined>(undefined)
   const sidebarSettingsRef = useRef(sidebarSettings)
   sidebarSettingsRef.current = sidebarSettings
@@ -1312,6 +1349,8 @@ export function App() {
         // prettier-ignore
         const projectPath = findSession(projectsRef.current, threadId)?.project.path ?? (threadId === activeIdRef.current ? activePathRef.current : undefined)
         if (event.type === 'turn.started') {
+          if (providerHistoryReads.current.has(threadId))
+            pendingProviderHistoryIds.current.add(threadId)
           threadController.resetBackground(threadId)
           if (threadId !== activeIdRef.current) {
             threadController.compact(threadId, isThreadCacheProtected(threadId))
@@ -1351,14 +1390,19 @@ export function App() {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
           // shipping, and parsing the full log just to throw it away.
-          void transport
-            .request('thread.history', { threadId, afterSeq: Number.MAX_SAFE_INTEGER })
-            .catch(() => undefined)
+          if (!pendingProviderHistoryIds.current.has(threadId)) {
+            void transport
+              .request('thread.history', { threadId, afterSeq: Number.MAX_SAFE_INTEGER })
+              .catch(() => undefined)
+          }
           refreshUsage(providerRef.current)
         }
       }
       if (event.type === 'turn.completed' || event.type === 'thread.error') {
         threadController.resetBackground(threadId)
+        if (pendingProviderHistoryIds.current.has(threadId)) {
+          refreshProviderThreadHistory(threadId)
+        }
         pruneThreadStateCache()
       }
     })
@@ -1482,6 +1526,7 @@ export function App() {
     pruneThreadStateCache,
     pruneQueueMetadata,
     isThreadCacheProtected,
+    refreshProviderThreadHistory,
   ])
 
   useEffect(() => {
@@ -1987,6 +2032,17 @@ export function App() {
       if (activeIdRef.current === threadId) setCheckpoints(result.checkpoints)
     },
     [transport],
+  )
+
+  useEffect(
+    () =>
+      transport.on('providerHistory.changed', ({ threadIds }) => {
+        for (const id of threadIds) {
+          refreshProviderThreadHistory(id)
+        }
+        void refreshProjects().catch(() => undefined)
+      }),
+    [transport, refreshProviderThreadHistory, refreshProjects],
   )
 
   const loadHistory = useCallback(
@@ -4996,6 +5052,8 @@ export function App() {
         className="notice"
         role="alert"
         visible={Boolean(actionError) && (settingsOpen || surface !== 'chat')}
+        onDismiss={() => setActionError(undefined)}
+        dismissKey={actionError}
       >
         <span className="notice__text">{actionError?.message}</span>
         <button className="ghost" onClick={() => setActionError(undefined)}>
@@ -5007,6 +5065,11 @@ export function App() {
         className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
         role="alert"
         visible={Boolean(notice)}
+        dismissKey={notice}
+        onDismiss={() => {
+          setNotice(undefined)
+          setUndoRestore(undefined)
+        }}
       >
         <span className="notice__text">{notice}</span>
         {undoRestore ? (

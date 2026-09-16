@@ -290,13 +290,50 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-16 base main bc155a53 + Design reliability update</span>
+        <span class="meta">2026-09-16 base main 1eb84c19 + saved provider chats</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <h2>Public Beta</h2>
+        <p class="sub">
+          Requests outside Design mode's scope continue as normal chat in the same session,
+          preserving attachments and model settings. The mode-change notice stays separate from the
+          answer, with a shared left edge and a compact gap before the continued reply. Queued
+          requests wait for that answer to finish.
+        </p>
+        <p class="sub">
+          Saved Codex, Claude Code and Grok chats now appear in projects already added in TasteCode.
+          The adapters read their own files (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1180"
+            >PR #1180</a
+          >), the server imports them in the background (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1189"
+            >PR #1189</a
+          >), and the renderer replays them without duplicates while local turns keep priority (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1190"
+            >PR #1190</a
+          >). Scope and limits are written down in
+          <a href="./ARCHITECTURE.md">ARCHITECTURE.md</a> (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1195"
+            >PR #1195</a
+          >).
+        </p>
+        <p class="sub">
+          Chat polish merged the same day: notices stay open while hovered, focused or while their
+          work is still running (<a href="https://github.com/Leonxlnx/tastecode/pull/1191"
+            >PR #1191</a
+          >), the notice text edge lines up with the reply below it (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1192"
+            >PR #1192</a
+          >), a streaming answer stays pinned to the bottom without trapping a reader who scrolled
+          up (<a href="https://github.com/Leonxlnx/tastecode/pull/1193">PR #1193</a>), and the table
+          toolbar sits in one row with a floating download menu (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1194"
+            >PR #1194</a
+          >).
+        </p>
         <p class="sub">
           Design Agent v0.5 ships in PR #1159: new runs randomly select reviewed references for the
           requested sections, preserve the selected images and hashes, and use desktop/mobile
@@ -308,6 +345,26 @@
           <a href="./verification/design-agent-v05-2026-09-16/README.md"
             >Validation evidence and gaps</a
           >. <a href="./DESIGN-REFERENCES.md">Reference workflow and local library setup</a>.
+        </p>
+        <p class="sub">
+          New Design runs sample the full eligible library without source-site or style filtering.
+          Complete generated candidates expand the local pool to 118 compositions and 15 heroes;
+          their visual inspection remains part of the consuming run. Hero entrances and distinct
+          scroll reveals are required by default. Normal follow-ups clear completed Design JSON
+          protocols (<a href="https://github.com/Leonxlnx/tastecode/pull/1175">PR #1175</a>), and
+          Claude Fable 5.1 is visible in the model picker (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1174"
+            >PR #1174</a
+          >).
+        </p>
+        <p class="sub">
+          Design variety and motion are merged in PR #1176. Private command environments (#1167) and
+          desktop navigation/IPC hardening (#1171) also passed the combined Windows checks. The
+          rebuilt app has restarted with its existing projects; live model discovery returns Fable
+          5.1. New generated sites and animation playback remain user-tested.
+          <a href="./verification/design-variety-2026-09-16/README.md"
+            >Integration evidence and remaining PRs</a
+          >.
         </p>
         <p class="sub">
           Quiet SQLite startup, stronger chat titles, centered theme cards, a real request preview,
@@ -835,41 +892,46 @@
                   >Design agent, simple for now
                   <span class="d"
                     >appearance-focused; briefs proceed autonomously without questions, with
-                    recorded assumptions and visible progress; incomplete visual acquisition replans
-                    once before Build, new product interfaces use native components, and renderer
-                    reloads retain the connection used by the thread controller; stale phases and
-                    terminal provider completions cannot mutate a newer run, terminal provider
-                    failures are visible instead of leaving briefing activity stuck, recoverable
-                    previews retry once without weakening file boundaries, package-manager previews
-                    stay in the selected workspace, and build reports must match the exact
-                    changed-file set; rendered preview audits require exactly one h1 and mobile
-                    interaction targets of at least 44 by 44 CSS pixels before visual review can
-                    pass; every new page section records one of the human-authored beta layout
-                    families and exact case IDs, invalid or adjacent duplicate compositions fail
-                    before Build, and Build plus Review must preserve the selected geometry; 132
-                    generated-only direction references contribute a bounded image deck; supplied
-                    reference pixels and selected direction IDs persist across phases; approved
-                    artifacts and assets are checked before reuse, duplicate briefing IDs are
-                    rejected, and exact output rules inspect nested files; brand palettes supply
-                    optional dependency-free card, section, and page gradient recipes; each section
-                    records a purposeful motion trigger, timing, easing, and reduced-motion
-                    equivalent instead of inheriting one generic reveal; page validation rejects
-                    eyebrows, internal placeholders, overlong headings, and redundant Hero support
-                    copy; Brand limits typography to two approved families, while Page, Asset,
-                    Build, and Review require coherent card systems, meaningful brand-accent use,
-                    and real image acquisition when provider tools are available; they block
-                    ornamental SVG filler, divider-grid templates, colored card rails, unstyled
-                    controls, overflow, and headings beyond three lines; representative content
-                    stays out of page disclaimers and reaches the final Harness response as a
-                    publishing verification note; serialized hidden capture remains the review
-                    authority, scrolls through lazy content, audits the whole document, captures a
-                    bounded whole-page image per viewport, waits for animation, font, and image
-                    settlement, confines navigation and redirects to the preview origin, and
-                    verifies the final URL; negotiated ACP image prompts receive the screenshots,
-                    and shared browser storage and cache are cleared before the next capture;
-                    successful previews remain reachable until their owning thread closes or starts
-                    a replacement, and a completed queued Design turn stays idle even when its
-                    provider start promise resolves late</span
+                    recorded assumptions and visible progress; new portfolios and catalogs use
+                    clearly identified concept content when real subjects were not requested or
+                    supplied; landing pages normally use eight substantive reference-based sections;
+                    missing original images prefer generation with licensed search as fallback;
+                    command and static previews select free ports on collision; incomplete visual
+                    acquisition replans once before Build, new product interfaces use native
+                    components, and renderer reloads retain the connection used by the thread
+                    controller; stale phases and terminal provider completions cannot mutate a newer
+                    run, terminal provider failures are visible instead of leaving briefing activity
+                    stuck, recoverable previews retry once without weakening file boundaries,
+                    package-manager previews stay in the selected workspace, and build reports must
+                    match the exact changed-file set; rendered preview audits require exactly one h1
+                    and mobile interaction targets of at least 44 by 44 CSS pixels before visual
+                    review can pass; every new page section records one of the human-authored beta
+                    layout families and exact case IDs, invalid or adjacent duplicate compositions
+                    fail before Build, and Build plus Review must preserve the selected geometry;
+                    new runs sample catalog and complete generated candidates uniformly, with
+                    distinct feature/about compositions before reuse; the legacy 132-direction deck
+                    remains for older saved runs; supplied reference pixels and selected direction
+                    IDs persist across phases; approved artifacts and assets are checked before
+                    reuse, duplicate briefing IDs are rejected, and exact output rules inspect
+                    nested files; brand palettes supply optional dependency-free card, section, and
+                    page gradient recipes; each section records a purposeful motion trigger, timing,
+                    easing, and reduced-motion equivalent, with visible hero and scroll entrances
+                    required by default; page validation rejects eyebrows, internal placeholders,
+                    overlong headings, and redundant Hero support copy; Brand limits typography to
+                    two approved families, while Page, Asset, Build, and Review require coherent
+                    card systems, meaningful brand-accent use, and real image acquisition when
+                    provider tools are available; they block ornamental SVG filler, divider-grid
+                    templates, colored card rails, unstyled controls, overflow, and headings beyond
+                    three lines; representative content stays out of page disclaimers and reaches
+                    the final Harness response as a publishing verification note; serialized hidden
+                    capture remains the review authority, scrolls through lazy content, audits the
+                    whole document, captures a bounded whole-page image per viewport, waits for
+                    animation, font, and image settlement, confines navigation and redirects to the
+                    preview origin, and verifies the final URL; negotiated ACP image prompts receive
+                    the screenshots, and shared browser storage and cache are cleared before the
+                    next capture; successful previews remain reachable until their owning thread
+                    closes or starts a replacement, and a completed queued Design turn stays idle
+                    even when its provider start promise resolves late</span
                   >
                 </span>
               </li>

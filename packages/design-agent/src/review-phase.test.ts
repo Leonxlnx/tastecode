@@ -46,6 +46,10 @@ describe('review and repair phases', () => {
       [],
     )
     expect(prompt).toContain('Any heading occupies more than three visual lines')
+    expect(prompt).toContain('flag missing planned motion when browser evidence proves it')
+    expect(prompt).toContain(
+      'Preserve concise identification of concept work or an illustrative catalog',
+    )
     expect(prompt).toContain('uppercase monospace micro-heading')
     expect(prompt).toContain('open editorial content becomes boxed')
     expect(prompt).toContain('approved brand accent appears only in tiny labels')

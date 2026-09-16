@@ -2,6 +2,8 @@ import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
+import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
+import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
 import { parsePageBlueprint, type PageBlueprint } from './page.js'
 import {
@@ -35,13 +37,15 @@ Use the brand system rather than repeating it. Do not choose new colors or typef
 
 Define one base grid, one signature composition rule, and a page rhythm. Choose components by semantic job and content shape, using the least novel component that fully supports the task. Do not assemble component-library demos, cardify prose, or add interaction merely to create activity. For every section specify a compact, medium, and expanded transformation. Compact reduces simultaneity, not content or capability; source order, state, proof adjacency, and action priority must survive.
 
-Give every section one explicit motion decision. Motion must serve feedback, state change, spatial continuity, explanation, or status; use purpose none when motion would add no comprehension. Choose one focal motion idea per section, not a universal fade-up applied to every element. Prefer native CSS and IntersectionObserver for simple entry and state changes. Reserve scroll progress, pinning, dragging, or GSAP-style sequencing for a selected layout case that genuinely depends on it. Use transform and opacity for visual motion, keep interface responses mostly between 100 and 300ms, allow longer narrative movement only when the composition needs it, and provide a reduced-motion replacement that preserves state and meaning. Hover motion is supplemental and must never carry required information.
+Give every section one explicit motion decision using the visible-motion requirements below. Plan hero and media entrances as spatial continuity or explanation; purpose none is available for remaining static sections after the required page animations are covered, or when the user explicitly requests no animation. Hover motion is supplemental and must never carry required information.
 
 Use cards for coherent features, people, plans, proof, actions, and media stories, not as empty wrappers around paragraphs. Plan one related base card language and at most one emphasized variant across the page. Let card size, media crop, and internal composition respond to the content instead of defaulting to equal three-column boxes. When a selected layout is image-led, record stable assetNeeds for every meaningful image or capture rather than replacing it with a decorative vector. Carry the approved brand accent into primary actions, focus and selected states, and one recurring card, media, or section treatment.
 
 Treat the selected reference images as composition requirements. Map each section to its reference's layoutFamily. Preserve its recognizable macro geometry, hierarchy, media placement and responsive behavior while adapting details to the brief. Do not add a section to use an available reference. Reuse a composition only when the content calls for it; do not impose variety that conflicts with an explicit user choice.
 
 The deck is a menu of available compositions, not a required section list. Select only the sections the brief needs. Section content and layoutFamily are different: a pricing comparison or FAQ can use a feature composition when no dedicated family is available. Use that reference's actual family and adapt the content inside its geometry; never copy an ID from another family or drop requested content because its topic lacks a named reference family.
+
+References were sampled uniformly from the entire eligible library, independently for each family. Use their supplied random order within each family: assign a different available reference to each repeated feature or about section before reusing one. Do not fall back to one source site's look or choose the most familiar composition. Adapt colors and identity to unify these layouts while retaining their different geometries.
 
 For a new product, implement code examples, model lists, billing panels, calendars, forms, and other product interface demonstrations as native HTML/CSS. Put a substantial interface component in componentNeeds and describe its representative content and composition in layout. Do not require a screenshot of software that does not exist. Reserve interface_capture assetNeeds for actual captures already supplied or available in the project. Real photography and physical product imagery remain assetNeeds; preserve the reference's media frame and proportions when implementing a native interface inside it.
 
@@ -60,11 +64,17 @@ REFERENCE LOCK — this overrides any looser example in the catalog above:
 
 Write concrete copy with direct verbs and specific nouns. Never use an em dash. Keep every heading within 12 words and 72 characters so it can normally fit one or two visual lines; a third line is a rare Build-time exception and four lines are forbidden. A Hero gets one headline, at most one concise supporting block, and its actions. Do not stack a headline, description, sub-description, and disclaimer.
 
-Do not invent names, customers, testimonials, metrics, rankings, awards, urgency, capabilities, or proof. An objective claim must point to real evidence recorded on its section. Representative interface records, weather, dates, inventory, and other demo-state data may be created when the page needs a finished one-shot experience, but never label them inside the page as sample, simulated, fictional, pending, unapproved, not connected, or to be supplied. Build records every representative value for the final user verification note instead. Avoid interchangeable formulas such as "the future of", "where X meets Y", "X reimagined", "unlock your potential", "seamless", "built for modern teams", and "one platform, endless possibilities"; replace them with actor + action + object + a truthful boundary. One concept keeps one noun and one action intent keeps one CTA label. Links name their destination and controls name their action.
+Do not invent real customers, testimonials, metrics, rankings, awards, urgency, capabilities, or proof. An objective claim must point to real evidence recorded on its section. Representative interface records, weather, dates, inventory, and other demo-state data may be created when the page needs a finished one-shot experience. Keep internal status notes such as pending, unapproved, not connected, or to be supplied out of the page. The content-scope rules below govern concept identities and their visible identification. Build records representative values for the final user verification note. Avoid interchangeable formulas such as "the future of", "where X meets Y", "X reimagined", "unlock your potential", "seamless", "built for modern teams", and "one platform, endless possibilities"; replace them with actor + action + object + a truthful boundary. One concept keeps one noun and one action intent keeps one CTA label. Links name their destination and controls name their action.
 
 Do not write eyebrow copy, uppercase monospace micro-headings, or decorative 01/02/03 section labels. Real ordered steps belong in the How It Works content itself, not in a page-wide eyebrow system. Do not put internal notes, prototype disclaimers, missing-content notices, approval states, or launch instructions in visible page copy. Do not invent a product name unless the brief requests naming. When naming is requested, avoid collision-prone bare metaphors such as Relay, Pulse, Orbit, Spark, Nexus, Loom, Flow, Beacon, Prism, and Forge, and never repair a weak name by appending AI, Labs, Studio, Tech, Systems, Platform, App, or HQ. Treat generated names as unscreened, never legally cleared.
 
 Complete this artifact using the project and these instructions; do not invoke external design skills.
+
+${LANDING_PAGE_GUIDANCE}
+
+${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 ${referenceDriven ? PAGE_PROTOCOL.replace('["hero-text-1","hero-visual-1"]', '["selected-reference-id"]').replace('"direction-001"', '"selected-reference-id"').replace('"navigation-1"', '"reference-navigation"') : PAGE_PROTOCOL}
 
