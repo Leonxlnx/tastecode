@@ -586,20 +586,83 @@
   color: var(--success);
 }
 
+/* Styled like the floating menus (.menu): the raised menu surface, flyout
+   shadow, 3px frame, a quiet group label and item-density rows instead of the
+   headed, hairline-separated settings card. */
 .appearance-editor {
   margin-top: 16px;
   overflow: hidden;
+  padding: 0;
   background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
+  border: 1px solid var(--line);
   border-radius: var(--r-lg);
+  box-shadow: none;
 }
 
-.appearance-editor__row {
-  min-height: 40px;
+.appearance-editor__heading {
+  margin: 0;
+  padding: 10px 12px;
+  line-height: 1.4;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+/* Specificity: .settings__row is defined later in this file, so these
+   overrides go through the .appearance-editor scope to win. */
+.appearance-editor .settings__row {
+  min-height: 48px;
+  gap: 16px;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 0;
+}
+
+.appearance-editor__heading + .settings__row,
+.appearance-editor .settings__row + .settings__row {
+  border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+
+.appearance-editor .settings__row {
+  transition: none;
+}
+
+.appearance-editor .settings__row:hover,
+.appearance-editor .settings__row:focus-within {
+  background: transparent;
+}
+
+.settings .appearance-editor .app-select__trigger,
+.settings .appearance-editor .app-select__trigger:hover,
+.settings .appearance-editor .app-select.is-open .app-select__trigger {
+  --control-pressed: var(--bg-rail);
+
+  background: var(--bg-rail);
+  border-color: var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  box-shadow: none;
+  transition: none;
+}
+
+.settings .appearance-editor .app-select__trigger:focus-visible {
+  border-color: var(--text-2);
+}
+
+.appearance-editor .settings__row-title {
+  font-size: var(--t-sm);
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.appearance-editor .settings__row-note {
+  margin-top: 2px;
+  color: var(--text-2);
+  line-height: 1.4;
 }
 
 .appearance-editor__row .settings__row-control {
-  width: min(272px, 52%);
+  width: min(208px, 52%);
   justify-content: flex-end;
 }
 
@@ -607,20 +670,20 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   min-width: 0;
 }
 
 .appearance-control__select {
-  width: min(190px, 100%);
+  width: min(152px, 100%);
   max-width: none;
 }
 
 .appearance-control__type,
 .appearance-choice__swatch {
-  width: 28px;
-  height: 28px;
+  width: 22px;
+  height: 22px;
   flex: none;
   border-radius: var(--r-md);
 }
@@ -632,7 +695,7 @@
   border: 1px solid var(--chrome-border);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
 }
 
 .appearance-choice__swatch {
@@ -1631,18 +1694,26 @@
   color: var(--text);
 }
 
-.settings .switch {
-  width: 34px;
-  height: 20px;
+.settings .settings__row:has(> .settings__row-control > .switch) {
+  min-height: 52px;
+  align-items: center;
+  flex-direction: row;
+  gap: 20px;
+  padding: 12px;
 }
 
-.settings .switch__thumb {
-  width: 14px;
-  height: 14px;
+.settings .settings__row-control:has(> .switch) {
+  width: auto;
+  align-self: center;
 }
 
-.settings .switch.is-on .switch__thumb {
-  transform: translateX(14px);
+.settings .settings__row:has(> .settings__row-control > .switch) .settings__row-copy {
+  flex: 1;
+}
+
+.settings .settings__row:has(> .settings__row-control > .switch) .settings__row-note {
+  margin-top: 4px;
+  line-height: 1.5;
 }
 
 :root[data-theme='light'] .settings {
@@ -2027,15 +2098,16 @@
     border-left: 0;
   }
 
-  .appearance-editor__row {
+  .appearance-editor .settings__row {
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
-    padding-block: 10px;
+    padding-block: 8px;
   }
 
   .appearance-editor__row .settings__row-control,
-  .appearance-control {
+  .appearance-control,
+  .appearance-editor__row .appearance-color {
     width: 100%;
   }
 
@@ -2165,7 +2237,8 @@
   }
 
   .appearance-editor__row .settings__row-control,
-  .appearance-control {
+  .appearance-control,
+  .appearance-editor__row .appearance-color {
     width: 100%;
   }
 
