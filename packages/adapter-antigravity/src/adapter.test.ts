@@ -1,7 +1,7 @@
 import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
@@ -31,14 +31,41 @@ class FakeChild extends ChildProcess {
     null,
     null,
   ]
+  wasKilled = false
+
+  override kill(): boolean {
+    this.wasKilled = true
+    setImmediate(() => {
+      this.stdout.end()
+      this.stderr.end()
+      this.emit('close', null)
+    })
+    return true
+  }
 }
 
-type SpawnRecord = { command?: string; args?: string[] }
+type SpawnOptionsRecord = {
+  cwd?: string
+  stdio?: readonly string[]
+  windowsHide?: boolean
+  detached?: boolean
+}
+type SpawnRecord = { command?: string; args?: string[]; options?: SpawnOptionsRecord }
 
 function fakeSpawn(record: SpawnRecord, child: FakeChild) {
-  return (command: string, args: string[]) => {
+  return (
+    command: string,
+    args: string[],
+    options?: {
+      cwd?: string
+      stdio?: readonly string[]
+      windowsHide?: boolean
+      detached?: boolean
+    },
+  ) => {
     record.command = command
     record.args = args
+    if (options) record.options = { ...options }
     return child
   }
 }
@@ -181,6 +208,115 @@ describe('Antigravity turn invocation', () => {
   })
 })
 
+describe('Antigravity subprocess ownership', () => {
+  it('spawns helpers owned and directly, keeping multi-line prompts intact', async () => {
+    const record: SpawnRecord = {}
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn(record, child) })
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'line one\nline two')
+    const prompt = record.args?.[record.args.indexOf('-p') + 1] ?? ''
+    // Direct spawn, never cmd.exe or a shell: the prompt survives the newline.
+    expect(record.command).toMatch(/agy/)
+    expect(record.command).not.toMatch(/cmd\.exe/i)
+    expect(prompt).toContain('line one\nline two')
+    // Shared owned spawning: exact group contract plus pipe stdio, no shell.
+    expect(record.options?.detached).toBe(process.platform !== 'win32')
+    expect(record.options?.stdio).toEqual(['pipe', 'pipe', 'pipe'])
+    expect(record.options?.windowsHide).toBe(true)
+    expect(record.options).not.toHaveProperty('shell')
+    await adapter.dispose()
+  })
+
+  it('emits exactly one interrupted completion without error on interrupt', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+    await adapter.interrupt()
+    await adapter.interrupt()
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(child.wasKilled).toBe(true)
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'interrupted' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    await adapter.dispose()
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+  })
+
+  it('replaces an in-flight turn without clobbering the new child', async () => {
+    const first = new FakeChild()
+    const second = new FakeChild()
+    const spawned: FakeChild[] = []
+    const adapter = new AntigravityAdapter({
+      spawn: () => {
+        const child = spawned.length === 0 ? first : second
+        spawned.push(child)
+        return child
+      },
+    })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'first')
+    await adapter.sendTurn(thread.id, 'second')
+    expect(first.wasKilled).toBe(true)
+    expect(second.wasKilled).toBe(false)
+    // The replaced child's late exit must not fail the new turn.
+    first.stdout.end()
+    first.emit('close', null)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    await adapter.dispose()
+    expect(second.wasKilled).toBe(true)
+  })
+
+  it('keeps a replaced old child silent on late error and close', async () => {
+    const first = new FakeChild()
+    const second = new FakeChild()
+    const spawned: FakeChild[] = []
+    const adapter = new AntigravityAdapter({
+      spawn: () => {
+        const child = spawned.length === 0 ? first : second
+        spawned.push(child)
+        return child
+      },
+    })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'first')
+    await adapter.sendTurn(thread.id, 'second')
+    expect(first.wasKilled).toBe(true)
+    // A late spawn failure from the replaced child must not fail any turn.
+    first.emit('error', new Error('late boom'))
+    first.emit('close', 1)
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(0)
+    await adapter.dispose()
+  })
+
+  it('reports a live spawn failure exactly once when error is followed by close', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Hello')
+    child.emit('error', new Error('spawn ENOENT'))
+    child.emit('close', 1)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(events.filter((event) => event.type === 'thread.error')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+  })
+})
+
 describe('Antigravity model list', () => {
   it('closes stdin for discovery — the CLI blocks forever on an open pipe', async () => {
     const child = new FakeChild()
@@ -196,6 +332,25 @@ describe('Antigravity model list', () => {
     child.stdout.end()
     child.emit('close', 0)
     await expect(listing).resolves.toMatchObject([{ id: 'gemini-3.6-flash-high' }])
+  })
+
+  it('times out model discovery deterministically while the tree shuts down', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeChild()
+      const adapter = new AntigravityAdapter({
+        spawn: () => child,
+      })
+      const pending = adapter.listModels()
+      const assertion = expect(pending).rejects.toThrow('timed out')
+      await vi.advanceTimersByTimeAsync(15000)
+      // A racing successful close must not change the latched timeout.
+      child.emit('close', 0)
+      await assertion
+      expect(child.wasKilled).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('collapses the agy models output into base models with efforts', () => {

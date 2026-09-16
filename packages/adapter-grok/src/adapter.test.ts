@@ -1,11 +1,11 @@
-import { ChildProcess } from 'node:child_process'
+import { ChildProcess, spawn } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import { pathToFileURL } from 'node:url'
 import type { DomainEvent } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   GROK_CAPABILITIES,
   GrokAdapter,
@@ -182,7 +182,7 @@ describe('Grok adapter', () => {
     expect(
       args.slice(args.indexOf('--reasoning-effort'), args.indexOf('--reasoning-effort') + 2),
     ).toEqual(['--reasoning-effort', 'low'])
-    adapter.dispose()
+    await adapter.dispose()
   })
 
   it('resumes a stable TasteCode thread through its separate Grok session id', async () => {
@@ -226,7 +226,7 @@ describe('Grok adapter', () => {
     )
     await learned
     expect(providerSessionIds).toEqual(['grok-native-session', 'grok-native-session-rotated'])
-    adapter.dispose()
+    await adapter.dispose()
   })
 
   it('resumes the named Grok session after an interrupted first turn', async () => {
@@ -249,7 +249,7 @@ describe('Grok adapter', () => {
     expect(spawned[1]).toContain('--resume')
     expect(spawned[1]).toContain(createdSessionId)
     expect(spawned[1]).not.toContain('--session-id')
-    adapter.dispose()
+    await adapter.dispose()
   })
 
   it('does not reuse synthetic turn ids after an adapter restart', async () => {
@@ -262,8 +262,8 @@ describe('Grok adapter', () => {
     const secondTurn = await second.sendTurn('grok-thread', 'two')
 
     expect(firstTurn).not.toBe(secondTurn)
-    first.dispose()
-    second.dispose()
+    await first.dispose()
+    await second.dispose()
   })
 
   it('ignores a native session id flushed by a replaced child', async () => {
@@ -293,7 +293,7 @@ describe('Grok adapter', () => {
 
     await learned
     expect(providerSessionIds).toEqual(['native-session', 'current-session'])
-    adapter.dispose()
+    await adapter.dispose()
   })
 
   it('keeps sequential tool and authored-text lifecycles distinct', async () => {
@@ -490,7 +490,7 @@ describe('Grok adapter', () => {
 
     children[2]!.stdout.write(`${JSON.stringify({ type: 'thought', data: 'disposing' })}\n`)
     await new Promise((resolve) => setImmediate(resolve))
-    adapter.dispose()
+    await adapter.dispose()
     if (signal === 'error') children[2]!.emit('error', new Error('killed'))
     await new Promise((resolve) => setImmediate(resolve))
 
@@ -592,7 +592,7 @@ describe('Grok adapter', () => {
       { text: 'after the file', durationMs: expect.any(Number) },
     ])
     expect(reasoning[0]?.id).not.toBe(reasoning[1]?.id)
-    adapter.dispose()
+    await adapter.dispose()
   })
 
   it('drains a final end frame before classifying process close', async () => {
@@ -730,7 +730,7 @@ describe('Grok adapter', () => {
       '--session-id',
       expect.any(String),
     ])
-    adapter.dispose()
+    await adapter.dispose()
   })
 
   it('formats Grok tool rows as a headline and readable output', () => {
@@ -811,10 +811,171 @@ describe('Grok adapter', () => {
         }),
       ]),
     )
-    adapter.dispose()
+    await adapter.dispose()
   })
 
   it('declares the one-shot print-mode capability set', () => {
     expect(GROK_CAPABILITIES).toMatchObject({ steer: false, interrupt: true, reasoningItems: true })
   })
+
+  it('spawns turns owned and directly, without a shell', async () => {
+    const child = new FakeChild()
+    let captured: { command: string; args: string[]; options: Record<string, unknown> } | undefined
+    const adapter = new GrokAdapter({
+      spawn: (command, args, options) => {
+        captured = { command, args, options: options as Record<string, unknown> }
+        return child
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'hello')
+
+    expect(captured).toBeDefined()
+    // Direct spawn, never cmd.exe; the shared boundary marks the group so
+    // killTree reaches the tree.
+    expect(captured!.command).not.toMatch(/cmd\.exe/i)
+    expect(captured!.options).toMatchObject({
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      cwd: 'C:\\repo',
+      detached: process.platform !== 'win32',
+    })
+    expect(captured!.options).not.toHaveProperty('shell')
+    await adapter.dispose()
+  })
+
+  it('owns the model-discovery child through the same boundary', async () => {
+    const child = new FakeChild()
+    let options: Record<string, unknown> | undefined
+    const adapter = new GrokAdapter({
+      spawn: (_command, _args, seen) => {
+        options = seen as Record<string, unknown>
+        setImmediate(() => {
+          child.stdout.end('Available models:\n  * grok-4.5 (default)\n')
+          child.emit('close', 0)
+        })
+        return child
+      },
+    })
+    await expect(adapter.listModels()).resolves.toEqual([
+      expect.objectContaining({ id: 'grok-4.5' }),
+    ])
+    expect(options).toMatchObject({
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      detached: process.platform !== 'win32',
+    })
+    expect(options).not.toHaveProperty('shell')
+    await adapter.dispose()
+  })
+
+  it('terminates the owned tree on interrupt through the shared boundary', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'stop me')
+    await adapter.interrupt()
+    expect(child.wasKilled).toBe(true)
+    await adapter.dispose()
+  })
+
+  it('treats a double interrupt as a single stop', async () => {
+    const child = new FakeChild()
+    let kills = 0
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'stop me twice')
+    child.kill = (): boolean => {
+      kills += 1
+      return FakeChild.prototype.kill.call(child)
+    }
+    await adapter.interrupt()
+    await adapter.interrupt()
+    expect(kills).toBe(1)
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      expect.objectContaining({ status: 'interrupted' }),
+    ])
+    await adapter.dispose()
+  })
+
+  it('stops a hung discovery through the shared boundary before timing out', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new FakeChild()
+      const adapter = new GrokAdapter({ spawn: () => child })
+      const listing = adapter.listModels()
+      const rejected = expect(listing).rejects.toThrow('grok did not answer in time')
+      await vi.advanceTimersByTimeAsync(15_000)
+      await rejected
+      expect(child.wasKilled).toBe(true)
+      await adapter.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
+
+describe.skipIf(process.platform === 'win32')('Grok owned tree teardown', () => {
+  it('kills a SIGTERM-ignoring descendant on interrupt', async () => {
+    const beat = path.join(os.tmpdir(), `harness-grok-teardown-${Date.now()}-${process.pid}.txt`)
+    const grandchild = [
+      "process.on('SIGTERM', () => {})",
+      "const fs = require('fs')",
+      `setInterval(() => fs.writeFileSync(${JSON.stringify(beat)}, String(Date.now())), 100)`,
+    ].join(';')
+    const parent = [
+      "const { spawn } = require('node:child_process')",
+      `spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'ignore' })`,
+      "process.on('SIGTERM', () => {})",
+      'setInterval(() => {}, 1000)',
+    ].join(';')
+    // A real injected spawn that honors the owned options, like the default.
+    // The adapter records ownership; the bounded TERM-to-KILL escalation must
+    // still reach the grandchild that ignores SIGTERM.
+    const adapter = new GrokAdapter({
+      spawn: (_command, _args, options) =>
+        spawn(process.execPath, ['-e', parent], {
+          ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+          detached: options.detached,
+        }),
+    })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread(os.tmpdir())
+      await adapter.sendTurn(thread.id, 'real tree')
+      await waitForFile(beat, 10_000)
+      await adapter.interrupt()
+      const afterInterrupt = readFileSync(beat, 'utf8')
+      await sleep(500)
+      expect(readFileSync(beat, 'utf8')).toBe(afterInterrupt)
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: 'turn.completed', status: 'interrupted' }),
+        ]),
+      )
+      expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    } finally {
+      await adapter.dispose()
+      rmSync(beat, { force: true })
+    }
+  }, 20_000)
+})
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForFile(filePath: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (existsSync(filePath)) return
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${filePath}`)
+    await sleep(100)
+  }
+}

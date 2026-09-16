@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
@@ -253,8 +253,21 @@ export type GrokAdapterEvents = {
 type SpawnFn = (
   command: string,
   args: string[],
-  options: { cwd?: string; stdio: ['pipe', 'pipe', 'pipe']; windowsHide: boolean },
+  options: {
+    cwd?: string
+    stdio: ['pipe', 'pipe', 'pipe']
+    windowsHide: boolean
+    detached?: boolean
+  },
 ) => ChildProcessWithoutNullStreams
+
+function spawnDirect(
+  command: string,
+  args: string[],
+  options: Parameters<SpawnFn>[2],
+): ChildProcessWithoutNullStreams {
+  return spawn(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] })
+}
 
 export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   #processStop: Promise<void> = Promise.resolve()
@@ -284,7 +297,25 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
 
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawnOwned
+    this.#spawn = options.spawn ?? spawnDirect
+  }
+
+  #spawnDirect(
+    command: string,
+    args: string[],
+    options: { cwd?: string } = {},
+  ): ChildProcessWithoutNullStreams {
+    return spawnOwned(
+      command,
+      args,
+      {
+        ...options,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        detached: process.platform !== 'win32',
+      },
+      this.#spawn,
+    )
   }
 
   get capabilities(): Capabilities {
@@ -394,11 +425,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     if (this.#child) await this.#stop(this.#child)
     let child: ChildProcessWithoutNullStreams
     try {
-      child = this.#spawn(grokCommand(), args, {
-        cwd: this.#workspacePath,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      })
+      child = this.#spawnDirect(grokCommand(), args, { cwd: this.#workspacePath })
     } catch (error) {
       rmSync(promptDirectory, { recursive: true, force: true })
       throw error
@@ -671,7 +698,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   }
 
   #capture(args: string[], timeoutMs = 15000): Promise<string> {
-    return captureGrok(this.#spawn, args, timeoutMs)
+    return captureGrok((command, argv) => this.#spawnDirect(command, argv), args, timeoutMs)
   }
 }
 
@@ -802,12 +829,20 @@ function readableGrokValue(value: unknown, depth = 0): string | undefined {
 export type GrokAccount = { signedIn: boolean }
 
 export async function grokAccount(): Promise<GrokAccount> {
-  return parseGrokAccount(await captureGrok(spawnOwned, ['models']))
+  return parseGrokAccount(await captureGrok(spawnGrokOwned, ['models']))
 }
 
 /** `grok logout` clears the CLI's own cached credentials. */
 export async function signOutGrok(): Promise<void> {
-  await captureGrok(spawnOwned, ['logout'])
+  await captureGrok(spawnGrokOwned, ['logout'])
+}
+
+function spawnGrokOwned(
+  command: string,
+  args: string[],
+  options: Parameters<SpawnFn>[2],
+): ChildProcessWithoutNullStreams {
+  return spawnOwned(command, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] })
 }
 
 /** One streamed text item (message or reasoning): started lazily on the
