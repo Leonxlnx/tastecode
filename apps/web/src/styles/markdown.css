@@ -5,7 +5,14 @@
   position: relative;
 }
 
+.reply--notice {
+  color: var(--text-3);
+}
+
 .reply > .md {
+  margin-inline: 0;
+  padding-inline: 0;
+  text-align: start;
   font-family: var(--font-ui);
   font-size: var(--t-md);
   font-weight: 400;
@@ -40,6 +47,10 @@
 }
 
 .md > *:last-child {
+  margin-bottom: 0;
+}
+
+.reply--notice > .md > :last-child {
   margin-bottom: 0;
 }
 

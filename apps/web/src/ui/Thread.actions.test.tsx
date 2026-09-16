@@ -65,6 +65,55 @@ function renderCompleted(items: Item[]) {
 }
 
 describe('approval queue', () => {
+  it('keeps the design fallback note muted beside the normal answer', () => {
+    const view = renderCompleted([
+      turnItem('design-not-applicable-test', 1, {
+        role: 'assistant',
+        phase: 'commentary',
+        text: 'Design mode was turned off because this request is not a website design task.',
+      }),
+      turnItem('answer', 2, {
+        turnId: 'turn-2',
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Here is the answer.',
+      }),
+    ])
+    expect(view.container.querySelector('.reply--notice')?.textContent).toContain(
+      'Design mode was turned off',
+    )
+    expect(view.container.querySelector('.reply--notice .response-actions')).toBeNull()
+    expect(
+      view.container
+        .querySelector('.reply--notice')
+        ?.closest('.thread__row')
+        ?.classList.contains('is-compact-to-next'),
+    ).toBe(true)
+    expect(
+      view.getByText('Here is the answer.').closest('.reply')?.classList.contains('reply--notice'),
+    ).toBe(false)
+  })
+
+  it('keeps normal spacing before a user message after a design fallback', () => {
+    const view = renderCompleted([
+      turnItem('design-not-applicable-test', 1, {
+        role: 'assistant',
+        text: 'Design mode was turned off.',
+      }),
+      turnItem('next-prompt', 2, {
+        turnId: 'turn-2',
+        role: 'user',
+        text: 'A separate request.',
+      }),
+    ])
+    expect(
+      view.container
+        .querySelector('.reply--notice')
+        ?.closest('.thread__row')
+        ?.classList.contains('is-compact-to-next'),
+    ).toBe(false)
+  })
+
   it('animates a new call in a reused stack, but not output updates or replay', () => {
     const animate = vi.fn(() => ({ cancel: vi.fn() }))
     const original = HTMLElement.prototype.animate
