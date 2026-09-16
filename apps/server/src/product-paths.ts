@@ -7,10 +7,22 @@ export function migrateProductFile(current: string, legacy: string): string {
   try {
     mkdirSync(path.dirname(current), { recursive: true })
     renameSync(legacy, current)
-    return current
   } catch {
     return legacy
   }
+  // A WAL sidecar holds the newest committed-but-uncheckpointed rows; leaving
+  // it behind would silently drop that tail on upgrade. Each move is
+  // best-effort — a stuck sidecar must not undo the database rename above.
+  for (const suffix of ['-wal', '-shm']) {
+    try {
+      if (existsSync(`${legacy}${suffix}`)) {
+        renameSync(`${legacy}${suffix}`, `${current}${suffix}`)
+      }
+    } catch {
+      // Keep going — losing a sidecar is bad, reverting the migration is worse.
+    }
+  }
+  return current
 }
 
 export function configFile(name: string): string {
