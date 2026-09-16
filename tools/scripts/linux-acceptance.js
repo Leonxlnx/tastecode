@@ -128,6 +128,14 @@ async function main() {
     if (!existsSync(path.join(resources, relativePath))) fail(`missing packaged ${relativePath}`)
   }
   run('pnpm', ['--filter', '@harness/desktop', 'verify:native-bindings', '--', executable])
+  run('pnpm', [
+    '--filter',
+    '@harness/desktop',
+    'verify:native-bindings',
+    '--',
+    '--utility',
+    executable,
+  ])
 
   const profile = mkdtempSync(path.join(os.tmpdir(), 'tastecode-linux-acceptance-'))
   const launchEnvironment = acceptanceLaunchEnvironment(profile)

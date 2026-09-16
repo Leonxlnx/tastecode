@@ -9,6 +9,7 @@ import {
   proveKeyringBinding,
   provePtyBinding,
   proveSqliteRuntime,
+  runNativeBindingProof,
 } from './native-binding-proof.js'
 
 const fixtures: string[] = []
@@ -180,6 +181,10 @@ describe('packaged native binding proof', () => {
 
   it('writes, reads, searches, and removes an isolated SQLite database', () => {
     expect(() => proveSqliteRuntime()).not.toThrow()
+  })
+
+  it('refuses to run outside a packaged Electron runtime', async () => {
+    await expect(runNativeBindingProof()).rejects.toThrow('utility process or Electron Node mode')
   })
 
   it('writes, reads, deletes, and verifies an isolated credential', () => {

@@ -287,8 +287,13 @@ export async function runNativeBindingProof(
   options: { proofFile?: string; modules?: PackagedNativeModules } = {},
 ): Promise<void> {
   const proofFile = options.proofFile ?? fileURLToPath(import.meta.url)
-  if (!process.versions.electron || process.env.ELECTRON_RUN_AS_NODE !== '1') {
-    throw new Error('native proof must run through the packaged Electron executable in Node mode')
+  const runtimeType = (process as NodeJS.Process & { type?: string }).type
+  const isUtilityProcess = runtimeType === 'utility'
+  const isElectronNodeMode = process.env.ELECTRON_RUN_AS_NODE === '1'
+  if (!process.versions.electron || (!isUtilityProcess && !isElectronNodeMode)) {
+    throw new Error(
+      'native proof must run in a packaged Electron utility process or Electron Node mode',
+    )
   }
   if (!isNativeBindingProofPlatform(process.platform)) {
     throw new Error('native proof is a Windows, macOS, and Linux release gate')
@@ -307,11 +312,15 @@ const isEntryPoint =
 
 if (isEntryPoint) {
   runNativeBindingProof()
-    .then(() => process.stdout.write('packaged PTY, SQLite, and keyring proofs passed\n'))
+    .then(() =>
+      process.stdout.write('packaged PTY, SQLite, and keyring proofs passed\n', () =>
+        process.exit(0),
+      ),
+    )
     .catch((error) => {
       process.stderr.write(
         `[native-proof] ${error instanceof Error ? error.message : String(error)}\n`,
+        () => process.exit(1),
       )
-      process.exitCode = 1
     })
 }
