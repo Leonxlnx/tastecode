@@ -2125,7 +2125,13 @@ export class Store {
 
       const states = new Map<string, InterruptedThreadState>()
       for (const row of rows) {
-        const event = DomainEventSchema.parse(JSON.parse(row.payload))
+        // A payload a newer build wrote (and a downgrade left behind) must not
+        // abort recovery for every other thread.
+        const event = parseStoredDomainEvent(row.payload)
+        if (!event) {
+          console.warn(`[store] skipping unparseable recovery payload for thread ${row.thread_id}`)
+          continue
+        }
         const state = states.get(row.thread_id) ?? {
           openTurns: new Set<string>(),
           activeItems: new Map(),

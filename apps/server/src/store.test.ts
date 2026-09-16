@@ -576,6 +576,37 @@ describe('recovering interrupted turns', () => {
     }
   })
 
+  it('skips an unparseable recovery payload without losing other threads', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-payload-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seedThread(seeded, 'good')
+    seedThread(seeded, 'corrupt')
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(`UPDATE recovery_lifecycles SET payload = 'not-json' WHERE thread_id = 'corrupt'`)
+      .run()
+    raw.close()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const restarted = new Store(file)
+    try {
+      expect(restarted.recoverInterruptedThreads()).toEqual(['good'])
+      expect(restarted.history('good').map(({ event }) => event)).toContainEqual({
+        type: 'turn.completed',
+        turnId: 'good-turn',
+        status: 'interrupted',
+      })
+    } finally {
+      warn.mockRestore()
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('filters old lifecycle history within the cold-start budget', () => {
     store.addProject('/repo')
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Scale' })
