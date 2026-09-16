@@ -304,7 +304,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #query: ClaudeQueryRuntime | undefined
   #queryAbort: AbortController | undefined
   #bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
-  #redactor = new ClaudeMcpRedactor()
+  readonly #secrets: readonly string[]
+  #redactor: ClaudeMcpRedactor
   #promptQueue: PromptQueue | undefined
   #queryGeneration = 0
   #sessionGeneration = 0
@@ -326,6 +327,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       createQuery?: ClaudeQueryFactory
       spawn?: ClaudeSpawn
       environment?: NodeJS.ProcessEnv
+      /**
+       * Extra values to strip from diagnostics and stderr. A custom harness
+       * passes its configured environment values here; they cannot be derived
+       * from the already-merged `environment`.
+       */
+      secrets?: string[]
       startupTimeoutMs?: number
     } = {},
   ) {
@@ -333,6 +340,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = options.environment ?? process.env
+    this.#secrets = options.secrets ?? []
+    this.#redactor = new ClaudeMcpRedactor(this.#secrets)
     this.#startupTimeoutMs = options.startupTimeoutMs ?? 15_000
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')
@@ -578,7 +587,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#activeTurnId = undefined
     this.#clearStreamingState()
     this.#options = {}
-    this.#redactor = new ClaudeMcpRedactor()
+    this.#redactor = new ClaudeMcpRedactor(this.#secrets)
     this.removeAllListeners()
     return cleanup().then(() => {
       if (closeError) throw closeError
@@ -620,7 +629,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   async #startQuery(resume?: string, options = this.#options): Promise<void> {
     const mcp = prepareClaudeMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {})
-    const redactor = new ClaudeMcpRedactor(mcp.secrets)
+    const redactor = new ClaudeMcpRedactor([...mcp.secrets, ...this.#secrets])
     this.#redactor = redactor
     const promptQueue = new PromptQueue()
     const abort = new AbortController()
@@ -699,7 +708,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   #queryOptions(
     overrides: ClaudeQueryOptions,
-    redactor = new ClaudeMcpRedactor(),
+    redactor = new ClaudeMcpRedactor(this.#secrets),
   ): ClaudeQueryOptions {
     const log = (chunk: string) => {
       const line = chunk.trimEnd()
