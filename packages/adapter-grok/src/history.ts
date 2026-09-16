@@ -22,7 +22,7 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
             names.slice(offset, offset + 16).map(async (id) => {
               const directory = path.join(folder, id)
               const [summaryText, summaryStat, updatesStat, chatStat] = await Promise.all([
-                readFile(path.join(directory, 'summary.json'), 'utf8').catch(() => ''),
+                readSessionFile(directory, 'summary.json'),
                 stat(path.join(directory, 'summary.json')).catch(() => undefined),
                 stat(path.join(directory, 'updates.jsonl')).catch(() => undefined),
                 stat(path.join(directory, 'chat_history.jsonl')).catch(() => undefined),
@@ -86,11 +86,24 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
       )
         return []
       const [updates, chat] = await Promise.all([
-        readFile(path.join(directory, 'updates.jsonl'), 'utf8').catch(() => ''),
-        readFile(path.join(directory, 'chat_history.jsonl'), 'utf8').catch(() => ''),
+        readSessionFile(directory, 'updates.jsonl'),
+        readSessionFile(directory, 'chat_history.jsonl'),
       ])
       return grokHistoryEvents(session, jsonLines(updates), jsonLines(chat))
     },
+  }
+}
+
+async function readSessionFile(directory: string, name: string): Promise<string> {
+  try {
+    const [folder, file] = await Promise.all([
+      realpath(directory),
+      realpath(path.join(directory, name)),
+    ])
+    if (path.dirname(file) !== folder || !(await stat(file)).isFile()) return ''
+    return await readFile(file, 'utf8')
+  } catch {
+    return ''
   }
 }
 
