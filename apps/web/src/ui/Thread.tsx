@@ -661,12 +661,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     (errorsInComposer && item.type === 'error') ||
     isBlankReasoning(item) ||
     (compactedActivity && !activityLead) ||
-    repeatedDesignRowAt(item, index) ||
-    // A design turn tells its story through the phase labels and TasteCode
-    // notes; raw provider work would drown that story in noise.
-    (presentation?.design === true &&
-      !compactedActivity &&
-      ((isActivity(item) && !designPhaseLabel(toolText(item))) || item.type === 'error'))
+    repeatedDesignRowAt(item, index)
   const nextVisibleItem = threadItemAt(
     items,
     liveItems,

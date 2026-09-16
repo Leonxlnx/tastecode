@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   DESIGN_BRIEF_ATTACHMENT,
-  FINAL_BRIEFING_QUESTION,
   designBriefingContinuation,
   designBriefingPrompt,
   designPhaseCorrectionPrompt,
@@ -29,7 +28,8 @@ describe('provider-neutral briefing workflow', () => {
     expect(prompt).toContain('There is no total question limit')
     expect(prompt).toContain('materially changes the result')
     expect(prompt).toContain('TasteCode presents them one at a time')
-    expect(prompt).toContain('Do not include the final open-ended check yourself')
+    expect(prompt).toContain('Never ask a generic closing question')
+    expect(prompt).toContain('return "complete" immediately with no questions')
     expect(prompt).toContain('Create a modern studio website.')
     // The UI always offers a free-text answer and never renders label tags,
     // so the model must not duplicate either.
@@ -164,13 +164,5 @@ describe('provider-neutral briefing workflow', () => {
         }),
       ),
     ).toThrow('briefing question ids must be unique')
-  })
-
-  it('owns the clean final question outside provider-specific tools', () => {
-    expect(FINAL_BRIEFING_QUESTION.question).toBe(
-      "Before I finalize your brief, is there anything else you'd like me to know?",
-    )
-    // No "(Recommended)" tag on the no-more-details answer.
-    expect(FINAL_BRIEFING_QUESTION.options[0]?.label).toBe("No, that's everything")
   })
 })

@@ -206,7 +206,6 @@ const StoredDesignFlowSchema = z.object({
     .default({}),
   phase: DesignFlowPhaseSchema,
   askedQuestions: z.boolean(),
-  finalAsked: z.boolean(),
   explicitAnswers: z.array(z.object({ question: z.string(), answer: z.string() })),
   correcting: z.boolean().optional().default(false),
   repairAttempt: z.number().int().nonnegative().optional().default(0),
@@ -245,7 +244,6 @@ type DesignFlow = {
   options: TurnOptions
   phase: DesignFlowPhase
   askedQuestions: boolean
-  finalAsked: boolean
   explicitAnswers: Array<{ question: string; answer: string }>
   correcting: boolean
   repairAttempt: number
@@ -333,7 +331,6 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     options,
     phase,
     askedQuestions: stored.askedQuestions,
-    finalAsked: stored.finalAsked,
     explicitAnswers: stored.explicitAnswers,
     correcting: stored.correcting,
     repairAttempt: stored.repairAttempt,
@@ -425,7 +422,6 @@ type DesignInput = {
   threadId: string
   turnId: string
   questions: BriefingQuestion[]
-  final: boolean
 }
 const PANIC_STOP_TIMEOUT_MS = 5_000
 const DESIGN_START_TIMEOUT_MS = 30_000
@@ -1493,7 +1489,6 @@ export class Orchestrator {
           options,
           phase: 'brief',
           askedQuestions: false,
-          finalAsked: false,
           explicitAnswers: [],
           correcting: false,
           repairAttempt: 0,
@@ -2596,38 +2591,14 @@ export class Orchestrator {
       const flow = this.#designFlows.get(threadId)
       if (!flow) return
 
-      const noMoreDetails =
-        designInput.final &&
-        (answers[designAgent().FINAL_BRIEFING_QUESTION.id] ?? []).includes(
-          designAgent().FINAL_BRIEFING_QUESTION.options[0]!.label,
-        )
-      if (!noMoreDetails) {
-        flow.explicitAnswers.push(
-          ...designInput.questions.flatMap((question) => {
-            const answer = (answers[question.id] ?? []).join(', ').trim()
-            return answer ? [{ question: question.question, answer }] : []
-          }),
-        )
-        this.#saveDesignFlow(threadId)
-        this.#recordDesignNote(threadId, designInput.turnId, 'Got it, thanks.')
-      }
-      if (noMoreDetails && flow.pendingBrief) {
-        try {
-          this.#completeDesignBrief(threadId, designInput.turnId, flow.pendingBrief)
-        } catch (error) {
-          const prompt = this.#queueDesignCorrection(threadId, flow, error)
-          if (!prompt) {
-            this.#failDesignFlow(threadId, error)
-            return
-          }
-          delete flow.pendingPrompt
-          this.#saveDesignFlow(threadId)
-          void this.#sendDesignTurn(threadId, prompt, [], this.#designTurnOptions(flow)).catch(
-            (sendError: unknown) => this.#failDesignFlow(threadId, sendError),
-          )
-        }
-        return
-      }
+      flow.explicitAnswers.push(
+        ...designInput.questions.flatMap((question) => {
+          const answer = (answers[question.id] ?? []).join(', ').trim()
+          return answer ? [{ question: question.question, answer }] : []
+        }),
+      )
+      this.#saveDesignFlow(threadId)
+      this.#recordDesignNote(threadId, designInput.turnId, 'Got it, thanks.')
 
       void this.#sendDesignTurn(
         threadId,
@@ -3073,13 +3044,20 @@ export class Orchestrator {
 
     const { unresolved, openTurnId } = designRecoveryState(this.#store.history(threadId))
     if (unresolved) {
+      // Older runs paused a complete brief behind a mandatory closing question.
+      if (flow.pendingBrief && unresolved.questions.every(({ id }) => id === 'final_note')) {
+        this.#record(threadId, { type: 'user_input.resolved', id: unresolved.id })
+        try {
+          this.#completeDesignBrief(threadId, unresolved.turnId, flow.pendingBrief)
+        } catch (error) {
+          this.#failDesignFlow(threadId, error)
+        }
+        return
+      }
       this.#designInputs.set(unresolved.id, {
         threadId,
         turnId: unresolved.turnId,
         questions: unresolved.questions,
-        final: unresolved.questions.every(
-          (question) => question.id === designAgent().FINAL_BRIEFING_QUESTION.id,
-        ),
       })
       this.#designInputByThread.set(threadId, unresolved.id)
       return
@@ -3352,6 +3330,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const designFlow = this.#designFlows.get(threadId)
     if (designFlow) {
+      prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Do not ask permission to continue or add a closing question. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
       this.#validateApprovedDesignArtifacts(designFlow)
       attachments = [
         ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
@@ -3581,6 +3560,22 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     }
 
     if (
+      (event.type === 'item.started' || event.type === 'item.completed') &&
+      event.item.type === 'message' &&
+      event.item.role === 'assistant' &&
+      event.item.phase === 'commentary'
+    ) {
+      this.#designMessageItems.delete(event.item.id)
+      if (event.type === 'item.completed' && !this.#acceptedDesignOutputs.has(turnId)) {
+        this.#designOutputErrors.set(
+          turnId,
+          new Error('Design phase returned no final JSON result'),
+        )
+      }
+      this.#record(threadId, event)
+      return
+    }
+    if (
       event.type === 'item.started' &&
       event.item.type === 'message' &&
       event.item.role === 'assistant'
@@ -3605,6 +3600,10 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
           this.#acceptedDesignOutputs.add(turnId)
         }
       } catch (error) {
+        // Providers without commentary phases still expose completed progress text.
+        if (event.item.text?.trim() && !/^\s*(?:[{[]|```)/.test(event.item.text)) {
+          this.#record(threadId, { ...event, item: { ...event.item, phase: 'commentary' } })
+        }
         this.#designOutputErrors.set(turnId, error)
       }
       return
@@ -3674,7 +3673,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       flow.askedQuestions = true
       delete flow.pendingBrief
       this.#saveDesignFlow(threadId)
-      this.#requestDesignInput(threadId, turnId, output.questions, false, round)
+      this.#requestDesignInput(threadId, turnId, output.questions, round)
       return
     }
     if (output.status === 'not_design') {
@@ -3695,13 +3694,6 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       return
     }
     const brief = DesignBriefInputSchema.parse(output.brief)
-    if (!flow.finalAsked) {
-      flow.pendingBrief = brief
-      flow.finalAsked = true
-      this.#saveDesignFlow(threadId)
-      this.#requestDesignInput(threadId, turnId, [designAgent().FINAL_BRIEFING_QUESTION], true)
-      return
-    }
     this.#completeDesignBrief(threadId, turnId, brief)
   }
 
@@ -3725,8 +3717,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     threadId: string,
     turnId: string,
     questions: BriefingQuestion[],
-    final: boolean,
-    round: 'first' | 'follow-up' | 'final' = 'final',
+    round: 'first' | 'follow-up',
   ): void {
     if (round === 'first') {
       this.#recordDesignNote(
@@ -3743,7 +3734,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       )
     }
     const id = crypto.randomUUID()
-    this.#designInputs.set(id, { threadId, turnId, questions, final })
+    this.#designInputs.set(id, { threadId, turnId, questions })
     this.#designInputByThread.set(threadId, id)
     this.#record(threadId, {
       type: 'user_input.requested',
@@ -3767,6 +3758,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
   #completeDesignBrief(threadId: string, turnId: string, brief: DesignBriefInput): void {
     const flow = this.#designFlows.get(threadId)
     if (!flow) return
+    delete flow.pendingBrief
     const saved = designAgent().writeDesignBrief(flow.workspacePath, {
       ...brief,
       originalRequest: flow.originalRequest,

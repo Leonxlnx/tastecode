@@ -80,9 +80,6 @@ Extract brief facts
         +-- material gaps --> structured questions --> re-evaluate
         |
         v
-Final optional note
-        |
-        v
 .taste/brief.json
         |
         v
@@ -147,7 +144,7 @@ Implemented mechanics:
 
 - Design entry through the existing composer;
 - fast request qualification and brief extraction;
-- adaptive structured questions and a final optional note;
+- adaptive structured questions only for material gaps, with no closing confirmation;
 - validated brief, brand, page, asset, preview, and review outputs;
 - automatic phase turns in the same provider session;
 - hidden machine-readable phase responses instead of raw JSON in chat;
@@ -237,15 +234,10 @@ Each question contains:
 
 After the answers return, the provider re-evaluates all core fields. Vague or contradictory
 answers produce the smallest useful set of follow-up questions. Resolved questions are not asked
-again. Once the provider returns a complete candidate brief after any question round, TasteCode
-always asks the final optional note:
-
-```text
-Before I finalize your brief, is there anything else you'd like me to know?
-```
-
-Choosing the recommended no-more-details answer writes the pending candidate brief. A custom final
-note goes through one more briefing continuation so it can be incorporated and validated.
+again. A complete brief advances directly to Brand, including when the original request needs
+no clarification. TasteCode never appends a generic closing question or asks permission to start.
+Older persisted runs waiting on the former final-note card resolve it and continue with their
+validated candidate brief when restored.
 
 ### Briefing UI
 
@@ -534,7 +526,7 @@ Persisted flow state includes:
 - original request;
 - selected model, service tier, and effort options;
 - current phase;
-- whether material questions and the final note were asked;
+- whether material questions were asked;
 - explicit briefing answers;
 - whether a malformed response is already being corrected;
 - pending candidate brief or next prompt;
@@ -555,8 +547,11 @@ On thread restoration, TasteCode:
 6. fails visibly and releases the queue if a required artifact was removed.
 
 The current phase prompts are internal provider turns. TasteCode creates a synthetic `tool_call`
-item such as `design:brand`, suppresses internal assistant JSON deltas, parses the completed
-assistant message, and only then advances. The visible activity labels are:
+item such as `design:brand`, suppresses internal final-result JSON deltas, parses the completed
+phase result, and only then advances. Ordinary assistant commentary streams into the normal chat
+alongside tool activity. Providers without commentary metadata expose plain-text updates when
+each message completes. Each phase requests concise updates about checks, changes, and validation;
+commentary alone does not count as a valid phase result. The visible activity labels are:
 
 - Preparing questions;
 - Creating brand direction;

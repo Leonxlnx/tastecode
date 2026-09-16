@@ -210,9 +210,19 @@ describe('design activity rows', () => {
     expect(screen.queryByText('design:brief')).toBeNull()
   })
 
-  it('keeps a design turn to its phase story, without raw provider activity', () => {
+  it('shows Design progress, provider commands, and errors alongside the phase label', () => {
     const items: Item[] = [
       { ...marker('m1', 'design:build'), status: 'started' },
+      {
+        id: 'progress-1',
+        turnId: 'turn-m1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        status: 'completed',
+        text: 'I am checking the existing styles before updating the page.',
+        createdAt: 1,
+      },
       {
         id: 'cmd-1',
         turnId: 'turn-m1',
@@ -245,14 +255,17 @@ describe('design activity rows', () => {
         onAnswerUserInput={() => undefined}
       />,
     )
-    expect(screen.queryByText(/Get-ChildItem/)).toBeNull()
+    expect(
+      screen.getByText('I am checking the existing styles before updating the page.'),
+    ).toBeTruthy()
+    expect(screen.getByText(/Get-ChildItem/)).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
-    expect(screen.queryByText('Exit code 1')).toBeNull()
+    expect(screen.getByText('Exit code 1')).toBeTruthy()
     // The rail names the phase even while a tool runs inside the turn.
     expect(workLabel(items, 'turn-m1', false)).toBe('Building the website')
   })
 
-  it('collapses a repeated phase across suppressed design activity', () => {
+  it('collapses a repeated phase while keeping provider activity visible', () => {
     renderCompleted([
       marker('m1', 'design:page'),
       {
@@ -278,8 +291,9 @@ describe('design activity rows', () => {
 
     expect(screen.getAllByText('Planning the page')).toHaveLength(2)
     expect(screen.getByText('Building the website')).toBeTruthy()
-    expect(screen.queryByText('pnpm build')).toBeNull()
-    expect(screen.queryByText('Planning the implementation')).toBeNull()
+    expect(screen.getByText(/pnpm build/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Thought' }))
+    expect(screen.getByText('Planning the implementation')).toBeTruthy()
   })
 
   it('collapses phase markers repeated by retried provider turns', () => {

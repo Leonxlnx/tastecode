@@ -43,8 +43,7 @@ export type TurnPresentation = {
   workStartedAt: number
   prompt: Item | undefined
   complete: boolean
-  /** Turns carrying a design:* phase marker tell their story through the
-   *  phase labels; raw provider activity stays out of the transcript. */
+  /** Turns carrying a design:* marker retain their phase labels alongside provider work. */
   design: boolean
 }
 

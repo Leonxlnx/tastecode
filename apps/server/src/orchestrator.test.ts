@@ -2366,7 +2366,54 @@ describe('provider-neutral design briefing', () => {
         )
 
         expect(sessions[0]?.sent[0]).toContain('TasteCode Design Briefing mode')
+        expect(sessions[0]?.sent[0]).toContain('plain-language progress updates')
         expect(sessions[0]?.sentAttachments[0]).toEqual([referencePath])
+        const progress = {
+          id: 'brief-progress',
+          turnId: 's1-turn',
+          type: 'message' as const,
+          role: 'assistant' as const,
+          phase: 'commentary' as const,
+          status: 'started' as const,
+          text: '',
+          createdAt: 1,
+        }
+        sessions[0]?.emit({ type: 'item.started', item: progress })
+        sessions[0]?.emit({
+          type: 'item.delta',
+          itemId: progress.id,
+          turnId: progress.turnId,
+          textDelta: 'I am checking the supplied style and required sections.',
+        })
+        sessions[0]?.emit({
+          type: 'item.completed',
+          item: {
+            ...progress,
+            status: 'completed',
+            text: 'I am checking the supplied style and required sections.',
+          },
+        })
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.id === progress.id,
+          ),
+        ).toBe(true)
+        expect(
+          received.some(({ event }) => event.type === 'item.delta' && event.itemId === progress.id),
+        ).toBe(true)
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.completed' && event.item.id === progress.id,
+          ),
+        ).toBe(true)
+        const protocol = { ...progress, id: 'brief-json', phase: 'final_answer' as const }
+        sessions[0]?.emit({ type: 'item.started', item: protocol })
+        sessions[0]?.emit({
+          type: 'item.delta',
+          itemId: protocol.id,
+          turnId: protocol.turnId,
+          textDelta: '{"status":"questions"',
+        })
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -2391,6 +2438,16 @@ describe('provider-neutral design briefing', () => {
         expect(firstRequest?.type).toBe('user_input.requested')
         if (firstRequest?.type !== 'user_input.requested') throw new Error('missing questions')
         expect(firstRequest.request.questions).toHaveLength(5)
+        expect(
+          received.some(
+            ({ event }) =>
+              (event.type === 'item.started' && event.item.id === protocol.id) ||
+              (event.type === 'item.delta' && event.itemId === protocol.id) ||
+              (event.type === 'item.completed' &&
+                event.item.type === 'message' &&
+                event.item.text?.startsWith('{"status"')),
+          ),
+        ).toBe(false)
         expect(store.designRun(thread.id)).toMatchObject({
           phase: 'brief',
           askedQuestions: true,
@@ -2433,6 +2490,7 @@ describe('provider-neutral design briefing', () => {
         })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
 
+        sessions[0]?.emit(turnStarted(thread.id, 's1-turn'))
         sessions[0]?.emit(
           message(
             JSON.stringify({
@@ -2460,16 +2518,10 @@ describe('provider-neutral design briefing', () => {
             's1-turn',
           ),
         )
-        const finalRequest = received
-          .filter(({ event }) => event.type === 'user_input.requested')
-          .at(-1)?.event
-        if (finalRequest?.type !== 'user_input.requested') throw new Error('missing final question')
-        expect(finalRequest.request.questions).toHaveLength(1)
-        expect(finalRequest.request.questions[0]?.id).toBe('final_note')
-
-        orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-          final_note: ["No, that's everything"],
-        })
+        expect(received.filter(({ event }) => event.type === 'user_input.requested')).toHaveLength(
+          2,
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(4))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
         const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
@@ -2752,7 +2804,7 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
-  it('asks the final note once before locking an initially complete brief', async () => {
+  it.each([false, true])('continues a complete brief (legacy: %s)', async (legacy) => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-complete-'))
     const priorLibrary = process.env.TASTECODE_REFERENCE_LIBRARY
     process.env.TASTECODE_REFERENCE_LIBRARY = workspace
@@ -2821,71 +2873,66 @@ describe('provider-neutral design briefing', () => {
           unresolved: [],
         },
       })
-      const thread = await orchestrator.startThread('codex', workspace)
-      await orchestrator.sendTurn(thread.id, request, [DESIGN_BRIEF_ATTACHMENT])
-      sessions[0]?.emit(message(completeOutput, 's1-turn'))
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
-
-      const finalRequests = () =>
-        received.filter(
-          ({ event }) =>
-            event.type === 'user_input.requested' &&
-            event.request.questions.some(({ id }) => id === 'final_note'),
-        )
-      await vi.waitFor(() => expect(finalRequests()).toHaveLength(1))
-      const finalRequest = finalRequests()[0]?.event
-      if (finalRequest?.type !== 'user_input.requested') throw new Error('missing final note')
-      expect(finalRequest.request.questions[0]).toMatchObject({
-        question: "Before I finalize your brief, is there anything else you'd like me to know?",
-        options: [{ label: "No, that's everything" }],
-      })
-
-      sessions[0]?.turnIds.push('final-note-turn', 'motion-turn', 'brand-turn')
-      orchestrator.respondToUserInput(thread.id, finalRequest.request.id, {
-        final_note: ["No, that's everything — except keep it motion-free."],
-      })
-      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
-      sessions[0]?.emit(
-        message(
-          JSON.stringify({
-            status: 'questions',
-            message: 'Preparing questions.',
+      let threadId: string
+      if (legacy) {
+        threadId = 'legacy-closing-question'
+        store.addProject(workspace)
+        store.addThread({
+          id: threadId,
+          projectPath: workspace,
+          provider: 'codex',
+          title: 'Legacy brief',
+        })
+        store.setDesignRun(threadId, {
+          originalRequest: request,
+          phase: 'brief',
+          askedQuestions: false,
+          finalAsked: true,
+          pendingBrief: JSON.parse(completeOutput).brief,
+          explicitAnswers: [],
+        })
+        store.append(threadId, {
+          type: 'user_input.requested',
+          request: {
+            id: 'legacy-final-note',
+            turnId: 'old-brief',
+            autoResolutionMs: null,
+            createdAt: 1,
             questions: [
               {
-                id: 'motion',
-                header: 'Motion',
-                question: 'Should every animation be removed?',
+                id: 'final_note',
+                header: 'Final note',
+                question: 'Anything else?',
                 allowOther: true,
-                options: [
-                  { label: 'Yes', description: 'Use no animation.' },
-                  { label: 'No', description: 'Keep restrained feedback.' },
-                ],
+                secret: false,
+                options: [{ label: "No, that's everything", description: 'Continue.' }],
               },
             ],
-            brief: null,
-          }),
-          'final-note-turn',
-        ),
-      )
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 'final-note-turn', status: 'completed' })
-      const motionRequest = received
-        .filter(({ event }) => event.type === 'user_input.requested')
-        .at(-1)?.event
-      if (motionRequest?.type !== 'user_input.requested') throw new Error('missing clarification')
-      orchestrator.respondToUserInput(thread.id, motionRequest.request.id, { motion: ['Yes'] })
-      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
-      sessions[0]?.emit(message(completeOutput, 'motion-turn'))
-      sessions[0]?.emit({ type: 'turn.completed', turnId: 'motion-turn', status: 'completed' })
+          },
+        })
+        await orchestrator.submitTurn(threadId, 'Continue afterward.')
+        expect(
+          received.some(
+            ({ event }) => event.type === 'user_input.resolved' && event.id === 'legacy-final-note',
+          ),
+        ).toBe(true)
+      } else {
+        const thread = await orchestrator.startThread('codex', workspace)
+        threadId = thread.id
+        await orchestrator.sendTurn(threadId, request, [DESIGN_BRIEF_ATTACHMENT])
+        sessions[0]?.emit(message(completeOutput, 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      }
 
-      await vi.waitFor(() => expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' }))
-      expect(store.designRun(thread.id)).toMatchObject({
+      await vi.waitFor(() => expect(store.designRun(threadId)).toMatchObject({ phase: 'brand' }))
+      expect(store.designRun(threadId)).toMatchObject({
         referenceDeck: [{ id: 'reviewed-hero' }, { id: 'reviewed-pricing' }],
       })
       await vi.waitFor(() =>
         expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),
       )
       expect(sessions[0]?.sentAttachments.at(-1)).toEqual([reference, mobileReference])
-      expect(finalRequests()).toHaveLength(1)
+      expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
     } finally {
       if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY
       else process.env.TASTECODE_REFERENCE_LIBRARY = priorLibrary
@@ -2944,18 +2991,31 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it('recovers from one malformed phase response', async () => {
+  it.each([false, true])('requires phase JSON (commentary: %s)', async (commentaryOnly) => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-correction-'))
     const { orchestrator, sessions, received, store } = harness()
     try {
       const thread = await orchestrator.startThread('codex', workspace)
       await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
-      sessions[0]?.emit(message('not json', 's1-turn'))
+      const incomplete = message('I am checking the current files.', 's1-turn')
+      if (incomplete.type !== 'item.completed') throw new Error('Expected a message')
+      sessions[0]?.emit({
+        ...incomplete,
+        item: { ...incomplete.item, ...(commentaryOnly ? { phase: 'commentary' as const } : {}) },
+      })
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
 
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
       expect(sessions[0]?.sent[1]).toContain('failed validation')
       sessions[0]?.emit(message('Interim explanation before the JSON report', 's1-turn'))
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'item.completed' &&
+            event.item.text === 'Interim explanation before the JSON report' &&
+            event.item.phase === 'commentary',
+        ),
+      ).toBe(true)
       sessions[0]?.emit(
         message(
           JSON.stringify({
