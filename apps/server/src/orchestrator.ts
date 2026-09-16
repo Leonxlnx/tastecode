@@ -3616,7 +3616,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       this.#completeDesignActivity(
         threadId,
         turnId,
-        event.status === 'completed' && !outputError ? 'completed' : 'failed',
+        event.status === 'completed' && (acceptedOutput || !outputError) ? 'completed' : 'failed',
       )
       this.#designTurns.delete(turnId)
       if (event.status !== 'completed') {

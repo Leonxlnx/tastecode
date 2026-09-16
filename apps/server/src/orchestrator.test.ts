@@ -2955,6 +2955,7 @@ describe('provider-neutral design briefing', () => {
 
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
       expect(sessions[0]?.sent[1]).toContain('failed validation')
+      sessions[0]?.emit(message('Interim explanation before the JSON report', 's1-turn'))
       sessions[0]?.emit(
         message(
           JSON.stringify({
@@ -2979,6 +2980,17 @@ describe('provider-neutral design briefing', () => {
         expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(true),
       )
       expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', correcting: false })
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() =>
+        expect(
+          received
+            .map(({ event }) => event)
+            .filter(
+              (event) => event.type === 'item.completed' && event.item.text === 'design:brief',
+            )
+            .at(-1),
+        ).toMatchObject({ item: { status: 'completed' } }),
+      )
     } finally {
       await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
