@@ -1,4 +1,12 @@
-import { chmodSync, lstatSync, mkdtempSync, rmSync, statSync, symlinkSync } from 'node:fs'
+import {
+  chmodSync,
+  lstatSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -52,6 +60,22 @@ describe('safe command environment', () => {
     }
   })
 
+  it('never forwards environment hooks planted in the parent process', () => {
+    const runtime = isolatedRuntime()
+    const hooks = ['NODE_OPTIONS', 'LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'GIT_SSH_COMMAND']
+    const saved = new Map(hooks.map((key) => [key, process.env[key]]))
+    for (const key of hooks) process.env[key] = 'planted'
+    try {
+      const env = safeCommandEnvironment('/repo', runtime)
+      for (const key of hooks) expect(env[key]).toBeUndefined()
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  })
+
   it('uses a per-user runtime directory instead of one shared name', () => {
     expect(commandRuntimeDirectory()).toBe(commandRuntimeDirectory())
     if (process.platform === 'win32' || typeof process.getuid !== 'function') return
@@ -93,5 +117,15 @@ describe('safe command environment', () => {
     expect(() => safeCommandEnvironment('/repo', link)).toThrow(/symlink/)
     expect(lstatSync(link).isSymbolicLink()).toBe(true)
     expect(statSync(target).mode & 0o777).toBe(0o755)
+  })
+
+  it('refuses a runtime path that is a regular file', () => {
+    if (process.platform === 'win32') return
+    const parent = mkdtempSync(path.join(os.tmpdir(), 'tastecode-env-file-test-'))
+    scratch.push(parent)
+    const file = path.join(parent, 'runtime')
+    writeFileSync(file, 'squat')
+
+    expect(() => safeCommandEnvironment('/repo', file)).toThrow(/not a directory/)
   })
 })
