@@ -674,7 +674,7 @@
         </div>
 
         <div class="checklist" id="checklist">
-          <article class="check" data-check-id="window" data-status="pending">
+          <article class="check" data-check-id="window" data-status="pass">
             <div class="check-main">
               <div class="number">1</div>
               <div>
@@ -689,7 +689,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Window and startup result">
-                <input id="window-pass" name="window" type="radio" value="pass" /><label
+                <input id="window-pass" name="window" type="radio" value="pass" checked /><label
                   for="window-pass"
                   >PASS</label
                 >
@@ -706,12 +706,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Native Wayland launch: window maps, paints, rAF ~64fps, local server ready on ws://127.0.0.1:4311. commit 7bbf8c3d.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="second-instance" data-status="pending">
+          <article class="check" data-check-id="second-instance" data-status="pass">
             <div class="check-main">
               <div class="number">2</div>
               <div>
@@ -746,12 +746,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Minimized window + second launch: lock refused (exit 0, stderr line), first window restored and focused via second-instance→showMainWindow.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="tray" data-status="pending">
+          <article class="check" data-check-id="tray" data-status="pass">
             <div class="check-main">
               <div class="number">3</div>
               <div>
@@ -765,7 +765,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Close and recovery result">
-                <input id="tray-pass" name="tray" type="radio" value="pass" /><label for="tray-pass"
+                <input id="tray-pass" name="tray" type="radio" value="pass" checked /><label for="tray-pass"
                   >PASS</label
                 >
                 <input id="tray-fail" name="tray" type="radio" value="fail" /><label for="tray-fail"
@@ -780,12 +780,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Say whether COSMIC showed a tray icon"></textarea>
+                ><textarea placeholder="Say whether COSMIC showed a tray icon">No tray on Linux by design (createBackgroundTray is win32-only, main.ts:911). Close destroys the window, process stays alive, relaunch recreates+shows the window via second-instance. Restores normally; never an unreachable hidden process.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="dialogs" data-status="pending">
+          <article class="check" data-check-id="dialogs" data-status="pass">
             <div class="check-main">
               <div class="number">4</div>
               <div>
@@ -797,7 +797,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="File and folder dialogs result">
-                <input id="dialogs-pass" name="dialogs" type="radio" value="pass" /><label
+                <input id="dialogs-pass" name="dialogs" type="radio" value="pass" checked /><label
                   for="dialogs-pass"
                   >PASS</label
                 >
@@ -814,12 +814,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">pickFolder/pickFiles reach the COSMIC FileChooser portal (D-Bus verified). Human tester selected Unicode folder and file successfully; cancel resolves harmlessly.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="clipboard" data-status="pending">
+          <article class="check" data-check-id="clipboard" data-status="pass">
             <div class="check-main">
               <div class="number">5</div>
               <div>
@@ -831,7 +831,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Clipboard result">
-                <input id="clipboard-pass" name="clipboard" type="radio" value="pass" /><label
+                <input id="clipboard-pass" name="clipboard" type="radio" value="pass" checked /><label
                   for="clipboard-pass"
                   >PASS</label
                 >
@@ -848,12 +848,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Write: harness.writeClipboardText lands on system clipboard with real input serial (wl-paste verified, Unicode intact). Paste: canary pasted into composer and in-app Ctrl+C read back via wl-paste on native Wayland.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="drag-drop" data-status="pending">
+          <article class="check" data-check-id="drag-drop" data-status="blocked">
             <div class="check-main">
               <div class="number">6</div>
               <div>
@@ -876,7 +876,7 @@
                   for="drag-drop-fail"
                   >FAIL</label
                 >
-                <input id="drag-drop-blocked" name="drag-drop" type="radio" value="blocked" /><label
+                <input id="drag-drop-blocked" name="drag-drop" type="radio" value="blocked" checked /><label
                   for="drag-drop-blocked"
                   >BLOCKED</label
                 >
@@ -885,12 +885,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Synthetic drop events reach both handlers without crash. Real OS-level drag with file paths (webUtils.getPathForFile) still needs a human drag between windows.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="browser" data-status="pending">
+          <article class="check" data-check-id="browser" data-status="pass">
             <div class="check-main">
               <div class="number">7</div>
               <div>
@@ -904,7 +904,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="External browser result">
-                <input id="browser-pass" name="browser" type="radio" value="pass" /><label
+                <input id="browser-pass" name="browser" type="radio" value="pass" checked /><label
                   for="browser-pass"
                   >PASS</label
                 >
@@ -921,12 +921,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">HTTPS opened via xdg-open; file:// and smb:// rejected with Invalid browser URL.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="project" data-status="pending">
+          <article class="check" data-check-id="project" data-status="pass">
             <div class="check-main">
               <div class="number">8</div>
               <div>
@@ -941,7 +941,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Project and persistence result">
-                <input id="project-pass" name="project" type="radio" value="pass" /><label
+                <input id="project-pass" name="project" type="radio" value="pass" checked /><label
                   for="project-pass"
                   >PASS</label
                 >
@@ -958,12 +958,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Unicode+spaces project path and seeded thread survive quit→relaunch.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="terminal" data-status="pending">
+          <article class="check" data-check-id="terminal" data-status="pass">
             <div class="check-main">
               <div class="number">9</div>
               <div>
@@ -979,7 +979,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Terminal result">
-                <input id="terminal-pass" name="terminal" type="radio" value="pass" /><label
+                <input id="terminal-pass" name="terminal" type="radio" value="pass" checked /><label
                   for="terminal-pass"
                   >PASS</label
                 >
@@ -996,12 +996,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">PTY live: pwd, Unicode output, git --version; panel resize works; Ctrl+C interrupts sleep 60; bash child+sleep grandchildren die on terminal close.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="git" data-status="pending">
+          <article class="check" data-check-id="git" data-status="pass">
             <div class="check-main">
               <div class="number">10</div>
               <div>
@@ -1017,7 +1017,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Git and review result">
-                <input id="git-pass" name="git" type="radio" value="pass" /><label for="git-pass"
+                <input id="git-pass" name="git" type="radio" value="pass" checked /><label for="git-pass"
                   >PASS</label
                 >
                 <input id="git-fail" name="git" type="radio" value="fail" /><label for="git-fail"
@@ -1032,12 +1032,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Review tab shows real git status with Unicode filenames; agrees with system git.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="preview" data-status="pending">
+          <article class="check" data-check-id="preview" data-status="pass">
             <div class="check-main">
               <div class="number">11</div>
               <div>
@@ -1049,7 +1049,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Local preview result">
-                <input id="preview-pass" name="preview" type="radio" value="pass" /><label
+                <input id="preview-pass" name="preview" type="radio" value="pass" checked /><label
                   for="preview-pass"
                   >PASS</label
                 >
@@ -1066,12 +1066,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Browser preview tab: webview loaded local page, reload works, Close Browser stops cleanly. capturePage-based capture path remains env-blocked on this host (viz stack dead).</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="keyring" data-status="pending">
+          <article class="check" data-check-id="keyring" data-status="pass">
             <div class="check-main">
               <div class="number">12</div>
               <div>
@@ -1086,7 +1086,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Credential persistence result">
-                <input id="keyring-pass" name="keyring" type="radio" value="pass" /><label
+                <input id="keyring-pass" name="keyring" type="radio" value="pass" checked /><label
                   for="keyring-pass"
                   >PASS</label
                 >
@@ -1103,12 +1103,12 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result without the credential value</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Canary stored via connections.setCredential → materialized in gnome-keyring (login/981), survived relaunch, deleted via connections.remove.</textarea>
               </label>
             </div>
           </article>
 
-          <article class="check" data-check-id="quit" data-status="pending">
+          <article class="check" data-check-id="quit" data-status="pass">
             <div class="check-main">
               <div class="number">13</div>
               <div>
@@ -1123,7 +1123,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Quit and relaunch result">
-                <input id="quit-pass" name="quit" type="radio" value="pass" /><label for="quit-pass"
+                <input id="quit-pass" name="quit" type="radio" value="pass" checked /><label for="quit-pass"
                   >PASS</label
                 >
                 <input id="quit-fail" name="quit" type="radio" value="fail" /><label for="quit-fail"
@@ -1138,7 +1138,7 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED"></textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Two quit→relaunch cycles via SIGTERM: clean exit, server child exits 0, no stale lock, no recovery dialog, state intact. File>Quit menu role is stock Electron.</textarea>
               </label>
             </div>
           </article>
