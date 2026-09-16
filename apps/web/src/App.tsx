@@ -5052,8 +5052,6 @@ export function App() {
         className="notice"
         role="alert"
         visible={Boolean(actionError) && (settingsOpen || surface !== 'chat')}
-        onDismiss={() => setActionError(undefined)}
-        dismissKey={actionError}
       >
         <span className="notice__text">{actionError?.message}</span>
         <button className="ghost" onClick={() => setActionError(undefined)}>
@@ -5065,11 +5063,6 @@ export function App() {
         className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
         role="alert"
         visible={Boolean(notice)}
-        dismissKey={notice}
-        onDismiss={() => {
-          setNotice(undefined)
-          setUndoRestore(undefined)
-        }}
       >
         <span className="notice__text">{notice}</span>
         {undoRestore ? (
