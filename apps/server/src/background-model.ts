@@ -263,8 +263,11 @@ export async function runBackgroundCompletion(input: {
     if (!final?.text.trim()) throw new Error('Background model returned no text.')
     return final.text.trim()
   } finally {
-    session?.dispose()
-    await rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+    try {
+      await session?.dispose()
+    } finally {
+      await rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+    }
   }
 }
 

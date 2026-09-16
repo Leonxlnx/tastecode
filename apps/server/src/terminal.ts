@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { IPty, spawn as NodePtySpawn } from 'node-pty'
 import { desktopPath } from '@harness/proc/desktop-path'
+import { cleanupExitedPtySession, ownPtySession, terminatePtySession } from '@harness/proc'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
@@ -16,6 +17,7 @@ export type TerminalStatus = {
   exitCode: number | null
 }
 type SpawnPty = typeof NodePtySpawn
+type TerminatePty = (process: IPty) => Promise<void>
 
 const require = createRequire(import.meta.url)
 let loadedSpawn: SpawnPty | undefined
@@ -23,7 +25,20 @@ let loadedSpawn: SpawnPty | undefined
 /** Keep the native PTY binding out of idle startup; terminals are optional. */
 const spawnPty: SpawnPty = (file, args, options) => {
   loadedSpawn ??= (require('node-pty') as { spawn: SpawnPty }).spawn
-  return loadedSpawn(file, args, options)
+  const process = loadedSpawn(file, args, options)
+  try {
+    return ownPtySession(process)
+  } catch (ownershipError) {
+    try {
+      process.kill()
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [ownershipError, cleanupError],
+        `failed to own or stop PTY ${process.pid}`,
+      )
+    }
+    throw ownershipError
+  }
 }
 
 type TerminalEntry = {
@@ -33,6 +48,7 @@ type TerminalEntry = {
   output: { dispose(): void }
   outputBuffer: TerminalOutputBuffer
   exited: Promise<void>
+  hasExited: boolean
 }
 
 /** One short output clock for every active terminal owned by a manager. */
@@ -132,6 +148,8 @@ export class TerminalManager {
   #onOutput: (terminalId: string, data: string, outputOffset: number) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
+  #terminatePty: TerminatePty
+  #cleanupExitedPty: TerminatePty
   #closeTimeoutMs: number
   readonly #outputScheduler = new TerminalOutputScheduler()
   #status = new Map<string, TerminalStatus & { finishedAt?: number }>()
@@ -141,11 +159,18 @@ export class TerminalManager {
       onOutput: (terminalId: string, data: string, outputOffset: number) => void
       onExit: (terminalId: string, exitCode: number | null) => void
     },
-    options: { spawnPty?: SpawnPty; closeTimeoutMs?: number } = {},
+    options: {
+      spawnPty?: SpawnPty
+      terminatePty?: TerminatePty
+      cleanupExitedPty?: TerminatePty
+      closeTimeoutMs?: number
+    } = {},
   ) {
     this.#onOutput = handlers.onOutput
     this.#onExit = handlers.onExit
     this.#spawnPty = options.spawnPty ?? spawnPty
+    this.#terminatePty = options.terminatePty ?? terminatePtySession
+    this.#cleanupExitedPty = options.cleanupExitedPty ?? cleanupExitedPtySession
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
@@ -180,6 +205,10 @@ export class TerminalManager {
 
     const currentId = this.#byThread.get(key)
     if (currentId) {
+      if (this.#closingById.has(currentId)) throw new Error(`terminal is closing: ${key}`)
+      if (this.#byId.get(currentId)?.hasExited) {
+        throw new Error(`terminal cleanup is pending: ${key}`)
+      }
       this.resize(currentId, columns, rows)
       return currentId
     }
@@ -218,7 +247,7 @@ export class TerminalManager {
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve
     })
-    const entry = { key, threadId, process, output, outputBuffer, exited }
+    const entry = { key, threadId, process, output, outputBuffer, exited, hasExited: false }
     this.#byId.set(terminalId, entry)
     this.#byThread.set(key, terminalId)
 
@@ -227,10 +256,8 @@ export class TerminalManager {
       // Explicit close disposes the buffer first because that pane is gone.
       outputBuffer.flush()
       output.dispose()
-      if (this.#byId.get(terminalId) === entry) {
-        this.#byId.delete(terminalId)
-        this.#byThread.delete(key)
-      }
+      entry.hasExited = true
+      void this.#cleanupExitedTerminal(terminalId)
       resolveExited()
       status.status = 'exited'
       status.exitCode = Number.isInteger(exitCode) ? exitCode : null
@@ -284,20 +311,19 @@ export class TerminalManager {
 
     const entry = this.#byId.get(terminalId)
     if (!entry) return Promise.resolve()
-    // Kill first. If node-pty rejects the request synchronously, the terminal
-    // remains attached and a later close can retry instead of losing it.
-    entry.process.kill()
-    this.#byId.delete(terminalId)
-    // Only unmap the key if it still points at this terminal — closing a
-    // stale id must not orphan a newer pty spawned under the same key.
-    if (this.#byThread.get(entry.key) === terminalId) {
-      this.#byThread.delete(entry.key)
-    }
-    // node-pty flushes buffered output after kill(); the client tore this
-    // pane down, so those late chunks must not be broadcast for its id.
-    entry.output.dispose()
-    entry.outputBuffer.dispose()
-    const closing = this.#boundedExit(terminalId, entry.exited)
+    // Start termination first. If ownership cannot be proved or node-pty
+    // rejects synchronously, a later close can retry instead of losing it.
+    const termination = entry.hasExited
+      ? this.#cleanupExitedPty(entry.process)
+      : this.#terminatePty(entry.process)
+    const closing = termination.then(() => {
+      // node-pty flushes buffered output after kill(); once termination is
+      // accepted, the client no longer needs those late chunks. A rejected
+      // termination keeps the stream attached so the same PTY can be retried.
+      entry.output.dispose()
+      entry.outputBuffer.dispose()
+      return this.#boundedExit(terminalId, entry.exited)
+    })
     this.#closingById.set(terminalId, closing)
     const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
     threadClosings.add(closing)
@@ -306,7 +332,20 @@ export class TerminalManager {
     // gone. Keep that generation tracked until its real exit arrives so a
     // retry cannot delete the cwd underneath it.
     void closing.catch(() => undefined)
-    void entry.exited.then(() => this.#forgetClosing(terminalId, entry.threadId, closing))
+    void closing.then(
+      () => {
+        if (this.#byId.get(terminalId) === entry) this.#byId.delete(terminalId)
+        if (this.#byThread.get(entry.key) === terminalId) {
+          this.#byThread.delete(entry.key)
+        }
+        this.#forgetClosing(terminalId, entry.threadId, closing)
+      },
+      () => {
+        // The entry remains the thread's tombstone, but the rejected promise
+        // must not be: a later close can retry cleanup of the same generation.
+        this.#forgetClosing(terminalId, entry.threadId, closing)
+      },
+    )
     return closing
   }
 
@@ -325,8 +364,12 @@ export class TerminalManager {
 
   closeAll(): Promise<void> {
     if (this.#closingAll) return this.#closingAll
-    this.#closingAll = this.#drainAll()
-    return this.#closingAll
+    const closing = this.#drainAll()
+    this.#closingAll = closing
+    void closing.catch(() => {
+      if (this.#closingAll === closing) this.#closingAll = undefined
+    })
+    return closing
   }
 
   async #drainThread(threadId: string): Promise<void> {
@@ -375,7 +418,18 @@ export class TerminalManager {
     if (threadClosings?.size === 0) this.#closingByThread.delete(threadId)
   }
 
+  async #cleanupExitedTerminal(terminalId: string): Promise<void> {
+    try {
+      await this.close(terminalId)
+    } catch {
+      // The entry remains tracked; explicit or server-wide close can retry.
+    }
+  }
+
   #get(terminalId: string): TerminalEntry {
+    if (this.#closingById.has(terminalId)) {
+      throw new Error(`terminal is closing: ${terminalId}`)
+    }
     const entry = this.#byId.get(terminalId)
     if (!entry) throw new Error(`no such terminal: ${terminalId}`)
     return entry

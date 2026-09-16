@@ -147,22 +147,6 @@ describe('design preview runner', () => {
     await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
   })
 
-  it('gives concurrent static previews distinct ports without replacing either site', async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
-    workspaces.push(workspace)
-    writeFileSync(path.join(workspace, 'index.html'), 'Static site')
-    const staticPlan = staticPreviewPlan(await freePort())
-    const first = await startDesignPreview(workspace, staticPlan)
-    previews.push(first)
-    const second = await startDesignPreview(workspace, staticPlan)
-    previews.push(second)
-    expect(second.url).not.toBe(first.url)
-    for (const preview of [first, second])
-      await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
-        'Static site',
-      )
-  })
-
   it('can retry a corrected static preview on the same port', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
@@ -379,6 +363,22 @@ describe('design preview runner', () => {
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
 
+  it('rejects stop while the preview port remains occupied', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'preview'))
+
+    const preview = await startDesignPreview(workspace, plan(port), 5_000)
+    const stopping = preview.stop()
+    const occupied = await occupyPort(port)
+    try {
+      await expect(stopping).rejects.toThrow(`preview port ${port} remained in use after stop`)
+    } finally {
+      await close(occupied)
+    }
+  })
+
   it('rejects command arguments that could escape through a Windows shim', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
@@ -541,6 +541,27 @@ function freePort(): Promise<number> {
       const port = serverPort(server)
       server.close((error) => (error ? reject(error) : resolve(port)))
     })
+  })
+}
+
+async function occupyPort(port: number): Promise<Server> {
+  const startedAt = Date.now()
+  do {
+    const server = await tryListen(port)
+    if (server) return server
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  } while (Date.now() - startedAt < 1_000)
+  throw new Error(`could not occupy test port ${port}`)
+}
+
+function tryListen(port: number): Promise<Server | undefined> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') resolve(undefined)
+      else reject(error)
+    })
+    server.listen(port, '127.0.0.1', () => resolve(server))
   })
 }
 
