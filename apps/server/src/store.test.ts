@@ -704,6 +704,42 @@ describe('opening a database written by an older build', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('skips an unparseable event row instead of bricking every startup', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-bad-event-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'good', projectPath: '/repo', provider: 'codex', title: 'Good' })
+    seeded.append('good', message('findable needle'))
+    seeded.addThread({ id: 'corrupt', projectPath: '/repo', provider: 'codex', title: 'Corrupt' })
+    seeded.append('corrupt', message('poisoned later'))
+    seeded.close()
+
+    // Forward-incompatible payload: valid JSON a newer build wrote, failing the
+    // schema a downgraded build knows. Plus a torn write that is not JSON at
+    // all — json_valid keeps it out of the rebuild scan entirely.
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(`UPDATE events SET payload = ? WHERE thread_id = 'corrupt'`)
+      .run('{"type":"item.completed","item":{"future":true}}')
+    raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES ('corrupt', 3, '{')`).run()
+    raw.exec(`DELETE FROM schema_migrations`)
+    raw.close()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('good')?.title).toBe('Good')
+      expect(reopened.searchSessions({ query: 'findable' }).results).toHaveLength(1)
+      // The skipped row stays in the log — derived indexes just cannot see it.
+      expect(reopened.searchSessions({ query: 'poisoned' }).results).toHaveLength(0)
+    } finally {
+      warn.mockRestore()
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('design runs', () => {

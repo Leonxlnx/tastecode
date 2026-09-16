@@ -2695,7 +2695,8 @@ export class Store {
     const placeholders = types.map(() => '?').join(', ')
     const batch = this.#db.prepare(
       `SELECT seq, thread_id, at, payload FROM events
-       WHERE seq > ? AND json_extract(payload, '$.type') IN (${placeholders})
+       WHERE seq > ? AND json_valid(payload)
+         AND json_extract(payload, '$.type') IN (${placeholders})
        ORDER BY seq LIMIT 5000`,
     )
     const saveMigration = this.#db.prepare(
@@ -2717,8 +2718,15 @@ export class Store {
         const rows = sqliteRows<EventRow>(batch, cursor, ...types)
         if (rows.length === 0) break
         for (const row of rows) {
-          const event = DomainEventSchema.parse(JSON.parse(row.payload))
           const seq = Number(row.seq)
+          // Forward-incompatible payloads — written by a newer build, left
+          // behind by a downgrade — degrade to "not indexed" instead of
+          // bricking every startup.
+          const event = parseStoredDomainEvent(row.payload)
+          if (!event) {
+            console.warn(`[store] skipping unparseable event at seq ${seq}`)
+            continue
+          }
           const at = Number(row.at)
           if (rebuild.search) this.#indexEvent(seq, row.thread_id, at, event)
           if (rebuild.usage && event.type === 'usage.updated') {
@@ -2764,7 +2772,7 @@ export class Store {
       this.#db.prepare(
         `SELECT seq, thread_id, at, payload
          FROM events
-         WHERE thread_id = ?
+         WHERE thread_id = ? AND json_valid(payload)
            AND json_extract(payload, '$.type') IN (
              'turn.started', 'turn.completed', 'thread.error',
              'item.started', 'item.completed',
@@ -2777,7 +2785,11 @@ export class Store {
       threadId,
     )
     for (const row of rows) {
-      const event = DomainEventSchema.parse(JSON.parse(row.payload))
+      const event = parseStoredDomainEvent(row.payload)
+      if (!event) {
+        console.warn(`[store] skipping unparseable event at seq ${Number(row.seq)}`)
+        continue
+      }
       const mutation = recoveryMutation(event)
       if (mutation) {
         this.#indexRecoveryMutation(Number(row.seq), row.thread_id, mutation, row.payload)
@@ -2791,7 +2803,7 @@ export class Store {
       this.#db.prepare(
         `SELECT seq, thread_id, at, payload
          FROM events
-         WHERE thread_id = ?
+         WHERE thread_id = ? AND json_valid(payload)
            AND json_extract(payload, '$.type') IN (
              'approval.requested', 'approval.resolved',
              'user_input.requested', 'user_input.resolved',
@@ -2802,7 +2814,11 @@ export class Store {
       threadId,
     )
     for (const row of rows) {
-      const event = DomainEventSchema.parse(JSON.parse(row.payload))
+      const event = parseStoredDomainEvent(row.payload)
+      if (!event) {
+        console.warn(`[store] skipping unparseable event at seq ${Number(row.seq)}`)
+        continue
+      }
       this.#indexInboxEvent(Number(row.seq), row.thread_id, event, row.payload)
     }
   }
@@ -3611,6 +3627,19 @@ function parseDomainEvent(serialized: string): DomainEvent {
     }
   }
   return DomainEventSchema.parse(value)
+}
+
+/**
+ * Derived state is rebuilt from stored payloads; a row a newer build wrote
+ * (and a downgrade left behind) or a torn write must degrade to "not
+ * indexed" instead of aborting every other row.
+ */
+function parseStoredDomainEvent(payload: string): DomainEvent | undefined {
+  try {
+    return parseDomainEvent(payload)
+  } catch {
+    return undefined
+  }
 }
 
 function toProviderId(provider: string): ProviderId {
