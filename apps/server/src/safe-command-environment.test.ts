@@ -33,6 +33,23 @@ describe('safe command environment', () => {
     expect(env['NoDefaultCurrentDirectoryInExePath']).toBe('1')
   })
 
+  it('keeps current-directory and empty entries off the command PATH', () => {
+    const runtime = isolatedRuntime()
+    const savedPath = process.env['PATH']
+    process.env['PATH'] = ['', '.', os.tmpdir()].join(path.delimiter)
+    try {
+      const entries = (safeCommandEnvironment('/repo', runtime)['PATH'] ?? '').split(
+        path.delimiter,
+      )
+      expect(entries).not.toContain('')
+      expect(entries).not.toContain('.')
+      expect(entries).toContain(os.tmpdir())
+    } finally {
+      if (savedPath === undefined) delete process.env['PATH']
+      else process.env['PATH'] = savedPath
+    }
+  })
+
   it('uses a per-user runtime directory instead of one shared name', () => {
     expect(commandRuntimeDirectory()).toBe(commandRuntimeDirectory())
     if (process.platform === 'win32' || typeof process.getuid !== 'function') return

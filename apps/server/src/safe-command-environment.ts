@@ -1,6 +1,7 @@
 import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { desktopPath } from '@harness/proc/desktop-path'
 
 /**
  * Stable per-user directory backing TEMP/TMP/APPDATA for spawned commands.
@@ -52,6 +53,24 @@ function ensurePrivateDirectory(directory: string): void {
   chmodSync(directory, 0o700)
 }
 
+/**
+ * PATH for spawned commands: the real user PATH plus the GUI additions
+ * (Homebrew, `~/.local/bin`, npm shims) that `desktopPath` applies at every
+ * other spawn site. `.` and empty entries resolve inside the command's working
+ * directory — letting a checked-in `git` shadow the allowlisted binary — so
+ * they are dropped.
+ *
+ * `process.env`, not the sandbox env, supplies the home and AppData locations
+ * the additions are derived from: the sandbox points HOME at the workspace,
+ * which would put `workspace/bin` and friends straight onto PATH.
+ */
+function commandPath(): string {
+  return desktopPath(process.env['PATH'] ?? '', { env: process.env })
+    .split(path.delimiter)
+    .filter((entry) => entry !== '' && entry !== '.')
+    .join(path.delimiter)
+}
+
 export function safeCommandEnvironment(
   workspace: string,
   runtimeDir = commandRuntimeDirectory(),
@@ -60,7 +79,7 @@ export function safeCommandEnvironment(
   const runtime = runtimeDir
   const nullFile = process.platform === 'win32' ? 'NUL' : '/dev/null'
   return {
-    PATH: process.env['PATH'],
+    PATH: commandPath(),
     PATHEXT: process.env['PATHEXT'],
     SYSTEMROOT: process.env['SYSTEMROOT'],
     WINDIR: process.env['WINDIR'],
