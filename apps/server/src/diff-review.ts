@@ -1,15 +1,17 @@
 import type { DiffDecision, DiffFile, DiffHunk, DiffLine, SessionDiff } from '@harness/contracts'
 import { createHash } from 'node:crypto'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { killTree, spawnOwned } from '@harness/proc'
 import { z } from 'zod'
 import { takeSnapshot } from './checkpoint.js'
 import { canonicalCheckoutRoot } from './checkout-access.js'
 import type { Store } from './store.js'
 
 const run = promisify(execFile)
+const GIT_APPLY_TIMEOUT_MS = 20_000
 
 type ParsedHunk = { value: DiffHunk; patch: string }
 type ParsedFile = { value: DiffFile; patch: string; targetId: string; hunks: ParsedHunk[] }
@@ -279,22 +281,38 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
     .join('\n')
 
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(
+    const child = spawnOwned(
       'git',
       ['apply', '--reverse', '--binary', '--recount', '--whitespace=nowarn', '-'],
-      { cwd: repoPath, windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
+      { cwd: repoPath, windowsHide: true, stdio: 'pipe' },
     )
     let stderr = ''
+    let settled = false
+    const finish = (error?: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      // The apply result is the answer; a teardown failure must not mask it.
+      void killTree(child).then(
+        () => (error ? reject(error) : resolve()),
+        (killError: unknown) => reject(error ?? killError),
+      )
+    }
+    const timer = setTimeout(() => {
+      finish(new Error('git apply did not finish in time'))
+    }, GIT_APPLY_TIMEOUT_MS)
+    // git apply reports on stderr only; drain stdout so a full pipe can
+    // never stall the child.
+    child.stdout.resume()
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => (stderr += chunk))
-    child.once('error', reject)
+    child.once('error', finish)
     // stdin is a Socket; an unhandled EPIPE/ENOENT on it is an uncaught
     // exception that takes the whole server down. The child's error/close
     // path already reports the failure.
     child.stdin.on('error', () => {})
     child.once('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(stderr.trim() || 'could not apply diff decision'))
+      finish(code === 0 ? undefined : new Error(stderr.trim() || 'could not apply diff decision'))
     })
     child.stdin.end(relative)
   })

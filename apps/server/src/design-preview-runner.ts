@@ -4,7 +4,7 @@ import { createServer } from 'node:net'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
 import { spawnCli } from '@harness/proc/cli'
-import { killTree, spawnOwned } from '@harness/proc'
+import { killTree } from '@harness/proc'
 import { z } from 'zod'
 import { existingWorkspacePath } from './api-workspace-paths.js'
 import { startStaticDesignPreview } from './design-static-preview.js'
@@ -58,14 +58,9 @@ export async function startDesignPreview(
   try {
     await assertPreviewPortAvailable(plan.url)
     const environment = safeCommandEnvironment(workspace)
-    child =
-      process.platform === 'win32'
-        ? spawnCli(plan.command, commandArgs, { cwd, replaceEnv: true, env: environment })
-        : spawnOwned(plan.command, commandArgs, {
-            cwd,
-            env: environment,
-            stdio: ['pipe', 'pipe', 'pipe'],
-          })
+    // spawnCli is spawnOwned plus env handling on POSIX and additionally
+    // routes .cmd shims through cmd.exe on Windows — one call covers both.
+    child = spawnCli(plan.command, commandArgs, { cwd, replaceEnv: true, env: environment })
     const childFailure = watchPreviewChild(child)
     child.stdin.end()
     const append = (chunk: string) => {
