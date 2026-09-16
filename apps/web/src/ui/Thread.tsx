@@ -2157,7 +2157,7 @@ function summariseLive(item: Item): string {
 }
 
 function designPhaseLabel(text: string): string | undefined {
-  if (text.includes('design:brief')) return 'Preparing questions'
+  if (text.includes('design:brief')) return 'Understanding the request'
   if (text.includes('design:brand')) return 'Creating brand direction'
   if (text.includes('design:page')) return 'Planning the page'
   if (text.includes('design:assets')) return 'Gathering assets'

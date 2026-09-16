@@ -206,7 +206,7 @@ describe('design activity rows', () => {
         onAnswerUserInput={() => undefined}
       />,
     )
-    expect(screen.getByText('Preparing questions')).toBeTruthy()
+    expect(screen.getByText('Understanding the request')).toBeTruthy()
     expect(screen.queryByText('design:brief')).toBeNull()
   })
 
