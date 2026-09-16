@@ -8,6 +8,7 @@ import type {
   PreviewPlan,
   ReviewScreenshot,
   ReferenceDirection,
+  TypographyCandidates,
   VisualReview,
 } from '@harness/design-agent'
 import { isDesignBriefAttachment } from '@harness/design-agent/attachment'
@@ -204,6 +205,9 @@ const StoredDesignFlowSchema = z.object({
   referenceAttachments: z.array(z.string()).max(64).optional().default([]),
   referenceSnapshot: DesignFileSnapshotSchema.optional(),
   referenceDeck: JsonValueSchema.optional(),
+  typographyCandidates: z
+    .record(z.enum(['sans', 'serif', 'display', 'mono']), z.array(z.string()).length(10))
+    .optional(),
   referenceDeckSnapshot: DesignFileSnapshotSchema.optional(),
   assetSnapshot: DesignFileSnapshotSchema.optional(),
   options: z
@@ -251,6 +255,7 @@ type DesignFlow = {
   referenceAttachments: string[]
   referenceSnapshot?: DesignFileSnapshot[]
   referenceDeck?: ReferenceDirection[]
+  typographyCandidates?: TypographyCandidates
   referenceDeckSnapshot?: DesignFileSnapshot[]
   assetSnapshot?: DesignFileSnapshot[]
   options: TurnOptions
@@ -338,6 +343,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(stored.referenceDeck
       ? { referenceDeck: designAgent().parseReferenceDeck(stored.referenceDeck) }
       : {}),
+    ...(stored.typographyCandidates ? { typographyCandidates: stored.typographyCandidates } : {}),
     ...(stored.referenceDeckSnapshot
       ? { referenceDeckSnapshot: stored.referenceDeckSnapshot }
       : {}),
@@ -3107,7 +3113,11 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     this.#validateApprovedDesignArtifacts(flow)
     const brief = flow.approvedBrief!
     if (flow.phase === 'brand')
-      return designAgent().designBrandPrompt(brief, flow.referenceAttachments)
+      return designAgent().designBrandPrompt(
+        brief,
+        flow.referenceAttachments,
+        flow.typographyCandidates,
+      )
     const brand = flow.approvedBrand!
     if (flow.phase === 'page')
       return designAgent().designPagePrompt(
@@ -3742,6 +3752,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       explicitAnswers: flow.explicitAnswers,
     })
     flow.approvedBrief = saved
+    flow.typographyCandidates ??= designAgent().selectTypographyCandidates()
     flow.referenceDeck = flow.referenceAttachments.length
       ? []
       : designAgent().selectReviewedReferences(saved)
@@ -3766,6 +3777,12 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     this.#validateApprovedDesignArtifacts(flow)
     if (flow.phase === 'brand') {
       const output = designAgent().parseBrandPhaseOutput(text)
+      if (flow.typographyCandidates)
+        designAgent().validateTypographySelection(
+          flow.approvedBrief!,
+          output,
+          flow.typographyCandidates,
+        )
       flow.correcting = false
       const brand = designAgent().writeBrandSystem(flow.workspacePath, output)
       flow.approvedBrand = brand
