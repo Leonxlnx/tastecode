@@ -61,7 +61,7 @@ export function parseCliOptions(args: string[], env: NodeJS.ProcessEnv = process
   return { command, port }
 }
 
-function parsePort(value: string, source: string): number {
+export function parsePort(value: string, source: string): number {
   if (!/^\d+$/.test(value)) throw new Error(`${source} must be a whole port number.`)
   const port = Number(value)
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -70,13 +70,31 @@ function parsePort(value: string, source: string): number {
   return port
 }
 
-function installShutdownHandlers(server: { close(): Promise<void> }): void {
+/** Last resort when a drain stalls — the server already bounds its own waits. */
+const SHUTDOWN_TIMEOUT_MS = 10_000
+
+export function installShutdownHandlers(server: { close(): Promise<void> }): void {
   let closing = false
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, () => {
       if (closing) return
       closing = true
-      void server.close().finally(() => process.exit(0))
+      // server.close() drains on a budget; this is the backstop for a provider
+      // or socket that still refuses to let the process leave.
+      const watchdog = setTimeout(() => {
+        console.error(`[server] shutdown timed out after ${SHUTDOWN_TIMEOUT_MS}ms`)
+        process.exit(1)
+      }, SHUTDOWN_TIMEOUT_MS)
+      watchdog.unref()
+      void server.close().then(
+        () => process.exit(0),
+        (error: unknown) => {
+          console.error(
+            `[server] shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
+          )
+          process.exit(1)
+        },
+      )
     })
   }
 }
