@@ -536,6 +536,11 @@ test('real ASAR resources retain every reference byte, license file, and the res
   await mkdir(path.join(references, 'library'))
   await writeFile(path.join(references, 'library', 'catalog.json'), '{"version":1}')
   await writeFile(path.join(references, 'library', 'hero.png'), 'PNG-library-reference')
+  await mkdir(path.join(references, 'motion'))
+  await writeFile(
+    path.join(references, 'motion', 'reveal.js'),
+    'export function installReferenceReveals() {}',
+  )
   await mkdir(packedReferences, { recursive: true })
   await cp(references, packedReferences, { recursive: true })
   await mkdir(resources)
@@ -546,7 +551,7 @@ test('real ASAR resources retain every reference byte, license file, and the res
       unpackDir: 'node_modules/@harness/design-agent/references/library',
     })
   await pack()
-  assert.equal(await verifyBundledDesignReferences(archive, references), 3)
+  assert.equal(await verifyBundledDesignReferences(archive, references), 4)
   await mkdir(path.join(source, 'release'))
   await mkdir(path.join(source, 'licenses'))
   await writeFile(path.join(source, 'licenses', 'reviewed.txt'), 'Reviewed dependency license')

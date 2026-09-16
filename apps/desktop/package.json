@@ -4,7 +4,7 @@
   "description": "A local desktop workspace for coding agents.",
   "author": "Tasteskill Team",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "private": true,
   "type": "module",
   "main": "./dist/main.js",
