@@ -17,7 +17,6 @@ import {
   DomainEventSchema,
   ProviderIdSchema,
   SidebarSettingsSchema,
-  ThreadLifecycleSchema,
 } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -1332,18 +1331,24 @@ export class Store {
     const rows = projectPath
       ? sqliteRows<ThreadRow>(this.#listProjectThreads, projectPath)
       : sqliteRows<ThreadRow>(this.#listThreads)
-    return rows.map(toThread)
+    const threads: StoredThread[] = []
+    for (const row of rows) {
+      const thread = toThread(row)
+      if (thread !== undefined) threads.push(thread)
+    }
+    return threads
   }
 
   /** Compact metadata for the sidebar's all-thread refresh. */
   sidebarThreads(): StoredSidebarThread[] {
     if (!this.#sidebarThreadsCache) {
-      this.#sidebarThreadsCache = sqliteRows<SidebarThreadRow>(this.#listSidebarThreads).map(
-        toSidebarThread,
-      )
-      this.#sidebarThreadIndexes = new Map(
-        this.#sidebarThreadsCache.map((thread, index) => [thread.id, index]),
-      )
+      const threads: StoredSidebarThread[] = []
+      for (const row of sqliteRows<SidebarThreadRow>(this.#listSidebarThreads)) {
+        const thread = toSidebarThread(row)
+        if (thread !== undefined) threads.push(thread)
+      }
+      this.#sidebarThreadsCache = threads
+      this.#sidebarThreadIndexes = new Map(threads.map((thread, index) => [thread.id, index]))
     }
     this.#flushPendingSidebarThreads()
     return this.#sidebarThreadsCache
@@ -1565,12 +1570,18 @@ export class Store {
   sidebarSettings(): SidebarSettings {
     if (this.#sidebarSettingsCache) return this.#sidebarSettingsCache
     const row = requiredSqliteRow<SidebarSettingsRow>(this.#readSidebarSettings)
+    const parsed = SidebarSettingsSchema.safeParse({
+      mode: row.mode,
+      autoSettleDays: row.auto_settle_days === null ? null : Number(row.auto_settle_days),
+    })
+    // The lifecycle scheduler reads this at startup; a row a newer build
+    // shaped differently must degrade, not keep the store from opening.
     this.#sidebarSettingsCache = Object.freeze(
-      SidebarSettingsSchema.parse({
-        mode: row.mode,
-        autoSettleDays: row.auto_settle_days === null ? null : Number(row.auto_settle_days),
-      }),
+      parsed.success ? parsed.data : { mode: 'classic', autoSettleDays: 3 },
     )
+    if (!parsed.success) {
+      console.warn('[store] unreadable sidebar settings, using defaults')
+    }
     return this.#sidebarSettingsCache
   }
 
@@ -1610,6 +1621,9 @@ export class Store {
         BackgroundModelPreferenceSchema.parse(JSON.parse(row.value)),
       )
     } catch {
+      // Same shared-table story as the event log: a value a newer build
+      // shaped differently degrades to the default, it does not brick reads.
+      console.warn('[store] unreadable background model preference, using the default')
       this.#backgroundModelPreferenceCache = AUTOMATIC_BACKGROUND_MODEL_PREFERENCE
     }
     return this.#backgroundModelPreferenceCache
@@ -1861,7 +1875,12 @@ export class Store {
   // ---- queued turns -----------------------------------------------------
 
   queuedTurns(threadId: string): StoredQueuedTurn[] {
-    return sqliteRows<QueuedTurnRow>(this.#listQueuedTurns, threadId).map(toQueuedTurn)
+    const turns: StoredQueuedTurn[] = []
+    for (const row of sqliteRows<QueuedTurnRow>(this.#listQueuedTurns, threadId)) {
+      const turn = toQueuedTurn(row)
+      if (turn !== undefined) turns.push(turn)
+    }
+    return turns
   }
 
   queuedThreadIds(): Set<string> {
@@ -1942,9 +1961,13 @@ export class Store {
     const claimed = this.#transaction(() => {
       const row = sqliteRow<QueuedTurnRow>(this.#findQueuedTurn, threadId, queueId)
       if (!row) return undefined
+      const stored = toQueuedTurn(row)
+      // Cannot honestly dispatch a prompt this build cannot read; the row
+      // stays queued for a build that can.
+      if (stored === undefined) return undefined
       this.#appendQueuedTurnEvent(threadId, queueId, 'claim', { intent })
       this.#dispatchQueuedTurn.run(intent, threadId, queueId)
-      return { ...toQueuedTurn(row), intent }
+      return { ...stored, intent }
     })
     if (claimed) this.#queuedThreadIdsCache = undefined
     return claimed
@@ -2078,7 +2101,11 @@ export class Store {
       threadId,
       targetId,
     )
-    return row ? DiffDecisionSchema.parse(row.decision) : undefined
+    if (!row) return undefined
+    const parsed = DiffDecisionSchema.safeParse(row.decision)
+    if (parsed.success) return parsed.data
+    console.warn(`[store] unknown diff decision '${row.decision}', treating as undecided`)
+    return undefined
   }
 
   // ---- events ------------------------------------------------------------
@@ -2101,7 +2128,11 @@ export class Store {
 
       const states = new Map<string, InterruptedThreadState>()
       for (const row of rows) {
-        const event = DomainEventSchema.parse(JSON.parse(row.payload))
+        const event = parseDomainEvent(
+          row.payload,
+          `recovery for interrupted thread ${row.thread_id}`,
+        )
+        if (event === undefined) continue
         const state = states.get(row.thread_id) ?? {
           openTurns: new Set<string>(),
           activeItems: new Map(),
@@ -2296,9 +2327,13 @@ export class Store {
    * the thread fresh asks for all of it. Same call either way.
    */
   history(threadId: string, afterSeq = 0): Array<{ seq: number; event: DomainEvent }> {
-    return sqliteRows<HistoryRow>(this.#threadHistory, threadId, afterSeq).map((row) => {
-      return { seq: Number(row.seq), event: parseDomainEvent(row.payload) }
-    })
+    const entries: Array<{ seq: number; event: DomainEvent }> = []
+    for (const row of sqliteRows<HistoryRow>(this.#threadHistory, threadId, afterSeq)) {
+      const event = parseDomainEvent(row.payload, `history for thread ${threadId}`)
+      if (event === undefined) continue
+      entries.push({ seq: Number(row.seq), event })
+    }
+    return entries
   }
 
   /** Read the latest saved replay as an immutable base, even when a small tail is newer. */
@@ -2393,8 +2428,10 @@ export class Store {
   inboxProjections(): Map<string, InboxProjection> {
     const projections = new Map<string, InboxProjection>()
     for (const row of sqliteRows<ThreadEventRow>(this.#threadInboxEvents)) {
+      const event = parseDomainEvent(row.payload, `inbox projections for thread ${row.thread_id}`)
+      if (event === undefined) continue
       const projection = projections.get(row.thread_id) ?? emptyInboxProjection()
-      applyInboxProjectionEvent(projection, parseDomainEvent(row.payload))
+      applyInboxProjectionEvent(projection, event)
       if (isEmptyInboxProjection(projection)) projections.delete(row.thread_id)
       else projections.set(row.thread_id, projection)
     }
@@ -2405,8 +2442,8 @@ export class Store {
   turnDiff(threadId: string, turnId: string): string | undefined {
     const row = sqliteRow<PayloadRow>(this.#readTurnDiff, threadId, turnId)
     if (!row) return undefined
-    const event = DomainEventSchema.parse(JSON.parse(row.payload))
-    return event.type === 'diff.updated' ? event.diff : undefined
+    const event = parseDomainEvent(row.payload, `turn diff for thread ${threadId}`)
+    return event?.type === 'diff.updated' ? event.diff : undefined
   }
 
   searchSessions(options: SessionSearchOptions): SessionSearchPage {
@@ -2509,18 +2546,24 @@ export class Store {
     )
     const last = page.at(-1)
     const hasMore = rows.length > limit && last !== undefined
-    return {
-      results: page.map((row, index) => ({
+    const results: SessionSearchResult[] = []
+    for (const [index, row] of page.entries()) {
+      const provider = toProviderId(row.provider)
+      if (provider === undefined) continue
+      results.push({
         resultId: resultIds[index]!,
         projectPath: row.project_path,
         projectName: row.project_name,
         threadId: row.thread_id,
         threadTitle: row.thread_title,
         turnId: row.turn_id,
-        provider: ProviderIdSchema.parse(row.provider),
+        provider,
         createdAt: Number(row.created_at),
         snippet: createSearchSnippetWithComparableTerms(row.text, comparableTerms),
-      })),
+      })
+    }
+    return {
+      results,
       nextCursor: hasMore
         ? encodeCursor({
             snapshotId,
@@ -2698,7 +2741,11 @@ export class Store {
         const rows = sqliteRows<EventRow>(batch, cursor, ...types)
         if (rows.length === 0) break
         for (const row of rows) {
-          const event = DomainEventSchema.parse(JSON.parse(row.payload))
+          const event = parseDomainEvent(
+            row.payload,
+            `derived index rebuild at event seq ${Number(row.seq)}`,
+          )
+          if (event === undefined) continue
           const seq = Number(row.seq)
           const at = Number(row.at)
           if (rebuild.search) this.#indexEvent(seq, row.thread_id, at, event)
@@ -2758,7 +2805,8 @@ export class Store {
       threadId,
     )
     for (const row of rows) {
-      const event = DomainEventSchema.parse(JSON.parse(row.payload))
+      const event = parseDomainEvent(row.payload, `recovery index rebuild for thread ${threadId}`)
+      if (event === undefined) continue
       const mutation = recoveryMutation(event)
       if (mutation) {
         this.#indexRecoveryMutation(Number(row.seq), row.thread_id, mutation, row.payload)
@@ -2783,7 +2831,8 @@ export class Store {
       threadId,
     )
     for (const row of rows) {
-      const event = DomainEventSchema.parse(JSON.parse(row.payload))
+      const event = parseDomainEvent(row.payload, `inbox index rebuild for thread ${threadId}`)
+      if (event === undefined) continue
       this.#indexInboxEvent(Number(row.seq), row.thread_id, event, row.payload)
     }
   }
@@ -2800,9 +2849,9 @@ export class Store {
     // Two bounded scans instead of one unbounded one: the session total only
     // needs this thread's rows, and "today" only needs rows since midnight —
     // across every provider, because the user's day is not provider-scoped.
-    const parseUsage = (payload: string): UsageSample | undefined => {
-      const event = DomainEventSchema.parse(JSON.parse(payload))
-      return event.type === 'usage.updated'
+    const parseUsage = (payload: string, owner: string): UsageSample | undefined => {
+      const event = parseDomainEvent(payload, `usage summary for thread ${owner}`)
+      return event?.type === 'usage.updated'
         ? { total: withoutContext(event.usage), cumulative: event.usage.cumulative === true }
         : undefined
     }
@@ -2818,7 +2867,7 @@ export class Store {
       )
       let previous: UsageTotal | undefined
       for (const row of rows) {
-        const sample = parseUsage(row.payload)
+        const sample = parseUsage(row.payload, threadId)
         if (!sample) continue
         const current = sample.total
         const increment = sample.cumulative ? usageIncrement(current, previous) : current
@@ -2844,7 +2893,7 @@ export class Store {
         since,
       )
       for (const seed of seeds) {
-        const usage = parseUsage(seed.payload)
+        const usage = parseUsage(seed.payload, seed.thread_id)
         if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
@@ -2858,7 +2907,7 @@ export class Store {
         since,
       )
       for (const row of rows) {
-        const sample = parseUsage(row.payload)
+        const sample = parseUsage(row.payload, row.thread_id)
         if (!sample) continue
         const current = sample.total
         const increment = sample.cumulative
@@ -3064,7 +3113,13 @@ export class Store {
       )
       for (const event of events) {
         insertEvent.run(event.seq, event.thread_id, event.at, event.payload)
-        const parsed = DomainEventSchema.parse(JSON.parse(event.payload))
+        // The row is restored verbatim even when this build cannot read it —
+        // the transcript is the user's; only derived indexing is skipped.
+        const parsed = parseDomainEvent(
+          event.payload,
+          `restored transcript for thread ${event.thread_id}`,
+        )
+        if (parsed === undefined) continue
         this.#indexEvent(event.seq, event.thread_id, event.at, parsed)
         if (parsed.type === 'usage.updated') {
           this.#indexUsageEvent(event.seq, event.thread_id, event.at, event.payload)
@@ -3559,8 +3614,23 @@ function toProject(row: ProjectRow): StoredProject {
   }
 }
 
-function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn {
-  const payload = StoredQueuedTurnPayloadSchema.parse(JSON.parse(row.payload))
+function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn | undefined {
+  let payload: z.infer<typeof StoredQueuedTurnPayloadSchema> | undefined
+  try {
+    const parsed = StoredQueuedTurnPayloadSchema.safeParse(JSON.parse(row.payload))
+    if (parsed.success) payload = parsed.data
+  } catch {
+    // Malformed JSON falls through to the same tombstone below.
+  }
+  if (payload === undefined) {
+    // A queued prompt only a newer build can read. There is no honest
+    // fallback for missing text, so the row becomes a tombstone: still
+    // stored, skipped by list reads, never dispatched half-read.
+    console.warn(
+      `[store] skipped a queued turn this build cannot read (thread ${row.thread_id}, queue ${row.queue_id})`,
+    )
+    return undefined
+  }
   return {
     id: row.queue_id,
     threadId: row.thread_id,
@@ -3573,8 +3643,21 @@ function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn {
   }
 }
 
-function parseDomainEvent(serialized: string): DomainEvent {
-  const value: unknown = JSON.parse(serialized)
+/**
+ * Read one stored event without letting a row this build cannot interpret
+ * deny the rest of the log. The table is shared across builds: a payload a
+ * newer version wrote fails this schema, and the row becomes a tombstone —
+ * still stored, skipped by every reader.
+ */
+function parseDomainEvent(serialized: string, context: string): DomainEvent | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(serialized)
+  } catch {
+    console.warn(`[store] ${context}: skipped a stored event with malformed JSON`)
+    return undefined
+  }
+  // item.delta stays hand-checked: hundreds a second and zod never sees them.
   if (value !== null && typeof value === 'object') {
     const event = value as Record<string, unknown>
     if (
@@ -3591,10 +3674,18 @@ function parseDomainEvent(serialized: string): DomainEvent {
       }
     }
   }
-  return DomainEventSchema.parse(value)
+  const parsed = DomainEventSchema.safeParse(value)
+  if (parsed.success) return parsed.data
+  const type =
+    value !== null && typeof value === 'object' ? (value as { type?: unknown }).type : undefined
+  console.warn(
+    `[store] ${context}: skipped a stored event this build cannot read` +
+      (typeof type === 'string' ? ` (type '${type}')` : ''),
+  )
+  return undefined
 }
 
-function toProviderId(provider: string): ProviderId {
+function toProviderId(provider: string): ProviderId | undefined {
   switch (provider) {
     case 'codex':
     case 'claude-code':
@@ -3606,8 +3697,14 @@ function toProviderId(provider: string): ProviderId {
     case 'acp':
     case 'api':
       return provider
-    default:
-      return ProviderIdSchema.parse(provider)
+    default: {
+      const parsed = ProviderIdSchema.safeParse(provider)
+      if (parsed.success) return parsed.data
+      // A provider only a newer build knows. The row stays stored; readers
+      // skip it rather than die on it.
+      console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      return undefined
+    }
   }
 }
 
@@ -3627,49 +3724,57 @@ function activeLifecycle(keepActive: boolean, wokeAt: number | undefined): Threa
   return { state: 'active', keepActive, wokeAt }
 }
 
+/** Corrupt stored timestamps normalize to 0 rather than fail the whole row. */
+function storedTimestamp(value: SqliteInteger): number {
+  const parsed = Number(value)
+  return isNonnegativeInteger(parsed) ? parsed : 0
+}
+
 function toActiveLifecycle(row: ActiveLifecycleRow): ThreadLifecycle {
   const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
-  const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
-  return wokeAt === undefined || isNonnegativeInteger(wokeAt)
-    ? lifecycle
-    : ThreadLifecycleSchema.parse(lifecycle)
+  return activeLifecycle(
+    row.keep_active === 1,
+    wokeAt !== undefined && isNonnegativeInteger(wokeAt) ? wokeAt : undefined,
+  )
 }
 
 function toThreadLifecycle(row: ThreadLifecycleRow): ThreadLifecycle {
   if (row.lifecycle_state === 'settled') {
-    const settledAt = Number(row.lifecycle_at ?? row.created_at)
     const reason = row.lifecycle_reason ?? 'manual'
-    if (isNonnegativeInteger(settledAt) && isLifecycleReason(reason)) {
-      return { state: 'settled', settledAt, reason }
+    return {
+      state: 'settled',
+      settledAt: storedTimestamp(row.lifecycle_at ?? row.created_at),
+      reason: isLifecycleReason(reason) ? reason : 'manual',
     }
-    return ThreadLifecycleSchema.parse({ state: 'settled', settledAt, reason })
   }
 
   if (row.lifecycle_state === 'snoozed') {
-    const snoozedAt = Number(row.lifecycle_at ?? row.created_at)
-    const wakeAt = Number(row.wake_at ?? row.created_at)
-    const lifecycle = { state: 'snoozed' as const, snoozedAt, wakeAt }
-    return isNonnegativeInteger(snoozedAt) && isNonnegativeInteger(wakeAt)
-      ? lifecycle
-      : ThreadLifecycleSchema.parse(lifecycle)
+    return {
+      state: 'snoozed',
+      snoozedAt: storedTimestamp(row.lifecycle_at ?? row.created_at),
+      wakeAt: storedTimestamp(row.wake_at ?? row.created_at),
+    }
   }
 
   if (row.lifecycle_state === 'active') {
-    const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
-    const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
-    return wokeAt === undefined || isNonnegativeInteger(wokeAt)
-      ? lifecycle
-      : ThreadLifecycleSchema.parse(lifecycle)
+    return toActiveLifecycle(row)
   }
 
-  return ThreadLifecycleSchema.parse({ state: row.lifecycle_state })
+  // A lifecycle state only a newer build understands: report the thread as
+  // plainly active rather than hide it or fail every list it appears in.
+  console.warn(`[store] unknown lifecycle state '${row.lifecycle_state}', treating as active`)
+  return activeLifecycle(row.keep_active === 1, undefined)
 }
 
-function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread {
+function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined {
+  const provider = toProviderId(row.provider)
+  // A thread this build cannot attribute stays in the table; it just has no
+  // honest place in a sidebar rendered from the provider contract.
+  if (provider === undefined) return undefined
   return {
     id: row.id,
     projectPath: row.project_path,
-    provider: toProviderId(row.provider),
+    provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     title: row.title,
     pinned: row.pinned === 1,
@@ -3681,14 +3786,16 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread {
   }
 }
 
-function toThread(row: ThreadRow): StoredThread {
+function toThread(row: ThreadRow): StoredThread | undefined {
   // Null timestamps (rows migrated before these columns existed) must not
   // become NaN — a snoozed thread with NaN wakeAt can never be woken.
   const lifecycle = toThreadLifecycle(row)
+  const provider = toProviderId(row.provider)
+  if (provider === undefined) return undefined
   return {
     id: row.id,
     projectPath: row.project_path,
-    provider: toProviderId(row.provider),
+    provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
@@ -3721,7 +3828,11 @@ function requiredSqliteRow<Row>(statement: StatementSync, ...params: SQLInputVal
 
 function queuedTurnIntent(value: string): StoredQueuedTurn['intent'] {
   if (value === 'normal' || value === 'steer') return value
-  throw new Error(`invalid queued turn intent: ${value}`)
+  // Runs in the constructor's claim recovery: one intent only a newer build
+  // wrote must not keep the store from opening. A normal turn is the honest
+  // degradation — the prompt still runs, just without steer semantics.
+  console.warn(`[store] unknown queued turn intent '${value}', treating as normal`)
+  return 'normal'
 }
 
 function serializeJson(value: unknown): string {

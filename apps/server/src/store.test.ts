@@ -602,6 +602,238 @@ describe('recovering interrupted turns', () => {
 })
 
 describe('a database written by a newer build', () => {
+  it('skips stored events this build cannot read instead of denying the log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-events-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'good', projectPath: '/repo', provider: 'codex', title: 'Good' })
+    seeded.append('good', {
+      type: 'turn.started',
+      turn: { id: 'open-turn', threadId: 'good', status: 'running', createdAt: 1 },
+    })
+    seeded.addThread({ id: 'mixed', projectPath: '/repo', provider: 'codex', title: 'Mixed' })
+    seeded.append('mixed', message('before the unknown rows'))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    // An event type this build does not know, and a row that is not JSON at
+    // all — both plausible once a newer build wrote to the same database.
+    const badSeq = Number(
+      raw
+        .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+        .run('mixed', 2, '{"type":"session.compacted","summary":"nightly"}').lastInsertRowid,
+    )
+    raw
+      .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+      .run('mixed', 3, 'not json at all')
+    // An open recovery lifecycle whose stored start payload is unreadable.
+    raw
+      .prepare(
+        `INSERT INTO recovery_lifecycles
+           (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
+         VALUES ('good', 'turn:unreadable', 'turn.started', ?, NULL, ?)`,
+      )
+      .run(badSeq, '{"type":"turn.started","turn":{"bogus":true}}')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.history('mixed').map(({ event }) => event)).toEqual([
+        message('before the unknown rows'),
+      ])
+      // The unreadable row is skipped; the readable open turn still recovers.
+      expect(reopened.recoverInterruptedThreads()).toEqual(['good'])
+      // The tombstoned rows stay stored for a build that can read them.
+      expect(reopened.lastSeq('mixed')).toBe(4)
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('finishes a derived-index rebuild when one stored event fails to parse', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-rebuild-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.append('one', message('needle that must stay searchable'))
+    seeded.append('one', {
+      type: 'turn.started',
+      turn: { id: 'open-turn', threadId: 'one', status: 'running', createdAt: 1 },
+    })
+    seeded.append('one', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 2 },
+    })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    // A selected event type carrying a shape this build rejects: the SQL
+    // prefilter sees 'item.started', then the schema refuses the payload.
+    raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`).run(
+      'one',
+      3,
+      JSON.stringify({
+        type: 'item.started',
+        item: {
+          id: 'x',
+          turnId: 'open-turn',
+          type: 'hologram',
+          status: 'started',
+          createdAt: 3,
+        },
+      }),
+    )
+    raw.exec(`
+      DELETE FROM session_search;
+      DELETE FROM usage_events;
+      DELETE FROM inbox_events;
+      DELETE FROM user_submission_items;
+      DELETE FROM turn_diff_events;
+      DELETE FROM recovery_lifecycles;
+      DELETE FROM recovery_errors;
+      DELETE FROM schema_migrations;
+    `)
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      // The constructor rebuilt every derived index past the unreadable row.
+      expect(reopened.searchSessions({ query: 'needle' }).results).toHaveLength(1)
+      expect(reopened.inboxProjections().get('one')?.approvals).toEqual(new Set(['approval-1']))
+      expect(reopened.recoverInterruptedThreads()).toEqual(['one'])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps lists and search usable when a thread row has an unknown provider', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-provider-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'normal', projectPath: '/repo', provider: 'codex', title: 'Normal' })
+    seeded.addThread({ id: 'alien', projectPath: '/repo', provider: 'codex', title: 'Alien' })
+    seeded.append('normal', message('shared needle'))
+    seeded.append('alien', message('shared needle'))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(`UPDATE threads SET provider = ? WHERE id = ?`)
+      .run('provider-from-nightly', 'alien')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.threads().map((thread) => thread.id)).toEqual(['normal'])
+      expect(reopened.sidebarThreads().map((thread) => thread.id)).toEqual(['normal'])
+      expect(reopened.thread('alien')).toBeUndefined()
+      const results = reopened.searchSessions({ query: 'needle' }).results
+      expect(results.map((result) => result.threadId)).toEqual(['normal'])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('degrades rows a schema-divergent build could leave behind', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-schema-'))
+    const file = path.join(dir, 'harness.db')
+    // The shape a newer build could leave: same columns, wider CHECK lists.
+    const raw = new DatabaseSync(file)
+    raw.exec(`
+      CREATE TABLE threads (
+        id           TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        provider     TEXT NOT NULL,
+        agent        TEXT,
+        provider_session_id TEXT,
+        title        TEXT NOT NULL,
+        pinned       INTEGER NOT NULL DEFAULT 0,
+        created_at   INTEGER NOT NULL,
+        closed_at    INTEGER,
+        worktree_path   TEXT,
+        worktree_branch TEXT,
+        lifecycle_state  TEXT NOT NULL DEFAULT 'active'
+          CHECK (lifecycle_state IN ('active', 'settled', 'snoozed', 'dormant')),
+        lifecycle_at     INTEGER,
+        lifecycle_reason TEXT,
+        wake_at          INTEGER,
+        keep_active      INTEGER NOT NULL DEFAULT 0,
+        woke_at          INTEGER,
+        unread           INTEGER NOT NULL DEFAULT 0,
+        last_active_at   INTEGER NOT NULL,
+        ephemeral        INTEGER NOT NULL DEFAULT 0,
+        parent_thread_id TEXT
+      );
+      CREATE TABLE queued_turns (
+        thread_id            TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        queue_id             TEXT NOT NULL,
+        client_submission_id TEXT,
+        position             INTEGER NOT NULL,
+        state                TEXT NOT NULL CHECK (state IN ('queued', 'dispatching')),
+        intent               TEXT NOT NULL,
+        payload              TEXT NOT NULL,
+        created_at           INTEGER NOT NULL,
+        PRIMARY KEY (thread_id, queue_id)
+      );
+      CREATE TABLE diff_decisions (
+        thread_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        decision  TEXT NOT NULL,
+        PRIMARY KEY (thread_id, target_id)
+      );
+    `)
+    raw.close()
+
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'weird', projectPath: '/repo', provider: 'codex', title: 'Weird' })
+    seeded.close()
+
+    const divergent = new DatabaseSync(file)
+    divergent.prepare(`UPDATE threads SET lifecycle_state = 'dormant' WHERE id = 'weird'`).run()
+    divergent
+      .prepare(
+        `INSERT INTO queued_turns
+           (thread_id, queue_id, position, state, intent, payload, created_at)
+         VALUES ('weird', 'q1', 0, 'queued', 'steer-v2', ?, 1)`,
+      )
+      .run(JSON.stringify({ text: 'queued prompt', attachments: [], options: {} }))
+    divergent
+      .prepare(
+        `INSERT INTO queued_turns
+           (thread_id, queue_id, position, state, intent, payload, created_at)
+         VALUES ('weird', 'q2', 1, 'queued', 'normal', ?, 2)`,
+      )
+      .run('{"prompt":"a shape this build does not know"}')
+    divergent
+      .prepare(`INSERT INTO diff_decisions (thread_id, target_id, decision) VALUES (?, ?, ?)`)
+      .run('weird', 'hunk:1', 'partial')
+    divergent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('weird')?.lifecycle).toEqual({ state: 'active', keepActive: false })
+      expect(reopened.sidebarThreads()[0]?.lifecycle).toEqual({
+        state: 'active',
+        keepActive: false,
+      })
+      expect(reopened.queuedTurns('weird').map((turn) => turn.intent)).toEqual(['normal'])
+      // The unreadable prompt is a tombstone: never listed, never claimed,
+      // still stored for a build that understands it.
+      expect(reopened.claimQueuedTurn('weird', 'q2', 'normal')).toBeUndefined()
+      expect(reopened.diffDecision('weird', 'hunk:1')).toBeUndefined()
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('does not keep cache writes a rolled-back recovery made', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-cache-'))
     const file = path.join(dir, 'harness.db')
