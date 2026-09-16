@@ -601,6 +601,30 @@ describe('recovering interrupted turns', () => {
   })
 })
 
+describe('a database written by a newer build', () => {
+  it('leaves a closed thread untouched by lifecycle writes', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'closed', projectPath: '/repo', provider: 'codex', title: 'Closed' })
+    store.touchThread('closed', true, 10)
+    store.closeThread('closed')
+
+    expect(() => store.settleThread('closed', 'manual')).toThrow('thread not found')
+    expect(() => store.snoozeThread('closed', 100)).toThrow('thread not found')
+    // Reading closed history marks it read: a no-op, not an error.
+    expect(() => store.markThreadRead('closed')).not.toThrow()
+    // An event still landing after close must not resurrect the thread.
+    expect(store.touchThread('closed', false, 20)).toEqual({ state: 'active', keepActive: false })
+
+    expect(store.thread('closed')).toMatchObject({
+      lifecycle: { state: 'active', keepActive: false },
+      unread: true,
+      lastActiveAt: 10,
+    })
+    expect(store.thread('closed')?.closedAt).toBeTypeOf('number')
+    expect(() => store.markThreadRead('missing')).toThrow('thread not found')
+  })
+})
+
 describe('opening a database written by an older build', () => {
   /**
    * The break this guards against only ever hits people who used the app

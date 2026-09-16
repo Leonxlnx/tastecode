@@ -1030,7 +1030,7 @@ export class Store {
     )
     this.#settleThreadStatement = this.#db.prepare(
       `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
-       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ?`,
+       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ? AND closed_at IS NULL`,
     )
     this.#settleInactiveThreadStatement = this.#db.prepare(
       `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?,
@@ -1051,14 +1051,15 @@ export class Store {
          AND ephemeral = 0 AND wake_at <= ? RETURNING woke_at, keep_active`,
     )
     this.#touchActiveThreadStatement = this.#db.prepare(
-      `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`,
+      `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?)
+       WHERE id = ? AND closed_at IS NULL`,
     )
     this.#touchThreadStatement = this.#db.prepare(
       `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
        lifecycle_reason = NULL, wake_at = NULL,
        woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END,
        last_active_at = ?, unread = MAX(unread, ?)
-       WHERE id = ? RETURNING woke_at, keep_active`,
+       WHERE id = ? AND closed_at IS NULL RETURNING woke_at, keep_active`,
     )
     this.#dueSnoozedThreadIds = this.#db.prepare(
       `SELECT id FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
@@ -1429,7 +1430,8 @@ export class Store {
     this.#updateThread(
       id,
       `UPDATE threads SET lifecycle_state = 'snoozed', lifecycle_at = ?,
-       lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL WHERE id = ?`,
+       lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL
+       WHERE id = ? AND closed_at IS NULL`,
       (thread) => ({ ...thread, lifecycle }),
       at,
       wakeAt,
@@ -1471,9 +1473,14 @@ export class Store {
   }
 
   touchThread(id: string, unread = false, at = Date.now()): ThreadLifecycle {
-    const retained = this.#threadCache.get(id)
+    const retained = this.thread(id)
+    if (retained === undefined) throw new Error('thread not found')
+    // A closed thread is frozen history. An event still landing after close
+    // must not resurrect it, and must not fail the dispatch that already
+    // appended the event either.
+    if (retained.closedAt !== undefined) return retained.lifecycle
     let lifecycle: ThreadLifecycle
-    if (retained?.lifecycle.state === 'active') {
+    if (retained.lifecycle.state === 'active') {
       const result = this.#touchActiveThreadStatement.run(at, unread ? 1 : 0, id)
       if (Number(result.changes) === 0) throw new Error('thread not found')
       lifecycle = retained.lifecycle
@@ -1504,18 +1511,22 @@ export class Store {
   }
 
   markThreadRead(id: string): void {
-    this.#updateThread(
-      id,
-      `UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ?`,
-      (thread) => ({
-        ...thread,
-        lifecycle:
-          thread.lifecycle.state === 'active'
-            ? activeLifecycle(thread.lifecycle.keepActive, undefined)
-            : thread.lifecycle,
-        unread: false,
-      }),
-    )
+    const result = this.#db
+      .prepare(`UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ? AND closed_at IS NULL`)
+      .run(id)
+    if (result.changes === 0) {
+      // Closed history is read-only; a missing id is still a caller error.
+      if (this.thread(id) === undefined) throw new Error('thread not found')
+      return
+    }
+    this.#updateCachedThread(id, (thread) => ({
+      ...thread,
+      lifecycle:
+        thread.lifecycle.state === 'active'
+          ? activeLifecycle(thread.lifecycle.keepActive, undefined)
+          : thread.lifecycle,
+      unread: false,
+    }))
     this.#updateSidebarThread(id, (thread) => {
       const lifecycle =
         thread.lifecycle.state === 'active'
