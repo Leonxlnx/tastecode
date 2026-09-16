@@ -7,6 +7,24 @@ import {
 } from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 
+/**
+ * Owned teardown for spawned process trees and Linux PTY sessions.
+ *
+ * Two mechanisms share one contract — a tree we spawned dies together:
+ * - {@link spawnOwned} gives each POSIX child its own process group and
+ *   {@link killTree} escalates the group through SIGTERM → SIGKILL; on
+ *   Windows the exit hook and killTree run `taskkill /T` on the spawned pid,
+ *   which also collects grandchildren a `.cmd` shim orphaned by exiting early.
+ * - {@link ownPtySession} + {@link terminatePtySession} sweep a Linux PTY's
+ *   kernel session by /proc scan while the verified leader is held stopped.
+ *
+ * Neither mechanism reaches processes that leave the owned boundary: a
+ * grandchild that calls setsid() (daemonizes) drops out of its group or
+ * session and survives, and members running under a different uid
+ * (sudo/setuid) are never signalled. Off Linux there is no session sweep —
+ * PTY teardown is leader-only, so descendants can outlive a closed terminal.
+ */
+
 export type KillableProcess = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'kill'>
 
 // Caller-facing spawn options: `detached` is not offerable because the
@@ -34,6 +52,7 @@ const stopping = new WeakMap<KillableProcess, Promise<void>>()
 const ownedLinuxPtySessions = new WeakMap<object, Promise<LinuxPtySessionOwnership>>()
 const PTY_SESSION_SETUP_TIMEOUT_MS = 250
 const PTY_SESSION_SETUP_POLL_MS = 5
+const UNOWNED_PTY_KILL_GRACE_MS = 250
 
 type PtyProcess = {
   pid: number
@@ -51,7 +70,24 @@ type LinuxProcessIdentity = {
 }
 
 type LinuxPtySessionOwnership =
-  { kind: 'owned'; owner: LinuxProcessIdentity } | { kind: 'failed'; error: unknown }
+  | { kind: 'owned'; owner: LinuxProcessIdentity }
+  // The captured generation changed: nothing derived from it may be
+  // signalled, so this failure must keep throwing instead of recovering.
+  | { kind: 'unproven'; error: unknown }
+  // setsid() had not completed by the setup deadline. The captured identity
+  // is kept so a later teardown can still prove the session if the leader
+  // finished establishing in the meantime.
+  | { kind: 'unestablished'; error: unknown; captured: LinuxProcessIdentity }
+
+/** The captured leader identity can no longer be trusted for signalling. */
+class PtySessionOwnershipLostError extends Error {
+  override name = 'PtySessionOwnershipLostError'
+}
+
+/** A scanned /proc entry was replaced by a new generation before signalling. */
+class StaleLinuxProcessError extends Error {
+  override name = 'StaleLinuxProcessError'
+}
 
 /** Native executable spawn with a private process group on POSIX. */
 export function spawnOwned(
@@ -90,12 +126,24 @@ export function spawnOwned(
   } else {
     child = spawn(command, args, { ...options, detached })
   }
-  if (process.platform !== 'win32' && child.pid) {
-    const group = child.pid
-    groups.set(child, group)
-    child.once('exit', () => {
-      void killTree(child).catch(() => undefined)
-    })
+  if (child.pid) {
+    if (process.platform === 'win32') {
+      child.once('exit', () => {
+        // A .cmd shim can exit while grandchildren it started are still
+        // running. taskkill /T takes down that remaining tree and fails
+        // harmlessly when the pid is already gone.
+        spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+          windowsHide: true,
+          timeout: 1_500,
+        })
+      })
+    } else {
+      const group = child.pid
+      groups.set(child, group)
+      child.once('exit', () => {
+        void killTree(child).catch(() => undefined)
+      })
+    }
   }
   return child
 }
@@ -109,13 +157,23 @@ export function ownPtySession<T extends PtyProcess>(pty: T): T {
   // A one-shot command may already be reaped; it has no session left to own.
   if (!identity) return pty
   if (identity.parentId !== process.pid) {
-    throw new Error(`cannot prove ownership of PTY session ${String(pty.pid)}`)
+    throw new PtySessionOwnershipLostError(
+      `cannot prove ownership of PTY session ${String(pty.pid)}`,
+    )
   }
   ownedLinuxPtySessions.set(pty, establishLinuxPtySession(identity))
   return pty
 }
 
-/** Terminate only a tree we own, then wait for bounded TERM/KILL escalation. */
+/**
+ * Terminate only a tree we own, then wait for bounded TERM/KILL escalation.
+ *
+ * The tree guarantee only covers children registered by {@link spawnOwned}:
+ * POSIX signals the whole process group and Windows runs `taskkill /T`. An
+ * unregistered child (or a test double) falls back to signalling the leader
+ * alone on POSIX, so its descendants can outlive it — Windows still tree-kills
+ * because taskkill walks the parent chain by pid.
+ */
 export function killTree(child: KillableProcess): Promise<void> {
   const existing = stopping.get(child)
   if (existing) return existing
@@ -144,17 +202,19 @@ async function terminate(child: KillableProcess): Promise<void> {
     groups.delete(child)
     return
   }
-  if (child.exitCode != null || child.signalCode != null) return
   // A failed spawn has no process to signal. Its native handle may still
   // contain pid 0, which means the caller's own process group on POSIX.
   if (!child.pid && child.kill === ChildProcess.prototype.kill) return
   if (process.platform === 'win32' && child.pid) {
+    // taskkill /T still tears down a tree whose .cmd shim already exited, so
+    // it runs before the exit check below; on a dead pid it fails harmlessly.
     const result = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
       windowsHide: true,
       timeout: 1_500,
     })
     if (!result.error && result.status === 0) return
   }
+  if (child.exitCode != null || child.signalCode != null) return
   // Unregistered children and test doubles have no group ownership. Never
   // signal a guessed group, which could include the app or another task.
   child.kill()
@@ -206,7 +266,7 @@ async function waitForGroupExit(pid: number, timeoutMs: number): Promise<boolean
       if (denied) throw denied
       return false
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+    await delay(25)
   }
 }
 
@@ -231,9 +291,55 @@ async function waitUntil(done: () => boolean, timeoutMs: number): Promise<boolea
   const deadline = Date.now() + timeoutMs
   while (!done()) {
     if (Date.now() >= deadline) return false
-    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+    await delay(25)
   }
   return true
+}
+
+/**
+ * Poll sleep that does not hold the event loop open: an unawaited killTree
+ * (e.g. the spawn exit hook) must not keep a closing process alive for the
+ * full TERM/KILL escalation window.
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms).unref()
+  })
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (errorCode(error) === 'ESRCH') return false
+    // EPERM still means the pid exists; the caller just cannot verify or
+    // signal that generation, which is the same answer liveness-wise.
+    if (errorCode(error) === 'EPERM') return true
+    throw error
+  }
+}
+
+/**
+ * Leader-only teardown for a PTY that has no owned session to sweep.
+ *
+ * node-pty sends SIGHUP and a shell can ignore it, so a leader that survives
+ * a short grace escalates to SIGKILL where POSIX signals are available —
+ * otherwise close() would time out with the PTY still running. On Windows
+ * node-pty already ends the process forcefully, so no escalation is needed.
+ */
+async function killUnownedPtyLeader(pty: PtyProcess): Promise<void> {
+  pty.kill()
+  if (process.platform === 'win32') return
+  if (await waitUntil(() => !processAlive(pty.pid), UNOWNED_PTY_KILL_GRACE_MS)) return
+  try {
+    process.kill(pty.pid, 'SIGKILL')
+  } catch (error) {
+    const code = errorCode(error)
+    // ESRCH: the leader left during the grace window. EPERM: the pid is not
+    // ours to signal — there is nothing left this layer can do about it.
+    if (code !== 'ESRCH' && code !== 'EPERM') throw error
+  }
 }
 
 export type TerminatePtySessionOptions = {
@@ -243,12 +349,18 @@ export type TerminatePtySessionOptions = {
 }
 
 /**
- * Stop every process in an owned PTY session before closing its leader.
+ * Stop every process in a provably owned PTY session before closing its
+ * leader.
  *
  * Interactive shells create a process group for each foreground/background
  * job, so signalling only the shell's group misses descendants. Keeping the
  * verified session leader alive during escalation prevents a reused numeric
  * session id from becoming authority to signal an unrelated process.
+ *
+ * The member sweep only exists on Linux, where {@link ownPtySession} proved
+ * the kernel session from /proc. Everywhere else — and for a PTY whose
+ * session stayed unprovable — teardown is leader-only ({@link
+ * killUnownedPtyLeader}), so descendants can outlive the leader.
  */
 export async function terminatePtySession(
   pty: PtyProcess,
@@ -256,11 +368,28 @@ export async function terminatePtySession(
 ): Promise<void> {
   const ownership = ownedLinuxPtySessions.get(pty)
   if (!ownership) {
-    pty.kill()
+    await killUnownedPtyLeader(pty)
     return
   }
   const session = await ownership
-  if (session.kind === 'failed') throw session.error
+  if (session.kind === 'unproven') throw session.error
+  if (session.kind === 'unestablished') {
+    // setsid() can still have completed after the setup deadline; prove it
+    // from the immutable captured generation before deciding nothing exists
+    // to sweep. A still-plain child gets leader-only teardown instead of a
+    // cached failure that would rethrow forever.
+    const owner = provenLinuxPtySessionOwner(session.captured)
+    if (!owner) {
+      ownedLinuxPtySessions.delete(pty)
+      await killUnownedPtyLeader(pty)
+      return
+    }
+    ownedLinuxPtySessions.set(
+      pty,
+      Promise.resolve<LinuxPtySessionOwnership>({ kind: 'owned', owner }),
+    )
+    return terminatePtySession(pty, options)
+  }
   const owner = session.owner
   const leader = readLinuxProcessIdentity(owner.pid)
   if (!leader || leader.state === 'Z' || leader.state === 'X') {
@@ -285,7 +414,12 @@ export async function terminatePtySession(
     // after the final empty scan. SIGKILL also handles shells that ignore HUP.
     signalLinuxProcess(owner, 'SIGKILL')
   } catch (error) {
-    signalLinuxProcess(owner, 'SIGCONT')
+    try {
+      signalLinuxProcess(owner, 'SIGCONT')
+    } catch {
+      // Resuming the frozen leader is best-effort: it may already be gone,
+      // and a SIGCONT failure must not mask the error that stopped it.
+    }
     throw error
   }
 }
@@ -298,7 +432,24 @@ export async function cleanupExitedPtySession(
   const ownership = ownedLinuxPtySessions.get(pty)
   if (!ownership) return
   const session = await ownership
-  if (session.kind === 'failed') throw session.error
+  if (session.kind === 'unproven') throw session.error
+  if (session.kind === 'unestablished') {
+    // The leader may have finished setsid() after the setup deadline; only a
+    // still-live leader can prove that now. A dead or never-established
+    // leader leaves no members this layer can identify safely, so the cached
+    // failure is dropped rather than rethrown forever.
+    const owner = provenLinuxPtySessionOwner(session.captured)
+    if (!owner) {
+      ownedLinuxPtySessions.delete(pty)
+      return
+    }
+    ownedLinuxPtySessions.set(
+      pty,
+      Promise.resolve<LinuxPtySessionOwnership>({ kind: 'owned', owner }),
+    )
+    await terminateExitedPtySession(owner, options)
+    return
+  }
   await terminateExitedPtySession(session.owner, options)
 }
 
@@ -358,7 +509,7 @@ async function waitForStoppedLinuxProcess(owner: LinuxProcessIdentity): Promise<
     }
     if (current.state === 'Z' || current.state === 'X') return false
     if (current.state === 'T' || current.state === 't') return true
-    await new Promise((resolve) => setTimeout(resolve, PTY_SESSION_SETUP_POLL_MS))
+    await delay(PTY_SESSION_SETUP_POLL_MS)
   } while (Date.now() - startedAt < PTY_SESSION_SETUP_TIMEOUT_MS)
   throw new Error(`PTY session leader ${owner.pid} did not stop`)
 }
@@ -374,13 +525,15 @@ async function waitForEstablishedPtySession(
     // and prevents that numeric id from being reused until cleanup finishes.
     if (!current) return expectedLinuxPtySession(captured)
     if (!sameLinuxProcessInstance(current, captured) || current.parentId !== captured.parentId) {
-      throw new Error(`cannot prove ownership of PTY session ${captured.pid}`)
+      throw new PtySessionOwnershipLostError(
+        `cannot prove ownership of PTY session ${captured.pid}`,
+      )
     }
     if (current.groupId === current.pid && current.sessionId === current.pid) return current
     if (current.state === 'Z' || current.state === 'X') {
       return expectedLinuxPtySession(captured)
     }
-    await new Promise((resolve) => setTimeout(resolve, PTY_SESSION_SETUP_POLL_MS))
+    await delay(PTY_SESSION_SETUP_POLL_MS)
   } while (Date.now() - startedAt < PTY_SESSION_SETUP_TIMEOUT_MS)
   throw new Error(`PTY session ${captured.pid} was not established`)
 }
@@ -392,7 +545,38 @@ async function establishLinuxPtySession(
     const owner = await waitForEstablishedPtySession(captured)
     return { kind: 'owned', owner }
   } catch (error) {
-    return { kind: 'failed', error }
+    return error instanceof PtySessionOwnershipLostError
+      ? { kind: 'unproven', error }
+      : { kind: 'unestablished', error, captured }
+  }
+}
+
+/**
+ * Re-verify a leader whose setsid() had not finished by the setup deadline.
+ * The captured generation is immutable, so the same pid/startTime/uid now
+ * shown as its own session and group leader proves ownership late. Anything
+ * else — a dead pid, a changed generation, a still-plain child — stays
+ * unprovable.
+ */
+function provenLinuxPtySessionOwner(
+  captured: LinuxProcessIdentity,
+): LinuxProcessIdentity | undefined {
+  try {
+    const current = readLinuxProcessIdentity(captured.pid)
+    if (
+      !current ||
+      !sameLinuxProcessInstance(current, captured) ||
+      current.parentId !== captured.parentId ||
+      current.sessionId !== current.pid ||
+      current.groupId !== current.pid
+    ) {
+      return undefined
+    }
+    return current
+  } catch {
+    // A /proc read failure cannot prove anything either; degrade rather than
+    // trade a cached failure for a fresh throw.
+    return undefined
   }
 }
 
@@ -412,7 +596,7 @@ async function waitForPtySessionMembers(
     const members = readMembers(owner)
     if (members.length === 0) return true
     for (const identity of members) onMember?.(identity)
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    await delay(pollIntervalMs)
   } while (Date.now() - startedAt < timeoutMs)
   return readMembers(owner).length === 0
 }
@@ -435,7 +619,15 @@ function signalNewLinuxProcess(
 ): void {
   const key = `${identity.pid}:${identity.startTime}`
   if (signalled.has(key)) return
-  signalLinuxProcess(identity, signal)
+  try {
+    signalLinuxProcess(identity, signal)
+  } catch (error) {
+    // A member can exit and its pid can be reused between the /proc scan and
+    // this signal. Skip the stale entry — the next rescan evaluates whatever
+    // generation holds the pid now instead of aborting the whole sweep.
+    if (error instanceof StaleLinuxProcessError) return
+    throw error
+  }
   signalled.add(key)
 }
 
@@ -443,7 +635,7 @@ function signalLinuxProcess(identity: LinuxProcessIdentity, signal: NodeJS.Signa
   const current = readLinuxProcessIdentity(identity.pid)
   if (!current) return
   if (!sameLinuxProcessGeneration(current, identity)) {
-    throw new Error(`process identity changed before ${signal}: ${identity.pid}`)
+    throw new StaleLinuxProcessError(`process identity changed before ${signal}: ${identity.pid}`)
   }
   try {
     process.kill(identity.pid, signal)
