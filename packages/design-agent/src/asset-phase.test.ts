@@ -72,6 +72,8 @@ describe('asset phase', () => {
     expect(prompt).toContain('pixel dimensions match aspectRatio')
     expect(prompt).toContain('rate limit')
     expect(prompt).toContain('Never invent a component ID')
+    expect(prompt).toContain('A footer photo credit does not consume the photograph')
+    expect(prompt).toContain('source.reference must contain only an HTTP(S) source-page URL')
   })
 
   it('parses the final response through the asset validator', () => {

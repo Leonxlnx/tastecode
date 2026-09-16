@@ -70,6 +70,54 @@ function crc32(buffer: Buffer): number {
 }
 
 describe('asset manifest', () => {
+  it('keeps a credited photograph assigned to its consuming section', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-credited-photo-'))
+    const page = {
+      sections: [
+        { id: 'hero', assetNeeds: ['office-photo'], componentNeeds: [] },
+        { id: 'footer', assetNeeds: [], componentNeeds: [] },
+      ],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const photo = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'office-photo',
+          kind: 'image',
+          role: 'photography',
+          status: 'ready',
+          purpose: 'Hero photograph with a footer credit',
+          requirements: ['Credit the photographer in the footer'],
+          sectionIds: ['hero'],
+          aspectRatio: '16:9',
+          composition: 'Wide office photograph',
+          source: {
+            kind: 'external',
+            reference: 'https://example.com/photo',
+            license: 'Photographer; licensed for reuse',
+          },
+          destination: 'office.png',
+        },
+      ],
+    })
+    try {
+      writeFileSync(path.join(workspace, 'office.png'), png(1600, 900))
+      expect(validateAssetManifestForPage(photo, page, workspace)).toEqual(photo)
+      expect(() =>
+        validateAssetManifestForPage(
+          {
+            ...photo,
+            assets: [{ ...photo.assets[0]!, sectionIds: ['hero', 'footer'] }],
+          },
+          page,
+          workspace,
+        ),
+      ).toThrow('sectionIds must exactly match hero')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('validates real attribution JSON as data without treating it as a component', () => {
     const workspace = mkdtempSync(path.join(tmpdir(), 'harness-data-asset-'))
     const page = {
