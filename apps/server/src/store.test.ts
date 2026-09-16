@@ -915,6 +915,33 @@ describe('threads', () => {
     expect(store.history('t1')).toHaveLength(1)
   })
 
+  it('keeps the first close time on a repeated close and reports a missing thread', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-close-thread-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    const now = vi.spyOn(Date, 'now')
+    try {
+      now.mockReturnValue(1111)
+      seeded.closeThread('main')
+      now.mockReturnValue(2222)
+      seeded.closeThread('main')
+    } finally {
+      now.mockRestore()
+      seeded.close()
+    }
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('main')?.closedAt).toBe(1111)
+      expect(() => reopened.closeThread('missing')).toThrow('thread not found')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('separates threads by project', () => {
     store.addProject('/other')
     store.addThread({ id: 'a', projectPath: '/repo', provider: 'codex', title: 'A' })

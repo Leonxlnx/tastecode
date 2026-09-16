@@ -1714,10 +1714,21 @@ export class Store {
     const closedAt = Date.now()
     this.#transaction(() => {
       this.#clearQueuedTurns(id)
-      this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(closedAt, id)
+      // The first close wins: COALESCE keeps an existing closed_at instead of
+      // rewriting it, and a missing thread reports changes = 0 like siblings.
+      const result = this.#db
+        .prepare(`UPDATE threads SET closed_at = COALESCE(closed_at, ?) WHERE id = ?`)
+        .run(closedAt, id)
+      if (Number(result.changes) === 0) throw new Error('thread not found')
     })
-    this.#updateCachedThread(id, (thread) => ({ ...thread, closedAt }))
-    this.#updateSidebarThread(id, (thread) => ({ ...thread, closedAt }))
+    this.#updateCachedThread(id, (thread) => ({
+      ...thread,
+      closedAt: thread.closedAt ?? closedAt,
+    }))
+    this.#updateSidebarThread(id, (thread) => ({
+      ...thread,
+      closedAt: thread.closedAt ?? closedAt,
+    }))
   }
 
   deleteThread(id: string): void {
