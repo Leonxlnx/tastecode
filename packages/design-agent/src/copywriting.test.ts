@@ -39,6 +39,14 @@ const page: PageBlueprint = {
 }
 
 describe('page copy lint', () => {
+  it('accepts honest concept content without treating it as unfinished copy or customer proof', () => {
+    for (const description of [
+      'Concept portfolio. Self-initiated hospitality studies.',
+      'Illustrative catalog. Original artist and release concepts.',
+    ]) {
+      expect(() => assertPageCopy({ ...page, page: { ...page.page, description } })).not.toThrow()
+    }
+  })
   it('blocks em dashes but not en dashes', () => {
     expect(() =>
       assertPageCopy({ ...page, page: { ...page.page, description: 'Fresh — every week.' } }),

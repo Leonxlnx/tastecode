@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
+import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
@@ -77,7 +78,7 @@ Review each section's recorded motion decision against the rendered result when 
 Apply the following pass blockers to every screenshot:
 - Any heading occupies more than three visual lines. One or two lines is the target; a third line is acceptable only when it remains balanced and readable. Report oversized type that overwhelms the viewport even when it technically fits.
 - Any eyebrow, uppercase monospace micro-heading, decorative 01/02/03 section label, IBM Plex Mono, Archivo, or repeated font-family switching inside a line or component.
-- Any visible internal note or unfinished copy such as sample, simulated, fictional, awaiting approval, still needed, not connected, before launch, live data required, or to be supplied.
+- Any visible internal note or unfinished copy such as awaiting approval, still needed, not connected, before launch, live data required, or to be supplied. Preserve concise identification of concept work or an illustrative catalog; these are meaningful content, not unfinished copy.
 - A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
 - Decorative hairline grids, repeated separator rules, or arbitrary square-panel templates replace spacing and meaningful grouping. Any full-height one-sided line attached to or aligned with a card edge is a major finding regardless of color or implementation, including border-left, border-inline-start, pseudo-elements, gradients, and narrow child strips.
 - Grouping loses the reference composition: open editorial content becomes boxed, distinct media layouts become equal-column templates, or related controls and cards use inconsistent spacing and states.
@@ -92,6 +93,8 @@ Apply the following pass blockers to every screenshot:
 Treat these as major findings, or blocking when they prevent reading or operation. Do not waive them because they match brand.json or page.json; repair the upstream interpretation.
 
 Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use these checks and the actual reference images; do not invoke external design skills.
+
+${DESIGN_CONTENT_GUIDANCE}
 
 Return JSON only:
 {"version":1,"verdict":"pass|repair","summary":"...","findings":[{"id":"stable_snake_case","severity":"blocking|major|minor","area":"viewport or section","evidenceType":"automated|visual_inspection","confidence":"high|medium|low|unknown","evidence":"what is visibly wrong","repair":"specific bounded correction"}]}
@@ -246,6 +249,8 @@ export function designRepairPrompt(
   return `You are running repair attempt ${attempt} of ${limit} in TasteCode Design Mode.
 
 Fix only the validated visual findings below. Inspect the existing implementation and every attached reference image. The approved referenceDirectionId and artifacts remain immutable during repair: restore their composition instead of inventing a replacement motif. Preserve unrelated user work and prefer the smallest shared correction that resolves each root cause across viewports. A finding about SVG filler or a full-height one-sided card-edge rail must remove the substitute itself, not merely recolor, narrow, or relocate it. Run relevant local checks. Do not start a preview server or expand the design direction.
+
+${DESIGN_CONTENT_GUIDANCE}
 
 Return JSON only as the final response:
 {"status":"complete|failed","summary":"...","files":["relative/path"],"checks":["command — result"]}

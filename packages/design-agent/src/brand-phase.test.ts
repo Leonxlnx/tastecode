@@ -69,6 +69,7 @@ describe('brand phase', () => {
 
   it('locks supplied identity before filling open brand decisions', () => {
     const prompt = designBrandPrompt(brief)
+    expect(prompt).toContain('Do not turn missing material into an invented requirement')
     expect(prompt).toContain('explicit user requirements')
     expect(prompt).toContain('Never replace a supplied logo, color, typeface')
     expect(prompt).toContain('Fill every supplied decision into its final destination')
