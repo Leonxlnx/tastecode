@@ -592,6 +592,11 @@ test('real ASAR resources retain every reference byte, license file, and the res
   await writeFile(path.join(packedReferences, 'unexpected.webp'), 'Extra image bytes')
   await pack()
   await assert.rejects(verifyBundledDesignReferences(archive, references), /reference filenames/)
+  await writeFile(path.join(references, 'unexpected.js'), 'export const unapproved = true')
+  await assert.rejects(
+    verifyBundledDesignReferences(archive, references),
+    /Unexpected design reference asset/,
+  )
 })
 
 test('draft uploads require exact explicit approval and a safe repository name', async (t) => {
