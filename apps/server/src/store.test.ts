@@ -942,6 +942,11 @@ describe('threads', () => {
     }
   })
 
+  it('ignores a second close instead of throwing', () => {
+    store.close()
+    expect(() => store.close()).not.toThrow()
+  })
+
   it('separates threads by project', () => {
     store.addProject('/other')
     store.addThread({ id: 'a', projectPath: '/repo', provider: 'codex', title: 'A' })

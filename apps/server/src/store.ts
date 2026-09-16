@@ -749,6 +749,8 @@ export class Store {
   #searchRevision = 0
   /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
   #ephemeralThreads = new Set<string>()
+  /** A double close — e.g. a second signal — is a no-op, not an error. */
+  #closed = false
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
@@ -1196,6 +1198,8 @@ export class Store {
   }
 
   close(): void {
+    if (this.#closed) return
+    this.#closed = true
     this.#searchSnapshots.clear()
     this.#db.close()
   }
