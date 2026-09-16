@@ -31,7 +31,7 @@ afterEach(async () => {
 })
 
 describe('design preview runner', () => {
-  it('refuses an occupied port before starting workspace code', async () => {
+  it('never accepts another site when workspace code ignores the assigned port', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     const marker = path.join(workspace, 'spawned.txt')
@@ -63,9 +63,85 @@ describe('design preview runner', () => {
     }
     expect(failure).toBeInstanceOf(Error)
     if (!(failure instanceof Error)) throw new Error('expected preview failure')
-    expect(failure.message).toContain(`preview port ${port} is already in use`)
-    expect(existsSync(marker)).toBe(false)
+    expect(failure.message).toContain('preview exited before it was ready')
+    expect(existsSync(marker)).toBe(true)
   })
+
+  it('moves an occupied command preview to a free port without touching the other site', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const occupied = createServer((_request, response) => response.end('unrelated preview'))
+    await listen(occupied)
+    const port = serverPort(occupied)
+    writeFileSync(
+      path.join(workspace, 'preview.mjs'),
+      previewServerSource(port, 'expected preview'),
+    )
+    const requested = { ...plan(port), url: `http://127.0.0.1:${port}/site/?view=desktop` }
+    try {
+      const preview = await startDesignPreview(workspace, requested, 5_000)
+      previews.push(preview)
+      expect(new URL(preview.url).port).not.toBe(String(port))
+      expect(new URL(preview.url).pathname).toBe('/site/')
+      expect(new URL(preview.url).search).toBe('?view=desktop')
+      await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+        'expected preview',
+      )
+      await preview.stop()
+      previews.pop()
+      await expect(fetch(requested.url).then((response) => response.text())).resolves.toBe(
+        'unrelated preview',
+      )
+    } finally {
+      await close(occupied)
+    }
+  })
+
+  it.each(['--port', '-p', '--port='])(
+    'rewrites the %s option forwarded through npm',
+    async (option) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+      workspaces.push(workspace)
+      const occupied = createServer((_request, response) => response.end('unrelated preview'))
+      await listen(occupied)
+      const port = serverPort(occupied)
+      writeFileSync(
+        path.join(workspace, 'package.json'),
+        JSON.stringify({ scripts: { dev: 'node preview.mjs' } }),
+      )
+      writeFileSync(
+        path.join(workspace, 'preview.mjs'),
+        `import { createServer } from 'node:http'
+const port = process.argv[2].includes('=') ? process.argv[2].split('=')[1] : process.argv[3]
+if (port !== process.env.PORT) throw new Error('port argument and environment disagree')
+createServer((_request, response) => response.end('expected preview')).listen(Number(port), '127.0.0.1')
+`,
+      )
+      const requested = parsePreviewPlan({
+        ...plan(port),
+        command: 'npm',
+        args: [
+          'run',
+          'dev',
+          '--',
+          ...(option.endsWith('=') ? [`${option}${port}`] : [option, String(port)]),
+        ],
+      })
+      try {
+        const preview = await startDesignPreview(workspace, requested, 10_000)
+        previews.push(preview)
+        expect(new URL(preview.url).port).not.toBe(String(port))
+        await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+          'expected preview',
+        )
+        await expect(fetch(requested.url).then((response) => response.text())).resolves.toBe(
+          'unrelated preview',
+        )
+      } finally {
+        await close(occupied)
+      }
+    },
+  )
 
   it('starts the expected workspace preview, waits for HTTP, and stops it', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
@@ -272,7 +348,7 @@ describe('design preview runner', () => {
     expect((await fetch(preview.url)).status).toBe(200)
   })
 
-  it('does not accept a concurrent preview serving the same port', async () => {
+  it('gives concurrent command previews distinct ports and serves the correct workspace', async () => {
     const port = await freePort()
     const firstWorkspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-first-'))
     const secondWorkspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-second-'))
@@ -295,13 +371,15 @@ describe('design preview runner', () => {
         attempt.status === 'fulfilled',
     )
     const rejected = attempts.filter((attempt) => attempt.status === 'rejected')
-    expect(running).toHaveLength(1)
-    expect(rejected).toHaveLength(1)
-    previews.push(running[0].value)
-    const expected = attempts[0].status === 'fulfilled' ? 'first workspace' : 'second workspace'
-    await expect(fetch(running[0].value.url).then((response) => response.text())).resolves.toBe(
-      expected,
-    )
+    previews.push(...running.map(({ value }) => value))
+    expect(rejected).toHaveLength(0)
+    expect(running).toHaveLength(2)
+    expect(running[0].value.url).not.toBe(running[1].value.url)
+    for (const [index, preview] of running.entries()) {
+      await expect(fetch(preview.value.url).then((response) => response.text())).resolves.toBe(
+        index === 0 ? 'first workspace' : 'second workspace',
+      )
+    }
   })
 
   it('rejects a child that exits after another response passes readiness', async () => {
@@ -579,6 +657,6 @@ const server = createServer((_request, response) => {
   response.end(${JSON.stringify(body)})
   ${exitAfterResponse ? "response.on('finish', () => process.exit(0))" : ''}
 })
-setTimeout(() => server.listen(${port}, '127.0.0.1'), ${delayMs})
+setTimeout(() => server.listen(Number(process.env.PORT) || ${port}, '127.0.0.1'), ${delayMs})
 `
 }
