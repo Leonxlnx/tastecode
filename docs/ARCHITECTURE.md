@@ -137,9 +137,15 @@ from the desktop package; the app ships no Claude binary of its own.
 
 **Users may register protocol-compatible executables as separate harness sources.** Each
 entry names an existing adapter protocol and stores an executable, fixed argv, optional launch
-directory, and non-secret environment overrides in
-`~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
-never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
+directory, and write-only environment overrides in
+`~/.tastecode/custom-harnesses.json`; arguments never pass through a shell. Environment
+values are secrets: the file keeps only the key names and opaque
+`custom-environment/<uuid>` references while the values live in the OS credential store, so
+backups and screen shares cannot leak them. Writes stage credentials under a recovery
+record before the config commits, an inter-process lockfile serializes the Electron shell
+against `harness serve`, and every surface a user-owned executable can echo onto — session
+logs, domain events, error messages, verification details — is redacted with the configured
+values. Provider CLIs, terminals, and custom commands resolve against a
 desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
 adds conventional user locations such as `~/.local/bin` and Homebrew's prefix rather than
 sourcing `.zshrc`. When a mod boots from its own directory,
