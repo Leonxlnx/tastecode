@@ -49,7 +49,10 @@ export function referenceLibraryRoot(): string {
     if (!path.isAbsolute(root)) throw new Error('Design reference libraryPath must be absolute')
     return root
   }
-  return fileURLToPath(new URL('../references/library/', import.meta.url))
+  const bundled = fileURLToPath(new URL('../references/library/', import.meta.url))
+  // Real files retain inode/size checks; Electron's virtual ASAR stats do not.
+  const unpacked = bundled.replace(/\.asar([\\/])/u, '.asar.unpacked$1')
+  return existsSync(unpacked) ? unpacked : bundled
 }
 
 export function loadReviewedReferences(root = referenceLibraryRoot()): ReferenceDirection[] {

@@ -48,7 +48,8 @@
     ],
     "npmRebuild": false,
     "asarUnpack": [
-      "node_modules/**/*.node"
+      "node_modules/**/*.node",
+      "node_modules/@harness/design-agent/references/library/**/*"
     ],
     "files": [
       "dist/{main.js,preload.cjs,native-binding-proof.js}",
