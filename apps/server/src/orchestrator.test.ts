@@ -1917,7 +1917,10 @@ describe('provider-neutral design briefing', () => {
     try {
       await orchestrator.submitTurn('trusted-build', 'Continue as a normal task.')
       expect(readDesignBrief(workspace)).toEqual(snapshots.approvedBrief)
-      expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
+      expect(sessions[0]?.sent).toEqual([
+        expect.stringContaining('User request:\nContinue as a normal task.'),
+      ])
+      expect(sessions[0]?.sent[0]).toContain('Earlier phase-only JSON protocols no longer apply')
       expect(
         received.some(
           ({ event }) =>
@@ -1976,7 +1979,10 @@ describe('provider-neutral design briefing', () => {
       const { orchestrator, sessions, received } = harness(undefined, store)
       try {
         await orchestrator.submitTurn('changed-reference', 'Continue as a normal task.')
-        expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
+        expect(sessions[0]?.sent).toEqual([
+          expect.stringContaining('User request:\nContinue as a normal task.'),
+        ])
+        expect(sessions[0]?.sent[0]).toContain('Earlier phase-only JSON protocols no longer apply')
         expect(
           received.some(
             ({ event }) =>
@@ -3190,6 +3196,11 @@ describe('provider-neutral design briefing', () => {
             event.type === 'thread.error' && event.message.includes('preview port 5173'),
         ),
       ).toBe(true)
+      await orchestrator.sendTurn('preview-recovery', 'then use port 6003')
+      expect(sessions[0]?.sent).toHaveLength(3)
+      expect(sessions[0]?.sent[2]).toContain('Earlier phase-only JSON protocols no longer apply')
+      expect(sessions[0]?.sent[2]).toContain('perform the launch on an available local port')
+      expect(sessions[0]?.sent[2]).toContain('then use port 6003')
     } finally {
       previewStarts.failures.length = 0
       await orchestrator.disposeAll()
@@ -3702,7 +3713,8 @@ describe('persisted threads', () => {
       })
       await vi.waitFor(() => expect(store.designRun('persisted-exact-build')).toBeUndefined())
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
-      expect(sessions[0]?.sent[2]).toBe(queuedPrompt)
+      expect(sessions[0]?.sent[2]).toContain(`User request:\n${queuedPrompt}`)
+      expect(sessions[0]?.sent[2]).toContain('Earlier phase-only JSON protocols no longer apply')
       expect(capturePreview).not.toHaveBeenCalled()
       expect(received.map(({ event }) => event)).toEqual(
         expect.arrayContaining([
