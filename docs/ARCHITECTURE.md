@@ -241,6 +241,25 @@ extra OpenAI API key for account-backed dictation.
 
 ---
 
+## Process ownership
+
+**Every child the server starts belongs to an owned tree.** `spawnOwned`/`spawnCli` in
+`@harness/proc` give each POSIX child its own process group, and `killTree` escalates the
+group through SIGTERM → SIGKILL; on Windows teardown runs `taskkill /T` on the spawned
+pid, which also collects grandchildren a `.cmd` shim orphaned by exiting early. Terminal
+PTYs are owned too: on Linux `ownPtySession` proves the kernel session from `/proc`
+(same pid, start time, and uid) and `terminatePtySession` sweeps every member while the
+verified leader is held stopped, so a reused session id never widens signal authority.
+
+**The guarantee ends at the owned boundary — by design and by platform.** A grandchild
+that daemonizes (`setsid`) leaves its group or session and survives; members running
+under a different uid (sudo/setuid) are never signalled. Off Linux there is no session
+sweep: PTY teardown is the leader alone with a SIGKILL backstop, so descendants can
+outlive a closed terminal on macOS. And an ownership record that can no longer be proved
+keeps failing rather than guessing at processes it cannot identify.
+
+---
+
 ## Project-scoped MCP configuration
 
 **TasteCode owns project-scoped MCP configuration; vendor-global configuration is an
@@ -464,3 +483,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-08 | Added checkpoint reachability and checkout guards, explicit history maintenance, provider controls, task-state ownership, bounded leases and local Electron performance gates. |
 | 2026-09-15 | Added authenticated repository and upload image previews, isolated SVG rendering, lazy loading, and byte-bounded caches for pull-request Markdown.                             |
 | 2026-09-15 | Dropped the Claude Agent SDK's bundled per-platform CLI from the dependency graph and the desktop package; the adapter always spawns the user's `claude`.                      |
+| 2026-09-16 | Owned every spawned process tree and Linux PTY session, and stated the teardown limits at the owned boundary.                                                                  |
