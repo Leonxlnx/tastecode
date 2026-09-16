@@ -75,8 +75,8 @@ to replace automatic candidates once inspected, and label alternate revisions wi
 ## Validation status
 
 The local initial catalog contains ten individually inspected section pairs from Meridian,
-Ritovex and Scalient. Complete-image discovery expands this installation to 120 composition groups,
-including 16 heroes. The roughly one thousand raw generated images include fragments and revisions;
+Ritovex and Scalient. Complete-image discovery expands this installation to 118 composition groups,
+including 15 heroes. The roughly one thousand raw generated images include fragments and revisions;
 they are not one thousand independent layouts and have not all been visually reviewed. Runtime unit
 and orchestration checks cover equal group eligibility, sampling without replacement,
 explicit selection, image attachment transport, catalog validation and persisted selection.

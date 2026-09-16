@@ -59,7 +59,8 @@ export function generatedReferenceCandidates(root: string) {
         /^([a-z0-9][a-z0-9-]*?)-(desktop|mobile)(?:-(full|v\d+))?\.(png|jpe?g|webp)$/i.exec(
           file.name,
         )
-      if (!match || /threshold|partial|crop|fragment/.test(match[1]!)) continue
+      if (!match || /threshold|partial|crop|fragment|(?:^|-)(?:lower|upper)(?:-|$)/.test(match[1]!))
+        continue
       const [, section, viewport] = match
       const views = sections.get(section!) ?? {}
       const key = viewport!.toLowerCase() as 'desktop' | 'mobile'
