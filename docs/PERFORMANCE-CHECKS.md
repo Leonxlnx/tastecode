@@ -33,6 +33,12 @@ Keep the machine otherwise quiet during measurement. A failure is a failed check
 the full report before drawing a conclusion. Run this on each release OS. Unit tests
 cover the accounting and thresholds; they do not replace real Electron measurements.
 
+For adversarial measurement — 2,000 messages, eight sessions, 240 stream batches, and a
+cold start seeded with 1,000 threads across 50 projects — set
+`HARNESS_PERF_ADVERSARIAL=1`. Adversarial runs keep every structural coverage check but
+relax the budget ceilings; they exist to produce source-bound measurements (the report
+records the exact commit), not to pass or fail the gate.
+
 To verify trusted preview height limits, capture cancellation, and storage cleanup using
 real Electron windows and the real preload bridge:
 
