@@ -868,7 +868,7 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Drag and drop result">
-                <input id="drag-drop-pass" name="drag-drop" type="radio" value="pass" /><label
+                <input id="drag-drop-pass" name="drag-drop" type="radio" value="pass" checked /><label
                   for="drag-drop-pass"
                   >PASS</label
                 >
@@ -876,7 +876,7 @@
                   for="drag-drop-fail"
                   >FAIL</label
                 >
-                <input id="drag-drop-blocked" name="drag-drop" type="radio" value="blocked" checked /><label
+                <input id="drag-drop-blocked" name="drag-drop" type="radio" value="blocked" /><label
                   for="drag-drop-blocked"
                   >BLOCKED</label
                 >
@@ -885,7 +885,7 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Synthetic drop events reach both handlers without crash. Real OS-level drag with file paths (webUtils.getPathForFile) still needs a human drag between windows.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">Real OS drag verified by human tester: Unicode file dropped into the composer and folder onto the rail accepted correctly, no duplicate events.</textarea>
               </label>
             </div>
           </article>
