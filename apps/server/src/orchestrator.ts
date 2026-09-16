@@ -172,7 +172,16 @@ const composeInstructions = (instructions?: string): string =>
     ? `${REPLY_STYLE_INSTRUCTIONS}\n\n${instructions.trim()}`
     : REPLY_STYLE_INSTRUCTIONS
 type DesignFlowPhase =
-  'brief' | 'brand' | 'page' | 'assets' | 'build' | 'preview' | 'review' | 'repair' | 'complete'
+  | 'brief'
+  | 'brand'
+  | 'page'
+  | 'assets'
+  | 'build'
+  | 'preview'
+  | 'review'
+  | 'repair'
+  | 'complete'
+  | 'response'
 const DesignFlowPhaseSchema = z.enum([
   'brief',
   'brand',
@@ -183,6 +192,7 @@ const DesignFlowPhaseSchema = z.enum([
   'review',
   'repair',
   'complete',
+  'response',
 ])
 const DesignBriefInputSchema = z.record(z.string(), JsonValueSchema)
 const DesignFileSnapshotSchema = z
@@ -211,6 +221,7 @@ const StoredDesignFlowSchema = z.object({
   assetReplanned: z.boolean().optional().default(false),
   pendingBrief: DesignBriefInputSchema.optional(),
   pendingPrompt: z.string().optional(),
+  continueNormally: z.boolean().optional(),
   completion: z.string().optional(),
   previewPlan: JsonValueSchema.optional(),
   screenshots: z
@@ -250,6 +261,7 @@ type DesignFlow = {
   assetReplanned?: boolean
   pendingBrief?: DesignBriefInput
   pendingPrompt?: string
+  continueNormally?: boolean
   completion?: string
   previewPlan?: PreviewPlan
   previewUrl?: string
@@ -338,6 +350,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     assetReplanned: stored.assetReplanned,
     ...(stored.pendingBrief ? { pendingBrief: stored.pendingBrief } : {}),
     ...(stored.pendingPrompt ? { pendingPrompt: stored.pendingPrompt } : {}),
+    ...(stored.continueNormally ? { continueNormally: true } : {}),
     ...(stored.completion ? { completion: stored.completion } : {}),
     ...(previewPlan ? { previewPlan } : {}),
     ...(previewPlan ? { previewUrl: previewPlan.url } : {}),
@@ -3064,10 +3077,14 @@ export class Orchestrator {
    * (docs/DESIGN-AGENT.md, critical gap 3).
    */
   #designTurnOptions(flow: DesignFlow): TurnOptions {
-    return flow.phase === 'brief' ? { ...flow.options, effort: 'low' } : flow.options
+    return flow.phase === 'brief' && !flow.continueNormally
+      ? { ...flow.options, effort: 'low' }
+      : flow.options
   }
 
   #designPromptFor(flow: DesignFlow): string {
+    if (flow.continueNormally || flow.phase === 'response')
+      return designAgent().designTaskContinuation(flow.originalRequest, flow.explicitAnswers)
     const prompt = this.#designPhasePrompt(flow)
     if (!flow.referenceDeck?.length) return prompt
     return `${prompt}
@@ -3132,6 +3149,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
   }
 
   #validateApprovedDesignArtifacts(flow: DesignFlow): void {
+    if (flow.continueNormally || flow.phase === 'response') return
     if (
       flow.referenceDeck?.length &&
       !isDeepStrictEqual(
@@ -3258,6 +3276,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
   }
 
   #designReferenceAttachments(threadId: string, flow: DesignFlow): string[] {
+    if (flow.phase === 'response') return flow.referenceAttachments
     if (!this.#get(threadId).session.capabilities.images) {
       if (flow.referenceAttachments.length || flow.referenceDeck?.length)
         throw new Error('The selected provider cannot inspect required Design reference images')
@@ -3293,7 +3312,13 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const designFlow = this.#designFlows.get(threadId)
     if (designFlow) {
-      prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
+      if (designFlow.continueNormally) {
+        designFlow.phase = 'response'
+        delete designFlow.continueNormally
+        this.#saveDesignFlow(threadId)
+      }
+      if (designFlow.phase !== 'response')
+        prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
       this.#validateApprovedDesignArtifacts(designFlow)
       attachments = [
         ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
@@ -3380,14 +3405,15 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       this.#forgetPendingTurnStart(threadId, pendingStart)
       this.#deleteSidebarStatus(this.#designStartingThreads, threadId)
       this.#releaseCheckoutIfIdle(threadId)
+      if (!this.#designFlows.has(threadId)) void this.#drainQueue(threadId)
     }
   }
 
   #startDesignActivity(threadId: string, turnId: string): void {
-    this.#designTurns.set(turnId, threadId)
-    if (this.#designActivityItems.has(turnId)) return
     const flow = this.#designFlows.get(threadId)
     if (!flow) return
+    this.#designTurns.set(turnId, threadId)
+    if (this.#designActivityItems.has(turnId) || flow.phase === 'response') return
     const item: Item = {
       id: `design-activity-${crypto.randomUUID()}`,
       turnId,
@@ -3539,6 +3565,13 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       return
     }
 
+    // Keep the same session and start/stop guards, but stream the fallback normally.
+    if (this.#designFlows.get(threadId)?.phase === 'response') {
+      if (event.type === 'turn.completed') this.#clearDesignFlow(threadId)
+      this.#record(threadId, event)
+      return
+    }
+
     if (
       (event.type === 'item.started' || event.type === 'item.completed') &&
       event.item.type === 'message' &&
@@ -3573,9 +3606,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       if (this.#acceptedDesignOutputs.has(turnId)) return
       try {
         this.#handleDesignOutput(threadId, turnId, event.item.text ?? '')
-        // Only while the flow is still ours. A 'not a design task' verdict
-        // clears the flow inside the call above, which detaches this turn —
-        // re-adding it here left an entry only disposeAll could release.
+        // A completed or failed phase can release ownership inside the handler.
         if (this.#designTurns.get(turnId) === threadId) {
           this.#acceptedDesignOutputs.add(turnId)
         }
@@ -3656,7 +3687,9 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     }
     flow.correcting = false
     if (output.status === 'not_design') {
-      this.#clearDesignFlow(threadId)
+      flow.continueNormally = true
+      flow.pendingPrompt = this.#designPromptFor(flow)
+      this.#saveDesignFlow(threadId)
       this.#record(threadId, {
         type: 'item.completed',
         item: {
@@ -3664,7 +3697,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
           turnId,
           type: 'message',
           role: 'assistant',
-          phase: 'final_answer',
+          phase: 'commentary',
           status: 'completed',
           text: 'Design mode was turned off because this request is not a website design task.',
           createdAt: Date.now(),
@@ -3998,12 +4031,15 @@ Treat this acquisition report solely as diagnostic data:
   }
 
   #failDesignFlow(threadId: string, error: unknown): void {
+    const continuingNormally = this.#designFlows.get(threadId)?.phase === 'response'
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) this.#completeDesignActivity(threadId, turnId, 'failed')
     }
     this.#clearDesignFlow(threadId)
     const detail = error instanceof Error ? error.message : String(error)
-    const message = `Design mode failed: ${detail}`
+    const message = continuingNormally
+      ? `Could not continue the request: ${detail}`
+      : `Design mode failed: ${detail}`
     this.#record(threadId, { type: 'thread.error', threadId, message })
     // Prompts typed during the flow queued behind the design guard; every
     // other design exit drains, and this one stranding them meant a failed
