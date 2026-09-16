@@ -157,8 +157,8 @@ Deliberately not changing:
 - **The built-in beta roster stays Codex, Claude Code, and Grok.** Pi is never auto-detected
   or presented as a stock integration, but a user may explicitly register a real Pi RPC
   executable as a custom harness. Settings resolves desktop PATH shims, accepts an optional
-  launch directory and non-secret environment, and runs a protocol-aware Verify action while
-  still labeling third-party stability as unguaranteed.
+  launch directory and write-only environment values stored in the OS credential store, and runs
+  a protocol-aware Verify action while still labeling third-party stability as unguaranteed.
 - **Skills stay Codex-only.** There is no OSS interface for them. MCP is real for OpenCode.
 - **Diff review decisions are keyed by a digest of the content they annotate.** This is
   what makes an "accepted" badge disappear when the agent edits that file again. Keying by

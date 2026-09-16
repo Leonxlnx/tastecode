@@ -83,4 +83,23 @@ describe('custom harness launch', () => {
 
     expect(result.stdout).toBe('early-late')
   })
+  it('redacts configured environment values from child failure details', async () => {
+    const secret = 'custom-environment-sentinel'
+    const script = 'process.stderr.write(process.env.CUSTOM_SECRET);process.exit(2)'
+
+    await expect(
+      runCustomHarness(
+        harness({ args: ['-e', script], environment: { CUSTOM_SECRET: secret } }),
+        undefined,
+        [],
+      ),
+    ).rejects.toThrow('exited with code 2: [redacted]')
+    await expect(
+      runCustomHarness(
+        harness({ args: ['-e', script], environment: { CUSTOM_SECRET: secret } }),
+        undefined,
+        [],
+      ),
+    ).rejects.not.toThrow(secret)
+  })
 })

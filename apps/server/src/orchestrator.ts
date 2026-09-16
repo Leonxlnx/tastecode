@@ -685,7 +685,11 @@ export class Orchestrator {
     harness: Parameters<CustomHarnessStore['upsert']>[0],
     workspacePath?: string,
   ) {
-    return verifyCustomHarnessCompatibility(harness, workspacePath, this.#onLog)
+    return verifyCustomHarnessCompatibility(
+      this.#customHarnesses.preview(harness),
+      workspacePath,
+      this.#onLog,
+    )
   }
 
   removeCustomHarness(harnessId: string): void {

@@ -20,6 +20,7 @@ import {
   actionableLaunchError,
   customHarnessRun,
   customHarnessSpawn,
+  redactCustomHarnessEnvironment,
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
@@ -310,7 +311,11 @@ export async function verifyCustomHarness(
   }
 
   try {
-    const protocol = await probeCustomHarnessProtocol(harness, workspacePath, onLog)
+    const protocol = await probeCustomHarnessProtocol(
+      harness,
+      workspacePath,
+      customHarnessLogger(harness, onLog),
+    )
     checks.push(protocol)
     return {
       status: protocol.status === 'warning' ? 'warning' : 'ready',
@@ -337,6 +342,13 @@ export async function verifyCustomHarness(
       checks,
     }
   }
+}
+
+function customHarnessLogger(
+  harness: CustomHarness | undefined,
+  onLog: (line: string) => void,
+): (line: string) => void {
+  return harness ? (line) => onLog(redactCustomHarnessEnvironment(line, harness)) : onLog
 }
 
 async function probeCustomHarnessProtocol(
@@ -568,7 +580,7 @@ function grokRuntime(
       const projectMcp = options.mcpServers?.some((server) => server.enabled) ?? false
       if (projectMcp) {
         const adapter = await acpAdapterFor(harness, options)
-        adapter.on('log', onLog)
+        adapter.on('log', customHarnessLogger(harness, onLog))
         return startedSession(adapter, async () => {
           const starting = adapter.startThread(workspacePath, {
             model: options.model,
@@ -582,7 +594,7 @@ function grokRuntime(
       }
       const { GrokAdapter } = await loadGrokAdapter()
       const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', onLog)
+      adapter.on('log', customHarnessLogger(harness, onLog))
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
         effort: options.effort,
@@ -599,7 +611,7 @@ function grokRuntime(
       // the protocol capability check before loading it.
       if (threadId.startsWith('acp-grok-')) {
         const adapter = await acpAdapterFor(harness, options)
-        adapter.on('log', onLog)
+        adapter.on('log', customHarnessLogger(harness, onLog))
         return startedSession(adapter, async () => {
           const resuming = adapter.resumeThread(threadId, workspacePath, {
             model: options.model,
@@ -618,7 +630,7 @@ function grokRuntime(
       }
       const { GrokAdapter } = await loadGrokAdapter()
       const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', onLog)
+      adapter.on('log', customHarnessLogger(harness, onLog))
       const thread = await adapter.resumeThread(
         threadId,
         options.providerSessionId,
@@ -650,7 +662,7 @@ function antigravityRuntime(
       const harness = harnessFor('antigravity', options.agent, resolveHarness)
       const { AntigravityAdapter } = await loadAntigravityAdapter()
       const adapter = new AntigravityAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', onLog)
+      adapter.on('log', customHarnessLogger(harness, onLog))
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
         effort: options.effort,
@@ -692,7 +704,7 @@ function cursorRuntime(
     const adapter = new CursorAdapter(
       harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
     )
-    adapter.on('log', onLog)
+    adapter.on('log', customHarnessLogger(harness, onLog))
     const selection = {
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
@@ -731,7 +743,7 @@ function openCodeRuntime(
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
-    adapter.on('log', onLog)
+    adapter.on('log', customHarnessLogger(harness, onLog))
     return startedSession(adapter, async () => {
       if (harness) {
         await customHarnessOperation(harness, 'start its server', adapter.start())
@@ -807,7 +819,7 @@ function codexRuntime(
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
-    adapter.on('log', onLog)
+    adapter.on('log', customHarnessLogger(harness, onLog))
     return startedSession(adapter, async () => {
       if (harness) {
         await customHarnessOperation(harness, 'initialize app-server', adapter.start())
@@ -861,7 +873,7 @@ function acpRuntime(
           }
         : undefined,
     )
-    adapter.on('log', onLog)
+    adapter.on('log', customHarnessLogger(harness, onLog))
     return startedSession(adapter, async () => {
       const selection = {
         approval: options.approval,
@@ -923,7 +935,7 @@ function claudeRuntime(
           }
         : {},
     )
-    adapter.on('log', onLog)
+    adapter.on('log', customHarnessLogger(harness, onLog))
     return adapter
   }
 
@@ -994,7 +1006,7 @@ function piRuntime(
       spawn: customHarnessSpawn(harness, workspacePath),
       ...(workspacePath ? { workspacePath } : {}),
     })
-    adapter.on('log', onLog)
+    adapter.on('log', customHarnessLogger(harness, onLog))
     return adapter
   }
   return {
