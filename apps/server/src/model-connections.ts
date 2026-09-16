@@ -7,7 +7,12 @@ import {
   type StoredModelConnection,
 } from '@harness/contracts'
 import { z } from 'zod'
-import { hasCredential, removeCredential, writeCredential } from './credentials.js'
+import {
+  hasCredential,
+  removeCredential,
+  removeCredentialStrict,
+  writeCredential,
+} from './credentials.js'
 import { configFile } from './product-paths.js'
 
 type ConfigFile = { version: 1; connections: StoredModelConnection[] }
@@ -44,12 +49,14 @@ export type ModelCredentialStore = {
   has(reference: string): boolean
   write(reference: string, value: string): void
   remove(reference: string): void
+  removeStrict(reference: string): void
 }
 
 const OS_CREDENTIALS: ModelCredentialStore = {
   has: hasCredential,
   write: writeCredential,
   remove: removeCredential,
+  removeStrict: removeCredentialStrict,
 }
 
 /** Human-readable provider configuration. API keys stay in the OS credential store. */
@@ -75,11 +82,20 @@ export class ModelConnectionStore {
     const existing = index < 0 ? undefined : file.connections[index]
     const connection = StoredModelConnectionSchema.parse({
       ...input,
-      credentialRef: existing?.credentialRef ?? `model-connections/${input.id}`,
+      // Stored connections keep their reference. New ones get a unique
+      // reference rather than deriving it from the id, so an API key a
+      // deleted same-id connection orphaned can never resolve again.
+      credentialRef: existing?.credentialRef ?? `model-connections/${randomUUID()}`,
     })
     if (index < 0) file.connections.push(connection)
     else file.connections[index] = connection
     this.#write(file)
+    if (!existing) {
+      // Connections created before unique references used
+      // `model-connections/<id>`; a leftover entry under that name is exactly
+      // the orphan this schema change exists to bury.
+      this.credentials.remove(`model-connections/${input.id}`)
+    }
     return this.#public(connection)
   }
 
@@ -94,7 +110,9 @@ export class ModelConnectionStore {
     if (index < 0) throw new Error(`model connection "${id}" does not exist`)
     const [connection] = file.connections.splice(index, 1)
     this.#write(file)
-    if (connection) this.credentials.remove(connection.credentialRef)
+    // Strict removal: a swallowed delete would orphan the API key, and the
+    // caller deserves to know the keyring still holds it.
+    if (connection) this.credentials.removeStrict(connection.credentialRef)
   }
 
   #public(connection: StoredModelConnection): ModelConnection {
