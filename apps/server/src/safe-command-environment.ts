@@ -65,6 +65,9 @@ export function safeCommandEnvironment(
     SYSTEMROOT: process.env['SYSTEMROOT'],
     WINDIR: process.env['WINDIR'],
     COMSPEC: process.env['COMSPEC'],
+    // cmd.exe searches the current directory before PATH unless this is set,
+    // so a workspace-shipped `git.cmd` would bypass the executable allowlist.
+    NoDefaultCurrentDirectoryInExePath: '1',
     TEMP: runtime,
     TMP: runtime,
     HOME: workspace,

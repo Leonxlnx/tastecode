@@ -30,6 +30,7 @@ describe('safe command environment', () => {
     expect(env['TEMP']).toBe(runtime)
     expect(env['TMP']).toBe(runtime)
     expect(env['APPDATA']).toBe(runtime)
+    expect(env['NoDefaultCurrentDirectoryInExePath']).toBe('1')
   })
 
   it('uses a per-user runtime directory instead of one shared name', () => {
