@@ -82,6 +82,7 @@ describe('reviewed reference library', () => {
       '01-hero-desktop-full',
       '01-hero-mobile',
       '01-hero-mobile-v2',
+      '01-hero-lower-02-about-desktop',
       '02-services-desktop',
       '03-about-desktop-1',
       '04-work-desktop',
