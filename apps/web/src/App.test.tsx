@@ -7587,6 +7587,117 @@ function sessionTitles(): string[] {
 }
 
 describe('reopening a session', () => {
+  it('retries deferred provider history when a queued turn ends before its first replay returns', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reads = 0
+    let release!: () => void
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'thread.history') return request(method, params)
+      reads += 1
+      const response = {
+        events: [
+          completedHistoryEvent(1, 'base', 'Existing message'),
+          ...(reads >= 3 ? [completedHistoryEvent(2, 'outside', 'Outside provider reply')] : []),
+        ],
+        running: reads === 2,
+        approval: 'ask',
+      }
+      if (reads === 2)
+        return new Promise((resolve) => {
+          release = () => resolve(response)
+        })
+      return Promise.resolve(response)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    expect(await screen.findByText('Existing message')).toBeTruthy()
+    startTurn('untouched-thread', 'local-turn')
+    act(() => {
+      transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+    })
+    completeTurn('untouched-thread', 'local-turn')
+    startTurn('untouched-thread', 'queued-turn')
+    completeTurn('untouched-thread', 'queued-turn')
+    expect(reads).toBe(2)
+    await act(async () => release())
+    expect(await screen.findByText('Outside provider reply')).toBeTruthy()
+    expect(reads).toBe(3)
+  })
+
+  it('keeps deferred provider history when a queued turn starts during its replay', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reads = 0
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'thread.history') return request(method, params)
+      reads += 1
+      return Promise.resolve({
+        events: [
+          completedHistoryEvent(1, 'base', 'Existing message'),
+          ...(reads >= 3 ? [completedHistoryEvent(2, 'outside', 'Outside provider reply')] : []),
+        ],
+        running: reads === 2,
+        approval: 'ask',
+      })
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    expect(await screen.findByText('Existing message')).toBeTruthy()
+    startTurn('untouched-thread', 'local-turn')
+    act(() => {
+      transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+    })
+    completeTurn('untouched-thread', 'local-turn')
+    startTurn('untouched-thread', 'queued-turn')
+    await waitFor(() => expect(reads).toBe(2))
+    expect(screen.queryByText('Outside provider reply')).toBeNull()
+    completeTurn('untouched-thread', 'queued-turn')
+    expect(await screen.findByText('Outside provider reply')).toBeTruthy()
+    expect(reads).toBe(3)
+  })
+
+  it.each(['turn.completed', 'thread.error'] as const)(
+    'replays deferred provider history after %s',
+    async (completion) => {
+      const request = transport.request.getMockImplementation()!
+      let changed = false
+      transport.request.mockImplementation((method, params) => {
+        if (method !== 'thread.history') return request(method, params)
+        return Promise.resolve({
+          events: [
+            completedHistoryEvent(1, 'base', 'Existing message'),
+            ...(changed ? [completedHistoryEvent(2, 'outside', 'Outside provider reply')] : []),
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      })
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+      expect(await screen.findByText('Existing message')).toBeTruthy()
+      startTurn('untouched-thread', 'local-turn')
+      await screen.findByText('Working')
+      transport.request.mockClear()
+      changed = true
+      act(() => {
+        transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+        transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+      })
+      expect(rpcCount('thread.history')).toBe(0)
+      if (completion === 'turn.completed') completeTurn('untouched-thread', 'local-turn')
+      else
+        emitThreadEvent('untouched-thread', {
+          type: 'thread.error',
+          threadId: 'untouched-thread',
+          message: 'Stopped',
+        })
+      expect(await screen.findByText('Outside provider reply')).toBeTruthy()
+      expect(screen.getAllByText('Existing message')).toHaveLength(1)
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'thread.history'),
+      ).toEqual([['thread.history', { threadId: 'untouched-thread' }]])
+    },
+  )
+
   /**
    * Asserting on the request rather than on rendered rows: happy-dom gives
    * every element zero size and has no ResizeObserver, so the virtualiser

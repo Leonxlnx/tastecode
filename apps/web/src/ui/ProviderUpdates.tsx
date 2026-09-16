@@ -88,6 +88,15 @@ export function ProviderUpdateNotice(props: {
       className="notice notice--provider-update"
       role="status"
       visible={entries.length > 0 && !props.suppressed}
+      onDismiss={dismiss}
+      autoDismissPaused={busy}
+      dismissKey={JSON.stringify(
+        entries.map((entry) => [
+          entry.provider,
+          entry.latestVersion,
+          state.operations[entry.provider]?.phase,
+        ]),
+      )}
     >
       <div className="provider-toast__header">
         <span>
