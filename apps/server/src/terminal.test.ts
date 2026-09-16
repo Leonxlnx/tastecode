@@ -77,6 +77,19 @@ describe('TerminalManager', () => {
     )
   })
 
+  it('keeps server-only HARNESS_* variables out of terminal shells', () => {
+    const environment = terminalEnvironment({
+      PATH: '/system/bin',
+      HARNESS_ACCESS_TOKEN: 'secret-token',
+      HARNESS_PORT: '4311',
+      CUSTOM: 'kept',
+    })
+    expect(environment.HARNESS_ACCESS_TOKEN).toBeUndefined()
+    expect(environment.HARNESS_PORT).toBeUndefined()
+    expect(environment.CUSTOM).toBe('kept')
+    expect(environment.TERM).toBe('xterm-256color')
+  })
+
   it('batches high-volume PTY output without changing its byte order', () => {
     const emitted: string[] = []
     const buffer = new TerminalOutputBuffer((data) => emitted.push(data), 4, 64 * 1024)
@@ -313,6 +326,55 @@ describe('TerminalManager', () => {
     const closed = manager.close(terminalId)
     pty.emitExit(0)
     await expect(closed).resolves.toBeUndefined()
+  })
+
+  it('caps the number of open terminals per thread', () => {
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => controlledPty() },
+    )
+    const ids = Array.from({ length: 8 }, (_, index) =>
+      manager.open('thread-capped', os.tmpdir(), 80, 24, `pane-${index}`),
+    )
+    expect(new Set(ids).size).toBe(8)
+    // Reattaching an existing pane does not count against the cap.
+    expect(manager.open('thread-capped', os.tmpdir(), 100, 30, 'pane-0')).toBe(ids[0])
+    expect(() => manager.open('thread-capped', os.tmpdir(), 80, 24, 'pane-9')).toThrow(
+      /too many open terminals for thread/i,
+    )
+    expect(() => manager.open('thread-capped', os.tmpdir(), 80, 24, 'pane-0')).not.toThrow()
+  })
+
+  it('caps the total number of open terminals', () => {
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => controlledPty() },
+    )
+    for (let index = 0; index < 64; index += 1) {
+      manager.open(`thread-${index}`, os.tmpdir(), 80, 24)
+    }
+    expect(() => manager.open('thread-overflow', os.tmpdir(), 80, 24)).toThrow(
+      /too many open terminals \(limit 64\)/i,
+    )
+  })
+
+  it('surfaces a dead PTY write or resize as a terminal exit', () => {
+    const dead = Object.assign(new Error('write EIO'), { code: 'EIO' })
+    const pty = controlledPty({
+      write: () => {
+        throw dead
+      },
+      resize: () => {
+        throw dead
+      },
+    })
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: () => pty },
+    )
+    const terminalId = manager.open('thread-dead', os.tmpdir(), 80, 24)
+    expect(() => manager.write(terminalId, 'x')).toThrow(/^terminal exited:/)
+    expect(() => manager.resize(terminalId, 100, 30)).toThrow(/^terminal exited:/)
   })
 
   it('attempts every PTY close when one kill request fails', async () => {
@@ -705,7 +767,13 @@ function processErrorCode(error: unknown): string | undefined {
   return typeof error.code === 'string' ? error.code : undefined
 }
 
-function controlledPty(options: { kill?: () => void } = {}): IPty & {
+function controlledPty(
+  options: {
+    kill?: () => void
+    write?: (data: string) => void
+    resize?: (columns: number, rows: number) => void
+  } = {},
+): IPty & {
   emitData(data: string): void
   emitExit(exitCode: number): void
 } {
@@ -725,8 +793,8 @@ function controlledPty(options: { kill?: () => void } = {}): IPty & {
       onExit = listener
       return { dispose: () => {} }
     },
-    write: () => {},
-    resize: () => {},
+    write: (data) => options.write?.(data),
+    resize: (columns, rows) => options.resize?.(columns, rows),
     clear: () => {},
     kill: () => options.kill?.(),
     pause: () => {},

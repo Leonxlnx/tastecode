@@ -10,6 +10,8 @@ const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
 const RETAINED_OUTPUT_SIZE = 200_000
 const RETAINED_EXIT_LIMIT = 64
 const RETAINED_EXIT_TTL_MS = 60 * 60 * 1000
+const MAX_TERMINALS_PER_THREAD = 8
+const MAX_OPEN_TERMINALS = 64
 export type TerminalStatus = {
   status: 'running' | 'exited' | 'unknown'
   output: string
@@ -213,6 +215,24 @@ export class TerminalManager {
       return currentId
     }
 
+    // PTYs hold real processes and kernel buffers; bound how many one thread
+    // and the whole server may keep open instead of spawning without limit.
+    let openForThread = 0
+    let openTotal = 0
+    for (const entry of this.#byId.values()) {
+      if (entry.hasExited) continue
+      openTotal += 1
+      if (entry.threadId === threadId) openForThread += 1
+    }
+    if (openTotal >= MAX_OPEN_TERMINALS) {
+      throw new Error(`too many open terminals (limit ${MAX_OPEN_TERMINALS})`)
+    }
+    if (openForThread >= MAX_TERMINALS_PER_THREAD) {
+      throw new Error(
+        `too many open terminals for thread ${threadId} (limit ${MAX_TERMINALS_PER_THREAD})`,
+      )
+    }
+
     const terminalId = randomUUID()
     this.#pruneStatuses()
     const process = this.#spawnPty(platformShell(), args, {
@@ -270,7 +290,14 @@ export class TerminalManager {
   }
 
   write(terminalId: string, data: string): void {
-    this.#get(terminalId).process.write(data)
+    const entry = this.#get(terminalId)
+    try {
+      entry.process.write(data)
+    } catch (error) {
+      // The PTY can die before its exit event reaches the manager; surface
+      // the lifecycle state instead of a raw fd error to the caller.
+      throw new Error(`terminal exited: ${terminalId}`, { cause: error })
+    }
   }
 
   status(terminalId: string): TerminalStatus {
@@ -302,7 +329,14 @@ export class TerminalManager {
   }
 
   resize(terminalId: string, columns: number, rows: number): void {
-    this.#get(terminalId).process.resize(columns, rows)
+    const entry = this.#get(terminalId)
+    try {
+      entry.process.resize(columns, rows)
+    } catch (error) {
+      // Same dead-but-unreported window as write(); report the lifecycle
+      // state rather than a raw fd error.
+      throw new Error(`terminal exited: ${terminalId}`, { cause: error })
+    }
   }
 
   close(terminalId: string): Promise<void> {
@@ -455,9 +489,15 @@ export function platformShell(
 export function terminalEnvironment(
   environment: NodeJS.ProcessEnv = globalThis.process.env,
 ): NodeJS.ProcessEnv {
+  const child = { ...environment }
+  // Server-only settings and credentials — HARNESS_ACCESS_TOKEN above all —
+  // must not leak into interactive shells and every program launched in them.
+  for (const name of Object.keys(child)) {
+    if (name.startsWith('HARNESS_')) delete child[name]
+  }
   return {
-    ...environment,
-    PATH: desktopPath(environment.PATH ?? '', { env: environment }),
+    ...child,
+    PATH: desktopPath(child.PATH ?? '', { env: child }),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'TasteCode',
