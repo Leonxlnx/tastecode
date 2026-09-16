@@ -86,8 +86,10 @@ describe('brand phase', () => {
     expect(prompt).toContain('Return each motionDirection.principles entry as one string')
     expect(prompt).toContain('Do not apply the same fade-up to every section')
     expect(prompt).toContain('including monumental type or monospace when present')
-    expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
-    expect(prompt).toContain('one base card language and at most one emphasized variant')
+    expect(prompt).toContain(
+      'Preserve rules, panels, card edges and dividers visible in the reference',
+    )
+    expect(prompt).toContain('Derive card padding, radius, surface depth')
     expect(prompt).toContain('primary action, focus and selected states')
     expect(prompt).toContain('prefer relevant supplied, generated, or properly sourced photographs')
   })

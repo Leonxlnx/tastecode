@@ -3258,6 +3258,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       files,
       flow.designSourceBaseline,
       assets,
+      flow.approvedPage,
     )
   }
 

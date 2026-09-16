@@ -91,6 +91,31 @@ describe('page copy lint', () => {
         sections: [{ ...section, copy: { ...section.copy, eyebrow: '01' } }],
       }),
     ).toThrow('copy/decorative-eyebrow')
+    expect(() =>
+      assertPageCopy({
+        ...page,
+        sections: [
+          {
+            ...section,
+            referenceDirectionId: 'reference-hero',
+            copy: { ...section.copy, eyebrow: '01' },
+          },
+        ],
+      }),
+    ).not.toThrow()
+    expect(() =>
+      assertPageCopy({
+        ...page,
+        sections: [
+          {
+            ...section,
+            referenceDirectionId: 'reference-hero',
+            copy: { ...section.copy, eyebrow: 'Trusted by 100 companies' },
+            evidence: [],
+          },
+        ],
+      }),
+    ).toThrow('copy/objective-claim')
   })
 
   it('blocks internal placeholders and overlong heading stacks', () => {
