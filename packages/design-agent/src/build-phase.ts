@@ -3,6 +3,7 @@ import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
 import { record, string, strings } from './parse.js'
@@ -75,6 +76,8 @@ Use the existing project implementation and motion tools without invoking extern
 ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)}. TasteCode validates the workspace before Preview; do not add helper or configuration files.` : ''}
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 ${BUILD_PROTOCOL}
 

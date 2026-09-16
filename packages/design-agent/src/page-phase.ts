@@ -3,6 +3,7 @@ import type { BrandSystem } from './brand.js'
 import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
+import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
 import { parsePageBlueprint, type PageBlueprint } from './page.js'
 import {
@@ -36,7 +37,7 @@ Use the brand system rather than repeating it. Do not choose new colors or typef
 
 Define one base grid, one signature composition rule, and a page rhythm. Choose components by semantic job and content shape, using the least novel component that fully supports the task. Do not assemble component-library demos, cardify prose, or add interaction merely to create activity. For every section specify a compact, medium, and expanded transformation. Compact reduces simultaneity, not content or capability; source order, state, proof adjacency, and action priority must survive.
 
-Give every section one explicit motion decision. Motion must serve feedback, state change, spatial continuity, explanation, or status; use purpose none when motion would add no comprehension. Choose one focal motion idea per section, not a universal fade-up applied to every element. Prefer native CSS and IntersectionObserver for simple entry and state changes. Reserve scroll progress, pinning, dragging, or GSAP-style sequencing for a selected layout case that genuinely depends on it. Use transform and opacity for visual motion, keep interface responses mostly between 100 and 300ms, allow longer narrative movement only when the composition needs it, and provide a reduced-motion replacement that preserves state and meaning. Hover motion is supplemental and must never carry required information.
+Give every section one explicit motion decision using the visible-motion requirements below. Plan hero and media entrances as spatial continuity or explanation; purpose none is available for remaining static sections after the required page animations are covered, or when the user explicitly requests no animation. Hover motion is supplemental and must never carry required information.
 
 Use cards for coherent features, people, plans, proof, actions, and media stories, not as empty wrappers around paragraphs. Plan one related base card language and at most one emphasized variant across the page. Let card size, media crop, and internal composition respond to the content instead of defaulting to equal three-column boxes. When a selected layout is image-led, record stable assetNeeds for every meaningful image or capture rather than replacing it with a decorative vector. Carry the approved brand accent into primary actions, focus and selected states, and one recurring card, media, or section treatment.
 
@@ -72,6 +73,8 @@ Complete this artifact using the project and these instructions; do not invoke e
 ${LANDING_PAGE_GUIDANCE}
 
 ${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 ${referenceDriven ? PAGE_PROTOCOL.replace('["hero-text-1","hero-visual-1"]', '["selected-reference-id"]').replace('"direction-001"', '"selected-reference-id"').replace('"navigation-1"', '"reference-navigation"') : PAGE_PROTOCOL}
 
