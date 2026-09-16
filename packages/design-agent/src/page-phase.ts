@@ -2,6 +2,7 @@ import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
+import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
 import { parsePageBlueprint, type PageBlueprint } from './page.js'
 import {
@@ -60,11 +61,15 @@ REFERENCE LOCK — this overrides any looser example in the catalog above:
 
 Write concrete copy with direct verbs and specific nouns. Never use an em dash. Keep every heading within 12 words and 72 characters so it can normally fit one or two visual lines; a third line is a rare Build-time exception and four lines are forbidden. A Hero gets one headline, at most one concise supporting block, and its actions. Do not stack a headline, description, sub-description, and disclaimer.
 
-Do not invent names, customers, testimonials, metrics, rankings, awards, urgency, capabilities, or proof. An objective claim must point to real evidence recorded on its section. Representative interface records, weather, dates, inventory, and other demo-state data may be created when the page needs a finished one-shot experience, but never label them inside the page as sample, simulated, fictional, pending, unapproved, not connected, or to be supplied. Build records every representative value for the final user verification note instead. Avoid interchangeable formulas such as "the future of", "where X meets Y", "X reimagined", "unlock your potential", "seamless", "built for modern teams", and "one platform, endless possibilities"; replace them with actor + action + object + a truthful boundary. One concept keeps one noun and one action intent keeps one CTA label. Links name their destination and controls name their action.
+Do not invent real customers, testimonials, metrics, rankings, awards, urgency, capabilities, or proof. An objective claim must point to real evidence recorded on its section. Representative interface records, weather, dates, inventory, and other demo-state data may be created when the page needs a finished one-shot experience. Keep internal status notes such as pending, unapproved, not connected, or to be supplied out of the page. The content-scope rules below govern concept identities and their visible identification. Build records representative values for the final user verification note. Avoid interchangeable formulas such as "the future of", "where X meets Y", "X reimagined", "unlock your potential", "seamless", "built for modern teams", and "one platform, endless possibilities"; replace them with actor + action + object + a truthful boundary. One concept keeps one noun and one action intent keeps one CTA label. Links name their destination and controls name their action.
 
 Do not write eyebrow copy, uppercase monospace micro-headings, or decorative 01/02/03 section labels. Real ordered steps belong in the How It Works content itself, not in a page-wide eyebrow system. Do not put internal notes, prototype disclaimers, missing-content notices, approval states, or launch instructions in visible page copy. Do not invent a product name unless the brief requests naming. When naming is requested, avoid collision-prone bare metaphors such as Relay, Pulse, Orbit, Spark, Nexus, Loom, Flow, Beacon, Prism, and Forge, and never repair a weak name by appending AI, Labs, Studio, Tech, Systems, Platform, App, or HQ. Treat generated names as unscreened, never legally cleared.
 
 Complete this artifact using the project and these instructions; do not invoke external design skills.
+
+${LANDING_PAGE_GUIDANCE}
+
+${DESIGN_CONTENT_GUIDANCE}
 
 ${referenceDriven ? PAGE_PROTOCOL.replace('["hero-text-1","hero-visual-1"]', '["selected-reference-id"]').replace('"direction-001"', '"selected-reference-id"').replace('"navigation-1"', '"reference-navigation"') : PAGE_PROTOCOL}
 
