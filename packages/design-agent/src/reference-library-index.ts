@@ -40,7 +40,7 @@ export function generatedReferenceCandidates(root: string) {
           'reference manifest',
         )
       : {}
-    let source = metadata.sourceUrl ?? metadata.source
+    let source = metadata.sourceUrl ?? metadata.source ?? metadata.url
     const readme = path.join(directory, 'README.md')
     if (typeof source !== 'string' && existsSync(readme)) {
       source = readWorkspaceFile(
@@ -56,7 +56,7 @@ export function generatedReferenceCandidates(root: string) {
       if (!file.isFile()) continue
       // Numbered fragments, lower crops and threshold variants are not complete section views.
       const match =
-        /^([a-z0-9][a-z0-9-]*?)-(desktop|mobile)(?:-(full|v\d+))?\.(png|jpe?g|webp)$/i.exec(
+        /^([a-z0-9][a-z0-9-]*?)-(desktop|mobile)(?:-(full|complete|v\d+))?\.(png|jpe?g|webp)$/i.exec(
           file.name,
         )
       if (!match || /threshold|partial|crop|fragment|(?:^|-)(?:lower|upper)(?:-|$)/.test(match[1]!))
@@ -66,7 +66,7 @@ export function generatedReferenceCandidates(root: string) {
       const key = viewport!.toLowerCase() as 'desktop' | 'mobile'
       const previous = views[key]
       const rank = (name: string) =>
-        name.includes('-full.') ? 1000 : Number(/-v(\d+)\./i.exec(name)?.[1] ?? 0)
+        /-(?:full|complete)\./.test(name) ? 1000 : Number(/-v(\d+)\./i.exec(name)?.[1] ?? 0)
       if (!previous || rank(file.name) > rank(previous)) views[key] = file.name
       sections.set(section!, views)
     }
@@ -83,8 +83,8 @@ export function generatedReferenceCandidates(root: string) {
               (item) =>
                 item.label === label ||
                 item.type === label ||
-                (item.order !== undefined &&
-                  String(item.order) === String(Number(/^\d+/.exec(section)?.[0]))),
+                ((item.order ?? item.id) !== undefined &&
+                  Number(item.order ?? item.id) === Number(/^\d+/.exec(section)?.[0])),
             )
         : undefined
       if (

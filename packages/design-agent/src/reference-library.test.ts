@@ -4,10 +4,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DesignBrief } from './brief.js'
+import { PAGE_LAYOUT_FAMILIES } from './page.js'
 import {
   loadReviewedReferences,
   parseReferenceDeck,
   referenceLibraryRoot,
+  referenceCandidatesForFamily,
   selectReviewedReferences,
 } from './reference-library.js'
 
@@ -54,10 +56,18 @@ describe('reviewed reference library', () => {
     expect(referenceLibraryRoot()).toBe(
       fileURLToPath(new URL('../references/library/', import.meta.url)),
     )
-    expect(references).toHaveLength(118)
-    expect(references.filter(({ family }) => family === 'hero')).toHaveLength(15)
-    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(102)
-    expect(selectReviewedReferences(brief, references)).toHaveLength(13)
+    expect(references).toHaveLength(172)
+    expect(references.filter(({ family }) => family === 'hero')).toHaveLength(24)
+    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(144)
+    expect(selectReviewedReferences(brief, references)).toHaveLength(14)
+    for (const family of PAGE_LAYOUT_FAMILIES) {
+      const pool = referenceCandidatesForFamily(family, references)
+      expect(
+        new Set(pool.map((entry) => entry.group ?? entry.id)).size,
+        family,
+      ).toBeGreaterThanOrEqual(10)
+      expect(new Set(pool.map((entry) => entry.imagePath)).size, family).toBeGreaterThanOrEqual(10)
+    }
 
     const custom = library()
     save(custom, [entry])
@@ -104,7 +114,7 @@ describe('reviewed reference library', () => {
     writeFileSync(
       path.join(site, 'manifest.json'),
       JSON.stringify({
-        source: 'https://example.com/new',
+        url: 'https://example.com/new',
         sections: ['hero', { order: 2, label: 'services', status: 'revision-needed' }],
       }),
     )

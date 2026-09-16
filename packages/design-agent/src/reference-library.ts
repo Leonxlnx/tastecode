@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES } from './page.js'
+import { PAGE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
 import type { ReferenceDirection } from './reference-directions.js'
 import { readRasterMetadata } from './raster-metadata.js'
@@ -120,6 +120,28 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
   }
 }
 
+/** Content topics can use a compatible image's geometry without relabeling that image. */
+export function referenceCandidatesForFamily(
+  family: PageLayoutFamily,
+  references: readonly ReferenceDirection[],
+): ReferenceDirection[] {
+  const native = references.filter((entry) => entry.family === family)
+  if (new Set(native.map((entry) => entry.group ?? entry.id)).size >= 10) return native
+  const compatible: Partial<Record<PageLayoutFamily, PageLayoutFamily[]>> = {
+    stats: ['social_proof', 'about'],
+    pricing: ['feature'],
+    how_it_works: ['feature', 'about'],
+    contact: ['cta'],
+    cta: ['contact'],
+    faq: ['feature'],
+  }
+  const pool = references.filter(
+    (entry) => entry.family === family || compatible[family]?.includes(entry.family),
+  )
+  // A deliberately small custom library remains authoritative; never pad it with duplicates.
+  return new Set(pool.map((entry) => entry.group ?? entry.id)).size >= 10 ? pool : native
+}
+
 export function selectReviewedReferences(
   brief: DesignBrief,
   references = loadReviewedReferences(),
@@ -133,7 +155,9 @@ export function selectReviewedReferences(
     // Section titles are free-form and multilingual. Let Page choose the needed
     // compositions from a complete deck instead of discarding families by keywords.
     // Each composition gets the same chance, regardless of source site or style tags.
-    const familyEntries = references.filter((entry) => entry.family === family)
+    const familyEntries = referenceCandidatesForFamily(family, references).filter(
+      (entry) => !groups.has(entry.group ?? entry.id),
+    )
     if (!familyEntries.length) continue
     const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
     const explicitSource = familyEntries.filter(
@@ -151,7 +175,14 @@ export function selectReviewedReferences(
       const group = entry.group ?? entry.id
       if (groups.has(group)) continue
       groups.add(group)
-      selected.push(entry)
+      selected.push(
+        entry.family === family
+          ? entry
+          : {
+              ...entry,
+              cue: `${entry.cue} Sampled for ${family} content from compatible compositions; retain its actual ${entry.family} layout family and image geometry.`,
+            },
+      )
     }
   }
   if (!selected.length)
