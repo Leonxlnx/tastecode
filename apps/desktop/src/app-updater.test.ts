@@ -62,6 +62,57 @@ describe('app update controller', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
+  it('keeps a downloaded update installable after a stray error', async () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('update-available', info)
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce())
+    updater.emit('update-downloaded', info)
+    updater.emit('error', new Error('post-download signature probe failed'))
+
+    expect(controller.state()).toMatchObject({ status: 'ready', version: info.version })
+    expect(controller.install()).toBe(true)
+  })
+
+  it('does not replace a live download with an error state', () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('update-available', info)
+    updater.emit('download-progress', { percent: 40 })
+    updater.emit('error', new Error('flaky network'))
+
+    expect(controller.state()).toMatchObject({ status: 'downloading', progress: 40 })
+  })
+
+  it('does not leak a stale error field into download progress', () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('error', new Error('check failed'))
+    expect(controller.state()).toMatchObject({ status: 'error' })
+
+    updater.emit('download-progress', { percent: 12 })
+    expect(controller.state()).toEqual({
+      status: 'downloading',
+      currentVersion: '0.1.0-beta.1',
+      progress: 12,
+    })
+  })
+
   it('stays inert outside a packaged build', async () => {
     const updater = fakeUpdater()
     const controller = createAppUpdateController({

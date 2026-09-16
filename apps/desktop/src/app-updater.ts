@@ -70,12 +70,16 @@ export function createAppUpdateController(
     currentVersion: options.currentVersion,
     version: info.version,
   })
-  const fail = (cause: unknown) =>
+  const fail = (cause: unknown) => {
+    // A stray late error — a post-download signature probe, a racing second
+    // check — must not throw away an installable update or a live download.
+    if (state.status === 'ready' || state.status === 'downloading') return
     publish({
       status: 'error',
       currentVersion: options.currentVersion,
       error: cause instanceof Error ? cause.message : String(cause),
     })
+  }
 
   const configureUpdater = (client: UpdateClient): UpdateClient => {
     if (updaterConfigured) return client
@@ -93,14 +97,17 @@ export function createAppUpdateController(
       publish(versioned('downloading', info))
       void client.downloadUpdate().catch(fail)
     })
-    client.on('download-progress', (progress) =>
+    client.on('download-progress', (progress) => {
+      // A state left over from a failed check would otherwise leak its stale
+      // error field into the live download.
+      const { error: _stale, ...rest } = state
       publish({
-        ...state,
+        ...rest,
         status: 'downloading',
         currentVersion: options.currentVersion,
         progress: Math.round(progress.percent),
-      }),
-    )
+      })
+    })
     client.on('update-downloaded', (info) => publish(versioned('ready', info)))
     client.on('error', fail)
     return client

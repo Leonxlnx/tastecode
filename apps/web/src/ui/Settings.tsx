@@ -1741,7 +1741,7 @@ function AboutSettings(props: { transport: Transport }) {
             }
           : { state: 'unavailable' as const, detail: 'No verdict' }
   const nativeStatus = manualUpdate
-    ? { state: 'unavailable' as const, detail: 'Download and install updates manually from GitHub' }
+    ? { state: 'manual' as const, detail: 'Download and install updates from GitHub' }
     : nativeUpdate?.status === 'current'
       ? { state: 'ready' as const, detail: 'Up to date' }
       : nativeDownloading

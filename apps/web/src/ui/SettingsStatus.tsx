@@ -4,6 +4,7 @@ const STATE_LABELS = {
   checking: 'Checking',
   ready: 'Ready',
   'setup-needed': 'Setup needed',
+  manual: 'Manual',
   unavailable: 'Unavailable',
   failed: 'Failed',
 } as const
