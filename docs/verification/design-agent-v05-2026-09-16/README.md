@@ -3,6 +3,19 @@
 Branch: `codex/design-agent-v05`, based on main `8d9ac8d1`.
 Draft PR: [#1159](https://github.com/Leonxlnx/tastecode/pull/1159).
 
+## Integration review
+
+On 2026-09-16 the combined candidate (main `8d9ac8d1`, this Design Agent work, PR #1129 at
+`9cef2d64` and PR #1130 at `44893da7`) passed `pnpm lint`, `pnpm typecheck`,
+`VITEST_MAX_WORKERS=2 pnpm test` and `pnpm build`. Renderer coverage is now 1,492 tests;
+server and desktop totals remain 712 and 158. Computer Use verified the compact effort slider
+from Medium to Ultra and back to Medium in the Windows desktop application. No prompt was sent.
+
+[Slider before](effort-before.png) · [Slider after](effort-after.png)
+
+PR #1153 remains pending a successful physical macOS window-drag check. The document-only
+proposal in PR #1132 fails `prettier --check gpt-6-defacto.md` and was excluded from the candidate.
+
 ## Four single-prompt runs
 
 All four tasks were created through the TasteCode desktop UI using Computer Use, Astra Medium,
