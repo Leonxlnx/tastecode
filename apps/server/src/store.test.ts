@@ -602,6 +602,46 @@ describe('recovering interrupted turns', () => {
 })
 
 describe('a database written by a newer build', () => {
+  it('does not keep cache writes a rolled-back recovery made', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-cache-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    for (const [id, turnId] of [
+      ['first', 'turn-first'],
+      ['second', 'turn-second'],
+    ] as const) {
+      seeded.addThread({ id, projectPath: '/repo', provider: 'codex', title: id })
+      seeded.append(id, {
+        type: 'turn.started',
+        turn: { id: turnId, threadId: id, status: 'running', createdAt: 1 },
+      })
+    }
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`CREATE TRIGGER fail_second BEFORE INSERT ON events
+      WHEN json_extract(NEW.payload, '$.turnId') = 'turn-second'
+      BEGIN SELECT RAISE(ABORT, 'injected recovery failure'); END`)
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      // Warm both caches so the failure lands on populated in-memory state.
+      expect(reopened.thread('first')?.unread).toBe(false)
+      expect(reopened.sidebarThreads().every((thread) => !thread.unread)).toBe(true)
+      expect(() => reopened.recoverInterruptedThreads()).toThrow('injected recovery failure')
+      // First's recovery appended and touched, then rolled back: the caches
+      // must agree with the database, not with the lost writes.
+      expect(reopened.thread('first')?.unread).toBe(false)
+      expect(reopened.sidebarThreads().find((thread) => thread.id === 'first')?.unread).toBe(false)
+      expect(reopened.history('first')).toHaveLength(1)
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('leaves a closed thread untouched by lifecycle writes', () => {
     store.addProject('/repo')
     store.addThread({ id: 'closed', projectPath: '/repo', provider: 'codex', title: 'Closed' })

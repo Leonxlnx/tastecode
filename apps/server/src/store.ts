@@ -2172,6 +2172,11 @@ export class Store {
       return recovered
     } catch (error) {
       this.#db.exec('ROLLBACK')
+      // The append/touch calls above also wrote to in-memory caches and the
+      // search revision; a database rollback does not undo those.
+      this.#threadCache.clear()
+      this.#invalidateSidebarThreads()
+      this.#searchRevision += 1
       throw error
     }
   }
