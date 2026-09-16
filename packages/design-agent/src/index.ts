@@ -140,3 +140,5 @@ export {
   parseReferenceDeck,
   selectReviewedReferences,
 } from './reference-library.js'
+export { selectTypographyCandidates, validateTypographySelection } from './typography.js'
+export type { TypographyCandidates } from './typography.js'

@@ -85,7 +85,7 @@ describe('brand phase', () => {
     expect(prompt).toContain('Make motionDirection operational')
     expect(prompt).toContain('Return each motionDirection.principles entry as one string')
     expect(prompt).toContain('Do not apply the same fade-up to every section')
-    expect(prompt).toContain('Never choose IBM Plex Mono, Archivo')
+    expect(prompt).toContain('including monumental type or monospace when present')
     expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
     expect(prompt).toContain('one base card language and at most one emphasized variant')
     expect(prompt).toContain('primary action, focus and selected states')
@@ -148,16 +148,16 @@ describe('brand phase', () => {
   })
 
   it.each(['IBM Plex Mono', 'Archivo', 'Archivo Narrow'])(
-    'rejects the banned typeface %s',
+    'preserves the reference or brand typeface %s',
     (family) => {
-      expect(() =>
+      expect(
         parseBrandPhaseOutput(
           JSON.stringify({
             ...brand,
             typefaces: [{ ...brand.typefaces[0], family }],
           }),
         ),
-      ).toThrow('is not allowed')
+      ).toMatchObject({ typefaces: [{ family }] })
     },
   )
 

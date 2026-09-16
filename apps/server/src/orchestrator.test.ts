@@ -2587,6 +2587,11 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
+        const typography = (
+          store.designRun(thread.id) as { typographyCandidates: { sans: string[] } }
+        ).typographyCandidates
+        expect(typography.sans).toHaveLength(10)
+        expect(sessions[0]?.sent[1]).toContain(JSON.stringify(typography))
         const brief = JSON.parse(readFileSync(path.join(workspace, '.taste', 'brief.json'), 'utf8'))
         expect(brief.subject).toBe('Independent studio')
         expect(brief.explicitAnswers).toEqual([])
@@ -2615,7 +2620,12 @@ describe('provider-neutral design briefing', () => {
               },
               colorPalette: [{ name: 'Ink', value: '#171717', usage: 'Primary text' }],
               typefaces: [
-                { family: 'Inter', source: 'project', roles: ['body'], weights: [400, 600] },
+                {
+                  family: typography.sans[0],
+                  source: 'Google Fonts',
+                  roles: ['body'],
+                  weights: [400, 600],
+                },
               ],
               interfaceDirection: 'Editorial grid with tactile controls.',
               imageDirection: {
