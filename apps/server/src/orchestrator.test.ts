@@ -3612,6 +3612,23 @@ describe('persisted threads', () => {
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
       expect(sessions[0]?.sent[2]).toBe(queuedPrompt)
       expect(capturePreview).not.toHaveBeenCalled()
+      expect(received.map(({ event }) => event)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'turn.completed',
+            turnId: 'correction-turn',
+            status: 'failed',
+          }),
+          expect.objectContaining({
+            type: 'item.completed',
+            item: expect.objectContaining({
+              turnId: 'correction-turn',
+              text: 'design:build',
+              status: 'failed',
+            }),
+          }),
+        ]),
+      )
       expect(
         received.some(
           ({ event }) =>

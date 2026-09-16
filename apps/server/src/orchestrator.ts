@@ -3616,7 +3616,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       this.#completeDesignActivity(
         threadId,
         turnId,
-        event.status === 'completed' ? 'completed' : 'failed',
+        event.status === 'completed' && !outputError ? 'completed' : 'failed',
       )
       this.#designTurns.delete(turnId)
       if (event.status !== 'completed') {
@@ -3628,6 +3628,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       let flow = this.#designFlows.get(threadId)
       if (!acceptedOutput && outputError && flow) {
         if (!this.#queueDesignCorrection(threadId, flow, outputError)) {
+          this.#record(threadId, { ...event, status: 'failed' })
           this.#failDesignFlow(threadId, outputError)
           return
         }
