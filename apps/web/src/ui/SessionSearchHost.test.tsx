@@ -42,6 +42,8 @@ function SearchHost(props: { onSelect?: () => void }) {
 }
 
 describe('SessionSearchHost focus restoration', () => {
+  beforeAll(() => import('./SessionSearch.js'))
+
   // Exercise focus behavior without timing the first cold module transform.
   beforeAll(async () => {
     await import('./SessionSearch.js')
