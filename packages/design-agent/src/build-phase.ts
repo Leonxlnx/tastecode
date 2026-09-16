@@ -3,7 +3,7 @@ import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
-import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
+import { DESIGN_MOTION_GUIDANCE, REFERENCE_REVEAL_SOURCE } from './motion-guidance.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
 import { record, string, strings } from './parse.js'
@@ -78,6 +78,11 @@ ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)
 ${DESIGN_CONTENT_GUIDANCE}
 
 ${DESIGN_MOTION_GUIDANCE}
+
+Use this tested native reveal implementation for simple scroll entrances; copy or inline it in the existing script and call installReferenceReveals after mounting. Mark selected leaf groups data-reveal="rise|slide|media". Keep CSS visible by default. In React return its cleanup from the effect. An existing motion library may implement the same lifecycle guarantees. The hero is separate: use a transform-only entrance if it has already painted; never hide it late while waiting for fonts or assets.
+<reference-reveal-source>
+${REFERENCE_REVEAL_SOURCE}
+</reference-reveal-source>
 
 ${BUILD_PROTOCOL}
 
