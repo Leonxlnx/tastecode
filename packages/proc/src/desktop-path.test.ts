@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe('desktopPath', () => {
   it('keeps inherited entries first and adds the user-local bin directory', () => {
-    const home = '/Users/harness-desktop-path-home'
+    const home = path.join(os.tmpdir(), 'harness-desktop-path-home')
     const current = ['/system/bin', '/opt/app/bin'].join(path.posix.delimiter)
     const result = desktopPath(current, { platform: 'darwin', home, env: {} })
 
