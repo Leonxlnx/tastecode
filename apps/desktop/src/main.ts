@@ -1046,16 +1046,28 @@ function configureRendererPermissions(): void {
   // enumeration) never consults the request handler below and defaults to
   // permissive, so it needs its own answer.
   session.defaultSession.setPermissionCheckHandler(
-    (webContents, permission) =>
-      isOwnRendererPermission(permission) && webContents !== null && isOwnRenderer(webContents),
+    (webContents, permission, _origin, details) =>
+      webContents !== null &&
+      webContents === mainWindow?.webContents &&
+      isOwnRenderer(webContents) &&
+      details?.isMainFrame === true &&
+      isOwnRendererPermission(permission, details.mediaType),
   )
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
-      if (permission !== 'media') {
-        callback(isOwnRendererPermission(permission) && isOwnRenderer(webContents))
+      if (
+        webContents !== mainWindow?.webContents ||
+        !isOwnRenderer(webContents) ||
+        details?.isMainFrame !== true
+      ) {
+        callback(false)
         return
       }
-      if (!isOwnRenderer(webContents) || !allowsMicrophoneRequest(details)) {
+      if (permission !== 'media') {
+        callback(isOwnRendererPermission(permission))
+        return
+      }
+      if (!allowsMicrophoneRequest(details)) {
         callback(false)
         return
       }
