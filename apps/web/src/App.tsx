@@ -169,18 +169,14 @@ import {
   DARK_THEME_QUERY,
   FONT_KEY,
   GLASS_KEY,
-  readAccentPreference,
-  readBackdropPreference,
-  readFontPreference,
-  readGlassPreference,
+  appearanceKey,
+  readAppearancePreferences,
+  type AppearancePreference,
   readSystemTheme,
   readThemePreference,
   THEME_KEY,
-  type AccentPreference,
-  type BackdropPreference,
   type Theme,
   type ThemePreference,
-  type FontPreference,
 } from './theme.js'
 
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
@@ -750,12 +746,24 @@ export function App() {
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
-  const [fontPreference, setFontPreference] = useState<FontPreference>(readFontPreference)
-  const [accentPreference, setAccentPreference] = useState<AccentPreference>(readAccentPreference)
-  const [backdropPreference, setBackdropPreference] =
-    useState<BackdropPreference>(readBackdropPreference)
-  const [sidebarGlass, setSidebarGlass] = useState<number>(readGlassPreference)
+  const [appearancePreferences, setAppearancePreferences] = useState(readAppearancePreferences)
   const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
+  const appearanceMode = themePreference === 'system' ? systemTheme : themePreference
+  const {
+    font: fontPreference,
+    accent: accentPreference,
+    backdrop: backdropPreference,
+    glass: sidebarGlass,
+  } = appearancePreferences[appearanceMode]
+  const updateAppearancePreference = useCallback(
+    (mode: Theme, updates: Partial<AppearancePreference>) => {
+      setAppearancePreferences((current) => ({
+        ...current,
+        [mode]: { ...current[mode], ...updates },
+      }))
+    },
+    [],
+  )
   const customColorScheme = backdropColorScheme(backdropPreference)
   const desktopThemePreference = customColorScheme ?? themePreference
   const theme = customColorScheme ?? (themePreference === 'system' ? systemTheme : themePreference)
@@ -959,22 +967,38 @@ export function App() {
   useLayoutEffect(() => {
     applyFontPreference(fontPreference)
   }, [fontPreference])
-  usePersistedSettingChange(FONT_KEY, fontPreference)
+  usePersistedSettingChange(appearanceKey(FONT_KEY, 'light'), appearancePreferences.light.font)
+  usePersistedSettingChange(appearanceKey(FONT_KEY, 'dark'), appearancePreferences.dark.font)
 
   useLayoutEffect(() => {
     applyAccentPreference(accentPreference)
   }, [accentPreference])
-  usePersistedSettingChange(ACCENT_KEY, accentPreference)
+  usePersistedSettingChange(appearanceKey(ACCENT_KEY, 'light'), appearancePreferences.light.accent)
+  usePersistedSettingChange(appearanceKey(ACCENT_KEY, 'dark'), appearancePreferences.dark.accent)
 
   useLayoutEffect(() => {
     applyBackdropPreference(backdropPreference)
   }, [backdropPreference])
-  usePersistedSettingChange(BACKDROP_KEY, backdropPreference)
+  usePersistedSettingChange(
+    appearanceKey(BACKDROP_KEY, 'light'),
+    appearancePreferences.light.backdrop,
+  )
+  usePersistedSettingChange(
+    appearanceKey(BACKDROP_KEY, 'dark'),
+    appearancePreferences.dark.backdrop,
+  )
 
   useLayoutEffect(() => {
     applyGlassPreference(sidebarGlass)
   }, [sidebarGlass])
-  usePersistedSettingChange(GLASS_KEY, String(sidebarGlass))
+  usePersistedSettingChange(
+    appearanceKey(GLASS_KEY, 'light'),
+    String(appearancePreferences.light.glass),
+  )
+  usePersistedSettingChange(
+    appearanceKey(GLASS_KEY, 'dark'),
+    String(appearancePreferences.dark.glass),
+  )
 
   useEffect(() => {
     const media = globalThis.matchMedia?.(DARK_THEME_QUERY)
@@ -4923,14 +4947,8 @@ export function App() {
             themePreference={themePreference}
             themeColorScheme={themeColorScheme}
             onThemePreferenceChange={setThemePreference}
-            fontPreference={fontPreference}
-            onFontPreferenceChange={setFontPreference}
-            accentPreference={accentPreference}
-            onAccentPreferenceChange={setAccentPreference}
-            backdropPreference={backdropPreference}
-            onBackdropPreferenceChange={setBackdropPreference}
-            sidebarGlass={sidebarGlass}
-            onSidebarGlassChange={setSidebarGlass}
+            appearancePreferences={appearancePreferences}
+            onAppearancePreferenceChange={updateAppearancePreference}
             showMacOSFontSmoothing={macOS}
             macOSFontSmoothing={macOSFontSmoothing}
             onMacOSFontSmoothingChange={setMacOSFontSmoothing}

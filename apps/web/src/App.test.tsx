@@ -4694,12 +4694,50 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).not.toBe('codex')
   })
 
+  it('saves mode appearance independently without applying inactive edits', async () => {
+    localStorage.setItem('harness.theme', 'light')
+    localStorage.setItem('harness.accent.light', 'forest')
+    localStorage.setItem('harness.accent.dark', 'ocean')
+    localStorage.setItem('harness.backdrop.light', '#FFFFFF')
+    localStorage.setItem('harness.backdrop.dark', '#111111')
+    localStorage.setItem('harness.sidebarGlass2.light', '0')
+    localStorage.setItem('harness.sidebarGlass2.dark', '50')
+    const first = render(<App />)
+    openSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
+    const dark = within(screen.getByRole('region', { name: 'Dark mode' }))
+    fireEvent.click(dark.getByRole('combobox', { name: 'Interface font' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
+    await waitFor(() => expect(localStorage.getItem('harness.font.dark')).toBe('inter'))
+    expect(document.documentElement.dataset.font).toBe('system')
+    expect(document.documentElement.dataset.accent).toBe('forest')
+    expect(document.documentElement.style.getPropertyValue('--custom-backdrop')).toBe('#FFFFFF')
+    expect(document.documentElement.dataset.glass).toBe('off')
+    fireEvent.click(screen.getByRole('radio', { name: 'Dark' }))
+    expect(document.documentElement.dataset.font).toBe('inter')
+    expect(document.documentElement.dataset.accent).toBe('ocean')
+    expect(document.documentElement.style.getPropertyValue('--custom-backdrop')).toBe('#111111')
+    expect(document.documentElement.style.getPropertyValue('--rail-glass')).toBe('0.5')
+    first.unmount()
+    render(<App />)
+    expect(document.documentElement.dataset.font).toBe('inter')
+    openSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Light' }))
+    expect(document.documentElement.dataset.font).toBe('system')
+    expect(document.documentElement.dataset.accent).toBe('forest')
+    expect(document.documentElement.dataset.glass).toBe('off')
+  })
+
   it('persists the selected interface font', async () => {
     const first = render(<App />)
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-    const fontSelector = screen.getByRole('combobox', { name: 'Interface font' })
-    expect(fontSelector.textContent).toContain('Geist')
+    const fontSelector = within(screen.getByRole('region', { name: 'Light mode' })).getByRole(
+      'combobox',
+      { name: 'Interface font' },
+    )
+    expect(fontSelector.textContent).toContain('System default')
     fireEvent.click(fontSelector)
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'Geist',
@@ -4710,7 +4748,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.font')).toBe('inter')
+      expect(localStorage.getItem('harness.font.light')).toBe('inter')
       expect(document.documentElement.dataset.font).toBe('inter')
     })
 
@@ -4743,7 +4781,11 @@ describe('new chats', () => {
       const first = render(<App />)
       openSettings()
       fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-      fireEvent.click(screen.getByRole('combobox', { name: 'Interface font' }))
+      fireEvent.click(
+        within(screen.getByRole('region', { name: 'Light mode' })).getByRole('combobox', {
+          name: 'Interface font',
+        }),
+      )
 
       expect(queryLocalFonts).toHaveBeenCalledOnce()
       expect(screen.getByRole('status').textContent).toBe('Loading fonts…')
@@ -4766,7 +4808,7 @@ describe('new chats', () => {
       ])
       fireEvent.click(atkinson)
       await waitFor(() => {
-        expect(localStorage.getItem('harness.font')).toBe('local:Atkinson Hyperlegible')
+        expect(localStorage.getItem('harness.font.light')).toBe('local:Atkinson Hyperlegible')
         expect(document.documentElement.dataset.font).toBe('local')
         expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe(
           '"Atkinson Hyperlegible", system-ui, sans-serif',
@@ -4779,9 +4821,14 @@ describe('new chats', () => {
       expect(document.documentElement.dataset.font).toBe('local')
       openSettings()
       fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Interface font' }), {
-        key: 'ArrowDown',
-      })
+      fireEvent.keyDown(
+        within(screen.getByRole('region', { name: 'Light mode' })).getByRole('combobox', {
+          name: 'Interface font',
+        }),
+        {
+          key: 'ArrowDown',
+        },
+      )
       expect(screen.getByRole('option', { name: 'Atkinson Hyperlegible' })).toBeTruthy()
       expect(screen.getAllByRole('option')).toHaveLength(6)
       expect(queryLocalFonts).toHaveBeenCalledOnce()
@@ -4795,8 +4842,15 @@ describe('new chats', () => {
     const first = render(<App />)
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-    fireEvent.click(screen.getByRole('button', { name: /^Accent palette:/ }))
-    const picker = screen.getByRole('dialog', { name: 'Accent palette color picker', hidden: true })
+    fireEvent.click(
+      within(screen.getByRole('region', { name: 'Light mode' })).getByRole('button', {
+        name: /^Accent palette:/,
+      }),
+    )
+    const picker = within(screen.getByRole('region', { name: 'Light mode' })).getByRole('dialog', {
+      name: 'Accent palette color picker',
+      hidden: true,
+    })
     fireEvent(picker, Object.assign(new Event('toggle'), { newState: 'open' }))
     const accentOptions = within(picker).getByRole('group', {
       name: 'Accent palette presets',
@@ -4806,7 +4860,7 @@ describe('new chats', () => {
     fireEvent.click(within(accentOptions).getByRole('button', { name: 'Ocean', hidden: true }))
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.accent')).toBe('ocean')
+      expect(localStorage.getItem('harness.accent.light')).toBe('ocean')
       expect(document.documentElement.dataset.accent).toBe('ocean')
     })
 
@@ -4817,6 +4871,8 @@ describe('new chats', () => {
   })
 
   it('tracks OS appearance while System is selected', async () => {
+    localStorage.setItem('harness.font.light', 'inter')
+    localStorage.setItem('harness.font.dark', 'mono')
     const originalMatchMedia = window.matchMedia.bind(window)
     let systemIsDark = false
     const systemThemeMedia = originalMatchMedia('(prefers-color-scheme: dark)')
@@ -4834,6 +4890,7 @@ describe('new chats', () => {
     await waitFor(() => {
       expect(localStorage.getItem('harness.theme')).toBe('system')
       expect(document.documentElement.dataset.theme).toBe('light')
+      expect(document.documentElement.dataset.font).toBe('inter')
     })
 
     systemIsDark = true
@@ -4847,6 +4904,7 @@ describe('new chats', () => {
     })
 
     expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.font).toBe('mono')
   })
 
   it.each([true, false])(
