@@ -34,6 +34,9 @@ describe('typography draw', () => {
       typefaces: [{ family: 'Arial' }],
     } as unknown as BrandSystem
     expect(() => validateTypographySelection(brief, brand, candidates)).toThrow('first-draw')
+    expect(() =>
+      validateTypographySelection({ ...brief, brandInputs: ['Use Arial'] }, brand, candidates),
+    ).toThrow('first-draw')
     brand.typefaces[0]!.family = candidates.serif[0]!
     expect(() => validateTypographySelection(brief, brand, candidates)).not.toThrow()
     brand.typefaces[0]!.family = 'Arial'

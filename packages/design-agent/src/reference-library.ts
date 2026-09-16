@@ -149,7 +149,8 @@ export function selectReviewedReferences(
   references = loadReviewedReferences(),
   chooseIndex: (length: number) => number = randomInt,
 ): ReferenceDirection[] {
-  const request = JSON.stringify(brief).toLowerCase()
+  const request =
+    `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
   if (!references.length) throw new Error('No Design references are available')
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
