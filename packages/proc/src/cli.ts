@@ -4,6 +4,8 @@ import path from 'node:path'
 import { desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
 
+const IS_INSTALLED_TIMEOUT_MS = 5_000
+
 /**
  * Spawn a CLI that may have been installed as an npm shim.
  *
@@ -55,8 +57,18 @@ export function isInstalled(
       windowsHide: true,
       env: { ...environment, PATH: desktopPath(environment.PATH ?? '', { env: environment }) },
     })
-    child.on('error', () => resolve(false))
-    child.on('exit', (code) => resolve(code === 0))
+    // where.exe itself can stall on a broken PATH entry; a hung lookup must
+    // answer "not installed" rather than block the caller forever.
+    const timer = setTimeout(() => {
+      child.kill()
+      resolve(false)
+    }, IS_INSTALLED_TIMEOUT_MS)
+    const finish = (installed: boolean) => {
+      clearTimeout(timer)
+      resolve(installed)
+    }
+    child.on('error', () => finish(false))
+    child.on('exit', (code) => finish(code === 0))
   })
 }
 
@@ -102,16 +114,17 @@ export async function commandVersion(
 function spawnCommandVersion(command: string, timeoutMs: number): Promise<string | undefined> {
   return new Promise((resolve) => {
     const child = spawnCli(command, ['--version'])
+    // A version probe that reads stdin would wait for input until the
+    // timeout; no probe gets any.
+    endStdin(child)
     let output = ''
     let settled = false
     const finish = (value: string | undefined) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      void killTree(child).then(
-        () => resolve(value),
-        () => resolve(undefined),
-      )
+      // A teardown failure must not throw away a version that was captured.
+      void killTree(child).finally(() => resolve(value))
     }
 
     const timer = setTimeout(() => finish(undefined), timeoutMs)
@@ -126,6 +139,16 @@ function spawnCommandVersion(command: string, timeoutMs: number): Promise<string
       finish(line?.trim() || undefined)
     })
   })
+}
+
+/**
+ * Close a probe child's stdin so a command that reads it cannot hang, and
+ * swallow the EPIPE a race with an already-exited child would otherwise
+ * raise as an unhandled stream error.
+ */
+function endStdin(child: ChildProcessWithoutNullStreams): void {
+  child.stdin.on('error', () => undefined)
+  child.stdin.end()
 }
 
 function resolveExecutable(
@@ -157,6 +180,9 @@ export function runCli(
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
   return new Promise((resolve, reject) => {
     const child = spawnCli(command, args)
+    // A command that reads stdin would wait for input until the timeout;
+    // runCli never provides any.
+    endStdin(child)
     let stdout = ''
     let stderr = ''
     let settled = false
@@ -166,10 +192,19 @@ export function runCli(
       if (settled) return
       settled = true
       clearTimeout(timer)
-      void killTree(child).then(() => {
-        if (result instanceof Error) reject(result)
-        else resolve(result)
-      }, reject)
+      void killTree(child).then(
+        () => {
+          if (result instanceof Error) reject(result)
+          else resolve(result)
+        },
+        (killError: unknown) => {
+          // The command's own outcome is the answer: a teardown failure must
+          // not mask a primary error such as the response timeout.
+          if (result instanceof Error) reject(result)
+          else if (killError instanceof Error) reject(killError)
+          else reject(new Error(String(killError)))
+        },
+      )
     }
     const timer = setTimeout(() => {
       finish(new Error(`${command} did not respond`))

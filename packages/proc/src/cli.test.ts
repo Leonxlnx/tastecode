@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -40,6 +40,39 @@ describe.skipIf(process.platform === 'win32')('runCli timeout teardown', () => {
     expect(result.code).toBe(0)
     expect(result.stdout).toBe('ok')
   })
+
+  it('keeps the primary error when teardown fails too', async () => {
+    // A killTree failure after the response timeout must not mask the
+    // timeout itself. The probe child exits on its own shortly after, so no
+    // real process outlives the mocked group signal.
+    const realKill = process.kill.bind(process)
+    const signal = vi.spyOn(process, 'kill').mockImplementation((pid, value) => {
+      if (typeof pid === 'number' && pid < 0) throw new Error('teardown failed')
+      return realKill(pid, value)
+    })
+    try {
+      await expect(
+        runCli(process.execPath, ['-e', 'setTimeout(() => {}, 500)'], 50),
+      ).rejects.toThrow(/did not respond/)
+    } finally {
+      signal.mockRestore()
+    }
+  })
+})
+
+describe('runCli stdin', () => {
+  it('closes stdin so a stdin-reading command can finish', async () => {
+    const result = await runCli(
+      process.execPath,
+      [
+        '-e',
+        'process.stdin.resume(); process.stdin.once("end", () => process.stdout.write("eof"))',
+      ],
+      5_000,
+    )
+    expect(result.code).toBe(0)
+    expect(result.stdout).toBe('eof')
+  })
 })
 
 describe.skipIf(process.platform === 'win32')('commandVersion timeout teardown', () => {
@@ -70,6 +103,22 @@ describe.skipIf(process.platform === 'win32')('commandVersion timeout teardown',
     } finally {
       rmSync(directory, { recursive: true, force: true })
       rmSync(beat, { force: true })
+    }
+  })
+
+  it('closes stdin so a version probe that reads it cannot hang', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-command-version-stdin-'))
+    const commandPath = path.join(directory, 'fake-version-stdin')
+    try {
+      writeFileSync(
+        commandPath,
+        `#!/usr/bin/env node\nprocess.stdin.resume(); process.stdin.once('end', () => console.log('tool 1.2.3'))\n`,
+      )
+      chmodSync(commandPath, 0o755)
+
+      await expect(commandVersion(commandPath, 2_000)).resolves.toBe('tool 1.2.3')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
     }
   })
 })
