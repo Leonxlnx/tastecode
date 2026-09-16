@@ -7,6 +7,7 @@ import { PAGE_LAYOUT_FAMILIES } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
 import type { ReferenceDirection } from './reference-directions.js'
 import { readRasterMetadata } from './raster-metadata.js'
+import { generatedReferenceCandidates } from './reference-library-index.js'
 import { containedWorkspaceFile, readWorkspaceFile } from './workspace-files.js'
 
 export function parseReferenceDeck(value: unknown): ReferenceDirection[] {
@@ -59,19 +60,24 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
       'reference catalog',
     )
     if (catalog.version !== 1) throw new Error('catalog version must be 1')
-    const entries = array(catalog.references, 'catalog.references')
+    const listed = array(catalog.references, 'catalog.references')
+    const listedIds = new Set(listed.map((entry) => record(entry, 'reference').id))
+    const entries = [
+      ...listed,
+      ...generatedReferenceCandidates(root).filter((entry) => !listedIds.has(entry.id)),
+    ]
     if (entries.length > 10_000) throw new Error('catalog exceeds 10000 entries')
-    const approved = entries.filter((value) => {
+    const eligible = entries.filter((value) => {
       const entry = record(value, 'reference')
       return (
-        entry.reviewStatus === 'reviewed' &&
+        (entry.reviewStatus === 'reviewed' || entry.reviewStatus === 'candidate') &&
         ![entry.imagePath, entry.mobileImagePath].some(
           (file) => typeof file === 'string' && /(?:^|[\\/])threshold-/iu.test(file),
         )
       )
     })
     // Parse each entry independently; the per-turn deck has a separate 64-reference bound.
-    const references = approved.flatMap((value) => {
+    const references = eligible.flatMap((value) => {
       const entry = record(value, 'reference')
       string(entry.reviewNotes, 'reviewNotes')
       string(entry.group, 'group')
@@ -88,7 +94,8 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
         },
       ]
     })
-    if (!references.length) throw new Error('catalog has no visually reviewed references')
+    if (!references.length)
+      throw new Error('catalog has no reviewed or generated reference candidates')
     if (new Set(references.map(({ id }) => id)).size !== references.length)
       throw new Error('duplicate reference IDs')
     return references.map((entry) => ({
@@ -117,52 +124,37 @@ export function selectReviewedReferences(
   chooseIndex: (length: number) => number = randomInt,
 ): ReferenceDirection[] {
   const request = JSON.stringify(brief).toLowerCase()
-  const words = new Set(request.match(/[\p{L}\p{N}]+/gu) ?? [])
-  const score = (entry: ReferenceDirection) =>
-    (request.includes(entry.id.toLowerCase()) ? 1000 : 0) +
-    (entry.source && request.includes(entry.source.toLowerCase()) ? 500 : 0) +
-    (entry.tags ?? []).reduce((total, tag) => total + (words.has(tag.toLowerCase()) ? 1 : 0), 0)
-  const ranked = [...references].sort((a, b) => score(b) - score(a) || a.id.localeCompare(b.id))
-  if (!ranked.length) throw new Error('No reviewed Design references are available')
-  const best = score(ranked[0]!)
-  const preferredPool = ranked.filter((entry) => score(entry) === best)
-  const preferred = preferredPool[chooseIndex(preferredPool.length)]
-  if (!preferred) throw new Error('No reviewed Design references are available')
+  if (!references.length) throw new Error('No Design references are available')
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
-  // A group identifies revisions of one section, not a site. One revision gets one vote.
-  const candidates = ranked.filter((entry) => {
-    const explicit =
-      request.includes(entry.id.toLowerCase()) ||
-      !!(entry.source && request.includes(entry.source.toLowerCase()))
-    const compatible = (entry.tags ?? []).filter((tag) => preferred.tags?.includes(tag)).length >= 2
-    return explicit || entry.source === preferred.source || compatible
-  })
   for (const family of PAGE_LAYOUT_FAMILIES) {
     // Section titles are free-form and multilingual. Let Page choose the needed
     // compositions from a complete deck instead of discarding families by keywords.
-    const compatibleEntries = candidates.filter((entry) => entry.family === family)
-    // A style preference must not remove content the user requested. Brand adaptation
-    // unifies a reviewed fallback when that collection has no composition for the family.
-    const familyEntries = compatibleEntries.length
-      ? compatibleEntries
-      : ranked.filter((entry) => entry.family === family)
+    // Each composition gets the same chance, regardless of source site or style tags.
+    const familyEntries = references.filter((entry) => entry.family === family)
     if (!familyEntries.length) continue
     const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
-    // Revisions share a vote: choose a group first, then its reviewed revision.
-    const pool = explicit.length ? explicit : familyEntries
+    const explicitSource = familyEntries.filter(
+      (entry) => entry.source && request.includes(entry.source.toLowerCase()),
+    )
+    // Revisions share a vote: choose a group first, then its eligible revision.
+    const pool = explicit.length ? explicit : explicitSource.length ? explicitSource : familyEntries
     const groupNames = [...new Set(pool.map((entry) => entry.group ?? entry.id))]
-    const chosenGroup = groupNames[chooseIndex(groupNames.length)]
-    const revisions = pool.filter((entry) => (entry.group ?? entry.id) === chosenGroup)
-    const entry = revisions[chooseIndex(revisions.length)]!
-    const group = entry.group ?? entry.id
-    if (groups.has(group)) continue
-    groups.add(group)
-    selected.push(entry)
+    // Repeated content sections need distinct compositions within the same page too.
+    const count = Math.min(groupNames.length, family === 'feature' ? 3 : family === 'about' ? 2 : 1)
+    for (let index = 0; index < count; index++) {
+      const [chosenGroup] = groupNames.splice(chooseIndex(groupNames.length), 1)
+      const revisions = pool.filter((entry) => (entry.group ?? entry.id) === chosenGroup)
+      const entry = revisions[chooseIndex(revisions.length)]!
+      const group = entry.group ?? entry.id
+      if (groups.has(group)) continue
+      groups.add(group)
+      selected.push(entry)
+    }
   }
   if (!selected.length)
     throw new Error(
-      'No reviewed references match the requested sections. Add matching catalog entries or attach your own reference images.',
+      'No references match the requested sections. Add matching catalog entries or attach your own reference images.',
     )
   if (selected.length > 24)
     throw new Error(

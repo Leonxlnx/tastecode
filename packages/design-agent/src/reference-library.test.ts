@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -42,7 +42,77 @@ function save(root: string, references: unknown[]) {
   writeFileSync(path.join(root, 'catalog.json'), JSON.stringify({ version: 1, references }))
 }
 describe('reviewed reference library', () => {
-  it('selects relevant compositions, deduplicates revisions, and discovers later additions', () => {
+  it('makes every hero group eligible despite different source sites, styles and revision counts', () => {
+    const root = library()
+    save(
+      root,
+      Array.from({ length: 10 }, (_, index) => ({
+        ...entry,
+        id: `hero-${index}`,
+        group: `hero-${index}`,
+        source: `https://example.com/${index}`,
+        tags: index === 0 ? ['studio', 'photographic'] : ['unrelated'],
+      })),
+    )
+    const references = loadReviewedReferences(root)
+    references.push({ ...references[0]!, id: 'hero-0-revision' })
+    const seen = Array.from(
+      { length: 10 },
+      (_, index) =>
+        selectReviewedReferences(brief, references, (length) => (length === 10 ? index : 0))[0]!
+          .group,
+    )
+    expect(new Set(seen).size).toBe(10)
+  })
+
+  it('indexes complete generated candidates without claiming visual approval or resurrecting rejected entries', () => {
+    const root = library()
+    const site = path.join(root, 'new-studio')
+    const generated = path.join(site, 'generated')
+    mkdirSync(generated, { recursive: true })
+    writeFileSync(
+      path.join(site, 'manifest.json'),
+      JSON.stringify({
+        source: 'https://example.com/new',
+        sections: ['hero', { order: 2, label: 'services', status: 'revision-needed' }],
+      }),
+    )
+    for (const name of [
+      '01-hero-desktop',
+      '01-hero-desktop-full',
+      '01-hero-mobile',
+      '01-hero-mobile-v2',
+      '02-services-desktop',
+      '03-about-desktop-1',
+      '04-work-desktop',
+      'threshold-hero-desktop',
+    ])
+      copyFileSync(path.join(root, 'hero.webp'), path.join(generated, `${name}.webp`))
+    save(root, [entry, { ...entry, id: 'new-studio-04-work', reviewStatus: 'rejected' }])
+    const references = loadReviewedReferences(root)
+    expect(references.map(({ id }) => id)).toEqual(['studio-hero', 'new-studio-01-hero'])
+    expect(references[1]?.imagePath).toBe(path.join(generated, '01-hero-desktop-full.webp'))
+    expect(references[1]?.mobileImagePath).toBe(path.join(generated, '01-hero-mobile-v2.webp'))
+    expect(references[1]?.cue).toContain('Visual review is pending')
+    expect(references[1]?.cue).toContain('not a verified responsive match')
+  })
+
+  it('samples repeated content families without replacement', () => {
+    const root = library()
+    save(
+      root,
+      Array.from({ length: 4 }, (_, index) => ({
+        ...entry,
+        id: `feature-${index}`,
+        group: `feature-${index}`,
+        family: 'feature',
+      })),
+    )
+    const selected = selectReviewedReferences(brief, loadReviewedReferences(root), () => 0)
+    expect(selected.map(({ id }) => id)).toEqual(['feature-0', 'feature-1', 'feature-2'])
+  })
+
+  it('deduplicates revisions, discovers additions, and preserves explicit selections', () => {
     const root = library()
     save(root, [
       entry,
@@ -64,6 +134,7 @@ describe('reviewed reference library', () => {
       selectReviewedReferences(
         { ...brief, originalRequest: 'Build commerce products shop' },
         loadReviewedReferences(root),
+        (length) => length - 1,
       )[0]?.id,
     ).toBe('shop-hero')
     expect(
@@ -87,7 +158,7 @@ describe('reviewed reference library', () => {
         (length) => length - 1,
       )[0]?.id,
     ).toBe('studio-hero')
-    expect(() => selectReviewedReferences(brief, [])).toThrow('No reviewed')
+    expect(() => selectReviewedReferences(brief, [])).toThrow('No Design references')
   })
   it('requires real reviewed files and pairing evidence; threshold files stay excluded', () => {
     const root = library()
@@ -102,7 +173,9 @@ describe('reviewed reference library', () => {
     save(root, [{ ...entry, imagePath: 'missing.png' }])
     expect(() => loadReviewedReferences(root)).toThrow('does not exist')
     save(root, [{ ...entry, imagePath: 'threshold-hero.png' }])
-    expect(() => loadReviewedReferences(root)).toThrow('no visually reviewed references')
+    expect(() => loadReviewedReferences(root)).toThrow(
+      'no reviewed or generated reference candidates',
+    )
   })
   it('keeps the composition deck complete for free-form section names', () => {
     const root = library()
