@@ -1723,6 +1723,7 @@ function AboutSettings(props: { transport: Transport }) {
   const nativeChecking = nativeUpdate?.status === 'checking'
   const nativeDownloading = nativeUpdate?.status === 'downloading'
   const nativeReady = nativeUpdate?.status === 'ready'
+  const manualUpdate = nativeUpdate?.status === 'manual'
   // Verdicts stay on the row's one line; a failure goes behind the red dot.
   const updateStatus = !result
     ? undefined
@@ -1739,8 +1740,9 @@ function AboutSettings(props: { transport: Transport }) {
               detail: `Newer: ${short(result.remote.sha)} — pull and restart`,
             }
           : { state: 'unavailable' as const, detail: 'No verdict' }
-  const nativeStatus =
-    nativeUpdate?.status === 'current'
+  const nativeStatus = manualUpdate
+    ? { state: 'unavailable' as const, detail: 'Download and install updates manually from GitHub' }
+    : nativeUpdate?.status === 'current'
       ? { state: 'ready' as const, detail: 'Up to date' }
       : nativeDownloading
         ? {
@@ -1781,16 +1783,28 @@ function AboutSettings(props: { transport: Transport }) {
           className="settings__action"
           type="button"
           disabled={checking || nativeChecking || nativeDownloading}
-          onClick={() => void (nativeReady ? installAppUpdate() : check())}
+          onClick={() => {
+            if (manualUpdate) {
+              window.open(
+                'https://github.com/Leonxlnx/tastecode/releases/latest',
+                '_blank',
+                'noopener,noreferrer',
+              )
+              return
+            }
+            void (nativeReady ? installAppUpdate() : check())
+          }}
         >
           <RotateCcw size={13} aria-hidden />
-          {nativeReady
-            ? 'Restart to update'
-            : nativeDownloading
-              ? 'Downloading…'
-              : checking || nativeChecking
-                ? 'Checking…'
-                : 'Check for updates'}
+          {manualUpdate
+            ? 'Open downloads'
+            : nativeReady
+              ? 'Restart to update'
+              : nativeDownloading
+                ? 'Downloading…'
+                : checking || nativeChecking
+                  ? 'Checking…'
+                  : 'Check for updates'}
         </button>
       </SettingsRow>
       <SettingsRow title="Source">

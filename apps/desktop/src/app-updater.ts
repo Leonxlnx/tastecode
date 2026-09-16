@@ -13,7 +13,8 @@ export type UpdateClient = Pick<
 >
 
 export type AppUpdateState = {
-  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
+  status:
+    'unsupported' | 'manual' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
   version?: string
   progress?: number
@@ -22,10 +23,23 @@ export type AppUpdateState = {
 
 type Timer = ReturnType<typeof setTimeout>
 
+export type AppUpdateMode = 'unsupported' | 'manual' | 'install'
+
+export function appUpdateMode(options: {
+  platform: NodeJS.Platform
+  packaged: boolean
+  developmentServer?: string | undefined
+}): AppUpdateMode {
+  if (!options.packaged || options.developmentServer) return 'unsupported'
+  if (options.platform === 'linux') return 'manual'
+  if (options.platform === 'win32' || options.platform === 'darwin') return 'install'
+  return 'unsupported'
+}
+
 export function createAppUpdateController(
   options: {
     currentVersion: string
-    enabled: boolean
+    mode: AppUpdateMode
     setTimeoutFn?: typeof setTimeout
     clearTimeoutFn?: typeof clearTimeout
   } & (
@@ -43,7 +57,7 @@ export function createAppUpdateController(
   let updater = options.updater
   let updaterConfigured = false
   let state: AppUpdateState = {
-    status: options.enabled ? 'idle' : 'unsupported',
+    status: options.mode === 'install' ? 'idle' : options.mode,
     currentVersion: options.currentVersion,
   }
 
@@ -92,7 +106,9 @@ export function createAppUpdateController(
     return client
   }
 
-  if (updater) configureUpdater(updater)
+  // Outside a packaged build the controller stays inert: touching the updater
+  // would attach listeners and flip flags on a client nobody will ever check.
+  if (options.mode === 'install' && updater) configureUpdater(updater)
 
   const loadUpdater = (): Promise<UpdateClient> => {
     if (updater) return Promise.resolve(updater)
@@ -107,7 +123,7 @@ export function createAppUpdateController(
   }
 
   const check = (): Promise<AppUpdateState> => {
-    if (!options.enabled) return Promise.resolve(state)
+    if (options.mode !== 'install') return Promise.resolve(state)
     if (checking) return checking
     checking = loadUpdater()
       .then((client) => client.checkForUpdates())
@@ -137,7 +153,7 @@ export function createAppUpdateController(
       return () => listeners.delete(listener)
     },
     start: () => {
-      if (!options.enabled || timer) return
+      if (options.mode !== 'install' || timer) return
       timer = setTimeoutFn(() => {
         timer = undefined
         void check()

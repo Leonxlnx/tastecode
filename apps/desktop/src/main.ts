@@ -23,6 +23,8 @@ import {
   Tray,
   utilityProcess,
   type Event as ElectronEvent,
+  type OpenDialogOptions,
+  type OpenDialogReturnValue,
   type WebContents,
 } from 'electron'
 import type { PreviewCaptureRequest } from '@harness/contracts'
@@ -35,6 +37,7 @@ import {
 } from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import {
+  appUpdateMode,
   createAppUpdateController,
   type AppUpdateController,
   type AppUpdateState,
@@ -215,6 +218,11 @@ app.setName(nativeAppName)
 if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration()
 if (process.env['HARNESS_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
+}
+// A machine whose GPU process cannot launch (some Wayland/Vulkan stacks) must
+// fall back to software rendering, not FATAL on "GPU process isn't usable".
+if (process.env['HARNESS_DISABLE_GPU'] !== '1') {
+  app.commandLine.appendSwitch('disable-gpu-process-crash-limit')
 }
 
 const ownsSingleInstance = app.requestSingleInstanceLock()
@@ -408,13 +416,15 @@ function createWindow(): void {
       // downloads Hunspell dictionaries at first run — the only network
       // traffic the app would ever do outside the renderer's own CSP.
       spellcheck: false,
+      // Zoom at creation, not on did-finish-load: a post-load setZoomFactor
+      // re-rasterizes while the first frame is pending, and on Wayland the
+      // invalidated frame is never reproduced for an unmapped window — the
+      // app would sit invisible forever, ready-to-show never firing.
+      zoomFactor: DEFAULT_ZOOM_FACTOR,
       preload: path.join(here, 'preload.cjs'),
     },
   })
   mainWindow = window
-  window.webContents.once('did-finish-load', () =>
-    window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
-  )
   configureEmbeddedBrowser(window.webContents)
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
@@ -770,9 +780,19 @@ async function sweepStaleCaptures(): Promise<void> {
  * itself — the user's own picker or operating-system drop is the only way a
  * path enters the app.
  */
+async function showOpenDialogForSender(
+  sender: WebContents,
+  options: OpenDialogOptions,
+): Promise<OpenDialogReturnValue> {
+  const owner = BrowserWindow.fromWebContents(sender)
+  return owner && !owner.isDestroyed()
+    ? dialog.showOpenDialog(owner, options)
+    : dialog.showOpenDialog(options)
+}
+
 ipcMain.handle('harness:pickFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory', 'createDirectory'],
     title: 'Choose a project folder',
   })
@@ -795,7 +815,7 @@ ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
 
 ipcMain.handle('harness:pickSkillFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory'],
     title: 'Choose an Agent Skill folder',
   })
@@ -804,7 +824,7 @@ ipcMain.handle('harness:pickSkillFolder', async (event) => {
 
 ipcMain.handle('harness:pickFiles', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openFile', 'multiSelections'],
     title: 'Attach files',
   })
@@ -882,7 +902,11 @@ if (ownsSingleInstance) {
     appUpdater = createAppUpdateController({
       loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer,
+      mode: appUpdateMode({
+        platform: process.platform,
+        packaged: app.isPackaged,
+        developmentServer: devServer,
+      }),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
@@ -896,7 +920,7 @@ if (ownsSingleInstance) {
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()
-    createBackgroundTray()
+    if (process.platform === 'win32') createBackgroundTray()
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
       app.on('did-become-active', () => {
