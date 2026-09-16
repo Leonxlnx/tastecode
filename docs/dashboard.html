@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-16 base main b9dc639e + Design notice spacing</span>
+        <span class="meta">2026-09-16 base main 1eb84c19 + saved provider chats</span>
       </div>
     </div>
 
@@ -302,6 +302,37 @@
           preserving attachments and model settings. The mode-change notice stays separate from the
           answer, with a shared left edge and a compact gap before the continued reply. Queued
           requests wait for that answer to finish.
+        </p>
+        <p class="sub">
+          Saved Codex, Claude Code and Grok chats now appear in projects already added in TasteCode.
+          The adapters read their own files (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1180"
+            >PR #1180</a
+          >), the server imports them in the background (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1189"
+            >PR #1189</a
+          >), and the renderer replays them without duplicates while local turns keep priority (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1190"
+            >PR #1190</a
+          >). Scope and limits are written down in
+          <a href="./ARCHITECTURE.md">ARCHITECTURE.md</a> (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1195"
+            >PR #1195</a
+          >).
+        </p>
+        <p class="sub">
+          Chat polish merged the same day: notices stay open while hovered, focused or while their
+          work is still running (<a href="https://github.com/Leonxlnx/tastecode/pull/1191"
+            >PR #1191</a
+          >), the notice text edge lines up with the reply below it (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1192"
+            >PR #1192</a
+          >), a streaming answer stays pinned to the bottom without trapping a reader who scrolled
+          up (<a href="https://github.com/Leonxlnx/tastecode/pull/1193">PR #1193</a>), and the table
+          toolbar sits in one row with a floating download menu (<a
+            href="https://github.com/Leonxlnx/tastecode/pull/1194"
+            >PR #1194</a
+          >).
         </p>
         <p class="sub">
           Design Agent v0.5 ships in PR #1159: new runs randomly select reviewed references for the
