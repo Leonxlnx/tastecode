@@ -218,6 +218,11 @@ if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration(
 if (process.env['HARNESS_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
 }
+// A machine whose GPU process cannot launch (some Wayland/Vulkan stacks) must
+// fall back to software rendering, not FATAL on "GPU process isn't usable".
+if (process.env['HARNESS_DISABLE_GPU'] !== '1') {
+  app.commandLine.appendSwitch('disable-gpu-process-crash-limit')
+}
 
 const ownsSingleInstance = app.requestSingleInstanceLock()
 let mainWindow: BrowserWindow | undefined
@@ -410,13 +415,15 @@ function createWindow(): void {
       // downloads Hunspell dictionaries at first run — the only network
       // traffic the app would ever do outside the renderer's own CSP.
       spellcheck: false,
+      // Zoom at creation, not on did-finish-load: a post-load setZoomFactor
+      // re-rasterizes while the first frame is pending, and on Wayland the
+      // invalidated frame is never reproduced for an unmapped window — the
+      // app would sit invisible forever, ready-to-show never firing.
+      zoomFactor: DEFAULT_ZOOM_FACTOR,
       preload: path.join(here, 'preload.cjs'),
     },
   })
   mainWindow = window
-  window.webContents.once('did-finish-load', () =>
-    window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
-  )
   configureEmbeddedBrowser(window.webContents)
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
