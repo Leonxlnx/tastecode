@@ -139,9 +139,25 @@ export function actionableLaunchError(harness: CustomHarness, cause: unknown): E
 }
 
 export function redactCustomHarnessEnvironment(value: string, harness: CustomHarness): string {
-  const secrets = [...new Set(Object.values(harness.environment ?? {}).filter(Boolean))].sort(
-    (left, right) => right.length - left.length,
-  )
+  return redactWithSecrets(value, customHarnessSecrets(harness))
+}
+
+/**
+ * The values a custom harness may echo back: its own configured environment
+ * plus any credential the adapter merged into the launch environment (the
+ * `HARNESS_MCP_*` variables that carry resolved MCP credentials). Longest
+ * first so overlapping values redact cleanly.
+ */
+export function customHarnessSecrets(
+  harness: CustomHarness,
+  extraSecrets: Iterable<string> = [],
+): string[] {
+  return [
+    ...new Set([...Object.values(harness.environment ?? {}), ...extraSecrets].filter(Boolean)),
+  ].sort((left, right) => right.length - left.length)
+}
+
+export function redactWithSecrets(value: string, secrets: readonly string[]): string {
   return secrets.reduce((redacted, secret) => redacted.split(secret).join('[redacted]'), value)
 }
 

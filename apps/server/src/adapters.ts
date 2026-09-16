@@ -19,8 +19,10 @@ import { createApiWorkspaceTools } from './api-workspace-tools.js'
 import {
   actionableLaunchError,
   customHarnessRun,
+  customHarnessSecrets,
   customHarnessSpawn,
   redactCustomHarnessEnvironment,
+  redactWithSecrets,
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
@@ -208,6 +210,45 @@ export function providerRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined = () => undefined,
 ): ProviderRuntime {
+  const runtime = selectableRuntime(provider, onLog, resolveHarness)
+  /**
+   * One chokepoint for custom-harness redaction. The adapter 'log' channel is
+   * already filtered, but a user-owned executable can echo its environment
+   * through domain events and rejected session calls too — both are wrapped
+   * here for every provider, including the start/resume calls themselves.
+   */
+  const open = async (
+    options: StartOptions,
+    openSession: () => Promise<{ thread: Thread; session: AgentSession }>,
+  ): Promise<{ thread: Thread; session: AgentSession }> => {
+    const harness = harnessFor(provider, options.agent, resolveHarness)
+    const secrets = harness ? customHarnessSecrets(harness, mcpCredentialValues(options)) : []
+    try {
+      const started = await openSession()
+      return secrets.length === 0
+        ? started
+        : { ...started, session: redactingSession(started.session, secrets) }
+    } catch (error) {
+      throw redactedRejection(error, (text) => redactWithSecrets(text, secrets))
+    }
+  }
+  return {
+    start: (workspacePath, options) => open(options, () => runtime.start(workspacePath, options)),
+    ...(runtime.resume
+      ? {
+          resume: (threadId, workspacePath, options) =>
+            open(options, () => runtime.resume!(threadId, workspacePath, options)),
+        }
+      : {}),
+    listModels: (agent) => runtime.listModels(agent),
+  }
+}
+
+function selectableRuntime(
+  provider: ProviderId,
+  onLog: (line: string) => void,
+  resolveHarness: (id: string) => CustomHarness | undefined,
+): ProviderRuntime {
   switch (provider) {
     case 'codex':
       return codexRuntime(onLog, resolveHarness)
@@ -316,7 +357,9 @@ export async function verifyCustomHarness(
       workspacePath,
       customHarnessLogger(harness, onLog),
     )
-    checks.push(protocol)
+    // The detail may quote wire data (agent name/version, model output) that
+    // can echo launch environment values.
+    checks.push({ ...protocol, detail: redactCustomHarnessEnvironment(protocol.detail, harness) })
     return {
       status: protocol.status === 'warning' ? 'warning' : 'ready',
       summary:
@@ -347,8 +390,92 @@ export async function verifyCustomHarness(
 function customHarnessLogger(
   harness: CustomHarness | undefined,
   onLog: (line: string) => void,
+  extraSecrets: Iterable<string> = [],
 ): (line: string) => void {
-  return harness ? (line) => onLog(redactCustomHarnessEnvironment(line, harness)) : onLog
+  if (!harness) return onLog
+  const secrets = customHarnessSecrets(harness, extraSecrets)
+  return (line) => onLog(redactWithSecrets(line, secrets))
+}
+
+/** Resolved MCP credentials merged into a custom harness launch environment. */
+function mcpCredentialValues(options: StartOptions): string[] {
+  return Object.values(options.mcpCredentials ?? {})
+}
+
+/**
+ * Redact every string inside an event payload without allocating when nothing
+ * matched — this runs per streamed delta on custom harness sessions.
+ */
+function redactPayload<T>(value: T, redact: (text: string) => string): T {
+  if (typeof value === 'string') return redact(value) as T
+  if (Array.isArray(value)) {
+    let redacted: unknown[] | undefined
+    for (let index = 0; index < value.length; index += 1) {
+      const entry = redactPayload(value[index], redact)
+      if (entry !== value[index]) (redacted ??= value.slice())[index] = entry
+    }
+    return (redacted ?? value) as T
+  }
+  if (value !== null && typeof value === 'object') {
+    let redacted: Record<string, unknown> | undefined
+    for (const [key, entry] of Object.entries(value)) {
+      const next = redactPayload(entry, redact)
+      if (next !== entry) (redacted ??= { ...(value as Record<string, unknown>) })[key] = next
+    }
+    return (redacted ?? value) as T
+  }
+  return value
+}
+
+/**
+ * Redact a rejection in place so the error keeps its class — callers test
+ * `instanceof` on session errors. Non-Error rejections pass through untouched.
+ */
+function redactedRejection(error: unknown, redact: (text: string) => string): unknown {
+  if (error instanceof Error) {
+    const message = redact(error.message)
+    if (message !== error.message) {
+      try {
+        error.message = message
+      } catch {
+        // A frozen error keeps its original message.
+      }
+    }
+  }
+  return error
+}
+
+/**
+ * The 'log' channel is redacted where each runtime wires it, but a custom
+ * harness session can also leak configured environment values through 'event'
+ * payloads and rejected session calls. One proxy covers all three channels.
+ */
+function redactingSession(session: AgentSession, secrets: readonly string[]): AgentSession {
+  if (secrets.length === 0) return session
+  const redact = (text: string) => redactWithSecrets(text, secrets)
+  return new Proxy(session, {
+    get(target, property) {
+      if (property === 'on') {
+        return (event: 'event' | 'log', listener: (payload: DomainEvent | string) => void) => {
+          if (event === 'event') {
+            target.on('event', (payload) => listener(redactPayload(payload, redact)))
+            return
+          }
+          target.on('log', (line) => listener(redact(line)))
+        }
+      }
+      const value = Reflect.get(target, property)
+      if (typeof value !== 'function') return value
+      return (...args: unknown[]) => {
+        const result = (value as (...args: unknown[]) => unknown).apply(target, args)
+        return result instanceof Promise
+          ? result.catch((error: unknown) => {
+              throw redactedRejection(error, redact)
+            })
+          : result
+      }
+    },
+  })
 }
 
 async function probeCustomHarnessProtocol(
@@ -580,7 +707,7 @@ function grokRuntime(
       const projectMcp = options.mcpServers?.some((server) => server.enabled) ?? false
       if (projectMcp) {
         const adapter = await acpAdapterFor(harness, options)
-        adapter.on('log', customHarnessLogger(harness, onLog))
+        adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
         return startedSession(adapter, async () => {
           const starting = adapter.startThread(workspacePath, {
             model: options.model,
@@ -594,7 +721,7 @@ function grokRuntime(
       }
       const { GrokAdapter } = await loadGrokAdapter()
       const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', customHarnessLogger(harness, onLog))
+      adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
         effort: options.effort,
@@ -611,7 +738,7 @@ function grokRuntime(
       // the protocol capability check before loading it.
       if (threadId.startsWith('acp-grok-')) {
         const adapter = await acpAdapterFor(harness, options)
-        adapter.on('log', customHarnessLogger(harness, onLog))
+        adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
         return startedSession(adapter, async () => {
           const resuming = adapter.resumeThread(threadId, workspacePath, {
             model: options.model,
@@ -630,7 +757,7 @@ function grokRuntime(
       }
       const { GrokAdapter } = await loadGrokAdapter()
       const adapter = new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', customHarnessLogger(harness, onLog))
+      adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
       const thread = await adapter.resumeThread(
         threadId,
         options.providerSessionId,
@@ -662,7 +789,7 @@ function antigravityRuntime(
       const harness = harnessFor('antigravity', options.agent, resolveHarness)
       const { AntigravityAdapter } = await loadAntigravityAdapter()
       const adapter = new AntigravityAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', customHarnessLogger(harness, onLog))
+      adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
       const thread = await adapter.startThread(workspacePath, {
         model: options.model,
         effort: options.effort,
@@ -704,7 +831,7 @@ function cursorRuntime(
     const adapter = new CursorAdapter(
       harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
     )
-    adapter.on('log', customHarnessLogger(harness, onLog))
+    adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
     const selection = {
       ...(options.model ? { model: options.model } : {}),
       ...(options.effort ? { effort: options.effort } : {}),
@@ -743,7 +870,7 @@ function openCodeRuntime(
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
-    adapter.on('log', customHarnessLogger(harness, onLog))
+    adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
     return startedSession(adapter, async () => {
       if (harness) {
         await customHarnessOperation(harness, 'start its server', adapter.start())
@@ -819,7 +946,7 @@ function codexRuntime(
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
-    adapter.on('log', customHarnessLogger(harness, onLog))
+    adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
     return startedSession(adapter, async () => {
       if (harness) {
         await customHarnessOperation(harness, 'initialize app-server', adapter.start())
@@ -873,7 +1000,7 @@ function acpRuntime(
           }
         : undefined,
     )
-    adapter.on('log', customHarnessLogger(harness, onLog))
+    adapter.on('log', customHarnessLogger(harness, onLog, mcpCredentialValues(options)))
     return startedSession(adapter, async () => {
       const selection = {
         approval: options.approval,
@@ -921,7 +1048,11 @@ function claudeRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
-  const adapterFor = async (agent: string | undefined, workspacePath?: string) => {
+  const adapterFor = async (
+    agent: string | undefined,
+    workspacePath?: string,
+    options?: StartOptions,
+  ) => {
     const harness = harnessFor('claude-code', agent, resolveHarness)
     const launch = harness
       ? resolveCustomHarnessLaunch(harness, workspacePath ?? process.cwd())
@@ -932,10 +1063,16 @@ function claudeRuntime(
         ? {
             spawn: customHarnessSpawn(harness, workspacePath),
             environment: launch!.environment,
+            // The user-configured values may surface in stderr and diagnostics;
+            // the adapter's redactor cannot derive them from the merged env.
+            secrets: Object.values(harness.environment ?? {}),
           }
         : {},
     )
-    adapter.on('log', customHarnessLogger(harness, onLog))
+    adapter.on(
+      'log',
+      customHarnessLogger(harness, onLog, options ? mcpCredentialValues(options) : []),
+    )
     return adapter
   }
 
@@ -955,7 +1092,7 @@ function claudeRuntime(
 
   return {
     async start(workspacePath, options) {
-      const adapter = await adapterFor(options.agent, workspacePath)
+      const adapter = await adapterFor(options.agent, workspacePath, options)
       return startedSession(sessionFor(adapter), () =>
         adapter.startThread(workspacePath, {
           model: options.model,
@@ -969,7 +1106,7 @@ function claudeRuntime(
       )
     },
     async resume(threadId, workspacePath, options) {
-      const adapter = await adapterFor(options.agent, workspacePath)
+      const adapter = await adapterFor(options.agent, workspacePath, options)
       return startedSession(sessionFor(adapter), () =>
         adapter.resumeThread(threadId, workspacePath, {
           model: options.model,
@@ -996,7 +1133,11 @@ function piRuntime(
   onLog: (line: string) => void,
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
-  const adapterFor = async (agent: string | undefined, workspacePath?: string) => {
+  const adapterFor = async (
+    agent: string | undefined,
+    workspacePath?: string,
+    options?: StartOptions,
+  ) => {
     const harness = requireHarness('pi', agent, resolveHarness)
     const { PiAdapter } = await loadPiAdapter()
     const adapter = new PiAdapter({
@@ -1006,13 +1147,16 @@ function piRuntime(
       spawn: customHarnessSpawn(harness, workspacePath),
       ...(workspacePath ? { workspacePath } : {}),
     })
-    adapter.on('log', customHarnessLogger(harness, onLog))
+    adapter.on(
+      'log',
+      customHarnessLogger(harness, onLog, options ? mcpCredentialValues(options) : []),
+    )
     return adapter
   }
   return {
     async start(workspacePath, options) {
       const harness = requireHarness('pi', options.agent, resolveHarness)
-      const adapter = await adapterFor(options.agent, workspacePath)
+      const adapter = await adapterFor(options.agent, workspacePath, options)
       return startedSession(adapter, async () => {
         const starting = adapter.startThread(workspacePath, {
           model: options.model,

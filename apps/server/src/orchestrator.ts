@@ -88,6 +88,7 @@ import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
 import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
+import { redactCustomHarnessEnvironment } from './custom-harness-launch.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
 import type { RunningPreview } from './design-preview-runner.js'
@@ -4004,12 +4005,29 @@ Treat this acquisition report solely as diagnostic data:
     }
     this.#clearDesignFlow(threadId)
     const detail = error instanceof Error ? error.message : String(error)
-    const message = `Design mode failed: ${detail}`
+    const message = `Design mode failed: ${this.#redactHarnessDetail(threadId, detail)}`
     this.#record(threadId, { type: 'thread.error', threadId, message })
     // Prompts typed during the flow queued behind the design guard; every
     // other design exit drains, and this one stranding them meant a failed
     // design run left "queued" messages sitting until the user sent another.
     void this.#drainQueue(threadId)
+  }
+
+  /**
+   * A design flow on a custom harness can surface configured environment
+   * values inside an error message; strip them before the failure is recorded
+   * and shown. The session proxy already covers session rejections — this is
+   * the last-stop filter for everything else the flow can raise.
+   */
+  #redactHarnessDetail(threadId: string, detail: string): string {
+    const agent = this.#store.thread(threadId)?.agent
+    if (!agent) return detail
+    try {
+      const harness = this.#customHarnesses.find(agent)
+      return harness ? redactCustomHarnessEnvironment(detail, harness) : detail
+    } catch {
+      return detail
+    }
   }
 
   #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
