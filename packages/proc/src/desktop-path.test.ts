@@ -22,6 +22,18 @@ describe('desktopPath', () => {
     expect(result.split(path.posix.delimiter)).toContain('/opt/homebrew/bin')
   })
 
+  it('adds snap, flatpak and nix bin directories on Linux', () => {
+    const home = '/home/tester'
+    const result = desktopPath('/usr/bin', { platform: 'linux', home, env: {} })
+    const entries = result.split(path.posix.delimiter)
+
+    expect(entries).toContain('/snap/bin')
+    expect(entries).toContain('/var/lib/flatpak/exports/bin')
+    expect(entries).toContain('/home/tester/.nix-profile/bin')
+    expect(entries).toContain('/home/tester/.local/share/flatpak/exports/bin')
+    expect(entries).not.toContain('/opt/homebrew/bin')
+  })
+
   it('does not duplicate a user bin that is already on PATH', () => {
     const home = '/Users/tester'
     const local = path.posix.join(home, '.local', 'bin')

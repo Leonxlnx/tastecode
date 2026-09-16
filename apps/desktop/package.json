@@ -144,7 +144,9 @@
       "packageCategory": "devel",
       "fpm": [
         "--depends",
-        "libasound2t64 | libasound2"
+        "libasound2t64 | libasound2",
+        "--depends",
+        "libc6 (>= 2.31)"
       ]
     },
     "win": {

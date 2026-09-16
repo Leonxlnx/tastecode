@@ -72,10 +72,15 @@ function extraDirectories(
       env.ProgramData ? join(env.ProgramData, 'chocolatey', 'bin') : undefined,
     ]
   }
-  return [
-    ...userBins,
-    platform === 'darwin' ? join(home, 'Library', 'pnpm', 'bin') : undefined,
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-  ]
+  if (platform === 'linux') {
+    return [
+      ...userBins,
+      join(home, '.nix-profile', 'bin'),
+      '/snap/bin',
+      '/var/lib/flatpak/exports/bin',
+      join(home, '.local', 'share', 'flatpak', 'exports', 'bin'),
+      '/usr/local/bin',
+    ]
+  }
+  return [...userBins, join(home, 'Library', 'pnpm', 'bin'), '/opt/homebrew/bin', '/usr/local/bin']
 }
