@@ -5,6 +5,10 @@
   position: relative;
 }
 
+.reply--notice {
+  color: var(--text-3);
+}
+
 .reply > .md {
   font-family: var(--font-ui);
   font-size: var(--t-md);
