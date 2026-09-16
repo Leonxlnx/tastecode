@@ -45,7 +45,8 @@ import {
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
-import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { configureEmbeddedBrowser } from './embedded-browser.js'
+import { assertSupportedExternalUrl } from './external-urls.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
@@ -62,7 +63,7 @@ import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
-import { restoreMainWindowPresence } from './window-presence.js'
+import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
   loadMainWindowState,
@@ -82,6 +83,13 @@ import {
 import { viewedImagePath } from './viewed-image-path.js'
 
 applyDesktopPath()
+
+// Owned children — the utility-process server below and the provider CLIs it
+// spawns — inherit this environment wholesale. A stale ELECTRON_RUN_AS_NODE
+// would boot the utility process as NodeMain instead of the server entry (a
+// restart loop), and NODE_OPTIONS would inject flags into every child.
+delete process.env['ELECTRON_RUN_AS_NODE']
+delete process.env['NODE_OPTIONS']
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -219,11 +227,25 @@ if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration(
 if (process.env['HARNESS_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
 }
-// A machine whose GPU process cannot launch (some Wayland/Vulkan stacks) must
-// fall back to software rendering, not FATAL on "GPU process isn't usable".
+// Chromium stops respawning the GPU process after a few crashes — the outcome
+// a flaky Wayland/Vulkan stack hits until the cap leaves the app stuck without
+// a working GPU. Lifting the cap lets respawns keep retrying; the counter
+// still surfaces a stack that never recovers. Software rendering stays opt-in
+// via HARNESS_DISABLE_GPU.
 if (process.env['HARNESS_DISABLE_GPU'] !== '1') {
   app.commandLine.appendSwitch('disable-gpu-process-crash-limit')
 }
+let gpuProcessDeaths = 0
+app.on('child-process-gone', (_event, details) => {
+  if (details.type !== 'GPU' || details.reason === 'clean-exit') return
+  gpuProcessDeaths += 1
+  if (gpuProcessDeaths === 8) {
+    const line =
+      'GPU process keeps crashing; relaunch with HARNESS_DISABLE_GPU=1 for software rendering'
+    console.error(`[desktop] ${line}`)
+    void diagnostics?.record('gpu', line)
+  }
+})
 
 const ownsSingleInstance = app.requestSingleInstanceLock()
 let mainWindow: BrowserWindow | undefined
@@ -310,14 +332,17 @@ function startOwnedServer(): void {
       }
     },
     onGaveUp: () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        void dialog.showMessageBox(mainWindow, {
-          type: 'error',
-          title: nativeAppName,
-          message: 'The core server keeps crashing.',
-          detail: 'Restart the app. If this keeps happening, reinstall it.',
-        })
+      const options = {
+        type: 'error' as const,
+        title: nativeAppName,
+        message: 'The core server keeps crashing.',
+        detail: 'Restart the app. If this keeps happening, reinstall it.',
       }
+      // macOS and Linux keep the app alive after the last window closes, so
+      // the dialog must stand alone when there is no window to parent it to.
+      const window = mainWindow
+      if (window && !window.isDestroyed()) void dialog.showMessageBox(window, options)
+      else void dialog.showMessageBox(options)
     },
   }
   serverSupervisor =
@@ -338,11 +363,23 @@ function startOwnedServer(): void {
 
 function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
+  let exitCode: number | null = null
+  child.once('exit', (code) => {
+    exitCode = code
+  })
   return {
+    get pid() {
+      return child.pid
+    },
+    get exitCode() {
+      return exitCode
+    },
+    get signalCode() {
+      return null
+    },
     get stdout() {
       return child.stdout
     },
@@ -466,11 +503,22 @@ function createWindow(): void {
   window.on('responsive', () => {
     console.info('[desktop] main window renderer recovered')
   })
+  let rendererReloaded = false
   window.webContents.on('render-process-gone', (_event, details) => {
     console.error(
       `[desktop] main window renderer exited: ${details.reason} (code ${details.exitCode})`,
     )
     void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
+    // A renderer that dies before ready-to-show never paints, so the window
+    // would stay hidden forever. Give it one reload; if that dies too, show
+    // whatever is left — an invisible app is worse than a broken page.
+    if (window.isVisible() || details.reason === 'clean-exit') return
+    if (!rendererReloaded) {
+      rendererReloaded = true
+      window.webContents.reload()
+    } else {
+      window.show()
+    }
   })
 
   // Avoid the white flash before React paints.
@@ -542,10 +590,9 @@ function showMainWindow(): void {
     createWindow()
     return
   }
-  restoreMainWindowPresence(process.platform, app, window)
-  if (window.isMinimized()) window.restore()
-  window.show()
-  window.focus()
+  // app.focus() matters on macOS: a second-instance or dock activation arrives
+  // while another app is frontmost, and window.focus() alone stays behind it.
+  presentMainWindow(process.platform, app, window)
 }
 
 function createBackgroundTray(): void {
@@ -708,7 +755,7 @@ ipcMain.handle('harness:cancelPreviewCapture', (event, value: unknown) => {
 
 ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
   requireOwnRenderer(event.sender)
-  await shell.openExternal(browserGuestUrl(url))
+  await shell.openExternal(assertSupportedExternalUrl(url))
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {

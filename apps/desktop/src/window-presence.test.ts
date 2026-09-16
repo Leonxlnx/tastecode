@@ -66,6 +66,28 @@ describe('restoreMainWindowPresence', () => {
 })
 
 describe('presentMainWindow', () => {
+  it('restores macOS presence before presenting the window', () => {
+    const { application, window } = presentationDoubles(true)
+
+    presentMainWindow('darwin', application, window)
+
+    expect(application.setActivationPolicy).toHaveBeenCalledWith('regular')
+    expect(window.setHiddenInMissionControl).toHaveBeenCalledWith(false)
+    expect(window.restore).toHaveBeenCalledOnce()
+    expect(window.show).toHaveBeenCalledOnce()
+    expect(application.focus).toHaveBeenCalledOnce()
+    expect(window.focus).toHaveBeenCalledOnce()
+  })
+
+  it('does not restore a window that is not minimized', () => {
+    const { window } = presentationDoubles(false)
+
+    presentMainWindow('win32', { setActivationPolicy: vi.fn(), focus: vi.fn() }, window)
+
+    expect(window.restore).not.toHaveBeenCalled()
+    expect(window.show).toHaveBeenCalledOnce()
+  })
+
   it('shows a Linux window before requesting application and window focus', () => {
     const { application, window } = presentationDoubles(true)
 
