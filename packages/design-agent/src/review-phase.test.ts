@@ -45,7 +45,9 @@ describe('review and repair phases', () => {
       {} as Parameters<typeof designReviewPrompt>[2],
       [],
     )
-    expect(prompt).toContain('Any heading occupies more than three visual lines')
+    expect(prompt).toContain(
+      'Heading size, width, line count or placement differs materially from the reference',
+    )
     expect(prompt).toContain('flag missing planned motion when browser evidence proves it')
     expect(prompt).toContain(
       'Preserve concise identification of concept work or an illustrative catalog',
@@ -59,7 +61,7 @@ describe('review and repair phases', () => {
     expect(prompt).toContain('replaces the reference alignment')
     expect(prompt).toContain("each section's recorded motion decision")
     expect(prompt).toContain('referenceDirectionId')
-    expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
+    expect(prompt).toContain('Invented grids, separator rules, card-edge rails')
     expect(prompt).toContain('SVG is acceptable only for an explicit functional icon, logo')
   })
 
@@ -97,7 +99,7 @@ describe('review and repair phases', () => {
     )
     expect(prompt).toContain('attempt 1 of 2')
     expect(prompt).toContain('Fix only the validated visual findings')
-    expect(prompt).toContain('must remove the substitute itself')
+    expect(prompt).toContain('Remove invented SVG filler and off-reference card-edge rails')
     expect(prompt).toContain('<screenshots>')
     expect(prompt).toContain('mobile.png')
   })
