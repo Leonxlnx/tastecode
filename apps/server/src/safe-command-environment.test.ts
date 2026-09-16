@@ -48,9 +48,7 @@ describe('safe command environment', () => {
     const savedPath = process.env['PATH']
     process.env['PATH'] = ['', '.', os.tmpdir()].join(path.delimiter)
     try {
-      const entries = (safeCommandEnvironment('/repo', runtime)['PATH'] ?? '').split(
-        path.delimiter,
-      )
+      const entries = (safeCommandEnvironment('/repo', runtime)['PATH'] ?? '').split(path.delimiter)
       expect(entries).not.toContain('')
       expect(entries).not.toContain('.')
       expect(entries).toContain(os.tmpdir())
