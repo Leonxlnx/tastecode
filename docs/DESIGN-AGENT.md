@@ -223,6 +223,18 @@ existing project evidence, and recorded assumptions. An unexpected question resp
 internal correction. Provider-originated input requests receive an instruction to choose defaults;
 permission approvals remain on the normal approval path. No credentials or authorization are invented.
 
+Landing pages normally receive at least eight substantive sections, excluding navigation and
+footer. Explicit smaller scopes, focused edits, and simpler pages take precedence. Section topics
+follow the request; every section's desktop and mobile composition comes from a reference image.
+
+Missing material for a new design must not become an invented requirement for real clients,
+artists, releases, or product photographs. The shared content guidance allows original concept
+studies and illustrative catalogs, preserves requested counts, and requires concise visible
+identification so they cannot masquerade as commissioned work or real releases. Explicit requests
+for real subjects and existing project facts remain binding. All phases preserve this distinction;
+Page replanning may replace unsupported assumptions introduced by an earlier phase. Image files,
+provenance, and resolution still have to pass acquisition validation before Build.
+
 Older persisted final-note cards resolve against their validated candidate brief. Other saved
 briefing questions resume with autonomous decision instructions. The shared UserInput surface
 remains available to ordinary non-Design tasks.
@@ -384,9 +396,9 @@ image quality or license ownership. Supplied assets used in the page need a work
 the finished result does not depend on an upload path.
 
 The Asset phase is an acquisition step rather than a wish list. It keeps every Page asset and
-component ID and reuses suitable project or supplied files first. Licensed search comes next for
-factual, editorial, or professional photography; image generation is reserved for precise,
-brand-specific original needs. Generated output receives an exact creative brief, intended crop
+component ID and reuses suitable project or supplied files first. Missing original visuals use
+image generation when available, falling back to licensed image search if unavailable or
+unsuccessful. Explicit real subjects require matching verified images. Generated output receives an exact creative brief, intended crop
 inspection, and at most one defect-led regeneration. A generated or downloaded file must be saved
 inside the project before it is marked ready. SVG is allowed only for a functional icon, logo, or
 truthful data diagram. It cannot satisfy photography, product imagery, editorial art, interface
@@ -449,6 +461,13 @@ every reported command ran. This distinction matters for future verification wor
 
 The Preview phase returns an executable, argv array, workspace-relative working directory,
 explicit `http://127.0.0.1:<port>` URL, optional readiness text, and one to four unique viewports.
+
+Static and command previews choose a free loopback port when the requested port is occupied or
+claimed by another concurrent preview. Command previews update explicit `--port`, `--port=`, or
+`-p` arguments and set `PORT`; custom Node servers must honor that environment variable. Readiness,
+capture, and cleanup use the actual selected URL. A hardcoded server that ignores its assigned
+port still fails instead of attaching to an unrelated site. Existing processes are never stopped
+to make room for a new preview.
 
 The parser rejects:
 
