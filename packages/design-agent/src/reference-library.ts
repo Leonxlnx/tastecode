@@ -2,6 +2,7 @@ import { randomInt } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { DesignBrief } from './brief.js'
 import { PAGE_LAYOUT_FAMILIES } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
@@ -48,9 +49,7 @@ export function referenceLibraryRoot(): string {
     if (!path.isAbsolute(root)) throw new Error('Design reference libraryPath must be absolute')
     return root
   }
-  throw new Error(
-    'Design reference library is not configured. Set TASTECODE_REFERENCE_LIBRARY or libraryPath in ~/.tastecode/design-references.json, then restart Design mode. You can also attach your own reference images.',
-  )
+  return fileURLToPath(new URL('../references/library/', import.meta.url))
 }
 
 export function loadReviewedReferences(root = referenceLibraryRoot()): ReferenceDirection[] {
