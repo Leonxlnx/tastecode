@@ -1,6 +1,6 @@
 import { resolveReasoningEffort, sourceKey, type ModelChoice } from '../model-catalog.js'
 
-export const SLIDER_DITHER_MIN_WIDTH = 44
+export const SLIDER_DITHER_MIN_WIDTH = 32
 export const SLIDER_DITHER_INSET = 2
 
 export type ModelSelectorProps = {
@@ -45,9 +45,16 @@ export function getEffortIndexFromPointer(input: {
   left: number
   width: number
   stopCount: number
+  currentIndex?: number | null
 }): number {
   if (input.stopCount <= 1) return 0
-  return Math.round(getEffortProgressFromPointer(input) * (input.stopCount - 1))
+  const position = getEffortProgressFromPointer(input) * (input.stopCount - 1)
+  if (input.currentIndex == null) return Math.round(position)
+  const current = input.currentIndex
+  // Keep the current stop until the pointer reaches the next stop's final quarter.
+  return position > current
+    ? Math.max(current, Math.floor(position + 0.25))
+    : Math.max(0, Math.min(current, Math.ceil(position - 0.25)))
 }
 
 export function getEffortProgressFromPointer(input: {
@@ -58,7 +65,7 @@ export function getEffortProgressFromPointer(input: {
   const innerWidth = input.width - SLIDER_DITHER_INSET * 2
   if (innerWidth <= SLIDER_DITHER_MIN_WIDTH) return 0
   const travelWidth = innerWidth - SLIDER_DITHER_MIN_WIDTH
-  const relativeX = input.clientX - input.left - SLIDER_DITHER_INSET - SLIDER_DITHER_MIN_WIDTH
+  const relativeX = input.clientX - input.left - SLIDER_DITHER_INSET - SLIDER_DITHER_MIN_WIDTH / 2
   return Math.min(1, Math.max(0, relativeX / travelWidth))
 }
 

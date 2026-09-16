@@ -571,6 +571,25 @@ describe('ModelSelector', () => {
         left: 100,
         width: 280,
       }),
-    ).toBeCloseTo(0.405, 3)
+    ).toBeCloseTo(0.5, 3)
+  })
+
+  it('switches only in the final quarter of a drag in either direction', () => {
+    const at = (position: number, currentIndex: number) =>
+      getEffortIndexFromPointer({
+        clientX: 18 + position * 100,
+        left: 0,
+        width: 336,
+        stopCount: 4,
+        currentIndex,
+      })
+    expect(at(1.26, 2)).toBe(2)
+    expect(at(1.25, 2)).toBe(1)
+    expect(at(1.74, 1)).toBe(1)
+    expect(at(1.75, 1)).toBe(2)
+    expect(at(1.5, 2)).toBe(2)
+    expect(at(1.5, 1)).toBe(1)
+    expect(at(-1, 2)).toBe(0)
+    expect(at(4, 1)).toBe(3)
   })
 })

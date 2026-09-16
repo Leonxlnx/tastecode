@@ -104,7 +104,7 @@
 
 .model-selector__slider {
   position: relative;
-  height: 36px;
+  height: 28px;
   width: 100%;
   touch-action: none;
   user-select: none;
@@ -124,9 +124,9 @@
 
 .model-selector__slider-track {
   position: absolute;
-  inset: 0;
+  inset: 3px 0;
   overflow: hidden;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-lg);
   background: var(--effort-track);
   box-shadow: var(--effort-track-shadow);
 }
@@ -138,14 +138,14 @@
   width: var(--model-selector-slider-width);
   overflow: hidden;
   background: var(--effort-fill);
-  border-radius: var(--r-pill);
+  border-radius: var(--r-md);
   box-shadow: var(--effort-fill-shadow);
 }
 
 .model-selector__slider-stops {
   position: absolute;
   z-index: 2;
-  inset: 0 22px;
+  inset: 0 18px;
   pointer-events: none;
 }
 
@@ -153,8 +153,8 @@
   position: absolute;
   top: 50%;
   left: calc(var(--model-selector-stop) * 100%);
-  width: 4px;
-  height: 4px;
+  width: 3px;
+  height: 3px;
   background: color-mix(in srgb, var(--text-3) 52%, transparent);
   border-radius: var(--r-circle);
   box-shadow: 0 0 0 1px color-mix(in srgb, black 10%, transparent);
@@ -163,6 +163,16 @@
 
 .model-selector__slider-stop.is-active {
   background: color-mix(in srgb, var(--effort-value) 84%, transparent);
+}
+
+.model-selector__slider .dither-slider {
+  opacity: 0.45;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .model-selector__slider:hover .model-selector__slider-stop.is-active {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--effort-value) 8%, transparent);
+  }
 }
 
 .dither-slider {
