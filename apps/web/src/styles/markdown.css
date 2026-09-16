@@ -20,6 +20,11 @@
   max-width: 72ch;
 }
 
+.reply--notice > .md > p:first-child {
+  /* Hang the opening D's side bearing on the reply's visible text edge. */
+  text-indent: -0.075em;
+}
+
 .reply > .md :is(strong, b) {
   font-weight: 550;
 }
