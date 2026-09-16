@@ -706,7 +706,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Native Wayland launch: window maps, paints, rAF ~64fps, local server ready on ws://127.0.0.1:4311. commit 7bbf8c3d.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Native Wayland launch: window maps, paints, rAF ~64fps, local server ready on ws://127.0.0.1:4311. commit 7bbf8c3d.</textarea>
               </label>
             </div>
           </article>
@@ -746,7 +747,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Minimized window + second launch: lock refused (exit 0, stderr line), first window restored and focused via second-instance→showMainWindow.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Minimized window + second launch: lock refused (exit 0, stderr line), first window restored and focused via second-instance→showMainWindow.</textarea>
               </label>
             </div>
           </article>
@@ -765,7 +767,8 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Close and recovery result">
-                <input id="tray-pass" name="tray" type="radio" value="pass" checked /><label for="tray-pass"
+                <input id="tray-pass" name="tray" type="radio" value="pass" checked /><label
+                  for="tray-pass"
                   >PASS</label
                 >
                 <input id="tray-fail" name="tray" type="radio" value="fail" /><label for="tray-fail"
@@ -780,7 +783,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Say whether COSMIC showed a tray icon">No tray on Linux by design (createBackgroundTray is win32-only, main.ts:911). Close destroys the window, process stays alive, relaunch recreates+shows the window via second-instance. Restores normally; never an unreachable hidden process.</textarea>
+                ><textarea placeholder="Say whether COSMIC showed a tray icon">
+No tray on Linux by design (createBackgroundTray is win32-only, main.ts:911). Close destroys the window, process stays alive, relaunch recreates+shows the window via second-instance. Restores normally; never an unreachable hidden process.</textarea>
               </label>
             </div>
           </article>
@@ -814,7 +818,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">pickFolder/pickFiles reach the COSMIC FileChooser portal (D-Bus verified). Human tester selected Unicode folder and file successfully; cancel resolves harmlessly.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+pickFolder/pickFiles reach the COSMIC FileChooser portal (D-Bus verified). Human tester selected Unicode folder and file successfully; cancel resolves harmlessly.</textarea>
               </label>
             </div>
           </article>
@@ -831,10 +836,13 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Clipboard result">
-                <input id="clipboard-pass" name="clipboard" type="radio" value="pass" checked /><label
-                  for="clipboard-pass"
-                  >PASS</label
-                >
+                <input
+                  id="clipboard-pass"
+                  name="clipboard"
+                  type="radio"
+                  value="pass"
+                  checked
+                /><label for="clipboard-pass">PASS</label>
                 <input id="clipboard-fail" name="clipboard" type="radio" value="fail" /><label
                   for="clipboard-fail"
                   >FAIL</label
@@ -848,7 +856,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Write: harness.writeClipboardText lands on system clipboard with real input serial (wl-paste verified, Unicode intact). Paste: canary pasted into composer and in-app Ctrl+C read back via wl-paste on native Wayland.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Write: harness.writeClipboardText lands on system clipboard with real input serial (wl-paste verified, Unicode intact). Paste: canary pasted into composer and in-app Ctrl+C read back via wl-paste on native Wayland.</textarea>
               </label>
             </div>
           </article>
@@ -868,10 +877,13 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Drag and drop result">
-                <input id="drag-drop-pass" name="drag-drop" type="radio" value="pass" checked /><label
-                  for="drag-drop-pass"
-                  >PASS</label
-                >
+                <input
+                  id="drag-drop-pass"
+                  name="drag-drop"
+                  type="radio"
+                  value="pass"
+                  checked
+                /><label for="drag-drop-pass">PASS</label>
                 <input id="drag-drop-fail" name="drag-drop" type="radio" value="fail" /><label
                   for="drag-drop-fail"
                   >FAIL</label
@@ -885,7 +897,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Real OS drag verified by human tester: Unicode file dropped into the composer and folder onto the rail accepted correctly, no duplicate events.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Real OS drag verified by human tester: Unicode file dropped into the composer and folder onto the rail accepted correctly, no duplicate events.</textarea>
               </label>
             </div>
           </article>
@@ -921,7 +934,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">HTTPS opened via xdg-open; file:// and smb:// rejected with Invalid browser URL.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+HTTPS opened via xdg-open; file:// and smb:// rejected with Invalid browser URL.</textarea>
               </label>
             </div>
           </article>
@@ -958,7 +972,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Unicode+spaces project path and seeded thread survive quit→relaunch.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Unicode+spaces project path and seeded thread survive quit→relaunch.</textarea>
               </label>
             </div>
           </article>
@@ -996,7 +1011,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">PTY live: pwd, Unicode output, git --version; panel resize works; Ctrl+C interrupts sleep 60; bash child+sleep grandchildren die on terminal close.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+PTY live: pwd, Unicode output, git --version; panel resize works; Ctrl+C interrupts sleep 60; bash child+sleep grandchildren die on terminal close.</textarea>
               </label>
             </div>
           </article>
@@ -1017,7 +1033,8 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Git and review result">
-                <input id="git-pass" name="git" type="radio" value="pass" checked /><label for="git-pass"
+                <input id="git-pass" name="git" type="radio" value="pass" checked /><label
+                  for="git-pass"
                   >PASS</label
                 >
                 <input id="git-fail" name="git" type="radio" value="fail" /><label for="git-fail"
@@ -1032,7 +1049,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Review tab shows real git status with Unicode filenames; agrees with system git.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Review tab shows real git status with Unicode filenames; agrees with system git.</textarea>
               </label>
             </div>
           </article>
@@ -1066,7 +1084,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Browser preview tab: webview loaded local page, reload works, Close Browser stops cleanly. capturePage-based capture path remains env-blocked on this host (viz stack dead).</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Browser preview tab: webview loaded local page, reload works, Close Browser stops cleanly. capturePage-based capture path remains env-blocked on this host (viz stack dead).</textarea>
               </label>
             </div>
           </article>
@@ -1103,7 +1122,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result without the credential value</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Canary stored via connections.setCredential → materialized in gnome-keyring (login/981), survived relaunch, deleted via connections.remove.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Canary stored via connections.setCredential → materialized in gnome-keyring (login/981), survived relaunch, deleted via connections.remove.</textarea>
               </label>
             </div>
           </article>
@@ -1123,7 +1143,8 @@
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Quit and relaunch result">
-                <input id="quit-pass" name="quit" type="radio" value="pass" checked /><label for="quit-pass"
+                <input id="quit-pass" name="quit" type="radio" value="pass" checked /><label
+                  for="quit-pass"
                   >PASS</label
                 >
                 <input id="quit-fail" name="quit" type="radio" value="fail" /><label for="quit-fail"
@@ -1138,7 +1159,8 @@
             <div class="note-wrap">
               <label
                 ><span>Observed result</span
-                ><textarea placeholder="Required for FAIL or BLOCKED">Two quit→relaunch cycles via SIGTERM: clean exit, server child exits 0, no stale lock, no recovery dialog, state intact. File>Quit menu role is stock Electron.</textarea>
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+Two quit→relaunch cycles via SIGTERM: clean exit, server child exits 0, no stale lock, no recovery dialog, state intact. File>Quit menu role is stock Electron.</textarea>
               </label>
             </div>
           </article>
