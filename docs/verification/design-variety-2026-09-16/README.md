@@ -1,45 +1,59 @@
-# Design variety and integration verification — 2026-09-16
+# Reference fidelity and private beta 2 verification
 
-Runtime source: main `02d27955`, verified locally on Windows. The app was rebuilt and restarted
-with its existing data, configuration and reference library. No Computer Use or new website
-generation prompts were submitted; manual visual generation testing remains with the user.
+Code merged in PRs #1202, #1203, #1204 and #1205. Verified runtime source:
+`2d6072e6795f7a465932c5663f22291056d80919`. The repository remains private.
 
-## Merged changes
+## Changes
 
-| PR                                                       | Result                                                                                                                          |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| [#1174](https://github.com/Leonxlnx/tastecode/pull/1174) | Claude Fable 5.1 appears by default, preserving live context aliases and efforts.                                               |
-| [#1175](https://github.com/Leonxlnx/tastecode/pull/1175) | Normal follow-ups after Design ends stop inheriting its JSON-only report instructions.                                          |
-| [#1176](https://github.com/Leonxlnx/tastecode/pull/1176) | Uniform reference-group sampling, complete generated candidate discovery, and visible motion requirements across design phases. |
-| [#1167](https://github.com/Leonxlnx/tastecode/pull/1167) | Private command scratch space and safer executable lookup.                                                                      |
-| [#1171](https://github.com/Leonxlnx/tastecode/pull/1171) | Desktop navigation, guest, IPC and resolved project-path checks.                                                                |
+- New runs retain reference geometry, line breaks, labels, borders, spacing and media count.
+  Page records measurable geometry; Build and Review compare it at desktop/mobile widths.
+  Existing asset provenance and SVG-substitution checks remain enforced. Pattern matching
+  cannot decide whether a border belongs to a reference; visual Review makes that comparison.
+- A persisted `node:crypto.randomInt` draw selects from forty verified font families: ten
+  sans, ten serif, ten display and ten mono. Explicit user fonts and existing identities win.
+  Acquisition must obtain actual fonts; Build verifies a loaded FontFace as well as the font
+  API check, which alone could accept a fallback. [Official source checks](./font-sources.json).
+- Fixing `url` metadata and complete-capture discovery exposes 172 composition groups,
+  316 original image files, 144 mobile pairs and 24 heroes. Every bundled sampling pool has
+  at least ten distinct groups and files; sparse topics use compatible image geometry with
+  its real layout family retained. These are not claims of ten native pricing/contact layouts.
+  Revisions do not get extra votes. [Inspected hero overview](./hero-gallery.png).
+- Build receives a tested native reveal implementation. It prepares only offscreen elements,
+  observes before entry, plays once, and restores visibility on cleanup or reduced motion.
+  It never hides already painted content to start a late opacity-zero entrance.
 
 ## Checks
 
-- `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm build` passed on the combined source tree.
-- Full tests include 130 Design Agent, 1,494 web, 729 server, 159 desktop, and 77 Claude adapter tests.
-- Real-process preview tests exercised occupied command/static ports, package-manager port flags,
-  concurrent previews, and preservation of an unrelated listening site.
-- The local eligible library contains 118 composition groups: 15 heroes, 27 features, 15 about,
-  16 social proof, 11 CTA, 11 footer, eight FAQ, six process, five pricing and four stats.
-  There are 102 paired mobile candidates. All included raster files passed the existing integrity
-  parser. Generated candidates explicitly retain pending visual-inspection and pairing notes.
-- The rebuilt renderer returned HTTP 200; the restarted WebSocket server returned 14 existing
-  projects and `claude-fable-5-1[1m]` with low/medium/high/xhigh/max efforts. The desktop stayed
-  responsive. No app crash appeared in the startup logs.
+An isolated source export combined current main with the changes without touching the running
+app. All four gates passed: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
+Design-agent: 134 tests; web: 1,521; server: 772; desktop: 172. Adapter/package suites passed
+with their existing skips. Release-tool checks: 41 passed, one skipped. Targeted checks were
+repeated after the final font-verification and packaging-verifier changes.
 
-Selection tests establish equal eligibility across ten different hero groups and sampling without
-replacement. Prompt checks establish that motion requirements reach every consuming phase. These
-are not proof that a fresh model-generated page implements or plays its animations correctly;
-that still needs live desktop/mobile review. No claim of universal error-free generation is made.
+A separate hidden Electron browser exercised a tall section, two rapid down/up cycles,
+restored mid-page scroll, reduced-motion changes and cleanup. Fourteen recorded visibility
+samples stayed fully visible after their first reveal. [Browser results](./motion-result.json).
+The portable unit test covers initial visibility, observer lifecycle and remount behavior.
 
-## Other PRs left open
+The Windows candidate's real packaged Design module loaded 172 references, verified all 316
+image hashes, drew fourteen different groups, and returned ten font choices per category.
+Packaged licenses, updater configuration, renderer and all 451 reference/resource files match
+the source. Packaged PTY and OS keyring proofs passed. The tested export matches all 1,961
+runtime/tooling files tracked by the main commit above.
 
-- #1170 adds a second preload to a test that already preloads the same module on main.
-- #1162–#1166 and #1168 contain broader process, credential/contract, lifecycle, diagnostics and
-  performance work. Their combined platform behavior was not qualified in this integration.
-- #1169 is legacy Rust/Bun configuration cleanup and was left outside this change.
-- #1153 and #1132 remain drafts.
+## Candidate and remaining release checks
 
-No hosted CI was started. The shared development checkout and other agents' processes were not
-changed. Only this task's isolated TasteCode desktop, server and renderer were restarted.
+`TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.
+Size: 510,237,067 bytes. SHA-256:
+`6abc8a284d597cf61cf9019f7811f2ce31f4ef0aa5d4240343c3ca2a9d14a496`.
+
+This is an unsigned Windows testing candidate, not a published or clean-machine-qualified
+release. The existing installer install/uninstall gate requires an isolated hosted Windows
+runner and was not bypassed. No hosted CI was dispatched. No macOS artifact was produced on
+Windows; macOS packaging and native validation still require Apple Silicon macOS.
+
+The user's current app and active tasks were left running. Existing generated websites were
+not edited. New real-provider website runs and final visual acceptance remain with the user;
+passing workflow tests does not prove every future model output is visually faithful or smooth.
+Public asset redistribution and release approval remain separate gates; no public release or
+repository-visibility change was made.

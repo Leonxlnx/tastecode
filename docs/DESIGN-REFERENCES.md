@@ -37,6 +37,19 @@ The same requirements reach Brand, Page, Build, Review and Repair. Build must wi
 the triggers and reduced-motion states; unused keyframes and button color changes are insufficient.
 Motion preserves the selected compositions. Still screenshots alone cannot prove motion works.
 
+New runs also persist a random font permutation: ten verified families in each of four
+categories. Match the reference's typography category and use its first drawn family, unless
+the user or an existing identity supplies the font. Font files must be acquired and actually
+loaded; CSS fallback declarations do not satisfy that requirement. Reference geometry,
+labels, case, borders and line breaks take priority over generic style preferences.
+
+Build receives the tested native `references/motion/reveal.js` implementation for simple
+entrances. It initializes only offscreen elements, observes before entry and plays once.
+Already visible or restored-scroll content stays visible. Reduced-motion changes and cleanup
+cancel only owned animations and restore the final state. Browser QA includes rapid down/up
+scrolling and restored scroll, not only still screenshots. See the
+[September 16 verification](./verification/design-variety-2026-09-16/README.md).
+
 ## Bundled library and local overrides
 
 Fresh checkouts and desktop packages use `packages/design-agent/references/library` automatically:
