@@ -445,7 +445,7 @@ function modelSource(choice: ModelChoice): string {
 }
 
 export function App() {
-  const transport = useMemo(() => new Transport(SERVER_BASE_URL), [])
+  const [transport] = useState(() => new Transport(SERVER_BASE_URL))
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
