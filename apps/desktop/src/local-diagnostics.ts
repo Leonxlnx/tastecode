@@ -29,11 +29,15 @@ export class LocalDiagnostics {
   }
 
   async initialize(): Promise<void> {
-    try {
-      this.#enabled = (await readFile(this.#enabledFile, 'utf8')).trim() === 'true'
-    } catch {
-      this.#enabled = false
-    }
+    const generation = this.#generation
+    const enabled = await readFile(this.#enabledFile, 'utf8')
+      .then((contents) => contents.trim() === 'true')
+      .catch(() => false)
+    // A setEnabled call that landed while the marker was being read wins: its
+    // generation bump both commits its optimistic state and invalidates records
+    // queued before it.
+    if (generation !== this.#generation) return
+    this.#enabled = enabled
     this.#generation += 1
   }
 
@@ -46,8 +50,8 @@ export class LocalDiagnostics {
     this.#enabled = enabled
     return this.#enqueue(async () => {
       if (generation !== this.#generation) return this.#enabled
-      await mkdir(this.directory, { recursive: true, mode: 0o700 })
       try {
+        await mkdir(this.directory, { recursive: true, mode: 0o700 })
         if (enabled) await writeFile(this.#enabledFile, 'true', { mode: 0o600 })
         else await rm(this.#enabledFile, { force: true })
       } catch (error) {

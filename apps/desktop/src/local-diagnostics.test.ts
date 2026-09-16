@@ -111,6 +111,17 @@ describe('local diagnostics', () => {
     expect(log).toMatch(/\n$/)
   })
 
+  it('rolls back the enabled flag when persistence fails', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
+    directories.push(root)
+    const blocker = path.join(root, 'not-a-directory')
+    await writeFile(blocker, 'file, not a directory')
+    const diagnostics = new LocalDiagnostics(path.join(blocker, 'diagnostics'))
+
+    await expect(diagnostics.setEnabled(true)).rejects.toThrow()
+    expect(diagnostics.isEnabled()).toBe(false)
+  })
+
   it('invalidates queued records immediately when disabled', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
     directories.push(directory)
