@@ -82,7 +82,6 @@
   /* Match the rail and native caption buttons. The hairline belongs to .stage
      so it follows the animated column. */
   background: var(--bg-rail);
-  -webkit-app-region: no-drag;
   user-select: none;
 }
 
@@ -121,7 +120,7 @@
 .rail {
   --rail-text: #dcdcda;
   --rail-font-size: 13px;
-  --rail-font-weight: 380;
+  --rail-font-weight: 400;
   --rail-letter-spacing: -0.01em;
 
   position: absolute;
@@ -1352,7 +1351,6 @@
   background: var(--bg);
   border-bottom: 1px solid var(--line);
   user-select: none;
-  -webkit-app-region: no-drag;
 }
 
 .stagehead__drag-region {
@@ -1555,10 +1553,6 @@
 
 .shell.is-macos .rail {
   padding-top: var(--titlebar-h);
-}
-
-.shell.is-macos .stagehead {
-  -webkit-app-region: no-drag;
 }
 
 .shell.is-macos .stagehead__drag-region {
@@ -3327,7 +3321,7 @@
     width: 100%;
   }
 
-  .composer__permission .tool > span,
+  .composer__permission-label,
   .composer__design > span {
     display: none;
   }
@@ -3785,7 +3779,7 @@
   /* Below this width the pill labels cannot sit next to the model picker
      and still fit one line. Keep the icons (their aria-labels stay intact)
      so the whole rail reads left to right at any phone width. */
-  .tools .composer__permission .tool > span,
+  .tools .composer__permission-label,
   .tools .composer__design > span {
     display: none;
   }
