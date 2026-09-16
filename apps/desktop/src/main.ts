@@ -863,7 +863,9 @@ if (ownsSingleInstance) {
   void app.whenReady().then(async () => {
     logStartupMilestone('app-ready')
     diagnostics = new LocalDiagnostics(localDiagnosticsDirectory(app.getPath('userData')))
-    process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
+    process.on('uncaughtExceptionMonitor', (error) =>
+      diagnostics?.recordSync('main crash', error.stack ?? String(error)),
+    )
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()
     logStartupMilestone('diagnostics-ready')

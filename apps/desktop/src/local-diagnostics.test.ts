@@ -111,6 +111,22 @@ describe('local diagnostics', () => {
     expect(log).toMatch(/\n$/)
   })
 
+  it('persists a fatal record synchronously', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
+    directories.push(directory)
+    const diagnostics = new LocalDiagnostics(directory)
+
+    diagnostics.recordSync('main crash', 'fatal before enable')
+    await expect(readFile(path.join(directory, 'errors.log'), 'utf8')).rejects.toThrow()
+
+    await diagnostics.setEnabled(true)
+    diagnostics.recordSync('main crash', 'fatal: C:\\Users\\Leon\\work token=secret')
+
+    const log = await readFile(path.join(directory, 'errors.log'), 'utf8')
+    expect(log).toContain('[main crash] fatal: [home]\\work token=[redacted]')
+    expect(log).not.toContain('secret')
+  })
+
   it('rolls back the enabled flag when persistence fails', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
     directories.push(root)

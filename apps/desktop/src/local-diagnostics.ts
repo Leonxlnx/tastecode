@@ -1,3 +1,4 @@
+import { appendFileSync, mkdirSync } from 'node:fs'
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -93,6 +94,19 @@ export class LocalDiagnostics {
         // Diagnostics must never become a second app failure.
       }
     })
+  }
+
+  // Synchronous variant for fatal paths such as `uncaughtExceptionMonitor`,
+  // where the process exits before the queued async write would run.
+  recordSync(source: string, text: string): void {
+    if (!this.#enabled) return
+    try {
+      mkdirSync(this.directory, { recursive: true, mode: 0o700 })
+      const entry = boundedEntry(`${new Date().toISOString()} [${scrub(source)}] ${scrub(text)}`)
+      appendFileSync(this.#logFile, entry, { encoding: 'utf8', mode: 0o600 })
+    } catch {
+      // Diagnostics must never become a second app failure.
+    }
   }
 
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
