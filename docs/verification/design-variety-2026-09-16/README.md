@@ -1,7 +1,7 @@
 # Reference fidelity and private beta 2 verification
 
-Code merged in PRs #1202, #1203, #1204 and #1205. Verified runtime source:
-`2d6072e6795f7a465932c5663f22291056d80919`. The repository remains private.
+Code merged in PRs #1202, #1203, #1204, #1205 and #1206. Verified runtime source:
+`0f53966431c2e7878a51896687fe56392a51ca01`. The repository remains private.
 
 [Earlier same-day checks](./earlier-checks.md) retain the prior model-picker, follow-up,
 security and app-restart evidence. The results below cover the later overnight changes.
@@ -31,7 +31,9 @@ An isolated source export combined current main with the changes without touchin
 app. All four gates passed: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`.
 Design-agent: 134 tests; web: 1,521; server: 772; desktop: 172. Adapter/package suites passed
 with their existing skips. Release-tool checks: 41 passed, one skipped. Targeted checks were
-repeated after the final font-verification and packaging-verifier changes.
+repeated after the final font-verification and packaging-verifier changes. Final lint, typecheck,
+build, 134 design-agent tests and 210 orchestration tests passed after restricting draw overrides
+to the original user prompt and actual answers; inferred brief notes cannot pin the random choice.
 
 A separate hidden Electron browser exercised a tall section, two rapid down/up cycles,
 restored mid-page scroll, reduced-motion changes and cleanup. Fourteen recorded visibility
@@ -47,8 +49,8 @@ runtime/tooling files tracked by the main commit above.
 ## Candidate and remaining release checks
 
 `TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.
-Size: 510,237,067 bytes. SHA-256:
-`6abc8a284d597cf61cf9019f7811f2ce31f4ef0aa5d4240343c3ca2a9d14a496`.
+Size: 510,237,171 bytes. SHA-256:
+`b10bba1b44e43a4ff601639564d7793d414f40e0fa8659e0e72f2dd2afa7fa06`.
 
 This is an unsigned Windows testing candidate, not a published or clean-machine-qualified
 release. The existing installer install/uninstall gate requires an isolated hosted Windows
