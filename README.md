@@ -36,9 +36,24 @@ unsigned builds.
 
 ## Requirements
 
-- Windows 10/11 x64 or macOS on Apple Silicon
+- Windows 10/11 x64, macOS on Apple Silicon, or Linux x64 (glibc ≥ 2.31, Wayland session)
 - at least one supported provider CLI installed and signed in
 - Git for project checkpoints and worktree features
+
+### Linux
+
+Linux is qualified on Pop!_OS 24.04 (COSMIC) and Ubuntu 24.04 (GNOME); other Wayland desktops
+are best-effort. Two artifacts ship per release:
+
+- **deb** — the primary artifact. Installs to `/opt`, registers the desktop entry and AppArmor
+  profile, and declares its dependencies to apt.
+- **AppImage** — portable, but needs `libfuse2` on the host and unprivileged user namespaces.
+  Ubuntu 23.10+ disables unprivileged user namespaces by default
+  (`kernel.apparmor_restrict_unprivileged_userns`); prefer the deb there. Without FUSE, run
+  `./TasteCode-*.AppImage --appimage-extract` and launch `squashfs-root/tastecode` instead.
+
+Credential storage needs a Secret Service provider on the session bus — GNOME and KDE ship one;
+minimal or headless desktops need gnome-keyring, KWallet, or KeePassXC installed.
 
 For local development, install Node 24 LTS and pnpm, then run:
 
