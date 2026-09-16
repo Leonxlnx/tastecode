@@ -78,7 +78,7 @@ export function safeCommandEnvironment(
   ensurePrivateDirectory(runtimeDir)
   const runtime = runtimeDir
   const nullFile = process.platform === 'win32' ? 'NUL' : '/dev/null'
-  return {
+  const environment: NodeJS.ProcessEnv = {
     PATH: commandPath(),
     PATHEXT: process.env['PATHEXT'],
     SYSTEMROOT: process.env['SYSTEMROOT'],
@@ -100,4 +100,7 @@ export function safeCommandEnvironment(
     GIT_CONFIG_GLOBAL: nullFile,
     NPM_CONFIG_USERCONFIG: nullFile,
   }
+  // POSIX tools honor TMPDIR; Windows reads TEMP/TMP above.
+  if (process.platform !== 'win32') environment['TMPDIR'] = runtime
+  return environment
 }

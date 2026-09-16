@@ -30,6 +30,8 @@ describe('safe command environment', () => {
     expect(env['TEMP']).toBe(runtime)
     expect(env['TMP']).toBe(runtime)
     expect(env['APPDATA']).toBe(runtime)
+    expect(env['LOCALAPPDATA']).toBe(runtime)
+    if (process.platform !== 'win32') expect(env['TMPDIR']).toBe(runtime)
     expect(env['NoDefaultCurrentDirectoryInExePath']).toBe('1')
   })
 
