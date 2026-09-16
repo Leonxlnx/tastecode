@@ -1241,7 +1241,14 @@ export function clientErrorMessage(error: unknown): string {
 
 export function hasAccess(requestUrl: string | undefined, expected: string | undefined): boolean {
   if (!expected) return true
-  const supplied = new URL(requestUrl ?? '/', 'ws://harness.local').searchParams.get('token')
+  let supplied: string | null
+  try {
+    supplied = new URL(requestUrl ?? '/', 'ws://harness.local').searchParams.get('token')
+  } catch {
+    // A request-target that is not a usable path — a mangled absolute-form or
+    // authority-form target — must not take the whole server down with it.
+    return false
+  }
   if (!supplied) return false
 
   const expectedBytes = Buffer.from(expected)

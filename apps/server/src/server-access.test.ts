@@ -69,4 +69,13 @@ describe('server access token', () => {
     expect(hasAccess('/?token=wrong-token', 'correct-token')).toBe(false)
     expect(hasAccess('/', 'correct-token')).toBe(false)
   })
+
+  it('treats a malformed request-target as no access instead of crashing', () => {
+    // An absolute-form target that is not a parseable URL used to throw here —
+    // inside the connection handler, that was a remote crash of the process.
+    expect(hasAccess('http://[::1', 'correct-token')).toBe(false)
+    expect(hasAccess('\\\\', 'correct-token')).toBe(false)
+    // A malformed target still admits nothing when no token is configured.
+    expect(hasAccess('http://[::1', undefined)).toBe(true)
+  })
 })
