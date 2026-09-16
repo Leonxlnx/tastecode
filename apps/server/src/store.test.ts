@@ -672,6 +672,9 @@ describe('a database written by a newer build', () => {
     const raw = new DatabaseSync(file)
     // A selected event type carrying a shape this build rejects: the SQL
     // prefilter sees 'item.started', then the schema refuses the payload.
+    raw
+      .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+      .run('one', 3, '{broken')
     raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`).run(
       'one',
       3,
@@ -719,6 +722,10 @@ describe('a database written by a newer build', () => {
     seeded.addThread({ id: 'alien', projectPath: '/repo', provider: 'codex', title: 'Alien' })
     seeded.append('normal', message('shared needle'))
     seeded.append('alien', message('shared needle'))
+    seeded.append('alien', {
+      type: 'turn.started',
+      turn: { id: 'alien-turn', threadId: 'alien', status: 'running', createdAt: 1 },
+    })
     seeded.close()
 
     const raw = new DatabaseSync(file)
@@ -734,6 +741,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.thread('alien')).toBeUndefined()
       const results = reopened.searchSessions({ query: 'needle' }).results
       expect(results.map((result) => result.threadId)).toEqual(['normal'])
+      expect(reopened.recoverInterruptedThreads()).toEqual([])
     } finally {
       reopened.close()
       rmSync(dir, { recursive: true, force: true })

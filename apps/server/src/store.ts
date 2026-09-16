@@ -802,13 +802,14 @@ export class Store {
     this.#deleteInboxStatus = this.#db.prepare(
       `DELETE FROM inbox_events
        WHERE thread_id = ?
-         AND json_extract(payload, '$.type') IN ('thread.error', 'turn.completed')`,
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type')
+           IN ('thread.error', 'turn.completed')`,
     )
     this.#deleteInboxRequest = this.#db.prepare(
       `DELETE FROM inbox_events
        WHERE thread_id = ?
-         AND json_extract(payload, '$.type') = ?
-         AND json_extract(payload, '$.request.id') = ?`,
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') = ?
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.request.id') = ?`,
     )
     this.#deleteThreadInboxEvents = this.#db.prepare(`DELETE FROM inbox_events WHERE thread_id = ?`)
     this.#insertUserSubmission = this.#db.prepare(
@@ -859,7 +860,10 @@ export class Store {
                 AND EXISTS (
                   SELECT 1 FROM design_runs
                   WHERE design_runs.thread_id = recovery.thread_id
-                    AND json_extract(design_runs.payload, '$.phase') = 'brief'
+                    AND json_extract(
+                      CASE WHEN json_valid(design_runs.payload) THEN design_runs.payload END,
+                      '$.phase'
+                    ) = 'brief'
                 ) THEN 1 ELSE 0 END AS resumable
        FROM recovery_lifecycles AS recovery
        INNER JOIN threads ON threads.id = recovery.thread_id
@@ -2128,6 +2132,8 @@ export class Store {
 
       const states = new Map<string, InterruptedThreadState>()
       for (const row of rows) {
+        // Leave newer-provider histories intact; they must not abort recovery of other threads.
+        if (!this.thread(row.thread_id)) continue
         const event = parseDomainEvent(
           row.payload,
           `recovery for interrupted thread ${row.thread_id}`,
@@ -2719,7 +2725,8 @@ export class Store {
     const placeholders = types.map(() => '?').join(', ')
     const batch = this.#db.prepare(
       `SELECT seq, thread_id, at, payload FROM events
-       WHERE seq > ? AND json_extract(payload, '$.type') IN (${placeholders})
+       WHERE seq > ?
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (${placeholders})
        ORDER BY seq LIMIT 5000`,
     )
     const saveMigration = this.#db.prepare(
@@ -2793,7 +2800,7 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
-           AND json_extract(payload, '$.type') IN (
+           AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'turn.started', 'turn.completed', 'thread.error',
              'item.started', 'item.completed',
              'approval.requested', 'approval.resolved',
@@ -2821,7 +2828,7 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
-           AND json_extract(payload, '$.type') IN (
+           AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'approval.requested', 'approval.resolved',
              'user_input.requested', 'user_input.resolved',
              'thread.error', 'turn.completed'
