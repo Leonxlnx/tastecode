@@ -340,7 +340,7 @@ The Page phase writes actual concise copy before implementation. It must use the
 system and must not choose replacement colors, fonts, or sources.
 
 New Page-phase outputs must map every section to Hero, About, Feature, How It Works, Social Proof,
-Stats, FAQ, CTA, Pricing, Contact, or Footer and select a reviewed reference from the persisted
+Stats, FAQ, CTA, Pricing, Contact, or Footer and select a reference from the persisted
 deck. New v0.5 runs record that reference ID in `layoutCases`; legacy runs retain the beta case
 validation. A custom-named section such as Showcase may reuse the compatible Feature family.
 Unknown, cross-family, and missing reference IDs fail the Page phase before Build.
@@ -709,7 +709,13 @@ them.
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
 selected reference IDs, responsive behavior, interactions, acceptance criteria, and one
-purposeful motion decision per section. New runs use the configured reviewed image library;
+purposeful motion decision per section. New runs sample uniformly across the configured catalog
+and labeled complete generated candidates, with pending inspection recorded honestly. They require
+a visible hero entrance and distinct scroll reveals unless the user explicitly requests no animation.
+Build and Review receive the same motion requirements, including trigger and reduced-motion checks;
+still screenshots alone cannot validate playback. Ordinary follow-ups after Design ends clear the
+phase-only JSON instruction so preview requests execute as normal user work.
+New runs use the configured image library;
 the 132 legacy direction variants remain available only for older saved runs. It still needs evidence from varied
 real builds to show which cues improve results and which should be retired.
 

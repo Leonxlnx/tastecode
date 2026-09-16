@@ -65,6 +65,8 @@ const artifacts = [
 describe('build phase', () => {
   it('requires the existing architecture and leaves preview to the harness', () => {
     const prompt = designBuildPrompt(...artifacts)
+    expect(prompt).toContain('Build must wire the triggers and classes')
+    expect(prompt).toContain('Verify an actual hero animation')
     expect(prompt).toContain('Build and Review must preserve it')
     expect(prompt).toContain('only fulfilled image needs may reach Build')
     expect(prompt).toContain('Do not scaffold a second app')

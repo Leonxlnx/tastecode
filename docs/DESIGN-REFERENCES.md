@@ -24,6 +24,12 @@ the page's sections. Required attribution JSON uses asset kind and role `data`, 
 path and provenance checks as other assets and a one-megabyte valid-JSON limit. Internal phase
 prompts do not appear as additional user messages in the chat.
 
+New websites include a visible hero entrance, distinct scroll reveals in at least two later
+sections when present, and interaction feedback unless the user explicitly requests no animation.
+The same requirements reach Brand, Page, Build, Review and Repair. Build must wire and exercise
+the triggers and reduced-motion states; unused keyframes and button color changes are insufficient.
+Motion preserves the selected compositions. Still screenshots alone cannot prove motion works.
+
 ## Local library
 
 Set `TASTECODE_REFERENCE_LIBRARY` to an absolute library directory before starting TasteCode,

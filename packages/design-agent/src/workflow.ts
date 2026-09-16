@@ -38,6 +38,8 @@ For a valid design request:
 
 ${LANDING_PAGE_GUIDANCE}
 
+New websites include visible entrance and scroll animations by default. Record an explicit request for no animation when given; do not infer motionless behavior merely from words such as calm, professional, or restrained.
+
 ${DESIGN_CONTENT_GUIDANCE}
 
 ${PROTOCOL}
@@ -58,6 +60,8 @@ export function designBriefingContinuation(
 Answer immediately from the supplied answers only. Do not inspect the workspace, call tools, browse, invoke skills or MCP servers, or describe your reasoning.
 
 Complete every core brief field autonomously. Use the original request and supplied answers; choose reasonable defaults for vague, missing, or contradictory details and record those choices in assumptions. Never ask questions, call a user-input tool, or request confirmation. Return "complete" with an empty questions array.
+
+New websites include visible entrance and scroll animations by default, unless the user explicitly requests no animation.
 
 ${LANDING_PAGE_GUIDANCE}
 

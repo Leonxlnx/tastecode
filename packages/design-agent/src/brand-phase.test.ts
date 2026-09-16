@@ -69,6 +69,7 @@ describe('brand phase', () => {
 
   it('locks supplied identity before filling open brand decisions', () => {
     const prompt = designBrandPrompt(brief)
+    expect(prompt).toContain('Animate new websites by default')
     expect(prompt).toContain('Do not turn missing material into an invented requirement')
     expect(prompt).toContain('explicit user requirements')
     expect(prompt).toContain('Never replace a supplied logo, color, typeface')
@@ -83,7 +84,7 @@ describe('brand phase', () => {
     expect(prompt).toContain("project's established icon system")
     expect(prompt).toContain('Make motionDirection operational')
     expect(prompt).toContain('Return each motionDirection.principles entry as one string')
-    expect(prompt).toContain('Ban universal fade-up choreography')
+    expect(prompt).toContain('Do not apply the same fade-up to every section')
     expect(prompt).toContain('Never choose IBM Plex Mono, Archivo')
     expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
     expect(prompt).toContain('one base card language and at most one emphasized variant')
