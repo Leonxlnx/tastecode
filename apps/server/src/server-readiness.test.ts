@@ -83,6 +83,63 @@ describe('server readiness', () => {
       rmSync(dataDirectory, { recursive: true, force: true })
     }
   })
+
+  it('drains a held-open HTTP request inside the shutdown budget', async () => {
+    const dataDirectory = mkdtempSync(path.join(os.tmpdir(), 'harness-server-drain-'))
+    const previousDataDirectory = process.env['HARNESS_DATA_DIR']
+    process.env['HARNESS_DATA_DIR'] = dataDirectory
+    const port = await freePort()
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    let server: Awaited<ReturnType<typeof startServer>> | undefined
+    let stalled: ReturnType<typeof connect> | undefined
+
+    try {
+      server = await startServer({ port, host: '127.0.0.1' })
+      // A request that never finishes would otherwise hold the listener's
+      // close() pending for the full 300s request timeout.
+      stalled = connect({ host: '127.0.0.1', port })
+      const socket = stalled
+      await new Promise<void>((resolve) => socket.once('connect', resolve))
+      socket.write('GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n')
+      const destroyed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
+
+      const startedAt = Date.now()
+      await server.close()
+      expect(Date.now() - startedAt).toBeLessThan(15_000)
+      await destroyed
+      server = undefined
+    } finally {
+      stalled?.destroy()
+      await server?.close()
+      log.mockRestore()
+      if (previousDataDirectory === undefined) delete process.env['HARNESS_DATA_DIR']
+      else process.env['HARNESS_DATA_DIR'] = previousDataDirectory
+      rmSync(dataDirectory, { recursive: true, force: true })
+    }
+  })
+
+  it('runs shutdown once across repeated close calls', async () => {
+    const dataDirectory = mkdtempSync(path.join(os.tmpdir(), 'harness-server-close-'))
+    const previousDataDirectory = process.env['HARNESS_DATA_DIR']
+    process.env['HARNESS_DATA_DIR'] = dataDirectory
+    const port = await freePort()
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    let server: Awaited<ReturnType<typeof startServer>> | undefined
+
+    try {
+      server = await startServer({ port, host: '127.0.0.1' })
+      // A double SIGINT — or any second caller — rides the same drain.
+      await Promise.all([server.close(), server.close()])
+      await server.close()
+      server = undefined
+    } finally {
+      await server?.close()
+      log.mockRestore()
+      if (previousDataDirectory === undefined) delete process.env['HARNESS_DATA_DIR']
+      else process.env['HARNESS_DATA_DIR'] = previousDataDirectory
+      rmSync(dataDirectory, { recursive: true, force: true })
+    }
+  })
 })
 
 async function freePort(): Promise<number> {

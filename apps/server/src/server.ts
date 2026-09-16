@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { createServer, STATUS_CODES, type Server as HttpServer } from 'node:http'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { ErrorCode, methods, PROTOCOL_VERSION, type MethodName } from '@harness/contracts'
@@ -26,6 +27,9 @@ import { createSerializedResultCache, serializeSuccessResponse } from './respons
 const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
 
+/** How long shutdown waits on held-open sockets before destroying them. */
+const DRAIN_TIMEOUT_MS = 5_000
+
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
 const startupMilestones = new Set<string>()
 
@@ -35,6 +39,19 @@ function reportStartupMilestone(name: string): void {
   }
   startupMilestones.add(name)
   console.log(`[startup] ${name} ${Date.now() - startupStartedAt}ms`)
+}
+
+/**
+ * What a partially-finished startup owns. Mirrored field-by-field in the
+ * catch below: the scheduler, sessions, store, lease and socket all unwind
+ * whatever did start, while the plain `let`s read as unassigned on a path
+ * where their step never ran.
+ */
+interface StartupResources {
+  store?: Store
+  orchestrator?: Orchestrator
+  scheduler?: LifecycleScheduler
+  checkpointProtection?: Promise<void>
 }
 
 /**
@@ -55,20 +72,33 @@ export async function startServer(
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
-  const wss = new WebSocketServer({ port, host })
+  // The HTTP listener stays ours so shutdown can drain it: handed a bare port,
+  // ws builds one internally whose close() waits on every non-upgrade socket —
+  // a stalled request can hold it for the whole 300s request timeout.
+  const httpServer = createServer((_request, response) => {
+    const body = STATUS_CODES[426] ?? 'Upgrade Required'
+    response.writeHead(426, {
+      'Content-Length': body.length,
+      'Content-Type': 'text/plain',
+    })
+    response.end(body)
+  })
+  const wss = new WebSocketServer({ server: httpServer })
+  httpServer.listen(port, host)
   await waitForListening(wss, port)
 
-  const databasePath = storeLocation()
-  let releaseDataLease: (() => void) | undefined
-  let store: Store
-  try {
-    releaseDataLease = acquireDataLease(databasePath)
-    store = new Store(databasePath)
-  } catch (error) {
-    releaseDataLease?.()
-    await closeWebSocketServer(wss)
-    throw error
+  // Attached before any step below can fail: an 'error' with no listener is an
+  // uncaughtException and would mask the real startup failure.
+  const logListenerError = (error: NodeJS.ErrnoException) => {
+    console.error(`[server] ${error.message}`)
   }
+  const exitOnListenerError = (error: NodeJS.ErrnoException) => {
+    logListenerError(error)
+    process.exit(1)
+  }
+  wss.on('error', exitOnListenerError)
+
+  const databasePath = storeLocation()
   const push = new PushBus()
   const providerService = import('./providers.js')
   let updatesService: Promise<import('./provider-updates.js').ProviderUpdateService> | undefined
@@ -82,100 +112,137 @@ export async function startServer(
     35_000,
     (socket, requestId) => push.send(socket, 'preview.captureCancelled', { requestId }),
   )
-
-  // Startup errors reject startServer. Errors after readiness are fatal because
-  // the long-lived local server can no longer honor its client connection.
-  wss.on('error', (error: NodeJS.ErrnoException) => {
-    console.error(`[server] ${error.message}`)
-    process.exit(1)
-  })
-
-  reportStartupMilestone('server-store-ready')
-  store.recoverInterruptedThreads()
-  reportStartupMilestone('server-recovery-ready')
-  let pullRequests: Promise<PullRequestService> | undefined
-  const pullRequestService = () =>
-    (pullRequests ??= import('./pull-requests.js').then(
-      ({ PullRequestService }) => new PullRequestService(),
-    ))
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
-  const orchestrator = new Orchestrator(store, {
-    onEvent: (threadId, event, seq, serializedEvent) => {
-      if (serializedEvent === undefined) {
-        push.broadcast('thread.event', { threadId, event, seq })
-      } else {
-        push.broadcastRecordedEvent('thread.event', threadId, serializedEvent, seq)
-      }
-    },
-    onSideEvent: (threadId, event, seq, serializedEvent) => {
-      if (serializedEvent === undefined) {
-        push.broadcast('sideChat.event', { threadId, event, seq })
-      } else {
-        push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
-      }
-    },
-    onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
-    onLog: (line) => console.log(`[agent] ${line}`),
-    onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
-    onMcpOAuth: (provider, projectPath, result) =>
-      push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
-    onMcpChanged: (provider, projectPath) =>
-      push.broadcast('mcp.changed', { provider, projectPath }),
-    onSkillsChanged: (provider, projectPath) =>
-      push.broadcast('skills.changed', { provider, projectPath }),
-    onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
-    onLifecycle: (threadId, lifecycle) =>
-      push.broadcast('thread.lifecycle', { threadId, lifecycle }),
-    onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
-    onTerminalOutput: (terminalId, data, outputOffset) =>
-      push.broadcast('terminal.output', { terminalId, data, outputOffset }),
-    onTerminalExit: (terminalId, exitCode) =>
-      push.broadcast('terminal.exit', { terminalId, exitCode }),
-    capturePreview: (url, viewports) =>
-      previewCapture.available
-        ? previewCapture.capture(url, viewports)
-        : Promise.resolve(undefined),
-  })
-  reportStartupMilestone('server-orchestrator-ready')
-  const checkpointProtection = orchestrator.protectStoredCheckpoints()
-  const projectList = createProjectListProjector({
-    includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
-  })
-  const serializeProjectList = createSerializedResultCache()
-  const historyResponse = createHistoryResponseProjector()
-  const serializeHistory = createSerializedResultCache()
-  const projectListState: ProjectListState = {
-    isTurnRunning: (threadId) => orchestrator.isTurnRunning(threadId),
-    inboxStatus: (threadId, queued, unread) => orchestrator.inboxStatus(threadId, queued, unread),
-    revision: () => orchestrator.sidebarStatusRevision(),
-    changesSince: (revision) => orchestrator.sidebarStatusChangesSince(revision),
-  }
-  const lifecycleScheduler = new LifecycleScheduler(
-    () => orchestrator.refreshLifecycle(),
-    () => store.nextLifecycleRefreshAt(),
-  )
-  notifyLifecycleScheduleChanged = (hint) => {
-    if (hint === 'later') lifecycleScheduler.changedLater()
-    else if (typeof hint === 'number') lifecycleScheduler.deadlineAdded(hint)
-    else lifecycleScheduler.changed()
-  }
-  lifecycleScheduler.refreshNow()
-  // A previous run killed mid-session leaves git believing in checkouts that
-  // are gone. Clearing that up at startup means the next session on that path
-  // starts instead of failing with a message about our own leftovers.
-  void orchestrator.recoverWorktrees().catch(() => undefined)
+  let checkpointProtectionFailure: { error: unknown } | undefined
 
-  wss.on('connection', (socket, request) => {
-    if (!allowedOrigin(request.headers.origin, options.accessToken)) {
-      socket.close(1008, 'Origin not allowed')
-      return
+  const started: StartupResources = {}
+  let releaseDataLease: (() => void) | undefined
+  let store: Store
+  let orchestrator: Orchestrator
+  let lifecycleScheduler: LifecycleScheduler
+  let checkpointProtection: Promise<void>
+  let pullRequestService: () => Promise<PullRequestService>
+  let projectList: ReturnType<typeof createProjectListProjector>
+  let serializeProjectList: ReturnType<typeof createSerializedResultCache>
+  let historyResponse: ReturnType<typeof createHistoryResponseProjector>
+  let serializeHistory: ReturnType<typeof createSerializedResultCache>
+  let projectListState: ProjectListState
+  try {
+    releaseDataLease = acquireDataLease(databasePath)
+    started.store = store = new Store(databasePath)
+
+    reportStartupMilestone('server-store-ready')
+    store.recoverInterruptedThreads()
+    reportStartupMilestone('server-recovery-ready')
+    let pullRequests: Promise<PullRequestService> | undefined
+    pullRequestService = () =>
+      (pullRequests ??= import('./pull-requests.js').then(
+        ({ PullRequestService }) => new PullRequestService(),
+      ))
+    started.orchestrator = orchestrator = new Orchestrator(store, {
+      onEvent: (threadId, event, seq, serializedEvent) => {
+        if (serializedEvent === undefined) {
+          push.broadcast('thread.event', { threadId, event, seq })
+        } else {
+          push.broadcastRecordedEvent('thread.event', threadId, serializedEvent, seq)
+        }
+      },
+      onSideEvent: (threadId, event, seq, serializedEvent) => {
+        if (serializedEvent === undefined) {
+          push.broadcast('sideChat.event', { threadId, event, seq })
+        } else {
+          push.broadcastRecordedEvent('sideChat.event', threadId, serializedEvent, seq)
+        }
+      },
+      onQueue: (threadId, state) => push.broadcast('thread.queue', { threadId, ...state }),
+      onLog: (line) => console.log(`[agent] ${line}`),
+      onLogin: (provider, result) => push.broadcast('auth.event', { provider, ...result }),
+      onMcpOAuth: (provider, projectPath, result) =>
+        push.broadcast('mcp.oauth', { provider, projectPath, ...result }),
+      onMcpChanged: (provider, projectPath) =>
+        push.broadcast('mcp.changed', { provider, projectPath }),
+      onSkillsChanged: (provider, projectPath) =>
+        push.broadcast('skills.changed', { provider, projectPath }),
+      onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
+      onLifecycle: (threadId, lifecycle) =>
+        push.broadcast('thread.lifecycle', { threadId, lifecycle }),
+      onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
+      onTerminalOutput: (terminalId, data, outputOffset) =>
+        push.broadcast('terminal.output', { terminalId, data, outputOffset }),
+      onTerminalExit: (terminalId, exitCode) =>
+        push.broadcast('terminal.exit', { terminalId, exitCode }),
+      capturePreview: (url, viewports) =>
+        previewCapture.available
+          ? previewCapture.capture(url, viewports)
+          : Promise.resolve(undefined),
+    })
+    reportStartupMilestone('server-orchestrator-ready')
+    // Runs in the background for startup speed, but is never left unhandled:
+    // the reason is latched here and surfaced by close().
+    started.checkpointProtection = checkpointProtection = orchestrator
+      .protectStoredCheckpoints()
+      .catch((error: unknown) => {
+        console.error(`[server] checkpoint protection failed: ${String(error)}`)
+        checkpointProtectionFailure = { error }
+      })
+    projectList = createProjectListProjector({
+      includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
+    })
+    serializeProjectList = createSerializedResultCache()
+    historyResponse = createHistoryResponseProjector()
+    serializeHistory = createSerializedResultCache()
+    projectListState = {
+      isTurnRunning: (threadId) => orchestrator.isTurnRunning(threadId),
+      inboxStatus: (threadId, queued, unread) => orchestrator.inboxStatus(threadId, queued, unread),
+      revision: () => orchestrator.sidebarStatusRevision(),
+      changesSince: (revision) => orchestrator.sidebarStatusChangesSince(revision),
     }
-    if (!hasAccess(request.url, options.accessToken)) {
-      socket.close(1008, 'Access denied')
-      return
+    started.scheduler = lifecycleScheduler = new LifecycleScheduler(
+      () => orchestrator.refreshLifecycle(),
+      () => store.nextLifecycleRefreshAt(),
+    )
+    notifyLifecycleScheduleChanged = (hint) => {
+      if (hint === 'later') lifecycleScheduler.changedLater()
+      else if (typeof hint === 'number') lifecycleScheduler.deadlineAdded(hint)
+      else lifecycleScheduler.changed()
     }
-    acceptConnection(socket)
-  })
+    lifecycleScheduler.refreshNow()
+    // A previous run killed mid-session leaves git believing in checkouts that
+    // are gone. Clearing that up at startup means the next session on that path
+    // starts instead of failing with a message about our own leftovers.
+    void orchestrator.recoverWorktrees().catch(() => undefined)
+
+    wss.on('connection', (socket, request) => {
+      if (!allowedOrigin(request.headers.origin, options.accessToken)) {
+        socket.close(1008, 'Origin not allowed')
+        return
+      }
+      if (!hasAccess(request.url, options.accessToken)) {
+        socket.close(1008, 'Access denied')
+        return
+      }
+      acceptConnection(socket)
+    })
+  } catch (error) {
+    // While unwinding, a late listener error must not kill the process before
+    // the real startup failure reaches the caller.
+    wss.off('error', exitOnListenerError)
+    wss.on('error', logListenerError)
+    started.scheduler?.dispose()
+    if (started.orchestrator) {
+      await started.orchestrator.disposeAll().catch(() => undefined)
+    }
+    // Already guarded at creation; awaiting it here keeps a checkpoint write
+    // from racing the store close below.
+    await started.checkpointProtection
+    try {
+      started.store?.close()
+    } finally {
+      releaseDataLease?.()
+    }
+    await closeListener(httpServer, wss).catch(() => undefined)
+    throw error
+  }
 
   function acceptConnection(socket: WebSocket): void {
     const welcome = {
@@ -975,26 +1042,35 @@ export async function startServer(
 
   console.log(`[server] listening on ws://${host}:${port}`)
 
+  async function shutdown(): Promise<void> {
+    lifecycleScheduler.dispose()
+    const orchestratorClosed = orchestrator.disposeAll()
+    const listenerClosed = closeListener(httpServer, wss)
+    const results = await Promise.allSettled([
+      orchestratorClosed,
+      checkpointProtection,
+      listenerClosed,
+    ])
+    try {
+      store.close()
+    } finally {
+      releaseDataLease?.()
+    }
+    const errors = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => result.reason)
+    if (checkpointProtectionFailure) errors.push(checkpointProtectionFailure.error)
+    if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
+  }
+
+  let closing: Promise<void> | undefined
   return {
     port,
-    close: async () => {
-      lifecycleScheduler.dispose()
-      const orchestratorClosed = orchestrator.disposeAll()
-      for (const socket of wss.clients) socket.terminate()
-      const results = await Promise.allSettled([
-        orchestratorClosed,
-        checkpointProtection,
-        new Promise<void>((resolve) => wss.close(() => resolve())),
-      ])
-      try {
-        store.close()
-      } finally {
-        releaseDataLease()
-      }
-      const errors = results
-        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-        .map((result) => result.reason)
-      if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
+    close: () => {
+      // Latch the first drain — a repeat signal rides it rather than racing a
+      // second shutdown through the same sockets and store.
+      closing ??= shutdown()
+      return closing
     },
   }
 }
@@ -1019,9 +1095,43 @@ function waitForListening(wss: WebSocketServer, port: number): Promise<void> {
   })
 }
 
-function closeWebSocketServer(wss: WebSocketServer): Promise<void> {
-  return new Promise((resolve, reject) => {
-    wss.close((error) => (error ? reject(error) : resolve()))
+/**
+ * Drain the listener without letting held-open sockets stall shutdown.
+ *
+ * ws clients are terminated rather than handshaken out, and idle HTTP
+ * keep-alive sockets are closed immediately. Anything left — a request that
+ * never finishes — would otherwise keep close() pending until the server's
+ * own timeouts expire, so at the deadline the remaining sockets are destroyed
+ * instead of waited on.
+ */
+function closeListener(httpServer: HttpServer, wss: WebSocketServer): Promise<void> {
+  for (const socket of wss.clients) socket.terminate()
+  // ws stops relaying listener errors once closed; keep a late one from
+  // becoming an uncaughtException during teardown.
+  httpServer.on('error', (error: NodeJS.ErrnoException) => {
+    console.error(`[server] ${error.message}`)
+  })
+  return new Promise((resolve) => {
+    const deadline = setTimeout(() => {
+      httpServer.closeAllConnections()
+      resolve()
+    }, DRAIN_TIMEOUT_MS)
+    let httpClosed = false
+    let wsClosed = false
+    const finishIfDrained = () => {
+      if (!httpClosed || !wsClosed) return
+      clearTimeout(deadline)
+      resolve()
+    }
+    httpServer.close(() => {
+      httpClosed = true
+      finishIfDrained()
+    })
+    httpServer.closeIdleConnections()
+    wss.close(() => {
+      wsClosed = true
+      finishIfDrained()
+    })
   })
 }
 
