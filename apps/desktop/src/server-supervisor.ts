@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { killTree, type KillableProcess } from '@harness/proc/kill'
 
 /**
  * The packaged app owns its core server. In development tools/scripts/dev.js
@@ -37,10 +38,11 @@ type CommandSupervisorOptions = {
   spawnFn?: typeof spawn
 }
 
-export type SupervisedServerProcess = {
+// KillableProcess (pid, exitCode, signalCode, kill) lets stop() tear down the
+// whole process tree, not just the direct child.
+export type SupervisedServerProcess = KillableProcess & {
   stdout: NodeJS.ReadableStream | null
   stderr: NodeJS.ReadableStream | null
-  kill: () => boolean
   onError: (listener: (error: unknown) => void) => void
   onExit: (listener: (code: number | null, signal: NodeJS.Signals | null) => void) => void
 }
@@ -54,6 +56,16 @@ export type SupervisorOptions = SupervisorCallbacks &
 
 function supervisedChildProcess(child: ChildProcess): SupervisedServerProcess {
   return {
+    // Read lazily: pid only exists after spawn, exitCode/signalCode after exit.
+    get pid() {
+      return child.pid
+    },
+    get exitCode() {
+      return child.exitCode
+    },
+    get signalCode() {
+      return child.signalCode
+    },
     stdout: child.stdout,
     stderr: child.stderr,
     kill: () => child.kill(),
@@ -77,25 +89,48 @@ export class ServerSupervisor {
   start(): void {
     if (this.#stopped || this.#child) return
     this.#startedAt = Date.now()
-    const child =
-      'launch' in this.#options
-        ? this.#options.launch()
-        : supervisedChildProcess(
-            (this.#options.spawnFn ?? spawn)(this.#options.command, this.#options.args, {
-              env: this.#options.env,
-              ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
-              stdio: ['ignore', 'pipe', 'pipe'],
-              windowsHide: true,
-            }),
-          )
+    let child: SupervisedServerProcess
+    try {
+      child =
+        'launch' in this.#options
+          ? this.#options.launch()
+          : supervisedChildProcess(
+              (this.#options.spawnFn ?? spawn)(this.#options.command, this.#options.args, {
+                env: this.#options.env,
+                ...(this.#options.cwd ? { cwd: this.#options.cwd } : {}),
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+              }),
+            )
+    } catch (error) {
+      // utilityProcess.fork throws synchronously when the entry cannot launch.
+      // Inside the restart timer that throw would escape as an
+      // uncaughtException and kill the whole app, so it counts as a failed run.
+      this.#options.onLog(`server failed to launch: ${String(error)}`)
+      this.#scheduleRestart()
+      return
+    }
     this.#child = child
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
-    const forward = (chunk: string) => {
-      for (const line of chunk.split(/\r?\n/)) if (line.trim()) this.#options.onLog(line)
+    // A chunk can split a line anywhere, so each stream keeps its partial tail
+    // — otherwise markers like "[server] listening" never match. A stream that
+    // ends mid-line still forwards the remainder.
+    const forwardLines = (stream: NodeJS.ReadableStream | null) => {
+      if (!stream) return
+      let pending = ''
+      stream.on('data', (chunk: string) => {
+        const lines = (pending + chunk).split(/\r?\n/)
+        pending = lines.pop() ?? ''
+        for (const line of lines) if (line.trim()) this.#options.onLog(line)
+      })
+      stream.on('end', () => {
+        if (pending.trim()) this.#options.onLog(pending)
+        pending = ''
+      })
     }
-    child.stdout?.on('data', forward)
-    child.stderr?.on('data', forward)
+    forwardLines(child.stdout)
+    forwardLines(child.stderr)
     child.onError((error) => {
       this.#options.onLog(`server failed to start: ${String(error)}`)
       this.#onExit(child)
@@ -112,13 +147,23 @@ export class ServerSupervisor {
     this.#restartTimer = undefined
     const child = this.#child
     this.#child = undefined
-    child?.kill()
+    if (!child) return
+    // kill() alone stops only the direct child — on Windows that would orphan
+    // the provider processes the server spawned. killTree ends the tree there
+    // (taskkill /T) and escalates TERM→KILL elsewhere.
+    void killTree(child).catch((error: unknown) => {
+      this.#options.onLog(`server did not stop cleanly: ${String(error)}`)
+    })
   }
 
   #onExit(child: SupervisedServerProcess): void {
     if (this.#child !== child) return
     this.#child = undefined
     if (this.#stopped) return
+    this.#scheduleRestart()
+  }
+
+  #scheduleRestart(): void {
     const healthy = Date.now() - this.#startedAt >= HEALTHY_RUN_MS
     this.#failures = healthy ? 1 : this.#failures + 1
     if (this.#failures > MAX_CONSECUTIVE_FAILURES) {

@@ -20,6 +20,9 @@ class FakeChild extends ChildProcess {
 
 function supervised(child: FakeChild): SupervisedServerProcess {
   return {
+    pid: child.pid,
+    exitCode: null,
+    signalCode: null,
     stdout: child.stdout,
     stderr: child.stderr,
     kill: () => child.kill(),
@@ -139,6 +142,66 @@ describe('ServerSupervisor', () => {
     sup.start()
     children[0]!.stdout.write('listening on 4311\npartial')
     expect(logs).toContain('listening on 4311')
+  })
+
+  it('holds a line split across chunks until the rest arrives', () => {
+    const { sup, children, logs } = supervisor()
+    sup.start()
+    children[0]!.stdout.write('listen')
+    expect(logs).toHaveLength(0)
+    children[0]!.stdout.write('ing on 4311\nnext\n')
+    expect(logs).toEqual(['listening on 4311', 'next'])
+  })
+
+  it('buffers partial lines per stream instead of interleaving them', () => {
+    const { sup, children, logs } = supervisor()
+    sup.start()
+    children[0]!.stdout.write('out-a')
+    children[0]!.stderr.write('err-b\n')
+    children[0]!.stdout.write('-done\n')
+    expect(logs).toEqual(['err-b', 'out-a-done'])
+  })
+
+  it('flushes a trailing unterminated line when a stream ends', () => {
+    const { sup, children, logs } = supervisor()
+    sup.start()
+    children[0]!.stderr.write('fatal: boom')
+    children[0]!.stderr.emit('end')
+    expect(logs).toContain('fatal: boom')
+  })
+
+  it('counts a synchronous launch throw as a failed run instead of crashing', () => {
+    const logs: string[] = []
+    const gaveUp = vi.fn()
+    const launch = vi.fn((): SupervisedServerProcess => {
+      throw new Error('fork failed')
+    })
+    const sup = new ServerSupervisor({
+      launch,
+      onLog: (line) => logs.push(line),
+      onGaveUp: gaveUp,
+    })
+
+    expect(() => sup.start()).not.toThrow()
+    expect(logs.some((line) => line.includes('fork failed'))).toBe(true)
+
+    vi.advanceTimersByTime(500)
+    expect(launch).toHaveBeenCalledTimes(2)
+  })
+
+  it('gives up after repeated synchronous launch throws', () => {
+    const gaveUp = vi.fn()
+    const launch = vi.fn((): SupervisedServerProcess => {
+      throw new Error('fork failed')
+    })
+    const sup = new ServerSupervisor({ launch, onLog: () => {}, onGaveUp: gaveUp })
+
+    sup.start()
+    for (let round = 0; round < MAX_CONSECUTIVE_FAILURES; round++) {
+      vi.advanceTimersByTime(15_000)
+    }
+    expect(gaveUp).toHaveBeenCalledOnce()
+    expect(launch).toHaveBeenCalledTimes(MAX_CONSECUTIVE_FAILURES + 1)
   })
 
   it('supervises an Electron utility-process launcher', () => {
