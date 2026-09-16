@@ -1,25 +1,31 @@
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const MAX_LOG_BYTES = 512 * 1024
+const MAX_ENTRY_BYTES = 4 * 1024
 const PRIVATE_KEY =
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|$)/g
 const STANDALONE_SECRET =
   /\b(?:sk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})\b/g
 
+export function localDiagnosticsDirectory(userDataDirectory: string): string {
+  return path.join(userDataDirectory, 'diagnostics', 'text')
+}
+
 export class LocalDiagnostics {
   readonly directory: string
   readonly #enabledFile: string
   readonly #logFile: string
-  readonly #onEnable: () => void
+  readonly #previousLogFile: string
   #enabled = false
-  #started = false
+  #generation = 0
+  #operations = Promise.resolve()
 
-  constructor(directory: string, onEnable: () => void) {
+  constructor(directory: string) {
     this.directory = directory
     this.#enabledFile = path.join(directory, 'enabled')
     this.#logFile = path.join(directory, 'errors.log')
-    this.#onEnable = onEnable
+    this.#previousLogFile = path.join(directory, 'errors.previous.log')
   }
 
   async initialize(): Promise<void> {
@@ -28,62 +34,80 @@ export class LocalDiagnostics {
     } catch {
       this.#enabled = false
     }
-    if (this.#enabled) {
-      try {
-        this.#start()
-      } catch {
-        this.#enabled = false
-      }
-    }
+    this.#generation += 1
   }
 
   isEnabled(): boolean {
     return this.#enabled
   }
 
-  async setEnabled(enabled: boolean): Promise<boolean> {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 })
+  setEnabled(enabled: boolean): Promise<boolean> {
+    const generation = ++this.#generation
     this.#enabled = enabled
-    if (enabled) {
-      await writeFile(this.#enabledFile, 'true', { mode: 0o600 })
+    return this.#enqueue(async () => {
+      if (generation !== this.#generation) return this.#enabled
+      await mkdir(this.directory, { recursive: true, mode: 0o700 })
       try {
-        this.#start()
+        if (enabled) await writeFile(this.#enabledFile, 'true', { mode: 0o600 })
+        else await rm(this.#enabledFile, { force: true })
       } catch (error) {
-        this.#enabled = false
-        await rm(this.#enabledFile, { force: true })
+        if (generation === this.#generation) {
+          this.#enabled = false
+          this.#generation += 1
+        }
         throw error
       }
-    } else {
-      await rm(this.#enabledFile, { force: true })
-    }
-    return enabled
+      return this.#enabled
+    })
   }
 
-  async record(source: string, cause: unknown): Promise<void> {
-    if (!this.#enabled) return
-    try {
-      await mkdir(this.directory, { recursive: true, mode: 0o700 })
-      const size = await stat(this.#logFile).then(
-        (entry) => entry.size,
-        () => 0,
-      )
-      if (size >= MAX_LOG_BYTES) await rm(this.#logFile, { force: true })
-      const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
-      await appendFile(
-        this.#logFile,
-        `${new Date().toISOString()} [${scrub(source)}] ${scrub(message)}\n`,
-        { encoding: 'utf8', mode: 0o600 },
-      )
-    } catch {
-      // Diagnostics must never become a second app failure.
-    }
+  record(source: string, cause: unknown): Promise<void> {
+    if (!this.#enabled) return Promise.resolve()
+    const generation = this.#generation
+    return this.#enqueue(async () => {
+      if (!this.#enabled || generation !== this.#generation) return
+      try {
+        await mkdir(this.directory, { recursive: true, mode: 0o700 })
+        const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
+        const entry = boundedEntry(
+          `${new Date().toISOString()} [${scrub(source)}] ${scrub(message)}`,
+        )
+        const size = await stat(this.#logFile).then(
+          (current) => current.size,
+          () => 0,
+        )
+        if (!this.#enabled || generation !== this.#generation) return
+        if (size + Buffer.byteLength(entry) > MAX_LOG_BYTES) {
+          await rm(this.#previousLogFile, { force: true })
+          if (!this.#enabled || generation !== this.#generation) return
+          if (size <= MAX_LOG_BYTES) await rename(this.#logFile, this.#previousLogFile)
+          else await rm(this.#logFile, { force: true })
+        }
+        if (!this.#enabled || generation !== this.#generation) return
+        await appendFile(this.#logFile, entry, { encoding: 'utf8', mode: 0o600 })
+      } catch {
+        // Diagnostics must never become a second app failure.
+      }
+    })
   }
 
-  #start(): void {
-    if (this.#started) return
-    this.#started = true
-    this.#onEnable()
+  #enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#operations.then(operation)
+    this.#operations = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    return result
   }
+}
+
+function boundedEntry(value: string): string {
+  const bytes = Buffer.from(value)
+  if (bytes.length < MAX_ENTRY_BYTES) return `${value}\n`
+  return `${bytes
+    .subarray(0, MAX_ENTRY_BYTES - 1)
+    .toString('utf8')
+    .replace(/\uFFFD$/u, '')}\n`
 }
 
 export function scrub(value: string): string {
@@ -94,5 +118,4 @@ export function scrub(value: string): string {
     .replace(/\/(?:Users|home)\/[^/\r\n]+/g, '[home]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')
     .replace(/\b(bearer|token|api[_-]?key)(\s*[:=]?\s*)\S+/gi, '$1$2[redacted]')
-    .slice(0, 4_000)
 }
