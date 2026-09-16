@@ -127,16 +127,18 @@ export function referenceCandidatesForFamily(
 ): ReferenceDirection[] {
   const native = references.filter((entry) => entry.family === family)
   if (new Set(native.map((entry) => entry.group ?? entry.id)).size >= 10) return native
-  const compatible: Partial<Record<PageLayoutFamily, PageLayoutFamily[]>> = {
+  const compatible = {
     stats: ['social_proof', 'about'],
     pricing: ['feature'],
     how_it_works: ['feature', 'about'],
     contact: ['cta'],
     cta: ['contact'],
     faq: ['feature'],
-  }
+  } as const satisfies Partial<Record<PageLayoutFamily, readonly PageLayoutFamily[]>>
+  const alternatives = compatible[family as keyof typeof compatible] ?? []
   const pool = references.filter(
-    (entry) => entry.family === family || compatible[family]?.includes(entry.family),
+    (entry) =>
+      entry.family === family || alternatives.some((candidate) => candidate === entry.family),
   )
   // A deliberately small custom library remains authoritative; never pad it with duplicates.
   return new Set(pool.map((entry) => entry.group ?? entry.id)).size >= 10 ? pool : native
