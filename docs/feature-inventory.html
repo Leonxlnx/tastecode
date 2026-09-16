@@ -1840,7 +1840,12 @@
               ><input type="checkbox" /><span
                 >Hardened Electron shell, renderer never spawns processes or reads the filesystem
                 <span class="d"
-                  >server replacement and watchdog recovery are generation-safe</span
+                  >server replacement and watchdog recovery are generation-safe; main-window
+                  redirects share the navigation gate, packaged IPC trusts only the app index,
+                  nested guest webviews are disabled, renderer error reports are bounded, and
+                  project-file reveals check resolved paths; spawned commands use a private per-user
+                  runtime directory on POSIX and exclude current-directory executable lookup on
+                  Windows</span
                 ></span
               ></label
             >
