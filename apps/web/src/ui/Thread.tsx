@@ -335,17 +335,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
     <div className="thread-shell">
-      <FrameScrollFollower
-        frameStore={props.frameStore}
-        revealRequest={props.revealRequest ?? 0}
-        completedRevealRequest={completedRevealRequest}
-        scroller={scroller}
-        modeRef={modeRef}
-        anchorIndex={anchorIndex}
-        virtualizer={virtualizer}
-        writeScrollTop={writeScrollTop}
-        setMode={setMode}
-      />
       {finding ? (
         <Suspense fallback={null}>
           <ThreadSearch
@@ -462,6 +451,19 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         </div>
       </div>
 
+      {/* Mount after the scroller so its ref is set before the layout effect. */}
+      <FrameScrollFollower
+        frameStore={props.frameStore}
+        revealRequest={props.revealRequest ?? 0}
+        completedRevealRequest={completedRevealRequest}
+        scroller={scroller}
+        modeRef={modeRef}
+        anchorIndex={anchorIndex}
+        virtualizer={virtualizer}
+        writeScrollTop={writeScrollTop}
+        setMode={setMode}
+      />
+
       {mode === 'free' ? (
         <button
           className="jump"
@@ -514,10 +516,10 @@ function FrameScrollFollower({
   setMode: (mode: ScrollMode) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
-  const itemVersion = useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+  useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
 
-  // Layout effect, not effect: this runs before paint, so the correction is
-  // never visible as a jump.
+  // Follow every render before paint: replay and virtual row measurements can
+  // change the scroll height without changing the live text frame version.
   useLayoutEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -545,17 +547,7 @@ function FrameScrollFollower({
       }
       writeScrollTop(element, start)
     }
-  }, [
-    anchorIndex,
-    completedRevealRequest,
-    itemVersion,
-    modeRef,
-    revealRequest,
-    scroller,
-    setMode,
-    virtualizer,
-    writeScrollTop,
-  ])
+  })
 
   return null
 }
