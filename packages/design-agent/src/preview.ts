@@ -21,7 +21,7 @@ export type PreviewPlan =
 
 const PREVIEW_PROTOCOL = `Return the preview plan as JSON only, without Markdown fences:
 
-Existing app: {"version":1,"kind":"command","command":"pnpm","args":["dev","--host","127.0.0.1"],"cwd":".","url":"http://127.0.0.1:5173","readyPattern":"optional output text","viewports":[{"name":"desktop","width":1440,"height":1000},{"name":"mobile","width":390,"height":844}]}
+Existing app: {"version":1,"kind":"command","command":"pnpm","args":["dev","--host","127.0.0.1","--port","5173"],"cwd":".","url":"http://127.0.0.1:5173","readyPattern":"optional output text","viewports":[{"name":"desktop","width":1440,"height":1000},{"name":"mobile","width":390,"height":844}]}
 
 Static files: {"version":1,"kind":"static","entry":"index.html","cwd":".","url":"http://127.0.0.1:4173/","viewports":[{"name":"desktop","width":1440,"height":1000},{"name":"mobile","width":390,"height":844}]}`
 
@@ -29,6 +29,8 @@ export function designPreviewPrompt(): string {
   return `You are running the Preview Setup phase of TasteCode Design Mode.
 
 Inspect the implemented project's real package scripts and configuration. Choose the existing development or preview command that serves the built page on 127.0.0.1 with an explicit port. Do not install dependencies, start the server yourself, use a shell string, or choose a remote URL. The command is an executable name and args is its argv array. cwd is relative to the current workspace.
+
+TasteCode automatically chooses another free port when the requested one is occupied and reports the actual preview URL. For package scripts, include the supported --port or -p option in args (and npm's -- separator); TasteCode updates that value and sets the PORT environment variable. A custom node server should read process.env.PORT. Do not hardcode the only usable port in a server script or require stopping another project's preview.
 
 Match the project's package manager instead of copying the example: package-lock.json means npm, pnpm-lock.yaml means pnpm, yarn.lock means yarn, and bun.lock or bun.lockb means bun. When the project has no package-manager lockfile, prefer a static plan for plain HTML or the package manager already named by the project's scripts or packageManager field. Never invoke another package manager against an existing install because it may rewrite node_modules or stall Preview while reinstalling dependencies.
 
