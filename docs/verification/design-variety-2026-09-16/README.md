@@ -90,6 +90,22 @@ after it. The Design package has 137 passing tests, including the explicit butto
 The user's installed app, running tasks, settings and project files were not changed. This is
 a source correction awaiting the next approved app update, not a live retry of the failed site.
 
+## Fictional example copy correction — 2026-09-17
+
+A second beta 3 run stopped in Page after the agent labelled contract clauses as fictional on
+its correction attempt. The claim detector treated numeric terms such as `30 days` and `45 days`
+as unsupported product proof even within those explicit examples. Numeric values in visibly
+fictional, illustrative or representative copy now produce a publication-review finding.
+Unlabelled numeric claims and assertions of customer proof, rankings, urgency and performance
+still require evidence; an illustrative label alone cannot exempt those assertions.
+
+The three captured sentence variants failed before the fix and pass afterward. The captured
+ten-section page now passes copy validation; all eight numeric findings remain review items.
+The combined Design package has 141 passing tests. The first full-suite run had one existing
+web-model-settings test time out finding its lazily loaded Models button; its focused rerun
+passed without changes to web code or tests. The installed app and active user runs remain
+untouched. No generated website was changed and no new website prompt was submitted.
+
 ## Earlier beta 2 candidate and remaining release checks
 
 `TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.
