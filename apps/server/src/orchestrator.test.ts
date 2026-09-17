@@ -5323,21 +5323,21 @@ describe('rolling a session back', () => {
     sessions[1]!.turnIds.push('busy-turn')
     await orchestrator.sendTurn(second.id, 'working')
     await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     sessions[1]!.emit(turnStarted(second.id, 'busy-turn'))
     writeFileSync(path.join(repo, 'file.txt'), 'second task work\n')
     await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     await expect(orchestrator.undoRestore(first.id, 'old-token')).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     await expect(orchestrator.undoTurnChanges(first.id, 'turn', 'patch')).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     await expect(orchestrator.switchBranch(repo, 'main')).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('second task work\n')
     sessions[1]!.emit({ type: 'turn.completed', turnId: 'busy-turn', status: 'completed' })

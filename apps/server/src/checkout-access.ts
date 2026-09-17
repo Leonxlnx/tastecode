@@ -51,7 +51,9 @@ export class CheckoutAccess {
     if (this.#exclusive.has(root))
       throw new Error('another restore or branch switch is running in this checkout')
     if (this.#writers.get(root)?.size)
-      throw new Error('stop running turns in this checkout before restoring or switching branches')
+      throw new Error(
+        'Chats are still working in this folder. Wait for them to finish or stop them, then try again.',
+      )
     this.#exclusive.add(root)
     try {
       return await operation()
