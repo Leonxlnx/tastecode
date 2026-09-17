@@ -785,6 +785,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     try {
       await this.#call('thread/resume', {
         threadId,
+        excludeTurns: true,
         config: { mcp_servers: prepared.servers },
       })
     } catch {
@@ -884,6 +885,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       {
         threadId,
         cwd: workspacePath,
+        // We replay our own event log; full provider history can exceed the frame limit.
+        excludeTurns: true,
         ...(options.instructions
           ? {
               developerInstructions: options.instructions,
