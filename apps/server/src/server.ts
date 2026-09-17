@@ -27,6 +27,54 @@ import { ProviderHistory } from './provider-history.js'
 const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
 
+/** How long the provider kill pass may take before shutdown stops waiting. */
+const SHUTDOWN_KILL_BUDGET_MS = 3_000
+/**
+ * The fatal-exit budget is the kill budget plus room for the store, history
+ * and socket teardown around it — still bounded, because a wedged dispose
+ * must never hold the process open.
+ */
+const FATAL_EXIT_BUDGET_MS = SHUTDOWN_KILL_BUDGET_MS + 2_000
+
+/**
+ * Fatal-exit path: one best-effort cleanup pass, then exit. Spawned provider
+ * children are detached process groups on POSIX and outlive an abrupt
+ * process.exit by design, so the cleanup is what keeps them from leaking —
+ * and the budget keeps a wedged dispose from holding the process open.
+ * Exported for tests.
+ */
+export function exitAfterCleanup(
+  cleanup: () => Promise<unknown>,
+  exit: (code: number) => void,
+  budgetMs = FATAL_EXIT_BUDGET_MS,
+): void {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, budgetMs)
+    timer.unref?.()
+  })
+  void Promise.race([
+    Promise.resolve()
+      .then(cleanup)
+      .catch(() => undefined),
+    expired,
+  ]).then(() => {
+    if (timer) clearTimeout(timer)
+    exit(1)
+  })
+}
+
+function bounded<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+    timer.unref?.()
+  })
+  return Promise.race([operation, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
+
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
 const startupMilestones = new Set<string>()
 
@@ -50,9 +98,12 @@ export function startServer(
     port?: number
     host?: string
     accessToken?: string | undefined
+    /** Test seam: observe a fatal exit instead of ending the test runner. */
+    exitProcess?: ((code: number) => void) | undefined
   } = {},
 ) {
   applyDesktopPath()
+  const exit = options.exitProcess ?? ((code: number) => process.exit(code))
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
   assertSafeBind(host, options.accessToken)
@@ -99,10 +150,10 @@ export function startServer(
         `[server] port ${port} is already in use — another TasteCode server is ` +
           `probably still running. Stop it, or set HARNESS_PORT to a free port.`,
       )
-      process.exit(1)
+    } else {
+      console.error(`[server] ${error.message}`)
     }
-    console.error(`[server] ${error.message}`)
-    process.exit(1)
+    exitAfterCleanup(shutdown, exit)
   })
 
   reportStartupMilestone('server-store-ready')
@@ -1039,14 +1090,25 @@ export function startServer(
 
   console.log(`[server] listening on ws://${host}:${port}`)
 
-  return {
-    port,
-    close: async () => {
+  let shutdownStarted: Promise<void> | undefined
+  /**
+   * One shutdown for every exit path — a signal-driven close and a fatal
+   * socket error converge here, so a second caller waits on the first rather
+   * than re-running the teardown.
+   */
+  function shutdown(): Promise<void> {
+    shutdownStarted ??= (async () => {
       historyClosing = true
       clearInterval(providerHistoryTimer)
       await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
-      const orchestratorClosed = orchestrator.disposeAll()
+      // Bounded: a wedged provider process must not keep this process — and
+      // the detached children it would orphan — alive past the budget.
+      const orchestratorClosed = bounded(
+        orchestrator.disposeAll(),
+        SHUTDOWN_KILL_BUDGET_MS,
+        'stopping agent processes timed out',
+      )
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
@@ -1062,7 +1124,13 @@ export function startServer(
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
         .map((result) => result.reason)
       if (errors.length > 0) throw new AggregateError(errors, 'server shutdown failed')
-    },
+    })()
+    return shutdownStarted
+  }
+
+  return {
+    port,
+    close: shutdown,
   }
 }
 
