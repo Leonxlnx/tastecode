@@ -62,6 +62,18 @@ protocol. Closing or restarting the Electron window does not stop active agents.
 stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
 credentials.
 
+A hard main-process death orphans that supervised server while it still holds the listen port
+and the SQLite data lease. On the next launch the shell probes the port before spawning: a
+holder that answers `server.welcome` at a compatible `PROTOCOL_VERSION` is adopted (running
+agent sessions survive a shell crash), anything else is killed only when attribution is
+certain — the listener self-identified as a core server, or its pid matches the owner record
+the supervisor writes at spawn. An unattributable holder is reported to the user, never
+killed, and the retry is bounded to one resolution pass plus the normal supervisor backoff.
+
+_Rejected:_ always-kill on EADDRINUSE would destroy live agent sessions after every crash ·
+always-adopt would pin the renderer to an incompatible or foreign listener · reading the lease
+file cannot name the holder because `BEGIN EXCLUSIVE` blocks readers by design.
+
 Electron's weaker security defaults are fixed in the shell: `contextIsolation: true`,
 `nodeIntegration: false`, sandboxing, a strict CSP, a narrow typed `contextBridge`, and
 deny-by-default external navigation. The renderer never spawns a process, touches the

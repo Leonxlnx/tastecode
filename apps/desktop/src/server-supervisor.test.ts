@@ -204,6 +204,97 @@ describe('ServerSupervisor', () => {
     expect(launch).toHaveBeenCalledTimes(MAX_CONSECUTIVE_FAILURES + 1)
   })
 
+  function supervisorWith(hooks: {
+    onSpawned?: (pid: number | undefined) => void
+    onEarlyExit?: () => Promise<'restart' | 'stop'> | 'restart' | 'stop'
+  }) {
+    const children: FakeChild[] = []
+    const gaveUp = vi.fn()
+    const sup = new ServerSupervisor({
+      command: 'node',
+      args: ['server.js'],
+      env: {},
+      onLog: () => {},
+      onGaveUp: gaveUp,
+      ...hooks,
+      spawnFn: () => {
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+    })
+    return { sup, children, gaveUp }
+  }
+
+  it('reports each spawned pid through onSpawned', () => {
+    const spawned: (number | undefined)[] = []
+    const { sup, children } = supervisorWith({ onSpawned: (pid) => spawned.push(pid) })
+    sup.start()
+    children[0]!.emit('exit', 1, null)
+    vi.advanceTimersByTime(500)
+    expect(spawned).toHaveLength(2)
+  })
+
+  it('consults onEarlyExit on the first early death and stops when told', async () => {
+    const onEarlyExit = vi.fn(() => 'stop' as const)
+    const { sup, children, gaveUp } = supervisorWith({ onEarlyExit })
+    sup.start()
+    children[0]!.emit('exit', 1, null)
+    await Promise.resolve()
+    vi.advanceTimersByTime(60_000)
+    expect(onEarlyExit).toHaveBeenCalledTimes(1)
+    expect(children).toHaveLength(1)
+    expect(gaveUp).not.toHaveBeenCalled()
+  })
+
+  it('resumes the backoff path when onEarlyExit returns restart', async () => {
+    const onEarlyExit = vi.fn(() => 'restart' as const)
+    const { sup, children } = supervisorWith({ onEarlyExit })
+    sup.start()
+    children[0]!.emit('exit', 1, null)
+    await Promise.resolve()
+    vi.advanceTimersByTime(500)
+    expect(onEarlyExit).toHaveBeenCalledTimes(1)
+    expect(children).toHaveLength(2)
+
+    // The consult happens once: a second early death goes straight to backoff.
+    children[1]!.emit('exit', 1, null)
+    await Promise.resolve()
+    vi.advanceTimersByTime(1_000)
+    expect(onEarlyExit).toHaveBeenCalledTimes(1)
+    expect(children).toHaveLength(3)
+  })
+
+  it('does not consult onEarlyExit for a run that reached the healthy threshold', async () => {
+    const onEarlyExit = vi.fn(() => 'stop' as const)
+    const { sup, children } = supervisorWith({ onEarlyExit })
+    sup.start()
+    vi.advanceTimersByTime(60_000)
+    children[0]!.emit('exit', 1, null)
+    await Promise.resolve()
+    vi.advanceTimersByTime(500)
+    expect(onEarlyExit).not.toHaveBeenCalled()
+    expect(children).toHaveLength(2)
+  })
+
+  it('a stop during the early-exit consult prevents the restart', async () => {
+    let decide: ((decision: 'restart' | 'stop') => void) | undefined
+    const { sup, children } = supervisorWith({
+      onEarlyExit: () =>
+        new Promise<'restart' | 'stop'>((resolve) => {
+          decide = resolve
+        }),
+    })
+    sup.start()
+    children[0]!.emit('exit', 1, null)
+    await Promise.resolve()
+    sup.stop()
+    decide!('restart')
+    await Promise.resolve()
+    vi.advanceTimersByTime(60_000)
+    expect(children).toHaveLength(1)
+  })
+
   it('supervises an Electron utility-process launcher', () => {
     const children: FakeChild[] = []
     const logs: string[] = []

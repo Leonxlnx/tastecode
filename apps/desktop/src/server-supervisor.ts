@@ -28,6 +28,19 @@ type SupervisorCallbacks = {
   onLog: (line: string) => void
   /** Called once when the supervisor gives up, for a user-facing surface. */
   onGaveUp?: (() => void) | undefined
+  /**
+   * Reports the pid of each successful launch so the caller can record server
+   * ownership — a hard crash leaves no other way to attribute the orphan later.
+   */
+  onSpawned?: ((pid: number | undefined) => void) | undefined
+  /**
+   * Consulted once, when a run dies before the healthy threshold — the
+   * signature of a resource conflict (port or data lease already held), which
+   * restarting cannot fix on its own. 'stop' ends supervision quietly (the
+   * caller adopted or reported the conflict); 'restart' resumes the normal
+   * backoff path.
+   */
+  onEarlyExit?: (() => Promise<'restart' | 'stop'> | 'restart' | 'stop') | undefined
 }
 
 type CommandSupervisorOptions = {
@@ -81,6 +94,7 @@ export class ServerSupervisor {
   #failures = 0
   #startedAt = 0
   #restartTimer: NodeJS.Timeout | undefined
+  #earlyExitChecked = false
 
   constructor(options: SupervisorOptions) {
     this.#options = options
@@ -111,6 +125,7 @@ export class ServerSupervisor {
       return
     }
     this.#child = child
+    this.#options.onSpawned?.(child.pid)
     child.stdout?.setEncoding('utf8')
     child.stderr?.setEncoding('utf8')
     // A chunk can split a line anywhere, so each stream keeps its partial tail
@@ -160,6 +175,36 @@ export class ServerSupervisor {
     if (this.#child !== child) return
     this.#child = undefined
     if (this.#stopped) return
+    // The first early death is where a stale-server conflict shows up (the
+    // port or the data lease is still held). Consult the owner once before
+    // falling back to blind backoff — later deaths stay on the normal path.
+    if (
+      !this.#earlyExitChecked &&
+      this.#options.onEarlyExit &&
+      Date.now() - this.#startedAt < HEALTHY_RUN_MS
+    ) {
+      this.#earlyExitChecked = true
+      void this.#resolveEarlyExit()
+      return
+    }
+    this.#scheduleRestart()
+  }
+
+  async #resolveEarlyExit(): Promise<void> {
+    const onEarlyExit = this.#options.onEarlyExit
+    let decision: 'restart' | 'stop' = 'restart'
+    if (onEarlyExit) {
+      try {
+        decision = await onEarlyExit()
+      } catch (error) {
+        this.#options.onLog(`early-exit check failed: ${String(error)}`)
+      }
+    }
+    if (this.#stopped || this.#child) return
+    if (decision === 'stop') {
+      this.#stopped = true
+      return
+    }
     this.#scheduleRestart()
   }
 

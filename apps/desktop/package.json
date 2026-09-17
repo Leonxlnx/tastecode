@@ -32,11 +32,13 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "@types/ws": "^8.18.1",
     "electron": "^43.4.0",
     "electron-builder": "26.15.3",
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "ws": "^8.21.1"
   },
   "build": {
     "appId": "dev.tastecode.desktop",

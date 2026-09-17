@@ -62,6 +62,13 @@ import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
+import {
+  clearServerOwner,
+  readServerOwner,
+  resolveStaleServer,
+  writeServerOwner,
+  type StaleServerVerdict,
+} from './stale-server.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -148,6 +155,11 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+// The supervised child inherits this env, so it binds the same port the
+// renderer targets (apps/web/src/server-url.ts defaults to 4311).
+const coreServerPort = Number(process.env['HARNESS_PORT']) || 4311
+const coreServerUrl = `ws://127.0.0.1:${coreServerPort}`
+const serverOwnerPath = path.join(productDataPath, 'server-owner.json')
 let startupWindowReady = false
 let startupServerReady = Boolean(devServer)
 let startupRendererReady = false
@@ -252,6 +264,8 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+/** Set when the port was held by a compatible core server we connected to. */
+let serverAdopted = false
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
@@ -307,6 +321,80 @@ if (!ownsSingleInstance) {
   app.quit()
 }
 
+function markCoreServerReady(): void {
+  if (startupServerReady) return
+  startupServerReady = true
+  logStartupMilestone('server-ready')
+  finishStartupBenchmarkIfReady()
+}
+
+function showServerFailureDialog(message: string, detail: string): void {
+  const options = { type: 'error' as const, title: nativeAppName, message, detail }
+  // macOS and Linux keep the app alive after the last window closes, so the
+  // dialog must stand alone when there is no window to parent it to.
+  const window = mainWindow
+  if (window && !window.isDestroyed()) void dialog.showMessageBox(window, options)
+  else void dialog.showMessageBox(options)
+}
+
+function reportServerConflict(
+  reason: Extract<StaleServerVerdict, { kind: 'blocked' }>['reason'],
+): void {
+  const detail =
+    reason === 'lease-held'
+      ? 'The TasteCode data folder is locked by another process. Close other TasteCode servers or history commands, then start the app again.'
+      : reason === 'incompatible-server'
+        ? 'An incompatible TasteCode server is still running. Close it, then start the app again.'
+        : reason === 'kill-failed'
+          ? 'An old TasteCode server did not stop when asked. End it manually, then start the app again.'
+          : `Another application is already using the local server port (${coreServerPort}). Close it, or set HARNESS_PORT to a free port, then start the app again.`
+  console.error(`[desktop] core server startup blocked: ${reason}`)
+  void diagnostics?.record('server conflict', reason)
+  showServerFailureDialog('The core server could not start.', detail)
+}
+
+/**
+ * Map a stale-server verdict onto the launch path: a compatible holder is
+ * adopted (the renderer connects to it either way), a cleared conflict frees
+ * the spawn, and an unresolvable one is reported rather than restarted into.
+ */
+function applyStaleServerVerdict(
+  verdict: StaleServerVerdict,
+  ownerPid: number | undefined,
+): 'spawn' | 'ready' | 'reported' {
+  if (verdict.kind === 'adopted') {
+    serverAdopted = true
+    if (ownerPid !== undefined && verdict.holderPids.includes(ownerPid)) {
+      // Re-write the record: a doomed respawn may already have overwritten it
+      // with its own (now dead) pid. The adopted orphan is the live holder.
+      void writeServerOwner(serverOwnerPath, {
+        pid: ownerPid,
+        port: coreServerPort,
+        recordedAt: Date.now(),
+      })
+    } else {
+      // A pid that is not the holder would misattribute a later conflict.
+      void clearServerOwner(serverOwnerPath)
+    }
+    console.log('[desktop] adopted the already-running core server')
+    void diagnostics?.record('server', `adopted running server on ${coreServerUrl}`)
+    markCoreServerReady()
+    return 'ready'
+  }
+  if (verdict.kind === 'blocked') {
+    reportServerConflict(verdict.reason)
+    return 'reported'
+  }
+  if (verdict.kind === 'cleared') void clearServerOwner(serverOwnerPath)
+  return 'spawn'
+}
+
+/** Recent supervised output, kept so an early death can be classified. */
+const recentServerLines: string[] = []
+const MAX_RECENT_SERVER_LINES = 40
+/** Printed by the server when the data lease is held (apps/server data-lease.ts). */
+const LEASE_CONFLICT_MARKER = 'Close TasteCode and its core server'
+
 /**
  * Outside development the shell owns its core server: without this a packaged
  * app has nothing listening on the socket and every feature sits behind a
@@ -316,33 +404,67 @@ if (!ownsSingleInstance) {
  * Packaged builds use Electron's Node utility process so the service stays
  * isolated without paying for a second full app executable launch. The legacy
  * Node-mode child remains available as a field fallback.
+ *
+ * A hard main-process death leaves the last server running as an orphan that
+ * still holds the port and the data lease. Before spawning, the port holder is
+ * probed and resolved (adopt / attribute-and-kill / report) — without this the
+ * supervisor restarts into a wall and the renderer can land on the stale one.
  */
-function startOwnedServer(): void {
-  if (devServer || serverSupervisor) return
+async function startOwnedServer(): Promise<void> {
+  if (devServer || serverSupervisor || serverAdopted) return
+  const previousOwner = await readServerOwner(serverOwnerPath)
+  // The record only applies to the port this run would bind.
+  const ownerPid =
+    previousOwner && previousOwner.port === coreServerPort ? previousOwner.pid : undefined
+  // A failed probe must not block a normal launch — the supervisor's early-exit
+  // check runs the same resolution again if the spawn actually dies.
+  let verdict: StaleServerVerdict = { kind: 'none' }
+  try {
+    verdict = await resolveStaleServer({
+      url: coreServerUrl,
+      ownerPid,
+      log: (line) => console.log(`[desktop] ${line}`),
+    })
+  } catch (error) {
+    console.error('[desktop] stale-server probe failed', error)
+    void diagnostics?.record('server conflict probe', error)
+  }
+  if (applyStaleServerVerdict(verdict, ownerPid) !== 'spawn') return
+
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
   const supervisorCallbacks = {
     onLog: (line: string) => {
       console.log('[server]', line)
-      if (!startupServerReady && line.startsWith('[server] listening on ')) {
-        startupServerReady = true
-        logStartupMilestone('server-ready')
-        finishStartupBenchmarkIfReady()
-      }
+      recentServerLines.push(line)
+      if (recentServerLines.length > MAX_RECENT_SERVER_LINES) recentServerLines.shift()
+      if (line.startsWith('[server] listening on ')) markCoreServerReady()
+    },
+    onSpawned: (pid: number | undefined) => {
+      recentServerLines.length = 0
+      if (pid === undefined) return
+      void writeServerOwner(serverOwnerPath, {
+        pid,
+        port: coreServerPort,
+        recordedAt: Date.now(),
+      })
+    },
+    onEarlyExit: async () => {
+      const leaseSuspected = recentServerLines.some((line) => line.includes(LEASE_CONFLICT_MARKER))
+      const verdict = await resolveStaleServer({
+        url: coreServerUrl,
+        ownerPid,
+        leaseSuspected,
+        log: (line) => console.log(`[desktop] ${line}`),
+      })
+      return applyStaleServerVerdict(verdict, ownerPid) === 'spawn' ? 'restart' : 'stop'
     },
     onGaveUp: () => {
-      const options = {
-        type: 'error' as const,
-        title: nativeAppName,
-        message: 'The core server keeps crashing.',
-        detail: 'Restart the app. If this keeps happening, reinstall it.',
-      }
-      // macOS and Linux keep the app alive after the last window closes, so
-      // the dialog must stand alone when there is no window to parent it to.
-      const window = mainWindow
-      if (window && !window.isDestroyed()) void dialog.showMessageBox(window, options)
-      else void dialog.showMessageBox(options)
+      showServerFailureDialog(
+        'The core server keeps crashing.',
+        'Restart the app. If this keeps happening, reinstall it.',
+      )
     },
   }
   serverSupervisor =
@@ -924,6 +1046,9 @@ if (ownsSingleInstance) {
     macOSHaptics.stop()
     serverSupervisor?.stop()
     serverSupervisor = undefined
+    // A clean quit reaps our child, so its record is never the live holder.
+    // An adopted server keeps running — keep the record for attribution.
+    if (!serverAdopted) void clearServerOwner(serverOwnerPath)
     tray?.destroy()
     tray = undefined
   })
@@ -960,7 +1085,7 @@ if (ownsSingleInstance) {
       if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
     })
     appUpdater.start()
-    startOwnedServer()
+    void startOwnedServer()
     configureAttachmentPreviews()
     configureRendererPermissions()
     void sweepStaleCaptures()
