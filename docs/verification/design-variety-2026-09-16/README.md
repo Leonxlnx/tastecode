@@ -139,6 +139,24 @@ packages to avoid resource contention with other local work. No tests were weake
 Private beta 4 carries these corrections. It is prepared separately from the installed beta 3;
 installation and app restart remain deferred to the user. No new website prompt was submitted.
 
+## Independent Windows launch and current-main candidate — 2026-09-17
+
+The previous installed-app launch used `Start-Process` directly from an agent terminal. That
+left the application in the launching process tree, consistent with the reported shutdown when
+Codex closed. No Windows application-crash record was present; the exact termination event was
+not recorded. A shell COM launch also retained the terminal parent on this machine.
+
+The corrected local launch uses Windows `Win32_Process.Create` with the current user and the
+installed executable. Its verified parent is `WmiPrvSE.exe`, outside the Codex process tree, and
+the terminal can exit while the app remains responsive. The ordinary desktop shortcut still
+targets the installed executable directly. No background task, startup service, development
+server, temporary profile or Codex app dependency was added. The installed beta 4 passed resource
+verification, authenticated model discovery including Astra, and preservation of all 106 chats.
+
+Private beta 5 additionally includes main `dd1f8cb6`: the newly merged onboarding, per-chat model
+setup, usage preloading, checkout error messages and transcript interaction changes. Windows
+packaging and the four local gates are checked before installation.
+
 ## Earlier beta 2 candidate and remaining release checks
 
 `TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.
