@@ -59,8 +59,9 @@ import {
   subscribeAppHaptics,
 } from '../haptics.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
-import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
+import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
@@ -78,6 +79,7 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
     return { default: module.AccountLimits }
   }))
 const AccountLimits = lazy(loadAccountLimits)
+
 const InboxSidebar = lazy(() =>
   import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
 )
@@ -206,7 +208,7 @@ function SidebarComponent(props: {
   onOpenSettings: (section?: 'profile') => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const profileDisplayName = props.profileIdentity?.displayName.trim()
+  const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
   const usageLimit = (props.usageStates ?? [])
     .flatMap((state) => {
       const source = state.summary?.limitSource
@@ -861,14 +863,10 @@ function SidebarComponent(props: {
                   {props.profileIdentity?.avatarDataUrl ? (
                     <img src={props.profileIdentity.avatarDataUrl} alt="" />
                   ) : (
-                    profileInitials(
-                      profileDisplayName || props.account?.email || props.providerName,
-                    )
+                    <GeneratedAvatar name={profileDisplayName} />
                   )}
                 </span>
-                <span className="account__name">
-                  {profileDisplayName || props.account?.email || props.providerName}
-                </span>
+                <span className="account__name">{profileDisplayName}</span>
                 {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
                   <span
                     className="account__usage"

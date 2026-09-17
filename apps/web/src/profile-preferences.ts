@@ -52,20 +52,6 @@ export async function readProfileImage(file: File): Promise<string> {
   return dataUrl
 }
 
-export function profileInitials(value: string): string {
-  const words = value.trim().split(/\s+/u).filter(Boolean)
-  const initials =
-    words.length > 1
-      ? words
-          .slice(0, 2)
-          .map((word) => Array.from(word)[0])
-          .join('')
-      : Array.from(words[0] ?? '')
-          .slice(0, 2)
-          .join('')
-  return initials.toUpperCase() || 'P'
-}
-
 async function hasExpectedSignature(file: File): Promise<boolean> {
   const bytes = new Uint8Array(await file.slice(0, 12).arrayBuffer())
   if (file.type === 'image/png') {

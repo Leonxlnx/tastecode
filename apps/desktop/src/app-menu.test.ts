@@ -8,11 +8,11 @@ import {
 } from './menu-contract.js'
 
 describe('application menu', () => {
-  it('exposes every renderer action from the native menu', () => {
+  it.each(['macOS', 'Windows', 'Linux'])('exposes every renderer action on %s', (platform) => {
     const onAction = vi.fn()
     const template = createApplicationMenuTemplate({
       appName: 'Taste Code',
-      isMacOS: true,
+      isMacOS: platform === 'macOS',
       isDevelopment: false,
       shortcuts: {},
       onAction,
@@ -27,7 +27,7 @@ describe('application menu', () => {
       new Set<NativeMenuAction>(NATIVE_MENU_ACTIONS),
     )
     expect(template.map((item) => item.label ?? item.role)).toEqual([
-      'Taste Code',
+      ...(platform === 'macOS' ? ['Taste Code'] : []),
       'File',
       'Edit',
       'View',

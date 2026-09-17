@@ -138,7 +138,7 @@ describe('sidebar theme CSS', () => {
   })
 
   it('keeps the account trigger compact and shows its disclosure state on the right', () => {
-    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 4px 9px 10px;/s)
+    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 6px;/s)
     expect(appCss).toMatch(/\.rail__foot \.menutrigger \{[^}]*width: 100%;/s)
     expect(appCss).toMatch(/\.account \{[^}]*gap: 8px;[^}]*width: 100%;/s)
     expect(appCss).toMatch(/\.account__avatar \{[^}]*width: 18px;[^}]*height: 18px;/s)
