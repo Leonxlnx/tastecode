@@ -27,6 +27,7 @@ import {
   runCustomHarness,
 } from './custom-harness-launch.js'
 import { retryableLazy } from './retryable-lazy.js'
+import { mapProviderSession } from './provider-session.js'
 
 const loadAcpAdapter = retryableLazy(() => import('@harness/adapter-acp'))
 const loadAntigravityAdapter = retryableLazy(() => import('@harness/adapter-antigravity'))
@@ -954,7 +955,7 @@ function codexRuntime(
         await adapter.start()
       }
       if (threadId === undefined) return adapter.startThread(workspacePath, options)
-      return adapter.resumeThread(threadId, workspacePath, {
+      return adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
         ...(options.instructions ? { instructions: options.instructions } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
       })
@@ -962,7 +963,8 @@ function codexRuntime(
   }
   return {
     start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
+    resume: async (threadId, workspacePath, options) =>
+      mapProviderSession(threadId, await open(workspacePath, options, threadId)),
     async listModels(agent) {
       const harness = harnessFor('codex', agent, resolveHarness)
       const { CodexAdapter } = await loadCodexAdapter()
@@ -1107,15 +1109,18 @@ function claudeRuntime(
     },
     async resume(threadId, workspacePath, options) {
       const adapter = await adapterFor(options.agent, workspacePath, options)
-      return startedSession(sessionFor(adapter), () =>
-        adapter.resumeThread(threadId, workspacePath, {
-          model: options.model,
-          effort: options.effort,
-          approval: options.approval,
-          instructions: options.instructions,
-          mcpServers: options.mcpServers,
-          mcpCredentials: options.mcpCredentials,
-        }),
+      return mapProviderSession(
+        threadId,
+        await startedSession(sessionFor(adapter), () =>
+          adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
+            model: options.model,
+            effort: options.effort,
+            approval: options.approval,
+            instructions: options.instructions,
+            mcpServers: options.mcpServers,
+            mcpCredentials: options.mcpCredentials,
+          }),
+        ),
       )
     },
     async listModels(agent) {

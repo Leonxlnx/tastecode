@@ -69,6 +69,8 @@ describe('brand phase', () => {
 
   it('locks supplied identity before filling open brand decisions', () => {
     const prompt = designBrandPrompt(brief)
+    expect(prompt).toContain('Animate new websites by default')
+    expect(prompt).toContain('Do not turn missing material into an invented requirement')
     expect(prompt).toContain('explicit user requirements')
     expect(prompt).toContain('Never replace a supplied logo, color, typeface')
     expect(prompt).toContain('Fill every supplied decision into its final destination')
@@ -82,10 +84,12 @@ describe('brand phase', () => {
     expect(prompt).toContain("project's established icon system")
     expect(prompt).toContain('Make motionDirection operational')
     expect(prompt).toContain('Return each motionDirection.principles entry as one string')
-    expect(prompt).toContain('Ban universal fade-up choreography')
-    expect(prompt).toContain('Never choose IBM Plex Mono, Archivo')
-    expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
-    expect(prompt).toContain('one base card language and at most one emphasized variant')
+    expect(prompt).toContain('Do not apply the same fade-up to every section')
+    expect(prompt).toContain('including monumental type or monospace when present')
+    expect(prompt).toContain(
+      'Preserve rules, panels, card edges and dividers visible in the reference',
+    )
+    expect(prompt).toContain('Derive card padding, radius, surface depth')
     expect(prompt).toContain('primary action, focus and selected states')
     expect(prompt).toContain('prefer relevant supplied, generated, or properly sourced photographs')
   })
@@ -146,16 +150,16 @@ describe('brand phase', () => {
   })
 
   it.each(['IBM Plex Mono', 'Archivo', 'Archivo Narrow'])(
-    'rejects the banned typeface %s',
+    'preserves the reference or brand typeface %s',
     (family) => {
-      expect(() =>
+      expect(
         parseBrandPhaseOutput(
           JSON.stringify({
             ...brand,
             typefaces: [{ ...brand.typefaces[0], family }],
           }),
         ),
-      ).toThrow('is not allowed')
+      ).toMatchObject({ typefaces: [{ family }] })
     },
   )
 

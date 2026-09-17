@@ -523,24 +523,35 @@ test('real ASAR resources retain every reference byte, license file, and the res
   const source = path.join(temporaryRoot, 'source')
   const resources = path.join(temporaryRoot, 'resources')
   const archiveInput = path.join(temporaryRoot, 'archive-input')
-  const references = path.join(source, 'packages', 'design-agent', 'references', 'directions')
+  const references = path.join(source, 'packages', 'design-agent', 'references')
   const packedReferences = path.join(
     archiveInput,
     'node_modules',
     '@harness',
     'design-agent',
     'references',
-    'directions',
   )
   await mkdir(references, { recursive: true })
   await writeFile(path.join(references, 'direction.webp'), 'RIFF-reference-bytes-WEBP')
+  await mkdir(path.join(references, 'library'))
+  await writeFile(path.join(references, 'library', 'catalog.json'), '{"version":1}')
+  await writeFile(path.join(references, 'library', 'hero.png'), 'PNG-library-reference')
+  await mkdir(path.join(references, 'motion'))
+  await writeFile(
+    path.join(references, 'motion', 'reveal.js'),
+    'export function installReferenceReveals() {}',
+  )
   await mkdir(packedReferences, { recursive: true })
   await cp(references, packedReferences, { recursive: true })
   await mkdir(resources)
   const archive = path.join(resources, 'app.asar')
   const asar = packagingAsar()
-  await asar.createPackage(archiveInput, archive)
-  assert.equal(await verifyBundledDesignReferences(archive, references), 1)
+  const pack = () =>
+    asar.createPackageWithOptions(archiveInput, archive, {
+      unpackDir: 'node_modules/@harness/design-agent/references/library',
+    })
+  await pack()
+  assert.equal(await verifyBundledDesignReferences(archive, references), 4)
   await mkdir(path.join(source, 'release'))
   await mkdir(path.join(source, 'licenses'))
   await writeFile(path.join(source, 'licenses', 'reviewed.txt'), 'Reviewed dependency license')
@@ -571,12 +582,21 @@ test('real ASAR resources retain every reference byte, license file, and the res
     /license does not match/,
   )
   await writeFile(path.join(resources, 'LICENSE'), 'Current LICENSE')
+  await rm(path.join(packedReferences, 'library', 'catalog.json'))
+  await pack()
+  await assert.rejects(verifyBundledDesignReferences(archive, references), /reference filenames/)
+  await cp(references, packedReferences, { recursive: true })
   await writeFile(path.join(packedReferences, 'direction.webp'), 'Changed image bytes')
-  await asar.createPackage(archiveInput, archive)
+  await pack()
   await assert.rejects(verifyPackagedResources(resources, releaseConfig, source), /reference bytes/)
   await writeFile(path.join(packedReferences, 'unexpected.webp'), 'Extra image bytes')
-  await asar.createPackage(archiveInput, archive)
+  await pack()
   await assert.rejects(verifyBundledDesignReferences(archive, references), /reference filenames/)
+  await writeFile(path.join(references, 'unexpected.js'), 'export const unapproved = true')
+  await assert.rejects(
+    verifyBundledDesignReferences(archive, references),
+    /Unexpected design reference asset/,
+  )
 })
 
 test('draft uploads require exact explicit approval and a safe repository name', async (t) => {
@@ -861,6 +881,9 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
   assert.deepEqual(desktop.build.publish, [
     { provider: 'generic', url: 'https://tastecode.dev/releases' },
   ])
+  assert.ok(
+    desktop.build.asarUnpack.includes('node_modules/@harness/design-agent/references/library/**/*'),
+  )
   for (const name of [
     'LICENSE',
     'NOTICE',

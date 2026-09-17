@@ -44,6 +44,7 @@ const DEFAULT_VISIBLE_MODELS = new Set([
   'gpt-5.6-luna',
   'gpt-5.3-codex-spark',
   'claude-fable-5',
+  'claude-fable-5-1',
   'fable',
   'claude-opus-5',
   'opus',

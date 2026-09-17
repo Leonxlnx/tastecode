@@ -78,6 +78,7 @@ export function AppSelect<Value extends string>(props: {
   value: Value
   options: readonly AppSelectOption<Value>[]
   onChange: (value: Value) => void
+  allowReselect?: boolean
   ariaLabel: string
   className?: string
   disabled?: boolean
@@ -172,7 +173,7 @@ export function AppSelect<Value extends string>(props: {
     if (props.loadingMessage) return
     const option = props.options[index]
     if (!option || option.disabled) return
-    if (option.value !== props.value) props.onChange(option.value)
+    if (option.value !== props.value || props.allowReselect) props.onChange(option.value)
     closeListbox(true)
   }
 

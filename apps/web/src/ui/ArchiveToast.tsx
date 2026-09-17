@@ -10,7 +10,13 @@ export function ArchiveToast(props: {
   onDismiss: () => void
 }) {
   return (
-    <NoticePresence className="notice notice--archive" role="status" visible={props.visible}>
+    <NoticePresence
+      className="notice notice--archive"
+      role="status"
+      visible={props.visible}
+      onDismiss={props.onDismiss}
+      dismissKey={props.count}
+    >
       <IconArchive size={16} stroke={1.7} aria-hidden />
       <span className="notice__text">{props.count > 1 ? 'Archived chats' : 'Archived chat'}</span>
       <button className="archive-toast__view" type="button" onClick={props.onView}>

@@ -2,8 +2,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NoticePresence } from './NoticePresence.js'
 
 const rootCssPath = resolve(process.cwd(), 'apps/web/src/styles/app.css')
@@ -12,7 +12,10 @@ const css = readFileSync(
   'utf8',
 )
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 function dispatchTransitionEnd(element: Element, propertyName: string) {
   const event = new Event('transitionend', { bubbles: true })
@@ -21,6 +24,60 @@ function dispatchTransitionEnd(element: Element, propertyName: string) {
 }
 
 describe('NoticePresence', () => {
+  it('uses the latest callback without restarting the timeout on renders', () => {
+    vi.useFakeTimers()
+    const first = vi.fn()
+    const latest = vi.fn()
+    const view = render(
+      <NoticePresence className="notice" role="status" visible onDismiss={first}>
+        Update
+      </NoticePresence>,
+    )
+    act(() => vi.advanceTimersByTime(4_000))
+    view.rerender(
+      <NoticePresence className="notice" role="status" visible onDismiss={latest}>
+        Update
+      </NoticePresence>,
+    )
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(first).not.toHaveBeenCalled()
+    expect(latest).toHaveBeenCalledOnce()
+  })
+
+  it('pauses for hover, focus and work, then gives changed content a fresh timeout', () => {
+    vi.useFakeTimers()
+    const dismiss = vi.fn()
+    const renderNotice = (paused = false, key = 'first') => (
+      <NoticePresence
+        className="notice"
+        role="status"
+        visible
+        onDismiss={dismiss}
+        autoDismissPaused={paused}
+        dismissKey={key}
+      >
+        <button>Update</button>
+      </NoticePresence>
+    )
+    const view = render(renderNotice())
+    fireEvent.mouseEnter(screen.getByRole('status'))
+    act(() => vi.advanceTimersByTime(6_000))
+    fireEvent.mouseLeave(screen.getByRole('status'))
+    fireEvent.focus(screen.getByRole('button'))
+    act(() => vi.advanceTimersByTime(6_000))
+    fireEvent.blur(screen.getByRole('button'))
+    view.rerender(renderNotice(true))
+    act(() => vi.advanceTimersByTime(6_000))
+    expect(dismiss).not.toHaveBeenCalled()
+    view.rerender(renderNotice())
+    act(() => vi.advanceTimersByTime(4_000))
+    view.rerender(renderNotice(false, 'second'))
+    act(() => vi.advanceTimersByTime(4_999))
+    expect(dismiss).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(1))
+    expect(dismiss).toHaveBeenCalledOnce()
+  })
+
   it('starts hidden when visible is false', () => {
     render(
       <NoticePresence className="notice" role="alert" visible={false}>

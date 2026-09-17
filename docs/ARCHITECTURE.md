@@ -308,6 +308,18 @@ transcripts and orchestration history; UI state is a derived read model. FTS5 fo
   lifecycle, settings, and catalog metadata remain ordinary transactional records. Never write
   directly to read models derived from the event log.
 
+**Local provider history is discovered without starting a model turn.** Codex, Claude Code,
+and Grok own their saved-file readers; shared import code only reads their declared history
+interface. A background metadata scan adds native chats only to projects already added in
+TasteCode and loads transcripts on demand. History readers never add projects. Adding a project
+starts a fresh scan; removing it stops further imports until it is added again. Stable provider
+identities prevent duplicate chats. Imported messages use the same
+typed items and renderer as local turns. New versions append events; source membership hides
+replaced native branches without moving local event positions or checkpoints. Replay orders
+imported turns by their original time and replaces stale partial client histories when needed.
+Provider files stay read-only. Local names, pins, archives, project removal, and deletion remain
+local choices. Cloud-only chats and missing native transcript files are outside this local reader.
+
 **Checkpoints are git**, captured on turn start and completion. Correct, inspectable with
 tools users already trust, identical across every engine. Non-git directories fall back to a
 content-addressed snapshot of touched files only.

@@ -129,6 +129,15 @@ function collectCopy(page: PageBlueprint): CopySurface[] {
       evidence: pageEvidence,
     })),
     ...page.sections.flatMap((section, sectionIndex) => [
+      ...(section.copy.eyebrow
+        ? [
+            {
+              path: `sections[${sectionIndex}].copy.eyebrow`,
+              text: section.copy.eyebrow,
+              evidence: section.evidence,
+            },
+          ]
+        : []),
       {
         path: `sections[${sectionIndex}].copy.heading`,
         text: section.copy.heading,
@@ -206,7 +215,11 @@ function lintHeadings(page: PageBlueprint): CopyLintFinding[] {
   return page.sections.flatMap((section, index) => {
     const heading = section.copy.heading.trim()
     const wordCount = heading.split(/\s+/u).length
-    if (wordCount <= MAX_HEADING_WORDS && heading.length <= MAX_HEADING_CHARACTERS) return []
+    if (
+      section.referenceDirectionId ||
+      (wordCount <= MAX_HEADING_WORDS && heading.length <= MAX_HEADING_CHARACTERS)
+    )
+      return []
     return [
       {
         rule: 'copy/heading-length',
@@ -280,7 +293,7 @@ function lintEyebrows(page: PageBlueprint): CopyLintFinding[] {
   return page.sections.flatMap((section, index) => {
     if (!('eyebrow' in section.copy) || typeof section.copy.eyebrow !== 'string') return []
     const eyebrow = section.copy.eyebrow.trim()
-    if (!eyebrow) return []
+    if (!eyebrow || section.referenceDirectionId) return []
     return [
       {
         rule: 'copy/decorative-eyebrow',

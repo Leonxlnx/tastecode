@@ -13,6 +13,34 @@ export type LocalFontPreference = `local:${string}`
 export type FontPreference = FontPreset | LocalFontPreference
 export type AccentPreference = AccentPreset | HexColor
 export type BackdropPreference = BackdropPreset | HexColor
+export type AppearancePreference = {
+  font: FontPreference
+  accent: AccentPreference
+  backdrop: BackdropPreference
+  glass: number
+}
+export type AppearancePreferences = {
+  light: AppearancePreference
+  dark: AppearancePreference
+}
+
+export function appearanceKey(key: string, theme: Theme): string {
+  return `${key}.${theme}`
+}
+
+function readAppearanceValue(key: string, theme?: Theme): string | null {
+  return (theme ? readStored(appearanceKey(key, theme)) : null) ?? readStored(key)
+}
+
+export function readAppearancePreferences(): AppearancePreferences {
+  const read = (theme: Theme): AppearancePreference => ({
+    font: readFontPreference(theme),
+    accent: readAccentPreference(theme),
+    backdrop: readBackdropPreference(theme),
+    glass: readGlassPreference(theme),
+  })
+  return { light: read('light'), dark: read('dark') }
+}
 
 /** With site data blocked, touching localStorage throws SecurityError — and
  *  these run during module init, where a throw is a white screen. */
@@ -67,13 +95,13 @@ export function applyTheme(theme: Theme): void {
   document.documentElement.classList.toggle('dark', colorSchemeForTheme(theme) === 'dark')
 }
 
-export function readFontPreference(): FontPreference {
-  const stored = readStored(FONT_KEY)
+export function readFontPreference(theme?: Theme): FontPreference {
+  const stored = readAppearanceValue(FONT_KEY, theme)
   if (FONT_PRESETS.has(stored as FontPreset)) return stored as FontPreset
   if (stored?.startsWith(LOCAL_FONT_PREFIX)) {
-    return fontPreferenceForFamily(stored.slice(LOCAL_FONT_PREFIX.length)) ?? 'geist'
+    return fontPreferenceForFamily(stored.slice(LOCAL_FONT_PREFIX.length)) ?? 'system'
   }
-  return 'geist'
+  return 'system'
 }
 
 export function fontPreferenceForFamily(family: string): LocalFontPreference | undefined {
@@ -105,8 +133,8 @@ export function applyFontPreference(font: FontPreference): void {
   }
 }
 
-export function readAccentPreference(): AccentPreference {
-  const stored = readStored(ACCENT_KEY)
+export function readAccentPreference(theme?: Theme): AccentPreference {
+  const stored = readAppearanceValue(ACCENT_KEY, theme)
   const custom = stored?.startsWith('#') ? normalizeHexColor(stored) : undefined
   if (custom) return custom
   return stored === 'ocean' ||
@@ -127,8 +155,8 @@ export function applyAccentPreference(accent: AccentPreference): void {
   else root.style.removeProperty('--custom-accent')
 }
 
-export function readBackdropPreference(): BackdropPreference {
-  const stored = readStored(BACKDROP_KEY)
+export function readBackdropPreference(theme?: Theme): BackdropPreference {
+  const stored = readAppearanceValue(BACKDROP_KEY, theme)
   const custom = stored?.startsWith('#') ? normalizeHexColor(stored) : undefined
   if (custom) return custom
   return stored === 'slate' ||
@@ -153,8 +181,8 @@ export function applyBackdropPreference(backdrop: BackdropPreference): void {
  * makes text sit on too little contrast to read comfortably. Defaults to
  * Medium (35): the glass is meant to be seen, not discovered in a submenu.
  */
-export function readGlassPreference(): number {
-  const raw = readStored(GLASS_KEY)
+export function readGlassPreference(theme?: Theme): number {
+  const raw = readAppearanceValue(GLASS_KEY, theme)
   if (raw === null || raw === '') return 35
   const stored = Number(raw)
   return Number.isFinite(stored) ? Math.min(60, Math.max(0, Math.round(stored))) : 35
