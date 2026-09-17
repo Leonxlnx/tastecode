@@ -76,6 +76,7 @@ export function containedWorkspaceFile(
   workspacePath: string,
   relativePath: string,
   label: string,
+  allowDirectory = false,
 ): string {
   const normalized = normalizeWorkspaceFile(relativePath)
   if (!normalized) throw new Error(`${label} must stay inside the workspace`)
@@ -90,7 +91,9 @@ export function containedWorkspaceFile(
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`${label} must stay inside the workspace after resolving symlinks`)
   }
-  if (!lstatSync(candidate).isFile()) throw new Error(`${label} must be a regular file`)
+  const stat = lstatSync(candidate)
+  if (!stat.isFile() && !(allowDirectory && stat.isDirectory()))
+    throw new Error(`${label} must be a regular file`)
   return candidate
 }
 
