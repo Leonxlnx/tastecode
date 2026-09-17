@@ -57,3 +57,4 @@ scratch/
 .unlazy/
 /apps/desktop/performance-results/
 /apps/desktop/preview-results/
+.worktrees/
