@@ -256,7 +256,10 @@ the canonical project path and a stable server id. They do not live in the repos
 the SQLite event log.
 
 Secrets live only in the OS credential store. The config may contain an opaque credential
-reference, never a token or secret environment value. Provider-owned OAuth credentials
+reference, never a token or secret environment value. Client-supplied references must live
+in the `mcp/` namespace so a request cannot aim another feature's secret — a model
+connection API key or harness environment value — at an arbitrary MCP endpoint; references
+already stored keep resolving. Provider-owned OAuth credentials
 remain with the provider binary; TasteCode starts the provider's login flow and observes its
 reported status without reading the credential.
 

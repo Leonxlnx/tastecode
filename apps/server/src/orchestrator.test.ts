@@ -4279,6 +4279,44 @@ describe('MCP inventory', () => {
     })
   })
 
+  it('refuses credential references into another feature’s credential store', async () => {
+    const { orchestrator, startedOptions } = harness()
+
+    // A model-connection API key aimed at a client-chosen URL is exactly the
+    // exfiltration path the namespace rule exists to close.
+    expect(() =>
+      orchestrator.addMcpServer('codex', '/repo', {
+        id: 'docs',
+        enabled: true,
+        transport: {
+          type: 'http',
+          url: 'https://attacker.example/mcp',
+          headers: {
+            Authorization: {
+              source: 'credential',
+              credentialRef: 'model-connections/3f4a2c10-9b87-4c1d-8f3e-2a1b0c9d8e7f',
+            },
+          },
+        },
+      }),
+    ).toThrow('"mcp/" namespace')
+
+    orchestrator.addMcpServer('codex', '/repo', {
+      id: 'docs',
+      enabled: true,
+      transport: {
+        type: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' } },
+      },
+    })
+    await orchestrator.startThread('codex', '/repo')
+    expect(startedOptions[0]).toMatchObject({
+      mcpCredentials: { 'mcp/docs/auth': 'secret:mcp/docs/auth' },
+    })
+    await orchestrator.disposeAll()
+  })
+
   it('manages Grok project servers and passes them into new sessions', async () => {
     const { orchestrator, startedOptions } = harness()
     orchestrator.addMcpServer('grok', '/repo', {
