@@ -31,6 +31,7 @@ import {
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
+  IconGauge as Gauge,
   IconGitPullRequest as GitPullRequest,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
@@ -79,6 +80,28 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
     return { default: module.AccountLimits }
   }))
 const AccountLimits = lazy(loadAccountLimits)
+
+function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
+  const summary = useRef<HTMLButtonElement>(null)
+  const visible = props.states.some((state) => state.status !== 'unavailable')
+  useLayoutEffect(() => summary.current?.focus(), [])
+  if (!visible) return null
+  return (
+    <section className="account-menu__usage" aria-label="Plan limits" aria-busy>
+      <button
+        ref={summary}
+        className="account-menu__usage-head"
+        type="button"
+        aria-label="Usage, Checking…"
+        aria-expanded={false}
+      >
+        <Gauge size={14} aria-hidden />
+        <span>Usage</span>
+        <span className="account-menu__usage-value">Checking…</span>
+      </button>
+    </section>
+  )
+}
 
 const InboxSidebar = lazy(() =>
   import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
@@ -885,7 +908,7 @@ function SidebarComponent(props: {
               return (
                 <>
                   {props.usageStates ? (
-                    <Suspense fallback={null}>
+                    <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
                       <RenderedAccountLimits
                         states={props.usageStates}
                         onRetry={props.onRetryUsage ?? noop}
