@@ -26,6 +26,20 @@ function defaultLocation(): string {
   return configFile('providers.json')
 }
 
+/**
+ * Endpoint spelling differences must not silently drop a configured key:
+ * the URL constructor already lowercases the host and folds default ports,
+ * and a trailing pathname slash is meaningless for these API bases.
+ */
+function normalizedBaseUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    return `${url.origin}${url.pathname.replace(/\/+$/, '')}${url.search}${url.hash}`
+  } catch {
+    return value
+  }
+}
+
 function parseConfig(raw: string): ConfigFile {
   const value = ConfigFileSchema.safeParse(JSON.parse(raw))
   if (!value.success) {
@@ -80,12 +94,20 @@ export class ModelConnectionStore {
     const file = this.#read()
     const index = file.connections.findIndex((entry) => entry.id === input.id)
     const existing = index < 0 ? undefined : file.connections[index]
+    // The stored key was entered for a specific endpoint: an upsert that moves
+    // the base URL must not inherit it, or a client could aim the key at any
+    // host. The connection keeps working only once the key is re-supplied.
+    const retargeted =
+      existing !== undefined &&
+      normalizedBaseUrl(existing.baseUrl) !== normalizedBaseUrl(input.baseUrl)
     const connection = StoredModelConnectionSchema.parse({
       ...input,
-      // Stored connections keep their reference. New ones get a unique
-      // reference rather than deriving it from the id, so an API key a
-      // deleted same-id connection orphaned can never resolve again.
-      credentialRef: existing?.credentialRef ?? `model-connections/${randomUUID()}`,
+      // Stored connections keep their reference while their endpoint stays
+      // put. New ones get a unique reference rather than deriving it from the
+      // id, so an API key a deleted same-id connection orphaned can never
+      // resolve again.
+      credentialRef:
+        existing && !retargeted ? existing.credentialRef : `model-connections/${randomUUID()}`,
     })
     if (index < 0) file.connections.push(connection)
     else file.connections[index] = connection
@@ -95,6 +117,10 @@ export class ModelConnectionStore {
       // `model-connections/<id>`; a leftover entry under that name is exactly
       // the orphan this schema change exists to bury.
       this.credentials.remove(`model-connections/${input.id}`)
+    } else if (retargeted) {
+      // The fresh reference can never resurrect the old key; delete it too so
+      // no orphaned copy lingers in the credential store.
+      this.credentials.remove(existing.credentialRef)
     }
     return this.#public(connection)
   }

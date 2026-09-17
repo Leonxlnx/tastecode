@@ -105,4 +105,53 @@ describe('model connections', () => {
     expect(() => store.remove('acme')).toThrow('credential store is locked')
     expect(credentials.get(ref)).toBe('live-key')
   })
+
+  it('retires the API key when an upsert retargets the base URL', () => {
+    const { location } = fixture()
+    const store = new ModelConnectionStore(location)
+    store.upsert(input('acme'))
+    store.setCredential('acme', 'live-key')
+    const before = store.get('acme').credentialRef
+
+    store.upsert({ ...input('acme'), baseUrl: 'https://attacker.example/v1' })
+
+    const after = store.get('acme')
+    expect(after.credentialRef).not.toBe(before)
+    expect(after.credentialRef).toMatch(/^model-connections\//)
+    // The moved connection reports unconfigured, and no orphaned copy of the
+    // old key lingers under the abandoned reference.
+    expect(store.list()[0]).toMatchObject({ credentialConfigured: false })
+    expect(credentials.has(before)).toBe(false)
+  })
+
+  it('keeps the API key when only the base URL spelling changes', () => {
+    const { location } = fixture()
+    const store = new ModelConnectionStore(location)
+    store.upsert(input('acme'))
+    store.setCredential('acme', 'live-key')
+    const before = store.get('acme').credentialRef
+
+    store.upsert({ ...input('acme'), baseUrl: 'https://OPENROUTER.ai/api/v1/' })
+
+    expect(store.get('acme').credentialRef).toBe(before)
+    expect(store.list()[0]).toMatchObject({ credentialConfigured: true })
+  })
+
+  it('keeps the API key when the endpoint stays but other fields change', () => {
+    const { location } = fixture()
+    const store = new ModelConnectionStore(location)
+    store.upsert(input('acme'))
+    store.setCredential('acme', 'live-key')
+    const before = store.get('acme').credentialRef
+
+    store.upsert({
+      ...input('acme'),
+      displayName: 'Renamed',
+      defaultModel: 'other/model',
+      enabled: false,
+    })
+
+    expect(store.get('acme').credentialRef).toBe(before)
+    expect(store.list()[0]).toMatchObject({ credentialConfigured: true, enabled: false })
+  })
 })
