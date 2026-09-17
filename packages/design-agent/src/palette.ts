@@ -390,7 +390,9 @@ function buildTheme(
     controlBorder: neutralColor(target.controlBorder, 0.025),
     accent: effectiveAccent,
     accentHover: accentColor(clamp(accent.l + (name === 'light' ? -0.07 : 0.07), 0.03, 0.97)),
-    onAccent: '#FFFFFF',
+    // Start with readable text on the immutable accent. Otherwise a mid-tone
+    // accent and its hover can trap single-role repairs on opposite polarities.
+    onAccent: contrast('#FFFFFF', effectiveAccent) >= 4.5 ? '#FFFFFF' : '#000000',
     accentText: accentColor(name === 'light' ? 0.38 : 0.72, Math.min(accent.c, 0.16)),
     focusRing: accentColor(name === 'light' ? 0.48 : 0.7, Math.min(accent.c, 0.18)),
   } satisfies PaletteRoles
