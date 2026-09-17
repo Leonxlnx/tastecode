@@ -282,6 +282,7 @@ function presentTurnsRange(
       if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
       draft.latestOutputAt = item.createdAt
 
+      if (item.type === 'reasoning') draft.workEntries.push({ item, index })
       if (item.type === 'message' && item.role === 'user') draft.prompt ??= item
       if (item.type === 'message' && item.role === 'assistant') {
         draft.latestAssistantOutputAt = item.createdAt

@@ -135,7 +135,7 @@ describe('audit integration regressions', () => {
     ).toBe('other\n')
     expect(git(repo, 'branch', '--show-current')).toBe('main')
     await expect(orchestrator.startThread('codex', repo, { baseRef: 'other' })).rejects.toThrow(
-      /running turns/,
+      /Chats are still working/,
     )
   })
 
@@ -150,10 +150,14 @@ describe('audit integration regressions', () => {
     session.stopError = new Error('process still alive')
     const closing = orchestrator.close(task.id)
     const refused = expect(closing).rejects.toThrow(/process still alive/)
-    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(/running turns/)
+    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(
+      /Chats are still working/,
+    )
     stop.release()
     await refused
-    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(/running turns/)
+    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(
+      /Chats are still working/,
+    )
     session.stopError = undefined
     await orchestrator.close(task.id)
     await expect(orchestrator.switchBranch(repo, 'other')).resolves.toMatchObject({

@@ -49,22 +49,25 @@ export function Approval(props: {
       ) : null}
 
       <div className="approval__actions">
-        <button className="btn btn--quiet" onClick={() => props.onDecide('deny')}>
-          Deny
-        </button>
-        <button className="approval__secondary-action" onClick={() => props.onDecide('abort')}>
-          Stop the turn
-        </button>
-        <span className="approval__spacer" />
-        <button
-          className="approval__secondary-action"
-          onClick={() => props.onDecide('approve-session')}
-        >
-          Always this session
-        </button>
-        <button className="btn" onClick={() => props.onDecide('approve')}>
-          Allow once
-        </button>
+        <div className="approval__action-group">
+          <button className="btn btn--quiet" onClick={() => props.onDecide('deny')}>
+            Deny
+          </button>
+          <button className="approval__secondary-action" onClick={() => props.onDecide('abort')}>
+            Stop the turn
+          </button>
+        </div>
+        <div className="approval__action-group">
+          <button
+            className="approval__secondary-action"
+            onClick={() => props.onDecide('approve-session')}
+          >
+            Always this session
+          </button>
+          <button className="btn" onClick={() => props.onDecide('approve')}>
+            Allow once
+          </button>
+        </div>
       </div>
     </div>
   )

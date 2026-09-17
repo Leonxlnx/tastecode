@@ -7,7 +7,6 @@ import {
   IconArrowRight as ArrowRight,
   IconArrowUp as ArrowUp,
   IconBackspace as BackspaceKey,
-  IconChevronUp as ControlKey,
   IconCommand as CommandKey,
   IconCornerDownLeft as EnterKey,
   IconOption as OptionKey,
@@ -78,6 +77,13 @@ function ShortcutKeyGlyph(props: { keyName: string; macOS: boolean }) {
 }
 
 function ShortcutGlyphs(props: { shortcut: Shortcut; macOS: boolean }) {
+  if (!props.macOS) {
+    return (
+      <kbd className="keybind-shortcut" title={shortcutLabel(props.shortcut, false)} aria-hidden>
+        {shortcutLabel(props.shortcut, false)}
+      </kbd>
+    )
+  }
   const iconProps = {
     'aria-hidden': true,
     className: 'keybind-shortcut__icon',
@@ -90,13 +96,7 @@ function ShortcutGlyphs(props: { shortcut: Shortcut; macOS: boolean }) {
       title={shortcutLabel(props.shortcut, props.macOS)}
       aria-hidden
     >
-      {props.shortcut.primary ? (
-        props.macOS ? (
-          <CommandKey {...iconProps} data-shortcut-icon="command" />
-        ) : (
-          <ControlKey {...iconProps} data-shortcut-icon="control" />
-        )
-      ) : null}
+      {props.shortcut.primary ? <CommandKey {...iconProps} data-shortcut-icon="command" /> : null}
       {props.shortcut.alt ? <OptionKey {...iconProps} data-shortcut-icon="option" /> : null}
       {props.shortcut.shift ? <ShiftKey {...iconProps} data-shortcut-icon="shift" /> : null}
       <ShortcutKeyGlyph keyName={props.shortcut.key} macOS={props.macOS} />

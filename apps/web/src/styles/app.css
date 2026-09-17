@@ -384,7 +384,9 @@
 
 .rail__foot {
   display: grid;
-  padding: 4px 9px 10px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 6px;
+  border-top: 1px solid var(--line-strong);
 }
 
 .account-menu__actions {
@@ -435,7 +437,8 @@
   overflow: hidden;
 }
 
-.account__avatar img {
+.account__avatar img,
+.account__avatar svg {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -477,8 +480,8 @@
    leaves room for the disclosure state at the right. */
 .rail__foot .menutrigger {
   width: 100%;
-  min-height: 32px;
-  padding: 4px 6px;
+  min-height: 28px;
+  padding: 3px 6px;
   background: none;
   border: 1px solid transparent;
   border-radius: var(--r-md);

@@ -398,13 +398,18 @@
   transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.activity__reveal[data-open='true'] {
+.activity__reveal[data-open='opening'] {
   display: block;
   clip-path: inset(0);
 
   @starting-style {
     clip-path: inset(0 0 100%);
   }
+}
+
+.activity__reveal[data-open='true'] {
+  display: block;
+  clip-path: inset(0);
 }
 
 .activity__reveal[data-open='closing'] {
@@ -424,14 +429,49 @@
   overflow: hidden;
 }
 
-/* Closing details leave flow once. The reveal retracts toward its trigger while
-   the virtualizer moves the following rows without repeated height measurement. */
-.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
+/* Details enter or leave flow once, and the row is re-measured in that same
+   commit. The rows below (and the working rail, which sits at the runway's
+   end) then glide on the compositor over the same curve as the wipe, so the
+   wipe edge and the next row's top move together. */
+.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='opening'])
+  :is(.thread__row, .thread__rail) {
+  transition: transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing'])
+  :is(.thread__row, .thread__rail) {
   transition: transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* The runway follows the rows over the same curve. Its height is the scroll
+   height: committing it in one step made the scroll end pin (or clamp) by the
+   full reveal height at once, which read as the whole transcript jumping when
+   the last turn was toggled. Growing it per frame lets the follower and the
+   browser clamp move the viewport smoothly instead, and carries anything
+   after the transcript with the rows. Only the runway box relayouts; the rows
+   are absolutely positioned and keep their measured heights. */
+.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='opening']) .thread__runway {
+  transition: height 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__runway {
+  transition: height 120ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Near the end the scroll follows the height in one step and the runway
+   slides back on the compositor instead (see measureRow in Thread.tsx). The
+   doubled class outranks the :has() rules above. */
+.thread[data-anchoring-end] .thread__runway.thread__runway {
+  transition: none;
 }
 
 .thread__row:has(> :is(.activity, .aux) [data-open='closing']) {
   z-index: 1;
+}
+
+/* A nested reveal retracts under its own summary, not under the outer stack. */
+.activity__body > :is(.activity, .aux) {
+  position: relative;
 }
 
 .activity--working {
@@ -552,7 +592,10 @@
     color: var(--text-2);
   }
 
-  .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__row {
+  .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='opening'])
+    :is(.thread__row, .thread__rail, .thread__runway),
+  .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing'])
+    :is(.thread__row, .thread__rail, .thread__runway) {
     transition: none;
   }
 }
@@ -776,13 +819,18 @@
   transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.aux__reveal[data-open='true'] {
+.aux__reveal[data-open='opening'] {
   display: block;
   clip-path: inset(0);
 
   @starting-style {
     clip-path: inset(0 0 100%);
   }
+}
+
+.aux__reveal[data-open='true'] {
+  display: block;
+  clip-path: inset(0);
 }
 
 .aux__reveal[data-open='closing'] {
@@ -1082,18 +1130,33 @@
 .approval__actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.approval__spacer {
-  flex: 1;
+.approval__action-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.approval__action-group:last-child {
+  margin-left: auto;
+}
+
+.approval__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .approval__secondary-action {
-  width: 140px;
-  min-height: 34px;
-  padding: 5px 12px;
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
   border-radius: var(--r-md);

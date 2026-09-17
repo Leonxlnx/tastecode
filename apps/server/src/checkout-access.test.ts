@@ -29,7 +29,7 @@ describe('checkout access', () => {
     expect(canonicalCheckoutRoot(alias)).toBe(canonicalCheckoutRoot(root))
     for (const directory of [root, nested, alias]) {
       await expect(access.exclusive(directory, async () => 'unsafe')).rejects.toThrow(
-        /running turns/,
+        /Chats are still working/,
       )
     }
     access.endTurn('working')

@@ -19,6 +19,9 @@ import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { mockKeyboardModifierState } from './test-keyboard.js'
+
+beforeEach(mockKeyboardModifierState)
 
 const SessionOrderSchema = z.record(z.string(), z.array(z.string()))
 type TestRequest = (method: string, params: unknown) => unknown | Promise<unknown>
@@ -1066,16 +1069,37 @@ describe('web client', () => {
     expect(document.querySelector('.workspace-panel')?.classList).not.toContain('is-open')
   })
 
-  it('mounts the deferred workspace panel for a direct tool shortcut', async () => {
-    render(<App />)
+  it.each(['macOS', 'Windows', 'Linux'])(
+    'opens workspace tools repeatedly on %s',
+    async (platform) => {
+      shortcutPlatform.macOS = platform === 'macOS'
+      const modifier = shortcutPlatform.macOS ? { metaKey: true } : { ctrlKey: true }
+      render(<App />)
 
-    await screen.findByRole('button', { name: 'Show workspace tools' })
-    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
-    fireEvent.keyDown(window, { key: 't', metaKey: true })
+      await screen.findByRole('button', { name: 'Show workspace tools' })
+      expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
+      fireEvent.keyDown(window, { key: 't', ...modifier })
 
-    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
-    expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
-  })
+      expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
+      expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
+      fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
+      expect(document.querySelector('.workspace-panel')?.classList).not.toContain('is-open')
+      fireEvent.keyDown(window, { key: 't', ...modifier })
+      await waitFor(() =>
+        expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open'),
+      )
+      fireEvent.keyDown(window, {
+        key: shortcutPlatform.macOS ? 'π' : 'p',
+        code: 'KeyP',
+        ...modifier,
+        altKey: true,
+      })
+      expect(await screen.findByRole('tab', { name: 'Files' })).toBeTruthy()
+      fireEvent.keyDown(window, { key: ',', ...modifier })
+      expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
+      expect(fireEvent.keyDown(window, { key: 't', ...modifier })).toBe(true)
+    },
+  )
 
   it('mounts the deferred workspace panel for a preview capture', async () => {
     render(<App />)
@@ -5371,6 +5395,182 @@ describe('new chats', () => {
     })
   })
 
+  it.each([false, true])(
+    'keeps each chat model setup after switching and reloading (same model: %s)',
+    async (sameModel) => {
+      localStorage.setItem('harness.modelVisibilityVersion', '3')
+      localStorage.setItem('harness.hiddenModels', '[]')
+      serverProjects[0]!.sessions = [
+        { id: 'chat-a', title: 'Chat A', provider: 'codex', createdAt: 1 },
+        { id: 'chat-b', title: 'Chat B', provider: 'codex', createdAt: 2 },
+      ]
+      const models = [
+        cachedCodexChoice().model,
+        {
+          ...cachedCodexChoice().model,
+          id: 'gpt-5.6-mini',
+          displayName: 'GPT-5.6 Mini',
+          isDefault: false,
+        },
+      ].map((model) => ({
+        ...model,
+        serviceTiers: [
+          { id: 'standard', name: 'Standard', description: '' },
+          { id: 'priority', name: 'Fast', description: '' },
+        ],
+      }))
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method, params) =>
+        method === 'models.list' ? Promise.resolve({ models }) : request(method, params),
+      )
+
+      const openPicker = async () => {
+        const button = await screen.findByRole('button', { name: 'Model and reasoning' })
+        if (button.getAttribute('aria-expanded') !== 'true') fireEvent.click(button)
+      }
+      const expectSetup = async (model: string, effort: string, fast: boolean) => {
+        await openPicker()
+        await waitFor(() => {
+          expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+            model,
+          )
+          expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+            `Effort: ${effort}`,
+          )
+          expect(
+            screen.getByRole('button', { name: fast ? 'Disable fast mode' : 'Enable fast mode' }),
+          ).toBeTruthy()
+        })
+      }
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Chat A,/ }))
+      await expectSetup('5.6 Sol', 'Low', false)
+      fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
+      await openPicker()
+      if (!sameModel)
+        fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
+      fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+      fireEvent.click(screen.getByRole('button', { name: 'Enable fast mode' }))
+      await expectSetup(sameModel ? '5.6 Sol' : '5.6 Mini', 'High', true)
+
+      fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
+      await expectSetup('5.6 Sol', 'Low', false)
+      const composer = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: 'Use this chat setup' } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+          text: 'Use this chat setup',
+          clientSubmissionId: expect.stringMatching(/^local:/),
+          threadId: 'chat-a',
+          model: 'gpt-5.6-sol',
+          effort: 'low',
+        }),
+      )
+      cleanup()
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Chat B,/ }))
+      await expectSetup(sameModel ? '5.6 Sol' : '5.6 Mini', 'High', true)
+      fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
+      await expectSetup('5.6 Sol', 'Low', false)
+    },
+  )
+
+  it('restores a chat setup after late discovery instead of the provider setup', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '3')
+    localStorage.setItem('harness.hiddenModels', '[]')
+    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.effort', 'low')
+    const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
+    localStorage.setItem('harness.modelByThread:untouched-thread', JSON.stringify(saved))
+    let discover!: (result: ResultOf<'models.list'>) => void
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list'
+        ? new Promise((resolve) => {
+            discover = resolve
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await screen.findByRole('button', { name: 'Model and reasoning' })
+    expect(JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!)).toEqual(
+      saved,
+    )
+    await act(async () =>
+      discover({
+        models: [
+          cachedCodexChoice().model,
+          {
+            ...cachedCodexChoice().model,
+            id: 'gpt-5.6-mini',
+            displayName: 'GPT-5.6 Mini',
+            isDefault: false,
+            serviceTiers: [{ id: 'priority', name: 'Fast', description: '' }],
+          },
+        ],
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        '5.6 Mini',
+      )
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: High',
+      )
+      expect(screen.getByRole('button', { name: 'Disable fast mode' })).toBeTruthy()
+    })
+    expect(JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!)).toEqual(
+      saved,
+    )
+  })
+
+  it('keeps edits made while a new chat starts after leaving the chat', async () => {
+    let finishStart!: () => Promise<void>
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') return Promise.resolve({ models: [cachedCodexChoice().model] })
+      if (method === 'thread.start')
+        return new Promise((resolve) => {
+          finishStart = async () => {
+            resolve(await request(method, params))
+          }
+        })
+      return request(method, params)
+    })
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    await screen.findByRole('button', { name: 'Model and reasoning' })
+    fireEvent.change(composer, { target: { value: 'New chat setup' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() => expect(finishStart).toBeTypeOf('function'))
+    fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    await act(async () => finishStart())
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.modelByThread:thread-1')).toBe(
+        JSON.stringify({
+          modelKey: 'codex:gpt-5.6-sol',
+          effort: 'high',
+        }),
+      ),
+    )
+    expect(
+      Object.keys(localStorage).some((key) => key.startsWith('harness.modelByThread:pending:')),
+    ).toBe(false)
+    fireEvent.click(await screen.findByRole('button', { name: /^New chat setup,/ }))
+    const picker = await screen.findByRole('button', { name: 'Model and reasoning' })
+    if (picker.getAttribute('aria-expanded') !== 'true') fireEvent.click(picker)
+    await waitFor(() =>
+      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+        'Effort: High',
+      ),
+    )
+  })
+
   it('restores the setup last used with a provider when returning to it', async () => {
     serverProviders = [
       ...serverProviders,
@@ -6105,6 +6305,32 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
+  it.each([true, false])('forces onboarding from Debug (macOS: %s)', async (macOS) => {
+    shortcutPlatform.macOS = macOS
+    localStorage.setItem('harness.onboarding.v1', 'done')
+    render(<App />)
+    await screen.findByRole('button', { name: 'Account' })
+    const modifier = macOS ? { metaKey: true } : { ctrlKey: true }
+    fireEvent.keyDown(window, { key: 'D', code: 'KeyD', ...modifier, shiftKey: true })
+    expect(screen.queryByRole('dialog', { name: 'Debug' })).toBeNull()
+    fireEvent.keyDown(window, { key: 'Î', code: 'KeyD', ...modifier, altKey: true, shiftKey: true })
+    fireEvent.click(await screen.findByRole('button', { name: 'Force onboarding' }))
+    await screen.findByRole('heading', { name: 'Welcome to TasteCode' })
+    fireEvent.click(screen.getByRole('button', { name: /^Begin setup/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Your name' }), {
+      target: { value: 'Blue Emi' },
+    })
+    expect(localStorage.getItem('harness.profile.displayName')).toBe('Blue Emi')
+    expect(document.querySelector('.account__name')?.textContent).toBe('Blue Emi')
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /^Dark/ }))
+    expect(localStorage.getItem('harness.theme')).toBe('dark')
+    expect(document.documentElement.dataset['theme']).toBe('dark')
+    fireEvent.click(screen.getByRole('button', { name: 'Skip setup' }))
+    expect(screen.queryByRole('dialog', { name: 'Pick your look' })).toBeNull()
+    expect(localStorage.getItem('harness.onboarding.v1')).toBe('done')
+  })
+
   it.each([true, false])(
     'opens newest sessions with platform shortcuts (macOS: %s)',
     async (macOS) => {
@@ -6324,24 +6550,26 @@ describe('global shortcuts', () => {
     expect(screen.queryByRole('option', { name: /New session/ })).toBeNull()
   })
 
-  it.each(ASSIGNED_DEFAULT_SHORTCUTS)(
-    'dispatches $label from the composer',
-    async ({ shortcut }) => {
-      render(<App />)
+  it.each(
+    ['macOS', 'Windows', 'Linux'].flatMap((platform) =>
+      ASSIGNED_DEFAULT_SHORTCUTS.map((binding) => ({ ...binding, platform })),
+    ),
+  )('dispatches $label from the composer on $platform', async ({ shortcut, platform }) => {
+    shortcutPlatform.macOS = platform === 'macOS'
+    render(<App />)
 
-      await screen.findByRole('button', { name: /^New session,/ })
-      const composer = screen.getByPlaceholderText('Do anything')
-      fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
-      expect(
-        fireEvent.keyDown(composer, {
-          key: shortcut.key,
-          metaKey: shortcut.primary,
-          altKey: shortcut.alt,
-          shiftKey: shortcut.shift,
-        }),
-      ).toBe(false)
-    },
-  )
+    await screen.findByRole('button', { name: /^New session,/ })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
+    expect(
+      fireEvent.keyDown(composer, {
+        key: shortcut.key,
+        ...(shortcutPlatform.macOS ? { metaKey: shortcut.primary } : { ctrlKey: shortcut.primary }),
+        altKey: shortcut.alt,
+        shiftKey: shortcut.shift,
+      }),
+    ).toBe(false)
+  })
 
   it('toggles the terminal from the composer without changing its draft', async () => {
     render(<App />)
