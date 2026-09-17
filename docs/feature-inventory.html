@@ -1020,7 +1020,11 @@
                 <span class="d"
                   >message, reasoning, plan, command, file change, tool call, subagent activity,
                   error; completed narration stays visible while tool output remains ordered and
-                  accessible on replay</span
+                  accessible on replay. Tool calls from every provider carry the same text shape
+                  (name, arguments, output): the row names the tool as code with the argument it
+                  acted on, and opens into arguments and output apart; web searches show their
+                  query; file changes carry a unified diff with per-file line counts, opened as
+                  tinted diff lines; failed or declined tools read as failures</span
                 ></span
               ></label
             >
@@ -1043,11 +1047,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Working status with a live elapsed label during active turns
+                >Working for status above the reply throughout active turns, with a live elapsed
+                time that becomes Worked for when the reply ends
                 <span class="d"
-                  >a placeholder rail covers the gap before output; reasoning then streams as prose,
-                  while one fixed tool row changes to the current command and settles without a
-                  duplicate live status</span
+                  >the timer reserves space above live messages and tool rows, counts from the turn
+                  start, and stops at completion; completed tool details remain in the work summary;
+                  between tool calls the live row says Thinking even when the model sends no
+                  reasoning summary</span
                 ></span
               ></label
             >

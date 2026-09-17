@@ -283,7 +283,7 @@ describe('streamed thread renders', () => {
 
     expect(rendered.container.querySelector('.activity')).toBe(stack)
     expect(rendered.getByRole('button', { name: 'Running git status --short' })).toBeTruthy()
-    expect(rendered.container.querySelectorAll('.activity')).toHaveLength(1)
+    expect(rendered.container.querySelectorAll('.activity:not(.activity--working)')).toHaveLength(1)
     expect(rendered.container.querySelector('[data-index="3"]')?.className).toContain(
       'is-suppressed',
     )
@@ -312,7 +312,9 @@ describe('streamed thread renders', () => {
     expect(thinking.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
       'true',
     )
-    expect(rendered.container.querySelector('.activity--working')).toBeNull()
+    expect(rendered.container.querySelector('.activity--working')?.textContent).toContain(
+      'Working for ',
+    )
   })
 
   it('does not wake a hidden document to update a live reasoning label', () => {
@@ -341,7 +343,7 @@ describe('streamed thread renders', () => {
       documentVisible = true
       act(() => document.dispatchEvent(new Event('visibilitychange')))
       expect(rendered.getByRole('button', { name: 'Thought for 5s' })).toBeTruthy()
-      expect(vi.getTimerCount()).toBe(1)
+      expect(vi.getTimerCount()).toBe(2)
       act(() => vi.advanceTimersByTime(1_000))
       expect(rendered.getByRole('button', { name: 'Thought for 6s' })).toBeTruthy()
 
@@ -369,7 +371,7 @@ describe('streamed thread renders', () => {
       const rendered = render(view([reasoning]))
 
       expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
-      expect(vi.getTimerCount()).toBe(1)
+      expect(vi.getTimerCount()).toBe(2)
       act(() => vi.advanceTimersByTime(59_999))
       expect(rendered.getByRole('button', { name: 'Thought for 1h' })).toBeTruthy()
       act(() => vi.advanceTimersByTime(1))

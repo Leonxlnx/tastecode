@@ -175,6 +175,110 @@
   flex: none;
 }
 
+/* Line counts beside an edited file, the same green and red the turn summary uses. */
+.aux__stat {
+  display: inline-flex;
+  gap: 5px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A tool's name is an identifier, so it reads as code inside the plain label. */
+.activity__tool {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: inherit;
+}
+
+/* ---------- tool call details ---------- */
+
+/* What the tool was asked, then what it answered. The block keeps the mono
+   surface of a plain output, but lays the two parts out instead of dumping
+   one blob. */
+.tool-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  white-space: normal;
+}
+
+.tool-detail__args {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.tool-detail__args dt {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.tool-detail__args dd {
+  min-width: 0;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-detail__output {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-detail__args + .tool-detail__output {
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+}
+
+/* A file change opens as the diff itself, with a file list when the patch
+   spans several files. Lines reuse the turn summary's tinted rows. */
+.change-detail {
+  white-space: normal;
+}
+
+.change-detail__files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 8px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  list-style: none;
+}
+
+.change-detail__files li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.change-detail__path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-detail__stat {
+  display: inline-flex;
+  gap: 5px;
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.change-detail__diff {
+  margin: 0;
+  font: inherit;
+  white-space: pre;
+}
+
 .said {
   position: relative;
   align-self: flex-end;
@@ -333,8 +437,17 @@
 }
 
 /* Only the summaries that actually open respond to hover. */
-.activity:not(.activity--working) > .activity__summary:hover {
+.activity > button.activity__summary:hover {
   color: var(--text);
+}
+
+.thread__row > .activity--duration {
+  margin: 0 0 12px;
+}
+
+.activity--duration .activity__summary {
+  cursor: default;
+  font-variant-numeric: tabular-nums;
 }
 
 .activity__glyph {
@@ -458,9 +571,11 @@
   transition: height 120ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* Near the end the scroll follows the height in one step and the runway
-   slides back on the compositor instead (see measureRow in Thread.tsx). The
-   doubled class outranks the :has() rules above. */
+/* Whenever the scroll can follow, it takes the new height in one step and the
+   runway slides back on the compositor instead, so the text below the
+   disclosure holds still (see measureRow in Thread.tsx). The height glide
+   above is only the fallback for a scroll that cannot move. The doubled class
+   outranks the :has() rules. */
 .thread[data-anchoring-end] .thread__runway.thread__runway {
   transition: none;
 }
