@@ -39,11 +39,13 @@ import {
   matchesShortcut,
   readKeybindings,
   shortcutLabel,
+  WORKSPACE_TOOL_SHORTCUTS,
   writeKeybindings,
   type KeybindingId,
   type Shortcut,
 } from './shortcuts.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
+import { DebugDialog } from './ui/DebugDialog.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
@@ -261,8 +263,8 @@ const CheckoutDiscardDialog = lazy(() =>
 const RollbackDialog = lazy(() =>
   import('./ui/RollbackDialog.js').then((module) => ({ default: module.RollbackDialog })),
 )
-const WelcomeDialog = lazy(() =>
-  import('./ui/WelcomeDialog.js').then((module) => ({ default: module.WelcomeDialog })),
+const Onboarding = lazy(() =>
+  import('./ui/Onboarding.js').then((module) => ({ default: module.Onboarding })),
 )
 
 /**
@@ -513,6 +515,8 @@ export function App() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => readSetting(ONBOARDING_KEY) === 'done',
   )
+  const [debugOpen, setDebugOpen] = useState(false)
+  const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
 
@@ -1552,30 +1556,6 @@ export function App() {
     isThreadCacheProtected,
     refreshProviderThreadHistory,
   ])
-
-  useEffect(() => {
-    if (workspacePanelHasMounted) return
-    const openWorkspaceTool = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return
-      const key = event.key.toLowerCase()
-      const kind: WorkspaceTool | undefined =
-        key === 'g' && event.shiftKey
-          ? 'review'
-          : key === 't' && !event.shiftKey
-            ? 'browser'
-            : key === 'p' && event.altKey && !event.shiftKey
-              ? 'files'
-              : key === 's' && event.altKey
-                ? 'side-chat'
-                : undefined
-      if (!kind) return
-      event.preventDefault()
-      setWorkspacePanelHasMounted(true)
-      setWorkspaceToolRequest({ request: ++nextWorkspaceToolRequest.current, kind })
-    }
-    window.addEventListener('keydown', openWorkspaceTool)
-    return () => window.removeEventListener('keydown', openWorkspaceTool)
-  }, [workspacePanelHasMounted])
 
   useEffect(() => {
     let cancelled = false
@@ -4298,7 +4278,20 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return
+      if (event.defaultPrevented || event.repeat || event.isComposing) return
+
+      const debugModifier = macOS
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+      if (
+        debugModifier &&
+        matchesShortcut(event, { key: 'd', primary: true, alt: true, shift: true })
+      ) {
+        event.preventDefault()
+        setDebugOpen((open) => !open)
+        return
+      }
+      if (debugOpen || (onboardingPreview && !settingsOpen)) return
 
       // Settings owns all keys while open. Its two app shortcuts can close
       // the sheet or jump directly to the keybind editor.
@@ -4330,16 +4323,25 @@ export function App() {
       const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
         matchesShortcut(event, keybindings[candidate.id]),
       )
-      if (!definition) return
+      if (definition) {
+        event.preventDefault()
+        keybindingActions[definition.id]()
+        return
+      }
 
+      const tool = WORKSPACE_TOOL_SHORTCUTS.find(({ shortcut }) => matchesShortcut(event, shortcut))
+      if (!tool) return
       event.preventDefault()
-      keybindingActions[definition.id]()
+      setWorkspacePanelHasMounted(true)
+      setWorkspaceToolRequest({ request: ++nextWorkspaceToolRequest.current, kind: tool.kind })
     }
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [
     checkoutDelete,
+    debugOpen,
+    onboardingPreview,
     keybindingActions,
     keybindings,
     macOS,
@@ -4961,22 +4963,46 @@ export function App() {
             authRefreshRevision={providerAuthRefreshRevision}
             onProviderLoginTerminalOpen={openProviderLoginTerminal}
             onReset={resetSettings}
+            onForceOnboarding={() => {
+              setSettingsOpen(false)
+              setOnboardingPreview(true)
+            }}
             onClose={closeSettings}
           />
         </Suspense>
       ) : null}
 
-      {isDesktop &&
-      projectsStatus === 'ready' &&
-      projects.length === 0 &&
-      !onboardingDismissed &&
-      !settingsOpen ? (
+      {debugOpen ? (
+        <DebugDialog
+          onClose={() => setDebugOpen(false)}
+          onForceOnboarding={() => {
+            setDebugOpen(false)
+            setSettingsOpen(false)
+            setOnboardingPreview(true)
+          }}
+        />
+      ) : null}
+
+      {onboardingPreview ||
+      (isDesktop && projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed) ? (
         <Suspense fallback={null}>
-          <WelcomeDialog
+          <Onboarding
+            hidden={settingsOpen || debugOpen}
+            displayName={profileIdentity.displayName}
+            onDisplayNameChange={(displayName) => updateProfileIdentity({ displayName })}
+            themePreference={themePreference}
+            onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
-            onAddProject={() => void addProject()}
+            onAddProject={() => {
+              setOnboardingPreview(false)
+              void addProject()
+            }}
             onOpenProviders={() => openSettings('providers')}
             onDismiss={() => {
+              if (onboardingPreview) {
+                setOnboardingPreview(false)
+                return
+              }
               writeSetting(ONBOARDING_KEY, 'done')
               setOnboardingDismissed(true)
             }}

@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 import { useState } from 'react'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mockKeyboardModifierState } from '../test-keyboard.js'
 import {
   createDefaultKeybindings,
   type KeybindingId,
@@ -28,7 +29,11 @@ function StatefulKeybindSettings(props: { macOS?: boolean; onReset?: () => void 
   )
 }
 
-afterEach(cleanup)
+beforeEach(mockKeyboardModifierState)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('keybind settings', () => {
   it('groups the app actions and filters them with the native settings search', () => {
@@ -99,19 +104,28 @@ describe('keybind settings', () => {
     expect(recorder.querySelector('kbd')?.title).toBe('⌘K')
   })
 
-  it('uses pictograms for non-macOS modifiers and special keys', () => {
+  it('shows Ctrl and Alt labels and records Windows/Linux shortcuts', () => {
     render(<StatefulKeybindSettings macOS={false} />)
     const commandPalette = screen.getByRole('button', {
       name: 'Change Command palette keybind',
     })
 
-    expect(commandPalette.querySelector('kbd')?.title).toBe('⌃K')
-    expect(commandPalette.querySelector('[data-shortcut-icon="control"]')).toBeTruthy()
-    expect(commandPalette.querySelector('.keybind-shortcut__key')?.textContent).toBe('K')
+    expect(commandPalette.querySelector('kbd')?.title).toBe('Ctrl+K')
+    expect(commandPalette.querySelector('kbd')?.textContent).toBe('Ctrl+K')
 
     const nextChat = screen.getByRole('button', { name: 'Change Next chat keybind' })
-    expect(nextChat.querySelector('[data-shortcut-icon="control"]')).toBeTruthy()
-    expect(nextChat.querySelector('[data-shortcut-icon="option"]')).toBeTruthy()
-    expect(nextChat.querySelector('[data-shortcut-icon="arrow-down"]')).toBeTruthy()
+    expect(nextChat.querySelector('kbd')?.textContent).toBe('Ctrl+Alt+ArrowDown')
+    expect(nextChat.querySelector('[data-shortcut-icon="option"]')).toBeNull()
+    fireEvent.click(commandPalette)
+    fireEvent.keyDown(commandPalette, { key: 'g', ctrlKey: true, altKey: true })
+    expect(commandPalette.querySelector('kbd')?.textContent).toBe('Ctrl+Alt+G')
+  })
+
+  it('records the base key for a macOS Option symbol', () => {
+    render(<StatefulKeybindSettings />)
+    const recorder = screen.getByRole('button', { name: 'Change Command palette keybind' })
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: 'π', code: 'KeyP', metaKey: true, altKey: true })
+    expect(recorder.querySelector('kbd')?.title).toBe('⌘⌥P')
   })
 })

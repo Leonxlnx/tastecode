@@ -1237,10 +1237,12 @@
                   >project loading and failures remain explicit; Retry remains available and a
                   reconnect recovers automatically; the no-project action uses the existing folder
                   picker; dropping one or many folders onto either Desktop sidebar adds every unique
-                  valid folder with a clear drop target; the first empty Desktop run adds a compact
-                  three-provider status and one clear Choose a project action; opening an empty
-                  project's drawer reveals No chats without replacing or collapsing the current
-                  chat; switching chats reveals the selected project without collapsing other open
+                  valid folder with a clear drop target; the first empty Desktop run opens a
+                  full-window five-page setup (welcome, name with live identicon, theme applied on
+                  choice, three-provider readiness, choose a folder) with Enter to continue, Back,
+                  Skip, and a page that survives a Settings round trip; opening an empty project's
+                  drawer reveals No chats without replacing or collapsing the current chat;
+                  switching chats reveals the selected project without collapsing other open
                   projects, and manual project folding remains available; compact folder rows align
                   directly below Projects and expanded Show more actions have no extra leading
                   spacer; <a href="./screenshots/empty-project.png">production evidence</a></span
@@ -1577,7 +1579,10 @@
                   terminal, workspace, chat, search, pull request, and settings actions, while the
                   desktop File, View, Chat, Workspace, Window, and Help menus mirror the same
                   actions and current custom accelerators. Cmd+1–9 on macOS and Ctrl+1–9 on
-                  Windows/Linux open the nine newest sessions in the first sidebar project</span
+                  Windows/Linux open the nine newest sessions in the first sidebar project.
+                  Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key labels
+                  and portable recorded Option keys. Direct workspace tool shortcuts work before and
+                  after the panel opens and respect modal keyboard ownership</span
                 ></span
               ></label
             >
@@ -1783,7 +1788,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar</span
+                >Profile: renderer-local display name, a pixel avatar generated from the name
+                (deterministic 8×8 sprite, curated palettes, hash-picked symmetry and ground
+                pattern) and an uploaded PNG, JPEG, or WebP photo that replaces it; Settings › Debug
+                has an avatar generator lab for previewing names at every shipped size</span
               ></label
             >
           </li>
@@ -1831,7 +1839,8 @@
               ><input type="checkbox" /><span
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
-                  >roomier action layout also applies to Debug; projects, workspaces, files,
+                  >Debug is a settings category, also opens with Cmd/Ctrl+Alt+Shift+D, and offers
+                  Force onboarding without resetting saved data; projects, workspaces, files,
                   history, and provider credentials remain untouched; upgrades move legacy history
                   and config into TasteCode paths without overwriting existing TasteCode data;
                   bounded local diagnostics can be revealed or copied only by the user after keyed

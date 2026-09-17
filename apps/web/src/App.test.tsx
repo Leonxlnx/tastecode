@@ -19,6 +19,9 @@ import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { mockKeyboardModifierState } from './test-keyboard.js'
+
+beforeEach(mockKeyboardModifierState)
 
 const SessionOrderSchema = z.record(z.string(), z.array(z.string()))
 type TestRequest = (method: string, params: unknown) => unknown | Promise<unknown>
@@ -1066,16 +1069,37 @@ describe('web client', () => {
     expect(document.querySelector('.workspace-panel')?.classList).not.toContain('is-open')
   })
 
-  it('mounts the deferred workspace panel for a direct tool shortcut', async () => {
-    render(<App />)
+  it.each(['macOS', 'Windows', 'Linux'])(
+    'opens workspace tools repeatedly on %s',
+    async (platform) => {
+      shortcutPlatform.macOS = platform === 'macOS'
+      const modifier = shortcutPlatform.macOS ? { metaKey: true } : { ctrlKey: true }
+      render(<App />)
 
-    await screen.findByRole('button', { name: 'Show workspace tools' })
-    expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
-    fireEvent.keyDown(window, { key: 't', metaKey: true })
+      await screen.findByRole('button', { name: 'Show workspace tools' })
+      expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
+      fireEvent.keyDown(window, { key: 't', ...modifier })
 
-    expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
-    expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
-  })
+      expect(await screen.findByRole('textbox', { name: 'Browser address' })).toBeTruthy()
+      expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open')
+      fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
+      expect(document.querySelector('.workspace-panel')?.classList).not.toContain('is-open')
+      fireEvent.keyDown(window, { key: 't', ...modifier })
+      await waitFor(() =>
+        expect(document.querySelector('.workspace-panel')?.classList).toContain('is-open'),
+      )
+      fireEvent.keyDown(window, {
+        key: shortcutPlatform.macOS ? 'π' : 'p',
+        code: 'KeyP',
+        ...modifier,
+        altKey: true,
+      })
+      expect(await screen.findByRole('tab', { name: 'Files' })).toBeTruthy()
+      fireEvent.keyDown(window, { key: ',', ...modifier })
+      expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
+      expect(fireEvent.keyDown(window, { key: 't', ...modifier })).toBe(true)
+    },
+  )
 
   it('mounts the deferred workspace panel for a preview capture', async () => {
     render(<App />)
@@ -6105,6 +6129,32 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
+  it.each([true, false])('forces onboarding from Debug (macOS: %s)', async (macOS) => {
+    shortcutPlatform.macOS = macOS
+    localStorage.setItem('harness.onboarding.v1', 'done')
+    render(<App />)
+    await screen.findByRole('button', { name: 'Account' })
+    const modifier = macOS ? { metaKey: true } : { ctrlKey: true }
+    fireEvent.keyDown(window, { key: 'D', code: 'KeyD', ...modifier, shiftKey: true })
+    expect(screen.queryByRole('dialog', { name: 'Debug' })).toBeNull()
+    fireEvent.keyDown(window, { key: 'Î', code: 'KeyD', ...modifier, altKey: true, shiftKey: true })
+    fireEvent.click(await screen.findByRole('button', { name: 'Force onboarding' }))
+    await screen.findByRole('heading', { name: 'Welcome to TasteCode' })
+    fireEvent.click(screen.getByRole('button', { name: /^Begin setup/ }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Your name' }), {
+      target: { value: 'Blue Emi' },
+    })
+    expect(localStorage.getItem('harness.profile.displayName')).toBe('Blue Emi')
+    expect(document.querySelector('.account__name')?.textContent).toBe('Blue Emi')
+    fireEvent.click(screen.getByRole('button', { name: /^Continue/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /^Dark/ }))
+    expect(localStorage.getItem('harness.theme')).toBe('dark')
+    expect(document.documentElement.dataset['theme']).toBe('dark')
+    fireEvent.click(screen.getByRole('button', { name: 'Skip setup' }))
+    expect(screen.queryByRole('dialog', { name: 'Pick your look' })).toBeNull()
+    expect(localStorage.getItem('harness.onboarding.v1')).toBe('done')
+  })
+
   it.each([true, false])(
     'opens newest sessions with platform shortcuts (macOS: %s)',
     async (macOS) => {
@@ -6324,24 +6374,26 @@ describe('global shortcuts', () => {
     expect(screen.queryByRole('option', { name: /New session/ })).toBeNull()
   })
 
-  it.each(ASSIGNED_DEFAULT_SHORTCUTS)(
-    'dispatches $label from the composer',
-    async ({ shortcut }) => {
-      render(<App />)
+  it.each(
+    ['macOS', 'Windows', 'Linux'].flatMap((platform) =>
+      ASSIGNED_DEFAULT_SHORTCUTS.map((binding) => ({ ...binding, platform })),
+    ),
+  )('dispatches $label from the composer on $platform', async ({ shortcut, platform }) => {
+    shortcutPlatform.macOS = platform === 'macOS'
+    render(<App />)
 
-      await screen.findByRole('button', { name: /^New session,/ })
-      const composer = screen.getByPlaceholderText('Do anything')
-      fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
-      expect(
-        fireEvent.keyDown(composer, {
-          key: shortcut.key,
-          metaKey: shortcut.primary,
-          altKey: shortcut.alt,
-          shiftKey: shortcut.shift,
-        }),
-      ).toBe(false)
-    },
-  )
+    await screen.findByRole('button', { name: /^New session,/ })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Keep this draft intact' } })
+    expect(
+      fireEvent.keyDown(composer, {
+        key: shortcut.key,
+        ...(shortcutPlatform.macOS ? { metaKey: shortcut.primary } : { ctrlKey: shortcut.primary }),
+        altKey: shortcut.alt,
+        shiftKey: shortcut.shift,
+      }),
+    ).toBe(false)
+  })
 
   it('toggles the terminal from the composer without changing its draft', async () => {
     render(<App />)

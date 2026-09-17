@@ -31,6 +31,7 @@ import {
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
+  IconGauge as Gauge,
   IconGitPullRequest as GitPullRequest,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
@@ -59,8 +60,9 @@ import {
   subscribeAppHaptics,
 } from '../haptics.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
-import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
+import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
@@ -78,6 +80,29 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
     return { default: module.AccountLimits }
   }))
 const AccountLimits = lazy(loadAccountLimits)
+
+function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
+  const summary = useRef<HTMLButtonElement>(null)
+  const visible = props.states.some((state) => state.status !== 'unavailable')
+  useLayoutEffect(() => summary.current?.focus(), [])
+  if (!visible) return null
+  return (
+    <section className="account-menu__usage" aria-label="Plan limits" aria-busy>
+      <button
+        ref={summary}
+        className="account-menu__usage-head"
+        type="button"
+        aria-label="Usage, Checking…"
+        aria-expanded={false}
+      >
+        <Gauge size={14} aria-hidden />
+        <span>Usage</span>
+        <span className="account-menu__usage-value">Checking…</span>
+      </button>
+    </section>
+  )
+}
+
 const InboxSidebar = lazy(() =>
   import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
 )
@@ -206,7 +231,7 @@ function SidebarComponent(props: {
   onOpenSettings: (section?: 'profile') => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const profileDisplayName = props.profileIdentity?.displayName.trim()
+  const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
   const usageLimit = (props.usageStates ?? [])
     .flatMap((state) => {
       const source = state.summary?.limitSource
@@ -861,14 +886,10 @@ function SidebarComponent(props: {
                   {props.profileIdentity?.avatarDataUrl ? (
                     <img src={props.profileIdentity.avatarDataUrl} alt="" />
                   ) : (
-                    profileInitials(
-                      profileDisplayName || props.account?.email || props.providerName,
-                    )
+                    <GeneratedAvatar name={profileDisplayName} />
                   )}
                 </span>
-                <span className="account__name">
-                  {profileDisplayName || props.account?.email || props.providerName}
-                </span>
+                <span className="account__name">{profileDisplayName}</span>
                 {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
                   <span
                     className="account__usage"
@@ -887,7 +908,7 @@ function SidebarComponent(props: {
               return (
                 <>
                   {props.usageStates ? (
-                    <Suspense fallback={null}>
+                    <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
                       <RenderedAccountLimits
                         states={props.usageStates}
                         onRetry={props.onRetryUsage ?? noop}
