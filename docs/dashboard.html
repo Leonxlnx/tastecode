@@ -302,9 +302,11 @@
           retaining workspace and credential boundaries. Correctable preview plans retry locally;
           provider failures and exhausted preview retries preserve a suspended phase for explicit
           continue/retry, including across runtime restart, without resampling references. Codex
-          accepts bounded history replies up to 128 MiB after a local 18.29 MiB history reply
-          exceeded the shared 16 MiB cap. These source fixes require a new installed build; active
-          beta 5 sessions remain untouched.
+          accepts bounded history replies up to 128 MiB. Preview capture retries client reconnects
+          within its original deadline; unavailable capture leaves the built preview open and
+          explicitly skips visual review. URL-style Windows file links resolve inside their project.
+          A local 18.29 MiB history reply previously exceeded the shared 16 MiB cap. These source
+          fixes require a new installed build; active beta 5 sessions remain untouched.
         </p>
         <p class="sub">
           Provider history now rechecks task ownership after discovery and defers imports while
