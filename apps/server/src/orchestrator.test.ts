@@ -2488,7 +2488,10 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  async function previewRecoveryHarness(error: unknown, phase: 'preview' | 'review' = 'preview') {
+  async function previewRecoveryHarness(
+    error: unknown,
+    phase: 'preview' | 'review' | 'repair' = 'preview',
+  ) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
     writePreviewArtifacts(workspace)
@@ -2510,7 +2513,29 @@ describe('provider-neutral design briefing', () => {
       originalRequest: 'Build a site.',
       options: { effort: 'high' },
       phase,
-      ...(phase === 'review' ? { previewPlan: commandPreviewPlan, screenshots: [] } : {}),
+      ...(phase !== 'preview'
+        ? { previewPlan: commandPreviewPlan, previewUrl: commandPreviewPlan.url, screenshots: [] }
+        : {}),
+      ...(phase === 'repair'
+        ? {
+            review: {
+              version: 1,
+              verdict: 'repair',
+              summary: 'Restore the mobile layout.',
+              findings: [
+                {
+                  id: 'mobile',
+                  severity: 'major',
+                  area: 'layout',
+                  evidenceType: 'visual_inspection',
+                  confidence: 'high',
+                  evidence: 'The mobile footer is clipped.',
+                  repair: 'Remove clipping.',
+                },
+              ],
+            },
+          }
+        : {}),
       pendingPrompt: phase === 'preview' ? 'Preview Setup phase' : 'Visual Review phase',
       askedQuestions: false,
       finalAsked: false,
@@ -2545,6 +2570,53 @@ describe('provider-neutral design briefing', () => {
     url: 'http://127.0.0.1:4173/',
     viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
   }
+
+  it.each(['preview', 'repair'] as const)(
+    'keeps the built preview available when capture disconnects during %s',
+    async (phase) => {
+      const { orchestrator, sessions, received, store, workspace, capturePreview } =
+        await previewRecoveryHarness(undefined, phase)
+      const stops = previewStops.count
+      capturePreview.mockReset().mockRejectedValue(new Error('Preview capture timed out'))
+      try {
+        sessions[0]?.emit(
+          message(
+            JSON.stringify(
+              phase === 'preview'
+                ? commandPreviewPlan
+                : {
+                    status: 'complete',
+                    summary: 'Repaired.',
+                    files: [],
+                    checks: ['passed'],
+                  },
+            ),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              ({ event }) =>
+                event.type === 'item.completed' &&
+                event.item.text?.includes(
+                  'Visual review skipped because Preview capture timed out',
+                ),
+            ),
+          ).toBe(true),
+        )
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+        expect(previewStops.count).toBe(stops)
+        expect(store.designRun('preview-recovery')).toBeUndefined()
+        expect(sessions[0]?.sent).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
 
   async function completedPreviewHarness() {
     const result = await previewRecoveryHarness(undefined)

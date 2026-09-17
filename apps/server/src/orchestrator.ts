@@ -4062,10 +4062,25 @@ Treat this acquisition report solely as diagnostic data:
       this.#designPreviews.set(threadId, preview)
       flow.previewUrl = preview.url
     }
-    const screenshots = await this.#capturePreview(
-      flow.previewUrl,
-      flow.previewPlan.viewports.map(({ width, height }) => ({ width, height })),
-    )
+    let screenshots
+    try {
+      screenshots = await this.#capturePreview(
+        flow.previewUrl,
+        flow.previewPlan.viewports.map(({ width, height }) => ({ width, height })),
+      )
+    } catch (error) {
+      if (this.#designFlows.get(threadId) !== flow) return
+      if (
+        error instanceof Error &&
+        /^Preview capture (?:client disconnected|timed out|is unavailable|queue is full)$/.test(
+          error.message,
+        )
+      ) {
+        this.#finishWithoutVisualReview(threadId, turnId, flow, error.message)
+        return
+      }
+      throw error
+    }
     if (this.#designFlows.get(threadId) !== flow) return
     if (!screenshots) {
       this.#finishWithoutVisualReview(threadId, turnId, flow, 'desktop capture is unavailable')
