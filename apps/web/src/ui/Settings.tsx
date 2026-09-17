@@ -15,7 +15,7 @@ import {
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
-import { accentColor, backdropColor } from '../theme-colors.js'
+import { accentColor, backdropColor, backdropColorScheme } from '../theme-colors.js'
 import {
   getFastModeOffValue,
   getFastServiceTier,
@@ -86,6 +86,8 @@ import {
   fontFamilyFromPreference,
   fontPreferenceForFamily,
   type AccentPreference,
+  type AppearancePreference,
+  type AppearancePreferences,
   type BackdropPreference,
   type FontPreference,
   type ThemePreference,
@@ -256,14 +258,11 @@ function SettingsComponent(props: {
   themePreference: ThemePreference
   themeColorScheme: ThemeColorScheme
   onThemePreferenceChange: (theme: ThemePreference) => void
-  fontPreference: FontPreference
-  onFontPreferenceChange: (font: FontPreference) => void
-  accentPreference: AccentPreference
-  onAccentPreferenceChange: (accent: AccentPreference) => void
-  backdropPreference: BackdropPreference
-  onBackdropPreferenceChange: (backdrop: BackdropPreference) => void
-  sidebarGlass: number
-  onSidebarGlassChange: (glass: number) => void
+  appearancePreferences: AppearancePreferences
+  onAppearancePreferenceChange: (
+    mode: ThemeColorScheme,
+    updates: Partial<AppearancePreference>,
+  ) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
@@ -1199,18 +1198,60 @@ function AppearanceSettings(props: {
   themePreference: ThemePreference
   themeColorScheme: ThemeColorScheme
   onThemePreferenceChange: (theme: ThemePreference) => void
-  fontPreference: FontPreference
-  onFontPreferenceChange: (font: FontPreference) => void
-  accentPreference: AccentPreference
-  onAccentPreferenceChange: (accent: AccentPreference) => void
-  backdropPreference: BackdropPreference
-  onBackdropPreferenceChange: (backdrop: BackdropPreference) => void
-  sidebarGlass: number
-  onSidebarGlassChange: (glass: number) => void
+  appearancePreferences: AppearancePreferences
+  onAppearancePreferenceChange: (
+    mode: ThemeColorScheme,
+    updates: Partial<AppearancePreference>,
+  ) => void
   showMacOSFontSmoothing: boolean
   macOSFontSmoothing: boolean
   onMacOSFontSmoothingChange: (enabled: boolean) => void
   showMacOSHaptics?: boolean | undefined
+}) {
+  return (
+    <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
+      <section className="appearance-theme" aria-labelledby="appearance-theme-heading">
+        <h2 className="settings__group-title" id="appearance-theme-heading">
+          Theme
+        </h2>
+        <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
+      </section>
+      <AppearanceCodePreview />
+      {(['light', 'dark'] as const).map((mode) => (
+        <AppearanceEditor
+          key={mode}
+          mode={mode}
+          preference={props.appearancePreferences[mode]}
+          onChange={(updates) => props.onAppearancePreferenceChange(mode, updates)}
+        />
+      ))}
+      {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
+        <section className="appearance-editor" aria-label="Shared appearance controls">
+          {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
+          {props.showMacOSFontSmoothing ? (
+            <SettingsRow className="appearance-editor__row" title="Font smoothing">
+              <button
+                className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
+                type="button"
+                role="switch"
+                aria-label="Font smoothing"
+                aria-checked={props.macOSFontSmoothing}
+                onClick={() => props.onMacOSFontSmoothingChange(!props.macOSFontSmoothing)}
+              >
+                <span className="switch__thumb" />
+              </button>
+            </SettingsRow>
+          ) : null}
+        </section>
+      ) : null}
+    </SettingsPanel>
+  )
+}
+
+function AppearanceEditor(props: {
+  mode: ThemeColorScheme
+  preference: AppearancePreference
+  onChange: (updates: Partial<AppearancePreference>) => void
 }) {
   const [installedFontFamilies, setInstalledFontFamilies] = useState(readInstalledFontFamilies)
   const requestInstalledFontFamilies = useCallback(() => {
@@ -1227,108 +1268,98 @@ function AppearanceSettings(props: {
       optionsByLabel.set(fontOptionKey(option.label), option)
     }
 
-    const selectedFamily = fontFamilyFromPreference(props.fontPreference)
+    const selectedFamily = fontFamilyFromPreference(props.preference.font)
     const options = [...optionsByLabel.values()]
-    if (!options.some((option) => option.value === props.fontPreference)) {
-      const label = selectedFamily ?? legacyFontLabel(props.fontPreference)
-      if (label) optionsByLabel.set(fontOptionKey(label), { value: props.fontPreference, label })
+    if (!options.some((option) => option.value === props.preference.font)) {
+      const label = selectedFamily ?? legacyFontLabel(props.preference.font)
+      if (label) optionsByLabel.set(fontOptionKey(label), { value: props.preference.font, label })
     }
 
     return [...optionsByLabel.values()].sort(compareFontOptions)
-  }, [installedFontFamilies, props.fontPreference])
+  }, [installedFontFamilies, props.preference.font])
   const selectedGlass = GLASS_OPTIONS.reduce((best, candidate) =>
-    Math.abs(candidate.value - props.sidebarGlass) < Math.abs(best.value - props.sidebarGlass)
+    Math.abs(candidate.value - props.preference.glass) <
+    Math.abs(best.value - props.preference.glass)
       ? candidate
       : best,
   )
-  const light = props.themeColorScheme === 'light'
+  const light = (backdropColorScheme(props.preference.backdrop) ?? props.mode) === 'light'
+  const title = props.mode === 'light' ? 'Light mode' : 'Dark mode'
 
   return (
-    <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
-      <section className="appearance-theme" aria-labelledby="appearance-theme-heading">
-        <h2 className="settings__group-title" id="appearance-theme-heading">
-          Theme
-        </h2>
-        <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
-      </section>
-      <AppearanceCodePreview />
-      <section className="appearance-editor" aria-label="Appearance controls">
-        <SettingsRow className="appearance-editor__row" title="Accent palette">
-          <AppearanceColorPicker
-            label="Accent palette"
-            value={props.accentPreference}
-            color={accentColor(props.accentPreference, light)}
-            options={ACCENT_OPTIONS.map((option) => ({
-              ...option,
-              color: accentColor(option.value, light),
-            }))}
-            onChange={props.onAccentPreferenceChange}
+    <section className="appearance-editor" aria-label={title}>
+      <h2 className="appearance-editor__heading">{title}</h2>
+      <SettingsRow className="appearance-editor__row" title="Theme">
+        <AppSelect
+          className="settings__select appearance-control__select"
+          ariaLabel={`${title} theme`}
+          align="right"
+          value="default"
+          options={[{ value: 'default', label: 'Default' }]}
+          allowReselect
+          onChange={() => props.onChange({ accent: 'neutral', backdrop: 'default' })}
+        />
+      </SettingsRow>
+      <SettingsRow className="appearance-editor__row" title="Accent palette">
+        <AppearanceColorPicker
+          label="Accent palette"
+          value={props.preference.accent}
+          color={accentColor(props.preference.accent, light)}
+          options={ACCENT_OPTIONS.map((option) => ({
+            ...option,
+            color: accentColor(option.value, light),
+          }))}
+          onChange={(accent) => props.onChange({ accent })}
+        />
+      </SettingsRow>
+      <SettingsRow className="appearance-editor__row" title="Background">
+        <AppearanceColorPicker
+          label="Background"
+          value={props.preference.backdrop}
+          color={backdropColor(props.preference.backdrop, light)}
+          options={BACKDROP_OPTIONS.map((option) => ({
+            ...option,
+            color: backdropColor(option.value, light),
+          }))}
+          onChange={(backdrop) => props.onChange({ backdrop })}
+        />
+      </SettingsRow>
+      <SettingsRow className="appearance-editor__row" title="Interface font">
+        <div className="appearance-control">
+          <span className="appearance-control__type" aria-hidden>
+            Aa
+          </span>
+          <AppSelect
+            className="settings__select appearance-control__select"
+            ariaLabel="Interface font"
+            align="right"
+            value={props.preference.font}
+            options={fontOptions}
+            onOpen={requestInstalledFontFamilies}
+            loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
+            search={FONT_SEARCH}
+            onChange={(font) => props.onChange({ font })}
           />
-        </SettingsRow>
-        <SettingsRow className="appearance-editor__row" title="Background">
-          <AppearanceColorPicker
-            label="Background"
-            value={props.backdropPreference}
-            color={backdropColor(props.backdropPreference, light)}
-            options={BACKDROP_OPTIONS.map((option) => ({
-              ...option,
-              color: backdropColor(option.value, light),
-            }))}
-            onChange={props.onBackdropPreferenceChange}
+        </div>
+      </SettingsRow>
+      <SettingsRow className="appearance-editor__row" title="Sidebar translucency">
+        <div className="appearance-control">
+          <span
+            className="appearance-control__swatch appearance-choice__swatch"
+            data-glass-preview={selectedGlass.value}
+            aria-hidden
           />
-        </SettingsRow>
-        <SettingsRow className="appearance-editor__row" title="Interface font">
-          <div className="appearance-control">
-            <span className="appearance-control__type" aria-hidden>
-              Aa
-            </span>
-            <AppSelect
-              className="settings__select appearance-control__select"
-              ariaLabel="Interface font"
-              align="right"
-              value={props.fontPreference}
-              options={fontOptions}
-              onOpen={requestInstalledFontFamilies}
-              loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
-              search={FONT_SEARCH}
-              onChange={props.onFontPreferenceChange}
-            />
-          </div>
-        </SettingsRow>
-        <SettingsRow className="appearance-editor__row" title="Sidebar translucency">
-          <div className="appearance-control">
-            <span
-              className="appearance-control__swatch appearance-choice__swatch"
-              data-glass-preview={selectedGlass.value}
-              aria-hidden
-            />
-            <AppSelect
-              className="settings__select appearance-control__select"
-              ariaLabel="Sidebar translucency"
-              align="right"
-              value={String(selectedGlass.value)}
-              options={GLASS_SELECT_OPTIONS}
-              onChange={(value) => props.onSidebarGlassChange(Number(value))}
-            />
-          </div>
-        </SettingsRow>
-        {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
-        {props.showMacOSFontSmoothing ? (
-          <SettingsRow className="appearance-editor__row" title="Font smoothing">
-            <button
-              className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
-              type="button"
-              role="switch"
-              aria-label="Font smoothing"
-              aria-checked={props.macOSFontSmoothing}
-              onClick={() => props.onMacOSFontSmoothingChange(!props.macOSFontSmoothing)}
-            >
-              <span className="switch__thumb" />
-            </button>
-          </SettingsRow>
-        ) : null}
-      </section>
-    </SettingsPanel>
+          <AppSelect
+            className="settings__select appearance-control__select"
+            ariaLabel="Sidebar translucency"
+            align="right"
+            value={String(selectedGlass.value)}
+            options={GLASS_SELECT_OPTIONS}
+            onChange={(value) => props.onChange({ glass: Number(value) })}
+          />
+        </div>
+      </SettingsRow>
+    </section>
   )
 }
 

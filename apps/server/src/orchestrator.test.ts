@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -1716,6 +1717,199 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it.each(ProviderIdSchema.options)(
+    'continues a non-design request with %s before the queue',
+    async (provider) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-fallback-'))
+      const reference = path.join(workspace, 'reference.png')
+      writeFileSync(reference, 'reference bytes')
+      const { orchestrator, sessions, received, store } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, workspace)
+        const session = sessions[0]!
+        session.turnIds = ['brief', 'answer', 'queued']
+        const request = 'What model and reference images did you use before?'
+        const options = { model: 'chosen-model', effort: 'high', serviceTier: 'fast' }
+        await orchestrator.submitTurn(
+          thread.id,
+          request,
+          [DESIGN_BRIEF_ATTACHMENT, reference],
+          options,
+          'original',
+        )
+        session.emit(turnStarted(thread.id, 'brief'))
+        expect(await orchestrator.submitTurn(thread.id, 'Next task')).toMatchObject({
+          queued: true,
+        })
+        const verdict = message(
+          JSON.stringify({ status: 'not_design', message: 'Not design.' }),
+          'brief',
+        )
+        session.emit(verdict)
+        session.emit(verdict)
+        expect(session.sent).toHaveLength(1)
+        session.emit({ type: 'turn.completed', turnId: 'brief', status: 'completed' })
+        await vi.waitFor(() => expect(session.sent).toHaveLength(2))
+        expect(session.sent[1]).toContain(request)
+        expect(session.sent[1]).toContain('restrictions have ended')
+        expect(session.sent[1]).not.toContain('must contain only the phase result')
+        expect(session.sent[1]).not.toContain('<selected-reference-workflow')
+        expect(session.sentAttachments[1]).toEqual([reference])
+        expect(session.sentOptions[1]).toEqual(options)
+        session.emit(turnStarted(thread.id, 'answer'))
+        session.emit(userMessage('internal-prompt', session.sent[1]!, 'answer', 'started'))
+        session.emit({
+          type: 'item.delta',
+          turnId: 'answer',
+          itemId: 'internal-prompt',
+          textDelta: 'hidden',
+        })
+        session.emit(userMessage('internal-prompt', session.sent[1]!, 'answer'))
+        const answer = {
+          id: 'normal-answer',
+          turnId: 'answer',
+          type: 'message' as const,
+          role: 'assistant' as const,
+          status: 'started' as const,
+          createdAt: 2,
+          text: '',
+        }
+        session.emit({ type: 'item.started', item: answer })
+        session.emit({
+          type: 'item.delta',
+          turnId: 'answer',
+          itemId: answer.id,
+          textDelta: 'Here is the answer.',
+        })
+        session.emit({
+          type: 'item.completed',
+          item: { ...answer, status: 'completed', text: 'Here is the answer.' },
+        })
+        expect(session.sent).toHaveLength(2)
+        const events = received.map(({ event }) => event)
+        const messages = events.flatMap((event) =>
+          event.type === 'item.completed' && event.item.type === 'message' ? [event.item] : [],
+        )
+        expect(messages.filter((item) => item.role === 'user').map((item) => item.text)).toEqual([
+          request,
+        ])
+        expect(
+          messages.filter((item) => item.id.startsWith('design-not-applicable-')),
+        ).toMatchObject([{ phase: 'commentary' }])
+        expect(messages.at(-1)?.text).toBe('Here is the answer.')
+        expect(
+          events.some((event) => event.type === 'item.delta' && event.itemId === 'internal-prompt'),
+        ).toBe(false)
+        expect(
+          events.some((event) => event.type === 'item.delta' && event.itemId === answer.id),
+        ).toBe(true)
+        session.emit({ type: 'turn.completed', turnId: 'answer', status: 'completed' })
+        await vi.waitFor(() => expect(session.sent).toHaveLength(3))
+        expect(session.sent[2]).toBe('Next task')
+        expect(store.designRun(thread.id)).toBeUndefined()
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each(['interrupted', 'failed'] as const)(
+    'does not continue after a %s classification',
+    async (status) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-stopped-'))
+      const { orchestrator, sessions, store } = harness()
+      try {
+        const thread = await orchestrator.startThread('codex', workspace)
+        await orchestrator.sendTurn(thread.id, 'Explain the last change.', [
+          DESIGN_BRIEF_ATTACHMENT,
+        ])
+        sessions[0]!.emit(
+          message(JSON.stringify({ status: 'not_design', message: 'Not design.' }), 's1-turn'),
+        )
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status })
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(sessions[0]!.sent).toHaveLength(1)
+        expect(store.designRun(thread.id)).toBeUndefined()
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.each(['brief', 'response'] as const)(
+    'restores a normal continuation from %s state',
+    async (phase) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-resume-normal-'))
+      const store = new Store(':memory:')
+      store.addProject(workspace)
+      store.addThread({
+        id: 'normal-resume',
+        projectPath: workspace,
+        provider: 'codex',
+        title: 'Continue',
+      })
+      store.setDesignRun('normal-resume', {
+        originalRequest: 'Explain the last change.',
+        phase,
+        ...(phase === 'brief' ? { continueNormally: true } : {}),
+        options: { model: 'chosen-model', effort: 'high' },
+        askedQuestions: false,
+        explicitAnswers: [],
+      })
+      const { orchestrator, sessions, received } = harness(undefined, store)
+      try {
+        await orchestrator.submitTurn('normal-resume', 'Next task')
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+        expect(sessions[0]!.sent[0]).toContain('Explain the last change.')
+        expect(sessions[0]!.sentOptions[0]).toEqual({ model: 'chosen-model', effort: 'high' })
+        sessions[0]!.emit(message('A normal answer.', 's1-turn'))
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'item.completed' && event.item.text === 'A normal answer.',
+          ),
+        ).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it('reports a failed continuation start and releases the design guard', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-fallback-failure-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Explain the last change.', [DESIGN_BRIEF_ATTACHMENT])
+      sessions[0]!.emit(
+        message(JSON.stringify({ status: 'not_design', message: 'Not design.' }), 's1-turn'),
+      )
+      sessions[0]!.sendError = new Error('Provider unavailable')
+      sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() =>
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message === 'Could not continue the request: Provider unavailable',
+          ),
+        ).toBe(true),
+      )
+      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it.each([false, true])(
     'replans unavailable product captures before Build (unresolved: %s)',
     async (stillMissing) => {
@@ -2981,7 +3175,9 @@ describe('provider-neutral design briefing', () => {
       await vi.waitFor(() =>
         expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),
       )
-      expect(sessions[0]?.sentAttachments.at(-1)).toEqual([reference, mobileReference])
+      expect(sessions[0]?.sentAttachments.at(-1)).toEqual(
+        [reference, mobileReference].map((file) => realpathSync(file)),
+      )
       expect(received.some(({ event }) => event.type === 'user_input.requested')).toBe(false)
     } finally {
       if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY

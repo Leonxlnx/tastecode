@@ -103,6 +103,9 @@ and resolving conflicts without rewriting published history. Do not un-park a pr
   unless Leon explicitly asks for it.**
 - Platform-specific changes still need a local run on the affected OS before release.
 - Keep local binds on `127.0.0.1`.
+- If the agent shell exports `ELECTRON_RUN_AS_NODE`, unset it for `pnpm dev`; otherwise
+  Electron starts as Node and cannot import `BrowserWindow`. On macOS, reference-library
+  tests need `TMPDIR` set to its canonical `/private/var/...` path rather than `/var/...`.
 
 ## Traps in this repo
 

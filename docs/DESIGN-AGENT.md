@@ -182,11 +182,18 @@ the workspace, browse, invoke skills or MCP, edit files, or build anything. This
 response fast and prevents project contents from influencing whether the user's request is a
 design task.
 
-If the provider returns `not_design`, TasteCode clears the flow and shows:
+If the provider returns `not_design`, TasteCode turns off the Design toggle and shows a muted
+grey note:
 
 ```text
 Design mode was turned off because this request is not a website design task.
 ```
+
+After the classification turn completes, the same session continues the original request as a
+normal task, with its attachments and the user's model, effort, and service tier. The continuation
+prompt explicitly ends the briefing restrictions. Its answer and tool events stream normally;
+internal prompts stay hidden, and queued requests wait until this response finishes. An interrupted
+or failed classification does not start the continuation.
 
 ## Briefing contract
 

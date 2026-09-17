@@ -366,12 +366,13 @@ export class ThreadController {
     this.#historyOwners.set(id, buffer)
     const base = afterSeq === undefined ? emptyThread : (this.snapshot(id) ?? emptyThread)
     try {
-      const { events, running, approval } = await this.transport.request(
+      const { events, running, approval, reset } = await this.transport.request(
         'thread.history',
         afterSeq === undefined ? { threadId: id } : { threadId: id, afterSeq },
       )
       if (this.#historyOwners.get(id) !== buffer) return
-      const restored = reduceEventLog(base, events, afterSeq)
+      if (reset) afterSeq = undefined
+      const restored = reduceEventLog(reset ? emptyThread : base, events, afterSeq)
       const lastSeq = events.at(-1)?.seq ?? afterSeq ?? 0
       const live = reduceEventLog(
         { ...restored, running, activeTurn: running ? restored.activeTurn : undefined },

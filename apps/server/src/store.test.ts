@@ -642,6 +642,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.history('mixed').map(({ event }) => event)).toEqual([
         message('before the unknown rows'),
       ])
+      expect(reopened.localHistory('mixed')).toEqual(reopened.history('mixed'))
       // The unreadable row is skipped; the readable open turn still recovers.
       expect(reopened.recoverInterruptedThreads()).toEqual(['good'])
       // The tombstoned rows stay stored for a build that can read them.

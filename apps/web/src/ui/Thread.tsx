@@ -335,17 +335,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
     <div className="thread-shell">
-      <FrameScrollFollower
-        frameStore={props.frameStore}
-        revealRequest={props.revealRequest ?? 0}
-        completedRevealRequest={completedRevealRequest}
-        scroller={scroller}
-        modeRef={modeRef}
-        anchorIndex={anchorIndex}
-        virtualizer={virtualizer}
-        writeScrollTop={writeScrollTop}
-        setMode={setMode}
-      />
       {finding ? (
         <Suspense fallback={null}>
           <ThreadSearch
@@ -462,6 +451,19 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         </div>
       </div>
 
+      {/* Mount after the scroller so its ref is set before the layout effect. */}
+      <FrameScrollFollower
+        frameStore={props.frameStore}
+        revealRequest={props.revealRequest ?? 0}
+        completedRevealRequest={completedRevealRequest}
+        scroller={scroller}
+        modeRef={modeRef}
+        anchorIndex={anchorIndex}
+        virtualizer={virtualizer}
+        writeScrollTop={writeScrollTop}
+        setMode={setMode}
+      />
+
       {mode === 'free' ? (
         <button
           className="jump"
@@ -514,10 +516,10 @@ function FrameScrollFollower({
   setMode: (mode: ScrollMode) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
-  const itemVersion = useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+  useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
 
-  // Layout effect, not effect: this runs before paint, so the correction is
-  // never visible as a jump.
+  // Follow every render before paint: replay and virtual row measurements can
+  // change the scroll height without changing the live text frame version.
   useLayoutEffect(() => {
     const element = scroller.current
     if (!element) return
@@ -545,17 +547,7 @@ function FrameScrollFollower({
       }
       writeScrollTop(element, start)
     }
-  }, [
-    anchorIndex,
-    completedRevealRequest,
-    itemVersion,
-    modeRef,
-    revealRequest,
-    scroller,
-    setMode,
-    virtualizer,
-    writeScrollTop,
-  ])
+  })
 
   return null
 }
@@ -669,7 +661,11 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   )
   const compactToNext =
     !suppressed &&
-    nextVisibleItem?.turnId === item.turnId &&
+    nextVisibleItem !== undefined &&
+    (nextVisibleItem.turnId === item.turnId ||
+      (item.type === 'message' &&
+        item.role === 'assistant' &&
+        item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
   const settling = settlingTurnId === item.turnId
@@ -902,8 +898,9 @@ const Row = memo(function Row({
 
   if (item.type === 'message') {
     const text = responseText ?? item.text ?? ''
+    const notice = item.id.startsWith('design-not-applicable-')
     return (
-      <div className={`reply${live ? ' is-streaming' : ''}`}>
+      <div className={`reply${notice ? ' reply--notice' : ''}${live ? ' is-streaming' : ''}`}>
         <Markdown
           text={text}
           projectPath={projectPath}
@@ -911,7 +908,7 @@ const Row = memo(function Row({
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
         />
-        {finalResponse && !live && item.status === 'completed' && text ? (
+        {finalResponse && !notice && !live && item.status === 'completed' && text ? (
           <ResponseActions
             text={text}
             createdAt={item.createdAt}
@@ -1711,10 +1708,14 @@ function ViewedImagePreview({
 const IMAGE_ATTACHMENT_RE = /\.(?:apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 
 function isImageAttachment(reference: string): boolean {
-  return IMAGE_ATTACHMENT_RE.test(reference)
+  return (
+    IMAGE_ATTACHMENT_RE.test(reference) ||
+    /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/.test(reference)
+  )
 }
 
 function attachmentName(reference: string): string {
+  if (reference.startsWith('data:image/')) return 'Attached image'
   return reference.split(/[\\/]/).filter(Boolean).at(-1) ?? reference
 }
 

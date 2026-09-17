@@ -130,6 +130,7 @@ export {
   designBriefingContinuation,
   designBriefingPrompt,
   designPhaseCorrectionPrompt,
+  designTaskContinuation,
   isDesignBriefAttachment,
   parseBriefingOutput,
   type BriefingOutput,
