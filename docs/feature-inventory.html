@@ -225,9 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta"
-          >2026-09-16 base main 0f539664 + Design variety and private beta 2 checks</span
-        >
+        <span class="meta">2026-09-17 base main 9a5b9755 + Windows provider PATH correction</span>
       </div>
     </div>
 
@@ -638,7 +636,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Auto-detect installed CLIs with version check and mismatch warning</span
+                >Auto-detect installed CLIs with version check and mismatch warning
+                <span class="d"
+                  >Windows discovery, provider launch and terminal environments preserve mixed-case
+                  Path entries and emit one PATH key. Missing program errors no longer claim that
+                  the project folder is unavailable; packaged checks exercise a real provider-helper
+                  command launch.</span
+                ></span
               ></label
             >
           </li>
