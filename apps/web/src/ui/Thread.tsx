@@ -1,8 +1,10 @@
 import {
+  createContext,
   lazy,
   memo,
   Suspense,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -39,7 +41,7 @@ import {
   writeClipboardText,
   type PickedAttachment,
 } from '../bridge.js'
-import { isEditableTarget } from '../shortcuts.js'
+import { isEditableTarget, matchesShortcut } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
 import { Diff } from './Diff.js'
@@ -90,6 +92,13 @@ const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
 
 /**
+ * Lets a disclosure re-measure its virtual row in the same commit that its
+ * reveal enters or leaves flow. Waiting for the ResizeObserver would move the
+ * rows below one frame after the reveal starts animating.
+ */
+const RowMeasureContext = createContext<((row: Element) => void) | undefined>(undefined)
+
+/**
  * The thread.
  *
  * Virtualised: only the rows near the viewport exist in the DOM, so a session
@@ -135,6 +144,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
   const currentApproval = thread.approvals[0]
   const scroller = useRef<HTMLDivElement>(null)
+  const runwayRef = useRef<HTMLDivElement>(null)
+  /** Scroll top to apply once the runway has committed a disclosure's new height. */
+  const pendingEndAnchor = useRef<number | undefined>(undefined)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
   const completedSearchJump = useRef(0)
@@ -291,8 +303,12 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   useEffect(() => {
     if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return
-      if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+      if (event.defaultPrevented || isEditableTarget(event.target)) return
+      if (
+        !matchesShortcut(event, { key: 'arrowup', alt: true }) &&
+        !matchesShortcut(event, { key: 'arrowdown', alt: true })
+      )
+        return
       // The first VISIBLE row, not rows[0] — that one is up to `overscan`
       // items above the viewport, and navigating from it could send the user
       // backwards to a turn they had already scrolled past.
@@ -310,6 +326,54 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   }, [props.keyboardActive, turns, virtualizer])
 
   const rows = virtualizer.getVirtualItems()
+
+  // measureElement without a ResizeObserver entry returns the cached size, so
+  // a disclosure that just changed its row's height has to hand over a fresh
+  // measurement. Rounded like the observer's border box so the observer's own
+  // notification a frame later finds nothing left to change.
+  const measureRow = useCallback(
+    (row: Element) => {
+      const el = scroller.current
+      const runway = runwayRef.current
+      const anchorEnd = el && runway && isAtBottom(el) ? { el, runway } : undefined
+      if (!anchorEnd) {
+        virtualizer.resizeItem(
+          virtualizer.indexFromElement(row),
+          Math.round(row.getBoundingClientRect().height),
+        )
+        return
+      }
+      // Near the end, the text after the disclosure is what the user is
+      // reading, so it must not move: the summary travels instead. Commit the
+      // runway height and the scroll in one step, then slide the runway back
+      // from the old offset on the compositor, over the same curve as the
+      // rows. Rows and runway then share one clock, which a per-frame scroll
+      // from the main thread could not — it drifted by up to a pixel.
+      const { el: scrollEl, runway: runwayEl } = anchorEnd
+      const index = virtualizer.indexFromElement(row)
+      const size = Math.round(row.getBoundingClientRect().height)
+      // resizeItem's rerender is flushed after this layout effect, so the
+      // runway has not grown yet; the cache says by how much it will.
+      const delta = size - (virtualizer.measurementsCache[index]?.size ?? size)
+      virtualizer.resizeItem(index, size)
+      if (delta === 0) return
+      // The scroll can only follow once that rerender has committed the new
+      // height, and the height must land in one step for the scroll to keep
+      // up: the follower applies this before paint and lifts the attribute.
+      scrollEl.dataset['anchoringEnd'] = ''
+      pendingEndAnchor.current = scrollEl.scrollTop + delta
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      // A reversal mid-flight keeps whatever offset is still being unwound.
+      const running = runwayEl.getAnimations()[0]
+      const current = running ? new DOMMatrix(getComputedStyle(runwayEl).transform).m42 : 0
+      running?.cancel()
+      runwayEl.animate([{ transform: `translateY(${current + delta}px)` }, { transform: 'none' }], {
+        duration: delta > 0 ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS,
+        easing: REVEAL_EASING,
+      })
+    },
+    [virtualizer, writeScrollTop],
+  )
 
   // The generic rail only covers the gap before the first response, plus
   // design turns whose phase owns the status line. Normal reasoning, tool
@@ -334,158 +398,166 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // of a scroll container scrolls away with the content — Ctrl+F used to
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
-    <div className="thread-shell">
-      {finding ? (
-        <Suspense fallback={null}>
-          <ThreadSearch
-            items={thread.items}
-            liveItems={liveItems}
-            frameStore={props.frameStore}
-            threadId={props.threadId}
-            onJump={jumpTo}
-            onClose={() => setFinding(false)}
-          />
-        </Suspense>
-      ) : null}
-      {thread.items.length === 0 && !running ? (
-        props.loading ? (
-          <ThreadSkeleton className="thread__empty" />
-        ) : (
-          <div className="empty thread__empty">
-            <div className="empty__prompt" role="heading" aria-level={1}>
-              Tell the agent what you want to build, then send it below.
-            </div>
-          </div>
-        )
-      ) : null}
-      <div className="thread" ref={scroller} onScroll={onScroll}>
-        <div className="thread__col">
-          <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
-            {rows.map((row) => {
-              const item = threadItemAt(thread.items, liveItems, row.index)
-              if (!item) return null
-              const presentation = presentations.get(item.turnId)
-              const activityGroup =
-                presentation && presentation.design !== true
-                  ? activityGroupAt(presentation.activityGroups, row.index)
-                  : undefined
-              return (
-                <ThreadFrameRow
-                  key={row.key}
-                  index={row.index}
-                  start={row.start}
-                  measureElement={virtualizer.measureElement}
-                  frameStore={props.frameStore}
-                  items={thread.items}
-                  presentation={presentation}
-                  activityGroup={activityGroup}
-                  running={running}
-                  errorsInComposer={props.errorsInComposer ?? false}
-                  activeTurnId={thread.activeTurn?.id}
-                  repeatedDesignRowAt={repeatedDesignRowAt}
-                  entering={enteringItemIds.has(item.id)}
-                  settlingTurnId={settledTurnId}
-                  showWorkingRail={showWorkingRail}
-                  projectPath={props.projectPath}
-                  onEditMessage={props.onEditMessage}
-                  checkpointIndex={checkpointIndex}
-                  onRevertCheckpoint={props.onRevertCheckpoint}
-                />
-              )
-            })}
-            {showWorkingRail && thread.activeTurn ? (
-              // Deliberately not keyed by turn id: the optimistic turn's id is
-              // replaced by the server's a few seconds in, and a key would
-              // remount the rail at exactly the moment this render position
-              // exists to survive. Before any response row exists the rail
-              // sits at the end of the runway, over the space the spacer
-              // below holds.
-              <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                <FrameWorkingRail
-                  frameStore={props.frameStore}
-                  items={thread.items}
-                  turnId={thread.activeTurn.id}
-                  liveStart={thread.liveStart}
-                  activityIndices={activeActivityIndices}
-                  startedAt={activePresentation?.workStartedAt ?? thread.activeTurn.startedAt}
-                />
+    <RowMeasureContext.Provider value={measureRow}>
+      <div className="thread-shell">
+        {finding ? (
+          <Suspense fallback={null}>
+            <ThreadSearch
+              items={thread.items}
+              liveItems={liveItems}
+              frameStore={props.frameStore}
+              threadId={props.threadId}
+              onJump={jumpTo}
+              onClose={() => setFinding(false)}
+            />
+          </Suspense>
+        ) : null}
+        {thread.items.length === 0 && !running ? (
+          props.loading ? (
+            <ThreadSkeleton className="thread__empty" />
+          ) : (
+            <div className="empty thread__empty">
+              <div className="empty__prompt" role="heading" aria-level={1}>
+                Tell the agent what you want to build, then send it below.
               </div>
+            </div>
+          )
+        ) : null}
+        <div className="thread" ref={scroller} onScroll={onScroll}>
+          <div className="thread__col">
+            <div
+              className="thread__runway"
+              ref={runwayRef}
+              style={{ height: virtualizer.getTotalSize() }}
+            >
+              {rows.map((row) => {
+                const item = threadItemAt(thread.items, liveItems, row.index)
+                if (!item) return null
+                const presentation = presentations.get(item.turnId)
+                const activityGroup =
+                  presentation && presentation.design !== true
+                    ? activityGroupAt(presentation.activityGroups, row.index)
+                    : undefined
+                return (
+                  <ThreadFrameRow
+                    key={row.key}
+                    index={row.index}
+                    start={row.start}
+                    measureElement={virtualizer.measureElement}
+                    frameStore={props.frameStore}
+                    items={thread.items}
+                    presentation={presentation}
+                    activityGroup={activityGroup}
+                    running={running}
+                    errorsInComposer={props.errorsInComposer ?? false}
+                    activeTurnId={thread.activeTurn?.id}
+                    repeatedDesignRowAt={repeatedDesignRowAt}
+                    entering={enteringItemIds.has(item.id)}
+                    settlingTurnId={settledTurnId}
+                    showWorkingRail={showWorkingRail}
+                    projectPath={props.projectPath}
+                    onEditMessage={props.onEditMessage}
+                    checkpointIndex={checkpointIndex}
+                    onRevertCheckpoint={props.onRevertCheckpoint}
+                  />
+                )
+              })}
+              {showWorkingRail && thread.activeTurn ? (
+                // Deliberately not keyed by turn id: the optimistic turn's id is
+                // replaced by the server's a few seconds in, and a key would
+                // remount the rail at exactly the moment this render position
+                // exists to survive. Before any response row exists the rail
+                // sits at the end of the runway, over the space the spacer
+                // below holds.
+                <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
+                  <FrameWorkingRail
+                    frameStore={props.frameStore}
+                    items={thread.items}
+                    turnId={thread.activeTurn.id}
+                    liveStart={thread.liveStart}
+                    activityIndices={activeActivityIndices}
+                    startedAt={activePresentation?.workStartedAt ?? thread.activeTurn.startedAt}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
+              <div className="thread__rail-spacer" aria-hidden />
+            ) : null}
+
+            {/* Above the plan and the diff: it is the only thing here that blocks
+            the agent, so it should be the first thing the eye lands on. */}
+            {thread.userInputs.map((request) => (
+              <UserInput
+                key={request.id}
+                request={request}
+                onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
+              />
+            ))}
+
+            {currentApproval ? (
+              <Approval
+                key={currentApproval.id}
+                request={currentApproval}
+                onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
+              />
+            ) : null}
+
+            {running ? <Plan steps={thread.plan} compact /> : null}
+            {!running ? (
+              <Diff
+                diff={thread.diff}
+                threadId={props.threadId}
+                transport={props.transport}
+                onUndo={
+                  props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
+                    ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
+                    : undefined
+                }
+              />
             ) : null}
           </div>
-
-          {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
-            <div className="thread__rail-spacer" aria-hidden />
-          ) : null}
-
-          {/* Above the plan and the diff: it is the only thing here that blocks
-            the agent, so it should be the first thing the eye lands on. */}
-          {thread.userInputs.map((request) => (
-            <UserInput
-              key={request.id}
-              request={request}
-              onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
-            />
-          ))}
-
-          {currentApproval ? (
-            <Approval
-              key={currentApproval.id}
-              request={currentApproval}
-              onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
-            />
-          ) : null}
-
-          {running ? <Plan steps={thread.plan} compact /> : null}
-          {!running ? (
-            <Diff
-              diff={thread.diff}
-              threadId={props.threadId}
-              transport={props.transport}
-              onUndo={
-                props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
-                  ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
-                  : undefined
-              }
-            />
-          ) : null}
         </div>
+
+        {/* Mount after the scroller so its ref is set before the layout effect. */}
+        <FrameScrollFollower
+          frameStore={props.frameStore}
+          threadId={props.threadId}
+          revealRequest={props.revealRequest ?? 0}
+          completedRevealRequest={completedRevealRequest}
+          scroller={scroller}
+          modeRef={modeRef}
+          anchorIndex={anchorIndex}
+          pendingEndAnchor={pendingEndAnchor}
+          virtualizer={virtualizer}
+          writeScrollTop={writeScrollTop}
+          setMode={setMode}
+        />
+
+        {mode === 'free' ? (
+          <button
+            className="jump"
+            onClick={() => {
+              const el = scroller.current
+              if (!el) return
+              // Stay in free mode for the whole glide. Flipping to follow-end
+              // here unmounts the button, and the first mid-flight scroll event
+              // then flips it straight back — remounting it with its entrance
+              // animation — until the scroll lands. The onScroll handler hands
+              // over to follow-end once the glide actually reaches the bottom.
+              el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
+              // Already at the bottom? Nothing animates and no scroll event
+              // comes, so there would be no handover — hide right away.
+              if (isAtBottom(el)) setMode('follow-end')
+            }}
+          >
+            <ArrowDownToLine size={13} aria-hidden />
+            Jump to latest
+          </button>
+        ) : null}
       </div>
-
-      {/* Mount after the scroller so its ref is set before the layout effect. */}
-      <FrameScrollFollower
-        frameStore={props.frameStore}
-        revealRequest={props.revealRequest ?? 0}
-        completedRevealRequest={completedRevealRequest}
-        scroller={scroller}
-        modeRef={modeRef}
-        anchorIndex={anchorIndex}
-        virtualizer={virtualizer}
-        writeScrollTop={writeScrollTop}
-        setMode={setMode}
-      />
-
-      {mode === 'free' ? (
-        <button
-          className="jump"
-          onClick={() => {
-            const el = scroller.current
-            if (!el) return
-            // Stay in free mode for the whole glide. Flipping to follow-end
-            // here unmounts the button, and the first mid-flight scroll event
-            // then flips it straight back — remounting it with its entrance
-            // animation — until the scroll lands. The onScroll handler hands
-            // over to follow-end once the glide actually reaches the bottom.
-            el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
-            // Already at the bottom? Nothing animates and no scroll event
-            // comes, so there would be no handover — hide right away.
-            if (isAtBottom(el)) setMode('follow-end')
-          }}
-        >
-          <ArrowDownToLine size={13} aria-hidden />
-          Jump to latest
-        </button>
-      ) : null}
-    </div>
+    </RowMeasureContext.Provider>
   )
 })
 
@@ -496,27 +568,48 @@ export const Thread = memo(function Thread(props: ThreadProps) {
  */
 function FrameScrollFollower({
   frameStore,
+  threadId,
   revealRequest,
   completedRevealRequest,
   scroller,
   modeRef,
   anchorIndex,
+  pendingEndAnchor,
   virtualizer,
   writeScrollTop,
   setMode,
 }: {
   frameStore: ThreadFrameStore
+  threadId: string | undefined
   revealRequest: number
   completedRevealRequest: { current: number }
   scroller: { current: HTMLDivElement | null }
   modeRef: { current: ScrollMode }
   anchorIndex: { current: number }
+  pendingEndAnchor: { current: number | undefined }
   virtualizer: Virtualizer<HTMLDivElement, Element>
   writeScrollTop: (element: HTMLElement, top: number) => void
   setMode: (mode: ScrollMode) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
   useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+  const openedThread = useRef(threadId)
+
+  // Images and change previews can resize below the virtual list without a
+  // transcript render. Keep the end pinned until the user takes over.
+  useLayoutEffect(() => {
+    const element = scroller.current
+    const content = element?.firstElementChild
+    if (!element || !content) return
+    const observer = new ResizeObserver(() => {
+      if (modeRef.current === 'follow-end') {
+        writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      }
+    })
+    observer.observe(element)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [scroller, modeRef, writeScrollTop])
 
   // Follow every render before paint: replay and virtual row measurements can
   // change the scroll height without changing the live text frame version.
@@ -524,7 +617,17 @@ function FrameScrollFollower({
     const element = scroller.current
     if (!element) return
 
-    if (completedRevealRequest.current !== revealRequest) {
+    // A disclosure near the end just committed its row's new height: keep the
+    // text after it where it was (see measureRow), whatever the mode.
+    if (pendingEndAnchor.current !== undefined) {
+      writeScrollTop(element, pendingEndAnchor.current)
+      pendingEndAnchor.current = undefined
+      delete element.dataset['anchoringEnd']
+      return
+    }
+
+    if (openedThread.current !== threadId || completedRevealRequest.current !== revealRequest) {
+      openedThread.current = threadId
       completedRevealRequest.current = revealRequest
       modeRef.current = 'follow-end'
       setMode('follow-end')
@@ -636,8 +739,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     activityGroup !== undefined &&
     (isStackedActivity(item) ||
       (presentation?.complete === true &&
-        item.type === 'message' &&
-        item.role === 'assistant' &&
+        isWorkDisclosureItem(item) &&
         index !== presentation.finalAnswerIndex))
   const activityLead = compactedActivity && activityGroup.firstIndex === index
   const itemAfterActivity = activityGroup
@@ -671,7 +773,14 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
   const activitySource =
-    activityLead && activityGroup ? { group: activityGroup, items, liveItems } : undefined
+    activityLead && activityGroup
+      ? {
+          group: activityGroup,
+          items,
+          liveItems,
+          complete: presentation?.complete === true && !live,
+        }
+      : undefined
   const liveItemUpdate = liveItems.get(index)
 
   return (
@@ -840,6 +949,7 @@ const Row = memo(function Row({
   if (activity) {
     return (
       <ActivityStack
+        key={activity.complete ? 'complete' : 'working'}
         activity={activity}
         live={activityLive}
         projectPath={projectPath}
@@ -973,6 +1083,7 @@ type ActivityRenderSource = {
   group: TurnActivityGroup
   items: readonly Item[]
   liveItems: ReadonlyMap<number, LiveItemUpdate>
+  complete: boolean
 }
 
 function lastActivityItemForRender({
@@ -1035,13 +1146,14 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
       {/* Design markers have no output worth expanding — their text is the slug. */}
       {detail && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
         <div
+          ref={disclosure.revealRef}
           className="aux__reveal"
           data-open={disclosure.dataOpen}
           aria-hidden={!disclosure.expanded}
           inert={!disclosure.expanded}
           onTransitionEnd={(event) => {
             if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-              disclosure.finishClosing()
+              disclosure.finishTransition()
           }}
         >
           {disclosure.contentMounted ? (
@@ -1063,7 +1175,7 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   )
 }
 
-type DisclosurePhase = 'closed' | 'open' | 'closing'
+type DisclosurePhase = 'closed' | 'opening' | 'open' | 'closing'
 
 function ReasoningDisclosure({
   item,
@@ -1128,17 +1240,18 @@ function ReasoningDisclosure({
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="aux__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+            disclosure.finishTransition()
         }}
       >
         <div className="aux__reveal-clip">
-          {disclosure.expanded || disclosure.dataOpen === 'closing' ? (
+          {disclosure.contentMounted ? (
             <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
               <Markdown
                 text={text}
@@ -1179,36 +1292,66 @@ function thoughtDuration(ms: number): string {
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
 }
 
+/** Must match the reveal transitions in thread.css. */
+const REVEAL_OPEN_MS = 180
+const REVEAL_CLOSE_MS = 120
+const REVEAL_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
+
+function settledPhase(phase: DisclosurePhase): DisclosurePhase {
+  return phase === 'opening' ? 'open' : phase === 'closing' ? 'closed' : phase
+}
+
 function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
-  const expanded = phase === 'open'
+  const revealRef = useRef<HTMLDivElement>(null)
+  const measureRow = useContext(RowMeasureContext)
+  const expanded = phase === 'open' || phase === 'opening'
+  const transitioning = phase === 'opening' || phase === 'closing'
+
+  // The reveal enters or leaves flow in this commit. Measuring the row now,
+  // before paint, starts the rows below in the same frame as the wipe; the
+  // ResizeObserver would only catch up a frame later.
+  useLayoutEffect(() => {
+    if (!transitioning || !measureRow) return
+    const row = revealRef.current?.closest('.thread__row')
+    if (row) measureRow(row)
+  }, [phase, transitioning, measureRow])
 
   useEffect(() => {
-    if (phase !== 'closing') return
+    if (!transitioning) return
     // A reversal before the first paint can leave no transition to finish.
     const timer = window.setTimeout(
-      () => setPhase((current) => (current === 'closing' ? 'closed' : current)),
-      180,
+      () => setPhase((current) => (current === phase ? settledPhase(phase) : current)),
+      (phase === 'opening' ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS) + 60,
     )
     return () => window.clearTimeout(timer)
-  }, [phase])
+  }, [phase, transitioning])
 
   const toggle = useCallback(() => {
     const reduceMotion =
       globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    setPhase((current) => (current === 'open' ? (reduceMotion ? 'closed' : 'closing') : 'open'))
+    setPhase((current) =>
+      current === 'open' || current === 'opening'
+        ? reduceMotion
+          ? 'closed'
+          : 'closing'
+        : reduceMotion
+          ? 'open'
+          : 'opening',
+    )
   }, [])
 
-  const finishClosing = useCallback(() => {
-    setPhase((current) => (current === 'closing' ? 'closed' : current))
+  const finishTransition = useCallback(() => {
+    setPhase(settledPhase)
   }, [])
 
   return {
     expanded,
     contentMounted: phase !== 'closed',
-    dataOpen: phase === 'open' ? 'true' : phase === 'closing' ? 'closing' : 'false',
+    dataOpen: phase === 'open' ? 'true' : phase === 'closed' ? 'false' : phase,
+    revealRef,
     toggle,
-    finishClosing,
+    finishTransition,
   } as const
 }
 
@@ -1255,13 +1398,14 @@ function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="activity__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+            disclosure.finishTransition()
         }}
       >
         {disclosure.contentMounted ? (
@@ -1295,13 +1439,13 @@ function ActivityStack({
   const current = live
     ? lastActivityItemForRender(activity)
     : (operationalActivity.at(-1) ?? completedActivity.at(-1))
-  const hasCommentary = completedActivity.some(
-    (item) => item.type === 'message' && item.role === 'assistant',
+  const hasWorkNotes = completedActivity.some(
+    (item) => item.type === 'reasoning' || (item.type === 'message' && item.role === 'assistant'),
   )
   const label =
     live && current
       ? liveActivityLabel(current)
-      : hasCommentary
+      : hasWorkNotes
         ? `Worked for ${workedFor(activity.group.elapsedMs)}`
         : activityStackLabel(operationalActivity)
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
@@ -1350,7 +1494,7 @@ function ActivityStack({
         title={label}
         onClick={disclosure.toggle}
       >
-        {live || !hasCommentary ? (
+        {live || !hasWorkNotes ? (
           <span className="activity__glyph" aria-hidden>
             {glyph(summaryItem)}
           </span>
@@ -1361,13 +1505,14 @@ function ActivityStack({
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="activity__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+            disclosure.finishTransition()
         }}
       >
         {disclosure.contentMounted ? (
@@ -1376,6 +1521,19 @@ function ActivityStack({
               {(visibleActivity ? groupCommandRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
                   return <CommandRun key={item[0]!.id} items={item} live={live} />
+                }
+                if (item.type === 'reasoning') {
+                  return (
+                    <ReasoningDisclosure
+                      key={item.id}
+                      item={item}
+                      text={item.text ?? ''}
+                      live={false}
+                      projectPath={projectPath}
+                      liveTextUpdate={undefined}
+                      liveUpdateVersion={undefined}
+                    />
+                  )
                 }
                 if (item.type === 'command' || item.type === 'file_change') {
                   return <AuxDisclosure key={item.id} item={item} live={false} />
@@ -1435,6 +1593,7 @@ function ActivityStack({
 function isWorkDisclosureItem(item: Item): boolean {
   return (
     isStackedActivity(item) ||
+    (item.type === 'reasoning' && !isBlankReasoning(item)) ||
     (item.type === 'message' && item.role === 'assistant' && Boolean(item.text?.trim()))
   )
 }
