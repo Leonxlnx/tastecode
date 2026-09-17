@@ -50,6 +50,12 @@ protocol. Closing or restarting the Electron window does not stop active agents.
 stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
 credentials.
 
+_Known limitation (v1):_ the loopback WebSocket authenticates origins, not clients. Any local
+process — including a page served from a workspace preview port — can open the socket and reach
+privileged calls such as `terminal.open`. `HARNESS_ACCESS_TOKEN` is only enforced when binding
+beyond loopback. A per-launch token handoff is deferred past v1; the bind stays on `127.0.0.1`
+and preview pages run sandboxed, so exploitation needs local code execution already.
+
 Electron's weaker security defaults are fixed in the shell: `contextIsolation: true`,
 `nodeIntegration: false`, sandboxing, a strict CSP, a narrow typed `contextBridge`, and
 deny-by-default external navigation. The renderer never spawns a process, touches the
