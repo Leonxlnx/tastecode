@@ -106,6 +106,33 @@ web-model-settings test time out finding its lazily loaded Models button; its fo
 passed without changes to web code or tests. The installed app and active user runs remain
 untouched. No generated website was changed and no new website prompt was submitted.
 
+## Asset and planning recovery — 2026-09-17
+
+The third captured failure had two causes: the SVG sniffer searched binary PNG provenance
+metadata for `<svg`, and a font-family record named a directory holding regular and italic files.
+SVG sniffing now requires a textual document prefix; the existing raster decoder still verifies
+format and image data. Font-family directories are resolved inside the workspace and expanded
+to concrete manifest entries before validation and snapshotting. Empty folders, path escapes,
+missing files, invalid raster bytes, and required-asset coverage remain errors.
+
+The actual asset manifest now validates with all 13 photographs and three font files, including
+eight original PNGs with their provenance metadata intact. All 16 files snapshot successfully.
+The user's files were only read; metadata was not removed and generated work was not rewritten.
+Both new regressions failed before the patch and passed afterward.
+
+Planning phases can correct up to three distinct errors; correcting an image no longer consumes
+the only opportunity to fix a subsequent font issue. The seen errors survive stored-flow restore,
+and an unchanged rejected output stops rather than looping. Build and Preview keep their existing
+retry bounds. Correction prompts permit relevant inspection within the phase's scope. Copy
+diagnostics now include the actual text and remediation; punctuation, heading length, eyebrow
+and hero-copy style suggestions are warnings instead of workflow-ending errors.
+
+The Design package has 143 passing tests. Focused orchestration checks cover correction after
+restore, repeated-error termination, unavailable assets, exact-file Build and bounded Preview.
+The broad server run encountered a one-second completion wait in the provider workflow test;
+all nine provider variants passed on focused rerun without test changes. Final gates are rerun
+after these additions. Installed beta 3 and the user's active tests remain untouched.
+
 ## Earlier beta 2 candidate and remaining release checks
 
 `TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.

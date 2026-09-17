@@ -1717,6 +1717,59 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it.each([false, true])(
+    'continues a different planning correction after restore and bounds repeated errors (%s)',
+    async (repeat) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-progress-'))
+      writePreviewArtifacts(workspace)
+      const store = new Store(':memory:')
+      store.addProject(workspace)
+      store.addThread({ id: 'progress', projectPath: workspace, provider: 'codex', title: 'Site' })
+      store.setDesignRun('progress', {
+        ...approvalSnapshot(workspace),
+        originalRequest: 'Build a site.',
+        phase: 'assets',
+        askedQuestions: false,
+        explicitAnswers: [],
+        correcting: true,
+        correctionErrors: ['An earlier image needed correction'],
+      })
+      const { orchestrator, sessions, received } = harness(undefined, store)
+      try {
+        const queued = await orchestrator.submitTurn('progress', 'Afterward')
+        if (queued.queued) orchestrator.deleteQueuedTurn('progress', queued.queuedTurn.id)
+        sessions[0]?.emit(message(JSON.stringify({ version: 2, assets: [] }), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(store.designRun('progress')).toMatchObject({
+          phase: 'assets',
+          correcting: true,
+          correctionErrors: [
+            'An earlier image needed correction',
+            'asset manifest version must be 1',
+          ],
+        })
+        sessions[0]?.emit(
+          message(JSON.stringify({ version: repeat ? 2 : 1, assets: [] }), 's1-turn'),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        if (repeat) {
+          expect(store.designRun('progress')).toBeUndefined()
+          expect(received.some(({ event }) => event.type === 'thread.error')).toBe(true)
+        } else {
+          await vi.waitFor(() =>
+            expect(store.designRun('progress')).toMatchObject({ phase: 'build' }),
+          )
+          expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+        }
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
+
   it.each(ProviderIdSchema.options)(
     'continues a non-design request with %s before the queue',
     async (provider) => {

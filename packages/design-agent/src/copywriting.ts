@@ -117,7 +117,7 @@ export function assertPageCopy(page: PageBlueprint): PageBlueprint {
   const errors = lintPageCopy(page).filter(({ severity }) => severity === 'error')
   if (errors.length) {
     throw new Error(
-      `page copy failed: ${errors.map(({ rule, path }) => `${rule} at ${path}`).join('; ')}`,
+      `page copy failed: ${errors.map(({ rule, path, excerpt, message }) => `${rule} at ${path}: ${JSON.stringify(excerpt)}. ${message}`).join('; ')}`,
     )
   }
   return page
@@ -165,7 +165,7 @@ function collectCopy(page: PageBlueprint): CopySurface[] {
 function lintEmDashes(surfaces: CopySurface[]): CopyLintFinding[] {
   return surfaces
     .filter(({ text }) => text.includes('\u2014'))
-    .map((surface) => finding('copy/em-dash', 'error', surface, 'Replace the em dash.'))
+    .map((surface) => finding('copy/em-dash', 'warning', surface, 'Replace the em dash.'))
 }
 
 function lintClaims(surfaces: CopySurface[]): CopyLintFinding[] {
@@ -236,7 +236,7 @@ function lintHeadings(page: PageBlueprint): CopyLintFinding[] {
     return [
       {
         rule: 'copy/heading-length',
-        severity: 'error' as const,
+        severity: 'warning' as const,
         path: `sections[${index}].copy.heading`,
         excerpt: heading,
         message: `Keep headings within ${MAX_HEADING_WORDS} words and ${MAX_HEADING_CHARACTERS} characters so they fit one or two lines; three lines is a rare visual exception.`,
@@ -251,7 +251,7 @@ function lintHeroCopyStack(page: PageBlueprint): CopyLintFinding[] {
       ? [
           {
             rule: 'copy/hero-body-stack',
-            severity: 'error' as const,
+            severity: 'warning' as const,
             path: `sections[${index}].copy.body`,
             excerpt: `${section.copy.body.length} supporting blocks`,
             message: 'Use at most one concise supporting block in the Hero.',
@@ -310,7 +310,7 @@ function lintEyebrows(page: PageBlueprint): CopyLintFinding[] {
     return [
       {
         rule: 'copy/decorative-eyebrow',
-        severity: 'error' as const,
+        severity: 'warning' as const,
         path: `sections[${index}].copy.eyebrow`,
         excerpt: eyebrow,
         message: 'Remove the eyebrow and express necessary context in the heading or body.',

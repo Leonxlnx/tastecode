@@ -47,10 +47,12 @@ describe('page copy lint', () => {
       expect(() => assertPageCopy({ ...page, page: { ...page.page, description } })).not.toThrow()
     }
   })
-  it('blocks em dashes but not en dashes', () => {
-    expect(() =>
-      assertPageCopy({ ...page, page: { ...page.page, description: 'Fresh — every week.' } }),
-    ).toThrow('copy/em-dash at page.description')
+  it('warns about em dashes without aborting the page', () => {
+    const draft = { ...page, page: { ...page.page, description: 'Fresh — every week.' } }
+    expect(() => assertPageCopy(draft)).not.toThrow()
+    expect(lintPageCopy(draft)).toContainEqual(
+      expect.objectContaining({ rule: 'copy/em-dash', severity: 'warning' }),
+    )
     expect(() =>
       assertPageCopy({ ...page, page: { ...page.page, description: 'Fresh Monday–Friday.' } }),
     ).not.toThrow()
@@ -108,14 +110,22 @@ describe('page copy lint', () => {
     expect(findings).toContainEqual(expect.objectContaining({ rule: 'copy/generic-phrase' }))
   })
 
-  it('blocks every eyebrow, including process numbering', () => {
+  it('warns about decorative eyebrows while still checking unsupported claims', () => {
     const section = page.sections[0]!
     expect(() =>
       assertPageCopy({
         ...page,
         sections: [{ ...section, copy: { ...section.copy, eyebrow: '01' } }],
       }),
-    ).toThrow('copy/decorative-eyebrow')
+    ).not.toThrow()
+    expect(
+      lintPageCopy({
+        ...page,
+        sections: [{ ...section, copy: { ...section.copy, eyebrow: '01' } }],
+      }),
+    ).toContainEqual(
+      expect.objectContaining({ rule: 'copy/decorative-eyebrow', severity: 'warning' }),
+    )
     expect(() =>
       assertPageCopy({
         ...page,
@@ -143,7 +153,7 @@ describe('page copy lint', () => {
     ).toThrow('copy/objective-claim')
   })
 
-  it('blocks internal placeholders and overlong heading stacks', () => {
+  it('blocks internal placeholders while keeping heading advice non-blocking', () => {
     const section = page.sections[0]!
     expect(() =>
       assertPageCopy({
@@ -161,7 +171,29 @@ describe('page copy lint', () => {
           },
         ],
       }),
-    ).toThrow(/copy\/(?:heading-length|hero-body-stack|internal-placeholder)/u)
+    ).toThrow('copy/internal-placeholder')
+    const longHeading = {
+      ...page,
+      sections: [
+        {
+          ...section,
+          layoutFamily: 'hero' as const,
+          copy: {
+            ...section.copy,
+            heading:
+              'A deliberately overlong heading that cannot remain concise across normal responsive layouts',
+            body: ['Primary support.', 'Additional context.'],
+          },
+        },
+      ],
+    }
+    expect(() => assertPageCopy(longHeading)).not.toThrow()
+    expect(lintPageCopy(longHeading)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: 'copy/heading-length', severity: 'warning' }),
+        expect.objectContaining({ rule: 'copy/hero-body-stack', severity: 'warning' }),
+      ]),
+    )
   })
 
   it('reviews saturated generated-name patterns without blocking user-owned names', () => {
