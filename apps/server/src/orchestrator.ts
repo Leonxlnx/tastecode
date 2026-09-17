@@ -4183,6 +4183,12 @@ Treat this acquisition report solely as diagnostic data:
     const flow = this.#designFlows.get(threadId)
     this.#clearDesignFlow(threadId)
     if (flow && flow.phase !== 'response' && !flow.continueNormally) {
+      // Suspension stops the preview. Recreate it before reviewing or repairing
+      // so a resumed review cannot report a URL whose server no longer exists.
+      if (flow.phase === 'review' || flow.phase === 'repair') {
+        flow.phase = 'preview'
+        delete flow.pendingPrompt
+      }
       flow.suspended = true
       this.#store.setDesignRun(threadId, flow)
     }

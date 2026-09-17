@@ -2488,7 +2488,7 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  async function previewRecoveryHarness(error: unknown) {
+  async function previewRecoveryHarness(error: unknown, phase: 'preview' | 'review' = 'preview') {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
     writePreviewArtifacts(workspace)
@@ -2509,8 +2509,9 @@ describe('provider-neutral design briefing', () => {
       ...approvalSnapshot(workspace),
       originalRequest: 'Build a site.',
       options: { effort: 'high' },
-      phase: 'preview',
-      pendingPrompt: 'Preview Setup phase',
+      phase,
+      ...(phase === 'review' ? { previewPlan: commandPreviewPlan, screenshots: [] } : {}),
+      pendingPrompt: phase === 'preview' ? 'Preview Setup phase' : 'Visual Review phase',
       askedQuestions: false,
       finalAsked: false,
       explicitAnswers: [],
@@ -3483,10 +3484,14 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it.each([false, true])(
-    'continues the saved phase after provider failure (new runtime: %s)',
-    async (restart) => {
-      const first = await previewRecoveryHarness(undefined)
+  it.each([
+    { restart: false, phase: 'preview' as const },
+    { restart: true, phase: 'preview' as const },
+    { restart: true, phase: 'review' as const },
+  ])(
+    'continues saved work after provider failure (phase: $phase, new runtime: $restart)',
+    async ({ restart, phase }) => {
+      const first = await previewRecoveryHarness(undefined, phase)
       let active = first
       const { store, workspace, artifacts } = first
       try {
