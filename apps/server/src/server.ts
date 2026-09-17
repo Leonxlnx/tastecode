@@ -176,6 +176,7 @@ export function startServer(
   }
   lifecycleScheduler.refreshNow()
   let historyClosing = false
+  let historySessionStarts = 0
   const providerHistory = Promise.all([
     import('@harness/adapter-codex').then(({ createCodexHistorySource }) => ({
       provider: 'codex' as const,
@@ -193,6 +194,7 @@ export function startServer(
     (sources) =>
       new ProviderHistory(store, sources, {
         isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+        canImport: () => historySessionStarts === 0,
         changed: (threadIds) => {
           if (!historyClosing) {
             lifecycleScheduler.changed()
@@ -278,6 +280,8 @@ export function startServer(
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    const createsSession = method === 'thread.start' || method === 'sideChat.start'
+    if (createsSession) historySessionStarts += 1
     try {
       const result = await route(socket, method, params)
       if (socket.readyState === socket.OPEN) {
@@ -295,6 +299,8 @@ export function startServer(
         error instanceof StaleDiffSnapshotError ? ErrorCode.STALE_SNAPSHOT : ErrorCode.INTERNAL,
         clientErrorMessage(error),
       )
+    } finally {
+      if (createsSession) historySessionStarts -= 1
     }
   }
 
