@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-17 base main 571bee75 + provider-history recovery</span>
+        <span class="meta">2026-09-18 base main 0848ecb9 + history prompt cleanup</span>
       </div>
     </div>
 
@@ -303,6 +303,11 @@
           loads successfully; real replies and active or queued work are preserved. Internal Design
           prompts stay behind the original task's turn filtering. This source fix requires a new
           installed build; the running Windows beta 5 test sessions remain untouched.
+        </p>
+        <p class="sub">
+          Saved Claude history now excludes SDK background-task notifications and matches Design
+          follow-up envelopes to the original user submission. Existing imports refresh through the
+          corrected parser without changing genuine user messages or stopping active tasks.
         </p>
         <p class="sub">
           Design palettes now choose readable button text before repairing hover contrast. The

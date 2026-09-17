@@ -249,6 +249,36 @@ describe('Claude Code saved history', () => {
     ])
   })
 
+  it('hides SDK task notifications while preserving identical text pasted by the user', async () => {
+    // Captured Claude 2.1.273 records use origin.kind, without isMeta or isSidechain.
+    const notification =
+      '<task-notification>\n<task-id>background</task-id>\n<status>stopped</status>\n</task-notification>'
+    const f = await fixture([
+      row('notification-before', 'user', notification, null, {
+        origin: { kind: 'task-notification' },
+        promptSource: 'sdk',
+      }),
+      row('u1', 'user', 'Start the preview', 'notification-before'),
+      row('a1', 'assistant', [{ type: 'text', text: 'Checking the port.' }], 'u1'),
+      row('notification', 'user', notification, 'a1', {
+        origin: { kind: 'task-notification' },
+        promptSource: 'sdk',
+      }),
+      row('u2', 'user', notification, 'notification'),
+      row('a2', 'assistant', [{ type: 'text', text: 'That is a task notification.' }], 'u2'),
+    ])
+    const session = (await f.source.list())[0]!
+    expect(session.title).toBe('Start the preview')
+    const events = await f.source.read(session)
+    expect(items(events).map((item) => item.text)).toEqual([
+      'Start the preview',
+      'Checking the port.',
+      notification,
+      'That is a task notification.',
+    ])
+    expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2)
+  })
+
   it('keeps tool identity stable when a result arrives, including image output and file changes', async () => {
     const f = await fixture([
       row('u1', 'user', 'Edit then inspect'),

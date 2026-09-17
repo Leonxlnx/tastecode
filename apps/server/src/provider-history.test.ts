@@ -518,6 +518,40 @@ describe('provider history integration', () => {
     ])
   })
 
+  it('deduplicates Design follow-up envelopes without hiding a genuine outside turn', async () => {
+    const prompt = "dude it's NOT running start it at 4024"
+    const wrapped =
+      'This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n' +
+      prompt
+    const withPrompt = (id: string, text: string, at: number) =>
+      transcript(id, `${id} answer`, at).map((event): DomainEvent =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, text } }
+          : event,
+      )
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'Existing',
+    })
+    for (const event of withPrompt('local-turn', prompt, 1000)) store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([
+      ...withPrompt('native', wrapped, 4451),
+      ...withPrompt('outside', `Explain this\n\nUser request:\n${prompt}`, 9000).slice(1),
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([
+      prompt,
+      'local-turn answer',
+      `Explain this\n\nUser request:\n${prompt}`,
+      'outside answer',
+    ])
+  })
+
   it('orders old discovered turns before local replies without changing durable sequences', async () => {
     store.addProject(process.cwd())
     store.addThread({

@@ -53,7 +53,12 @@ async function records(file: string): Promise<SavedRecord[]> {
 }
 
 function visible(row: SavedRecord): boolean {
-  return !row.isSidechain && !row.teamName && !row.isMeta
+  return (
+    !row.isSidechain &&
+    !row.teamName &&
+    !row.isMeta &&
+    object(row.origin).kind !== 'task-notification'
+  )
 }
 
 function sdkRecord(row: SavedRecord): SavedRecord & { type: string } {
@@ -286,7 +291,8 @@ export function createClaudeHistorySource(
           present.add(locator)
           try {
             const info = await stat(locator)
-            const revision = `${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+            // Reimport saved transcripts that previously exposed machine notifications.
+            const revision = `2:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
             let cached = cache.get(locator)
             if (cached?.revision !== revision) {
               const id = file.name.slice(0, -6)
