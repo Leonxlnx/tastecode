@@ -16,10 +16,15 @@ interface CopySurface {
   evidence: string[]
 }
 
-const CLAIM_PATTERNS = [
+const NUMERIC_CLAIM_PATTERNS = [
   /[$€£]\s?\d|\b\d[\d,.]*\s?(?:USD|EUR|GBP)\b/iu,
   /\b\d+(?:[.,]\d+)?\s*(?:%|x|×)(?![\p{L}\p{N}_])/iu,
   /\b\d[\d,.]*\+?\s+(?:customers?|users?|teams?|companies|countries|years?|hours?|minutes?|days?|projects?|reviews?|downloads?|orders?)\b/iu,
+]
+
+const CLAIM_PATTERNS = [
+  /\b(?:save[sd]?|saving|cuts?|reduce[sd]?|increase[sd]?|boost[sd]?|improve[sd]?)\b[^.!?]{0,60}\b\d/iu,
+  /\b\d+(?:[.,]\d+)?\s*(?:%|x|×)\s+(?:faster|cheaper|more|less|accurate|accuracy|uptime|reliability|savings)\b/iu,
   /\b(?:fastest|safest|cheapest|most trusted|most accurate|most reliable|highest[- ]rated|lowest[- ]cost|#\s*1|number one|the only)\b/iu,
   /\b(?:studies show|research (?:shows|proves)|clinically proven|doctors recommend|award[- ]winning|trusted by|used by)\b/iu,
   /\b(?:today only|limited spots?|ends soon|act now)\b/iu,
@@ -165,15 +170,23 @@ function lintEmDashes(surfaces: CopySurface[]): CopyLintFinding[] {
 
 function lintClaims(surfaces: CopySurface[]): CopyLintFinding[] {
   return surfaces.flatMap((surface) => {
-    if (!CLAIM_PATTERNS.some((pattern) => pattern.test(surface.text))) return []
+    const assertedClaim = CLAIM_PATTERNS.some((pattern) => pattern.test(surface.text))
+    if (!assertedClaim && !NUMERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(surface.text)))
+      return []
+    // Numeric terms in visibly fictional examples are content, not product proof.
+    // Keep assertions such as "trusted by" subject to the evidence requirement.
+    const illustrativeValue =
+      !assertedClaim && /\b(?:fictional|illustrative|representative)\b/iu.test(surface.text)
     return [
       finding(
         'copy/objective-claim',
-        surface.evidence.length ? 'review' : 'error',
+        surface.evidence.length || illustrativeValue ? 'review' : 'error',
         surface,
-        surface.evidence.length
-          ? 'Verify the claim against its recorded evidence before publishing.'
-          : 'Remove the objective claim or attach real evidence to the section.',
+        illustrativeValue
+          ? 'Keep the illustrative context visible and verify the example values before publishing.'
+          : surface.evidence.length
+            ? 'Verify the claim against its recorded evidence before publishing.'
+            : 'Remove the objective claim or attach real evidence to the section.',
       ),
     ]
   })
