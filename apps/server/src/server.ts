@@ -1165,6 +1165,15 @@ function errorCode(error: unknown): string | undefined {
 
 export function clientErrorMessage(error: unknown): string {
   if (errorCode(error) === 'ENOENT') {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'syscall' in error &&
+      typeof error.syscall === 'string' &&
+      error.syscall.startsWith('spawn ')
+    ) {
+      return 'A required program could not be started. Check the provider installation and executable search path.'
+    }
     return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
   }
   return messageOf(error)

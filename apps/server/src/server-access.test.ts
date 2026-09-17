@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { allowedOrigin, assertSafeBind, clientErrorMessage, hasAccess } from './server.js'
 
 describe('client error messages', () => {
+  it('does not describe a missing program as a missing project folder', () => {
+    const error = Object.assign(new Error('spawn C:\\private\\tool.exe ENOENT'), {
+      code: 'ENOENT',
+      syscall: 'spawn C:\\private\\tool.exe',
+    })
+    expect(clientErrorMessage(error)).toBe(
+      'A required program could not be started. Check the provider installation and executable search path.',
+    )
+  })
   it('replaces raw missing-path details without hiding other errors', () => {
     expect(
       clientErrorMessage(Object.assign(new Error('ENOENT: C:\\secret\\path'), { code: 'ENOENT' })),

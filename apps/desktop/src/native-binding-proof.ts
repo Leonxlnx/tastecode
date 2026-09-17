@@ -3,6 +3,7 @@ import { closeSync, openSync, readFileSync, readSync, readdirSync } from 'node:f
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { runCli } from '@harness/proc/cli'
 
 const PTY_MARKER = 'TASTECODE_NATIVE_PTY_OK'
 const CREDENTIAL_SERVICE = 'TasteCode Native Binding Proof'
@@ -258,6 +259,13 @@ export async function runNativeBindingProof(
   }
   const modules = options.modules ?? (await loadPackagedNativeModules())
   assertPackagedDesignReferences(proofFile, modules.designEntry)
+  if (process.platform === 'win32') {
+    // Exercise the provider launcher inside Electron, where inherited PATH may be spelled Path.
+    const result = await runCli('cmd.exe', ['/d', '/c', 'echo TASTECODE_CLI_PATH_OK'])
+    if (result.code !== 0 || result.stdout.trim() !== 'TASTECODE_CLI_PATH_OK') {
+      throw new Error('packaged Windows provider launcher could not start a system command')
+    }
+  }
   await provePtyBinding(modules.pty)
   assertPackagedNativeModules(proofFile, modules)
   proveKeyringBinding(modules.keyring)

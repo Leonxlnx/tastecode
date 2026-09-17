@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { desktopPath } from './desktop-path.js'
+import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
 
 const IS_INSTALLED_TIMEOUT_MS = 5_000
@@ -52,10 +52,12 @@ export function isInstalled(
   }
 
   return new Promise((resolve) => {
+    const env = { ...environment }
+    applyDesktopPath(env)
     const child = spawn('where.exe', [command], {
       stdio: 'ignore',
       windowsHide: true,
-      env: { ...environment, PATH: desktopPath(environment.PATH ?? '', { env: environment }) },
+      env,
     })
     // where.exe itself can stall on a broken PATH entry; a hung lookup must
     // answer "not installed" rather than block the caller forever.
@@ -78,7 +80,7 @@ function childEnvironment(options: {
 }): NodeJS.ProcessEnv | undefined {
   if (options.replaceEnv) return options.env
   const env = { ...process.env, ...options.env }
-  env.PATH = desktopPath(env.PATH ?? '', { env })
+  applyDesktopPath(env)
   return env
 }
 

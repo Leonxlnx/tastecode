@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { applyDesktopPath, desktopPath, isInstalled } from './index.js'
+import { applyDesktopPath, desktopPath, isInstalled, spawnCli } from './index.js'
 
 const roots: string[] = []
 
@@ -12,6 +12,24 @@ afterEach(() => {
 })
 
 describe('desktopPath', () => {
+  it('reads the Windows Path spelling from a copied environment', () => {
+    const result = desktopPath(undefined, {
+      platform: 'win32',
+      env: { Path: 'C:\\Windows\\System32;C:\\tools' },
+    })
+    expect(result.split(';').slice(0, 2)).toEqual(['C:\\Windows\\System32', 'C:\\tools'])
+  })
+
+  it.skipIf(process.platform !== 'win32')(
+    'normalizes Windows PATH aliases and preserves an explicit override',
+    () => {
+      const env = { Path: 'C:\\inherited', PATH: 'C:\\override' }
+      applyDesktopPath(env)
+      expect(Object.keys(env).filter((key) => key.toLowerCase() === 'path')).toEqual(['PATH'])
+      expect(env.PATH.split(';')[0]).toBe('C:\\override')
+    },
+  )
+
   it('keeps inherited entries first and adds the user-local bin directory', () => {
     const home = path.join(os.tmpdir(), 'harness-desktop-path-home')
     const current = ['/system/bin', '/opt/app/bin'].join(path.posix.delimiter)
@@ -59,6 +77,30 @@ describe('desktopPath', () => {
 })
 
 describe('isInstalled', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'finds and launches a program from an Explorer-style Path environment',
+    async () => {
+      const home = mkdtempSync(path.join(os.tmpdir(), 'harness-windows-path-'))
+      roots.push(home)
+      const command = `harness-path-proof-${process.pid}`
+      writeFileSync(path.join(home, `${command}.cmd`), '@echo off\r\necho WINDOWS_PATH_OK\r\n')
+      const env = { ...process.env }
+      for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') delete env[key]
+      env.Path = `${home};${path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')}`
+      await expect(isInstalled(command, env)).resolves.toBe(true)
+      const child = spawnCli(command, [], { env })
+      let output = ''
+      child.stdout.on('data', (chunk) => {
+        output += String(chunk)
+      })
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.on('error', reject)
+        child.on('close', resolve)
+      })
+      expect(code).toBe(0)
+      expect(output.trim()).toBe('WINDOWS_PATH_OK')
+    },
+  )
   it('finds a user-local shim that a GUI PATH would miss', async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'harness-desktop-path-'))
     roots.push(home)
