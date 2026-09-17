@@ -19,7 +19,6 @@ import {
   DomainEventSchema,
   ProviderIdSchema,
   SidebarSettingsSchema,
-  ThreadLifecycleSchema,
 } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -1370,18 +1369,24 @@ export class Store {
     const rows = projectPath
       ? sqliteRows<ThreadRow>(this.#listProjectThreads, projectPath)
       : sqliteRows<ThreadRow>(this.#listThreads)
-    return rows.map(toThread)
+    const threads: StoredThread[] = []
+    for (const row of rows) {
+      const thread = toThread(row)
+      if (thread !== undefined) threads.push(thread)
+    }
+    return threads
   }
 
   /** Compact metadata for the sidebar's all-thread refresh. */
   sidebarThreads(): StoredSidebarThread[] {
     if (!this.#sidebarThreadsCache) {
-      this.#sidebarThreadsCache = sqliteRows<SidebarThreadRow>(this.#listSidebarThreads).map(
-        toSidebarThread,
-      )
-      this.#sidebarThreadIndexes = new Map(
-        this.#sidebarThreadsCache.map((thread, index) => [thread.id, index]),
-      )
+      const threads: StoredSidebarThread[] = []
+      for (const row of sqliteRows<SidebarThreadRow>(this.#listSidebarThreads)) {
+        const thread = toSidebarThread(row)
+        if (thread !== undefined) threads.push(thread)
+      }
+      this.#sidebarThreadsCache = threads
+      this.#sidebarThreadIndexes = new Map(threads.map((thread, index) => [thread.id, index]))
     }
     this.#flushPendingSidebarThreads()
     return this.#sidebarThreadsCache
@@ -2151,6 +2156,8 @@ export class Store {
 
       const states = new Map<string, InterruptedThreadState>()
       for (const row of rows) {
+        // Leave newer-provider histories intact; they must not abort recovery of other threads.
+        if (!this.thread(row.thread_id)) continue
         const event = parseDomainEvent(
           row.payload,
           `recovery for interrupted thread ${row.thread_id}`,
@@ -2571,18 +2578,24 @@ export class Store {
     )
     const last = page.at(-1)
     const hasMore = rows.length > limit && last !== undefined
-    return {
-      results: page.map((row, index) => ({
+    const results: SessionSearchResult[] = []
+    for (const [index, row] of page.entries()) {
+      const provider = toProviderId(row.provider)
+      if (provider === undefined) continue
+      results.push({
         resultId: resultIds[index]!,
         projectPath: row.project_path,
         projectName: row.project_name,
         threadId: row.thread_id,
         threadTitle: row.thread_title,
         turnId: row.turn_id,
-        provider: ProviderIdSchema.parse(row.provider),
+        provider,
         createdAt: Number(row.created_at),
         snippet: createSearchSnippetWithComparableTerms(row.text, comparableTerms),
-      })),
+      })
+    }
+    return {
+      results,
       nextCursor: hasMore
         ? encodeCursor({
             snapshotId,
@@ -3705,7 +3718,7 @@ function parseDomainEvent(serialized: string, context: string): DomainEvent | un
   return undefined
 }
 
-function toProviderId(provider: string): ProviderId {
+function toProviderId(provider: string): ProviderId | undefined {
   switch (provider) {
     case 'codex':
     case 'claude-code':
@@ -3717,8 +3730,14 @@ function toProviderId(provider: string): ProviderId {
     case 'acp':
     case 'api':
       return provider
-    default:
-      return ProviderIdSchema.parse(provider)
+    default: {
+      const parsed = ProviderIdSchema.safeParse(provider)
+      if (parsed.success) return parsed.data
+      // A provider only a newer build knows. The row stays stored; readers
+      // skip it rather than die on it.
+      console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      return undefined
+    }
   }
 }
 
@@ -3738,49 +3757,57 @@ function activeLifecycle(keepActive: boolean, wokeAt: number | undefined): Threa
   return { state: 'active', keepActive, wokeAt }
 }
 
+/** Corrupt stored timestamps normalize to 0 rather than fail the whole row. */
+function storedTimestamp(value: SqliteInteger): number {
+  const parsed = Number(value)
+  return isNonnegativeInteger(parsed) ? parsed : 0
+}
+
 function toActiveLifecycle(row: ActiveLifecycleRow): ThreadLifecycle {
   const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
-  const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
-  return wokeAt === undefined || isNonnegativeInteger(wokeAt)
-    ? lifecycle
-    : ThreadLifecycleSchema.parse(lifecycle)
+  return activeLifecycle(
+    row.keep_active === 1,
+    wokeAt !== undefined && isNonnegativeInteger(wokeAt) ? wokeAt : undefined,
+  )
 }
 
 function toThreadLifecycle(row: ThreadLifecycleRow): ThreadLifecycle {
   if (row.lifecycle_state === 'settled') {
-    const settledAt = Number(row.lifecycle_at ?? row.created_at)
     const reason = row.lifecycle_reason ?? 'manual'
-    if (isNonnegativeInteger(settledAt) && isLifecycleReason(reason)) {
-      return { state: 'settled', settledAt, reason }
+    return {
+      state: 'settled',
+      settledAt: storedTimestamp(row.lifecycle_at ?? row.created_at),
+      reason: isLifecycleReason(reason) ? reason : 'manual',
     }
-    return ThreadLifecycleSchema.parse({ state: 'settled', settledAt, reason })
   }
 
   if (row.lifecycle_state === 'snoozed') {
-    const snoozedAt = Number(row.lifecycle_at ?? row.created_at)
-    const wakeAt = Number(row.wake_at ?? row.created_at)
-    const lifecycle = { state: 'snoozed' as const, snoozedAt, wakeAt }
-    return isNonnegativeInteger(snoozedAt) && isNonnegativeInteger(wakeAt)
-      ? lifecycle
-      : ThreadLifecycleSchema.parse(lifecycle)
+    return {
+      state: 'snoozed',
+      snoozedAt: storedTimestamp(row.lifecycle_at ?? row.created_at),
+      wakeAt: storedTimestamp(row.wake_at ?? row.created_at),
+    }
   }
 
   if (row.lifecycle_state === 'active') {
-    const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
-    const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
-    return wokeAt === undefined || isNonnegativeInteger(wokeAt)
-      ? lifecycle
-      : ThreadLifecycleSchema.parse(lifecycle)
+    return toActiveLifecycle(row)
   }
 
-  return ThreadLifecycleSchema.parse({ state: row.lifecycle_state })
+  // A lifecycle state only a newer build understands: report the thread as
+  // plainly active rather than hide it or fail every list it appears in.
+  console.warn(`[store] unknown lifecycle state '${row.lifecycle_state}', treating as active`)
+  return activeLifecycle(row.keep_active === 1, undefined)
 }
 
-function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread {
+function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined {
+  const provider = toProviderId(row.provider)
+  // A thread this build cannot attribute stays in the table; it just has no
+  // honest place in a sidebar rendered from the provider contract.
+  if (provider === undefined) return undefined
   return {
     id: row.id,
     projectPath: row.project_path,
-    provider: toProviderId(row.provider),
+    provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     title: row.title,
     pinned: row.pinned === 1,
@@ -3792,14 +3819,16 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread {
   }
 }
 
-function toThread(row: ThreadRow): StoredThread {
+function toThread(row: ThreadRow): StoredThread | undefined {
   // Null timestamps (rows migrated before these columns existed) must not
   // become NaN — a snoozed thread with NaN wakeAt can never be woken.
   const lifecycle = toThreadLifecycle(row)
+  const provider = toProviderId(row.provider)
+  if (provider === undefined) return undefined
   return {
     id: row.id,
     projectPath: row.project_path,
-    provider: toProviderId(row.provider),
+    provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,

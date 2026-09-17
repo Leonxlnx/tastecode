@@ -713,13 +713,71 @@ describe('a database written by a newer build', () => {
     }
   })
 
+  it('keeps lists and search usable when a thread row has an unknown provider', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-provider-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'normal', projectPath: '/repo', provider: 'codex', title: 'Normal' })
+    seeded.addThread({ id: 'alien', projectPath: '/repo', provider: 'codex', title: 'Alien' })
+    seeded.append('normal', message('shared needle'))
+    seeded.append('alien', message('shared needle'))
+    seeded.append('alien', {
+      type: 'turn.started',
+      turn: { id: 'alien-turn', threadId: 'alien', status: 'running', createdAt: 1 },
+    })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(`UPDATE threads SET provider = ? WHERE id = ?`)
+      .run('provider-from-nightly', 'alien')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.threads().map((thread) => thread.id)).toEqual(['normal'])
+      expect(reopened.sidebarThreads().map((thread) => thread.id)).toEqual(['normal'])
+      expect(reopened.thread('alien')).toBeUndefined()
+      const results = reopened.searchSessions({ query: 'needle' }).results
+      expect(results.map((result) => result.threadId)).toEqual(['normal'])
+      expect(reopened.recoverInterruptedThreads()).toEqual([])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('degrades rows a schema-divergent build could leave behind', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-schema-'))
     const file = path.join(dir, 'harness.db')
-    // The shape a newer build could leave: same columns, without the CHECK
-    // lists this build writes under.
+    // The shape a newer build could leave: same columns, wider CHECK lists.
     const raw = new DatabaseSync(file)
     raw.exec(`
+      CREATE TABLE threads (
+        id           TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        provider     TEXT NOT NULL,
+        agent        TEXT,
+        provider_session_id TEXT,
+        title        TEXT NOT NULL,
+        pinned       INTEGER NOT NULL DEFAULT 0,
+        created_at   INTEGER NOT NULL,
+        closed_at    INTEGER,
+        worktree_path   TEXT,
+        worktree_branch TEXT,
+        lifecycle_state  TEXT NOT NULL DEFAULT 'active'
+          CHECK (lifecycle_state IN ('active', 'settled', 'snoozed', 'dormant')),
+        lifecycle_at     INTEGER,
+        lifecycle_reason TEXT,
+        wake_at          INTEGER,
+        keep_active      INTEGER NOT NULL DEFAULT 0,
+        woke_at          INTEGER,
+        unread           INTEGER NOT NULL DEFAULT 0,
+        last_active_at   INTEGER NOT NULL,
+        ephemeral        INTEGER NOT NULL DEFAULT 0,
+        parent_thread_id TEXT
+      );
       CREATE TABLE queued_turns (
         thread_id            TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
         queue_id             TEXT NOT NULL,
@@ -746,6 +804,7 @@ describe('a database written by a newer build', () => {
     seeded.close()
 
     const divergent = new DatabaseSync(file)
+    divergent.prepare(`UPDATE threads SET lifecycle_state = 'dormant' WHERE id = 'weird'`).run()
     divergent
       .prepare(
         `INSERT INTO queued_turns
@@ -767,6 +826,12 @@ describe('a database written by a newer build', () => {
 
     const reopened = new Store(file)
     try {
+      // A lifecycle state only a newer build knows reads as plainly active.
+      expect(reopened.thread('weird')?.lifecycle).toEqual({ state: 'active', keepActive: false })
+      expect(reopened.sidebarThreads()[0]?.lifecycle).toEqual({
+        state: 'active',
+        keepActive: false,
+      })
       // The unknown intent degrades to a normal turn; the unreadable prompt
       // is a tombstone: never listed, never claimed, still stored for a
       // build that understands it.
