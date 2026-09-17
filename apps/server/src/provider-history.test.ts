@@ -82,6 +82,228 @@ const messages = (id: string) =>
 
 describe('provider history integration', () => {
   it.each(['codex', 'claude-code', 'grok'] as const)(
+    'does not import a second %s task created while discovery is pending',
+    async (provider) => {
+      let release!: (sessions: ProviderHistorySession[]) => void
+      const source: ProviderHistorySource = {
+        list: () =>
+          new Promise((resolve) => {
+            release = resolve
+          }),
+        read: vi.fn(async () => transcript()),
+      }
+      const history = new ProviderHistory(store, [{ provider, history: source }], {
+        isBusy: () => false,
+        changed: vi.fn(),
+        log: vi.fn(),
+      })
+      histories.push(history)
+      const refresh = history.refresh()
+      store.addThread({ id: 'native', provider, projectPath: process.cwd(), title: 'My design' })
+      release([metadata()])
+      await refresh
+      expect(store.threads().map((thread) => thread.id)).toEqual(['native'])
+      expect(store.providerHistories()[0]?.threadId).toBe('native')
+    },
+  )
+
+  it('defers discovery while a provider start has not returned its task identity', async () => {
+    let starting = true
+    const source = { list: vi.fn(async () => [metadata()]), read: vi.fn(async () => transcript()) }
+    const history = new ProviderHistory(store, [{ provider: 'codex', history: source }], {
+      canImport: () => !starting,
+      isBusy: () => false,
+      changed: vi.fn(),
+      log: vi.fn(),
+    })
+    histories.push(history)
+    await history.refresh()
+    expect(store.threads()).toEqual([])
+    store.addThread({
+      id: 'native',
+      provider: 'codex',
+      projectPath: process.cwd(),
+      title: 'My design',
+    })
+    starting = false
+    await history.refresh()
+    expect(store.threads().map((thread) => thread.id)).toEqual(['native'])
+  })
+
+  it('does not discover temporary tasks as public chats', async () => {
+    store.addThread({
+      id: 'native',
+      provider: 'codex',
+      projectPath: process.cwd(),
+      title: 'Side chat',
+      ephemeral: true,
+    })
+    const { history } = setup()
+    await history.refresh()
+    expect(store.threads()).toEqual([])
+    expect(store.providerHistories()).toEqual([])
+  })
+
+  it.each([false, true])(
+    'repairs an existing duplicate without losing real replies (local reply: %s)',
+    async (reply) => {
+      const internal = transcript('native', 'Internal phase output')
+      const user = internal[2]!
+      if (user.type === 'item.completed')
+        user.item.text = '<selected-reference-workflow>internal</selected-reference-workflow>'
+      const outside = transcript('outside', 'Real outside answer', 90000).slice(1)
+      const { history, source, hooks } = setup()
+      vi.mocked(source.read).mockResolvedValue([...internal, ...outside])
+      await history.refresh()
+      const duplicateId = 'external:codex:native'
+      await history.load(duplicateId)
+      if (reply)
+        for (const event of transcript('reply', 'Keep this reply', 180000).slice(1))
+          store.append(duplicateId, event)
+      store.addThread({
+        id: 'native',
+        provider: 'codex',
+        projectPath: process.cwd(),
+        title: 'My design',
+      })
+      for (const event of transcript('native', 'Clean design progress'))
+        store.append('native', event)
+      hooks.isBusy.mockImplementation((id) => id === 'native')
+      await history.refresh()
+      expect(store.thread(duplicateId)).toBeDefined()
+      hooks.isBusy.mockReturnValue(false)
+      await history.refresh()
+      await history.load('native')
+      expect(store.thread('native')?.title).toBe('My design')
+      expect(messages('native').map((item) => item.text)).toEqual([
+        'Hello',
+        'Clean design progress',
+        'Hello',
+        'Real outside answer',
+      ])
+      expect(store.providerHistories()[0]).toMatchObject({
+        threadId: 'native',
+        loadedRevision: '1',
+      })
+      if (reply) {
+        expect(messages(duplicateId).map((item) => item.text)).toContain('Keep this reply')
+        expect(
+          messages(duplicateId).some((item) => item.text?.includes('selected-reference-workflow')),
+        ).toBe(false)
+      } else expect(store.thread(duplicateId)).toBeUndefined()
+      const restarted = new ProviderHistory(store, [{ provider: 'codex', history: source }], hooks)
+      histories.push(restarted)
+      await restarted.refresh()
+      expect(store.providerHistories()[0]?.threadId).toBe('native')
+      expect(
+        messages('native').some((item) => item.text?.includes('selected-reference-workflow')),
+      ).toBe(false)
+    },
+  )
+
+  it('keeps the imported copy when canonical transcript recovery fails, then retries', async () => {
+    const { history, source } = setup()
+    await history.refresh()
+    await history.load('external:codex:native')
+    store.addThread({
+      id: 'native',
+      provider: 'codex',
+      projectPath: process.cwd(),
+      title: 'My design',
+    })
+    vi.mocked(source.read).mockRejectedValueOnce(new Error('temporarily unavailable'))
+    await history.refresh()
+    expect(messages('external:codex:native')).toHaveLength(2)
+    await history.refresh()
+    expect(store.thread('external:codex:native')).toBeUndefined()
+    expect(messages('native')).toHaveLength(2)
+  })
+
+  it.each(['running', 'queued'] as const)(
+    'defers recovery when the duplicate becomes %s during the read',
+    async (busy) => {
+      const { history, source, hooks } = setup()
+      await history.refresh()
+      await history.load('external:codex:native')
+      store.addThread({
+        id: 'native',
+        provider: 'codex',
+        projectPath: process.cwd(),
+        title: 'My design',
+      })
+      let release!: (events: DomainEvent[]) => void
+      vi.mocked(source.read).mockReturnValueOnce(
+        new Promise((resolve) => {
+          release = resolve
+        }),
+      )
+      const refresh = history.refresh()
+      await vi.waitFor(() => expect(source.read).toHaveBeenCalledTimes(2))
+      if (busy === 'running')
+        hooks.isBusy.mockImplementation((id) => id === 'external:codex:native')
+      else
+        store.enqueueQueuedTurn({
+          id: 'queued',
+          threadId: 'external:codex:native',
+          text: 'Keep this queued prompt',
+          attachments: [],
+          options: {},
+          createdAt: 10000,
+        })
+      release(transcript())
+      await refresh
+      expect(store.thread('external:codex:native')).toBeDefined()
+      expect(store.providerHistories()[0]?.loadedRevision).toBeNull()
+      if (busy === 'queued')
+        expect(store.queuedTurns('external:codex:native')[0]?.text).toBe('Keep this queued prompt')
+    },
+  )
+
+  it('retries failed reconciliation when the duplicate contains a real reply', async () => {
+    const { history, source } = setup()
+    await history.refresh()
+    await history.load('external:codex:native')
+    for (const event of transcript('reply', 'Keep this reply', 90000).slice(1))
+      store.append('external:codex:native', event)
+    store.addThread({
+      id: 'native',
+      provider: 'codex',
+      projectPath: process.cwd(),
+      title: 'My design',
+    })
+    vi.mocked(source.read).mockRejectedValueOnce(new Error('temporary failure'))
+    await history.refresh()
+    expect(store.providerHistories()[0]?.loadedRevision).toBeNull()
+    await history.refresh()
+    expect(store.providerHistories()[0]?.loadedRevision).toBe('1')
+    expect(messages('external:codex:native').map((item) => item.text)).toContain('Keep this reply')
+  })
+
+  it('discards a pending read of a duplicate after ownership is reconciled', async () => {
+    const { history, source } = setup()
+    await history.refresh()
+    let release!: (events: DomainEvent[]) => void
+    vi.mocked(source.read).mockReturnValueOnce(
+      new Promise((resolve) => {
+        release = resolve
+      }),
+    )
+    const staleRead = history.load('external:codex:native')
+    store.addThread({
+      id: 'native',
+      provider: 'codex',
+      projectPath: process.cwd(),
+      title: 'My design',
+    })
+    for (const event of transcript()) store.append('native', event)
+    await history.refresh()
+    release(transcript('native', 'Do not resurrect this duplicate'))
+    expect(await staleRead).toBe(false)
+    expect(store.thread('external:codex:native')).toBeUndefined()
+    expect(messages('native')).toHaveLength(2)
+  })
+
+  it.each(['codex', 'claude-code', 'grok'] as const)(
     'imports %s chats only after their project is added in TasteCode',
     async (provider) => {
       store.removeProject(process.cwd())

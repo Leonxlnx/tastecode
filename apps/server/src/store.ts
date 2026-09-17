@@ -1470,6 +1470,17 @@ export class Store {
     }))
   }
 
+  /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
+  nativeProviderThreads(provider: ProviderId): StoredThread[] {
+    return sqliteRows<ThreadRow>(
+      this.#db.prepare("SELECT * FROM threads WHERE provider = ? AND id NOT LIKE 'external:%'"),
+      provider,
+    ).flatMap((row) => {
+      const thread = toThread(row)
+      return thread ? [thread] : []
+    })
+  }
+
   providerHistoryChangedAfter(threadId: string, seq: number): boolean {
     return (
       this.#db
@@ -1488,7 +1499,11 @@ export class Store {
     this.#db
       .prepare(
         `INSERT INTO provider_history (provider, session_id, thread_id, metadata)
-      VALUES (?, ?, ?, ?) ON CONFLICT(provider, session_id) DO UPDATE SET metadata = excluded.metadata`,
+      VALUES (?, ?, ?, ?) ON CONFLICT(provider, session_id) DO UPDATE SET
+        metadata = excluded.metadata,
+        loaded_revision = CASE WHEN provider_history.thread_id = excluded.thread_id
+          THEN provider_history.loaded_revision ELSE NULL END,
+        thread_id = excluded.thread_id`,
       )
       .run(provider, session.id, threadId, JSON.stringify(session))
     const thread = this.thread(threadId)

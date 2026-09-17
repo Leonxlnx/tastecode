@@ -31,6 +31,7 @@ export class ProviderHistory {
     private sources: Source[],
     private hooks: {
       isBusy(threadId: string): boolean
+      canImport?(): boolean
       changed(threadIds: string[]): void
       log(message: string): void
     },
@@ -39,6 +40,8 @@ export class ProviderHistory {
   }
 
   #remember(entry: Imported): void {
+    const previous = this.#entries.get(`${entry.provider}:${entry.session.id}`)
+    if (previous && previous.threadId !== entry.threadId) this.#byThread.delete(previous.threadId)
     this.#entries.set(`${entry.provider}:${entry.session.id}`, entry)
     this.#byThread.set(entry.threadId, entry)
   }
@@ -51,21 +54,22 @@ export class ProviderHistory {
   }
 
   async #refresh(): Promise<void> {
-    const sources = new Map(this.sources.map(({ provider, history }) => [provider, history]))
-    const nativeThreads = new Map(
-      this.store.threads().map((thread) => {
-        const id = thread.providerSessionId ?? thread.id
-        const nativeId = sources.get(thread.provider)?.resolveSessionId?.(id) ?? id
-        return [`${thread.provider}:${nativeId}`, thread]
-      }),
-    )
     await Promise.all(
       this.sources.map(async ({ provider, history }) => {
         try {
           const sessions = await history.list()
-          if (this.#closed) return
+          if (this.#closed || this.hooks.canImport?.() === false) return
+          // Starting a provider and scanning its saved sessions can overlap. Resolve
+          // ownership only after the scan, preferring native tasks over imported copies.
+          const nativeThreads = new Map(
+            this.store.nativeProviderThreads(provider).map((thread) => {
+              const id = thread.providerSessionId ?? thread.id
+              return [history.resolveSessionId?.(id) ?? id, thread]
+            }),
+          )
           const changed: string[] = []
           const imported: Imported[] = []
+          const repair = new Set<string>()
           this.store.batchLifecycleUpdates(() => {
             for (const session of sessions) {
               if (
@@ -77,36 +81,59 @@ export class ProviderHistory {
                 continue
               const key = `${provider}:${session.id}`
               const previous = this.#entries.get(key)
-              // Retain a tombstone when a user deletes the local copy.
-              if (previous && !this.store.thread(previous.threadId)) continue
+              const native = nativeThreads.get(session.id)
+              const duplicateId = `external:${provider}:${session.id}`
+              const duplicate = native && this.store.thread(duplicateId)
               if (
+                duplicate &&
+                (this.hooks.isBusy(duplicateId) || this.store.queuedTurns(duplicateId).length)
+              )
+                continue
+              const repairing = Boolean(
+                duplicate &&
+                (!previous ||
+                  previous.threadId !== native?.id ||
+                  previous.loadedRevision !== session.revision ||
+                  this.store.localHistory(duplicateId).length === 0),
+              )
+              // Retain a tombstone when a user deletes the local copy.
+              if (previous && !native && !this.store.thread(previous.threadId)) continue
+              if (
+                !repairing &&
+                (!native || native.id === previous?.threadId) &&
                 previous?.session.revision === session.revision &&
                 previous.session.title === session.title
               )
                 continue
-              const existing = previous
-                ? this.store.thread(previous.threadId)
-                : nativeThreads.get(key)
+              const existing =
+                native ?? (previous ? this.store.thread(previous.threadId) : undefined)
               if (existing?.ephemeral) continue
               const threadId = existing?.id ?? `external:${provider}:${session.id}`
               if (!existing) {
                 this.store.addProviderThread(threadId, provider, session)
-              } else if (previous && existing.title === previous.session.title && session.title) {
+              } else if (
+                previous?.threadId === threadId &&
+                existing.title === previous.session.title &&
+                session.title
+              ) {
                 this.store.renameThread(threadId, session.title)
               }
               const entry = {
                 provider,
                 threadId,
                 session,
-                loadedRevision: previous?.loadedRevision ?? null,
+                loadedRevision:
+                  !repairing && previous?.threadId === threadId ? previous.loadedRevision : null,
               }
               this.store.saveProviderHistory(provider, threadId, session)
               imported.push(entry)
               changed.push(threadId)
+              if (repairing) repair.add(threadId)
             }
           })
           for (const entry of imported) this.#remember(entry)
           if (changed.length) this.hooks.changed(changed)
+          for (const threadId of repair) await this.load(threadId)
         } catch {
           // Never log source content or paths from a malformed provider record.
           this.hooks.log(`${provider} history could not be refreshed; will retry`)
@@ -130,17 +157,45 @@ export class ProviderHistory {
       while (entry && entry.loadedRevision !== entry.session.revision) {
         const current = entry
         const events = await source.history.read(current.session)
-        if (this.#closed || this.hooks.isBusy(threadId) || !this.store.thread(threadId))
+        if (
+          this.#closed ||
+          this.hooks.isBusy(threadId) ||
+          !this.store.thread(threadId) ||
+          !this.#byThread.has(threadId)
+        )
+          return changed
+        const duplicateId = `external:${provider}:${current.session.id}`
+        if (
+          duplicateId !== threadId &&
+          (this.hooks.isBusy(duplicateId) || this.store.queuedTurns(duplicateId).length)
+        )
           return changed
         if (events.length === 0) throw new Error('Saved provider chat is unavailable; try again')
-        const entries = importedEvents(
-          events,
-          threadId,
-          this.store.localHistory(threadId).map(({ event }) => event),
-        )
+        const local = this.store.localHistory(threadId).map(({ event }) => event)
+        const entries = importedEvents(events, threadId, local)
         changed =
           this.store.mergeProviderHistory(threadId, current.session.revision, entries) || changed
         current.loadedRevision = current.session.revision
+        if (
+          duplicateId !== threadId &&
+          this.store.thread(duplicateId) &&
+          !this.hooks.isBusy(duplicateId) &&
+          !this.store.queuedTurns(duplicateId).length
+        ) {
+          const duplicateLocal = this.store.localHistory(duplicateId).map(({ event }) => event)
+          // Only remove a read-only mirror after its real outside turns have been
+          // imported successfully. Replies written in the duplicate remain intact.
+          if (duplicateLocal.length === 0 && !this.store.thread(duplicateId)?.worktreePath) {
+            this.store.deleteThread(duplicateId)
+          } else {
+            this.store.mergeProviderHistory(
+              duplicateId,
+              current.session.revision,
+              importedEvents(events, duplicateId, [...local, ...duplicateLocal]),
+            )
+          }
+          this.hooks.changed([threadId, duplicateId])
+        }
         entry = this.#byThread.get(threadId)
       }
       return changed

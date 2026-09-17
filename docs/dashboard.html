@@ -290,13 +290,20 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-17 base main dd1f8cb6 + Windows beta 5 candidate</span>
+        <span class="meta">2026-09-17 base main 488c4885 + provider-history recovery</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <h2>Private Beta Preparation</h2>
+        <p class="sub">
+          Provider history now rechecks task ownership after discovery and defers imports while
+          sessions start. Existing duplicate imports are reconciled after the canonical transcript
+          loads successfully; real replies and active or queued work are preserved. Internal Design
+          prompts stay behind the original task's turn filtering. This source fix requires a new
+          installed build; the running Windows beta 5 test sessions remain untouched.
+        </p>
         <p class="sub">
           Design palettes now choose readable button text before repairing hover contrast. The
           captured coffee-site failure and 864 generated light/dark palette cases pass without
