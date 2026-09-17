@@ -4694,12 +4694,50 @@ describe('new chats', () => {
     expect(document.documentElement.dataset.theme).not.toBe('codex')
   })
 
+  it('saves mode appearance independently without applying inactive edits', async () => {
+    localStorage.setItem('harness.theme', 'light')
+    localStorage.setItem('harness.accent.light', 'forest')
+    localStorage.setItem('harness.accent.dark', 'ocean')
+    localStorage.setItem('harness.backdrop.light', '#FFFFFF')
+    localStorage.setItem('harness.backdrop.dark', '#111111')
+    localStorage.setItem('harness.sidebarGlass2.light', '0')
+    localStorage.setItem('harness.sidebarGlass2.dark', '50')
+    const first = render(<App />)
+    openSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
+    const dark = within(screen.getByRole('region', { name: 'Dark mode' }))
+    fireEvent.click(dark.getByRole('combobox', { name: 'Interface font' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
+    await waitFor(() => expect(localStorage.getItem('harness.font.dark')).toBe('inter'))
+    expect(document.documentElement.dataset.font).toBe('system')
+    expect(document.documentElement.dataset.accent).toBe('forest')
+    expect(document.documentElement.style.getPropertyValue('--custom-backdrop')).toBe('#FFFFFF')
+    expect(document.documentElement.dataset.glass).toBe('off')
+    fireEvent.click(screen.getByRole('radio', { name: 'Dark' }))
+    expect(document.documentElement.dataset.font).toBe('inter')
+    expect(document.documentElement.dataset.accent).toBe('ocean')
+    expect(document.documentElement.style.getPropertyValue('--custom-backdrop')).toBe('#111111')
+    expect(document.documentElement.style.getPropertyValue('--rail-glass')).toBe('0.5')
+    first.unmount()
+    render(<App />)
+    expect(document.documentElement.dataset.font).toBe('inter')
+    openSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Light' }))
+    expect(document.documentElement.dataset.font).toBe('system')
+    expect(document.documentElement.dataset.accent).toBe('forest')
+    expect(document.documentElement.dataset.glass).toBe('off')
+  })
+
   it('persists the selected interface font', async () => {
     const first = render(<App />)
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-    const fontSelector = screen.getByRole('combobox', { name: 'Interface font' })
-    expect(fontSelector.textContent).toContain('Geist')
+    const fontSelector = within(screen.getByRole('region', { name: 'Light mode' })).getByRole(
+      'combobox',
+      { name: 'Interface font' },
+    )
+    expect(fontSelector.textContent).toContain('System default')
     fireEvent.click(fontSelector)
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'Geist',
@@ -4710,7 +4748,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.font')).toBe('inter')
+      expect(localStorage.getItem('harness.font.light')).toBe('inter')
       expect(document.documentElement.dataset.font).toBe('inter')
     })
 
@@ -4743,7 +4781,11 @@ describe('new chats', () => {
       const first = render(<App />)
       openSettings()
       fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-      fireEvent.click(screen.getByRole('combobox', { name: 'Interface font' }))
+      fireEvent.click(
+        within(screen.getByRole('region', { name: 'Light mode' })).getByRole('combobox', {
+          name: 'Interface font',
+        }),
+      )
 
       expect(queryLocalFonts).toHaveBeenCalledOnce()
       expect(screen.getByRole('status').textContent).toBe('Loading fonts…')
@@ -4766,7 +4808,7 @@ describe('new chats', () => {
       ])
       fireEvent.click(atkinson)
       await waitFor(() => {
-        expect(localStorage.getItem('harness.font')).toBe('local:Atkinson Hyperlegible')
+        expect(localStorage.getItem('harness.font.light')).toBe('local:Atkinson Hyperlegible')
         expect(document.documentElement.dataset.font).toBe('local')
         expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe(
           '"Atkinson Hyperlegible", system-ui, sans-serif',
@@ -4779,9 +4821,14 @@ describe('new chats', () => {
       expect(document.documentElement.dataset.font).toBe('local')
       openSettings()
       fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Interface font' }), {
-        key: 'ArrowDown',
-      })
+      fireEvent.keyDown(
+        within(screen.getByRole('region', { name: 'Light mode' })).getByRole('combobox', {
+          name: 'Interface font',
+        }),
+        {
+          key: 'ArrowDown',
+        },
+      )
       expect(screen.getByRole('option', { name: 'Atkinson Hyperlegible' })).toBeTruthy()
       expect(screen.getAllByRole('option')).toHaveLength(6)
       expect(queryLocalFonts).toHaveBeenCalledOnce()
@@ -4795,8 +4842,15 @@ describe('new chats', () => {
     const first = render(<App />)
     openSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Appearance' }))
-    fireEvent.click(screen.getByRole('button', { name: /^Accent palette:/ }))
-    const picker = screen.getByRole('dialog', { name: 'Accent palette color picker', hidden: true })
+    fireEvent.click(
+      within(screen.getByRole('region', { name: 'Light mode' })).getByRole('button', {
+        name: /^Accent palette:/,
+      }),
+    )
+    const picker = within(screen.getByRole('region', { name: 'Light mode' })).getByRole('dialog', {
+      name: 'Accent palette color picker',
+      hidden: true,
+    })
     fireEvent(picker, Object.assign(new Event('toggle'), { newState: 'open' }))
     const accentOptions = within(picker).getByRole('group', {
       name: 'Accent palette presets',
@@ -4806,7 +4860,7 @@ describe('new chats', () => {
     fireEvent.click(within(accentOptions).getByRole('button', { name: 'Ocean', hidden: true }))
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.accent')).toBe('ocean')
+      expect(localStorage.getItem('harness.accent.light')).toBe('ocean')
       expect(document.documentElement.dataset.accent).toBe('ocean')
     })
 
@@ -4817,6 +4871,8 @@ describe('new chats', () => {
   })
 
   it('tracks OS appearance while System is selected', async () => {
+    localStorage.setItem('harness.font.light', 'inter')
+    localStorage.setItem('harness.font.dark', 'mono')
     const originalMatchMedia = window.matchMedia.bind(window)
     let systemIsDark = false
     const systemThemeMedia = originalMatchMedia('(prefers-color-scheme: dark)')
@@ -4834,6 +4890,7 @@ describe('new chats', () => {
     await waitFor(() => {
       expect(localStorage.getItem('harness.theme')).toBe('system')
       expect(document.documentElement.dataset.theme).toBe('light')
+      expect(document.documentElement.dataset.font).toBe('inter')
     })
 
     systemIsDark = true
@@ -4847,6 +4904,7 @@ describe('new chats', () => {
     })
 
     expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.font).toBe('mono')
   })
 
   it.each([true, false])(
@@ -7587,6 +7645,117 @@ function sessionTitles(): string[] {
 }
 
 describe('reopening a session', () => {
+  it('retries deferred provider history when a queued turn ends before its first replay returns', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reads = 0
+    let release!: () => void
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'thread.history') return request(method, params)
+      reads += 1
+      const response = {
+        events: [
+          completedHistoryEvent(1, 'base', 'Existing message'),
+          ...(reads >= 3 ? [completedHistoryEvent(2, 'outside', 'Outside provider reply')] : []),
+        ],
+        running: reads === 2,
+        approval: 'ask',
+      }
+      if (reads === 2)
+        return new Promise((resolve) => {
+          release = () => resolve(response)
+        })
+      return Promise.resolve(response)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    expect(await screen.findByText('Existing message')).toBeTruthy()
+    startTurn('untouched-thread', 'local-turn')
+    act(() => {
+      transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+    })
+    completeTurn('untouched-thread', 'local-turn')
+    startTurn('untouched-thread', 'queued-turn')
+    completeTurn('untouched-thread', 'queued-turn')
+    expect(reads).toBe(2)
+    await act(async () => release())
+    expect(await screen.findByText('Outside provider reply')).toBeTruthy()
+    expect(reads).toBe(3)
+  })
+
+  it('keeps deferred provider history when a queued turn starts during its replay', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reads = 0
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'thread.history') return request(method, params)
+      reads += 1
+      return Promise.resolve({
+        events: [
+          completedHistoryEvent(1, 'base', 'Existing message'),
+          ...(reads >= 3 ? [completedHistoryEvent(2, 'outside', 'Outside provider reply')] : []),
+        ],
+        running: reads === 2,
+        approval: 'ask',
+      })
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    expect(await screen.findByText('Existing message')).toBeTruthy()
+    startTurn('untouched-thread', 'local-turn')
+    act(() => {
+      transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+    })
+    completeTurn('untouched-thread', 'local-turn')
+    startTurn('untouched-thread', 'queued-turn')
+    await waitFor(() => expect(reads).toBe(2))
+    expect(screen.queryByText('Outside provider reply')).toBeNull()
+    completeTurn('untouched-thread', 'queued-turn')
+    expect(await screen.findByText('Outside provider reply')).toBeTruthy()
+    expect(reads).toBe(3)
+  })
+
+  it.each(['turn.completed', 'thread.error'] as const)(
+    'replays deferred provider history after %s',
+    async (completion) => {
+      const request = transport.request.getMockImplementation()!
+      let changed = false
+      transport.request.mockImplementation((method, params) => {
+        if (method !== 'thread.history') return request(method, params)
+        return Promise.resolve({
+          events: [
+            completedHistoryEvent(1, 'base', 'Existing message'),
+            ...(changed ? [completedHistoryEvent(2, 'outside', 'Outside provider reply')] : []),
+          ],
+          running: false,
+          approval: 'ask',
+        })
+      })
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+      expect(await screen.findByText('Existing message')).toBeTruthy()
+      startTurn('untouched-thread', 'local-turn')
+      await screen.findByText('Working')
+      transport.request.mockClear()
+      changed = true
+      act(() => {
+        transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+        transport.listeners.get('providerHistory.changed')?.({ threadIds: ['untouched-thread'] })
+      })
+      expect(rpcCount('thread.history')).toBe(0)
+      if (completion === 'turn.completed') completeTurn('untouched-thread', 'local-turn')
+      else
+        emitThreadEvent('untouched-thread', {
+          type: 'thread.error',
+          threadId: 'untouched-thread',
+          message: 'Stopped',
+        })
+      expect(await screen.findByText('Outside provider reply')).toBeTruthy()
+      expect(screen.getAllByText('Existing message')).toHaveLength(1)
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'thread.history'),
+      ).toEqual([['thread.history', { threadId: 'untouched-thread' }]])
+    },
+  )
+
   /**
    * Asserting on the request rather than on rendered rows: happy-dom gives
    * every element zero size and has no ResizeObserver, so the virtualiser

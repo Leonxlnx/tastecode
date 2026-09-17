@@ -121,7 +121,7 @@
 .rail {
   --rail-text: #dcdcda;
   --rail-font-size: 13px;
-  --rail-font-weight: 380;
+  --rail-font-weight: 400;
   --rail-letter-spacing: -0.01em;
 
   position: absolute;
@@ -728,8 +728,8 @@
 
 .switch {
   position: relative;
-  width: 30px;
-  height: 18px;
+  width: 36px;
+  height: 22px;
   flex: none;
   padding: 0;
   background: var(--surface-3);
@@ -755,10 +755,11 @@
 
 .switch__thumb {
   position: absolute;
-  top: 2px;
+  top: 50%;
   left: 2px;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
+  translate: 0 -50%;
   background: var(--text-2);
   border-radius: var(--r-circle);
   transition:
@@ -768,7 +769,7 @@
 
 .switch.is-on .switch__thumb {
   background: var(--on-light);
-  transform: translateX(12px);
+  transform: translateX(14px);
 }
 
 .section {

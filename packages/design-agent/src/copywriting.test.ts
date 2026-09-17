@@ -39,6 +39,14 @@ const page: PageBlueprint = {
 }
 
 describe('page copy lint', () => {
+  it('accepts honest concept content without treating it as unfinished copy or customer proof', () => {
+    for (const description of [
+      'Concept portfolio. Self-initiated hospitality studies.',
+      'Illustrative catalog. Original artist and release concepts.',
+    ]) {
+      expect(() => assertPageCopy({ ...page, page: { ...page.page, description } })).not.toThrow()
+    }
+  })
   it('blocks em dashes but not en dashes', () => {
     expect(() =>
       assertPageCopy({ ...page, page: { ...page.page, description: 'Fresh — every week.' } }),
@@ -83,6 +91,31 @@ describe('page copy lint', () => {
         sections: [{ ...section, copy: { ...section.copy, eyebrow: '01' } }],
       }),
     ).toThrow('copy/decorative-eyebrow')
+    expect(() =>
+      assertPageCopy({
+        ...page,
+        sections: [
+          {
+            ...section,
+            referenceDirectionId: 'reference-hero',
+            copy: { ...section.copy, eyebrow: '01' },
+          },
+        ],
+      }),
+    ).not.toThrow()
+    expect(() =>
+      assertPageCopy({
+        ...page,
+        sections: [
+          {
+            ...section,
+            referenceDirectionId: 'reference-hero',
+            copy: { ...section.copy, eyebrow: 'Trusted by 100 companies' },
+            evidence: [],
+          },
+        ],
+      }),
+    ).toThrow('copy/objective-claim')
   })
 
   it('blocks internal placeholders and overlong heading stacks', () => {

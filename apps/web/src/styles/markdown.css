@@ -5,12 +5,24 @@
   position: relative;
 }
 
+.reply--notice {
+  color: var(--text-3);
+}
+
 .reply > .md {
+  margin-inline: 0;
+  padding-inline: 0;
+  text-align: start;
   font-family: var(--font-ui);
   font-size: var(--t-md);
   font-weight: 400;
   line-height: 1.52;
   max-width: 72ch;
+}
+
+.reply--notice > .md > p:first-child {
+  /* Hang the opening D's side bearing on the reply's visible text edge. */
+  text-indent: -0.075em;
 }
 
 .reply > .md :is(strong, b) {
@@ -40,6 +52,10 @@
 }
 
 .md > *:last-child {
+  margin-bottom: 0;
+}
+
+.reply--notice > .md > :last-child {
   margin-bottom: 0;
 }
 
@@ -196,8 +212,7 @@
   position: relative;
 }
 
-.md [data-streamdown='code-block'] button,
-.md [data-streamdown='table-wrapper'] button {
+.md [data-streamdown='code-block'] button {
   display: grid;
   place-items: center;
   width: 24px;
@@ -215,19 +230,15 @@
 }
 
 .md [data-streamdown='code-block']:hover button,
-.md [data-streamdown='table-wrapper']:hover button,
-.md [data-streamdown='code-block'] button:focus-visible,
-.md [data-streamdown='table-wrapper'] button:focus-visible {
+.md [data-streamdown='code-block'] button:focus-visible {
   opacity: 1;
 }
 
-.md [data-streamdown='code-block'] button:hover,
-.md [data-streamdown='table-wrapper'] button:hover {
+.md [data-streamdown='code-block'] button:hover {
   color: var(--text);
 }
 
-.md [data-streamdown='code-block'] button svg,
-.md [data-streamdown='table-wrapper'] button svg {
+.md [data-streamdown='code-block'] button svg {
   width: 13px;
   height: 13px;
 }
@@ -251,6 +262,98 @@
   display: flex;
   align-items: center;
   gap: 3px;
+}
+
+/* Streamdown's table toolbar and menus rely on Tailwind utilities, which this
+   app does not load. Keep controls in one row and menus out of document flow. */
+.md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-height: 26px;
+  padding: 0 2px 2px;
+
+  > div {
+    position: relative;
+  }
+
+  button {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    color: var(--text-3);
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--text);
+    }
+
+    svg {
+      width: 13px;
+      height: 13px;
+    }
+  }
+
+  > button,
+  > div > button {
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-out);
+  }
+
+  > div > div {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 2;
+    min-width: 120px;
+    padding: 3px;
+    border: 1px solid var(--menu-line);
+    border-radius: var(--r-md);
+    background: var(--menu-bg);
+    box-shadow: var(--shadow-flyout);
+
+    button {
+      display: block;
+      width: 100%;
+      height: auto;
+      padding: 5px 8px;
+      border: 0;
+      background: transparent;
+      color: var(--text-2);
+      font-size: var(--t-sm);
+      text-align: left;
+
+      &:hover,
+      &:focus-visible {
+        background: var(--menu-hover);
+        color: var(--text);
+      }
+    }
+  }
+}
+
+.md [data-streamdown='table-wrapper']:is(:hover, :focus-within) > div:first-child {
+  > button,
+  > div > button {
+    opacity: 1;
+  }
+}
+
+.md [data-streamdown='table-wrapper'] > div:last-child {
+  overflow-x: auto;
+  margin-bottom: 14px;
+
+  > table {
+    display: table;
+    margin: 0;
+  }
 }
 
 .md pre {

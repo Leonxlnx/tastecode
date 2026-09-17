@@ -130,6 +130,7 @@ export {
   designBriefingContinuation,
   designBriefingPrompt,
   designPhaseCorrectionPrompt,
+  designTaskContinuation,
   isDesignBriefAttachment,
   parseBriefingOutput,
   type BriefingOutput,
@@ -140,3 +141,5 @@ export {
   parseReferenceDeck,
   selectReviewedReferences,
 } from './reference-library.js'
+export { selectTypographyCandidates, validateTypographySelection } from './typography.js'
+export type { TypographyCandidates } from './typography.js'

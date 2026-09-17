@@ -1,0 +1,282 @@
+[
+  {
+    "group": "sans",
+    "family": "Bricolage Grotesque",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/bricolagegrotesque/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Syne",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/syne/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Hanken Grotesk",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/hankengrotesk/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Schibsted Grotesk",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/schibstedgrotesk/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Space Grotesk",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/spacegrotesk/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Onest",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/onest/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Instrument Sans",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/instrumentsans/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Commissioner",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/commissioner/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Spline Sans",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/splinesans/METADATA.pb"
+  },
+  {
+    "group": "sans",
+    "family": "Figtree",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/figtree/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Fraunces",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/fraunces/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Newsreader",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/newsreader/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Bodoni Moda",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/bodonimoda/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Cormorant Garamond",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/cormorantgaramond/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "DM Serif Display",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/dmserifdisplay/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Young Serif",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/youngserif/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Instrument Serif",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/instrumentserif/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Prata",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/prata/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Gloock",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/gloock/METADATA.pb"
+  },
+  {
+    "group": "serif",
+    "family": "Lora",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/lora/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Unbounded",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/unbounded/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Dela Gothic One",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/delagothicone/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Archivo Black",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/archivoblack/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Big Shoulders",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/bigshoulders/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Bebas Neue",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Changa One",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/changaone/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Righteous",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/righteous/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Bowlby One SC",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/bowlbyonesc/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Paytone One",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/paytoneone/METADATA.pb"
+  },
+  {
+    "group": "display",
+    "family": "Anybody",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/anybody/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "Martian Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/martianmono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "Azeret Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/azeretmono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "Space Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/spacemono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "Fragment Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/fragmentmono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "Spline Sans Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/splinesansmono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "Roboto Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/robotomono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "Red Hat Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/redhatmono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "PT Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ptmono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "IBM Plex Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexmono/METADATA.pb"
+  },
+  {
+    "group": "mono",
+    "family": "JetBrains Mono",
+    "status": 200,
+    "matched": true,
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/jetbrainsmono/METADATA.pb"
+  }
+]
