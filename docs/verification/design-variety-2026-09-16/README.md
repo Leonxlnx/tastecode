@@ -73,6 +73,23 @@ Built with `--publish never`, installed locally, and left running. It remains un
 has not completed the separate clean-machine qualification. The public beta update feed
 still returns 404 until release hosting is configured. No hosted CI or public release ran.
 
+## Mid-tone palette correction — 2026-09-17
+
+An installed beta 3 coffee-site run failed in Brand with `light.onAccent on accent is 4.26:1`.
+The captured recipe used `#70805D` and a derived `#5C6C49` hover. Starting with white text
+failed on the accent; changing only the text failed on hover. The greedy repair could not
+cross that intermediate state and incorrectly reported an unrepairable palette.
+
+The generator now chooses white or black text against the immutable accent first, then uses
+the existing repair for hover. The original recipe passes through the real Brand parser with
+24 color records; its accent remains `#70805D` and hover becomes `#6A7A56`. All 864 combinations
+of a 216-color RGB grid, light/dark themes, and quiet/defined surfaces passed. Locked inaccessible
+colors still produce an explicit conflict. The new regression failed before the fix and passed
+after it. The Design package has 137 passing tests, including the explicit button-text lock.
+
+The user's installed app, running tasks, settings and project files were not changed. This is
+a source correction awaiting the next approved app update, not a live retry of the failed site.
+
 ## Earlier beta 2 candidate and remaining release checks
 
 `TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.
