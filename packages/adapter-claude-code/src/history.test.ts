@@ -304,7 +304,7 @@ describe('Claude Code saved history', () => {
       status: 'completed',
       attachments: ['data:image/png;base64,AA=='],
     })
-    expect(result?.text).toContain('"new_string": "after"')
+    expect(result?.text).toContain('-before\n+after')
     expect(result?.text).toContain('Saved\n')
     expect(result?.text).not.toContain('base64')
   })

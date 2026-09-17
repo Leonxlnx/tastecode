@@ -1,4 +1,5 @@
 import type { Item } from '@harness/contracts'
+import { toolUseItemFields } from './events.js'
 
 export type SavedRecord = Record<string, unknown>
 
@@ -52,16 +53,7 @@ function blockText(content: unknown): string {
 }
 
 function toolItem(block: SavedRecord, base: Item): Item {
-  const name = string(block.name) ?? 'tool'
-  const input = object(block.input)
-  if (name === 'Bash' || name === 'PowerShell') {
-    return { ...base, type: 'command', command: string(input.command) ?? name }
-  }
-  if (name === 'Write' || name === 'Edit' || name === 'NotebookEdit' || name === 'MultiEdit') {
-    const filePath = string(input.file_path) ?? string(input.notebook_path) ?? ''
-    return { ...base, type: 'file_change', path: filePath, text: JSON.stringify(input, null, 2) }
-  }
-  return { ...base, type: 'tool_call', text: `${name}\n${JSON.stringify(input, null, 2)}` }
+  return { ...base, ...toolUseItemFields(string(block.name) ?? 'tool', object(block.input)) }
 }
 
 /** Keep each tool's result on its own typed item, including failed command output. */
