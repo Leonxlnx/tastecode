@@ -78,11 +78,6 @@ export function parseBrandSystem(value: unknown): BrandSystem {
     }
   })
   if (typefaces.length > 2) throw new Error('brand system must use at most two typeface families')
-  for (const { family } of typefaces) {
-    if (/^(?:archivo|ibm plex mono)(?:\s|$)/iu.test(family.trim())) {
-      throw new Error(`brand system typeface ${family} is not allowed`)
-    }
-  }
 
   return {
     version: 1,

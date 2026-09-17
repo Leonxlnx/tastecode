@@ -33,6 +33,17 @@ describe('preview capture bridge', () => {
 })
 
 describe('attachment preview bridge', () => {
+  it('previews imported raster data without a native file read', async () => {
+    const bridge = await import('./bridge.js')
+    const reference = 'data:image/png;base64,iVBORw0KGgo='
+    await expect(bridge.previewViewedImage(reference)).resolves.toMatchObject({
+      previewUrl: reference,
+      name: 'Attached image',
+    })
+    await expect(
+      bridge.previewViewedImage('data:image/svg+xml;base64,PHN2Zz4='),
+    ).resolves.toBeUndefined()
+  })
   it('reuses the signed preview returned by the file picker', async () => {
     const picked = {
       path: '/work/reference.png',

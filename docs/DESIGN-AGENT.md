@@ -182,11 +182,18 @@ the workspace, browse, invoke skills or MCP, edit files, or build anything. This
 response fast and prevents project contents from influencing whether the user's request is a
 design task.
 
-If the provider returns `not_design`, TasteCode clears the flow and shows:
+If the provider returns `not_design`, TasteCode turns off the Design toggle and shows a muted
+grey note:
 
 ```text
 Design mode was turned off because this request is not a website design task.
 ```
+
+After the classification turn completes, the same session continues the original request as a
+normal task, with its attachments and the user's model, effort, and service tier. The continuation
+prompt explicitly ends the briefing restrictions. Its answer and tool events stream normally;
+internal prompts stay hidden, and queued requests wait until this response finishes. An interrupted
+or failed classification does not start the continuation.
 
 ## Briefing contract
 
@@ -222,6 +229,18 @@ Design runs never present briefing questions. The provider completes the brief u
 existing project evidence, and recorded assumptions. An unexpected question response receives one
 internal correction. Provider-originated input requests receive an instruction to choose defaults;
 permission approvals remain on the normal approval path. No credentials or authorization are invented.
+
+Landing pages normally receive at least eight substantive sections, excluding navigation and
+footer. Explicit smaller scopes, focused edits, and simpler pages take precedence. Section topics
+follow the request; every section's desktop and mobile composition comes from a reference image.
+
+Missing material for a new design must not become an invented requirement for real clients,
+artists, releases, or product photographs. The shared content guidance allows original concept
+studies and illustrative catalogs, preserves requested counts, and requires concise visible
+identification so they cannot masquerade as commissioned work or real releases. Explicit requests
+for real subjects and existing project facts remain binding. All phases preserve this distinction;
+Page replanning may replace unsupported assumptions introduced by an earlier phase. Image files,
+provenance, and resolution still have to pass acquisition validation before Build.
 
 Older persisted final-note cards resolve against their validated candidate brief. Other saved
 briefing questions resume with autonomous decision instructions. The shared UserInput surface
@@ -328,7 +347,7 @@ The Page phase writes actual concise copy before implementation. It must use the
 system and must not choose replacement colors, fonts, or sources.
 
 New Page-phase outputs must map every section to Hero, About, Feature, How It Works, Social Proof,
-Stats, FAQ, CTA, Pricing, Contact, or Footer and select a reviewed reference from the persisted
+Stats, FAQ, CTA, Pricing, Contact, or Footer and select a reference from the persisted
 deck. New v0.5 runs record that reference ID in `layoutCases`; legacy runs retain the beta case
 validation. A custom-named section such as Showcase may reuse the compatible Feature family.
 Unknown, cross-family, and missing reference IDs fail the Page phase before Build.
@@ -384,9 +403,9 @@ image quality or license ownership. Supplied assets used in the page need a work
 the finished result does not depend on an upload path.
 
 The Asset phase is an acquisition step rather than a wish list. It keeps every Page asset and
-component ID and reuses suitable project or supplied files first. Licensed search comes next for
-factual, editorial, or professional photography; image generation is reserved for precise,
-brand-specific original needs. Generated output receives an exact creative brief, intended crop
+component ID and reuses suitable project or supplied files first. Missing original visuals use
+image generation when available, falling back to licensed image search if unavailable or
+unsuccessful. Explicit real subjects require matching verified images. Generated output receives an exact creative brief, intended crop
 inspection, and at most one defect-led regeneration. A generated or downloaded file must be saved
 inside the project before it is marked ready. SVG is allowed only for a functional icon, logo, or
 truthful data diagram. It cannot satisfy photography, product imagery, editorial art, interface
@@ -449,6 +468,13 @@ every reported command ran. This distinction matters for future verification wor
 
 The Preview phase returns an executable, argv array, workspace-relative working directory,
 explicit `http://127.0.0.1:<port>` URL, optional readiness text, and one to four unique viewports.
+
+Static and command previews choose a free loopback port when the requested port is occupied or
+claimed by another concurrent preview. Command previews update explicit `--port`, `--port=`, or
+`-p` arguments and set `PORT`; custom Node servers must honor that environment variable. Readiness,
+capture, and cleanup use the actual selected URL. A hardcoded server that ignores its assigned
+port still fails instead of attaching to an unrelated site. Existing processes are never stopped
+to make room for a new preview.
 
 The parser rejects:
 
@@ -690,7 +716,13 @@ them.
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
 selected reference IDs, responsive behavior, interactions, acceptance criteria, and one
-purposeful motion decision per section. New runs use the configured reviewed image library;
+purposeful motion decision per section. New runs sample uniformly across the configured catalog
+and labeled complete generated candidates, with pending inspection recorded honestly. They require
+a visible hero entrance and distinct scroll reveals unless the user explicitly requests no animation.
+Build and Review receive the same motion requirements, including trigger and reduced-motion checks;
+still screenshots alone cannot validate playback. Ordinary follow-ups after Design ends clear the
+phase-only JSON instruction so preview requests execute as normal user work.
+New runs use the configured image library;
 the 132 legacy direction variants remain available only for older saved runs. It still needs evidence from varied
 real builds to show which cues improve results and which should be retired.
 

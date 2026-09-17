@@ -227,12 +227,14 @@ let appUpdater: AppUpdateController | undefined
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
-  ipcMain.on('harness:startupPreloadReady', (_event, elapsed: unknown) => {
+  ipcMain.on('harness:startupPreloadReady', (event, elapsed: unknown) => {
+    if (!isOwnRenderer(event.sender)) return
     if (typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0) {
       console.log(`[startup] preload-ready ${Math.round(elapsed)}ms`)
     }
   })
-  ipcMain.on('harness:startupRendererMilestone', (_event, name: unknown) => {
+  ipcMain.on('harness:startupRendererMilestone', (event, name: unknown) => {
+    if (!isOwnRenderer(event.sender)) return
     if (
       name !== 'module-loaded' &&
       name !== 'react-commit' &&
@@ -484,15 +486,18 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  window.webContents.on('will-navigate', (event, url) => {
+  const restrictWindowNavigation = (event: ElectronEvent, url: string) => {
     // Origin comparison, not a prefix check — "http://localhost:5173.evil.example"
-    // starts with the dev server string but is not it.
+    // starts with the dev server string but is not it. will-navigate does not
+    // fire for server-side redirects, so will-redirect applies the same policy.
     const allowed = devServer !== undefined && sameOrigin(url, devServer)
     if (!allowed) {
       event.preventDefault()
       if (isWebUrl(url)) void shell.openExternal(url)
     }
-  })
+  }
+  window.webContents.on('will-navigate', restrictWindowNavigation)
+  window.webContents.on('will-redirect', restrictWindowNavigation)
 
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
@@ -513,13 +518,17 @@ function createWindow(): void {
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(
-      startupRendererPath ??
-        (app.isPackaged
-          ? path.join(process.resourcesPath, 'web', 'index.html')
-          : path.join(here, '../../web/dist/index.html')),
-    )
+    void window.loadFile(rendererIndexPath())
   }
+}
+
+function rendererIndexPath(): string {
+  return (
+    startupRendererPath ??
+    (app.isPackaged
+      ? path.join(process.resourcesPath, 'web', 'index.html')
+      : path.join(here, '../../web/dist/index.html'))
+  )
 }
 
 function appWindows(): BrowserWindow[] {
@@ -618,7 +627,7 @@ ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
 })
 
 ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
-  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
+  if (!isOwnRenderer(event.sender) || typeof value !== 'string' || value.length > 8_192) return
   void diagnostics?.record('renderer', value)
 })
 
@@ -788,6 +797,8 @@ function parseDroppedFolderPaths(value: unknown): Promise<string[]> {
   return droppedFolderPathsSchema.then((schema) => schema.parse(value))
 }
 
+// The schema bounds shape, not provenance: the channel cannot tell a real OS
+// drop from a fabricated list, so it stays a bounded directory-existence oracle.
 ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
   requireOwnRenderer(event.sender)
   return droppedFolderPaths(await parseDroppedFolderPaths(value))
@@ -829,10 +840,13 @@ ipcMain.handle('harness:revealPath', (event, value: unknown) => {
   shell.showItemInFolder(revealablePath(value))
 })
 
-ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootValue: unknown) => {
-  requireOwnRenderer(event.sender)
-  shell.showItemInFolder(projectFilePath(value, projectRootValue))
-})
+ipcMain.handle(
+  'harness:revealProjectFile',
+  async (event, value: unknown, projectRootValue: unknown) => {
+    requireOwnRenderer(event.sender)
+    shell.showItemInFolder(await projectFilePath(value, projectRootValue))
+  },
+)
 
 ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
@@ -1032,16 +1046,28 @@ function configureRendererPermissions(): void {
   // enumeration) never consults the request handler below and defaults to
   // permissive, so it needs its own answer.
   session.defaultSession.setPermissionCheckHandler(
-    (webContents, permission) =>
-      isOwnRendererPermission(permission) && webContents !== null && isOwnRenderer(webContents),
+    (webContents, permission, _origin, details) =>
+      webContents !== null &&
+      webContents === mainWindow?.webContents &&
+      isOwnRenderer(webContents) &&
+      details?.isMainFrame === true &&
+      isOwnRendererPermission(permission, details.mediaType),
   )
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
-      if (permission !== 'media') {
-        callback(isOwnRendererPermission(permission) && isOwnRenderer(webContents))
+      if (
+        webContents !== mainWindow?.webContents ||
+        !isOwnRenderer(webContents) ||
+        details?.isMainFrame !== true
+      ) {
+        callback(false)
         return
       }
-      if (!isOwnRenderer(webContents) || !allowsMicrophoneRequest(details)) {
+      if (permission !== 'media') {
+        callback(isOwnRendererPermission(permission))
+        return
+      }
+      if (!allowsMicrophoneRequest(details)) {
         callback(false)
         return
       }
@@ -1070,7 +1096,18 @@ function requireOwnRenderer(webContents: WebContents): void {
 
 function isOwnRenderer(webContents: WebContents): boolean {
   const url = webContents.getURL()
-  return devServer ? sameOrigin(url, devServer) : url.startsWith('file:')
+  if (devServer) return sameOrigin(url, devServer)
+  // Only the file the app itself loaded is our renderer — a bare scheme check
+  // would trust any file: page that ever reaches this session.
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'file:') return false
+    parsed.hash = ''
+    parsed.search = ''
+    return fileURLToPath(parsed) === rendererIndexPath()
+  } catch {
+    return false
+  }
 }
 
 app.on('window-all-closed', () => {

@@ -64,7 +64,7 @@ export function packagingAsar() {
 
 export async function verifyBundledDesignReferences(
   archive,
-  source = path.join(repositoryRoot, 'packages', 'design-agent', 'references', 'directions'),
+  source = path.join(repositoryRoot, 'packages', 'design-agent', 'references'),
 ) {
   const asar = packagingAsar()
   asar.uncache(archive)
@@ -73,19 +73,28 @@ export async function verifyBundledDesignReferences(
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const child = path.join(relative, entry.name)
       if (entry.isDirectory()) await collect(path.join(directory, entry.name), child)
-      else if (entry.isFile() && entry.name.endsWith('.webp')) expected.push(child)
+      else if (
+        entry.isFile() &&
+        (/\.(webp|png|jpe?g|json|md)$/.test(entry.name) ||
+          child === path.join('motion', 'reveal.js'))
+      )
+        expected.push(child)
       else throw new Error('Unexpected design reference asset')
     }
   }
   await collect(source)
   if (expected.length === 0) throw new Error('No source design references were found')
-  const prefix = path.join('node_modules', '@harness', 'design-agent', 'references', 'directions')
+  const prefix = path.join('node_modules', '@harness', 'design-agent', 'references')
   const names = asar
     .listPackage(archive)
     .map((name) => name.replaceAll('\\', '/').replace(/^\//, ''))
   const expectedNames = expected.map((name) => path.join(prefix, name).replaceAll('\\', '/')).sort()
   const archiveNames = names
-    .filter((name) => name.startsWith(`${prefix.replaceAll('\\', '/')}/`) && name.endsWith('.webp'))
+    .filter(
+      (name) =>
+        name.startsWith(`${prefix.replaceAll('\\', '/')}/`) &&
+        !asar.statFile(archive, path.normalize(name)).files,
+    )
     .sort()
   if (JSON.stringify(expectedNames) !== JSON.stringify(archiveNames))
     throw new Error('Packaged design reference filenames do not match the source')
@@ -127,7 +136,7 @@ export async function verifyPackagedResources(
   }
   await verifyBundledDesignReferences(
     path.join(resources, 'app.asar'),
-    path.join(sourceRoot, 'packages', 'design-agent', 'references', 'directions'),
+    path.join(sourceRoot, 'packages', 'design-agent', 'references'),
   )
 }
 

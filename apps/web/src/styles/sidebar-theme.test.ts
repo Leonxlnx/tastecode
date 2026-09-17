@@ -37,7 +37,7 @@ describe('sidebar theme CSS', () => {
 
   it('uses compact regular-weight sidebar type', () => {
     expect(appCss).toMatch(
-      /\.rail \{[^}]*--rail-font-size: 13px;[^}]*--rail-font-weight: 380;[^}]*--rail-letter-spacing: -0\.01em;/s,
+      /\.rail \{[^}]*--rail-font-size: 13px;[^}]*--rail-font-weight: 400;[^}]*--rail-letter-spacing: -0\.01em;/s,
     )
     expect(appCss).toMatch(
       /\.navitem \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*letter-spacing: var\(--rail-letter-spacing\);/s,

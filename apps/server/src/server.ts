@@ -23,6 +23,7 @@ import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
+import { ProviderHistory } from './provider-history.js'
 
 const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
@@ -52,6 +53,8 @@ interface StartupResources {
   orchestrator?: Orchestrator
   scheduler?: LifecycleScheduler
   checkpointProtection?: Promise<void>
+  providerHistory?: Promise<ProviderHistory>
+  providerHistoryTimer?: ReturnType<typeof setInterval>
 }
 
 /**
@@ -114,6 +117,9 @@ export async function startServer(
   )
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
   let checkpointProtectionFailure: { error: unknown } | undefined
+  let historyClosing = false
+  let providerHistory: Promise<ProviderHistory>
+  let providerHistoryTimer: ReturnType<typeof setInterval>
 
   const started: StartupResources = {}
   let releaseDataLease: (() => void) | undefined
@@ -207,6 +213,38 @@ export async function startServer(
       else lifecycleScheduler.changed()
     }
     lifecycleScheduler.refreshNow()
+    started.providerHistory = providerHistory = Promise.all([
+      import('@harness/adapter-codex').then(({ createCodexHistorySource }) => ({
+        provider: 'codex' as const,
+        history: createCodexHistorySource(),
+      })),
+      import('@harness/adapter-claude-code').then(({ createClaudeHistorySource }) => ({
+        provider: 'claude-code' as const,
+        history: createClaudeHistorySource(),
+      })),
+      import('@harness/adapter-grok').then(({ createGrokHistorySource }) => ({
+        provider: 'grok' as const,
+        history: createGrokHistorySource(),
+      })),
+    ]).then(
+      (sources) =>
+        new ProviderHistory(store, sources, {
+          isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+          changed: (threadIds) => {
+            if (!historyClosing) {
+              lifecycleScheduler.changed()
+              push.broadcast('providerHistory.changed', { threadIds })
+            }
+          },
+          log: (message) => console.log(`[history] ${message}`),
+        }),
+    )
+    started.providerHistoryTimer = providerHistoryTimer = setInterval(
+      refreshProviderHistory,
+      15_000,
+    )
+    providerHistoryTimer.unref()
+    refreshProviderHistory()
     // A previous run killed mid-session leaves git believing in checkouts that
     // are gone. Clearing that up at startup means the next session on that path
     // starts instead of failing with a message about our own leftovers.
@@ -228,6 +266,11 @@ export async function startServer(
     // the real startup failure reaches the caller.
     wss.off('error', exitOnListenerError)
     wss.on('error', logListenerError)
+    // An in-flight provider-history import must not outlive the orchestrator
+    // and store it feeds, so it unwinds first — same order as shutdown().
+    historyClosing = true
+    if (started.providerHistoryTimer) clearInterval(started.providerHistoryTimer)
+    await started.providerHistory?.then((history) => history.close()).catch(() => undefined)
     started.scheduler?.dispose()
     if (started.orchestrator) {
       await started.orchestrator.disposeAll().catch(() => undefined)
@@ -242,6 +285,16 @@ export async function startServer(
     }
     await closeListener(httpServer, wss).catch(() => undefined)
     throw error
+  }
+
+  function refreshProviderHistory(): void {
+    if (!historyClosing)
+      void providerHistory.then((history) => history.refresh()).catch(() => undefined)
+  }
+
+  async function loadProviderHistory(threadId: string): Promise<void> {
+    const history = await providerHistory
+    if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
 
   function acceptConnection(socket: WebSocket): void {
@@ -662,7 +715,9 @@ export async function startServer(
 
       case 'projects.add': {
         const p = parseParams(method, params)
-        return store.addProject(p.path, p.name)
+        const project = store.addProject(p.path, p.name)
+        refreshProviderHistory()
+        return project
       }
 
       case 'projects.pin': {
@@ -795,11 +850,18 @@ export async function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
-        const history = await orchestrator.historyForResponse(p.threadId, p.afterSeq ?? 0)
+        await loadProviderHistory(p.threadId)
+        const reset =
+          p.afterSeq !== undefined && store.providerHistoryChangedAfter(p.threadId, p.afterSeq)
+        const history = await orchestrator.historyForResponse(
+          p.threadId,
+          reset ? 0 : (p.afterSeq ?? 0),
+        )
         const running = orchestrator.isTurnRunning(p.threadId)
         const approval = store.threadApproval(p.threadId) ?? 'ask'
         const result = historyResponse(history.events, running, approval)
         orchestrator.markThreadRead(p.threadId)
+        if (reset) return { ...result, reset: true }
         return serializeHistory(
           result,
           history.serializedEvents === undefined
@@ -939,6 +1001,7 @@ export async function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
+        await loadProviderHistory(p.threadId)
         return {
           ...(await orchestrator.submitTurn(
             p.threadId,
@@ -1043,6 +1106,11 @@ export async function startServer(
   console.log(`[server] listening on ws://${host}:${port}`)
 
   async function shutdown(): Promise<void> {
+    // Imports still streaming in would otherwise write through a store that is
+    // already closing beneath them, so history stops before anything else.
+    historyClosing = true
+    clearInterval(providerHistoryTimer)
+    await providerHistory.then((history) => history.close()).catch(() => undefined)
     lifecycleScheduler.dispose()
     const orchestratorClosed = orchestrator.disposeAll()
     const listenerClosed = closeListener(httpServer, wss)
