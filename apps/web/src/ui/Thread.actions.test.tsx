@@ -12,7 +12,8 @@ import {
   workLabel,
 } from './Thread.js'
 
-const { previewViewedImage, revealPath, writeClipboardText } = vi.hoisted(() => ({
+const { resizeItem, previewViewedImage, revealPath, writeClipboardText } = vi.hoisted(() => ({
+  resizeItem: vi.fn((_index: number, _size: number): void => undefined),
   previewViewedImage: vi.fn(async (): Promise<unknown> => undefined),
   revealPath: vi.fn(async () => undefined),
   writeClipboardText: vi.fn(async () => undefined),
@@ -30,6 +31,8 @@ vi.mock('@tanstack/react-virtual', () => ({
       })),
     getTotalSize: () => count * 72,
     measureElement: () => undefined,
+    indexFromElement: (node: Element) => Number(node.getAttribute('data-index')),
+    resizeItem,
     measurementsCache: [],
     getOffsetForIndex: () => [0],
     scrollToIndex: () => undefined,
@@ -38,6 +41,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 
 afterEach(() => {
   cleanup()
+  resizeItem.mockClear()
   previewViewedImage.mockReset()
   previewViewedImage.mockResolvedValue(undefined)
   revealPath.mockReset()
@@ -494,6 +498,7 @@ describe('completed activity disclosure', () => {
     renderCompleted(items)
 
     expect(screen.queryByText('Thinking')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
     const thought = screen.getByRole('button', { name: 'Thought for 12s' })
     const reveal = thought.parentElement?.querySelector('.aux__reveal')
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
@@ -558,9 +563,18 @@ describe('completed activity disclosure', () => {
     fireEvent.click(disclosure)
 
     expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-    expect(reveal?.getAttribute('data-open')).toBe('true')
+    expect(reveal?.getAttribute('data-open')).toBe('opening')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(container.querySelector('.activity__body')).toBeTruthy()
+
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+      )
+    }
+
+    expect(reveal?.getAttribute('data-open')).toBe('true')
 
     fireEvent.click(disclosure)
 
@@ -578,6 +592,40 @@ describe('completed activity disclosure', () => {
 
     expect(reveal?.getAttribute('data-open')).toBe('false')
     expect(container.querySelector('.activity__body')).toBeNull()
+  })
+
+  it('re-measures the virtual row in the commit that moves details in or out of flow', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+      turnItem('command-1', 2, { type: 'command', command: 'pnpm test' }),
+      turnItem('answer-1', 3, { role: 'assistant', phase: 'final_answer', text: 'Fixed.' }),
+    ])
+    const disclosure = screen.getByRole('button', { name: 'Ran commands' })
+    const row = disclosure.closest<HTMLElement>('.thread__row')
+    expect(row?.getAttribute('data-index')).toBe('1')
+    const measured = vi.spyOn(row!, 'getBoundingClientRect').mockReturnValue({
+      height: 96.4,
+    } as DOMRect)
+
+    expect(resizeItem).not.toHaveBeenCalled()
+    fireEvent.click(disclosure)
+    expect(resizeItem).toHaveBeenCalledTimes(1)
+    expect(resizeItem).toHaveBeenCalledWith(1, 96)
+
+    const reveal = container.querySelector('.activity__reveal')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+      )
+    }
+    // Settling into the open state changes nothing the virtualizer must know.
+    expect(resizeItem).toHaveBeenCalledTimes(1)
+
+    measured.mockReturnValue({ height: 30 } as DOMRect)
+    fireEvent.click(disclosure)
+    expect(resizeItem).toHaveBeenCalledTimes(2)
+    expect(resizeItem).toHaveBeenLastCalledWith(1, 30)
   })
 
   it('keeps a reopened command group open when its old close timer expires', () => {
@@ -729,6 +777,54 @@ describe('completed activity disclosure', () => {
     expect(screen.getByText('Done.').closest('.activity__reveal')).toBeNull()
   })
 
+  it('closes an expanded work batch when the turn finishes and can reveal it again', () => {
+    const prompt = turnItem('prompt', 1, { role: 'user', text: 'Check it' })
+    const command = turnItem('command', 2, {
+      type: 'command',
+      status: 'started',
+      command: 'pnpm test',
+    })
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+      items: [prompt, command],
+    })
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    fireEvent.click(view.container.querySelector<HTMLButtonElement>('.activity__summary')!)
+    expect(view.container.querySelector('.activity__body')).toBeTruthy()
+
+    act(() =>
+      store.publish({
+        ...emptyThread,
+        items: [
+          prompt,
+          { ...command, status: 'completed' },
+          turnItem('thought', 3, { type: 'reasoning', text: 'The checks passed.' }),
+          turnItem('answer', 4, {
+            role: 'assistant',
+            phase: 'final_answer',
+            text: 'All done.',
+          }),
+        ],
+      }),
+    )
+
+    const summary = screen.getByRole('button', { name: /Worked for/ })
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(view.container.querySelector('.activity__body')).toBeNull()
+    expect(screen.getByText('All done.')).toBeTruthy()
+    fireEvent.click(summary)
+    expect(screen.getByRole('button', { name: 'Ran pnpm test' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Thought' }))
+    expect(screen.getByText('The checks passed.')).toBeTruthy()
+    fireEvent.click(summary)
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByText('All done.')).toBeTruthy()
+  })
+
   it('keeps every completed activity kind accessible after replay', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Build it' }),
@@ -743,6 +839,9 @@ describe('completed activity disclosure', () => {
     ]
     renderCompleted(items.map((entry) => ({ ...entry })))
 
+    expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull()
+    expect(screen.getByText('Built.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
     const thought = screen.getByRole('button', { name: 'Thought' })
     expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
       'true',
@@ -752,7 +851,6 @@ describe('completed activity disclosure', () => {
       'false',
     )
     expect(screen.getByText('Inspecting state')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Ran commands, searched' }))
     expect(screen.getByText('Ran pnpm test')).toBeTruthy()
     expect(screen.getByText('Searched 4 files')).toBeTruthy()
   })
@@ -770,6 +868,9 @@ describe('completed activity disclosure', () => {
       turnItem('answer-1', 6, { role: 'assistant', text: 'Done.' }),
     ])
 
+    expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull()
+    expect(screen.queryByText('Ran git status --short')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
     const thought = screen.getByRole('button', { name: 'Thought' })
     expect(thought).toBeTruthy()
     expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
@@ -780,10 +881,6 @@ describe('completed activity disclosure', () => {
 
     fireEvent.click(thought)
     expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
-    const stack = screen.getByRole('button', { name: 'Read files, ran commands' })
-
-    fireEvent.click(stack)
-
     fireEvent.click(screen.getByRole('button', { name: 'Ran commands' }))
     const firstCommand = screen.getByText('Ran git status --short')
     expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('false')
@@ -1326,7 +1423,7 @@ describe('collapsed row disclosure', () => {
     fireEvent.click(disclosure)
 
     expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-    expect(reveal?.getAttribute('data-open')).toBe('true')
+    expect(reveal?.getAttribute('data-open')).toBe('opening')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
     expect(reveal?.hasAttribute('inert')).toBe(false)
     const command = screen.getByRole('button', { name: 'Ran pnpm test' })
