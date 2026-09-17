@@ -145,6 +145,22 @@ describe('Markdown inline references', () => {
     )
   })
 
+  it('reveals the completed page from a slash-prefixed Windows drive link', async () => {
+    const project = 'E:/randomtesting/A_personalharness/AAAA/test24'
+    render(
+      <Markdown
+        text={`[Open the completed page](/${project}/dist/index.html).`}
+        projectPath={project}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Open the completed page' }))
+    expect(revealProjectFile).toHaveBeenCalledWith(
+      'E:\\randomtesting\\A_personalharness\\AAAA\\test24\\dist\\index.html',
+      project,
+    )
+    expect(screen.queryByText('This file is outside the selected project')).toBeNull()
+  })
+
   it('shows a retryable error when the native reveal request fails', async () => {
     vi.mocked(revealProjectFile).mockRejectedValueOnce(new Error('reveal failed'))
     render(
