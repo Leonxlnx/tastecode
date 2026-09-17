@@ -210,10 +210,16 @@ export function startServer(
   }
   const providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
   providerHistoryTimer.unref()
-  refreshProviderHistory()
+  // Opening a task during startup must not replay an obsolete imported transcript
+  // before adapter revisions and ownership have been refreshed.
+  const initialProviderHistory = providerHistory.then(async (history) => {
+    await history.refresh()
+    return history
+  })
+  void initialProviderHistory.catch(() => undefined)
 
   async function loadProviderHistory(threadId: string): Promise<void> {
-    const history = await providerHistory
+    const history = await initialProviderHistory
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
   // A previous run killed mid-session leaves git believing in checkouts that
