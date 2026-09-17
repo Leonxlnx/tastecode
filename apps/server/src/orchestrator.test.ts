@@ -5817,6 +5817,39 @@ describe('panic versus an in-flight queue drain', () => {
   })
 })
 
+describe('shutdown owns every spawned process', () => {
+  it('retries a failed provider stop once before reporting the leak', async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('codex', process.cwd())
+    const session = sessions[0]!
+    let attempts = 0
+    session.dispose = () => {
+      attempts += 1
+      if (attempts === 1) return Promise.reject(new Error('still running'))
+      session.disposed = true
+    }
+
+    await orchestrator.disposeAll()
+
+    expect(attempts).toBe(2)
+    expect(session.disposed).toBe(true)
+  })
+
+  it('reports a provider stop that also fails the retry', async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('codex', process.cwd())
+    const session = sessions[0]!
+    let attempts = 0
+    session.dispose = () => {
+      attempts += 1
+      return Promise.reject(new Error('still running'))
+    }
+
+    await expect(orchestrator.disposeAll()).rejects.toThrow(/could not be stopped/i)
+    expect(attempts).toBe(2)
+  })
+})
+
 describe('background sessions', () => {
   class FakeCodexControl extends EventEmitter {
     start = vi.fn(async () => {})

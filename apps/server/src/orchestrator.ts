@@ -2939,9 +2939,25 @@ export class Orchestrator {
     this.#backgroundSourcesRevision += 1
     await Promise.allSettled([...this.#designPreviewTasks.values(), ...previewsStopped])
     await Promise.allSettled(this.#stoppingDesignPreviews.values())
-    const failures = (await stopped).filter(
+    let failures = (await stopped).filter(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     )
+    if (failures.length) {
+      // A kill that failed still owns a live process — a detached one outlives
+      // this process by design. Give it one more pass before reporting the
+      // leak; killTree clears its in-flight record on failure, so a repeated
+      // dispose re-runs the TERM→KILL escalation rather than returning a
+      // cached rejection.
+      const retried = await Promise.allSettled([
+        this.#terminals.closeAll(),
+        this.#controls.disposeAll(),
+        ...[...this.#stoppingSessions.keys()].map((threadId) => this.#stopThreadProvider(threadId)),
+        ...backgroundSessions.map((session) => this.#disposeSession(session)),
+      ])
+      failures = retried.filter(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      )
+    }
     if (failures.length)
       throw new AggregateError(
         failures.map((result) => result.reason),
