@@ -65,7 +65,14 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
       if (!isBrowserGuestUrl(url)) event.preventDefault()
     })
     // will-navigate does not fire for programmatic loadURL() or src attribute
-    // changes; a guest that still ends up off the web gets unloaded.
+    // changes; stopping a rejected main-frame navigation at start keeps its
+    // response from ever committing into the guest.
+    guest.on('did-start-navigation', (details) => {
+      if (details.isMainFrame && !details.isSameDocument && !isBrowserGuestUrl(details.url, true)) {
+        guest.stop()
+      }
+    })
+    // A guest that still ends up off the web gets unloaded.
     guest.on('did-navigate', (_event, url) => {
       if (!isBrowserGuestUrl(url, true)) {
         void guest.loadURL('about:blank').catch(() => {})
@@ -86,10 +93,27 @@ function isBrowserGuestUrl(value: unknown, allowBlank = false): value is string 
   if (allowBlank && value === 'about:blank') return true
   try {
     const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
+    if (url.protocol === 'https:') return true
+    // Plain HTTP stays loopback-only: dev previews bind 127.0.0.1 (see
+    // LoopbackPreviewUrlSchema), while unrestricted HTTP would let a guest
+    // page pull link-local metadata endpoints or LAN services into this
+    // shared session.
+    return url.protocol === 'http:' && isLoopbackHostname(url.hostname)
   } catch {
     return false
   }
+}
+
+/**
+ * WHATWG parsing already normalizes non-decimal IPv4 spellings, trailing-dot
+ * IPs and compressed IPv6 literals, so string checks cover every loopback
+ * spelling a URL can carry.
+ */
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === '[::1]') return true
+  if (/^127(?:\.\d{1,3}){3}$/.test(hostname)) return true
+  const domain = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname
+  return domain === 'localhost' || domain.endsWith('.localhost')
 }
 
 /** Present the guest as Chromium instead of exposing the Electron shell. */
