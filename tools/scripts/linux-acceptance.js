@@ -137,9 +137,12 @@ async function main() {
     fail(`configured Linux app executable is not executable: ${executableName}`)
   }
   const resources = path.join(unpackedDirectory, 'resources')
+  const unpackedDir = statSync(path.join(resources, 'app.asar.unpacked'), {
+    throwIfNoEntry: false,
+  })
+  if (!unpackedDir?.isDirectory()) fail('missing packaged app.asar.unpacked/')
   for (const relativePath of [
     'app.asar',
-    'app.asar.unpacked',
     'LICENSE',
     'NOTICE',
     'THIRD_PARTY_LICENSES.txt',
