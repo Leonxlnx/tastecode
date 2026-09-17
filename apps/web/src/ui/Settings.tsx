@@ -277,12 +277,16 @@ function SettingsComponent(props: {
   onAccountChange: (provider: ProviderId, account: Account) => void
   authRefreshRevision?: number | undefined
   initialSection?: SettingsSection | undefined
+  showDebug?: boolean | undefined
   onReset: () => void
   onForceOnboarding?: (() => void) | undefined
   onClose: () => void
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
 }) {
-  const [section, setSection] = useState<SettingsSection>(props.initialSection ?? 'providers')
+  const [selectedSection, setSection] = useState<SettingsSection>(
+    props.initialSection ?? 'providers',
+  )
+  const section = selectedSection === 'debug' && !props.showDebug ? 'providers' : selectedSection
 
   useEffect(() => {
     setSection(props.initialSection ?? 'providers')
@@ -400,12 +404,14 @@ function SettingsComponent(props: {
             label="Data & privacy"
             onClick={() => setSection('data')}
           />
-          <SettingsNavItem
-            active={section === 'debug'}
-            icon={<Bug size={15} aria-hidden />}
-            label="Debug"
-            onClick={() => setSection('debug')}
-          />
+          {props.showDebug ? (
+            <SettingsNavItem
+              active={section === 'debug'}
+              icon={<Bug size={15} aria-hidden />}
+              label="Debug"
+              onClick={() => setSection('debug')}
+            />
+          ) : null}
           <SettingsNavItem
             active={section === 'about'}
             icon={<Info size={15} aria-hidden />}
