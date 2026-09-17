@@ -46,7 +46,34 @@ Packaged licenses, updater configuration, renderer and all 451 reference/resourc
 the source. Packaged PTY and OS keyring proofs passed. The tested export matches all 1,961
 runtime/tooling files tracked by the main commit above.
 
-## Candidate and remaining release checks
+## Windows provider startup correction — 2026-09-17
+
+Private beta 3 (`714dce34`) corrects a packaged Windows startup failure: copying `process.env`
+made its `Path` key case-sensitive, and adding a second `PATH` discarded System32. Shared CLI
+discovery, provider launch and terminal environments now preserve and normalize that path.
+Missing-program errors no longer claim that the project directory is unavailable. The packaged
+native proof now launches a real system command through the same helper as providers.
+
+All four local gates passed. The first full test run overlapped installer compression and hit
+two existing one-second startup waits in `audit-regressions.test.ts`; the isolated six-test
+suite and a full rerun without compression both passed, without changing those tests. Final
+server checks: 774 passed; desktop: 172; web: 1,521. Focused regression checks: 45 passed, one skip.
+
+The real beta 3 package passed reference/license/renderer verification, native PTY and keyring
+proofs, and launch checks for Codex, Claude Code and Grok. Codex returned eight models including
+Astra and a signed-in account. The installed app was then started using persistent Windows
+environment paths, with no development server or Codex-session-only home override. Its own
+WebSocket API confirmed successful model/account requests and all 99 existing chats. Both
+history profiles were backed up before their earlier merge; the installer keeps the normal
+installed profile. No website-generation prompts were submitted for this verification.
+
+Installer: `TasteCode-0.1.0-beta.3-win-x64.exe`, 510,237,506 bytes, SHA-256
+`b21ab908fcaba2f9d264f7a926b53e3668afce6a0b43eb3eb8a8a0322981fe16`.
+Built with `--publish never`, installed locally, and left running. It remains unsigned and
+has not completed the separate clean-machine qualification. The public beta update feed
+still returns 404 until release hosting is configured. No hosted CI or public release ran.
+
+## Earlier beta 2 candidate and remaining release checks
 
 `TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.
 Size: 510,237,171 bytes. SHA-256:
