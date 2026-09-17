@@ -130,8 +130,14 @@ and hero-copy style suggestions are warnings instead of workflow-ending errors.
 The Design package has 143 passing tests. Focused orchestration checks cover correction after
 restore, repeated-error termination, unavailable assets, exact-file Build and bounded Preview.
 The broad server run encountered a one-second completion wait in the provider workflow test;
-all nine provider variants passed on focused rerun without test changes. Final gates are rerun
-after these additions. Installed beta 3 and the user's active tests remain untouched.
+all nine provider variants passed on focused rerun without test changes. The final full run
+passed: 143 Design, 1,521 web, 776 server and 172 desktop tests, plus all adapter/package suites
+and 46 release-tool checks (existing skips retained). `pnpm lint`, `pnpm typecheck`, `pnpm test`
+and `pnpm build` all passed. The full test run used two Vitest workers and serial workspace
+packages to avoid resource contention with other local work. No tests were weakened.
+
+Private beta 4 carries these corrections. It is prepared separately from the installed beta 3;
+installation and app restart remain deferred to the user. No new website prompt was submitted.
 
 ## Earlier beta 2 candidate and remaining release checks
 
