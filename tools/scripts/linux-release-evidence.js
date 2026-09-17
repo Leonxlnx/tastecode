@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -174,6 +174,77 @@ export function verifyConfiguredDebDependencies(releaseDirectory, desktopPackage
     )
   }
   assertConfiguredDebDependencies(actualDepends, debConfig)
+}
+
+/**
+ * Verify the deb payload itself — declared dependencies alone cannot prove the
+ * sandbox helper, AppArmor profile, desktop entry, or icon actually shipped.
+ */
+export async function verifyDebContents(releaseDirectory, desktopPackage) {
+  const debName = expectedLinuxArtifactNames(
+    {
+      version: desktopPackage.version,
+      artifactName: desktopPackage.build?.artifactName,
+      productName: desktopPackage.productName,
+      name: desktopPackage.name,
+    },
+    TAG,
+  ).find((name) => name.endsWith('.deb'))
+  if (!debName) {
+    throw new Error('[linux-release-evidence] cannot determine the expected deb artifact name')
+  }
+  const debPath = path.join(releaseDirectory, debName)
+  const extractionRoot = await mkdtemp(path.join(os.tmpdir(), 'tastecode-deb-verify-'))
+  try {
+    try {
+      execFileSync('dpkg-deb', ['--extract', debPath, extractionRoot], {
+        stdio: 'ignore',
+        timeout: 120_000,
+      })
+    } catch {
+      throw new Error(
+        '[linux-release-evidence] cannot extract the deb with dpkg-deb; install dpkg and retry',
+      )
+    }
+    const productRoot = path.join(extractionRoot, 'opt', desktopPackage.productName)
+    const executable = desktopPackage.build?.linux?.executableName ?? 'tastecode'
+    for (const required of [
+      executable,
+      'chrome-sandbox',
+      path.join('resources', 'app.asar'),
+      path.join('resources', 'apparmor-profile'),
+    ]) {
+      const entry = statSync(path.join(productRoot, required), { throwIfNoEntry: false })
+      if (!entry?.isFile()) {
+        throw new Error(`[linux-release-evidence] deb payload is missing ${required}`)
+      }
+    }
+    const applications = path.join(extractionRoot, 'usr', 'share', 'applications')
+    const desktopEntryName = readdirSync(applications).find((name) => name.endsWith('.desktop'))
+    if (!desktopEntryName) {
+      throw new Error('[linux-release-evidence] deb payload ships no .desktop entry')
+    }
+    const desktopEntry = readFileSync(path.join(applications, desktopEntryName), 'utf8')
+    for (const key of ['StartupWMClass=', 'Icon=', 'Exec=']) {
+      if (!desktopEntry.includes(key)) {
+        throw new Error(
+          `[linux-release-evidence] ${desktopEntryName} is missing a ${key.slice(0, -1)} key`,
+        )
+      }
+    }
+    const iconName = /^Icon=(.+)$/m.exec(desktopEntry)?.[1]?.trim()
+    if (!iconName) {
+      throw new Error('[linux-release-evidence] desktop entry has no Icon name')
+    }
+    const icons = readdirSync(path.join(extractionRoot, 'usr', 'share', 'icons', 'hicolor'), {
+      recursive: true,
+    })
+    if (!icons.some((entry) => path.basename(entry) === `${iconName}.png`)) {
+      throw new Error(`[linux-release-evidence] no hicolor icon named ${iconName}.png in the deb`)
+    }
+  } finally {
+    await rm(extractionRoot, { recursive: true, force: true })
+  }
 }
 
 export async function collectLinuxReleaseEvidence(
@@ -376,6 +447,7 @@ async function main() {
   }
   assertWorktreeClean(porcelain)
   verifyConfiguredDebDependencies(options.dir, desktopPackage)
+  await verifyDebContents(options.dir, desktopPackage)
   let commit
   try {
     commit = execFileSync('git', ['rev-parse', 'HEAD'], {
