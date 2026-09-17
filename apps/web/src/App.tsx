@@ -45,7 +45,6 @@ import {
   type Shortcut,
 } from './shortcuts.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
-import { DebugDialog } from './ui/DebugDialog.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
@@ -516,7 +515,7 @@ export function App() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => readSetting(ONBOARDING_KEY) === 'done',
   )
-  const [debugOpen, setDebugOpen] = useState(false)
+  const [debugSettingsVisible, setDebugSettingsVisible] = useState(false)
   const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
@@ -4343,10 +4342,10 @@ export function App() {
         matchesShortcut(event, { key: 'd', primary: true, alt: true, shift: true })
       ) {
         event.preventDefault()
-        setDebugOpen((open) => !open)
+        setDebugSettingsVisible((visible) => !visible)
         return
       }
-      if (debugOpen || (onboardingPreview && !settingsOpen)) return
+      if (onboardingPreview && !settingsOpen) return
 
       // Settings owns all keys while open. Its two app shortcuts can close
       // the sheet or jump directly to the keybind editor.
@@ -4395,7 +4394,6 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [
     checkoutDelete,
-    debugOpen,
     onboardingPreview,
     keybindingActions,
     keybindings,
@@ -4983,6 +4981,7 @@ export function App() {
         <Suspense fallback={null}>
           <Settings
             initialSection={settingsSection}
+            showDebug={debugSettingsVisible}
             provider={provider}
             providerName={providerName(provider, acpAgentName)}
             transport={transport}
@@ -5027,22 +5026,11 @@ export function App() {
         </Suspense>
       ) : null}
 
-      {debugOpen ? (
-        <DebugDialog
-          onClose={() => setDebugOpen(false)}
-          onForceOnboarding={() => {
-            setDebugOpen(false)
-            setSettingsOpen(false)
-            setOnboardingPreview(true)
-          }}
-        />
-      ) : null}
-
       {onboardingPreview ||
       (isDesktop && projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed) ? (
         <Suspense fallback={null}>
           <Onboarding
-            hidden={settingsOpen || debugOpen}
+            hidden={settingsOpen}
             displayName={profileIdentity.displayName}
             onDisplayNameChange={(displayName) => updateProfileIdentity({ displayName })}
             themePreference={themePreference}
