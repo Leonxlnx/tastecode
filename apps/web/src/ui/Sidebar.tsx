@@ -83,7 +83,11 @@ const AccountLimits = lazy(loadAccountLimits)
 
 function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
   const summary = useRef<HTMLButtonElement>(null)
-  const visible = props.states.some((state) => state.status !== 'unavailable')
+  const visible = props.states.some(({ summary }) =>
+    summary?.limitSource
+      ? summary.limitSource.status !== 'unavailable'
+      : !summary || summary.limits.length > 0,
+  )
   useLayoutEffect(() => summary.current?.focus(), [])
   if (!visible) return null
   return (

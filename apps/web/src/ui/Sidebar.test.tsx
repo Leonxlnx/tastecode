@@ -106,6 +106,33 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('hides unavailable plan limits while the account component is loading', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    renderProjectCatalog([], undefined, [
+      {
+        provider: 'grok',
+        status: 'ready',
+        summary: {
+          session: usage,
+          today: usage,
+          limits: [],
+          limitSource: { provider: 'grok', status: 'unavailable' },
+        },
+      },
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+  })
+
   it('shows Usage on the first menu render while limits are still loading', () => {
     renderProjectCatalog([], undefined, [{ provider: 'codex', status: 'loading' }])
 
