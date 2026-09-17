@@ -3252,7 +3252,7 @@ describe('provider-neutral design briefing', () => {
       )
       sessions[0]?.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
 
-      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', suspended: true })
       expect(
         received.some(
           ({ event }) =>
@@ -3350,6 +3350,16 @@ describe('provider-neutral design briefing', () => {
 
   it.each([
     {
+      failure: new Error('path must be a file'),
+      name: 'directory supplied as an entry file',
+      plan: commandPreviewPlan,
+    },
+    {
+      failure: new Error('preview script "serve" is not declared in package.json'),
+      name: 'undeclared package script',
+      plan: commandPreviewPlan,
+    },
+    {
       failure: new Error('preview port 5173 is already in use; choose another port'),
       name: 'occupied port',
       plan: commandPreviewPlan,
@@ -3432,7 +3442,7 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
-  it('fails after the bounded Preview correction also fails', async () => {
+  it('suspends after the bounded Preview correction also fails', async () => {
     const failure = new Error('preview port 5173 is already in use; choose another port')
     const { orchestrator, sessions, received, store, workspace } =
       await previewRecoveryHarness(failure)
@@ -3446,7 +3456,12 @@ describe('provider-neutral design briefing', () => {
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
 
       sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
-      await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      await vi.waitFor(() =>
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'preview',
+          suspended: true,
+        }),
+      )
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       expect(sessions[0]?.sent).toHaveLength(2)
       expect(
@@ -3467,6 +3482,53 @@ describe('provider-neutral design briefing', () => {
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
+
+  it.each([false, true])(
+    'continues the saved phase after provider failure (new runtime: %s)',
+    async (restart) => {
+      const first = await previewRecoveryHarness(undefined)
+      let active = first
+      const { store, workspace, artifacts } = first
+      try {
+        first.sessions[0]?.emit({
+          type: 'thread.error',
+          threadId: 'preview-recovery',
+          message: 'Usage limit reached',
+        })
+        first.sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'preview',
+          suspended: true,
+        })
+        if (restart) {
+          await first.orchestrator.disposeAll()
+          active = { ...first, ...harness(undefined, store) }
+          active.capturePreview.mockResolvedValue(undefined)
+        }
+        await active.orchestrator.submitTurn('preview-recovery', 'continue', [
+          DESIGN_BRIEF_ATTACHMENT,
+        ])
+        const prompt = active.sessions[0]?.sent.at(-1)
+        expect(prompt).toContain('Preview Setup phase')
+        expect(prompt).not.toContain('Design Briefing mode')
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'preview',
+          originalRequest: 'Build a site.',
+          options: { effort: 'high' },
+        })
+        expect(artifacts.map(([file]) => readFileSync(file, 'utf8'))).toEqual(
+          artifacts.map(([, contents]) => contents),
+        )
+        active.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+        active.sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      } finally {
+        await active.orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
 
   it.each([
     {

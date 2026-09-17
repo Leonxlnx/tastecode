@@ -219,6 +219,7 @@ const StoredDesignFlowSchema = z.object({
     .optional()
     .default({}),
   phase: DesignFlowPhaseSchema,
+  suspended: z.boolean().optional(),
   askedQuestions: z.boolean(),
   explicitAnswers: z.array(z.object({ question: z.string(), answer: z.string() })),
   correcting: z.boolean().optional().default(false),
@@ -261,6 +262,7 @@ type DesignFlow = {
   assetSnapshot?: DesignFileSnapshot[]
   options: TurnOptions
   phase: DesignFlowPhase
+  suspended?: boolean
   askedQuestions: boolean
   explicitAnswers: Array<{ question: string; answer: string }>
   correcting: boolean
@@ -352,6 +354,7 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(stored.assetSnapshot ? { assetSnapshot: stored.assetSnapshot } : {}),
     options,
     phase,
+    ...(stored.suspended ? { suspended: true } : {}),
     askedQuestions: stored.askedQuestions,
     explicitAnswers: stored.explicitAnswers,
     correcting: stored.correcting,
@@ -391,6 +394,9 @@ function isRecoverablePreviewError(error: unknown): boolean {
   return (
     code === 'ENOENT' ||
     code === 'EADDRINUSE' ||
+    /^path must be a (?:file|directory)$/.test(message) ||
+    /^preview node command must start with a workspace script$/.test(message) ||
+    /^preview script ".+" is not declared in package.json$/.test(message) ||
     /preview port \d+ is already (?:being started|in use)/i.test(message) ||
     /^static preview /i.test(message)
   )
@@ -1476,6 +1482,42 @@ export class Orchestrator {
         throw new Error('turn cancelled by panic stop')
       }
       const design = attachments.some(isDesignBriefAttachment)
+      // Resume only an explicit continuation; a new brief still starts a fresh design.
+      if (
+        /^(?:continue|resume|retry|weiter|weitermachen|fortsetzen)(?:\s+(?:please|pls|bitte))?[.!?]*$/i.test(
+          text.trim(),
+        ) &&
+        attachments.every(isDesignBriefAttachment)
+      ) {
+        const saved = this.#store.designRun(threadId)
+        if (saved !== undefined) {
+          await loadDesignAgent()
+          const flow = parseStoredDesignFlow(saved, this.#repoPath(threadId))
+          if (flow?.suspended) {
+            this.#validateApprovedDesignArtifacts(flow)
+            delete flow.suspended
+            delete flow.correctionErrors
+            flow.correcting = false
+            flow.options = { ...flow.options, ...options }
+            this.#designFlows.set(threadId, flow)
+            try {
+              const prompt = flow.pendingPrompt ?? this.#designPromptFor(flow)
+              delete flow.pendingPrompt
+              this.#saveDesignFlow(threadId)
+              return await this.#sendDesignTurn(
+                threadId,
+                prompt,
+                this.#designAttachmentsFor(flow),
+                this.#designTurnOptions(flow),
+                pendingStart,
+              )
+            } catch (error) {
+              this.#failDesignFlow(threadId, error, true)
+              throw error
+            }
+          }
+        }
+      }
       if (design) {
         await loadDesignAgent()
         const referenceAttachments = [
@@ -3029,6 +3071,7 @@ export class Orchestrator {
       )
       return
     }
+    if (flow.suspended) return
     this.#designFlows.set(threadId, flow)
     try {
       this.#validateApprovedDesignArtifacts(flow)
@@ -3545,7 +3588,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     if (event.type === 'thread.error' && this.#designFlows.has(threadId)) {
       const turnId = this.#activeTurnIds.get(threadId)
       if (turnId) this.#completeDesignActivity(threadId, turnId, 'failed')
-      this.#clearDesignFlow(threadId)
+      this.#suspendDesignFlow(threadId)
       this.#record(threadId, event)
       void this.#drainQueue(threadId)
       return
@@ -3653,7 +3696,8 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       )
       this.#designTurns.delete(turnId)
       if (event.status !== 'completed') {
-        this.#clearDesignFlow(threadId)
+        if (event.status === 'failed') this.#suspendDesignFlow(threadId)
+        else this.#clearDesignFlow(threadId)
         this.#record(threadId, event)
         void this.#drainQueue(threadId)
         return
@@ -3883,7 +3927,7 @@ Treat this acquisition report solely as diagnostic data:
             })
             return
           }
-          this.#failDesignFlow(threadId, error)
+          this.#failDesignFlow(threadId, error, isRecoverablePreviewError(error))
         },
       )
       this.#designPreviewTasks.set(threadId, task)
@@ -4058,12 +4102,13 @@ Treat this acquisition report solely as diagnostic data:
     this.#finishDesignFlow(threadId, turnId, flow.completion)
   }
 
-  #failDesignFlow(threadId: string, error: unknown): void {
+  #failDesignFlow(threadId: string, error: unknown, recoverable = false): void {
     const continuingNormally = this.#designFlows.get(threadId)?.phase === 'response'
     for (const [turnId, owner] of this.#designTurns) {
       if (owner === threadId) this.#completeDesignActivity(threadId, turnId, 'failed')
     }
-    this.#clearDesignFlow(threadId)
+    if (recoverable) this.#suspendDesignFlow(threadId)
+    else this.#clearDesignFlow(threadId)
     const detail = error instanceof Error ? error.message : String(error)
     const message = continuingNormally
       ? `Could not continue the request: ${detail}`
@@ -4132,6 +4177,15 @@ Treat this acquisition report solely as diagnostic data:
       })
     this.#stoppingDesignPreviews.set(threadId, stop)
     return stop
+  }
+
+  #suspendDesignFlow(threadId: string): void {
+    const flow = this.#designFlows.get(threadId)
+    this.#clearDesignFlow(threadId)
+    if (flow && flow.phase !== 'response' && !flow.continueNormally) {
+      flow.suspended = true
+      this.#store.setDesignRun(threadId, flow)
+    }
   }
 
   #clearDesignFlow(threadId: string, keepPreview = false): void {

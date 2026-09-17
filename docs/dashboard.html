@@ -290,13 +290,22 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-17 base main 571bee75 + provider-history recovery</span>
+        <span class="meta">2026-09-18 base main 0848ecb9 + Design recovery fixes</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <h2>Private Beta Preparation</h2>
+        <p class="sub">
+          Design preview validates the Node entry file separately from directory and port arguments,
+          retaining workspace and credential boundaries. Correctable preview plans retry locally;
+          provider failures and exhausted preview retries preserve a suspended phase for explicit
+          continue/retry, including across runtime restart, without resampling references. Codex
+          accepts bounded history replies up to 128 MiB after a local 18.29 MiB history reply
+          exceeded the shared 16 MiB cap. These source fixes require a new installed build; active
+          beta 5 sessions remain untouched.
+        </p>
         <p class="sub">
           Provider history now rechecks task ownership after discovery and defers imports while
           sessions start. Existing duplicate imports are reconciled after the canonical transcript
