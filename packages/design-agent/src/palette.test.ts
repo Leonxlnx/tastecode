@@ -46,6 +46,23 @@ describe('semantic palette generation', () => {
     expect(result.value.themes.light?.roles.accent).toBe('#5581D4')
   })
 
+  it.each(['light', 'dark'] as const)(
+    'repairs button text and hover together for a mid-tone accent in %s',
+    (theme) => {
+      const result = generatePalette({
+        themes: {
+          [theme]: { accentSeed: '#70805D', neutralSeed: '#635B52', surfaceContrast: 'quiet' },
+        },
+        locked: { [theme]: { accent: '#70805D' } },
+      })
+      expect(result.status).toBe('ready')
+      if (result.status !== 'ready') return
+      const palette = result.value.themes[theme]!
+      expect(palette.roles.accent).toBe('#70805D')
+      expect(auditPalette(palette.roles).pass).toBe(true)
+    },
+  )
+
   it('derives accent-dependent roles from an explicit accent lock', () => {
     const withLock = generatePalette({
       themes: {
@@ -69,10 +86,13 @@ describe('semantic palette generation', () => {
     }
   })
 
-  it('blocks an inaccessible locked pair instead of changing it', () => {
+  it.each([
+    { canvas: '#777777', text: '#777777' },
+    { accent: '#70805D', onAccent: '#FFFFFF' },
+  ])('blocks an inaccessible locked pair instead of changing it: %o', (locked) => {
     const result = generatePalette({
       ...request,
-      locked: { light: { canvas: '#777777', text: '#777777' } },
+      locked: { light: locked },
     })
     expect(result).toEqual(
       expect.objectContaining({

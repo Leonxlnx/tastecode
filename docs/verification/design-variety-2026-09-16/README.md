@@ -73,6 +73,72 @@ Built with `--publish never`, installed locally, and left running. It remains un
 has not completed the separate clean-machine qualification. The public beta update feed
 still returns 404 until release hosting is configured. No hosted CI or public release ran.
 
+## Mid-tone palette correction — 2026-09-17
+
+An installed beta 3 coffee-site run failed in Brand with `light.onAccent on accent is 4.26:1`.
+The captured recipe used `#70805D` and a derived `#5C6C49` hover. Starting with white text
+failed on the accent; changing only the text failed on hover. The greedy repair could not
+cross that intermediate state and incorrectly reported an unrepairable palette.
+
+The generator now chooses white or black text against the immutable accent first, then uses
+the existing repair for hover. The original recipe passes through the real Brand parser with
+24 color records; its accent remains `#70805D` and hover becomes `#6A7A56`. All 864 combinations
+of a 216-color RGB grid, light/dark themes, and quiet/defined surfaces passed. Locked inaccessible
+colors still produce an explicit conflict. The new regression failed before the fix and passed
+after it. The Design package has 137 passing tests, including the explicit button-text lock.
+
+The user's installed app, running tasks, settings and project files were not changed. This is
+a source correction awaiting the next approved app update, not a live retry of the failed site.
+
+## Fictional example copy correction — 2026-09-17
+
+A second beta 3 run stopped in Page after the agent labelled contract clauses as fictional on
+its correction attempt. The claim detector treated numeric terms such as `30 days` and `45 days`
+as unsupported product proof even within those explicit examples. Numeric values in visibly
+fictional, illustrative or representative copy now produce a publication-review finding.
+Unlabelled numeric claims and assertions of customer proof, rankings, urgency and performance
+still require evidence; an illustrative label alone cannot exempt those assertions.
+
+The three captured sentence variants failed before the fix and pass afterward. The captured
+ten-section page now passes copy validation; all eight numeric findings remain review items.
+The combined Design package has 141 passing tests. The first full-suite run had one existing
+web-model-settings test time out finding its lazily loaded Models button; its focused rerun
+passed without changes to web code or tests. The installed app and active user runs remain
+untouched. No generated website was changed and no new website prompt was submitted.
+
+## Asset and planning recovery — 2026-09-17
+
+The third captured failure had two causes: the SVG sniffer searched binary PNG provenance
+metadata for `<svg`, and a font-family record named a directory holding regular and italic files.
+SVG sniffing now requires a textual document prefix; the existing raster decoder still verifies
+format and image data. Font-family directories are resolved inside the workspace and expanded
+to concrete manifest entries before validation and snapshotting. Empty folders, path escapes,
+missing files, invalid raster bytes, and required-asset coverage remain errors.
+
+The actual asset manifest now validates with all 13 photographs and three font files, including
+eight original PNGs with their provenance metadata intact. All 16 files snapshot successfully.
+The user's files were only read; metadata was not removed and generated work was not rewritten.
+Both new regressions failed before the patch and passed afterward.
+
+Planning phases can correct up to three distinct errors; correcting an image no longer consumes
+the only opportunity to fix a subsequent font issue. The seen errors survive stored-flow restore,
+and an unchanged rejected output stops rather than looping. Build and Preview keep their existing
+retry bounds. Correction prompts permit relevant inspection within the phase's scope. Copy
+diagnostics now include the actual text and remediation; punctuation, heading length, eyebrow
+and hero-copy style suggestions are warnings instead of workflow-ending errors.
+
+The Design package has 143 passing tests. Focused orchestration checks cover correction after
+restore, repeated-error termination, unavailable assets, exact-file Build and bounded Preview.
+The broad server run encountered a one-second completion wait in the provider workflow test;
+all nine provider variants passed on focused rerun without test changes. The final full run
+passed: 143 Design, 1,521 web, 776 server and 172 desktop tests, plus all adapter/package suites
+and 46 release-tool checks (existing skips retained). `pnpm lint`, `pnpm typecheck`, `pnpm test`
+and `pnpm build` all passed. The full test run used two Vitest workers and serial workspace
+packages to avoid resource contention with other local work. No tests were weakened.
+
+Private beta 4 carries these corrections. It is prepared separately from the installed beta 3;
+installation and app restart remain deferred to the user. No new website prompt was submitted.
+
 ## Earlier beta 2 candidate and remaining release checks
 
 `TasteCode-0.1.0-beta.2-win-x64.exe` was built locally with `--publish never`.

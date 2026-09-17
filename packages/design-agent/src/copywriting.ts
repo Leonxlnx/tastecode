@@ -16,10 +16,15 @@ interface CopySurface {
   evidence: string[]
 }
 
-const CLAIM_PATTERNS = [
+const NUMERIC_CLAIM_PATTERNS = [
   /[$€£]\s?\d|\b\d[\d,.]*\s?(?:USD|EUR|GBP)\b/iu,
   /\b\d+(?:[.,]\d+)?\s*(?:%|x|×)(?![\p{L}\p{N}_])/iu,
   /\b\d[\d,.]*\+?\s+(?:customers?|users?|teams?|companies|countries|years?|hours?|minutes?|days?|projects?|reviews?|downloads?|orders?)\b/iu,
+]
+
+const CLAIM_PATTERNS = [
+  /\b(?:save[sd]?|saving|cuts?|reduce[sd]?|increase[sd]?|boost[sd]?|improve[sd]?)\b[^.!?]{0,60}\b\d/iu,
+  /\b\d+(?:[.,]\d+)?\s*(?:%|x|×)\s+(?:faster|cheaper|more|less|accurate|accuracy|uptime|reliability|savings)\b/iu,
   /\b(?:fastest|safest|cheapest|most trusted|most accurate|most reliable|highest[- ]rated|lowest[- ]cost|#\s*1|number one|the only)\b/iu,
   /\b(?:studies show|research (?:shows|proves)|clinically proven|doctors recommend|award[- ]winning|trusted by|used by)\b/iu,
   /\b(?:today only|limited spots?|ends soon|act now)\b/iu,
@@ -112,7 +117,7 @@ export function assertPageCopy(page: PageBlueprint): PageBlueprint {
   const errors = lintPageCopy(page).filter(({ severity }) => severity === 'error')
   if (errors.length) {
     throw new Error(
-      `page copy failed: ${errors.map(({ rule, path }) => `${rule} at ${path}`).join('; ')}`,
+      `page copy failed: ${errors.map(({ rule, path, excerpt, message }) => `${rule} at ${path}: ${JSON.stringify(excerpt)}. ${message}`).join('; ')}`,
     )
   }
   return page
@@ -160,20 +165,28 @@ function collectCopy(page: PageBlueprint): CopySurface[] {
 function lintEmDashes(surfaces: CopySurface[]): CopyLintFinding[] {
   return surfaces
     .filter(({ text }) => text.includes('\u2014'))
-    .map((surface) => finding('copy/em-dash', 'error', surface, 'Replace the em dash.'))
+    .map((surface) => finding('copy/em-dash', 'warning', surface, 'Replace the em dash.'))
 }
 
 function lintClaims(surfaces: CopySurface[]): CopyLintFinding[] {
   return surfaces.flatMap((surface) => {
-    if (!CLAIM_PATTERNS.some((pattern) => pattern.test(surface.text))) return []
+    const assertedClaim = CLAIM_PATTERNS.some((pattern) => pattern.test(surface.text))
+    if (!assertedClaim && !NUMERIC_CLAIM_PATTERNS.some((pattern) => pattern.test(surface.text)))
+      return []
+    // Numeric terms in visibly fictional examples are content, not product proof.
+    // Keep assertions such as "trusted by" subject to the evidence requirement.
+    const illustrativeValue =
+      !assertedClaim && /\b(?:fictional|illustrative|representative)\b/iu.test(surface.text)
     return [
       finding(
         'copy/objective-claim',
-        surface.evidence.length ? 'review' : 'error',
+        surface.evidence.length || illustrativeValue ? 'review' : 'error',
         surface,
-        surface.evidence.length
-          ? 'Verify the claim against its recorded evidence before publishing.'
-          : 'Remove the objective claim or attach real evidence to the section.',
+        illustrativeValue
+          ? 'Keep the illustrative context visible and verify the example values before publishing.'
+          : surface.evidence.length
+            ? 'Verify the claim against its recorded evidence before publishing.'
+            : 'Remove the objective claim or attach real evidence to the section.',
       ),
     ]
   })
@@ -223,7 +236,7 @@ function lintHeadings(page: PageBlueprint): CopyLintFinding[] {
     return [
       {
         rule: 'copy/heading-length',
-        severity: 'error' as const,
+        severity: 'warning' as const,
         path: `sections[${index}].copy.heading`,
         excerpt: heading,
         message: `Keep headings within ${MAX_HEADING_WORDS} words and ${MAX_HEADING_CHARACTERS} characters so they fit one or two lines; three lines is a rare visual exception.`,
@@ -238,7 +251,7 @@ function lintHeroCopyStack(page: PageBlueprint): CopyLintFinding[] {
       ? [
           {
             rule: 'copy/hero-body-stack',
-            severity: 'error' as const,
+            severity: 'warning' as const,
             path: `sections[${index}].copy.body`,
             excerpt: `${section.copy.body.length} supporting blocks`,
             message: 'Use at most one concise supporting block in the Hero.',
@@ -297,7 +310,7 @@ function lintEyebrows(page: PageBlueprint): CopyLintFinding[] {
     return [
       {
         rule: 'copy/decorative-eyebrow',
-        severity: 'error' as const,
+        severity: 'warning' as const,
         path: `sections[${index}].copy.eyebrow`,
         excerpt: eyebrow,
         message: 'Remove the eyebrow and express necessary context in the heading or body.',
