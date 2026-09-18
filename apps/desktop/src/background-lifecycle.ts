@@ -17,7 +17,7 @@ const STATUS_NOTIFIER_WATCHER = 'org.kde.StatusNotifierWatcher'
  * `string "org.kde.StatusNotifierWatcher"` entries from dbus-send ListNames.
  */
 export function dbusNamesIncludeStatusNotifierWatcher(output: string): boolean {
-  return output.split(/[\s"',;:()\[\]{}|]+/).includes(STATUS_NOTIFIER_WATCHER)
+  return output.split(/[\s"',;:()[\]{}|]+/).includes(STATUS_NOTIFIER_WATCHER)
 }
 
 export type LinuxTrayHostProbeRun = (

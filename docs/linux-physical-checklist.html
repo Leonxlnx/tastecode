@@ -1211,12 +1211,12 @@ NOT YET VERIFIED — requires a live panel to judge icon rendering and menu inte
               <div>
                 <h3>Close without a StatusNotifier host</h3>
                 <p>
-                  On a desktop without an SNI host (or with
-                  DBUS_SESSION_BUS_ADDRESS pointed at a nonexistent socket), close the window.
+                  On a desktop without an SNI host (or with DBUS_SESSION_BUS_ADDRESS pointed at a
+                  nonexistent socket), close the window.
                 </p>
                 <p class="pass-criterion">
-                  <strong>PASS:</strong> The log reports "[desktop] linux tray host: absent", no tray
-                  is created, the close destroys the window, and the process exits cleanly.
+                  <strong>PASS:</strong> The log reports "[desktop] linux tray host: absent", no
+                  tray is created, the close destroys the window, and the process exits cleanly.
                 </p>
               </div>
               <fieldset
@@ -1253,9 +1253,7 @@ NOT YET VERIFIED — stock GNOME without an AppIndicator extension is the real-w
               <div class="number">16</div>
               <div>
                 <h3>AppImage update check</h3>
-                <p>
-                  From the AppImage, open Settings → About and press "Check for updates".
-                </p>
+                <p>From the AppImage, open Settings → About and press "Check for updates".</p>
                 <p class="pass-criterion">
                   <strong>PASS:</strong> The check reaches GitHub (network log shows a request for
                   latest-linux.yml under Leonxlnx/tastecode releases) and reports an update, "up to

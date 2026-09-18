@@ -51,9 +51,9 @@ describe('dbusNamesIncludeStatusNotifierWatcher', () => {
 
   it('does not match a partial name or unrelated output', () => {
     expect(dbusNamesIncludeStatusNotifierWatcher('org.kde.StatusNotifierWatcher2\n')).toBe(false)
-    expect(
-      dbusNamesIncludeStatusNotifierWatcher('string "org.kde.StatusNotifierItem-1-1"'),
-    ).toBe(false)
+    expect(dbusNamesIncludeStatusNotifierWatcher('string "org.kde.StatusNotifierItem-1-1"')).toBe(
+      false,
+    )
     expect(dbusNamesIncludeStatusNotifierWatcher('total garbage')).toBe(false)
     expect(dbusNamesIncludeStatusNotifierWatcher('')).toBe(false)
   })

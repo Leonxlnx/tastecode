@@ -154,9 +154,7 @@ export async function prepareLinuxRelease({ root = workspaceRoot, run = runComma
       cwd: root,
       phase: 'evidence',
     })
-    process.stdout.write(
-      `${TAG} prepared Linux distribution: ${artifacts.join(', ')}\n`,
-    )
+    process.stdout.write(`${TAG} prepared Linux distribution: ${artifacts.join(', ')}\n`)
     return { ...paths, artifacts }
   })
 }

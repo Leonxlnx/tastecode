@@ -221,10 +221,7 @@ test('version, channel, product, and artifact names come from package config', a
   assert.equal(config.prerelease, false)
   assert.equal(config.platforms.macos.metadata, 'latest-mac.yml')
   assert.equal(config.platforms.linux.metadata, 'latest-linux.yml')
-  assert.equal(
-    config.platforms.linux.primaryArtifact,
-    'Example App-2.3.4-linux-x86_64.AppImage',
-  )
+  assert.equal(config.platforms.linux.primaryArtifact, 'Example App-2.3.4-linux-x86_64.AppImage')
   assert.deepEqual(config.platforms.linux.artifacts, [
     'Example App-2.3.4-linux-amd64.deb',
     'Example App-2.3.4-linux-x86_64.AppImage',
