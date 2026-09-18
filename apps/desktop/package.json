@@ -134,7 +134,7 @@
       "category": "Development",
       "synopsis": "Local desktop workspace for coding agents",
       "description": "A local desktop workspace for coding agents.",
-      "maintainer": "Tasteskill Team",
+      "maintainer": "Tasteskill Team <hello@tasteskill.dev>",
       "target": [
         {
           "target": "AppImage",
