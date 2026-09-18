@@ -72,6 +72,10 @@
   --model-picker-hover-bg: var(--menu-hover);
   --model-picker-selected-shadow: none;
 
+  /* The menu box is a fixed 300px; an `auto` grid column would size to the
+     longest model name and overflow the panel. minmax caps the track at the
+     box width so names ellipsize instead of clipping off the left edge. */
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   width: min(300px, calc(100vw - 16px));
   /* The generic .menu clamp (340px) is shorter than list + effort controls,
