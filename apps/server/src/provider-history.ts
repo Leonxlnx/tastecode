@@ -332,8 +332,16 @@ export function importedEvents(
 }
 
 function sameUserMessage(left: Item, right: Item): boolean {
+  let text = right.text
+  // Native logs contain our Design follow-up envelope; local history keeps only
+  // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
+  if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {
+    const marker = '\n\nUser request:\n'
+    const start = text.indexOf(marker)
+    if (start !== -1) text = text.slice(start + marker.length)
+  }
   return (
-    left.text === right.text &&
+    (left.text === right.text || left.text === text) &&
     Math.abs(left.createdAt - right.createdAt) < 60_000 &&
     JSON.stringify(left.attachments ?? []) === JSON.stringify(right.attachments ?? [])
   )
