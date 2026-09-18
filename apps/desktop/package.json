@@ -47,6 +47,15 @@
       "en-US"
     ],
     "npmRebuild": false,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true,
+      "grantFileProtocolExtraPrivileges": true
+    },
     "asarUnpack": [
       "node_modules/**/*.node",
       "node_modules/@harness/design-agent/references/library/**/*"
