@@ -11,8 +11,27 @@ releases; stable installs do not opt into prereleases. Downgrades remain disable
 
 ## Prepare, build, then publish
 
+Published Windows bootstrap, 2026-09-18:
+[beta 6](https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.6) is pinned to
+`2bc6d252bffd749bd5aaba3d556d314ba7a800e3`. Its unsigned Windows installer, packaged
+resources, PTY/keyring modules, metadata and five remote asset hashes passed verification.
+The actual GitHub provider resolved beta 6 anonymously; the installer returned HTTP 206
+with its executable header. An installed old-to-new upgrade was not exercised, and the
+active beta 5 installation was not restarted or replaced.
+
+The requested Windows-first bootstrap is public while macOS is being built. Build macOS
+from the same pinned commit, verify signing/notarization and its ZIP, then add its absent
+files to this release before distributing it. Never replace published Windows files or
+change the tag. The draft-only uploader deliberately refuses this published release;
+verify each added macOS file and its remote digest independently. Subsequent releases
+must stage both platforms together before publication, because GitHub-connected macOS
+clients would otherwise discover a release without matching metadata.
+
+[Direct Windows download](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.6/TasteCode-0.1.0-beta.6-win-x64.exe)
+works without a GitHub login and can be used on the landing page.
+
 1. Finish the intended merges, choose a version higher than every distributed build, and
-   merge the version change. `0.1.0-beta.6` is reserved for the next candidate. Do not reuse
+   merge the version change. `0.1.0-beta.6` is already published. Do not reuse
    a version or replace files in a published release.
 2. Pin the final clean `main` commit. Build Windows and macOS from that same commit and
    configuration. Set `APPROVED_SHA` and `EVENT_SHA` to its full SHA and `EVENT_REF` to
