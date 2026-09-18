@@ -216,6 +216,12 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('dev.tastecode.desktop')
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 }
+if (process.platform === 'linux') {
+  // Desktop environments match windows to launcher entries by WM_CLASS/app_id;
+  // without this the running window never groups with tastecode.desktop and
+  // GNOME/COSMIC show a generic icon for the app.
+  app.setDesktopName('dev.tastecode.desktop')
+}
 app.setName(nativeAppName)
 // Diagnostics for the field: software rendering and a DevTools port, both
 // opt-in via environment so a broken machine can be inspected.
