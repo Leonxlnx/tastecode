@@ -44,7 +44,7 @@ export async function generateReleaseChecksums(
 if (isMain(import.meta.url)) {
   const [directory, platform] = process.argv.slice(2)
   if (!directory || !platform)
-    throw new Error('Usage: node release-checksums.js <directory> <windows|macos>')
+    throw new Error('Usage: node release-checksums.js <directory> <windows|macos|linux>')
   const approvedSha = verifyReleaseCheckout()
   const rows = await generateReleaseChecksums(path.resolve(directory), platform, { approvedSha })
   console.log(

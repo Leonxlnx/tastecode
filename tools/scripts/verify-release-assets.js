@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
-import { lstat, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { generateReleaseChecksums } from './release-checksums.js'
@@ -155,6 +155,25 @@ export function assertInstallerProofHost(env = process.env) {
 export async function verifyPackageContainers(directory, platform, config = releaseConfig) {
   await verifyReleasePayload(directory, platform, config)
   const detail = platformConfig(platform, config)
+  if (platform === 'linux') {
+    if (process.platform !== 'linux' || process.arch !== detail.arch)
+      throw new Error('Linux proof must run on Linux x64')
+    const unpacked = path.join(directory, 'linux-unpacked')
+    await verifyPackagedResources(path.join(unpacked, 'resources'), config)
+    const desktopPackage = JSON.parse(
+      await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'),
+    )
+    const executableName = desktopPackage.build?.linux?.executableName
+    if (typeof executableName !== 'string')
+      throw new Error('apps/desktop/package.json must define build.linux.executableName')
+    // The node-mode proof needs no display; the utility-launcher proof is
+    // covered by the local Wayland acceptance run, not by a headless runner.
+    run(process.execPath, [
+      path.join(desktopDirectory, 'scripts', 'run-native-binding-proof.js'),
+      path.join(unpacked, executableName),
+    ])
+    return
+  }
   if (platform === 'macos') {
     if (process.platform !== 'darwin' || process.arch !== detail.arch)
       throw new Error('macOS proof must run on Apple Silicon macOS')
@@ -224,10 +243,8 @@ export async function verifyPackageContainers(directory, platform, config = rele
 export async function buildPackageProof(directory, platform) {
   const approvedSha = verifyReleaseCheckout()
   const detail = platformConfig(platform)
-  if (
-    (platform === 'windows' ? 'win32' : 'darwin') !== process.platform ||
-    detail.arch !== process.arch
-  )
+  const hostPlatform = { windows: 'win32', macos: 'darwin', linux: 'linux' }[platform]
+  if (hostPlatform !== process.platform || detail.arch !== process.arch)
     throw new Error('Package proof must run on the target operating system and architecture')
   // Refuse stale output. The license command writes its existing shared report under release/.
   await mkdir(directory)
@@ -240,7 +257,9 @@ export async function buildPackageProof(directory, platform) {
   const targets =
     platform === 'windows'
       ? ['--win', 'nsis', '--x64']
-      : ['--mac', 'dmg', 'zip', '--arm64', '--config.mac.notarize=false']
+      : platform === 'linux'
+        ? ['--linux', 'AppImage', 'deb', '--x64']
+        : ['--mac', 'dmg', 'zip', '--arm64', '--config.mac.notarize=false']
   run(
     process.execPath,
     [
@@ -265,7 +284,7 @@ if (isMain(import.meta.url)) {
   if (first === '--package' || first === '--containers') {
     if (!second || !third)
       throw new Error(
-        'Usage: node verify-release-assets.js <--package|--containers> <directory> <windows|macos>',
+        'Usage: node verify-release-assets.js <--package|--containers> <directory> <windows|macos|linux>',
       )
     if (first === '--package') await buildPackageProof(path.resolve(second), third)
     else await verifyPackageContainers(path.resolve(second), third)

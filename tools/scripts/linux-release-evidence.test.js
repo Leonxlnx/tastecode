@@ -48,6 +48,7 @@ async function withDir(fn) {
 async function writeCandidateSet(directory) {
   await writeFile(path.join(directory, APP), APP_PAYLOAD)
   await writeFile(path.join(directory, DEB), DEB_PAYLOAD)
+  await writeFile(path.join(directory, 'latest-linux.yml'), `version: ${VERSION}\n`)
 }
 
 test('requires configured FPM dependencies in the built deb', () => {
@@ -96,7 +97,7 @@ test('rejects artifact templates that collapse AppImage and deb to one name', ()
   )
 })
 
-test('records a deterministic manual-only distribution manifest', () =>
+test('records a deterministic distribution manifest with AppImage install updates', () =>
   withDir(async (directory) => {
     await writeCandidateSet(directory)
     const { inventory, checksumText } = await collectLinuxReleaseEvidence(directory, {
@@ -104,7 +105,7 @@ test('records a deterministic manual-only distribution manifest', () =>
       commit: COMMIT.toUpperCase(),
     })
     assert.equal(inventory.schemaVersion, 4)
-    assert.equal(inventory.updateMode, 'manual')
+    assert.equal(inventory.updateMode, 'appimage-install')
     assert.deepEqual(inventory.artifacts, [
       { file: DEB, bytes: Buffer.byteLength(DEB_PAYLOAD), sha256: sha256(DEB_PAYLOAD) },
       { file: APP, bytes: Buffer.byteLength(APP_PAYLOAD), sha256: sha256(APP_PAYLOAD) },
@@ -115,7 +116,13 @@ test('records a deterministic manual-only distribution manifest', () =>
       schemaVersion: 1,
       version: VERSION,
     })
-    assert.equal(checksumText, `${sha256(DEB_PAYLOAD)}  ${DEB}\n${sha256(APP_PAYLOAD)}  ${APP}\n`)
+    const metadataPayload = `version: ${VERSION}\n`
+    assert.equal(
+      checksumText,
+      `${sha256(DEB_PAYLOAD)}  ${DEB}\n` +
+        `${sha256(APP_PAYLOAD)}  ${APP}\n` +
+        `${sha256(metadataPayload)}  latest-linux.yml\n`,
+    )
 
     const first = await writeLinuxReleaseEvidence(directory, { version: VERSION, commit: COMMIT })
     const firstInventory = await readFile(first.inventoryPath, 'utf8')
@@ -139,9 +146,20 @@ test('requires both nonempty Linux x64 candidates', async (t) => {
   await t.test('missing AppImage names the preparation command', () =>
     withDir(async (directory) => {
       await writeFile(path.join(directory, DEB), DEB_PAYLOAD)
+      await writeFile(path.join(directory, 'latest-linux.yml'), `version: ${VERSION}\n`)
       await assert.rejects(
         collectLinuxReleaseEvidence(directory, { version: VERSION, commit: COMMIT }),
         /missing: TasteCode-.*\.AppImage.*dist:linux/,
+      )
+    }),
+  )
+  await t.test('missing updater metadata names the preparation command', () =>
+    withDir(async (directory) => {
+      await writeFile(path.join(directory, APP), APP_PAYLOAD)
+      await writeFile(path.join(directory, DEB), DEB_PAYLOAD)
+      await assert.rejects(
+        collectLinuxReleaseEvidence(directory, { version: VERSION, commit: COMMIT }),
+        /missing: latest-linux\.yml.*dist:linux/,
       )
     }),
   )
@@ -149,6 +167,7 @@ test('requires both nonempty Linux x64 candidates', async (t) => {
     withDir(async (directory) => {
       await writeFile(path.join(directory, APP), '')
       await writeFile(path.join(directory, DEB), DEB_PAYLOAD)
+      await writeFile(path.join(directory, 'latest-linux.yml'), `version: ${VERSION}\n`)
       await assert.rejects(
         collectLinuxReleaseEvidence(directory, { version: VERSION, commit: COMMIT }),
         /release candidate is empty/,
@@ -157,7 +176,7 @@ test('requires both nonempty Linux x64 candidates', async (t) => {
   )
 })
 
-test('rejects every stale artifact and updater sidecar', () =>
+test('rejects every stale artifact and unapproved updater sidecar', () =>
   withDir(async (directory) => {
     const extras = [
       'TasteCode-0.0.0-old-linux-amd64.deb',
@@ -176,7 +195,7 @@ test('rejects every stale artifact and updater sidecar', () =>
     }
     assert.ok(error, 'expected stale files and sidecars to be rejected')
     for (const name of extras) assert.ok(error.message.includes(name), `names ${name}`)
-    assert.match(error.message, /manual-update only/)
+    assert.match(error.message, /unapproved sidecar/)
   }))
 
 test('rejects unexpected directories in the release distribution', () =>

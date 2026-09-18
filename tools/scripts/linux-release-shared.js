@@ -14,7 +14,9 @@ export function compareAscii(left, right) {
   return 0
 }
 
-const SAFE_NAME_PATTERN = /^[A-Za-z0-9._+-]+$/
+// Flat artifact filenames: interior spaces are legal (assertAssetName and
+// electron-builder both allow them) but a leading/trailing space or dot is not.
+const SAFE_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9 ._+-]*[A-Za-z0-9_+-])?$/
 
 export function assertSafeName(fileName, context, tag) {
   if (
@@ -45,6 +47,10 @@ function expandArtifactName(template, values, tag) {
   })
 }
 
+// electron-updater reads latest-linux.yml on x64 (the -linux channel suffix).
+// electron-builder embeds the AppImage block map, so no .blockmap sidecar ships.
+export const LINUX_UPDATER_METADATA = 'latest-linux.yml'
+
 // Expand the desktop artifactName template the same way electron-builder does
 // for the two required x64 Linux targets.
 export function expectedLinuxArtifactNames({ version, artifactName, productName, name }, tag) {
@@ -74,6 +80,12 @@ export function expectedLinuxArtifactNames({ version, artifactName, productName,
     )
   }
   return names
+}
+
+// The Linux distribution set: both installable artifacts plus the updater
+// metadata the AppImage reads for in-app updates.
+export function expectedLinuxDistributionFiles(options, tag) {
+  return [...expectedLinuxArtifactNames(options, tag), LINUX_UPDATER_METADATA].sort(compareAscii)
 }
 
 async function digestFile(algorithm, encoding, filePath) {

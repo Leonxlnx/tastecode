@@ -4,12 +4,24 @@ import { lstat, open, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { JSON_SCHEMA, load } from 'js-yaml'
+import { expectedLinuxArtifactNames } from './linux-release-shared.js'
 
 export const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
 export const desktopDirectory = path.join(repositoryRoot, 'apps', 'desktop')
 const platforms = {
   windows: { os: 'win', arch: 'x64', label: 'windows-x64', extensions: ['exe'] },
   macos: { os: 'mac', arch: 'arm64', label: 'macos-arm64', extensions: ['zip', 'dmg'] },
+  // AppImage and deb expand ${arch} differently (x86_64 vs amd64), so names
+  // come from the shared Linux helper. Only the AppImage is an updater target;
+  // its block map is embedded, so Linux emits no .blockmap sidecars.
+  linux: {
+    os: 'linux',
+    arch: 'x64',
+    label: 'linux-x64',
+    linuxArtifacts: true,
+    primaryExtension: 'AppImage',
+    blockmapExtensions: [],
+  },
 }
 
 export function assertAssetName(name) {
@@ -63,6 +75,7 @@ export function createReleaseConfig(packageJson) {
   for (const [platform, required] of [
     ['win', ['nsis']],
     ['mac', ['dmg', 'zip']],
+    ['linux', ['AppImage', 'deb']],
   ]) {
     for (const key of ['publish', 'artifactName', 'detectUpdateChannel']) {
       if (build[platform]?.[key] !== undefined)
@@ -92,21 +105,38 @@ export function createReleaseConfig(packageJson) {
     platforms: {},
   }
   for (const [platform, detail] of Object.entries(platforms)) {
-    const artifacts = detail.extensions.map((ext) => {
-      const values = { version, productName, name, os: detail.os, arch: detail.arch, ext }
-      return assertAssetName(
-        build.artifactName.replace(/\$\{([^}]+)\}/g, (_, key) => {
-          if (!Object.hasOwn(values, key))
-            throw new Error(`Unsupported artifactName variable: ${key}`)
-          return values[key]
-        }),
+    const artifacts = detail.linuxArtifacts
+      ? expectedLinuxArtifactNames(
+          { version, artifactName: build.artifactName, productName, name },
+          '[release-manifest]',
+        )
+      : detail.extensions.map((ext) => {
+          const values = { version, productName, name, os: detail.os, arch: detail.arch, ext }
+          return assertAssetName(
+            build.artifactName.replace(/\$\{([^}]+)\}/g, (_, key) => {
+              if (!Object.hasOwn(values, key))
+                throw new Error(`Unsupported artifactName variable: ${key}`)
+              return values[key]
+            }),
+          )
+        })
+    const primaryArtifact = detail.primaryExtension
+      ? artifacts.find((name) => name.endsWith(`.${detail.primaryExtension}`))
+      : artifacts[0]
+    if (!primaryArtifact) throw new Error(`Release platform ${platform} has no updater artifact`)
+    const blockmaps = artifacts
+      .filter((name) =>
+        (detail.blockmapExtensions ?? detail.extensions ?? []).some((ext) =>
+          name.endsWith(`.${ext}`),
+        ),
       )
-    })
+      .map((name) => `${name}.blockmap`)
     config.platforms[platform] = {
       ...detail,
       artifacts,
-      primaryArtifact: artifacts[0],
-      metadata: `${channel}${platform === 'macos' ? '-mac' : ''}.yml`,
+      blockmaps,
+      primaryArtifact,
+      metadata: `${channel}${{ macos: '-mac', linux: '-linux' }[platform] ?? ''}.yml`,
       checksums: `SHA256SUMS-${detail.label}.txt`,
       provenance: `PROVENANCE-${detail.label}.json`,
     }
@@ -137,7 +167,7 @@ export function platformConfig(platform, config = releaseConfig) {
 
 export function releasePayloadAssets(platform, config = releaseConfig) {
   const detail = platformConfig(platform, config)
-  return [...detail.artifacts.flatMap((name) => [name, `${name}.blockmap`]), detail.metadata].sort()
+  return [...detail.artifacts, ...(detail.blockmaps ?? []), detail.metadata].sort()
 }
 
 export function checksumPayloadAssets(platform, config = releaseConfig) {

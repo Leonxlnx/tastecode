@@ -25,6 +25,7 @@ const artifacts = [
   'TasteCode-9.9.9-test.1-linux-amd64.deb',
   'TasteCode-9.9.9-test.1-linux-x86_64.AppImage',
 ]
+const distribution = [...artifacts, 'latest-linux.yml'].sort()
 
 test('one preparation owns exactly one root build', () => {
   const commands = linuxPreparationCommands('/workspace')
@@ -52,15 +53,15 @@ test('one preparation owns exactly one root build', () => {
   assert.deepEqual(ACCEPTANCE_PREPARATION_ARGS, ['--filter', '@harness/desktop', 'dist:linux'])
 })
 
-test('Linux packaging disables publisher and update metadata generation only on Linux', async () => {
+test('Linux packaging inherits the GitHub publisher so AppImage metadata is generated', async () => {
   const packageJson = JSON.parse(
     await readFile(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'),
     ),
   )
-  assert.equal(packageJson.build.linux.publish, null)
+  assert.equal(packageJson.build.linux.publish, undefined)
   assert.deepEqual(packageJson.build.publish, [
-    { provider: 'generic', url: 'https://tastecode.dev/releases' },
+    { provider: 'github', owner: 'Leonxlnx', repo: 'tastecode', releaseType: 'draft' },
   ])
 })
 
@@ -91,19 +92,19 @@ test('refuses concurrent writers to the shared Linux release output', async (t) 
   await assert.doesNotReject(withLinuxPreparationLock(lock, async () => undefined))
 })
 
-test('stages only the two manual Linux distribution artifacts', async (t) => {
+test('stages both artifacts plus the AppImage updater metadata', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'tastecode-linux-stage-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const source = path.join(root, 'private')
   const destination = path.join(root, 'distribution')
   await mkdir(source, { recursive: true })
-  for (const name of artifacts) await writeFile(path.join(source, name), `fixture:${name}`)
+  for (const name of distribution) await writeFile(path.join(source, name), `fixture:${name}`)
   await writeFile(path.join(source, 'beta-linux.yml'), 'private builder sidecar')
   await writeFile(path.join(source, `${artifacts[1]}.blockmap`), 'private builder sidecar')
 
-  assert.deepEqual(await stageLinuxDistribution(source, destination, desktopPackage), artifacts)
-  assert.deepEqual(await readdir(destination), artifacts)
-  for (const name of artifacts) {
+  assert.deepEqual(await stageLinuxDistribution(source, destination, desktopPackage), distribution)
+  assert.deepEqual((await readdir(destination)).sort(), distribution)
+  for (const name of distribution) {
     assert.equal(await readFile(path.join(destination, name), 'utf8'), `fixture:${name}`)
   }
 })

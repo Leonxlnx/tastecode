@@ -53,7 +53,7 @@ async function temporary(t) {
 
 async function fixture(t, { platform = 'all', config = releaseConfig } = {}) {
   const directory = await temporary(t)
-  for (const current of platform === 'all' ? ['windows', 'macos'] : [platform]) {
+  for (const current of platform === 'all' ? ['windows', 'macos', 'linux'] : [platform]) {
     const detail = platformConfig(current, config)
     for (const name of releasePayloadAssets(current, config).filter(
       (name) => name !== detail.metadata,
@@ -75,7 +75,7 @@ async function fixture(t, { platform = 'all', config = releaseConfig } = {}) {
         version: config.version,
         files,
         path: detail.primaryArtifact,
-        sha512: files[0].sha512,
+        sha512: files.find((file) => file.url === detail.primaryArtifact).sha512,
         releaseDate: '2026-09-09T00:00:00.000Z',
       }),
     )
@@ -220,6 +220,15 @@ test('version, channel, product, and artifact names come from package config', a
   assert.equal(config.tag, 'v2.3.4')
   assert.equal(config.prerelease, false)
   assert.equal(config.platforms.macos.metadata, 'latest-mac.yml')
+  assert.equal(config.platforms.linux.metadata, 'latest-linux.yml')
+  assert.equal(
+    config.platforms.linux.primaryArtifact,
+    'Example App-2.3.4-linux-x86_64.AppImage',
+  )
+  assert.deepEqual(config.platforms.linux.artifacts, [
+    'Example App-2.3.4-linux-amd64.deb',
+    'Example App-2.3.4-linux-x86_64.AppImage',
+  ])
   assert.equal(config.platforms.windows.primaryArtifact, 'Example App-2.3.4-win-x64.exe')
   const directory = await fixture(t, { config })
   assert.deepEqual(
@@ -261,7 +270,7 @@ test('unsafe cross-platform filenames are rejected', () => {
   assert.equal(assertAssetName('Example App-1.0.0+1.exe'), 'Example App-1.0.0+1.exe')
 })
 
-test('public GitHub updates resolve beta metadata and downloads on Windows and macOS', async (t) => {
+test('public GitHub updates resolve beta metadata and downloads on every platform', async (t) => {
   const desktop = createRequire(path.join(desktopDirectory, 'package.json'))
   const updater = createRequire(desktop.resolve('electron-updater'))
   const { GitHubProvider } = updater('./providers/GitHubProvider.js')
@@ -270,6 +279,7 @@ test('public GitHub updates resolve beta metadata and downloads on Windows and m
   for (const [platform, target] of [
     ['win32', 'windows'],
     ['darwin', 'macos'],
+    ['linux', 'linux'],
   ]) {
     const detail = platformConfig(target)
     const requests = []

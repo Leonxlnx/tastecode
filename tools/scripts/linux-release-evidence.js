@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   compareAscii,
   expectedLinuxArtifactNames,
+  expectedLinuxDistributionFiles,
   listReleaseFiles,
   parseDirArgs,
   readDesktopPackage,
@@ -266,7 +267,16 @@ export async function collectLinuxReleaseEvidence(
     )
   }
   const resolvedDesktop = desktopPackage ?? (await readDesktopPackage(workspaceRoot, TAG))
-  const expected = expectedLinuxArtifactNames(
+  const artifactNames = expectedLinuxArtifactNames(
+    {
+      version,
+      artifactName: resolvedDesktop.build?.artifactName,
+      productName: resolvedDesktop.productName,
+      name: resolvedDesktop.name,
+    },
+    TAG,
+  )
+  const expected = expectedLinuxDistributionFiles(
     {
       version,
       artifactName: resolvedDesktop.build?.artifactName,
@@ -297,13 +307,13 @@ export async function collectLinuxReleaseEvidence(
       `[linux-release-evidence] release directory ${releaseDirectory} must contain exactly ` +
         `${expected.join(', ')} plus generated evidence; ${details.join('; ')}. ` +
         `Rebuild both x64 targets with ${LINUX_DIST_COMMAND}, then remove stale files. ` +
-        'Linux v1 is manual-update only, so updater YAML, blockmaps, zip files, and every ' +
+        'Only latest-linux.yml is approved updater metadata; blockmaps, zip files, and every ' +
         'other unapproved sidecar are rejected.',
     )
   }
 
   const artifacts = []
-  for (const name of expected) {
+  for (const name of artifactNames) {
     const artifactPath = path.join(releaseDirectory, name)
     const fileStat = await stat(artifactPath)
     if (!fileStat.isFile() || fileStat.size === 0) {
@@ -326,17 +336,24 @@ export async function collectLinuxReleaseEvidence(
     artifacts,
     commit: commit.toLowerCase(),
     payloadProvenance: {
-      artifacts: expected.toSorted(compareAscii),
+      artifacts: artifactNames.toSorted(compareAscii),
       commit: commit.toLowerCase(),
       schemaVersion: BUILD_PROVENANCE_SCHEMA_VERSION,
       version,
     },
     schemaVersion: 4,
-    updateMode: 'manual',
+    // The AppImage self-updates via latest-linux.yml; the deb stays
+    // package-manager owned and updates manually.
+    updateMode: 'appimage-install',
     version,
   }
-  const checksumText = `${artifacts.map(({ file, sha256 }) => `${sha256}  ${file}`).join('\n')}\n`
-  return { expected, inventory, checksumText }
+  // Checksums cover every distributed file — updater metadata included — not
+  // only the provenance-checked installable artifacts.
+  const checksumRows = []
+  for (const name of expected) {
+    checksumRows.push(`${await sha256File(path.join(releaseDirectory, name))}  ${name}`)
+  }
+  return { expected, inventory, checksumText: `${checksumRows.join('\n')}\n` }
 }
 
 let tempFileCounter = 0

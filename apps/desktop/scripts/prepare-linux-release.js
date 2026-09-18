@@ -4,7 +4,7 @@ import { copyFile, lstat, mkdir, open, readFile, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { expectedLinuxArtifactNames } from '../../../tools/scripts/linux-release-shared.js'
+import { expectedLinuxDistributionFiles } from '../../../tools/scripts/linux-release-shared.js'
 
 const TAG = '[prepare-linux-release]'
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
@@ -65,7 +65,7 @@ function runCommand({ command, args, cwd, phase }) {
 }
 
 export async function stageLinuxDistribution(source, destination, desktopPackage) {
-  const expected = expectedLinuxArtifactNames(
+  const expected = expectedLinuxDistributionFiles(
     {
       version: desktopPackage.version,
       artifactName: desktopPackage.build?.artifactName,
@@ -84,7 +84,7 @@ export async function stageLinuxDistribution(source, destination, desktopPackage
     } catch (error) {
       if (error?.code === 'ENOENT') {
         throw new Error(
-          `${TAG} packaged artifact is missing from ${source}: ${name}; rerun pnpm --filter @harness/desktop dist:linux`,
+          `${TAG} packaged artifact is missing from ${source}: ${name}; rerun pnpm --filter @harness/desktop dist:linux (a missing latest-linux.yml means the AppImage publish provider is not configured)`,
         )
       }
       throw error
@@ -155,7 +155,7 @@ export async function prepareLinuxRelease({ root = workspaceRoot, run = runComma
       phase: 'evidence',
     })
     process.stdout.write(
-      `${TAG} prepared manual-update Linux distribution: ${artifacts.join(', ')}\n`,
+      `${TAG} prepared Linux distribution: ${artifacts.join(', ')}\n`,
     )
     return { ...paths, artifacts }
   })
