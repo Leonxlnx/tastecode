@@ -949,6 +949,199 @@ describe('provider-neutral Side chat', () => {
   })
 })
 
+describe('queued Side-chat channel', () => {
+  const sideUserTexts = (events: Array<{ event: DomainEvent }>): string[] =>
+    events.flatMap(({ event }) =>
+      event.type === 'item.completed' && event.item.type === 'message' && event.item.role === 'user'
+        ? [event.item.text ?? '']
+        : [],
+    )
+
+  it('keeps a queued Side-chat prompt on the Side-chat channel while the main turn runs', async () => {
+    const { orchestrator, store, sessions, received, sideReceived } = harness()
+    try {
+      const parent = await orchestrator.startThread('codex', '/repo')
+      store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+
+      const side = await orchestrator.startSideThread(parent.id)
+
+      const main = await orchestrator.submitTurn(parent.id, 'Main work.', [], {}, 'main-submission')
+      if (main.queued) throw new Error('expected the main turn to start')
+      sessions[1]?.turnIds.push('side-first-turn', 'side-second-turn')
+      const first = await orchestrator.submitTurn(side.id, 'Side first.', [], {}, 'side-first')
+      if (first.queued) throw new Error('expected the Side-chat turn to start')
+      const queued = await orchestrator.submitTurn(side.id, 'Side queued.', [], {}, 'side-queued')
+      if (!queued.queued) throw new Error('expected the Side-chat prompt to queue')
+
+      expect(store.queuedTurns(side.id).map(({ id }) => id)).toEqual(['side-queued'])
+
+      sessions[1]?.emit({ type: 'turn.completed', turnId: 'side-first-turn', status: 'completed' })
+      await vi.waitFor(() => expect(sessions[1]?.sent).toEqual(['Side first.', 'Side queued.']))
+
+      expect(sideUserTexts(sideReceived)).toContain('Side queued.')
+      expect(received.some(({ threadId }) => threadId === side.id)).toBe(false)
+
+      sessions[1]?.emit(message('Side answer.', 'side-second-turn'))
+      expect(
+        sideReceived.some(
+          ({ threadId, event }) =>
+            threadId === side.id &&
+            event.type === 'item.completed' &&
+            event.item.type === 'message' &&
+            event.item.text === 'Side answer.',
+        ),
+      ).toBe(true)
+      expect(received.some(({ threadId }) => threadId === side.id)).toBe(false)
+
+      const sideTexts = store
+        .history(side.id)
+        .flatMap(({ event }) =>
+          event.type === 'item.completed' && event.item.type === 'message'
+            ? [event.item.text ?? '']
+            : [],
+        )
+      expect(sideTexts.indexOf('Side first.')).toBeLessThan(sideTexts.indexOf('Side queued.'))
+      expect(
+        store
+          .history(parent.id)
+          .some(({ event }) => JSON.stringify(event).includes('Side queued.')),
+      ).toBe(false)
+
+      sessions[1]?.emit({ type: 'turn.completed', turnId: 'side-second-turn', status: 'completed' })
+      expect(orchestrator.isTurnRunning(parent.id)).toBe(true)
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('steers a queued Side-chat prompt on the Side-chat channel', async () => {
+    const { orchestrator, store, sessions, received, sideReceived } = harness()
+    try {
+      const parent = await orchestrator.startThread('codex', '/repo')
+      store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+
+      const side = await orchestrator.startSideThread(parent.id)
+      sessions[1]?.turnIds.push('side-first-turn')
+      const first = await orchestrator.submitTurn(side.id, 'Side first.', [], {}, 'side-first')
+      if (first.queued) throw new Error('expected the Side-chat turn to start')
+      const queued = await orchestrator.submitTurn(side.id, 'Steer me.', [], {}, 'side-steer')
+      if (!queued.queued) throw new Error('expected the Side-chat prompt to queue')
+
+      await orchestrator.steerQueuedTurn(side.id, queued.queuedTurn.id)
+
+      expect(sessions[1]?.steered).toEqual(['Steer me.'])
+      expect(sideUserTexts(sideReceived)).toContain('Steer me.')
+      expect(received.some(({ threadId }) => threadId === side.id)).toBe(false)
+
+      sessions[1]?.emit({ type: 'turn.completed', turnId: 'side-first-turn', status: 'completed' })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('preserves the Side-chat channel across an orchestrator restart', async () => {
+    const first = harness()
+    const parent = await first.orchestrator.startThread('codex', '/repo')
+    first.store.append(
+      parent.id,
+      userMessage('parent-user', 'Explain this failure.', 'parent-turn'),
+    )
+    const side = await first.orchestrator.startSideThread(parent.id)
+    first.sessions[1]?.turnIds.push('side-first-turn')
+    await first.orchestrator.submitTurn(side.id, 'Side first.', [], {}, 'side-first')
+    const queued = await first.orchestrator.submitTurn(
+      side.id,
+      'Side queued.',
+      [],
+      {},
+      'side-queued',
+    )
+    if (!queued.queued) throw new Error('expected the Side-chat prompt to queue')
+    expect(first.store.queuedTurns(side.id).map(({ id }) => id)).toEqual(['side-queued'])
+    await first.orchestrator.disposeAll()
+
+    const restarted = harness(undefined, first.store)
+    try {
+      expect(restarted.orchestrator.queue(side.id).items.map(({ id }) => id)).toEqual([
+        'side-queued',
+      ])
+      const wake = await restarted.orchestrator.submitTurn(
+        side.id,
+        'Wake.',
+        [],
+        {},
+        'wake-submission',
+      )
+      expect(wake.queued).toBe(true)
+      await vi.waitFor(() => expect(restarted.sessions[0]?.sent).toEqual(['Side queued.']))
+
+      expect(sideUserTexts(restarted.sideReceived)).toContain('Side queued.')
+      expect(restarted.received.some(({ threadId }) => threadId === side.id)).toBe(false)
+      expect(restarted.resumedIds).toContain(side.id)
+
+      restarted.sessions[0]?.emit(message('Side resumed answer.', 's1-turn'))
+      expect(
+        restarted.sideReceived.some(
+          ({ threadId, event }) =>
+            threadId === side.id &&
+            event.type === 'item.completed' &&
+            event.item.type === 'message' &&
+            event.item.text === 'Side resumed answer.',
+        ),
+      ).toBe(true)
+      expect(restarted.received.some(({ threadId }) => threadId === side.id)).toBe(false)
+
+      expect(restarted.orchestrator.queue(side.id).items.map(({ id }) => id)).toEqual([
+        'wake-submission',
+      ])
+    } finally {
+      await restarted.orchestrator.disposeAll()
+      first.store.close()
+    }
+  })
+
+  it('purges queued Side chats on a full store restart instead of leaking them', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-side-queue-restart-'))
+    const file = path.join(dir, 'harness.db')
+    const seededStore = new Store(file)
+    const seeded = harness(undefined, seededStore)
+    try {
+      const parent = await seeded.orchestrator.startThread('codex', '/repo')
+      seeded.store.append(
+        parent.id,
+        userMessage('parent-user', 'Explain this failure.', 'parent-turn'),
+      )
+      const side = await seeded.orchestrator.startSideThread(parent.id)
+      seeded.sessions[1]?.turnIds.push('side-first-turn')
+      await seeded.orchestrator.submitTurn(parent.id, 'Main work.', [], {}, 'main-submission')
+      await seeded.orchestrator.submitTurn(side.id, 'Side first.', [], {}, 'side-first')
+      await seeded.orchestrator.submitTurn(parent.id, 'Main queued.', [], {}, 'main-queued')
+      const queued = await seeded.orchestrator.submitTurn(
+        side.id,
+        'Side queued.',
+        [],
+        {},
+        'side-queued',
+      )
+      if (!queued.queued) throw new Error('expected the Side-chat prompt to queue')
+      await seeded.orchestrator.disposeAll()
+      seededStore.close()
+
+      const restartedStore = new Store(file)
+      try {
+        expect(restartedStore.thread(side.id)).toBeUndefined()
+        expect(restartedStore.queuedTurns(side.id)).toEqual([])
+        expect(restartedStore.queuedTurns(parent.id).map(({ id }) => id)).toEqual(['main-queued'])
+      } finally {
+        restartedStore.close()
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('workspace paths', () => {
   it('expands a home-relative project before starting Grok and taking checkpoints', async () => {
     const projectPath = ['~', 'Developer', 'harness'].join(path.sep)
