@@ -50,6 +50,13 @@ import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import {
+  GPU_CRASH_WINDOW_MS,
+  gpuFallbackRequested,
+  isGpuProcessFailure,
+  shouldFallbackToSoftware,
+  writeGpuFallbackFlag,
+} from './gpu-fallback.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
@@ -233,6 +240,33 @@ app.setName(nativeAppName)
 // Diagnostics for the field: software rendering and a DevTools port, both
 // opt-in via environment so a broken machine can be inspected.
 if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration()
+// A GPU process that keeps dying (VMs, NVIDIA+Wayland, old Mesa) leaves a
+// blank window while Chromium retries forever — the crash limit is disabled
+// below. After repeated failures persist a flag and relaunch once on software
+// rendering so the next start is usable.
+else if (gpuFallbackRequested(app.getPath('userData'))) {
+  console.info('[desktop] gpu-fallback.json present: starting with software rendering')
+  app.disableHardwareAcceleration()
+}
+const gpuFailures: number[] = []
+app.on('child-process-gone', (_event, details) => {
+  if (!isGpuProcessFailure(details)) return
+  const now = Date.now()
+  gpuFailures.push(now)
+  while (gpuFailures.length > 0 && now - gpuFailures[0]! > GPU_CRASH_WINDOW_MS) gpuFailures.shift()
+  console.error(`[desktop] GPU process gone (reason ${details.reason ?? 'unknown'})`)
+  if (!shouldFallbackToSoftware(gpuFailures, now)) return
+  const userData = app.getPath('userData')
+  void writeGpuFallbackFlag(userData)
+    .then(() => {
+      console.error('[desktop] repeated GPU failures: relaunching with software rendering')
+      app.relaunch()
+      app.quit()
+    })
+    .catch((error: unknown) => {
+      console.error('[desktop] could not persist gpu-fallback flag:', error)
+    })
+})
 if (process.env['HARNESS_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
 }
