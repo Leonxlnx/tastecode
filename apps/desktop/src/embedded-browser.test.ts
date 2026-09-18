@@ -3,11 +3,35 @@ import { describe, expect, it, vi } from 'vitest'
 import { browserGuestUrl, browserUserAgent, configureEmbeddedBrowser } from './embedded-browser.js'
 
 describe('embedded browser guest', () => {
-  it('accepts only HTTP pages and a blank bootstrap document', () => {
+  it('accepts HTTPS pages, loopback HTTP and a blank bootstrap document', () => {
     expect(browserGuestUrl('http://127.0.0.1:4311/preview')).toBe('http://127.0.0.1:4311/preview')
+    expect(browserGuestUrl('http://127.38.0.1:5173/')).toBe('http://127.38.0.1:5173/')
+    expect(browserGuestUrl('http://localhost:5173/')).toBe('http://localhost:5173/')
+    expect(browserGuestUrl('http://app.localhost:5173/')).toBe('http://app.localhost:5173/')
+    expect(browserGuestUrl('http://[::1]:5173/')).toBe('http://[::1]:5173/')
     expect(browserGuestUrl('https://example.com/')).toBe('https://example.com/')
+    // The URL parser normalizes exotic spellings before the policy sees them.
+    expect(browserGuestUrl('http://2130706433/')).toBe('http://2130706433/')
+    expect(browserGuestUrl('http://0x7f.0.0.1/')).toBe('http://0x7f.0.0.1/')
     expect(() => browserGuestUrl('file:///etc/passwd')).toThrow('Invalid browser URL')
     expect(() => browserGuestUrl('javascript:alert(1)')).toThrow('Invalid browser URL')
+  })
+
+  it('rejects plain HTTP off the host machine', () => {
+    // Cloud metadata endpoints, LAN services and WAN sites share one answer.
+    expect(() => browserGuestUrl('http://169.254.169.254/latest/meta-data')).toThrow(
+      'Invalid browser URL',
+    )
+    expect(() => browserGuestUrl('http://169.254.169.254./')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://2852039166/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://192.168.1.1/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://10.0.0.1/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://100.64.0.1/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://example.com/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://[fe80::1]/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://[::ffff:a9fe:a9fe]/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://127.0.0.1.evil.example/')).toThrow('Invalid browser URL')
+    expect(() => browserGuestUrl('http://localhost.evil.example/')).toThrow('Invalid browser URL')
   })
 
   it('strips Electron product markers without damaging the Chromium user agent', () => {
@@ -72,6 +96,63 @@ describe('embedded browser guest', () => {
     await vi.waitFor(() => expect(guest.loadURL).toHaveBeenCalledWith('https://example.com/next'))
     expect(openWindow({ url: 'file:///etc/passwd' })).toEqual({ action: 'deny' })
     expect(guest.loadURL).toHaveBeenCalledOnce()
+  })
+
+  it('denies guest navigation to non-loopback HTTP at every hook', () => {
+    const owner = ownerHarness()
+    configureEmbeddedBrowser(owner.contents)
+
+    const event = { preventDefault: vi.fn() }
+    owner.listener('will-attach-webview')(event, {}, { src: 'http://169.254.169.254/' })
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+
+    const guestListeners = new Map<string, (...args: any[]) => void>()
+    const guest = {
+      getUserAgent: vi.fn(() => ''),
+      loadURL: vi.fn(async () => undefined),
+      on: vi.fn((name: string, listener: (...args: any[]) => void) =>
+        guestListeners.set(name, listener),
+      ),
+      session: {
+        setPermissionCheckHandler: vi.fn(),
+        setPermissionRequestHandler: vi.fn(),
+      },
+      setUserAgent: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      stop: vi.fn(),
+    }
+    owner.listener('did-attach-webview')({}, guest)
+
+    const willNavigate = guestListeners.get('will-navigate')
+    willNavigate?.(event, 'http://169.254.169.254/latest/meta-data')
+    willNavigate?.(event, 'https://example.com/')
+    willNavigate?.(event, 'http://127.0.0.1:4311/preview')
+    expect(event.preventDefault).toHaveBeenCalledTimes(2)
+
+    // Programmatic loadURL() skips will-navigate; did-start-navigation stops it.
+    const startNavigation = guestListeners.get('did-start-navigation')
+    startNavigation?.({
+      isMainFrame: true,
+      isSameDocument: false,
+      url: 'http://169.254.169.254/latest/meta-data',
+    })
+    expect(guest.stop).toHaveBeenCalledOnce()
+    startNavigation?.({
+      isMainFrame: true,
+      isSameDocument: false,
+      url: 'http://127.0.0.1:4311/preview',
+    })
+    startNavigation?.({
+      isMainFrame: false,
+      isSameDocument: false,
+      url: 'http://169.254.169.254/latest/meta-data',
+    })
+    startNavigation?.({
+      isMainFrame: true,
+      isSameDocument: false,
+      url: 'about:blank',
+    })
+    expect(guest.stop).toHaveBeenCalledOnce()
   })
 })
 
