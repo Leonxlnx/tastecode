@@ -38,6 +38,7 @@ export function createAppUpdateController(
   const clearTimeoutFn = options.clearTimeoutFn ?? clearTimeout
   const lazyLoadUpdater = options.loadUpdater
   let timer: Timer | undefined
+  let started = false
   let checking: Promise<AppUpdateState> | undefined
   let loading: Promise<UpdateClient> | undefined
   let updater = options.updater
@@ -69,7 +70,7 @@ export function createAppUpdateController(
     updaterConfigured = true
     client.autoDownload = false
     client.autoInstallOnAppQuit = true
-    client.allowPrerelease = true
+    client.allowPrerelease = options.currentVersion.includes('-')
     client.allowDowngrade = false
     client.on('checking-for-update', () =>
       publish({ status: 'checking', currentVersion: options.currentVersion }),
@@ -109,6 +110,7 @@ export function createAppUpdateController(
   const check = (): Promise<AppUpdateState> => {
     if (!options.enabled) return Promise.resolve(state)
     if (checking) return checking
+    if (state.status === 'downloading' || state.status === 'ready') return Promise.resolve(state)
     checking = loadUpdater()
       .then((client) => client.checkForUpdates())
       .then(
@@ -124,6 +126,16 @@ export function createAppUpdateController(
     return checking
   }
 
+  const schedule = (delay: number) => {
+    timer = setTimeoutFn(() => {
+      timer = undefined
+      void check().finally(() => {
+        if (started) schedule(60 * 60 * 1000)
+      })
+    }, delay)
+    timer.unref?.()
+  }
+
   return {
     state: () => state,
     check,
@@ -137,14 +149,12 @@ export function createAppUpdateController(
       return () => listeners.delete(listener)
     },
     start: () => {
-      if (!options.enabled || timer) return
-      timer = setTimeoutFn(() => {
-        timer = undefined
-        void check()
-      }, 15_000)
-      timer.unref?.()
+      if (!options.enabled || started) return
+      started = true
+      schedule(15_000)
     },
     dispose: () => {
+      started = false
       if (timer) clearTimeoutFn(timer)
       timer = undefined
       listeners.clear()
