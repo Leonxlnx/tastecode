@@ -467,7 +467,7 @@ describe('OpenCode adapter', () => {
     expect(
       mock.requests.find((request) => request.method === 'POST' && request.url.endsWith('/prompt'))
         ?.body,
-    ).toEqual({ text: 'Answer plainly.\n\nCheck it' })
+    ).toEqual({ prompt: { text: 'Answer plainly.\n\nCheck it' } })
     adapter.dispose()
   })
 

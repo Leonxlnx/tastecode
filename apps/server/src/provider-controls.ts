@@ -22,6 +22,7 @@ const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
 const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
 const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
+const loadOpenCodeAuth = retryableLazy(() => import('@harness/adapter-opencode/auth'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -130,7 +131,10 @@ const defaultServices = {
   antigravity: {},
   api: {},
   codex: {},
-  opencode: {},
+  opencode: {
+    account: async () => (await loadOpenCodeAuth()).openCodeAccount(),
+    signOut: async () => (await loadOpenCodeAuth()).signOutOpenCode(),
+  },
   pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,

@@ -441,9 +441,7 @@
           </li>
         </ul>
 
-        <h3>
-          OpenCode (local server, HTTP/SSE) <span class="pill-parked">parked for the beta</span>
-        </h3>
+        <h3>OpenCode (local server, HTTP/SSE)</h3>
         <ul class="check">
           <li>
             <label
@@ -468,6 +466,25 @@
             <label
               ><input type="checkbox" /><span
                 >Sign in through its own CLI in the guided card</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >CLI-reported sign-in state and sign-out
+                <span class="d"
+                  >`opencode auth list` answers the account check without touching the credential
+                  file; sign-out replays each listed credential through `opencode auth logout`; a
+                  clean listing keeps the free tier runnable with zero stored credentials</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >In-app update check that defers to `opencode upgrade`</span
               ></label
             >
           </li>

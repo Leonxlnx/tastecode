@@ -502,15 +502,16 @@
           <a href="./verification/pr-quality-2026-09-09.md">scope, evidence, and release limits</a>.
         </p>
         <p class="sub">
-          The first release ships three subscription plans and nothing else: Codex, Claude Code, and
-          Grok. Everything below either exists and is checked, is being worked on, or must happen
-          before the beta goes out. Parked features stay built in the repo and return afterwards.
+          The release ships four agent providers and nothing else: Codex, Claude Code, Grok, and
+          OpenCode. Everything below either exists and is checked, is being worked on, or must
+          happen before the beta goes out. Parked features stay built in the repo and return
+          afterwards.
         </p>
         <div class="hero">
           <div class="kpi">
-            <b>3</b>
+            <b>4</b>
             <span>providers in the beta</span>
-            <small>Codex, Claude Code, Grok. All working today</small>
+            <small>Codex, Claude Code, Grok, OpenCode. All working today</small>
           </div>
           <div class="kpi">
             <b>Ready</b>
@@ -547,7 +548,7 @@
         </p>
         <div class="lanes">
           <div class="lane l-done">
-            <header>Ready <span class="count">32</span></header>
+            <header>Ready <span class="count">33</span></header>
             <ul>
               <li>
                 <i class="tick">✓</i>
@@ -585,6 +586,21 @@
                     images plus selected file resources reach the CLI through ACP prompt blocks;
                     project MCP servers selected in Settings join MCP-enabled sessions through
                     Grok's ACP handshake</span
+                  >
+                </span>
+              </li>
+              <li>
+                <i class="tick">✓</i>
+                <span
+                  >OpenCode agent
+                  <span class="d"
+                    >native adapter over the local `opencode serve` HTTP/SSE server covering the v1
+                    and v2 protocols; provider-owned model catalog with per-model reasoning
+                    variants, session start and restart-safe resume, interruptible turns, and
+                    retryable permission approvals; guided CLI install and `opencode auth login`
+                    sign-in from Settings; account state read from `opencode auth list` rather than
+                    its credential file; project MCP servers reach sessions through managed config
+                    injection</span
                   >
                 </span>
               </li>
@@ -737,7 +753,7 @@
                   <span class="d"
                     >the server retains protocol-compatible executable support for future/nightly
                     work, while the public-beta Providers screen exposes only Codex, Claude Code,
-                    and Grok</span
+                    Grok, and OpenCode</span
                   >
                 </span>
               </li>
@@ -1093,7 +1109,6 @@
         </p>
         <div class="parked">
           <span>Cursor adapter</span>
-          <span>OpenCode adapter</span>
           <span>Antigravity adapter</span>
           <span>Kimi CLI over ACP</span>
           <span>API connections, 6 presets</span>

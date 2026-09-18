@@ -32,6 +32,7 @@ const BETA_PLANS = [
   { id: 'codex', name: 'Codex', vendor: 'OpenAI' },
   { id: 'claude-code', name: 'Claude Code', vendor: 'Anthropic' },
   { id: 'grok', name: 'Grok', vendor: 'xAI' },
+  { id: 'opencode', name: 'OpenCode', vendor: 'SST' },
 ] as const satisfies ReadonlyArray<{ id: ProviderId; name: string; vendor: string }>
 
 const THEME_CHOICES = [
@@ -329,10 +330,10 @@ export function Onboarding(props: {
                 {checking
                   ? 'Looking for the coding agents installed on this machine…'
                   : readyCount === BETA_PLANS.length
-                    ? 'All three beta plans are ready. Nothing else to do here.'
-                    : `${readyCount} of ${BETA_PLANS.length} beta plans ready. Set up the rest now, or later in Settings.`}
+                    ? 'All agents are ready. Nothing else to do here.'
+                    : `${readyCount} of ${BETA_PLANS.length} agents ready. Set up the rest now, or later in Settings.`}
               </p>
-              <ul className="onboarding__providers" aria-label="Supported beta plans">
+              <ul className="onboarding__providers" aria-label="Supported agents">
                 {readiness.map(({ plan, label, tone }) => (
                   <li className="onboarding__provider" data-tone={tone} key={plan.id}>
                     <span className="onboarding__provider-mark">

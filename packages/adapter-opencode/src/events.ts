@@ -28,6 +28,7 @@ export class OpenCodeEventMapper {
   readonly #text = new Map<string, string>()
   readonly #completed = new Set<string>()
   readonly #v2Tools = new Map<string, { name: string; input?: Record<string, JsonRpcValue> }>()
+  readonly #v2Usage = { input: 0, cached: 0, write: 0, output: 0, reasoning: 0, cost: 0 }
 
   constructor(turnId: string, model?: string) {
     this.#turnId = turnId
@@ -65,26 +66,75 @@ export class OpenCodeEventMapper {
 
   #v2(event: OpenCodeV2Event): DomainEvent[] {
     const data = event.data
-    if (event.type === 'session.text.started') return this.#v2Stream(data, 'message', 'started')
-    if (event.type === 'session.text.delta') return this.#v2Stream(data, 'message', 'delta')
-    if (event.type === 'session.text.ended') return this.#v2Stream(data, 'message', 'ended')
-    if (event.type === 'session.reasoning.started')
+    if (event.type === 'session.text.started' || event.type === 'session.next.text.started') {
+      return this.#v2Stream(data, 'message', 'started')
+    }
+    if (event.type === 'session.text.delta' || event.type === 'session.next.text.delta') {
+      return this.#v2Stream(data, 'message', 'delta')
+    }
+    if (event.type === 'session.text.ended' || event.type === 'session.next.text.ended') {
+      return this.#v2Stream(data, 'message', 'ended')
+    }
+    if (
+      event.type === 'session.reasoning.started' ||
+      event.type === 'session.next.reasoning.started'
+    ) {
       return this.#v2Stream(data, 'reasoning', 'started')
-    if (event.type === 'session.reasoning.delta') return this.#v2Stream(data, 'reasoning', 'delta')
-    if (event.type === 'session.reasoning.ended') return this.#v2Stream(data, 'reasoning', 'ended')
-    if (event.type === 'session.tool.input.started') {
-      const id = string(data.id)
+    }
+    if (event.type === 'session.reasoning.delta' || event.type === 'session.next.reasoning.delta') {
+      return this.#v2Stream(data, 'reasoning', 'delta')
+    }
+    if (event.type === 'session.reasoning.ended' || event.type === 'session.next.reasoning.ended') {
+      return this.#v2Stream(data, 'reasoning', 'ended')
+    }
+    if (
+      event.type === 'session.tool.input.started' ||
+      event.type === 'session.next.tool.input.started'
+    ) {
+      const id = string(data.callID) || string(data.id)
       if (id) this.#v2Tools.set(id, { name: string(data.name) || 'tool' })
       return []
     }
-    if (event.type === 'session.tool.called') return this.#v2Tool(data, 'started')
-    if (event.type === 'session.tool.success') return this.#v2Tool(data, 'completed')
-    if (event.type === 'session.tool.failed') return this.#v2Tool(data, 'failed')
-    // v2 emits both `session.step.ended` and a cumulative
-    // `session.usage.updated` for the same step. The latter is the stable
-    // turn-level value; mapping both would publish every usage update twice.
+    if (event.type === 'session.tool.called' || event.type === 'session.next.tool.called') {
+      return this.#v2Tool(data, 'started')
+    }
+    if (event.type === 'session.tool.success' || event.type === 'session.next.tool.success') {
+      return this.#v2Tool(data, 'completed')
+    }
+    if (event.type === 'session.tool.failed' || event.type === 'session.next.tool.failed') {
+      return this.#v2Tool(data, 'failed')
+    }
+    // `session.usage.updated` is a cumulative turn total on older servers.
+    // `session.next.step.ended` reports per-step usage, so the mapper sums it.
     if (event.type === 'session.usage.updated') return [v2Usage(data, this.#model)]
+    if (event.type === 'session.next.step.ended') return [this.#v2StepUsage(data)]
     return []
+  }
+
+  #v2StepUsage(data: Record<string, JsonRpcValue>): DomainEvent {
+    const tokens = record(data['tokens'])
+    const cache = record(tokens['cache'])
+    this.#v2Usage.input += number(tokens['input'])
+    this.#v2Usage.cached += number(cache['read'])
+    this.#v2Usage.write += number(cache['write'])
+    this.#v2Usage.output += number(tokens['output'])
+    this.#v2Usage.reasoning += number(tokens['reasoning'])
+    this.#v2Usage.cost += number(data['cost'])
+    const totals = this.#v2Usage
+    const output = totals.output + totals.reasoning
+    return {
+      type: 'usage.updated',
+      usage: {
+        ...(this.#model ? { model: this.#model } : {}),
+        inputTokens: totals.input,
+        cachedInputTokens: totals.cached,
+        outputTokens: output,
+        reasoningTokens: totals.reasoning,
+        totalTokens: totals.input + totals.cached + totals.write + output,
+        costUsd: totals.cost,
+        inputIncludesCached: false,
+      },
+    }
   }
 
   #v2Stream(
@@ -93,8 +143,9 @@ export class OpenCodeEventMapper {
     phase: 'started' | 'delta' | 'ended',
   ): DomainEvent[] {
     const messageId = string(data.assistantMessageID) || 'assistant'
-    const ordinal = number(data['ordinal'])
-    const id = `${this.#turnId}-${messageId}-${type}-${ordinal}`
+    const partId =
+      string(data.textID) || string(data.reasoningID) || String(number(data['ordinal']))
+    const id = `${this.#turnId}-${messageId}-${type}-${partId}`
     const events: DomainEvent[] = []
     if (!this.#open.has(id)) {
       const item: Item = {
@@ -138,9 +189,9 @@ export class OpenCodeEventMapper {
     data: Record<string, JsonRpcValue>,
     status: 'started' | 'completed' | 'failed',
   ): DomainEvent[] {
-    const callId = string(data.id)
+    const callId = string(data.callID) || string(data.id)
     if (!callId) return []
-    const known = this.#v2Tools.get(callId) ?? { name: 'tool' }
+    const known = this.#v2Tools.get(callId) ?? { name: string(data.tool) || 'tool' }
     if (status === 'started') {
       const input = record(data.input)
       this.#v2Tools.set(callId, { ...known, input })

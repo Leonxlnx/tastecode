@@ -10,9 +10,9 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 **Branch model (Leon and Bluedev, 2026-08-08):** `main` is the public beta for roughly the
 next four weeks and becomes the stable release at v1. `nightly` is the integration branch:
 every new change lands there first and nothing is hidden on it — it carries the full
-provider roster (Codex, Claude Code, Grok plus the parked Cursor, OpenCode, Antigravity,
+provider roster (Codex, Claude Code, Grok, OpenCode plus the parked Cursor, Antigravity,
 ACP and API-connection surfaces, all working). Work that the beta itself needs (fixes and
-polish for the three shipped plans) still goes to `main` by PR and reaches `nightly` on the
+polish for the shipped providers) still goes to `main` by PR and reaches `nightly` on the
 next sync; everything else targets `nightly`. Keep `nightly` synchronized by merging `main`
 and resolving conflicts without rewriting published history. Do not un-park a provider on
 `main` without Leon saying so. The Rust + GPUI rewrite is preserved only on

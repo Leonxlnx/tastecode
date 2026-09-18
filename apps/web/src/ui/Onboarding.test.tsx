@@ -83,17 +83,18 @@ describe('first-run onboarding', () => {
     expect(props.onDismiss).toHaveBeenCalledOnce()
   })
 
-  it('covers exactly the three beta plans and routes setup into provider settings', () => {
+  it('covers exactly the shipped agents and routes setup into provider settings', () => {
     const props = renderOnboarding()
     fireEvent.click(screen.getByRole('button', { name: /^Begin setup/ }))
     next()
     next()
 
-    const plans = screen.getByRole('list', { name: 'Supported beta plans' })
-    expect(plans.querySelectorAll('.onboarding__provider')).toHaveLength(3)
+    const plans = screen.getByRole('list', { name: 'Supported agents' })
+    expect(plans.querySelectorAll('.onboarding__provider')).toHaveLength(4)
     expect(plans.textContent).toContain('CodexOpenAIReady')
     expect(plans.textContent).toContain('Claude CodeAnthropicChecking…')
     expect(plans.textContent).toContain('GrokxAINot installedSet up')
+    expect(plans.textContent).toContain('OpenCodeSSTChecking…')
     expect(screen.getByRole('status').textContent).toContain('Looking for the coding agents')
 
     // Only the row that needs something offers the action; ready and
@@ -109,13 +110,14 @@ describe('first-run onboarding', () => {
         codexReady,
         { ...codexReady, id: 'claude-code', displayName: 'Claude Code' },
         { ...codexReady, id: 'grok', displayName: 'Grok', auth: 'unknown' },
+        { ...codexReady, id: 'opencode', displayName: 'OpenCode' },
       ],
     })
     fireEvent.click(screen.getByRole('button', { name: /^Begin setup/ }))
     next()
     next()
 
-    expect(screen.getByRole('status').textContent).toContain('All three beta plans are ready')
+    expect(screen.getByRole('status').textContent).toContain('All agents are ready')
     expect(screen.queryByRole('button', { name: /^Set up / })).toBeNull()
   })
 

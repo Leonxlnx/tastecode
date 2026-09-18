@@ -2,9 +2,12 @@ import { codexLoginStatus } from '@harness/adapter-codex/auth'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
+import { openCodeLoginStatus } from '@harness/adapter-opencode/auth'
+import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode/capabilities'
 import { CODEX_UPDATES } from '@harness/adapter-codex/updates'
 import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
 import { GROK_UPDATES } from '@harness/adapter-grok/updates'
+import { OPENCODE_UPDATES } from '@harness/adapter-opencode/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc/cli'
@@ -15,8 +18,8 @@ import { commandVersion, isInstalled } from '@harness/proc/cli'
  * Detection is by looking for the binary and asking it its version. We never
  * inspect a credential file to decide whether someone is signed in — that is
  * the line in rules/security.md, and it is why `auth` is mostly `unknown` here.
- * The one provider that can tell us is Codex, which answers over its own
- * protocol, and that answer is fetched on demand rather than on every listing.
+ * Codex answers over its own protocol and OpenCode reports its own auth
+ * listing; both answers are fetched on demand rather than on every listing.
  *
  * A provider we have not built stays in the list with a `problem` explaining
  * why. Silently omitting it would leave the user unable to tell "not supported"
@@ -80,13 +83,27 @@ const PROBES: Probe[] = [
     // Device flow in the CLI's own terminal, same shape as `kimi login`.
     loginCommand: 'grok login',
   },
+  {
+    id: 'opencode',
+    updater: OPENCODE_UPDATES,
+    displayName: 'OpenCode',
+    command: 'opencode',
+    capabilities: OPENCODE_CAPABILITIES,
+    setup: {
+      installUrl: 'https://opencode.ai/en/docs',
+      installCommand: 'npm install -g opencode-ai',
+      login: 'provider',
+      loginOpensBrowser: false,
+    },
+    // `auth login` is an interactive picker inside the CLI's own TUI.
+    loginCommand: 'opencode auth login',
+  },
 ]
 
 /**
- * The public beta ships exactly three subscription plans: Codex, Claude Code
- * and Grok (Leon's release scope, 2026-08-07). The Cursor, OpenCode,
- * Antigravity and ACP adapters stay in the repo fully working and return to
- * this roster after the beta — docs/dashboard.html tracks that list.
+ * The roster users can pick from. The Cursor, Antigravity and ACP adapters
+ * stay in the repo fully working and return to this roster in a later
+ * release — docs/dashboard.html tracks that list.
  */
 
 /**
@@ -105,8 +122,11 @@ export type SystemProbe = {
 const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
-  auth: (provider) =>
-    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+  auth: (provider) => {
+    if (provider === 'codex') return codexLoginStatus()
+    if (provider === 'opencode') return openCodeLoginStatus()
+    return Promise.resolve<ProviderStatus['auth']>('unknown')
+  },
 }
 
 export function providerUpdateSources() {
@@ -214,8 +234,7 @@ function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
-  // Beta roster: direct probes only. The ACP aggregate row returns together
-  // with the parked adapters after the beta.
+  // Direct probes only; ACP agents reach the roster through the agent list.
   const detection = Promise.all(PROBES.map((entry) => probe(entry, system)))
   providerDetections.set(system, detection)
   const clear = () => {

@@ -18,6 +18,7 @@ The public beta ships with:
 - Codex
 - Claude Code
 - Grok
+- OpenCode
 - provider-aware models, permissions, and session controls
 - project and session search, rename, and pinning
 - terminal, browser preview, attachments, git context, and readable diffs

@@ -227,6 +227,7 @@ const MCP_PROVIDER_OPTIONS = [
   { provider: 'codex', providerName: 'Codex' },
   { provider: 'claude-code', providerName: 'Claude Code' },
   { provider: 'grok', providerName: 'Grok' },
+  { provider: 'opencode', providerName: 'OpenCode' },
 ] satisfies Array<{ provider: ProviderId; providerName: string }>
 
 const FOCUSABLE_SELECTOR =
@@ -870,9 +871,9 @@ export function ProviderSettings(props: {
     )
   }
 
-  // Public beta scope: exactly the three subscription plans the server lists
-  // (Codex, Claude Code, Grok). The ACP agents, Cursor, OpenCode, Antigravity
-  // and API-connection surfaces are parked, not deleted — see AGENTS.md.
+  // Shipped roster: the direct providers the server lists (Codex, Claude
+  // Code, Grok, OpenCode). The ACP agents, Cursor, Antigravity and
+  // API-connection surfaces are parked, not deleted — see AGENTS.md.
   const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
   const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
   const renderProviderRow = (status: ProviderStatus) => (
@@ -889,8 +890,9 @@ export function ProviderSettings(props: {
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
+      {byId('opencode').map(renderProviderRow)}
       {direct
-        .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
+        .filter((status) => !['codex', 'claude-code', 'grok', 'opencode'].includes(status.id))
         .map(renderProviderRow)}
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>

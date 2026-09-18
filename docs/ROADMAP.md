@@ -68,7 +68,7 @@ reopening the finished milestone:
 
 - one TasteCode-owned direct API runtime for OpenAI, Anthropic, OpenRouter, Kimi, GLM / Z.ai
   and custom OpenAI-compatible endpoints,
-- native OpenCode and Cursor adapters, and
+- a native Cursor adapter, and
 - Kimi Code and GLM coding-plan support through ACP or captured structured CLI surfaces.
 
 The implementation order, shared transports and definition of done are in

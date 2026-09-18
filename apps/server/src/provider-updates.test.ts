@@ -24,6 +24,7 @@ describe('provider update service', () => {
       'codex',
       'claude-code',
       'grok',
+      'opencode',
     ])
   })
 
@@ -51,7 +52,7 @@ describe('provider update service', () => {
     const { service, system } = fixture()
     system.version.mockResolvedValue('0.12.0')
     await expect(service.commandFor('codex')).rejects.toThrow('no newer version')
-    await expect(service.commandFor('opencode')).rejects.toThrow('does not support')
+    await expect(service.commandFor('cursor')).rejects.toThrow('does not support')
   })
 
   it('shares concurrent checks, caches them, and rechecks after a requested refresh', async () => {

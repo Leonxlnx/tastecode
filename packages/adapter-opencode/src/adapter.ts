@@ -19,6 +19,7 @@ import {
   type JsonRpcValue,
 } from '@harness/proc'
 import { z } from 'zod'
+import { OPENCODE_CAPABILITIES } from './capabilities.js'
 import {
   OpenCodeEventMapper,
   OpenCodeV2EventSchema,
@@ -26,14 +27,7 @@ import {
   type OpenCodeWireEvent,
 } from './events.js'
 
-export const OPENCODE_CAPABILITIES: Capabilities = {
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: true,
-  approvals: true,
-  images: false,
-}
+export { OPENCODE_CAPABILITIES }
 
 type Events = { event: [DomainEvent]; log: [string] }
 type OpenCodeProtocol = 'v1' | 'v2'
@@ -376,7 +370,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
     if (this.#protocol === 'v2') {
-      void this.#sendV2Turn(text, turnId).catch(() => this.#failTurn(turnId))
+      void this.#sendV2Turn(text, turnId).catch((error) => this.#failTurn(turnId, error))
       return turnId
     }
     const model = parseModel(this.#model)
@@ -391,7 +385,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         ...(this.#instructions ? { system: this.#instructions } : {}),
       },
       throwOnError: true,
-    }).catch(() => this.#failTurn(turnId))
+    }).catch((error) => this.#failTurn(turnId, error))
     return turnId
   }
 
@@ -607,7 +601,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#instructionsPending && this.#instructions ? `${this.#instructions}\n\n${text}` : text
     await this.#v2Request(`/api/session/${encodeURIComponent(sessionId)}/prompt`, {
       method: 'POST',
-      body: JSON.stringify({ text: prompt }),
+      body: JSON.stringify({ prompt: { text: prompt } }),
     })
     this.#instructionsPending = false
   }
@@ -710,9 +704,22 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     if (this.#mapper) {
       for (const domainEvent of this.#mapper.translate(event)) this.emit('event', domainEvent)
     }
-    if (event.type === 'session.execution.succeeded') this.#finishTurn('completed')
-    else if (event.type === 'session.execution.interrupted') this.#finishTurn('interrupted')
-    else if (event.type === 'session.execution.failed' || event.type === 'session.step.failed') {
+    if (
+      event.type === 'session.execution.succeeded' ||
+      (event.type === 'session.next.step.ended' &&
+        stringValue(event.data['finish']) !== 'tool-calls')
+    ) {
+      this.#finishTurn('completed')
+    } else if (
+      event.type === 'session.execution.interrupted' ||
+      (event.type === 'session.next.step.failed' && v2StepInterrupted(event.data))
+    ) {
+      this.#finishTurn('interrupted')
+    } else if (
+      event.type === 'session.execution.failed' ||
+      event.type === 'session.step.failed' ||
+      event.type === 'session.next.step.failed'
+    ) {
       this.#failTurn()
     }
   }
@@ -789,7 +796,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
 
   /** When `turnId` is given, no-op unless it is still the live turn — a late
    *  rejection from a finished turn must not fail whatever runs now. */
-  #failTurn(turnId?: string): void {
+  #failTurn(turnId?: string, error?: unknown): void {
     if (turnId !== undefined && this.#turnId !== turnId) return
     if (!this.#turnId || !this.#threadId) return
     const failedTurnId = this.#turnId
@@ -803,7 +810,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#mapper = undefined
     for (const event of finishEvents) this.emit('event', event)
     for (const id of approvals) this.emit('event', { type: 'approval.resolved', id })
-    this.emit('log', 'OpenCode request failed')
+    this.emit('log', `OpenCode request failed${error instanceof Error ? `: ${error.message}` : ''}`)
     this.emit('event', {
       type: 'thread.error',
       threadId,
@@ -952,4 +959,15 @@ function sessionId(event: OpenCodeWireEvent): string | undefined {
         properties.data.part?.sessionID ??
         properties.data.info?.sessionID)
     : undefined
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function v2StepInterrupted(data: Record<string, unknown>): boolean {
+  const error = data['error']
+  if (typeof error !== 'object' || error === null) return false
+  const message = (error as Record<string, unknown>)['message']
+  return typeof message === 'string' && /interrupt/i.test(message)
 }

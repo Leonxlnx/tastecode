@@ -154,7 +154,7 @@ call site away from being real.
 
 Deliberately not changing:
 
-- **The built-in beta roster stays Codex, Claude Code, and Grok.** Pi is never auto-detected
+- **The built-in roster is Codex, Claude Code, Grok, and OpenCode.** Pi is never auto-detected
   or presented as a stock integration, but a user may explicitly register a real Pi RPC
   executable as a custom harness. Settings resolves desktop PATH shims, accepts an optional
   launch directory and non-secret environment, and runs a protocol-aware Verify action while
