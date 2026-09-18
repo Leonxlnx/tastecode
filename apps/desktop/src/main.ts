@@ -56,6 +56,7 @@ import {
   type MenuKeyInput,
 } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
+import { writableOrCreatable } from './userdata-writable.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import {
@@ -346,8 +347,33 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 if (!ownsSingleInstance) {
-  console.error(`[desktop] another ${nativeAppName} instance owns the single-instance lock`)
-  app.quit()
+  // The lock also fails when userData cannot be created (read-only HOME,
+  // missing XDG_CONFIG_HOME parent) — that is not a second instance, and
+  // quitting quietly would leave the user with no explanation. On Linux a
+  // pre-ready dialog only writes to stderr, so it waits for ready; the
+  // timeout keeps a wedged environment from lingering forever. The dialog is
+  // unparented — there is no window, and parenting through zxdg_exporter_v2
+  // crashes COSMIC/Wayland.
+  if (!writableOrCreatable(productDataPath)) {
+    console.error(`[desktop] cannot write to data directory ${productDataPath}`)
+    void app.whenReady().then(async () => {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: nativeAppName,
+        message: `${nativeAppName} cannot start because its data directory is not writable.`,
+        detail:
+          `${productDataPath}\n\n` +
+          'Fix the directory permissions (for example `chmod u+w` on it, or restore write access ' +
+          'to your home directory) and launch again.',
+        buttons: ['Quit'],
+      })
+      app.quit()
+    })
+    setTimeout(() => app.quit(), 60_000).unref()
+  } else {
+    console.error(`[desktop] another ${nativeAppName} instance owns the single-instance lock`)
+    app.quit()
+  }
 }
 
 /**
