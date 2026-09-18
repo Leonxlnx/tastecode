@@ -18,6 +18,7 @@ import {
   verifyReleasePayload,
 } from './release-manifest.js'
 import { verifyReleaseCheckout } from './verify-release-input.js'
+import { assertGlibcFloor, declaredLibcFloor } from './linux-acceptance.js'
 
 function run(executable, args, options = {}) {
   const result = spawnSync(executable, args, {
@@ -166,6 +167,12 @@ export async function verifyPackageContainers(directory, platform, config = rele
     const executableName = desktopPackage.build?.linux?.executableName
     if (typeof executableName !== 'string')
       throw new Error('apps/desktop/package.json must define build.linux.executableName')
+    // The same floor gate as linux-acceptance: a runner whose toolchain links
+    // newer glibc symbols must not produce a deb that lies about its floor.
+    const libcFloor = declaredLibcFloor(desktopPackage.build?.deb?.depends)
+    if (libcFloor === undefined)
+      throw new Error('apps/desktop deb depends must declare a libc6 (>= <version>) floor')
+    assertGlibcFloor(unpacked, executableName, libcFloor, '[release-proof]')
     // The node-mode proof needs no display; the utility-launcher proof is
     // covered by the local Wayland acceptance run, not by a headless runner.
     run(process.execPath, [

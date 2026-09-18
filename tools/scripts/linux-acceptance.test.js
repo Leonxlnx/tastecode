@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { test } from 'node:test'
 
-import { compareDottedVersions, declaredLibcFloor, maxSymbolVersion } from './linux-acceptance.js'
+import {
+  compareDottedVersions,
+  declaredLibcFloor,
+  maxSymbolVersion,
+  nativeBinaryCandidates,
+} from './linux-acceptance.js'
 
 test('maxSymbolVersion picks the highest GLIBC tag in objdump output', () => {
   const output = [
@@ -40,4 +48,25 @@ test('declaredLibcFloor extracts the libc6 constraint', () => {
   assert.equal(declaredLibcFloor(['libgtk-3-0']), undefined)
   assert.equal(declaredLibcFloor(undefined), undefined)
   assert.equal(declaredLibcFloor(['libc6']), undefined)
+})
+
+test('nativeBinaryCandidates finds the executable and every shipped addon or library', () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'linux-acceptance-binaries-'))
+  mkdirSync(path.join(root, 'resources', 'app.asar.unpacked'), { recursive: true })
+  writeFileSync(path.join(root, 'tastecode'), 'elf')
+  writeFileSync(path.join(root, 'libffmpeg.so'), 'elf')
+  writeFileSync(path.join(root, 'resources', 'app.asar.unpacked', 'pty.node'), 'elf')
+  writeFileSync(path.join(root, 'chrome-sandbox'), 'elf')
+  writeFileSync(path.join(root, 'README.txt'), 'text')
+  const found = nativeBinaryCandidates(root, 'tastecode').map((name) =>
+    path.relative(root, name).split(path.sep).join('/'),
+  )
+  assert.deepEqual(found.sort(), [
+    'chrome-sandbox',
+    'libffmpeg.so',
+    'resources/app.asar.unpacked/pty.node',
+    'tastecode',
+  ])
+  // Optional helper binaries that are absent are skipped, not required.
+  assert.ok(!found.includes('chrome_crashpad_handler'))
 })

@@ -61,8 +61,9 @@ export function declaredLibcFloor(depends) {
 // Every shipped ELF binary a loader resolves at runtime: the Electron
 // executable and its bundled shared libraries plus native Node addons. A
 // symbol newer than the declared libc6 floor would silently break install on
-// older distributions, so the floor is measured rather than assumed.
-function nativeBinaryCandidates(unpackedDirectory, executableName) {
+// older distributions, so the floor is measured rather than assumed. Exported
+// for the packaging proof, which applies the same gate to CI-built artifacts.
+export function nativeBinaryCandidates(unpackedDirectory, executableName) {
   const candidates = [path.join(unpackedDirectory, executableName)]
   const walk = (directory) => {
     let entries
@@ -81,6 +82,34 @@ function nativeBinaryCandidates(unpackedDirectory, executableName) {
   candidates.push(path.join(unpackedDirectory, 'chrome-sandbox'))
   candidates.push(path.join(unpackedDirectory, 'chrome_crashpad_handler'))
   return candidates.filter((candidate) => statSync(candidate, { throwIfNoEntry: false })?.isFile())
+}
+
+/**
+ * Measure the highest GLIBC symbol version in every shipped ELF binary and
+ * throw when one needs more than the deb's declared libc6 floor. objdump must
+ * be on PATH — binutils is preinstalled on the qualified Linux hosts and
+ * runners. Returns the measured floor per binary for the acceptance report.
+ */
+export function assertGlibcFloor(unpackedDirectory, executableName, libcFloor, tag) {
+  const floors = {}
+  for (const binary of nativeBinaryCandidates(unpackedDirectory, executableName)) {
+    // The Electron binary's dynamic symbol table alone is several megabytes.
+    const symbols = execFileSync('objdump', ['-T', binary], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    })
+    const measured = maxSymbolVersion(symbols, 'GLIBC')
+    if (measured === undefined) continue
+    const relative = path.relative(unpackedDirectory, binary)
+    floors[relative] = measured
+    if (compareDottedVersions(measured, libcFloor) > 0) {
+      throw new Error(
+        `${tag} ${relative} requires GLIBC_${measured}, ` +
+          `above the declared deb floor libc6 (>= ${libcFloor})`,
+      )
+    }
+  }
+  return floors
 }
 
 function block(message) {
@@ -222,20 +251,12 @@ async function main() {
   if (libcFloor === undefined) {
     fail('apps/desktop deb depends must declare a libc6 (>= <version>) floor')
   }
-  const glibcFloorByBinary = {}
-  for (const binary of nativeBinaryCandidates(unpackedDirectory, executableName)) {
-    // The Electron binary's dynamic symbol table alone is several megabytes.
-    const symbols = command('objdump', ['-T', binary], { maxBuffer: 64 * 1024 * 1024 })
-    const measured = maxSymbolVersion(symbols, 'GLIBC')
-    if (measured === undefined) continue
-    glibcFloorByBinary[path.relative(unpackedDirectory, binary)] = measured
-    if (compareDottedVersions(measured, libcFloor) > 0) {
-      fail(
-        `${path.relative(unpackedDirectory, binary)} requires GLIBC_${measured}, ` +
-          `above the declared deb floor libc6 (>= ${libcFloor})`,
-      )
-    }
-  }
+  const glibcFloorByBinary = assertGlibcFloor(
+    unpackedDirectory,
+    executableName,
+    libcFloor,
+    '[linux-acceptance]',
+  )
   run('pnpm', ['--filter', '@harness/desktop', 'verify:native-bindings', '--', executable])
   run('pnpm', [
     '--filter',
