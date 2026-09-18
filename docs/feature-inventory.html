@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-18 main 3bb73f7f · Windows and macOS beta 7 published</span>
+        <span class="meta">2026-09-18 main dd95e2f9 · Windows and macOS beta 7 published</span>
       </div>
     </div>
 
@@ -821,11 +821,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model, effort, and tier remembered per chat, with provider defaults for new chats
+                >Model, effort, speed, Design mode, and permissions remembered per chat
                 <span class="d"
                   >chat switches, catalog failures, hidden models, late discovery, and restart
                   preserve the last valid same-source choice; cross-provider overrides never reach a
-                  bound thread</span
+                  bound thread. Design completion resets only that chat's one-shot Design mode.
+                  Permission edits during startup reach the created chat; reconnect and pending-turn
+                  recovery restore the saved approval mode.</span
                 ></span
               ></label
             >
