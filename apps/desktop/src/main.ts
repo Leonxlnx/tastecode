@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -35,6 +35,7 @@ import {
   pickedAttachment,
 } from './attachment-preview.js'
 import {
+  appImageUserNamespaceBlocked,
   probeLinuxTrayHost,
   shouldHideWindowOnClose,
 } from './background-lifecycle.js'
@@ -928,6 +929,29 @@ if (ownsSingleInstance) {
       if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
     })
     appUpdater.start()
+    // An AppImage on Ubuntu 23.10+ may reach this point yet still fail to
+    // spawn its renderer sandbox; say so instead of dying silently later.
+    if (process.platform === 'linux' && process.env['APPIMAGE']) {
+      try {
+        const restriction = await readFile(
+          '/proc/sys/kernel/apparmor_restrict_unprivileged_userns',
+          'utf8',
+        )
+        if (appImageUserNamespaceBlocked(restriction)) {
+          console.error(
+            '[desktop] kernel.apparmor_restrict_unprivileged_userns=1: the AppImage sandbox cannot start on this kernel',
+          )
+          dialog.showErrorBox(
+            nativeAppName,
+            'This system restricts unprivileged user namespaces, so the AppImage cannot start its sandbox.\n\n' +
+              'Install the deb package from GitHub Releases instead, or run:\n' +
+              'sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0',
+          )
+        }
+      } catch {
+        // No such sysctl on this kernel — the restriction does not exist.
+      }
+    }
     startOwnedServer()
     configureAttachmentPreviews()
     configureRendererPermissions()

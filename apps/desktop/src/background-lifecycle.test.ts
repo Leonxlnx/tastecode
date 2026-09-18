@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  appImageUserNamespaceBlocked,
   dbusNamesIncludeStatusNotifierWatcher,
   probeLinuxTrayHost,
   shouldHideWindowOnClose,
@@ -88,5 +89,14 @@ describe('probeLinuxTrayHost', () => {
       throw new Error('spawn busctl ENOENT')
     }
     await expect(probeLinuxTrayHost({ run })).resolves.toBe(false)
+  })
+})
+
+describe('appImageUserNamespaceBlocked', () => {
+  it('flags only an enabled restriction', () => {
+    expect(appImageUserNamespaceBlocked('1\n')).toBe(true)
+    expect(appImageUserNamespaceBlocked('0\n')).toBe(false)
+    expect(appImageUserNamespaceBlocked(undefined)).toBe(false)
+    expect(appImageUserNamespaceBlocked('')).toBe(false)
   })
 })

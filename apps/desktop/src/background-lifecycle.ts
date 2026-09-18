@@ -67,3 +67,14 @@ export async function probeLinuxTrayHost(
   }
   return false
 }
+
+/**
+ * Ubuntu 23.10+ can restrict unprivileged user namespaces behind
+ * `kernel.apparmor_restrict_unprivileged_userns`. An AppImage cannot ship a
+ * setuid chrome-sandbox inside its FUSE mount, so with the sysctl at 1 the
+ * renderer sandbox cannot start. A missing file means the restriction does
+ * not exist on this kernel — the AppImage is fine.
+ */
+export function appImageUserNamespaceBlocked(sysctlContents: string | undefined): boolean {
+  return sysctlContents?.trim() === '1'
+}
