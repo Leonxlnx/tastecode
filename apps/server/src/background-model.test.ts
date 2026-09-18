@@ -215,6 +215,42 @@ describe('background completion', () => {
       expect(session.turnOptions?.serviceTier).toBe(serviceTier)
     },
   )
+
+  it('hands the live session to its owner before the turn runs', async () => {
+    const session = new CompletingSession()
+    const owned: AgentSession[] = []
+    const runtime: ProviderRuntime = {
+      async start(workspacePath) {
+        return {
+          thread: {
+            id: 'background-thread',
+            provider: 'codex',
+            workspacePath,
+            createdAt: 0,
+          },
+          session,
+        }
+      },
+      async listModels() {
+        return []
+      },
+    }
+
+    await expect(
+      runBackgroundCompletion({
+        runtime,
+        selection: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          sourceName: 'Codex',
+          automatic: true,
+        },
+        prompt: 'Write a title.',
+        onSession: (started) => owned.push(started),
+      }),
+    ).resolves.toBe('Generated title')
+    expect(owned).toEqual([session])
+  })
 })
 
 describe('background output shaping', () => {

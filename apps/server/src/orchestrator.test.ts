@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process'
+import { EventEmitter } from 'node:events'
 import {
   copyFileSync,
   existsSync,
@@ -44,7 +45,9 @@ import {
   designWorkspaceFileBaseline,
   snapshotDesignFiles,
 } from '@harness/design-agent'
+import { CustomHarnessStore } from './custom-harnesses.js'
 import { McpConfigStore } from './mcp-config.js'
+import { ModelConnectionStore } from './model-connections.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
@@ -6026,5 +6029,157 @@ describe('panic versus an in-flight queue drain', () => {
     // The panicked drain must not leave turn B running or re-queued.
     expect(orchestrator.inboxStatus(thread.id)).not.toBe('working')
     expect(orchestrator.queue(thread.id).items).toEqual([])
+  })
+})
+
+describe('shutdown owns every spawned process', () => {
+  it('retries a failed provider stop once before reporting the leak', async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('codex', process.cwd())
+    const session = sessions[0]!
+    let attempts = 0
+    session.dispose = () => {
+      attempts += 1
+      if (attempts === 1) return Promise.reject(new Error('still running'))
+      session.disposed = true
+    }
+
+    await orchestrator.disposeAll()
+
+    expect(attempts).toBe(2)
+    expect(session.disposed).toBe(true)
+  })
+
+  it('reports a provider stop that also fails the retry', async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('codex', process.cwd())
+    const session = sessions[0]!
+    let attempts = 0
+    session.dispose = () => {
+      attempts += 1
+      return Promise.reject(new Error('still running'))
+    }
+
+    await expect(orchestrator.disposeAll()).rejects.toThrow(/could not be stopped/i)
+    expect(attempts).toBe(2)
+  })
+})
+
+describe('background sessions', () => {
+  class FakeCodexControl extends EventEmitter {
+    start = vi.fn(async () => {})
+    dispose = vi.fn(async () => {})
+    account = vi.fn(async () => ({ signedIn: false }))
+    listModels = vi.fn(async () => [])
+    listMcpServers = vi.fn(async () => [])
+    listSkills = vi.fn(async () => ({ skills: [], errors: [] }))
+    setSkillEnabled = vi.fn(async () => true)
+    rateLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    consumeRateLimitReset = vi.fn(async () => 'nothingToReset' as const)
+    startLogin = vi.fn(async () => ({ loginId: 'login', authUrl: 'https://example.test' }))
+    cancelLogin = vi.fn(async () => {})
+    useApiKey = vi.fn(async () => ({ signedIn: false }))
+    signOut = vi.fn(async () => {})
+    onUsageChanged = vi.fn((_listener: () => void) => {})
+  }
+
+  /**
+   * A background task resolves its model through a custom harness, so the
+   * provider-control processes it would otherwise spawn are replaced with
+   * fakes and only the tracked session under test is real.
+   */
+  function backgroundHarness() {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-background-'))
+    const sessions: FakeSession[] = []
+    const runtime: ProviderRuntime = {
+      async start(workspacePath) {
+        const session = new FakeSession(`bg${sessions.length + 1}`)
+        sessions.push(session)
+        return {
+          thread: {
+            id: `bg-thread-${sessions.length}`,
+            provider: 'pi',
+            workspacePath,
+            createdAt: Date.now(),
+          },
+          session,
+        }
+      },
+      async listModels() {
+        return [
+          {
+            id: 'fake-model',
+            displayName: 'Fake Model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        ]
+      },
+    }
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      runtimeFor: () => runtime,
+      mcpConfig: new McpConfigStore(path.join(dir, 'mcp.json')),
+      modelConnections: new ModelConnectionStore(path.join(dir, 'connections.json')),
+      customHarnesses: new CustomHarnessStore(path.join(dir, 'harnesses.json')),
+      providerControls: {
+        createCodex: () => new FakeCodexControl(),
+        services: {
+          'claude-code': { account: async () => ({ signedIn: false }) },
+          grok: { account: async () => ({ signedIn: false }) },
+        },
+      },
+    })
+    orchestrator.upsertCustomHarness({
+      id: 'fake',
+      displayName: 'Fake harness',
+      provider: 'pi',
+      command: 'fake-cli',
+      args: [],
+    })
+    return { orchestrator, sessions }
+  }
+
+  const commitDiff = {
+    threadId: 'workspace',
+    version: 'tree',
+    files: [{ path: 'a.ts', status: 'modified' as const, binary: false, hunks: [] }],
+  }
+
+  it('disposes a live background-model session on shutdown', async () => {
+    const { orchestrator, sessions } = backgroundHarness()
+    await orchestrator.updateBackgroundModelPreference({
+      mode: 'manual',
+      target: { provider: 'pi', agent: 'fake', model: 'fake-model' },
+    })
+
+    const pending = orchestrator.generateBackgroundCommitMessage(commitDiff)
+    void pending.catch(() => undefined)
+    await vi.waitFor(() => expect(sessions).toHaveLength(1))
+    expect(sessions[0]!.disposed).toBe(false)
+
+    await orchestrator.disposeAll()
+
+    expect(sessions[0]!.disposed).toBe(true)
+  })
+
+  it('kills a live background-model session during panic stop', async () => {
+    const { orchestrator, sessions } = backgroundHarness()
+    await orchestrator.updateBackgroundModelPreference({
+      mode: 'manual',
+      target: { provider: 'pi', agent: 'fake', model: 'fake-model' },
+    })
+
+    const pending = orchestrator.generateBackgroundCommitMessage(commitDiff)
+    void pending.catch(() => undefined)
+    await vi.waitFor(() => expect(sessions).toHaveLength(1))
+
+    await orchestrator.panicStop()
+
+    expect(sessions[0]!.disposed).toBe(true)
+    await orchestrator.disposeAll()
   })
 })
