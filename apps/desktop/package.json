@@ -175,6 +175,9 @@
         "libsecret-1-0",
         "libasound2t64 | libasound2",
         "libgbm1"
+      ],
+      "recommends": [
+        "libayatana-appindicator3-1 | libappindicator3-1"
       ]
     },
     "win": {
