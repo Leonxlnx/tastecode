@@ -1079,6 +1079,19 @@ describe('queued Side-chat channel', () => {
       expect(sideUserTexts(restarted.sideReceived)).toContain('Side queued.')
       expect(restarted.received.some(({ threadId }) => threadId === side.id)).toBe(false)
       expect(restarted.resumedIds).toContain(side.id)
+
+      restarted.sessions[0]?.emit(message('Side resumed answer.', 's1-turn'))
+      expect(
+        restarted.sideReceived.some(
+          ({ threadId, event }) =>
+            threadId === side.id &&
+            event.type === 'item.completed' &&
+            event.item.type === 'message' &&
+            event.item.text === 'Side resumed answer.',
+        ),
+      ).toBe(true)
+      expect(restarted.received.some(({ threadId }) => threadId === side.id)).toBe(false)
+
       expect(restarted.orchestrator.queue(side.id).items.map(({ id }) => id)).toEqual([
         'wake-submission',
       ])
