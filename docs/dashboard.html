@@ -945,8 +945,9 @@
                     import, PTY and keyring checks pass on arm64 macOS. NSIS packaging produces the
                     installer, blockmap, and update metadata. New beta 6 packages use public GitHub
                     Releases, check hourly, and show a ready-to-install notice linking to About;
-                    packaged Linux links to manual GitHub downloads and distributes no
-                    updater-channel sidecars.
+                    the Linux AppImage uses the same GitHub updater feed via
+                    <code>latest-linux.yml</code> (live check not yet verified), while the deb
+                    stays package-manager owned and links to manual GitHub downloads.
                     <a href="./RELEASING.md">Release preparation and beta 5 migration</a> are
                     documented. Windows and signed/notarized macOS beta 6 are publicly downloadable;
                     Windows clean install and onboarding pass. Installed automatic

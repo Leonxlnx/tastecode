@@ -599,7 +599,7 @@
           role="progressbar"
           aria-label="Checklist progress"
           aria-valuemin="0"
-          aria-valuemax="13"
+          aria-valuemax="16"
           aria-valuenow="0"
           id="progress-track"
         >
@@ -753,13 +753,15 @@ Minimized window + second launch: lock refused (exit 0, stderr line), first wind
             </div>
           </article>
 
-          <article class="check" data-check-id="tray" data-status="pass">
+          <article class="check" data-check-id="tray" data-status="pending">
             <div class="check-main">
               <div class="number">3</div>
               <div>
                 <h3>Close and recovery</h3>
                 <p>
-                  Close the main window. Restore it from the tray, app launcher, or another launch.
+                  Close the main window. With a StatusNotifier host the window hides to the tray;
+                  restore it from the tray menu or a relaunch. Without a host the window is
+                  destroyed and the process exits.
                 </p>
                 <p class="pass-criterion">
                   <strong>PASS:</strong> The app restores normally or exits cleanly. It never
@@ -767,8 +769,7 @@ Minimized window + second launch: lock refused (exit 0, stderr line), first wind
                 </p>
               </div>
               <fieldset class="status-options" aria-label="Close and recovery result">
-                <input id="tray-pass" name="tray" type="radio" value="pass" checked /><label
-                  for="tray-pass"
+                <input id="tray-pass" name="tray" type="radio" value="pass" /><label for="tray-pass"
                   >PASS</label
                 >
                 <input id="tray-fail" name="tray" type="radio" value="fail" /><label for="tray-fail"
@@ -784,7 +785,7 @@ Minimized window + second launch: lock refused (exit 0, stderr line), first wind
               <label
                 ><span>Observed result</span
                 ><textarea placeholder="Say whether COSMIC showed a tray icon">
-No tray on Linux by design (createBackgroundTray is win32-only, main.ts:911). Close destroys the window, process stays alive, relaunch recreates+shows the window via second-instance. Restores normally; never an unreachable hidden process.</textarea>
+NOT YET VERIFIED — close-to-tray is new on Linux. Startup probes the session D-Bus for org.kde.StatusNotifierWatcher and logs "[desktop] linux tray host: present|absent". On COSMIC (host present) the window must hide on close and restore via the tray Open entry or a second launch.</textarea>
               </label>
             </div>
           </article>
@@ -1161,6 +1162,133 @@ Canary stored via connections.setCredential → materialized in gnome-keyring (l
                 ><span>Observed result</span
                 ><textarea placeholder="Required for FAIL or BLOCKED">
 Two quit→relaunch cycles via SIGTERM: clean exit, server child exits 0, no stale lock, no recovery dialog, state intact. File>Quit menu role is stock Electron.</textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="tray-menu" data-status="pending">
+            <div class="check-main">
+              <div class="number">14</div>
+              <div>
+                <h3>Tray icon and menu</h3>
+                <p>
+                  On a desktop with a StatusNotifier host (COSMIC qualifies), confirm the tray icon
+                  is visible, open its menu, and use both entries.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The icon renders in the panel, the menu shows "Open Taste
+                  Code" and "Quit Taste Code", Open restores the hidden window, and Quit exits the
+                  whole process tree with nothing left on 127.0.0.1:4311.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="Tray icon and menu result">
+                <input id="tray-menu-pass" name="tray-menu" type="radio" value="pass" /><label
+                  for="tray-menu-pass"
+                  >PASS</label
+                >
+                <input id="tray-menu-fail" name="tray-menu" type="radio" value="fail" /><label
+                  for="tray-menu-fail"
+                  >FAIL</label
+                >
+                <input id="tray-menu-blocked" name="tray-menu" type="radio" value="blocked" /><label
+                  for="tray-menu-blocked"
+                  >BLOCKED</label
+                >
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+NOT YET VERIFIED — requires a live panel to judge icon rendering and menu interaction. Verify on both linux-unpacked and the AppImage (icon must resolve inside the mounted asar).</textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="no-sni-close" data-status="pending">
+            <div class="check-main">
+              <div class="number">15</div>
+              <div>
+                <h3>Close without a StatusNotifier host</h3>
+                <p>
+                  On a desktop without an SNI host (or with
+                  DBUS_SESSION_BUS_ADDRESS pointed at a nonexistent socket), close the window.
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The log reports "[desktop] linux tray host: absent", no tray
+                  is created, the close destroys the window, and the process exits cleanly.
+                </p>
+              </div>
+              <fieldset
+                class="status-options"
+                aria-label="Close without a StatusNotifier host result"
+              >
+                <input id="no-sni-close-pass" name="no-sni-close" type="radio" value="pass" /><label
+                  for="no-sni-close-pass"
+                  >PASS</label
+                >
+                <input id="no-sni-close-fail" name="no-sni-close" type="radio" value="fail" /><label
+                  for="no-sni-close-fail"
+                  >FAIL</label
+                >
+                <input
+                  id="no-sni-close-blocked"
+                  name="no-sni-close"
+                  type="radio"
+                  value="blocked"
+                /><label for="no-sni-close-blocked">BLOCKED</label>
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+NOT YET VERIFIED — stock GNOME without an AppIndicator extension is the real-world case; a broken DBUS_SESSION_BUS_ADDRESS is the quick proxy. Either way the app must not leave an invisible hidden process.</textarea>
+              </label>
+            </div>
+          </article>
+
+          <article class="check" data-check-id="appimage-update" data-status="pending">
+            <div class="check-main">
+              <div class="number">16</div>
+              <div>
+                <h3>AppImage update check</h3>
+                <p>
+                  From the AppImage, open Settings → About and press "Check for updates".
+                </p>
+                <p class="pass-criterion">
+                  <strong>PASS:</strong> The check reaches GitHub (network log shows a request for
+                  latest-linux.yml under Leonxlnx/tastecode releases) and reports an update, "up to
+                  date", or an explicit error — never a silent dead-end. The deb build instead shows
+                  the manual-download path.
+                </p>
+              </div>
+              <fieldset class="status-options" aria-label="AppImage update check result">
+                <input
+                  id="appimage-update-pass"
+                  name="appimage-update"
+                  type="radio"
+                  value="pass"
+                /><label for="appimage-update-pass">PASS</label>
+                <input
+                  id="appimage-update-fail"
+                  name="appimage-update"
+                  type="radio"
+                  value="fail"
+                /><label for="appimage-update-fail">FAIL</label>
+                <input
+                  id="appimage-update-blocked"
+                  name="appimage-update"
+                  type="radio"
+                  value="blocked"
+                /><label for="appimage-update-blocked">BLOCKED</label>
+              </fieldset>
+            </div>
+            <div class="note-wrap">
+              <label
+                ><span>Observed result</span
+                ><textarea placeholder="Required for FAIL or BLOCKED">
+NOT YET VERIFIED — updater wiring is confirmed statically (latest-linux.yml + app-update.yml in the package) but no live check against GitHub has been run yet. Draft releases mean the check may legitimately report "up to date" until a release is published.</textarea>
               </label>
             </div>
           </article>

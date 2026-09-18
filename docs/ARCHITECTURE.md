@@ -126,17 +126,32 @@ Linux delivery is proved in layers:
 5. AppImage and deb release candidates built from the same tested commit, with license bundle,
    checksums, artifact inventory, and clean-machine evidence.
 
-AppImage is the portable Linux artifact, but Linux v1 updates are manual. The About surface links
-packaged Linux users to GitHub Releases without loading `electron-updater`; deb installs remain
-package-owned. Linux packaging sets its publisher to `null`, preventing update metadata generation.
+AppImage is the portable Linux artifact and gets in-app updates: the desktop shares the GitHub
+publisher (`Leonxlnx/tastecode`, draft releases), so packaging emits `latest-linux.yml` and
+`app-update.yml` alongside both targets. `electron-updater` replaces the AppImage in place via its
+embedded block map; no `.blockmap` sidecar ships. The deb stays package-manager owned — updates for
+it remain manual downloads from GitHub Releases. Unpackaged or dev builds report `unsupported` and
+never touch the updater. Updater behavior is a package policy injected into the shared updater
+state machine (`appUpdateMode`) rather than scattered platform checks.
 
 **The AppImage carries a sandbox requirement the deb does not.** Its FUSE mount cannot ship a
 setuid `chrome-sandbox`, so the renderer sandbox needs unprivileged user namespaces. Ubuntu
 23.10+ restricts those behind `kernel.apparmor_restrict_unprivileged_userns` and only packaged
 applications can install an AppArmor profile — the deb does (`apparmor-profile` ships in its
-resources), the AppImage cannot. On stock Ubuntu/Pop!_OS 24.04 the AppImage therefore fails at
-launch unless the user disables that restriction; the deb is the primary artifact and the
-AppImage claim stays limited to distributions that leave unprivileged user namespaces open.
+resources), the AppImage cannot. On kernels enforcing that restriction the AppImage cannot start
+its sandbox; the app detects the sysctl at startup and tells the user to install the deb or set
+`kernel.apparmor_restrict_unprivileged_userns=0`, instead of exiting silently. The deb is the
+primary artifact and the AppImage claim stays limited to distributions that leave unprivileged
+user namespaces open.
+
+**Close-to-tray is conditional on Linux.** The window hides on close only when a real tray exists:
+Electron's `Tray` constructor succeeds even where no StatusNotifier host will ever draw the icon,
+so startup first probes the session D-Bus for `org.kde.StatusNotifierWatcher` (`busctl --user list`,
+`dbus-send ... ListNames` fallback). With a host (KDE, COSMIC, GNOME with an AppIndicator
+extension) close hides to the tray and Quit still exits fully; without one, close destroys the
+window and the process exits — never an unreachable ghost process. The deb `Recommends`
+`libayatana-appindicator3-1 | libappindicator3-1` so the SNI client library is present where apt
+honors recommends. macOS keeps native close semantics and has no tray.
 
 Credentials require a Secret Service provider on the session D-Bus (gnome-keyring, KWallet,
 KeePassXC). Minimal or headless desktops may have none, in which case credential-backed features
@@ -144,11 +159,11 @@ fail with an explicit install/unlock message rather than silently storing plaint
 declares `libc6 (>= 2.31)`, the glibc floor of the shipped Electron, so apt refuses installs on
 distributions too old to run the binary. musl-based distributions (Alpine) and arm64 are outside
 the x86_64 gnu-only artifact set.
-The curated `release/linux-x64` distribution contains only the AppImage, deb, SHA-256 checksums,
-and source-bound evidence; strict staging also excludes any unexpected private builder output.
-Windows and macOS retain the global generic publisher and their existing application-owned updater
-path. Updater behavior is a package policy injected into the shared updater state machine rather
-than scattered platform checks.
+The curated `release/linux-x64` distribution contains the AppImage, deb, `latest-linux.yml` updater
+metadata, SHA-256 checksums, and source-bound evidence; strict staging also excludes any unexpected
+private builder output.
+Windows and macOS retain the shared GitHub publisher and their existing application-owned updater
+path.
 
 The unpacked artifact and native proof come before AppImage/deb configuration. A package that
 draws a window but cannot open a PTY, use the credential store, or stop descendants is not a

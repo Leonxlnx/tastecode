@@ -1886,9 +1886,11 @@
                 public <code>Leonxlnx/tastecode</code> GitHub Releases; hourly checks and an in-app
                 ready notice are implemented. Windows and signed/notarized macOS beta 6 are
                 published. Windows public-download clean installation, onboarding and a live update
-                check pass. Packaged Linux links to manual downloads and distributes no
-                updater-channel sidecars. Automatic installed version-to-version upgrade proof
-                remains pending; beta 5 requires feed migration or one manual installer update</span
+                check pass. The Linux AppImage consumes the same GitHub feed through
+                <code>latest-linux.yml</code> (live check not yet verified); the deb stays
+                package-manager owned and links to manual downloads. Automatic installed
+                version-to-version upgrade proof remains pending; beta 5 requires feed migration or
+                one manual installer update</span
               ></label
             >
           </li>
@@ -1968,8 +1970,9 @@
               ><input type="checkbox" /><span
                 >Windows title bar via the real Window Controls Overlay
                 <span class="d"
-                  >TasteCode icon in the window, taskbar, tray, macOS Dock, package, and
-                  README</span
+                  >TasteCode icon in the window, taskbar, tray, macOS Dock, package, and README;
+                  close-to-tray on Windows and on Linux when a StatusNotifier host is present —
+                  otherwise Linux close destroys the window and exits</span
                 ></span
               ></label
             >
