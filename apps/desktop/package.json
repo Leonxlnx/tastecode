@@ -152,7 +152,9 @@
       "syncDesktopName": true,
       "icon": "assets/icons",
       "desktop": {
-        "Keywords": "coding;agents;ai;development;"
+        "entry": {
+          "Keywords": "coding;agents;ai;development;"
+        }
       },
       "files": [
         "!dist/**/*.map",
