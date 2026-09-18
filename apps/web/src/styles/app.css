@@ -3455,6 +3455,11 @@
   }
 }
 
+.notice--app-update {
+  top: 52px;
+  bottom: auto;
+}
+
 .notice__text {
   /* Server error messages are the point of this toast; clamping to three
      lines beats truncating them to an unreadable single one. */

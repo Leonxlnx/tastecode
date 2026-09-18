@@ -23,7 +23,7 @@ export function AppUpdateNotice(props: { onReview: () => void }) {
   }, [])
   return (
     <NoticePresence
-      className="notice"
+      className="notice notice--app-update"
       role="status"
       visible={state?.status === 'ready' && state.version !== dismissed}
       onDismiss={() => setDismissed(state?.version)}
