@@ -6,7 +6,7 @@
   "author": "Tasteskill Team",
   "license": "Apache-2.0",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
-  "desktopName": "dev.tastecode.desktop.desktop",
+  "desktopName": "dev.tastecode.desktop",
   "version": "0.1.0-beta.6",
   "private": true,
   "type": "module",
@@ -131,7 +131,6 @@
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
     "linux": {
       "executableName": "tastecode",
-      "icon": "assets/tastecode-app-icon.png",
       "category": "Development",
       "synopsis": "Local desktop workspace for coding agents",
       "description": "A local desktop workspace for coding agents.",
@@ -152,6 +151,9 @@
       ],
       "syncDesktopName": true,
       "icon": "assets/icons",
+      "desktop": {
+        "Keywords": "coding;agents;ai;development;"
+      },
       "files": [
         "!dist/**/*.map",
         "!dist/**/*.d.ts",
