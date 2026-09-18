@@ -651,7 +651,9 @@ function createWindow(): void {
   window.webContents.on('will-redirect', restrictWindowNavigation)
 
   window.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return
+    // Linux delivers 'rawKeyDown' for non-text keys (Ctrl+W emits no 'char');
+    // 'keyDown' covers the rest. One press produces exactly one of them.
+    if (input.type !== 'keyDown' && input.type !== 'rawKeyDown') return
     const action = zoomShortcut(input)
     if (action) {
       event.preventDefault()
