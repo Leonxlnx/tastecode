@@ -8,7 +8,7 @@ import type {
 import type { WebSocket } from 'ws'
 
 type PendingCapture<Client extends object> = {
-  socket: Client
+  socket?: Client
   request: PreviewCaptureRequest
   resolve: (screenshots: PreviewScreenshot[]) => void
   reject: (error: Error) => void
@@ -33,18 +33,23 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
   }
 
   setCapability(socket: Client, available: boolean): void {
-    if (available) this.#clients.add(socket)
-    else this.remove(socket)
+    if (available) {
+      this.#clients.add(socket)
+      this.#dispatchNext()
+    } else this.remove(socket)
   }
 
   remove(socket: Client): void {
     this.#clients.delete(socket)
     for (const [requestId, pending] of this.#pending) {
       if (pending.socket !== socket) continue
-      clearTimeout(pending.timer)
       this.#pending.delete(requestId)
       this.#cancel(socket, requestId)
-      pending.reject(new Error('Preview capture client disconnected'))
+      delete pending.socket
+      // Keep the original deadline, but give the replacement native capture a
+      // fresh identity so late cancellation/results cannot affect its retry.
+      pending.request = { ...pending.request, requestId: randomUUID() }
+      this.#pending.set(pending.request.requestId, pending)
     }
     this.#dispatchNext()
   }
@@ -89,34 +94,43 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
   }
 
   #dispatchNext(): void {
-    if (this.#pending.size > 0 || this.#queue.length === 0) return
+    const interrupted = this.#pending.values().next().value
+    if (interrupted?.socket || (!interrupted && this.#queue.length === 0)) return
     let socket: Client | undefined
     for (const client of this.#clients) {
       socket = client
       break
     }
     if (!socket) {
+      if (interrupted) return
       for (const queued of this.#queue.splice(0)) {
         queued.reject(new Error('Preview capture client disconnected'))
       }
       return
     }
+    if (interrupted) {
+      interrupted.socket = socket
+      try {
+        this.send(socket, interrupted.request)
+      } catch {
+        this.remove(socket)
+      }
+      return
+    }
     const queued = this.#queue.shift()!
     const timer = setTimeout(() => {
-      this.#pending.delete(queued.request.requestId)
-      this.#cancel(socket, queued.request.requestId)
+      this.#pending.delete(pending.request.requestId)
+      if (pending.socket) this.#cancel(pending.socket, pending.request.requestId)
       queued.reject(new Error('Preview capture timed out'))
       this.#dispatchNext()
     }, this.timeoutMs)
     timer.unref()
-    this.#pending.set(queued.request.requestId, { socket, timer, ...queued })
+    const pending = { socket, timer, ...queued }
+    this.#pending.set(queued.request.requestId, pending)
     try {
       this.send(socket, queued.request)
-    } catch (error) {
-      clearTimeout(timer)
-      this.#pending.delete(queued.request.requestId)
-      queued.reject(error instanceof Error ? error : new Error(String(error)))
-      this.#dispatchNext()
+    } catch {
+      this.remove(socket)
     }
   }
 

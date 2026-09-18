@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-18 base main d39bff26 + history prompt cleanup</span>
+        <span class="meta">2026-09-18 base main 5765767f + Design recovery fixes</span>
       </div>
     </div>
 
@@ -917,14 +917,22 @@
                   30-second start-only watchdog fails silent starts visibly without timing out
                   running work; terminal provider errors end briefing activity, remain visible, and
                   cannot idle a newer turn; retired approval warnings are omitted from new and saved
-                  transcripts; recoverable preview startup retries once; package-manager selectors
-                  cannot escape the selected workspace; exact-file build reports are checked against
-                  the bounded before-and-after tree; legacy page artifacts record a validated beta
-                  layout family and human-authored case IDs, while v0.5 artifacts lock each section
-                  to its selected image reference and carry those compositions into Build and
-                  Review; supplied reference pixels and locked direction IDs persist across phases;
-                  approved artifacts and assets are checked before reuse, duplicate briefing IDs
-                  fail validation, and exact output rules inspect nested files; v0.5 new runs sample
+                  transcripts; recoverable preview startup retries once, including invalid entry
+                  types and missing package scripts; Node script directory and port arguments are
+                  accepted with workspace boundaries intact; provider failures and exhausted preview
+                  retries preserve the phase for explicit continue/retry without new references,
+                  including across runtime restart; Codex history replies have a finite 128 MiB
+                  allowance while other protocol frame limits remain unchanged; capture reconnects
+                  retry within the original deadline, and capture outages preserve the built preview
+                  with an explicit skipped-review notice; slash-prefixed Windows drive links resolve
+                  within the project boundary; package-manager selectors cannot escape the selected
+                  workspace; exact-file build reports are checked against the bounded
+                  before-and-after tree; legacy page artifacts record a validated beta layout family
+                  and human-authored case IDs, while v0.5 artifacts lock each section to its
+                  selected image reference and carry those compositions into Build and Review;
+                  supplied reference pixels and locked direction IDs persist across phases; approved
+                  artifacts and assets are checked before reuse, duplicate briefing IDs fail
+                  validation, and exact output rules inspect nested files; v0.5 new runs sample
                   uniformly across catalog and complete generated candidate groups, without style
                   filtering or extra votes for revisions; repeated feature/about sections use
                   distinct references before reuse; fresh checkouts and packages bundle 172

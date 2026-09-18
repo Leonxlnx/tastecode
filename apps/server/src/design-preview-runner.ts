@@ -6,7 +6,7 @@ import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
 import { spawnCli } from '@harness/proc/cli'
 import { z } from 'zod'
-import { existingWorkspacePath } from './api-workspace-paths.js'
+import { existingWorkspacePath, writableWorkspacePath } from './api-workspace-paths.js'
 import { startStaticDesignPreview } from './design-static-preview.js'
 import { safeCommandEnvironment } from './safe-command-environment.js'
 
@@ -155,20 +155,24 @@ export function assertRunsWorkspaceCode(
   plan: Extract<PreviewPlan, { kind: 'command' }>,
 ): void {
   if (plan.command === 'node') {
-    const entries = plan.args.filter((arg) => !arg.startsWith('-'))
-    if (entries.length === 0) throw new Error('preview command must name a script in the workspace')
-    // EVERY path argument, not just the first: `node --import ./local.mjs
-    // ../../outside.mjs` would otherwise pass on the local one and then run
-    // the other. Flag VALUES are checked too — they can be paths as well.
-    for (const entry of plan.args) {
-      if (entry.startsWith('-') && !entry.includes(path.sep) && !entry.includes('/')) continue
-      const candidate = entry.startsWith('-') ? entry.slice(entry.indexOf('=') + 1) : entry
-      // Throws unless the file exists inside the workspace.
-      existingWorkspacePath(
-        workspace,
-        path.relative(workspace, path.resolve(cwd, candidate)),
-        false,
+    const [script, ...args] = plan.args
+    // Keep Node runtime flags (eval, loaders, preloads) out of model-chosen argv.
+    // Projects needing them can declare an existing package script instead.
+    if (!script || script.startsWith('-'))
+      throw new Error('preview node command must start with a workspace script')
+    existingWorkspacePath(workspace, path.relative(workspace, path.resolve(cwd, script)), false)
+    for (const entry of args) {
+      if (
+        entry.startsWith('-') &&
+        !entry.includes('=') &&
+        !entry.includes(path.sep) &&
+        !entry.includes('/')
       )
+        continue
+      const candidate = entry.startsWith('-') ? entry.slice(entry.indexOf('=') + 1) : entry
+      // Script arguments may be directories, ports or other values. Retain
+      // workspace/credential boundaries without requiring each value to be a file.
+      writableWorkspacePath(workspace, path.relative(workspace, path.resolve(cwd, candidate)))
     }
     return
   }

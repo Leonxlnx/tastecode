@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-18 base main 5ad1f012 + GitHub update preparation</span>
+        <span class="meta">2026-09-18 base main 5765767f + Design recovery fixes</span>
       </div>
     </div>
 
@@ -303,6 +303,17 @@
           details, per-file line counts and a turn timer; disclosure headers stay visible as they
           open. Desktop links offer Open and Copy Link. Local checks and macOS Electron interaction
           checks passed; this source delivery does not publish a new app build.
+        </p>
+        <p class="sub">
+          Design preview validates the Node entry file separately from directory and port arguments,
+          retaining workspace and credential boundaries. Correctable preview plans retry locally;
+          provider failures and exhausted preview retries preserve a suspended phase for explicit
+          continue/retry, including across runtime restart, without resampling references. Codex
+          accepts bounded history replies up to 128 MiB. Preview capture retries client reconnects
+          within its original deadline; unavailable capture leaves the built preview open and
+          explicitly skips visual review. URL-style Windows file links resolve inside their project.
+          A local 18.29 MiB history reply previously exceeded the shared 16 MiB cap. These source
+          fixes require a new installed build; active beta 5 sessions remain untouched.
         </p>
         <p class="sub">
           Provider history now rechecks task ownership after discovery and defers imports while
