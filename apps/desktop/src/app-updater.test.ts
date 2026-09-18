@@ -20,6 +20,24 @@ const info = { version: '0.1.0-beta.2' }
 afterEach(() => vi.useRealTimers())
 
 describe('app update controller', () => {
+  it('waits for updater cleanup on disposal', async () => {
+    let finish!: () => void
+    const cleanup = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const updater = Object.assign(fakeUpdater(), { dispose: vi.fn(() => cleanup) })
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.7',
+      enabled: true,
+    })
+    const result = controller.dispose()
+    expect(result).toBe(cleanup)
+    expect(updater.dispose).toHaveBeenCalledOnce()
+    finish()
+    await result
+  })
+
   it('downloads an available beta once and installs only after it is ready', async () => {
     const updater = fakeUpdater()
     const states: string[] = []
@@ -81,14 +99,15 @@ describe('app update controller', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
   })
 
-  it('keeps stable installs out of prereleases and retains a ready download', async () => {
+  it('follows the newest release including prereleases and retains a ready download', async () => {
     const updater = fakeUpdater()
     const controller = createAppUpdateController({
       updater,
       currentVersion: '1.0.0',
       enabled: true,
     })
-    expect(updater.allowPrerelease).toBe(false)
+    expect(updater.allowPrerelease).toBe(true)
+    expect(updater.allowDowngrade).toBe(false)
     updater.emit('update-downloaded', { version: '1.0.1' })
     await expect(controller.check()).resolves.toMatchObject({ status: 'ready', version: '1.0.1' })
     expect(updater.checkForUpdates).not.toHaveBeenCalled()

@@ -2,11 +2,12 @@
 
 # TasteCode
 
+[Download Windows](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.6/TasteCode-0.1.0-beta.6-win-x64.exe) · [Download macOS](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.6/TasteCode-0.1.0-beta.6-mac-arm64.dmg)
+
 > A local desktop workspace for AI coding agents, with Design Mode built in.
 
-**Status: public beta (`0.1.0-beta.6`).** TasteCode currently supports Windows x64 and
-macOS Apple Silicon. Expect beta rough edges and report them through
-[GitHub Issues](https://github.com/Leonxlnx/tastecode/issues).
+**Early beta (`0.1.0-beta.6`).** Expect bugs, rough edges, and changes as we keep working
+on TasteCode. Please [report any issues](https://github.com/Leonxlnx/tastecode/issues) you find.
 
 ## What TasteCode does
 

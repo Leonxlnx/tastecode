@@ -156,6 +156,16 @@ export function releaseAssets(platform = 'all', config = releaseConfig) {
     .sort()
 }
 
+// Beta 7 is the bridge for beta 6's YAML/ZIP updater. Proof files remain local
+// after that bridge; GitHub supplies the public asset SHA-256 digests itself.
+export function releaseUploadAssets(config = releaseConfig) {
+  if (/^0\.1\.0-beta\.[0-7]$/.test(config.version)) return releaseAssets('all', config)
+  return [
+    ...config.platforms.windows.artifacts.filter((name) => name.endsWith('.exe')),
+    ...config.platforms.macos.artifacts.filter((name) => name.endsWith('.dmg')),
+  ].sort()
+}
+
 export async function openRegularFile(filePath) {
   const before = await lstat(filePath)
   if (!before.isFile() || before.nlink !== 1 || before.size === 0) {
