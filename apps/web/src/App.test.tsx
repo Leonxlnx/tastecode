@@ -5402,7 +5402,7 @@ describe('new chats', () => {
   })
 
   it.each([false, true])(
-    'keeps each chat model setup after switching and reloading (same model: %s)',
+    'keeps each chat model, design, and approval setup after switching and reloading (same model: %s)',
     async (sameModel) => {
       localStorage.setItem('harness.modelVisibilityVersion', '4')
       localStorage.setItem('harness.hiddenModels', '[]')
@@ -5426,9 +5426,23 @@ describe('new chats', () => {
         ],
       }))
       const request = transport.request.getMockImplementation()!
-      transport.request.mockImplementation((method, params) =>
-        method === 'models.list' ? Promise.resolve({ models }) : request(method, params),
-      )
+      const approvals = new Map<string, string>()
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'models.list') return Promise.resolve({ models })
+        if (method === 'thread.setApproval') {
+          const { threadId, approval } = methods['thread.setApproval'].params.parse(params)
+          approvals.set(threadId, approval)
+        }
+        if (method === 'thread.history') {
+          const { threadId } = methods['thread.history'].params.parse(params)
+          return Promise.resolve({
+            events: [],
+            running: false,
+            approval: approvals.get(threadId) ?? 'ask',
+          })
+        }
+        return request(method, params)
+      })
 
       const openPicker = async () => {
         const button = await screen.findByRole('button', { name: 'Model and reasoning' })
@@ -5446,6 +5460,12 @@ describe('new chats', () => {
           expect(
             screen.getByRole('button', { name: fast ? 'Disable fast mode' : 'Enable fast mode' }),
           ).toBeTruthy()
+          expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+            String(fast),
+          )
+          expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+            fast ? 'Auto' : 'Ask first',
+          )
         })
       }
       render(<App />)
@@ -5457,6 +5477,9 @@ describe('new chats', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
       fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
       fireEvent.click(screen.getByRole('button', { name: 'Enable fast mode' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: /Auto-approve/ }))
       await expectSetup(sameModel ? '5.6 Sol' : '5.6 Mini', 'High', true)
 
       fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
@@ -5479,6 +5502,28 @@ describe('new chats', () => {
       await expectSetup(sameModel ? '5.6 Sol' : '5.6 Mini', 'High', true)
       fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
       await expectSetup('5.6 Sol', 'Low', false)
+      emitThreadEvent('chat-b', {
+        type: 'item.completed',
+        item: {
+          id: 'design-done',
+          turnId: 'design-turn',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          text: 'Website built. Checks passed.',
+          createdAt: 3,
+        },
+      })
+      expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+        'false',
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
+      expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+        'false',
+      )
+      expect(JSON.parse(localStorage.getItem('harness.modelByThread:chat-b')!).designMode).toBe(
+        false,
+      )
     },
   )
 
@@ -5535,9 +5580,14 @@ describe('new chats', () => {
 
   it('keeps edits made while a new chat starts after leaving the chat', async () => {
     let finishStart!: () => Promise<void>
+    let savedApproval = 'full'
     const request = transport.request.getMockImplementation()!
     transport.request.mockImplementation((method, params) => {
       if (method === 'models.list') return Promise.resolve({ models: [cachedCodexChoice().model] })
+      if (method === 'thread.setApproval')
+        savedApproval = methods['thread.setApproval'].params.parse(params).approval
+      if (method === 'thread.history')
+        return Promise.resolve({ events: [], running: false, approval: savedApproval })
       if (method === 'thread.start')
         return new Promise((resolve) => {
           finishStart = async () => {
@@ -5549,30 +5599,45 @@ describe('new chats', () => {
     render(<App />)
     const composer = await screen.findByPlaceholderText('Do anything')
     await screen.findByRole('button', { name: 'Model and reasoning' })
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Full access/ }))
     fireEvent.change(composer, { target: { value: 'New chat setup' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
     await waitFor(() => expect(finishStart).toBeTypeOf('function'))
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Ask first/ }))
+    expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain('Ask first')
     fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
     await act(async () => finishStart())
     await waitFor(() =>
-      expect(localStorage.getItem('harness.modelByThread:thread-1')).toBe(
-        JSON.stringify({
-          modelKey: 'codex:gpt-5.6-sol',
-          effort: 'high',
-        }),
-      ),
+      expect(JSON.parse(localStorage.getItem('harness.modelByThread:thread-1') ?? 'null')).toEqual({
+        modelKey: 'codex:gpt-5.6-sol',
+        effort: 'high',
+        designMode: true,
+      }),
     )
     expect(
       Object.keys(localStorage).some((key) => key.startsWith('harness.modelByThread:pending:')),
     ).toBe(false)
+    expect(transport.request).toHaveBeenCalledWith('thread.setApproval', {
+      threadId: 'thread-1',
+      approval: 'ask',
+    })
     fireEvent.click(await screen.findByRole('button', { name: /^New chat setup,/ }))
     const picker = await screen.findByRole('button', { name: 'Model and reasoning' })
     if (picker.getAttribute('aria-expanded') !== 'true') fireEvent.click(picker)
     await waitFor(() =>
       expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
         'Effort: High',
+      ),
+    )
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Permissions' }).textContent).toContain(
+        'Ask first',
       ),
     )
   })
