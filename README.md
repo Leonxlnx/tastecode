@@ -49,13 +49,34 @@ are best-effort. Two artifacts ship per release:
 
 - **deb** — the primary artifact. Installs to `/opt`, registers the desktop entry and AppArmor
   profile, and declares its dependencies to apt.
-- **AppImage** — portable, but needs `libfuse2` on the host and unprivileged user namespaces.
-  Ubuntu 23.10+ disables unprivileged user namespaces by default
-  (`kernel.apparmor_restrict_unprivileged_userns`); prefer the deb there. Without FUSE, run
-  `./TasteCode-*.AppImage --appimage-extract` and launch `squashfs-root/tastecode` instead.
+- **AppImage** — portable, with a statically linked runtime that needs no host FUSE library.
+  It still needs unprivileged user namespaces for the Chromium sandbox; Ubuntu 23.10+ disables
+  them by default (`kernel.apparmor_restrict_unprivileged_userns`), so prefer the deb there.
+  If mounting fails for another reason, `./TasteCode-*.AppImage --appimage-extract` and run
+  `squashfs-root/tastecode` instead.
 
 Credential storage needs a Secret Service provider on the session bus — GNOME and KDE ship one;
 minimal or headless desktops need gnome-keyring, KWallet, or KeePassXC installed.
+
+### Linux troubleshooting
+
+- **The AppImage refuses to start and mentions user namespaces.** The Chromium sandbox needs
+  unprivileged user namespaces. The app shows a dialog with the fix; on Ubuntu 24.04 install
+  the deb instead, or run
+  `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`.
+- **The AppArmor prompt asks about the profile.** The deb installs
+  `/etc/apparmor.d/tastecode` at install time and removes it on uninstall.
+- **No tray icon on GNOME.** Stock GNOME has no StatusNotifier host, so the window close
+  button quits the app instead of hiding to a tray. Install the *AppIndicator and KStatusNotifierItem
+  Support* extension to get the tray icon and close-to-tray behavior.
+- **Credential errors mention gnome-keyring or KWallet.** Install and unlock a Secret Service
+  provider; TasteCode stores nothing when none is available.
+- **Collecting logs.** Settings → Local diagnostics writes a secret-scrubbed
+  `errors.log` (512 KB, one rotated generation) under
+  `~/.config/TasteCode/diagnostics/text/`. The button next to the toggle opens that directory.
+  For console output, launch `tastecode` from a terminal.
+- **Full uninstall.** `sudo apt remove tastecode`, then delete `~/.config/TasteCode` and
+  `~/.tastecode`.
 
 For local development, install Node 24 LTS and pnpm, then run:
 
