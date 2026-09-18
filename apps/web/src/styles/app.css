@@ -105,6 +105,26 @@
   -webkit-app-region: drag;
 }
 
+/* Renderer-drawn caption buttons for Linux, where the frameless window gets
+   no native controls. Slightly larger than .icon-btn so they are easy to hit. */
+.titlebar__controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.icon-btn.titlebar__winbtn {
+  width: 30px;
+  height: 30px;
+  color: var(--titlebar-symbol);
+  -webkit-app-region: no-drag;
+}
+
+.icon-btn.titlebar__winbtn--close:is(:hover, :focus-visible) {
+  background: #e81123;
+  color: #fff;
+}
+
 .shell.is-narrow .titlebar {
   background: var(--bg-rail);
 }

@@ -20,6 +20,12 @@ export function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+export type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
+
+export function isWindowControlAction(value: unknown): value is WindowControlAction {
+  return value === 'minimize' || value === 'toggle-maximize' || value === 'close'
+}
+
 export function isAppUpdateState(value: unknown): value is AppUpdateState {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const state = value as Record<string, unknown>

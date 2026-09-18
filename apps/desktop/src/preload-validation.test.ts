@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import { isAppUpdateState, isFiniteNumber, isWindowControlAction } from './preload-validation.js'
 
 describe('preload validation', () => {
   it('accepts valid update states and finite zoom factors', () => {
@@ -23,5 +23,15 @@ describe('preload validation', () => {
     ).toBe(false)
     expect(isFiniteNumber(Number.NaN)).toBe(false)
     expect(isFiniteNumber(Infinity)).toBe(false)
+  })
+
+  it('accepts only the three window control actions', () => {
+    expect(isWindowControlAction('minimize')).toBe(true)
+    expect(isWindowControlAction('toggle-maximize')).toBe(true)
+    expect(isWindowControlAction('close')).toBe(true)
+    expect(isWindowControlAction('destroy')).toBe(false)
+    expect(isWindowControlAction('')).toBe(false)
+    expect(isWindowControlAction(null)).toBe(false)
+    expect(isWindowControlAction({ action: 'close' })).toBe(false)
   })
 })

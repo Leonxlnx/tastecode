@@ -76,6 +76,7 @@ import {
   type MainWindowStatePersistence,
 } from './window-state.js'
 import { windowThemeOptions, windowThemeSource } from './window-theme.js'
+import { isWindowControlAction } from './preload-validation.js'
 import {
   DEFAULT_ZOOM_FACTOR,
   isZoomAction,
@@ -461,6 +462,12 @@ function createWindow(): void {
 
   if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
+  // The Linux title bar draws its own caption buttons and needs the maximized
+  // state to pick the right icon; the native caption controls on Windows and
+  // macOS render without renderer involvement.
+  window.on('maximize', () => window.webContents.send('harness:windowMaximized', true))
+  window.on('unmaximize', () => window.webContents.send('harness:windowMaximized', false))
+
   window.on('close', (event) => {
     if (!shouldHideWindowOnClose(process.platform, appIsQuitting, tray !== undefined)) return
     event.preventDefault()
@@ -627,6 +634,31 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for zoom action')
   applyZoom(window, action)
+})
+
+ipcMain.handle('harness:windowControl', (event, action: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (!isWindowControlAction(action)) throw new Error('Invalid window control action')
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed()) throw new Error('No window for control action')
+  switch (action) {
+    case 'minimize':
+      window.minimize()
+      break
+    case 'toggle-maximize':
+      if (window.isMaximized()) window.unmaximize()
+      else window.maximize()
+      break
+    case 'close':
+      window.close()
+      break
+  }
+})
+
+ipcMain.handle('harness:windowIsMaximized', (event) => {
+  requireOwnRenderer(event.sender)
+  const window = BrowserWindow.fromWebContents(event.sender)
+  return window !== null && !window.isDestroyed() && window.isMaximized()
 })
 
 ipcMain.handle('harness:getDiagnosticsEnabled', (event) => {

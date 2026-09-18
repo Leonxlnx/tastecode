@@ -45,6 +45,9 @@ type Bridge = {
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
   setMenuShortcuts?: (shortcuts: NativeMenuShortcuts) => void
+  windowControl?: (action: WindowControlAction) => Promise<void>
+  windowIsMaximized?: () => Promise<boolean>
+  onWindowMaximizedChange?: (listener: (maximized: boolean) => void) => () => void
   onMenuAction?: (listener: (action: NativeMenuAction) => void) => () => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
@@ -71,6 +74,7 @@ declare global {
 }
 
 export type ZoomAction = 'in' | 'out' | 'reset'
+export type WindowControlAction = 'minimize' | 'toggle-maximize' | 'close'
 type AppTheme = 'light' | 'dark' | 'codex'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'
@@ -136,6 +140,43 @@ export function reportStartupMilestone(name: RendererStartupMilestone): void {
 
 export function isMacOS(): boolean {
   return navigator.platform.startsWith('Mac')
+}
+
+export function isLinux(): boolean {
+  return navigator.platform.startsWith('Linux')
+}
+
+export type WindowControls = {
+  minimize: () => Promise<void>
+  toggleMaximize: () => Promise<void>
+  close: () => Promise<void>
+  isMaximized: () => Promise<boolean>
+  onMaximizedChange: (listener: (maximized: boolean) => void) => () => void
+}
+
+/**
+ * Renderer-drawn caption buttons. Only present in the desktop build; callers
+ * still gate on isLinux() because Windows and macOS show native controls.
+ */
+export function windowControlApi(): WindowControls | undefined {
+  const bridge = window.harness
+  if (
+    bridge?.windowControl === undefined ||
+    bridge.windowIsMaximized === undefined ||
+    bridge.onWindowMaximizedChange === undefined
+  ) {
+    return undefined
+  }
+  const control = bridge.windowControl
+  const isMaximized = bridge.windowIsMaximized
+  const onMaximizedChange = bridge.onWindowMaximizedChange
+  return {
+    minimize: () => control('minimize'),
+    toggleMaximize: () => control('toggle-maximize'),
+    close: () => control('close'),
+    isMaximized,
+    onMaximizedChange,
+  }
 }
 
 export async function pickFolder(): Promise<string | undefined> {
