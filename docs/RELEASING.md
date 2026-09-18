@@ -49,8 +49,17 @@ Isolated Developer ID-signed Electron fixtures completed native beta 6 → beta 
 legacy YAML/ZIP updater, then beta 7 → beta 8 via the new DMG path, including app replacement,
 relaunch, and preserved test profile data. The beta 8 fixture exposed only EXE/DMG assets.
 This proves the update engines, not production database migrations or Windows installation.
-Beta 7 has not been published. Upgrade checks with the final production packages on both
-target operating systems remain a release gate.
+Beta 7 macOS is published as a normal release from commit
+`82f714614bfa9454a9c8ee9bc681d15712a3df89`. Apple accepted the app and DMG, both tickets
+are stapled, Gatekeeper accepts both, and packaged native bindings and three fresh-data
+launches pass. A signed production beta 6 copy downloaded beta 7 from the public GitHub
+release, installed through Squirrel on quit, and reopened as beta 7 with its test chat and
+renderer setting intact. The reopened beta 7 updater also read the public release correctly.
+The test used isolated app and data directories; its relaunch was controlled to keep those
+test-only data paths. The earlier signed fixtures separately proved automatic relaunch.
+
+Windows beta 7 remains pending and must use the exact same tagged source commit. Its
+signing and native upgrade checks are still the Windows maintainer's release gates.
 
 ## Prepare, build, then publish
 
@@ -69,7 +78,7 @@ macOS DMG, ZIP, blockmaps, metadata, checksums, and provenance are now publicly 
 from the same source commit. The macOS owner's release report records Developer ID signing,
 Apple notarization, Gatekeeper acceptance, native bindings, and three fresh-data launches.
 Both primary downloads and the macOS ZIP returned HTTP 200. The two obsolete unsigned
-beta 1 draft releases were removed; beta 6 is the only release and tag.
+beta 1 draft releases were removed before beta 7 publication.
 
 Never replace published files or change the tag. Except for the approved beta 7 macOS-first
 release below, subsequent releases must stage both
