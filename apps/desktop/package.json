@@ -164,6 +164,7 @@
       "packageCategory": "devel",
       "depends": [
         "libc6 (>= 2.31)",
+        "libstdc++6",
         "libgtk-3-0t64 | libgtk-3-0",
         "libnotify4",
         "libnss3",

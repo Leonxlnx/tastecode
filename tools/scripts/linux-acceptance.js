@@ -4,6 +4,7 @@ import {
   createReadStream,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   statSync,
   writeFileSync,
@@ -19,6 +20,68 @@ const releaseDirectory = path.join(workspaceRoot, 'release')
 
 export const ACCEPTANCE_VALIDATION_SCRIPTS = ['lint', 'typecheck', 'test']
 export const ACCEPTANCE_PREPARATION_ARGS = ['--filter', '@harness/desktop', 'dist:linux']
+
+/**
+ * Highest versioned-symbol tag (e.g. `GLIBC_2.28`) in `objdump -T` output.
+ * Returns undefined when the binary carries no tags with that prefix.
+ */
+export function maxSymbolVersion(objdumpOutput, prefix) {
+  let highest
+  for (const match of objdumpOutput.matchAll(new RegExp(`${prefix}_([0-9.]+)`, 'g'))) {
+    const version = match[1]
+    if (highest === undefined || compareDottedVersions(version, highest) > 0) {
+      highest = version
+    }
+  }
+  return highest
+}
+
+export function compareDottedVersions(left, right) {
+  const a = left.split('.').map(Number)
+  const b = right.split('.').map(Number)
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const delta = (a[index] ?? 0) - (b[index] ?? 0)
+    if (delta !== 0) return delta
+  }
+  return 0
+}
+
+/**
+ * The declared glibc floor from deb depends entries like `libc6 (>= 2.31)`.
+ * Returns undefined when no libc6 constraint is declared.
+ */
+export function declaredLibcFloor(depends) {
+  for (const dependency of depends ?? []) {
+    const match = /^libc6\s*\(>=\s*([0-9.]+)\)\s*$/.exec(dependency)
+    if (match) return match[1]
+  }
+  return undefined
+}
+
+// Every shipped ELF binary a loader resolves at runtime: the Electron
+// executable and its bundled shared libraries plus native Node addons. A
+// symbol newer than the declared libc6 floor would silently break install on
+// older distributions, so the floor is measured rather than assumed.
+function nativeBinaryCandidates(unpackedDirectory, executableName) {
+  const candidates = [path.join(unpackedDirectory, executableName)]
+  const walk = (directory) => {
+    let entries
+    try {
+      entries = readdirSync(directory, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (/\.(?:node|so(?:\.\d+)*)$/.test(entry.name)) candidates.push(full)
+    }
+  }
+  walk(unpackedDirectory)
+  candidates.push(path.join(unpackedDirectory, 'chrome-sandbox'))
+  candidates.push(path.join(unpackedDirectory, 'chrome_crashpad_handler'))
+  return candidates.filter((candidate) => statSync(candidate, { throwIfNoEntry: false })?.isFile())
+}
 
 function block(message) {
   process.stderr.write(`[linux-acceptance] environment blocked: ${message}\n`)
@@ -151,6 +214,27 @@ async function main() {
     const resource = statSync(path.join(resources, relativePath), { throwIfNoEntry: false })
     if (!resource?.isFile()) fail(`missing packaged ${relativePath}`)
   }
+
+  // Measure the true glibc floor of every shipped ELF binary and refuse to
+  // qualify a package that needs more than the deb declares.
+  probe('objdump', ['--version'])
+  const libcFloor = declaredLibcFloor(desktopPackage.build?.deb?.depends)
+  if (libcFloor === undefined) {
+    fail('apps/desktop deb depends must declare a libc6 (>= <version>) floor')
+  }
+  const glibcFloorByBinary = {}
+  for (const binary of nativeBinaryCandidates(unpackedDirectory, executableName)) {
+    const symbols = command('objdump', ['-T', binary])
+    const measured = maxSymbolVersion(symbols, 'GLIBC')
+    if (measured === undefined) continue
+    glibcFloorByBinary[path.relative(unpackedDirectory, binary)] = measured
+    if (compareDottedVersions(measured, libcFloor) > 0) {
+      fail(
+        `${path.relative(unpackedDirectory, binary)} requires GLIBC_${measured}, ` +
+          `above the declared deb floor libc6 (>= ${libcFloor})`,
+      )
+    }
+  }
   run('pnpm', ['--filter', '@harness/desktop', 'verify:native-bindings', '--', executable])
   run('pnpm', [
     '--filter',
@@ -206,6 +290,8 @@ async function main() {
     ...identity,
     executable,
     appAsarSha256: await sha256(path.join(resources, 'app.asar')),
+    libcFloor,
+    glibcFloorByBinary,
     releaseEvidence: {
       artifacts: releaseEvidence.artifacts,
       commit: releaseEvidence.commit,
