@@ -14,6 +14,13 @@ digest is an error; the app does not silently fall back to an older release.
 
 ## Beta 7 bridge, then two public files
 
+Beta 8 preparation (2026-09-18): the release owner authorized an unsigned Windows
+build and publication, with macOS built separately by its maintainer. Build both
+platforms from the same tagged main commit. This version includes the internal
+review-chat import fix and per-chat composer settings fixes. Keep the release in
+draft until both matching installers and their GitHub digests are present; beta 7
+clients report an error when the newest release lacks their platform's installer.
+
 Beta 7 is the transition release. It includes the new asset updater **and** the old YAML,
 ZIP, and blockmap files so beta 6 can install it through its existing updater. Keep beta 7
 available long enough for users to update before publishing beta 8.
