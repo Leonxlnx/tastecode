@@ -524,6 +524,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       }),
       'Codex',
       {
+        // Resume replies include full history; a captured Design chat exceeded
+        // the shared 16 MiB frame limit. Keep a finite, history-sized allowance.
+        maxFrameBytes: 128 * 1024 * 1024,
         onProtocolError: (error) => {
           const turns = [...this.#activeTurns]
           this.#activeTurns.clear()
@@ -785,6 +788,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     try {
       await this.#call('thread/resume', {
         threadId,
+        excludeTurns: true,
         config: { mcp_servers: prepared.servers },
       })
     } catch {
@@ -884,6 +888,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       {
         threadId,
         cwd: workspacePath,
+        // We replay our own event log; full provider history can exceed the frame limit.
+        excludeTurns: true,
         ...(options.instructions
           ? {
               developerInstructions: options.instructions,

@@ -194,7 +194,8 @@
   overflow: hidden;
 }
 
-.profile-identity__avatar img {
+.profile-identity__avatar img,
+.profile-identity__avatar svg {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -251,16 +252,48 @@
   outline-offset: 2px;
 }
 
+.profile-identity__portrait {
+  position: relative;
+}
+
+/* The upload lives on the picture itself: a small pencil badge on the corner,
+   cut out from the avatar by a ring in the page background. */
+.profile-identity__edit {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-circle);
+  box-shadow:
+    0 0 0 3px var(--bg),
+    0 6px 14px -8px rgb(0 0 0 / 60%);
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.profile-identity__edit:hover {
+  background: var(--control-hover);
+  color: var(--text);
+}
+
+.profile-identity__edit:focus-within {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
 .profile-identity__photo-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 6px;
-}
-
-.profile-identity__photo:focus-within {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
 }
 
 .profile-identity__photo-note,
@@ -275,6 +308,159 @@
 
 .profile-identity__photo-error {
   color: var(--error);
+}
+
+/* Debug › Avatar generator: one input, the picture at every shipped size,
+   then fixed samples so shape and color variety can be judged side by side. */
+.avatar-lab {
+  display: grid;
+  gap: 16px;
+  padding: 4px 14px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.avatar-lab__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.avatar-lab__field {
+  display: grid;
+  flex: 1 1 200px;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.avatar-lab__field input {
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  outline: none;
+}
+
+.avatar-lab__field input:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.avatar-lab__previews {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 18px;
+}
+
+.avatar-lab__preview {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.avatar-lab__frame {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-circle);
+  overflow: hidden;
+}
+
+.avatar-lab__frame svg {
+  width: 100%;
+  height: 100%;
+}
+
+.avatar-lab__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 0 auto;
+  align-self: center;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.avatar-lab__meta code {
+  font-family: var(--font-mono);
+  color: var(--text-2);
+}
+
+.avatar-lab__samples {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Candidate styles sit in one row above the previews; the active one is the
+   style every preview and sample below is drawn in. */
+.avatar-lab__styles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.avatar-lab__style small {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.avatar-lab__style,
+.avatar-lab__sample {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+
+.avatar-lab__style:hover,
+.avatar-lab__sample:hover {
+  background: var(--surface-2);
+}
+
+.avatar-lab__style.is-active,
+.avatar-lab__sample.is-active {
+  border-color: var(--chrome-border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.avatar-lab__style:focus-visible,
+.avatar-lab__sample:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
 }
 
 @media (max-width: 660px) {

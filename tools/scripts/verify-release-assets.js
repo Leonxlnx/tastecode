@@ -125,7 +125,12 @@ export async function verifyPackagedResources(
   const updater = parseMetadata(await readSmallFile(path.join(resources, 'app-update.yml')))
   if (
     updater?.provider !== config.publish.provider ||
-    updater.url !== config.publish.url ||
+    updater.owner !== config.publish.owner ||
+    updater.repo !== config.publish.repo ||
+    updater.host !== undefined ||
+    updater.protocol !== undefined ||
+    updater.private !== undefined ||
+    updater.token !== undefined ||
     updater.channel !== config.updaterChannel
   )
     throw new Error('Packaged updater does not match the configured feed')

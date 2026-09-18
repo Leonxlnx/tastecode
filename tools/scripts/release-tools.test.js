@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import os from 'node:os'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import test from 'node:test'
 import { dump, load } from 'js-yaml'
@@ -225,11 +226,10 @@ test('version, channel, product, and artifact names come from package config', a
     await verifyReleaseDirectory(directory, { approvedSha, config }),
     releaseAssets('all', config),
   )
-  desktop.build.publish[0].channel = 'candidate'
-  assert.equal(createReleaseConfig(desktop).channel, 'candidate')
-  delete desktop.build.publish[0].channel
   desktop.version = '2.3.4-rc-internal.2'
-  assert.equal(createReleaseConfig(desktop).channel, 'rc-internal')
+  assert.equal(createReleaseConfig(desktop).channel, 'latest')
+  assert.equal(createReleaseConfig(desktop).updaterChannel, undefined)
+  assert.equal(createReleaseConfig(desktop).prerelease, true)
   desktop.build.mac.detectUpdateChannel = false
   assert.throws(() => createReleaseConfig(desktop), /per-platform/)
   delete desktop.build.mac.detectUpdateChannel
@@ -259,6 +259,73 @@ test('unsafe cross-platform filenames are rejected', () => {
     assert.throws(() => assertAssetName(name), /safe, flat filenames/, String(name))
   }
   assert.equal(assertAssetName('Example App-1.0.0+1.exe'), 'Example App-1.0.0+1.exe')
+})
+
+test('public GitHub updates resolve beta metadata and downloads on Windows and macOS', async (t) => {
+  const desktop = createRequire(path.join(desktopDirectory, 'package.json'))
+  const updater = createRequire(desktop.resolve('electron-updater'))
+  const { GitHubProvider } = updater('./providers/GitHubProvider.js')
+  const { HttpError } = updater('builder-util-runtime')
+  const directory = await fixture(t)
+  for (const [platform, target] of [
+    ['win32', 'windows'],
+    ['darwin', 'macos'],
+  ]) {
+    const detail = platformConfig(target)
+    const requests = []
+    const provider = new GitHubProvider(
+      releaseConfig.publish,
+      {
+        allowPrerelease: true,
+        currentVersion: '0.1.0-beta.5',
+        fullChangelog: false,
+      },
+      {
+        platform,
+        executor: {
+          request: async (options) => {
+            assert.equal(options.hostname, 'github.com')
+            assert.equal(options.headers?.authorization, undefined)
+            const pathname = options.path.split('?')[0]
+            requests.push(pathname)
+            if (pathname.endsWith('.atom'))
+              return `<feed><entry><title>Beta</title><link href="https://github.com/Leonxlnx/tastecode/releases/tag/${releaseConfig.tag}"/><content>Update</content></entry></feed>`
+            if (pathname.endsWith(`/${detail.metadata}`))
+              return readFile(path.join(directory, detail.metadata), 'utf8')
+            throw new HttpError(404, 'No separate beta metadata')
+          },
+        },
+      },
+    )
+    const info = await provider.getLatestVersion()
+    assert.equal(info.version, releaseConfig.version)
+    assert.equal(
+      requests.at(-1),
+      `/Leonxlnx/tastecode/releases/download/${releaseConfig.tag}/${detail.metadata}`,
+    )
+    assert.deepEqual(
+      provider.resolveFiles(info).map((file) => file.url.href),
+      detail.artifacts.map(
+        (name) =>
+          `https://github.com/Leonxlnx/tastecode/releases/download/${releaseConfig.tag}/${name}`,
+      ),
+    )
+  }
+})
+
+test('release config refuses private, redirected, or automatic GitHub publication', async () => {
+  const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
+  for (const override of [
+    { private: true },
+    { host: 'example.com' },
+    { releaseType: 'release' },
+    { owner: '../other' },
+    { token: 'fixture' },
+  ]) {
+    const value = structuredClone(desktop)
+    Object.assign(value.build.publish[0], override)
+    assert.throws(() => createReleaseConfig(value), /public GitHub/)
+  }
 })
 
 test('untrusted updater metadata cannot redirect, omit, or corrupt artifacts', async (t) => {
@@ -879,7 +946,7 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
   }
   const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
   assert.deepEqual(desktop.build.publish, [
-    { provider: 'generic', url: 'https://tastecode.dev/releases' },
+    { provider: 'github', owner: 'Leonxlnx', repo: 'tastecode', releaseType: 'draft' },
   ])
   assert.ok(
     desktop.build.asarUnpack.includes('node_modules/@harness/design-agent/references/library/**/*'),

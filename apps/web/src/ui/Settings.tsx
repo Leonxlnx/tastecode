@@ -42,6 +42,7 @@ import {
   IconArrowLeft as ArrowLeft,
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
+  IconBug as Bug,
   IconDatabase as Database,
   IconEye as Eye,
   IconEyeOff as EyeOff,
@@ -117,6 +118,7 @@ import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
 import { ProviderRow, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
+import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
@@ -143,6 +145,7 @@ export type SettingsSection =
   | 'appearance'
   | 'keybinds'
   | 'data'
+  | 'debug'
   | 'about'
 
 const THEME_OPTIONS = [
@@ -274,11 +277,16 @@ function SettingsComponent(props: {
   onAccountChange: (provider: ProviderId, account: Account) => void
   authRefreshRevision?: number | undefined
   initialSection?: SettingsSection | undefined
+  showDebug?: boolean | undefined
   onReset: () => void
+  onForceOnboarding?: (() => void) | undefined
   onClose: () => void
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
 }) {
-  const [section, setSection] = useState<SettingsSection>(props.initialSection ?? 'providers')
+  const [selectedSection, setSection] = useState<SettingsSection>(
+    props.initialSection ?? 'providers',
+  )
+  const section = selectedSection === 'debug' && !props.showDebug ? 'providers' : selectedSection
 
   useEffect(() => {
     setSection(props.initialSection ?? 'providers')
@@ -396,6 +404,14 @@ function SettingsComponent(props: {
             label="Data & privacy"
             onClick={() => setSection('data')}
           />
+          {props.showDebug ? (
+            <SettingsNavItem
+              active={section === 'debug'}
+              icon={<Bug size={15} aria-hidden />}
+              label="Debug"
+              onClick={() => setSection('debug')}
+            />
+          ) : null}
           <SettingsNavItem
             active={section === 'about'}
             icon={<Info size={15} aria-hidden />}
@@ -432,6 +448,25 @@ function SettingsComponent(props: {
             />
           ) : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
+          {section === 'debug' ? (
+            <SettingsPanel title="Debug">
+              <SettingsRow title="Onboarding">
+                <button
+                  className="btn"
+                  onClick={props.onForceOnboarding}
+                  disabled={!props.onForceOnboarding}
+                >
+                  Force onboarding
+                </button>
+              </SettingsRow>
+              <SettingsRow
+                title="Avatar generator"
+                note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
+                className="settings__row--roomy"
+              />
+              <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
+            </SettingsPanel>
+          ) : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
       </main>

@@ -118,8 +118,10 @@ export async function startServer(
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
   let checkpointProtectionFailure: { error: unknown } | undefined
   let historyClosing = false
+  let historySessionStarts = 0
   let providerHistory: Promise<ProviderHistory>
   let providerHistoryTimer: ReturnType<typeof setInterval>
+  let initialProviderHistory: Promise<ProviderHistory>
 
   const started: StartupResources = {}
   let releaseDataLease: (() => void) | undefined
@@ -230,6 +232,7 @@ export async function startServer(
       (sources) =>
         new ProviderHistory(store, sources, {
           isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+          canImport: () => historySessionStarts === 0,
           changed: (threadIds) => {
             if (!historyClosing) {
               lifecycleScheduler.changed()
@@ -244,7 +247,13 @@ export async function startServer(
       15_000,
     )
     providerHistoryTimer.unref()
-    refreshProviderHistory()
+    // Opening a task during startup must not replay an obsolete imported transcript
+    // before adapter revisions and ownership have been refreshed.
+    initialProviderHistory = providerHistory.then(async (history) => {
+      await history.refresh()
+      return history
+    })
+    void initialProviderHistory.catch(() => undefined)
     // A previous run killed mid-session leaves git believing in checkouts that
     // are gone. Clearing that up at startup means the next session on that path
     // starts instead of failing with a message about our own leftovers.
@@ -293,7 +302,7 @@ export async function startServer(
   }
 
   async function loadProviderHistory(threadId: string): Promise<void> {
-    const history = await providerHistory
+    const history = await initialProviderHistory
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
 
@@ -344,6 +353,8 @@ export async function startServer(
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    const createsSession = method === 'thread.start' || method === 'sideChat.start'
+    if (createsSession) historySessionStarts += 1
     try {
       const result = await route(socket, method, params)
       if (socket.readyState === socket.OPEN) {
@@ -361,6 +372,8 @@ export async function startServer(
         error instanceof StaleDiffSnapshotError ? ErrorCode.STALE_SNAPSHOT : ErrorCode.INTERNAL,
         clientErrorMessage(error),
       )
+    } finally {
+      if (createsSession) historySessionStarts -= 1
     }
   }
 
@@ -1302,6 +1315,15 @@ function errorCode(error: unknown): string | undefined {
 
 export function clientErrorMessage(error: unknown): string {
   if (errorCode(error) === 'ENOENT') {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'syscall' in error &&
+      typeof error.syscall === 'string' &&
+      error.syscall.startsWith('spawn ')
+    ) {
+      return 'A required program could not be started. Check the provider installation and executable search path.'
+    }
     return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
   }
   return messageOf(error)
