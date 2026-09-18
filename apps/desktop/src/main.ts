@@ -34,7 +34,10 @@ import {
   attachmentPreviewFromUrl,
   pickedAttachment,
 } from './attachment-preview.js'
-import { shouldHideWindowOnClose } from './background-lifecycle.js'
+import {
+  probeLinuxTrayHost,
+  shouldHideWindowOnClose,
+} from './background-lifecycle.js'
 import {
   appUpdateMode,
   createAppUpdateController,
@@ -451,7 +454,7 @@ function createWindow(): void {
   if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
   window.on('close', (event) => {
-    if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
+    if (!shouldHideWindowOnClose(process.platform, appIsQuitting, tray !== undefined)) return
     event.preventDefault()
     window.hide()
   })
@@ -559,7 +562,14 @@ function showMainWindow(): void {
 function createBackgroundTray(): void {
   if (process.platform === 'darwin' || tray) return
   const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
-  tray = new Tray(icon)
+  try {
+    tray = new Tray(icon)
+  } catch (error) {
+    // Desktops without a StatusNotifier host (stock GNOME, minimal sessions)
+    // throw here — close then destroys the window, same as before the tray.
+    console.warn('[desktop] background tray unavailable:', error)
+    return
+  }
   tray.setToolTip(nativeAppName)
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -925,7 +935,15 @@ if (ownsSingleInstance) {
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()
-    if (process.platform === 'win32') createBackgroundTray()
+    if (process.platform === 'win32') {
+      createBackgroundTray()
+    } else if (process.platform === 'linux') {
+      // `new Tray` succeeds even where no StatusNotifier host will ever draw
+      // the icon, so the D-Bus probe decides whether close may hide.
+      const trayHost = await probeLinuxTrayHost()
+      console.info(`[desktop] linux tray host: ${trayHost ? 'present' : 'absent'}`)
+      if (trayHost) createBackgroundTray()
+    }
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
       app.on('did-become-active', () => {
