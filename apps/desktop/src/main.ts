@@ -72,6 +72,7 @@ import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
+import { parsePortConflict, probePortOwner } from './server-port-conflict.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -353,6 +354,22 @@ function startOwnedServer(): void {
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
+  // Set when the server reports EADDRINUSE. A compatible listener gets adopted
+  // after one probe; anything else stops the retries early and names the port.
+  let portConflict: { port: number; checked: boolean } | undefined
+  const portConflictDialog = (port: number) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Deliberately unparented: parenting goes through zxdg_exporter_v2, and a
+      // compositor that rejects the role kills the whole client on the
+      // resulting protocol error (observed on COSMIC).
+      void dialog.showMessageBox({
+        type: 'error',
+        title: nativeAppName,
+        message: `Port ${port} is already used by another application.`,
+        detail: `TasteCode needs local port ${port} for its core server. Stop the other application, or set HARNESS_PORT to a free port.`,
+      })
+    }
+  }
   const supervisorCallbacks = {
     onLog: (line: string) => {
       console.log('[server]', line)
@@ -361,10 +378,39 @@ function startOwnedServer(): void {
         logStartupMilestone('server-ready')
         finishStartupBenchmarkIfReady()
       }
+      const conflictPort = parsePortConflict(line)
+      if (conflictPort !== undefined) {
+        if (portConflict === undefined) portConflict = { port: conflictPort, checked: false }
+        if (!portConflict.checked) {
+          portConflict.checked = true
+          void probePortOwner('127.0.0.1', conflictPort).then((owner) => {
+            if (owner === 'harness') {
+              console.log(
+                `[desktop] port ${conflictPort} is held by a compatible server; adopting it`,
+              )
+              serverSupervisor?.stop()
+              if (!startupServerReady) {
+                startupServerReady = true
+                logStartupMilestone('server-ready')
+                finishStartupBenchmarkIfReady()
+              }
+            } else if (owner === 'foreign') {
+              serverSupervisor?.stop()
+              portConflictDialog(conflictPort)
+            }
+            // 'unknown' keeps the normal restart path: the port may free itself.
+          })
+        }
+      }
     },
     onGaveUp: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        void dialog.showMessageBox(mainWindow, {
+        if (portConflict !== undefined) {
+          portConflictDialog(portConflict.port)
+          return
+        }
+        // Unparented for the same reason as portConflictDialog.
+        void dialog.showMessageBox({
           type: 'error',
           title: nativeAppName,
           message: 'The core server keeps crashing.',
