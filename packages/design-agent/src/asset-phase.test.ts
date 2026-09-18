@@ -54,9 +54,12 @@ describe('asset phase', () => {
     const prompt = designAssetPrompt(input.brief, input.brand, input.page)
     expect(prompt).toContain('OriginKit is optional')
     expect(prompt).toContain('This is an acquisition phase, not a wish list')
+    expect(prompt).toContain('prefer image generation when available')
+    expect(prompt).toContain('if unavailable or unsuccessful, use licensed online image search')
     expect(prompt).toContain(
-      'licensed search result for factual, editorial, or professional photography',
+      'rather than declaring nonexistent client or artist materials mandatory',
     )
+    expect(prompt).toContain('only fulfilled image needs may reach Build')
     expect(prompt).toContain('use an available image tool with the selected reference composition')
     expect(prompt).not.toContain('frontend image-direction skill')
     expect(prompt).toContain('use status needed and omit source and destination entirely')

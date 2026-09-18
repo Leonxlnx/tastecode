@@ -65,14 +65,18 @@ const artifacts = [
 describe('build phase', () => {
   it('requires the existing architecture and leaves preview to the harness', () => {
     const prompt = designBuildPrompt(...artifacts)
+    expect(prompt).toContain('Build must wire the triggers and classes')
+    expect(prompt).toContain('Verify an actual hero animation')
+    expect(prompt).toContain('Build and Review must preserve it')
+    expect(prompt).toContain('only fulfilled image needs may reach Build')
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
     expect(prompt).toContain('The reference is the primary hard composition requirement')
     expect(prompt).toContain("Implement each section's recorded motion decision")
     expect(prompt).toContain('never use transition: all')
     expect(prompt).toContain('replace the reference with a generic centered heading')
-    expect(prompt).toContain('with three as the maximum')
-    expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
+    expect(prompt).toContain('Match its line count, text block width and relative size')
+    expect(prompt).toContain('Reproduce reference spacing, rules, borders, radii and surfaces')
     expect(prompt).toContain('open columns remain open')
     expect(prompt).toContain('finished page must not become generic gray')
     expect(prompt).toContain('never leave a browser-default control')
@@ -109,6 +113,21 @@ describe('build phase', () => {
         '.feature-card { border-left: 3px solid #f40; padding: 1rem; }',
       )
       expect(() => validateDesignSourceQuality(workspace, [])).toThrow(DesignSourceQualityError)
+      const referencePage = {
+        ...artifacts[2],
+        sections: artifacts[2].sections.map((section) => ({
+          ...section,
+          referenceDirectionId: 'reference-hero',
+        })),
+      }
+      expect(() =>
+        validateDesignSourceQuality(workspace, [], [], undefined, referencePage),
+      ).not.toThrow()
+      writeFileSync(path.join(workspace, 'filler.svg'), '<svg><path d="M0 0"/></svg>')
+      expect(() =>
+        validateDesignSourceQuality(workspace, [], [], undefined, referencePage),
+      ).toThrow('SVG substitute')
+      rmSync(path.join(workspace, 'filler.svg'))
       expect(() => validateDesignSourceQuality(workspace, ['styles.css'])).toThrow(
         'remove newly introduced card rails or unmanifested SVG substitutes',
       )

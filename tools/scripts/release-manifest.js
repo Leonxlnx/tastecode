@@ -41,19 +41,24 @@ export function createReleaseConfig(packageJson) {
   }
   assertAssetName(productName)
   const publish = Array.isArray(build?.publish) ? build.publish : [build?.publish]
-  if (publish.length !== 1 || publish[0]?.provider !== 'generic') {
-    throw new Error('Release proof requires the configured generic updater provider')
+  if (publish.length !== 1 || publish[0]?.provider !== 'github') {
+    throw new Error('Release proof requires the configured GitHub updater provider')
   }
-  const updateUrl = new URL(publish[0].url)
-  if (updateUrl.protocol !== 'https:' || updateUrl.username || updateUrl.password) {
-    throw new Error('The configured update feed must use HTTPS without credentials')
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(publish[0].owner ?? '') ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(publish[0].repo ?? '') ||
+    Object.keys(publish[0]).some(
+      (key) => !['provider', 'owner', 'repo', 'releaseType'].includes(key),
+    ) ||
+    publish[0].releaseType !== 'draft'
+  ) {
+    throw new Error('Configure one public GitHub repository with draft-only publication')
   }
   const prerelease = /^\d+\.\d+\.\d+-([^+]+)/.exec(version)?.[1]
-  const updaterChannel =
-    publish[0].channel ??
-    (build.detectUpdateChannel === false ? undefined : prerelease?.split('.')[0])
-  const channel = updaterChannel ?? 'latest'
-  if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(channel)) throw new Error('Unsupported updater channel')
+  // GitHub selects prereleases from tags and falls back to latest*.yml within that release.
+  // Unlike the generic provider, electron-builder does not infer a beta channel here.
+  const updaterChannel = undefined
+  const channel = 'latest'
   if (typeof build.artifactName !== 'string') throw new Error('Configure an explicit artifactName')
   for (const [platform, required] of [
     ['win', ['nsis']],

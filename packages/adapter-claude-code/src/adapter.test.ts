@@ -918,6 +918,14 @@ describe('Claude Agent SDK session', () => {
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
       {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
         value: 'sonnet',
         resolvedModel: 'claude-sonnet-5',
         displayName: 'Sonnet',
@@ -941,6 +949,7 @@ describe('Claude Agent SDK session', () => {
         isDefault: model.isDefault,
       })),
     ).toEqual([
+      { id: 'claude-fable-5-1[1m]', displayName: 'Claude Fable 5.1', isDefault: false },
       { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
       { id: 'opus[1m]', displayName: 'Claude Opus 5', isDefault: true },
       { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },

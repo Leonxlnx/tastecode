@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 import type { AssetManifest } from './assets.js'
+import type { PageBlueprint } from './page.js'
 import {
   containedWorkspaceFile,
   readWorkspaceFile,
@@ -16,17 +17,24 @@ export function validateDesignSourceQuality(
   reportedFiles: readonly string[] = [],
   baseline: readonly string[] = [],
   assets?: AssetManifest,
+  page?: PageBlueprint,
 ): void {
   for (const file of reportedFiles)
     containedWorkspaceFile(workspacePath, file, 'reported Build file')
   const previous = new Map<string, number>()
   for (const violation of baseline) previous.set(violation, (previous.get(violation) ?? 0) + 1)
-  const violations = designSourceViolations(workspacePath, assets).filter((violation) => {
-    const remaining = previous.get(violation) ?? 0
-    if (!remaining) return true
-    previous.set(violation, remaining - 1)
-    return false
-  })
+  // Source patterns cannot distinguish a copied reference border from invented decoration.
+  // Reference-bound geometry is judged against the actual images in visual Review.
+  const referenceBound =
+    !!page?.sections.length && page.sections.every((section) => section.referenceDirectionId)
+  const violations = designSourceViolations(workspacePath, assets, referenceBound).filter(
+    (violation) => {
+      const remaining = previous.get(violation) ?? 0
+      if (!remaining) return true
+      previous.set(violation, remaining - 1)
+      return false
+    },
+  )
   if (violations.length) {
     throw new DesignSourceQualityError(
       `design source quality failed; remove newly introduced card rails or unmanifested SVG substitutes: ${violations.join('; ')}`,
@@ -41,8 +49,13 @@ export function designSourceQualityBaseline(
   return designSourceViolations(workspacePath, assets)
 }
 
-function designSourceViolations(workspacePath: string, assets?: AssetManifest): string[] {
+function designSourceViolations(
+  workspacePath: string,
+  assets?: AssetManifest,
+  referenceBound = false,
+): string[] {
   const violations: string[] = []
+  const cardRails: string[] = []
   const approvedSvgFiles = new Set(
     (assets?.assets ?? []).flatMap((asset) => {
       if (!asset.role || !['functional_icon', 'logo', 'data_diagram'].includes(asset.role)) {
@@ -83,22 +96,22 @@ function designSourceViolations(workspacePath: string, assets?: AssetManifest): 
     }
 
     if (['.css', '.scss', '.sass', '.less'].includes(extension)) {
-      scanCssCardRails(source, normalized, violations)
+      scanCssCardRails(source, normalized, cardRails)
     } else if (extension === '.vue' || extension === '.svelte' || extension === '.html') {
       for (const style of source.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
-        scanCssCardRails(style[1]!, normalized, violations)
+        scanCssCardRails(style[1]!, normalized, cardRails)
       }
     } else {
       for (const match of source.matchAll(/(?:css|styled(?:\.\w+|\([^)]*\)))\s*`([\s\S]*?)`/g)) {
         const css = match[1] ?? ''
-        scanCssCardRails(css, normalized, violations)
+        scanCssCardRails(css, normalized, cardRails)
         const declarationContext = source.slice(Math.max(0, match.index! - 160), match.index)
         if (isCardLike(declarationContext)) {
-          scanCssCardRails(`.generated-card { ${css} }`, normalized, violations)
+          scanCssCardRails(`.generated-card { ${css} }`, normalized, cardRails)
         }
       }
     }
-    scanMarkupCardRails(source, normalized, violations)
+    scanMarkupCardRails(source, normalized, cardRails)
     if (!approvedSvgFiles.has(normalized)) {
       for (const match of source.matchAll(/<svg\b/gi)) {
         const start = match.index!
@@ -110,7 +123,7 @@ function designSourceViolations(workspacePath: string, assets?: AssetManifest): 
       }
     }
   }
-  return violations.sort()
+  return (referenceBound ? violations : [...violations, ...cardRails]).sort()
 }
 
 function sourceFingerprint(source: string): string {

@@ -1,0 +1,64 @@
+{
+  "passed": true,
+  "samples": [
+    {
+      "top": 0,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 700,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 1500,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 2800,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 1500,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 700,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 0,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 0,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 700,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 1500,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 2800,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 1500,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 700,
+      "values": ["1", "1", "1"]
+    },
+    {
+      "top": 0,
+      "values": ["1", "1", "1"]
+    }
+  ],
+  "restoredScrollVisible": true,
+  "reducedMotionVisible": true,
+  "cleanupVisible": true
+}

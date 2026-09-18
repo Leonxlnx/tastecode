@@ -145,7 +145,7 @@ describe('app update controller', () => {
     expect(loadUpdater).not.toHaveBeenCalled()
   })
 
-  it('checks automatically after startup', async () => {
+  it('checks after startup and hourly while open, then stops on disposal', async () => {
     vi.useFakeTimers()
     const updater = fakeUpdater()
     const controller = createAppUpdateController({
@@ -159,6 +159,25 @@ describe('app update controller', () => {
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    controller.start()
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+    controller.dispose()
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps stable installs out of prereleases and retains a ready download', async () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '1.0.0',
+      mode: 'install',
+    })
+    expect(updater.allowPrerelease).toBe(false)
+    updater.emit('update-downloaded', { version: '1.0.1' })
+    await expect(controller.check()).resolves.toMatchObject({ status: 'ready', version: '1.0.1' })
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
   })
 
   it('does not load the optional updater before the automatic check', async () => {

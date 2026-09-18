@@ -22,6 +22,7 @@ import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
+import { ProviderHistory } from './provider-history.js'
 
 const SERVER_VERSION = '0.0.0'
 export { DEFAULT_PORT } from './server-config.js'
@@ -174,6 +175,53 @@ export function startServer(
     else lifecycleScheduler.changed()
   }
   lifecycleScheduler.refreshNow()
+  let historyClosing = false
+  let historySessionStarts = 0
+  const providerHistory = Promise.all([
+    import('@harness/adapter-codex').then(({ createCodexHistorySource }) => ({
+      provider: 'codex' as const,
+      history: createCodexHistorySource(),
+    })),
+    import('@harness/adapter-claude-code').then(({ createClaudeHistorySource }) => ({
+      provider: 'claude-code' as const,
+      history: createClaudeHistorySource(),
+    })),
+    import('@harness/adapter-grok').then(({ createGrokHistorySource }) => ({
+      provider: 'grok' as const,
+      history: createGrokHistorySource(),
+    })),
+  ]).then(
+    (sources) =>
+      new ProviderHistory(store, sources, {
+        isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+        canImport: () => historySessionStarts === 0,
+        changed: (threadIds) => {
+          if (!historyClosing) {
+            lifecycleScheduler.changed()
+            push.broadcast('providerHistory.changed', { threadIds })
+          }
+        },
+        log: (message) => console.log(`[history] ${message}`),
+      }),
+  )
+  const refreshProviderHistory = () => {
+    if (!historyClosing)
+      void providerHistory.then((history) => history.refresh()).catch(() => undefined)
+  }
+  const providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
+  providerHistoryTimer.unref()
+  // Opening a task during startup must not replay an obsolete imported transcript
+  // before adapter revisions and ownership have been refreshed.
+  const initialProviderHistory = providerHistory.then(async (history) => {
+    await history.refresh()
+    return history
+  })
+  void initialProviderHistory.catch(() => undefined)
+
+  async function loadProviderHistory(threadId: string): Promise<void> {
+    const history = await initialProviderHistory
+    if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
+  }
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
   // starts instead of failing with a message about our own leftovers.
@@ -238,6 +286,8 @@ export function startServer(
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    const createsSession = method === 'thread.start' || method === 'sideChat.start'
+    if (createsSession) historySessionStarts += 1
     try {
       const result = await route(socket, method, params)
       if (socket.readyState === socket.OPEN) {
@@ -255,6 +305,8 @@ export function startServer(
         error instanceof StaleDiffSnapshotError ? ErrorCode.STALE_SNAPSHOT : ErrorCode.INTERNAL,
         clientErrorMessage(error),
       )
+    } finally {
+      if (createsSession) historySessionStarts -= 1
     }
   }
 
@@ -609,7 +661,9 @@ export function startServer(
 
       case 'projects.add': {
         const p = parseParams(method, params)
-        return store.addProject(p.path, p.name)
+        const project = store.addProject(p.path, p.name)
+        refreshProviderHistory()
+        return project
       }
 
       case 'projects.pin': {
@@ -742,11 +796,18 @@ export function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
-        const history = await orchestrator.historyForResponse(p.threadId, p.afterSeq ?? 0)
+        await loadProviderHistory(p.threadId)
+        const reset =
+          p.afterSeq !== undefined && store.providerHistoryChangedAfter(p.threadId, p.afterSeq)
+        const history = await orchestrator.historyForResponse(
+          p.threadId,
+          reset ? 0 : (p.afterSeq ?? 0),
+        )
         const running = orchestrator.isTurnRunning(p.threadId)
         const approval = store.threadApproval(p.threadId) ?? 'ask'
         const result = historyResponse(history.events, running, approval)
         orchestrator.markThreadRead(p.threadId)
+        if (reset) return { ...result, reset: true }
         return serializeHistory(
           result,
           history.serializedEvents === undefined
@@ -886,6 +947,7 @@ export function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
+        await loadProviderHistory(p.threadId)
         return {
           ...(await orchestrator.submitTurn(
             p.threadId,
@@ -992,6 +1054,9 @@ export function startServer(
   return {
     port,
     close: async () => {
+      historyClosing = true
+      clearInterval(providerHistoryTimer)
+      await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
@@ -1112,6 +1177,15 @@ function errorCode(error: unknown): string | undefined {
 
 export function clientErrorMessage(error: unknown): string {
   if (errorCode(error) === 'ENOENT') {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'syscall' in error &&
+      typeof error.syscall === 'string' &&
+      error.syscall.startsWith('spawn ')
+    ) {
+      return 'A required program could not be started. Check the provider installation and executable search path.'
+    }
     return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
   }
   return messageOf(error)

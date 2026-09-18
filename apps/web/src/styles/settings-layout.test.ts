@@ -24,10 +24,10 @@ describe('settings viewport CSS', () => {
       /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.theme-picker \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s,
     )
     expect(settingsCss).toMatch(
-      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-code-preview \{[^}]*grid-template-columns: 1fr;[\s\S]*?\.appearance-editor__row \{[^}]*flex-direction: column;[\s\S]*?\.appearance-control \{[^}]*width: 100%;/s,
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-code-preview \{[^}]*grid-template-columns: 1fr;[\s\S]*?\.appearance-editor \.settings__row \{[^}]*flex-direction: column;[\s\S]*?\.appearance-control,[\s\S]*?\{[^}]*width: 100%;/s,
     )
     expect(settingsCss).toMatch(
-      /\.appearance-control__select \{[^}]*width: min\(190px, 100%\);[^}]*max-width: none;/s,
+      /\.appearance-control__select \{[^}]*width: min\(152px, 100%\);[^}]*max-width: none;/s,
     )
   })
 

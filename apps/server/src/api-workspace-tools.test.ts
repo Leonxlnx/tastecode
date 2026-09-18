@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -6,6 +6,7 @@ import type { ApiToolCall } from '@harness/adapter-api'
 import type { JsonValue } from '@harness/contracts'
 import { z } from 'zod'
 import { createApiWorkspaceTools } from './api-workspace-tools.js'
+import { commandRuntimeDirectory } from './safe-command-environment.js'
 
 function workspace(): string {
   const root = mkdtempSync(path.join(tmpdir(), 'harness-api-tools-'))
@@ -96,5 +97,29 @@ describe('direct API workspace tools', () => {
         signal,
       ),
     ).rejects.toThrow('command argument is unsafe')
+  })
+
+  it('returns the environment refusal instead of a generic tool failure', async () => {
+    if (process.platform === 'win32') return
+    // Redirect os.tmpdir so the default runtime path lands in this scratch
+    // directory, then squat it with a regular file to force the refusal.
+    const parent = mkdtempSync(path.join(tmpdir(), 'harness-env-refusal-'))
+    const savedTmpdir = process.env['TMPDIR']
+    process.env['TMPDIR'] = parent
+    try {
+      writeFileSync(commandRuntimeDirectory(), 'squat')
+      const tools = createApiWorkspaceTools(workspace(), 'full')
+      const result = await tools.executeTool(
+        call('run_command', { command: 'node', args: ['--version'], cwd: '.' }),
+        new AbortController().signal,
+      )
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('not a directory')
+      expect(result.content).not.toBe('Tool execution failed.')
+    } finally {
+      if (savedTmpdir === undefined) delete process.env['TMPDIR']
+      else process.env['TMPDIR'] = savedTmpdir
+      rmSync(parent, { recursive: true, force: true })
+    }
   })
 })

@@ -183,6 +183,8 @@ function isWindowsRoot(value: string): boolean {
 }
 
 function windowsReference(candidate: string, projectPath: string): ProjectFileReference {
+  // Models also emit URL-style drive paths outside a file: URL.
+  if (/^\/[a-z]:[\\/]/i.test(candidate)) candidate = candidate.slice(1)
   if (candidate.startsWith('\\\\') || candidate.startsWith('//')) {
     return { kind: 'blocked', path: candidate, reason: 'Network file links are not allowed' }
   }

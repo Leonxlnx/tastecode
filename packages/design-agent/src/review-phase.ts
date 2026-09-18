@@ -3,6 +3,8 @@ import path from 'node:path'
 import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
+import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
@@ -70,16 +72,16 @@ export function designReviewPrompt(
 
 Inspect every supplied screenshot and reference image with image-viewing tools. Screenshot paths are listed in <screenshots>; user mockups and internal direction images are listed separately below. Compare visible evidence against the primary reference for each section as well as the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective TasteCode evidence: include repairs for their failures and never dismiss them from visual judgment.
 
-For every visible section, compare its screenshot geometry first against referenceDirectionId, then its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. The reference must remain recognizably present in macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and intended movement. Changing the project identity, copy, palette, typography, icons, image subject, and small component details is expected; replacing the composition is not. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, loses the reference at a breakpoint, or adds a signature motif absent from the reference.
+For every visible section, compare its screenshot geometry first against referenceDirectionId, then its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. The reference must remain recognizably present in macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and intended movement. Only identity content, brand hues, the approved font family and image subjects should change. Compare normalized heading/media boxes, section height, line count, whitespace, radii, borders and overlaps against the reference; require repair when these drift without a concrete content, accessibility or responsive reason. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, loses the reference at a breakpoint, or adds a signature motif absent from the reference.
 
 Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, avoid repeated generic reveal choreography, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
 
 Apply the following pass blockers to every screenshot:
-- Any heading occupies more than three visual lines. One or two lines is the target; a third line is acceptable only when it remains balanced and readable. Report oversized type that overwhelms the viewport even when it technically fits.
-- Any eyebrow, uppercase monospace micro-heading, decorative 01/02/03 section label, IBM Plex Mono, Archivo, or repeated font-family switching inside a line or component.
-- Any visible internal note or unfinished copy such as sample, simulated, fictional, awaiting approval, still needed, not connected, before launch, live data required, or to be supplied.
+- Heading size, width, line count or placement differs materially from the reference without a content or accessibility reason. Preserve intentional monumental typography and multi-line composition.
+- Invented labels, uppercase monospace micro-headings or decorative numbering absent from the reference, or a missing/failed approved font load. Do not flag reference typography merely because it is unusual.
+- Any visible internal note or unfinished copy such as awaiting approval, still needed, not connected, before launch, live data required, or to be supplied. Preserve concise identification of concept work or an illustrative catalog; these are meaningful content, not unfinished copy.
 - A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
-- Decorative hairline grids, repeated separator rules, or arbitrary square-panel templates replace spacing and meaningful grouping. Any full-height one-sided line attached to or aligned with a card edge is a major finding regardless of color or implementation, including border-left, border-inline-start, pseudo-elements, gradients, and narrow child strips.
+- Invented grids, separator rules, card-edge rails or square-panel templates replace the reference geometry. Preserve those details when they are actually visible in the selected image.
 - Grouping loses the reference composition: open editorial content becomes boxed, distinct media layouts become equal-column templates, or related controls and cards use inconsistent spacing and states.
 - An approved brand accent appears only in tiny labels, icons, or underlines instead of meaningful actions and selected states; or unrelated card colors fragment the brand system.
 - An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space or substitutes for the reference's real imagery. SVG is acceptable only for an explicit functional icon, logo, or truthful data diagram.
@@ -92,6 +94,10 @@ Apply the following pass blockers to every screenshot:
 Treat these as major findings, or blocking when they prevent reading or operation. Do not waive them because they match brand.json or page.json; repair the upstream interpretation.
 
 Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use these checks and the actual reference images; do not invoke external design skills.
+
+${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 Return JSON only:
 {"version":1,"verdict":"pass|repair","summary":"...","findings":[{"id":"stable_snake_case","severity":"blocking|major|minor","area":"viewport or section","evidenceType":"automated|visual_inspection","confidence":"high|medium|low|unknown","evidence":"what is visibly wrong","repair":"specific bounded correction"}]}
@@ -245,7 +251,11 @@ export function designRepairPrompt(
   }))
   return `You are running repair attempt ${attempt} of ${limit} in TasteCode Design Mode.
 
-Fix only the validated visual findings below. Inspect the existing implementation and every attached reference image. The approved referenceDirectionId and artifacts remain immutable during repair: restore their composition instead of inventing a replacement motif. Preserve unrelated user work and prefer the smallest shared correction that resolves each root cause across viewports. A finding about SVG filler or a full-height one-sided card-edge rail must remove the substitute itself, not merely recolor, narrow, or relocate it. Run relevant local checks. Do not start a preview server or expand the design direction.
+Fix only the validated visual findings below. Inspect the existing implementation and every attached reference image. The approved referenceDirectionId and artifacts remain immutable during repair: restore their composition instead of inventing a replacement motif. Preserve unrelated user work and prefer the smallest shared correction that resolves each root cause across viewports. Remove invented SVG filler and off-reference card-edge rails; preserve borders and rules visible in the reference. Run relevant local checks. Do not start a preview server or expand the design direction.
+
+${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 Return JSON only as the final response:
 {"status":"complete|failed","summary":"...","files":["relative/path"],"checks":["command — result"]}

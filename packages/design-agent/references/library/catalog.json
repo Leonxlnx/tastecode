@@ -1,0 +1,3553 @@
+{
+  "version": 1,
+  "references": [
+    {
+      "source": "https://meridian-wf-template.webflow.io/",
+      "imagePath": "images/meridian-01-hero-desktop.png",
+      "tags": ["light", "editorial", "serif", "photographic", "consulting", "services"],
+      "group": "meridian-01-hero",
+      "family": "hero",
+      "id": "meridian-01-hero",
+      "mobileImagePath": "images/meridian-01-hero-mobile.png",
+      "pairEvidence": "Same heading, support and action; preserve one project logo across both viewports.",
+      "cue": "Full-bleed office photograph with inset navigation and large left-aligned serif headline.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1024,
+          "height": 1536
+        }
+      },
+      "sha256": {
+        "imagePath": "3259e8473f4ca97015653859fe6ce38b2f8c727a5a2ccc69ebe8af11003002c2",
+        "mobileImagePath": "5efdd2d50adcb46ba5daddef6fda1dedeb67814867f3eaccccc235802d28a709"
+      }
+    },
+    {
+      "source": "https://meridian-wf-template.webflow.io/",
+      "imagePath": "images/meridian-02-metrics-desktop.png",
+      "tags": ["light", "editorial", "serif", "photographic", "consulting", "services"],
+      "group": "meridian-02-metrics",
+      "family": "stats",
+      "id": "meridian-02-metrics",
+      "mobileImagePath": "images/meridian-02-metrics-mobile.png",
+      "pairEvidence": "Same three metrics and labels. Replace fictional numbers with verified project facts.",
+      "cue": "Three horizontal metrics with short separators; stack in the same order on mobile.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2172,
+          "height": 724
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1086,
+          "height": 1448
+        }
+      },
+      "sha256": {
+        "imagePath": "f80bffe6f8f2e2e5db6637926e7e1bd35aac249d3b6c26f4f0e2fa8a9f40d0c9",
+        "mobileImagePath": "7c326fef28d56b6053f817f86e566e1cf7b711ab21bd18a39006d1808307a430"
+      }
+    },
+    {
+      "source": "https://meridian-wf-template.webflow.io/",
+      "imagePath": "images/meridian-03-introduction-desktop.png",
+      "tags": ["light", "editorial", "serif", "photographic", "consulting", "services"],
+      "group": "meridian-03-introduction",
+      "family": "about",
+      "id": "meridian-03-introduction",
+      "mobileImagePath": "images/meridian-03-introduction-mobile.png",
+      "pairEvidence": "Matching copy and action; unify image crop and corner details.",
+      "cue": "Large left photograph with right editorial heading and low support copy; image then text on mobile.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 912,
+          "height": 1725
+        }
+      },
+      "sha256": {
+        "imagePath": "78715c5b308768cac64b4f3aa2187fac30e58af47b3ecc2c2e22e72fe00873ea",
+        "mobileImagePath": "1d3e8c598557508b8133e721f4d8c9206d13aa39d45eab12cca2c5518d213a26"
+      }
+    },
+    {
+      "source": "https://meridian-wf-template.webflow.io/",
+      "imagePath": "images/meridian-04-services-desktop.png",
+      "tags": ["light", "editorial", "serif", "photographic", "consulting", "services"],
+      "group": "meridian-04-services",
+      "family": "feature",
+      "id": "meridian-04-services",
+      "mobileImagePath": "images/meridian-04-services-mobile.png",
+      "pairEvidence": "Same service order and copy; desktop arrows must become accessible links on mobile.",
+      "cue": "Heading above three image-led service columns; stack all three on mobile.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 724,
+          "height": 2172
+        }
+      },
+      "sha256": {
+        "imagePath": "a8ca58b559129fa47f0d6586dc609ad275ee75fbd51853367d498a00515d2154",
+        "mobileImagePath": "ac814d7aee6e849a9aac6f3dfcb0e595b5cd2d6aa4a37eee5cfe72b012e16e8c"
+      }
+    },
+    {
+      "source": "https://meridian-wf-template.webflow.io/",
+      "imagePath": "images/meridian-09-contact-desktop.png",
+      "tags": ["light", "editorial", "serif", "photographic", "consulting", "services"],
+      "group": "meridian-09-contact",
+      "family": "cta",
+      "id": "meridian-09-contact",
+      "mobileImagePath": "images/meridian-09-contact-mobile.png",
+      "pairEvidence": "Same statement and action; this is a call to action, not a contact form.",
+      "cue": "Dark photographic call to action with left serif statement and button.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2048,
+          "height": 768
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1131,
+          "height": 1391
+        }
+      },
+      "sha256": {
+        "imagePath": "daa9e07a1e26d7246c5df56a8261d233db96049cc3193843139a74071d70f8ed",
+        "mobileImagePath": "65f7b1f59ed9b24b10b486ef3811c1be6b721cdeeaac564883b9a264cc1a384f"
+      }
+    },
+    {
+      "source": "https://meridian-wf-template.webflow.io/",
+      "imagePath": "images/meridian-10-footer-desktop.png",
+      "tags": ["light", "editorial", "serif", "photographic", "consulting", "services"],
+      "group": "meridian-10-footer",
+      "family": "footer",
+      "id": "meridian-10-footer",
+      "mobileImagePath": "images/meridian-10-footer-mobile.png",
+      "pairEvidence": "Matching navigation content; replace concept copyright and use one consistent brand mark.",
+      "cue": "Brand and three navigation columns above legal row; stack groups on mobile.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2087,
+          "height": 753
+        },
+        "mobile": {
+          "format": "png",
+          "width": 724,
+          "height": 2172
+        }
+      },
+      "sha256": {
+        "imagePath": "e4c888730eadc99da89d399aef5e5f3ea1df032aecbf19f03c363dfbc722571f",
+        "mobileImagePath": "4f4d2c739ad5e07e4762b2faa8d5c6120c71f8e8cb971f6f16dcb6540794a46e"
+      }
+    },
+    {
+      "source": "https://ritovex.webflow.io/",
+      "imagePath": "images/ritovex-01-hero-desktop.png",
+      "tags": ["light", "sans", "agency", "studio", "services"],
+      "group": "ritovex-01-hero",
+      "family": "hero",
+      "id": "ritovex-01-hero",
+      "mobileImagePath": "images/ritovex-01-hero-mobile.png",
+      "pairEvidence": "Same heading and actions; desktop and mobile concept logos differ, so use the project logo.",
+      "cue": "Large left headline and right notched portrait; center text above portrait on mobile.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1624,
+          "height": 969
+        },
+        "mobile": {
+          "format": "png",
+          "width": 854,
+          "height": 1842
+        }
+      },
+      "sha256": {
+        "imagePath": "782caef23791f751e4c69461777bb4fafeb040a73016ab83e1b32501f1928582",
+        "mobileImagePath": "4f4a36eb5258dd00c453622059591d2c679256eec5ea467b797db80fbf0a9bad"
+      }
+    },
+    {
+      "source": "https://ritovex.webflow.io/",
+      "imagePath": "images/ritovex-06-process-desktop.png",
+      "tags": ["light", "sans", "agency", "studio", "services"],
+      "group": "ritovex-06-process",
+      "family": "how_it_works",
+      "id": "ritovex-06-process",
+      "mobileImagePath": "images/ritovex-06-process-mobile.png",
+      "pairEvidence": "All three steps and their order match.",
+      "cue": "Left heading and action with three numbered process cards on the right; stack on mobile.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1520,
+          "height": 1034
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2009
+        }
+      },
+      "sha256": {
+        "imagePath": "1a0269c95d3b0494ede39b9cbdd42dded640df123d5dc35d3301923bf91e5820",
+        "mobileImagePath": "9eadbc5b01c5de972a619a513f4f98e7270233d8f9d2f44a04a37466d680ed8c"
+      }
+    },
+    {
+      "source": "https://ritovex.webflow.io/",
+      "imagePath": "images/ritovex-11-footer-desktop.png",
+      "tags": ["light", "sans", "agency", "studio", "services"],
+      "group": "ritovex-11-footer",
+      "family": "footer",
+      "id": "ritovex-11-footer",
+      "mobileImagePath": "images/ritovex-11-footer-mobile.png",
+      "pairEvidence": "Matching newsletter and navigation; ensure small-screen link columns remain readable.",
+      "cue": "Newsletter above navigation, contact, legal and large grooved wordmark.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2008
+        }
+      },
+      "sha256": {
+        "imagePath": "170378320c58d40b443a1d1b6ed50c26ae696517a4b9ece1ffd9a14cfc6d63ed",
+        "mobileImagePath": "ad7df4832ca2577660a1abaef4d0991f3f9f5b19890d64c0d363591bda8497d0"
+      }
+    },
+    {
+      "source": "https://scalient.webflow.io/",
+      "imagePath": "images/scalient-05-services-desktop.png",
+      "tags": ["dark", "sans", "agency", "studio", "services"],
+      "group": "scalient-05-services",
+      "family": "feature",
+      "id": "scalient-05-services",
+      "mobileImagePath": "images/scalient-05-services-mobile.png",
+      "pairEvidence": "Same four services; mobile v2 removes final-card rotation and light fill, preserve intentional emphasis accessibly.",
+      "cue": "Dark service section with four cards and an emphasized final card.",
+      "reviewNotes": "Generated desktop and mobile images visually inspected individually. Originals and other revisions retained outside this selection.",
+      "reviewStatus": "reviewed",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 724,
+          "height": 2172
+        }
+      },
+      "sha256": {
+        "imagePath": "fedc5456215978a2320864da5b6fa229b658cc45da2bfdaaedabf15757fb5676",
+        "mobileImagePath": "4c9a950f3f1c076f435a41baa34908aa370da4ebf8ed1f5f9b337e64b44c902c"
+      }
+    },
+    {
+      "id": "ariyana-studio-01-hero",
+      "group": "ariyana-studio-01-hero",
+      "family": "hero",
+      "source": "https://ariyana-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ariyana-studio-01-hero-desktop.png",
+      "mobileImagePath": "images/ariyana-studio-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from ariyana-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "9464685ef1d88eeaa122193a942bbd9ad60b7cc9aada94df253830789e421d70",
+        "mobileImagePath": "0f76451f5bf69d2bc8311e908e880e8197413ce256b96107fa002f9613108b43"
+      }
+    },
+    {
+      "id": "ariyana-studio-02-about",
+      "group": "ariyana-studio-02-about",
+      "family": "about",
+      "source": "https://ariyana-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ariyana-studio-02-about-desktop.png",
+      "mobileImagePath": "images/ariyana-studio-02-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from ariyana-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "48facd2348b47b6157a0ef95e14569d3966114e2eddaa6ec882ecb4787e49d8b",
+        "mobileImagePath": "f73dc27c5323c80e086cc65ff03d02f9bad022f1d229c87e1c79b18c338d8b09"
+      }
+    },
+    {
+      "id": "ariyana-studio-04-process",
+      "group": "ariyana-studio-04-process",
+      "family": "how_it_works",
+      "source": "https://ariyana-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ariyana-studio-04-process-desktop.png",
+      "mobileImagePath": "images/ariyana-studio-04-process-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated process section from ariyana-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "849a51ee95c42298c7530d46f6d37295c52c34c13b254fe65ccb8384f2f35adf",
+        "mobileImagePath": "d6e9f58ae1e5325551b583bb1f392633a91a451fb04de9037993b6bc508ed360"
+      }
+    },
+    {
+      "id": "ariyana-studio-06-testimonial",
+      "group": "ariyana-studio-06-testimonial",
+      "family": "social_proof",
+      "source": "https://ariyana-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ariyana-studio-06-testimonial-desktop.png",
+      "mobileImagePath": "images/ariyana-studio-06-testimonial-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonial section from ariyana-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "c061db8c41625be1da9894b00a51ed8243a2b2ac4ba77014444d1b97ad9ed7c6",
+        "mobileImagePath": "d0e31b3f833b1a6b74ab60c54e49cecc26dff07407a3ee7e32a09ca944f320ee"
+      }
+    },
+    {
+      "id": "ariyana-studio-08-showreel",
+      "group": "ariyana-studio-08-showreel",
+      "family": "feature",
+      "source": "https://ariyana-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ariyana-studio-08-showreel-desktop.png",
+      "mobileImagePath": "images/ariyana-studio-08-showreel-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated showreel section from ariyana-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "7e35c38a7de6e5ba2efaa24c832578b38f69f890b04e39fd2df112d989fb4956",
+        "mobileImagePath": "ab0e4e06956be0b8d76f71eeff19c51e2a777e286b22dd0d589a3284dda80c73"
+      }
+    },
+    {
+      "id": "ariyana-studio-11-cta",
+      "group": "ariyana-studio-11-cta",
+      "family": "cta",
+      "source": "https://ariyana-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ariyana-studio-11-cta-desktop.png",
+      "mobileImagePath": "images/ariyana-studio-11-cta-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta section from ariyana-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "ae0e3c104aa0a3ab56b90bb6a4f84b32fc722a705b30accf25827b4b2320157e",
+        "mobileImagePath": "54f7c9127be0f7e6a90d8157d7d5f49e2fe55f5eabf38294e3b89f51d114d032"
+      }
+    },
+    {
+      "id": "ariyana-studio-12-footer",
+      "group": "ariyana-studio-12-footer",
+      "family": "footer",
+      "source": "https://ariyana-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ariyana-studio-12-footer-desktop.png",
+      "mobileImagePath": "images/ariyana-studio-12-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from ariyana-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "0afd516c19b0d438a55174947decbc6d4678020f67e8ed20c1f2a39cb0addf47",
+        "mobileImagePath": "d16187c8c405eb49ce7573608ac9c9740431db9191e39cab513e77f94eca3ebb"
+      }
+    },
+    {
+      "id": "avoora-01-hero",
+      "group": "avoora-01-hero",
+      "family": "hero",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-01-hero-desktop.png",
+      "mobileImagePath": "images/avoora-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "99b4f9cc1b53e16401cd48273eade786399f167c1dd695223b0a3c66359331e1",
+        "mobileImagePath": "05f883e82ce6bf6f5d43d1e93b690b25707ab17c293f44653c2c05bafdd316aa"
+      }
+    },
+    {
+      "id": "avoora-02-about",
+      "group": "avoora-02-about",
+      "family": "about",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-02-about-desktop.png",
+      "mobileImagePath": "images/avoora-02-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "7a7b12dbc9069d3e927ec62c2fe4fb353314087048bc8237d00977f6d30a97ae",
+        "mobileImagePath": "f20fbcec50536f9b2c5583f814d04dc9a0b64a74e444e4f0d5f6c3ca268d8446"
+      }
+    },
+    {
+      "id": "avoora-03-work-1",
+      "group": "avoora-03-work-1",
+      "family": "feature",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-03-work-1-desktop.png",
+      "mobileImagePath": "images/avoora-03-work-1-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated work-1 section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "5cea93e57354a10ab8778c2c8baefea69e6ae7a8895e716327e5273990fd0588",
+        "mobileImagePath": "047d7e6fd20046a77e2e8749126bed628f15291a9e78090a273fc2aa01b51dae"
+      }
+    },
+    {
+      "id": "avoora-03-work-2",
+      "group": "avoora-03-work-2",
+      "family": "feature",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-03-work-2-desktop.png",
+      "mobileImagePath": "images/avoora-03-work-2-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated work-2 section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "ba8389f27fd8e85970b0dbf424c7c488d3a306370d78621c2b2e9cdbdcfb05b7",
+        "mobileImagePath": "e93119512b42437740003ec3d35e91656583d145e374b2b869b7291406799354"
+      }
+    },
+    {
+      "id": "avoora-03-work-3",
+      "group": "avoora-03-work-3",
+      "family": "feature",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-03-work-3-desktop.png",
+      "cue": "Generated work-3 section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "669ca315babca024936ba3cf0d8115f9989db94fc9c8bc41b9927807353be3e1"
+      }
+    },
+    {
+      "id": "avoora-03-work-4",
+      "group": "avoora-03-work-4",
+      "family": "feature",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-03-work-4-desktop.png",
+      "cue": "Generated work-4 section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "7223d805c36c256a3b207600e511fb4e4e164a841734368a2f324fb0776116ad"
+      }
+    },
+    {
+      "id": "avoora-06-testimonials",
+      "group": "avoora-06-testimonials",
+      "family": "social_proof",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-06-testimonials-desktop.png",
+      "mobileImagePath": "images/avoora-06-testimonials-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "304a59a3383d3abc797dcb1599f26116e9164a0ba1d11250447d723eee9b0c0f",
+        "mobileImagePath": "916e9783e211712b493916a122b331cf6c3c8e013f1d00c84baa1f19678d0405"
+      }
+    },
+    {
+      "id": "avoora-07-awards",
+      "group": "avoora-07-awards",
+      "family": "social_proof",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-07-awards-desktop.png",
+      "mobileImagePath": "images/avoora-07-awards-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated awards section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "34a493b332cb3ef9feb803db36b179ce8ad52c2c6b889b4f7e07bad9a1d80e43",
+        "mobileImagePath": "be597fe6870c73f46718e57b822e06bdf6a37556dc583c80f39c7fc70736f177"
+      }
+    },
+    {
+      "id": "avoora-10-faq",
+      "group": "avoora-10-faq",
+      "family": "faq",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-10-faq-desktop.png",
+      "mobileImagePath": "images/avoora-10-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "ee3e80d8d5bdeb5a28aca8b817ef47242dcdd29cf7a90d8aee52cb81725c9cd8",
+        "mobileImagePath": "26194050cae87d47613e9cd2db67e78767fe1ac43f507a4cfa64be9056c99484"
+      }
+    },
+    {
+      "id": "avoora-11-articles",
+      "group": "avoora-11-articles",
+      "family": "feature",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-11-articles-desktop.png",
+      "mobileImagePath": "images/avoora-11-articles-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated articles section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "aec26545bac7c103f284a72add5e7f72dc98ef3c0bc63f2301382701a9355386",
+        "mobileImagePath": "3874aece0a7781a55bb553007db554a05bafd9a4401ea61d9a4a20d98e84641e"
+      }
+    },
+    {
+      "id": "avoora-12-contact",
+      "group": "avoora-12-contact",
+      "family": "cta",
+      "source": "https://avoora.webflow.io/",
+      "tags": [],
+      "imagePath": "images/avoora-12-contact-desktop.png",
+      "mobileImagePath": "images/avoora-12-contact-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated contact section from avoora. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "bfe4c791273d248aceaa28381134ce1e33aa240ca1128e3a2dec7a04b534bc5f",
+        "mobileImagePath": "34d1f45cd900ec250e6cbe7e7ac4d3b233b1eceb791125a2ea7aa896c2c5b7c6"
+      }
+    },
+    {
+      "id": "cipher-security-01-hero",
+      "group": "cipher-security-01-hero",
+      "family": "hero",
+      "source": "https://cipher-security.webflow.io/",
+      "tags": [],
+      "imagePath": "images/cipher-security-01-hero-desktop.png",
+      "mobileImagePath": "images/cipher-security-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from cipher-security. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "9a6658ead600c0116f2cd9940bb174dcd9ea84e7c71b1477c600f8395f0f7684",
+        "mobileImagePath": "e69984595a98b08cb20e8af79156a06393ede9c31991113ed5d464e59ee3ef6b"
+      }
+    },
+    {
+      "id": "cipher-security-02-about",
+      "group": "cipher-security-02-about",
+      "family": "about",
+      "source": "https://cipher-security.webflow.io/",
+      "tags": [],
+      "imagePath": "images/cipher-security-02-about-desktop.png",
+      "mobileImagePath": "images/cipher-security-02-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from cipher-security. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "7c659306a7398ddf41109474347ab2bb3fedb81dc70d6fe00f6ef195fe489bb5",
+        "mobileImagePath": "594b1d5f40d2853ba73ad678e21745aa24d279a480f96b14ca06e1e304e60e9d"
+      }
+    },
+    {
+      "id": "cipher-security-05-team",
+      "group": "cipher-security-05-team",
+      "family": "about",
+      "source": "https://cipher-security.webflow.io/",
+      "tags": [],
+      "imagePath": "images/cipher-security-05-team-desktop.png",
+      "mobileImagePath": "images/cipher-security-05-team-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated team section from cipher-security. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "ff4fed363498cb54a96b0a4e26886d033906c0073c285aac2c615f544e4a7d04",
+        "mobileImagePath": "5976c1a6484b33c4abe301cd59ba7efd2f8849eef00e965b171c9e89d35bd2e4"
+      }
+    },
+    {
+      "id": "cipher-security-08-testimonials",
+      "group": "cipher-security-08-testimonials",
+      "family": "social_proof",
+      "source": "https://cipher-security.webflow.io/",
+      "tags": [],
+      "imagePath": "images/cipher-security-08-testimonials-desktop.png",
+      "mobileImagePath": "images/cipher-security-08-testimonials-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials section from cipher-security. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "16b222b4b30cbeaa9835c57c824fd59476e0d498be5e6bb5c28815a2d17b8c37",
+        "mobileImagePath": "e693bc2e5fa8eee77288e50f9dfd99f70e761d0d5da28103ba26b9c9133af582"
+      }
+    },
+    {
+      "id": "cipher-security-09-faq",
+      "group": "cipher-security-09-faq",
+      "family": "faq",
+      "source": "https://cipher-security.webflow.io/",
+      "tags": [],
+      "imagePath": "images/cipher-security-09-faq-desktop.png",
+      "mobileImagePath": "images/cipher-security-09-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from cipher-security. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "2e3b8967fafb6eb2048f42365c60216b4ecaf983a2bbcf6de1f092a4f0e14ada",
+        "mobileImagePath": "a5b245ba537789cec7a55722c48f0fe4f804018ddf5264d0ae52830fb59e27d1"
+      }
+    },
+    {
+      "id": "cipher-security-10-contact",
+      "group": "cipher-security-10-contact",
+      "family": "cta",
+      "source": "https://cipher-security.webflow.io/",
+      "tags": [],
+      "imagePath": "images/cipher-security-10-contact-desktop.png",
+      "mobileImagePath": "images/cipher-security-10-contact-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated contact section from cipher-security. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "e3ae12c2f13ddb5e955b62fac9a3f88a4e4877324ff06639ef409f1d86a09309",
+        "mobileImagePath": "7dbdb5079a64db250a205842eaa4d5f2fcc2296c7a7ba0e0dce8af6cd59be7b6"
+      }
+    },
+    {
+      "id": "fabrica-01-hero",
+      "group": "fabrica-01-hero",
+      "family": "hero",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-01-hero-desktop.png",
+      "mobileImagePath": "images/fabrica-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "8e792359e742792b9047e830ac1e84f8f9d5ecd84cc6cfb983fc632defd6035c",
+        "mobileImagePath": "5114d2b2010c2dd8bfe80f55dda5651085887629b59b39c7f1816a5c80ac356f"
+      }
+    },
+    {
+      "id": "fabrica-02-clients",
+      "group": "fabrica-02-clients",
+      "family": "social_proof",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-02-clients-desktop.png",
+      "mobileImagePath": "images/fabrica-02-clients-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated clients section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "783d45ddb76052272f12fdbe7cf90003faf683d3775a47a7099f50d0c90ff78f",
+        "mobileImagePath": "642808b10c334f9b0d26b786a4000069db2e3f0846c043b35cf0d2f230ffda1d"
+      }
+    },
+    {
+      "id": "fabrica-04-benefits",
+      "group": "fabrica-04-benefits",
+      "family": "feature",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-04-benefits-desktop.png",
+      "cue": "Generated benefits section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "39397de7e5789b95283869a7f9a9e986188a4ac531800261f4a89d807d9b2abd"
+      }
+    },
+    {
+      "id": "fabrica-06-about",
+      "group": "fabrica-06-about",
+      "family": "about",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-06-about-desktop.png",
+      "cue": "Generated about section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "c712630819831c95173512f82badd2d96909cd4aff624dbfc7b6f4f4fa31bb97"
+      }
+    },
+    {
+      "id": "fabrica-06-about-process",
+      "group": "fabrica-06-about-process",
+      "family": "how_it_works",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-06-about-process-desktop.png",
+      "mobileImagePath": "images/fabrica-06-about-process-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about-process section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "4572bd7706028276f6350c4183a81eb2e181067b530d85cec5a345604caeb833",
+        "mobileImagePath": "72c191937274a3c1d2cc56364f37c035d5c8ed87759a6d3cf2e360e236b4a7ef"
+      }
+    },
+    {
+      "id": "fabrica-06-process",
+      "group": "fabrica-06-process",
+      "family": "how_it_works",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-06-process-desktop.png",
+      "mobileImagePath": "images/fabrica-06-process-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated process section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "906b9ca94b35817a3827baf1580284658eb69992089206dcd2e810cc3af79c57",
+        "mobileImagePath": "23f45d47dbacd7cb442c09bcef39b1e7865044f93f05429e1d474350f11067e8"
+      }
+    },
+    {
+      "id": "fabrica-07-showreel",
+      "group": "fabrica-07-showreel",
+      "family": "feature",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-07-showreel-desktop.png",
+      "mobileImagePath": "images/fabrica-07-showreel-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated showreel section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "731175f145acf51ef77195204673708c765a76682aca43b6f32fa5a2275ddef5",
+        "mobileImagePath": "0aadad8f260eecd75e4855fd156127c50a70118f35538ddd3790431593b9f5e7"
+      }
+    },
+    {
+      "id": "fabrica-08-testimonials",
+      "group": "fabrica-08-testimonials",
+      "family": "social_proof",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-08-testimonials-desktop.png",
+      "cue": "Generated testimonials section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "e90b7003757617596422aa2ffc771d6ed68e347fc24b6d875f5a3dc731b01e8c"
+      }
+    },
+    {
+      "id": "fabrica-09-metrics-approach",
+      "group": "fabrica-09-metrics-approach",
+      "family": "stats",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-09-metrics-approach-desktop.png",
+      "mobileImagePath": "images/fabrica-09-metrics-approach-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated metrics-approach section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "87f3ef0cc8342a73bd301d2992db458b86214d823607df384d6270844fedfceb",
+        "mobileImagePath": "69ea6d73aed520a09e0580bc0825bb737bfad06bdf2ad745ffbcbf1341f38feb"
+      }
+    },
+    {
+      "id": "fabrica-10-case-study",
+      "group": "fabrica-10-case-study",
+      "family": "feature",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-10-case-study-desktop.png",
+      "cue": "Generated case-study section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "ed87298247d445090a0913bac4f41303ff9a4ad65900a8fa4ce0abdf684d31c6"
+      }
+    },
+    {
+      "id": "fabrica-12-team",
+      "group": "fabrica-12-team",
+      "family": "about",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-12-team-desktop.png",
+      "cue": "Generated team section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "bdf8c5472679682c39ba964e0516000688ddca2f621de9b044468b210655ca56"
+      }
+    },
+    {
+      "id": "fabrica-13-faq",
+      "group": "fabrica-13-faq",
+      "family": "faq",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-13-faq-desktop.png",
+      "mobileImagePath": "images/fabrica-13-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "2829ab91478722b6b2f1f0cda343a8e95c532bdd9e334baf00a33fb0a0828ad9",
+        "mobileImagePath": "6d3ce51a436354830db65b13c920c19ca32891a424f3712226479b2642bd3bb7"
+      }
+    },
+    {
+      "id": "fabrica-14-blog",
+      "group": "fabrica-14-blog",
+      "family": "feature",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-14-blog-desktop.png",
+      "cue": "Generated blog section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "3f421e06e2da6dfe27f2aafa538444a39d026950c5757501676b86dafd06b79f"
+      }
+    },
+    {
+      "id": "fabrica-15-contact",
+      "group": "fabrica-15-contact",
+      "family": "cta",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-15-contact-desktop.png",
+      "mobileImagePath": "images/fabrica-15-contact-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated contact section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "9f4619b070b65c7ad4a6fb968ba9010990cf48d090785b943da171adf744054a",
+        "mobileImagePath": "f75c70ff7d2112fcfd842cc4a6e87c8211f813b5c7c59474de1c40f8b1ceec24"
+      }
+    },
+    {
+      "id": "fabrica-16-footer",
+      "group": "fabrica-16-footer",
+      "family": "footer",
+      "source": "https://fabrica.framer.media/",
+      "tags": [],
+      "imagePath": "images/fabrica-16-footer-desktop.png",
+      "mobileImagePath": "images/fabrica-16-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from fabrica. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "30dc2c2102814a8b2d98091bd2e650f09c93881f2976a1de0a99ced6f6d6c40f",
+        "mobileImagePath": "8a5884c87395638bb1f7ef3a6a7b223581480914eb8c34a1b4009801549cc185"
+      }
+    },
+    {
+      "id": "gallery-studio-01-hero",
+      "group": "gallery-studio-01-hero",
+      "family": "hero",
+      "source": "https://gallery-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/gallery-studio-01-hero-desktop.png",
+      "mobileImagePath": "images/gallery-studio-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from gallery-studio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "cedaa0f2db668896c9771a94d03b6033c698d8bf8713d5e389cf72d0dfca81b1",
+        "mobileImagePath": "052e17170da9612523cab090d7dd0e758591136c52e1aea8e10eabd1c22dc946"
+      }
+    },
+    {
+      "id": "karo-template-01-hero",
+      "group": "karo-template-01-hero",
+      "family": "hero",
+      "source": "https://karo-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/karo-template-01-hero-desktop.png",
+      "mobileImagePath": "images/karo-template-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from karo-template. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "a5bc25e7ea1a4631969a455ac1c6683f27ad05616e403b136913a7cf745a1fce",
+        "mobileImagePath": "b447da7f82f436d7e2519cbbafeed355afd4fd39d57a50b62bb2024b8df3a7b4"
+      }
+    },
+    {
+      "id": "karo-template-06-about",
+      "group": "karo-template-06-about",
+      "family": "about",
+      "source": "https://karo-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/karo-template-06-about-desktop.png",
+      "mobileImagePath": "images/karo-template-06-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from karo-template. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "fc5aba61645e8d55e2d4aa2d57bc88f61f02144575fad3fba8bf4238c4a48902",
+        "mobileImagePath": "ac427e6f73336e44bd08fc1ceddce8e739fe2673b741105808449108b00cbcfc"
+      }
+    },
+    {
+      "id": "karo-template-07-services",
+      "group": "karo-template-07-services",
+      "family": "feature",
+      "source": "https://karo-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/karo-template-07-services-desktop.png",
+      "cue": "Generated services section from karo-template. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "bff95871e5fa5838eed20e7c3f559dfa5ecb97fdd6f4ae135ac94ad3b538e6d3"
+      }
+    },
+    {
+      "id": "karo-template-08-testimonials-brand",
+      "group": "karo-template-08-testimonials-brand",
+      "family": "social_proof",
+      "source": "https://karo-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/karo-template-08-testimonials-brand-desktop.png",
+      "mobileImagePath": "images/karo-template-08-testimonials-brand-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials-brand section from karo-template. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "aa73284aaa93710b0254a050a0b47cc3192540d571c0a27cf210dd0981ef57ca",
+        "mobileImagePath": "c458d987f72e0d43d136f963844178915de4d335387f291a57fb2d353dcacf71"
+      }
+    },
+    {
+      "id": "karo-template-08-testimonials-editorial",
+      "group": "karo-template-08-testimonials-editorial",
+      "family": "social_proof",
+      "source": "https://karo-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/karo-template-08-testimonials-editorial-desktop.png",
+      "mobileImagePath": "images/karo-template-08-testimonials-editorial-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials-editorial section from karo-template. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "17ba513895a6786fd54657b6b20565513c9b14f7af37495b5f9b93cdae163e6e",
+        "mobileImagePath": "0601d4c871354177a31c4789f18e380896248889ca9cef8a0306dd570c99d87a"
+      }
+    },
+    {
+      "id": "karo-template-08-testimonials-wedding",
+      "group": "karo-template-08-testimonials-wedding",
+      "family": "social_proof",
+      "source": "https://karo-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/karo-template-08-testimonials-wedding-desktop.png",
+      "mobileImagePath": "images/karo-template-08-testimonials-wedding-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials-wedding section from karo-template. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "34d7ab74550f48ddc7ac536c20659877fbf04ea85bb273e0668bc25621ee97b1",
+        "mobileImagePath": "4af9150be5f5e8624bbd02c1475eb76edf092c9f971baaa05c0ef99ebceb06b2"
+      }
+    },
+    {
+      "id": "karo-template-09-footer",
+      "group": "karo-template-09-footer",
+      "family": "footer",
+      "source": "https://karo-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/karo-template-09-footer-desktop.png",
+      "mobileImagePath": "images/karo-template-09-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from karo-template. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "8a99ac31d193d4a34bc78181986f44ec1cd7f3c48b4fc66c16daac4f84851310",
+        "mobileImagePath": "c57294b9fa405ccb2b9648cba2f68962c95fad912e0d85658a06b9f418b48429"
+      }
+    },
+    {
+      "id": "meridian-05-playbook",
+      "group": "meridian-05-playbook",
+      "family": "feature",
+      "source": "https://meridian-wf-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/meridian-05-playbook-desktop.png",
+      "mobileImagePath": "images/meridian-05-playbook-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated playbook section from meridian. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "4d1419e01ffc052e5ee6087300dbbe4846dc7591d8b4e163720a77bc70f182d1",
+        "mobileImagePath": "45f9b8ab85d18d63a55e3a5a9f4dcfdd0c31357c9da1fda8bbe61be5ec2c5bf0"
+      }
+    },
+    {
+      "id": "meridian-06-case-studies",
+      "group": "meridian-06-case-studies",
+      "family": "feature",
+      "source": "https://meridian-wf-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/meridian-06-case-studies-desktop.png",
+      "mobileImagePath": "images/meridian-06-case-studies-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated case-studies section from meridian. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "a9d841c0f6318ead46484e722206008b131f1b556c339ff34c1913c3b3d33adb",
+        "mobileImagePath": "f277276b69048e5d9d299c5fafa7b6617e92d25432407a383db9514405642b88"
+      }
+    },
+    {
+      "id": "meridian-07-testimonials",
+      "group": "meridian-07-testimonials",
+      "family": "social_proof",
+      "source": "https://meridian-wf-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/meridian-07-testimonials-desktop.png",
+      "mobileImagePath": "images/meridian-07-testimonials-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials section from meridian. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "d6f29b4413223052b00971591f4f6e771c741d4dc72dcd227a156700a749c1d3",
+        "mobileImagePath": "f3f6c41da0b9f3ddd67991e5ce8698cd5b5eedd9f546435df7e67cd538d657ff"
+      }
+    },
+    {
+      "id": "meridian-08-about",
+      "group": "meridian-08-about",
+      "family": "about",
+      "source": "https://meridian-wf-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/meridian-08-about-desktop.png",
+      "mobileImagePath": "images/meridian-08-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from meridian. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "99c2d7e2d414878a84ffd5023e205ecc9e3ee6020cc4e279a708638b9a912327",
+        "mobileImagePath": "a1dccd1c24f4aa4817d2b157a77703e74298244fcb7b87459ba07093b3fb42e5"
+      }
+    },
+    {
+      "id": "meridian-09-contact-footer",
+      "group": "meridian-09-contact-footer",
+      "family": "footer",
+      "source": "https://meridian-wf-template.webflow.io/",
+      "tags": [],
+      "imagePath": "images/meridian-09-contact-footer-desktop.png",
+      "cue": "Generated contact-footer section from meridian. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "0314a949df45d7135feb80c9adc5243ecc64296e73ffecdaafda5f4541f905c7"
+      }
+    },
+    {
+      "id": "nubo-01-hero",
+      "group": "nubo-01-hero",
+      "family": "hero",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-01-hero-desktop.png",
+      "mobileImagePath": "images/nubo-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "507fc1023bcf762c314e4f9503850417a6a32fa65d17f5bb4e5a9208c6c8bd0e",
+        "mobileImagePath": "57b482c4e7808e69674e00e11a91d71329b31f37f07f1ca3b3725644cb1d0132"
+      }
+    },
+    {
+      "id": "nubo-02-showreel",
+      "group": "nubo-02-showreel",
+      "family": "feature",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-02-showreel-desktop.png",
+      "mobileImagePath": "images/nubo-02-showreel-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated showreel section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "e18742ea20745e4d5e74c83212506b6e20c14d16c7c44fc9d01f4c1b6a281bfe",
+        "mobileImagePath": "762336ce32fca503c9824f44a2425b2f4b2ca30a436510b062e8ff08f91390fc"
+      }
+    },
+    {
+      "id": "nubo-04-how-it-works",
+      "group": "nubo-04-how-it-works",
+      "family": "how_it_works",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-04-how-it-works-desktop.png",
+      "mobileImagePath": "images/nubo-04-how-it-works-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated how-it-works section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "5b0156453018ba09cea0218fbb4247cea1fe1577d26f333ab15ddd48ad68620a",
+        "mobileImagePath": "955ca439412b64789b4175d65a80bf99fe3edf16e525a743dcfd81ec79fc8f91"
+      }
+    },
+    {
+      "id": "nubo-05-benefits",
+      "group": "nubo-05-benefits",
+      "family": "feature",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-05-benefits-desktop.png",
+      "mobileImagePath": "images/nubo-05-benefits-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated benefits section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "c58a204b6844b108cd725ea80348aec5848fb7a356c990128ac414ee21fdf90c",
+        "mobileImagePath": "c003f8bab70e41eec3cade84ec33da24805a34453f736a5893536a364fa4047f"
+      }
+    },
+    {
+      "id": "nubo-06-features",
+      "group": "nubo-06-features",
+      "family": "feature",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-06-features-desktop.png",
+      "mobileImagePath": "images/nubo-06-features-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated features section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "fb98e2f2f4e74720cab135e06d2e1c97164173eaf2c75518efeb566300480f32",
+        "mobileImagePath": "823a23b36a6571fcfe8b6480cf64d64db3c0d5d7b422f9f3c6fff7121fffa32f"
+      }
+    },
+    {
+      "id": "nubo-07-benefits-detail",
+      "group": "nubo-07-benefits-detail",
+      "family": "feature",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-07-benefits-detail-desktop.png",
+      "mobileImagePath": "images/nubo-07-benefits-detail-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated benefits-detail section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "923cfa81d6fc7372e191640cf837e34c1980b2211600a4208fef79cd6f712300",
+        "mobileImagePath": "f19a6940515dd44cd407a234f8874130096240499093b28e3301819758bc0a6a"
+      }
+    },
+    {
+      "id": "nubo-08-faq",
+      "group": "nubo-08-faq",
+      "family": "faq",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-08-faq-desktop.png",
+      "mobileImagePath": "images/nubo-08-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "b0077987eb0b1a2c503a44dda6202b0d0d69de8295e6c3908b6cec48d0df9785",
+        "mobileImagePath": "b00e18fecfeea93b812041abade47dd52a05100a371be2bcb847e1acd79c1493"
+      }
+    },
+    {
+      "id": "nubo-09-stats",
+      "group": "nubo-09-stats",
+      "family": "stats",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-09-stats-desktop.png",
+      "mobileImagePath": "images/nubo-09-stats-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated stats section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "3cec6fc78c1854abebd60c6477d5b2f3ffec8e84b1dee94253133161f5c367db",
+        "mobileImagePath": "8e5ee1be2a88d9b90352998b70ac33c03abc6af8d0b573afae08509465211813"
+      }
+    },
+    {
+      "id": "nubo-10-pricing",
+      "group": "nubo-10-pricing",
+      "family": "pricing",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-10-pricing-desktop.png",
+      "mobileImagePath": "images/nubo-10-pricing-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated pricing section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "8bf1a7eb35ba3589efae4eccdc8a518428ffc7affd78d3dfe044252f164ea340",
+        "mobileImagePath": "ace18a8ca974ed2f926b1bd14c49431ea7df5fe3668589a806c70db07e3a4ffd"
+      }
+    },
+    {
+      "id": "nubo-11-testimonial",
+      "group": "nubo-11-testimonial",
+      "family": "social_proof",
+      "source": "https://nubo.framer.website/",
+      "tags": [],
+      "imagePath": "images/nubo-11-testimonial-desktop.png",
+      "mobileImagePath": "images/nubo-11-testimonial-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonial section from nubo. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "362b97484dcb7f4b41c07e02a6fc3f57a255c569f2fa3a9d84c340beb786d977",
+        "mobileImagePath": "00d1c34e327eb7623393343f80c8745a6f1c10ce31ee0a651f7daed2c96c7eb3"
+      }
+    },
+    {
+      "id": "ollef-01-hero",
+      "group": "ollef-01-hero",
+      "family": "hero",
+      "source": "https://ollef.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ollef-01-hero-desktop.png",
+      "mobileImagePath": "images/ollef-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from ollef. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "73fabe774a2124e74b4f2f570595492d2c6d6374e21353837b5f69d579132d0d",
+        "mobileImagePath": "29626c572bf61b2a610f580e048e839409801cc716bcf62782f313ce12734c54"
+      }
+    },
+    {
+      "id": "ollef-03-studio",
+      "group": "ollef-03-studio",
+      "family": "about",
+      "source": "https://ollef.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ollef-03-studio-desktop.png",
+      "mobileImagePath": "images/ollef-03-studio-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated studio section from ollef. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "2590738598a95ed80f62caf37ffe7c1168d9e0936aa01d1814e12ca608895121",
+        "mobileImagePath": "05fa4c46a6ed42bdc634d27f72851c65c3b6d7585a189865d1f547593f08a2a8"
+      }
+    },
+    {
+      "id": "ollef-04-values",
+      "group": "ollef-04-values",
+      "family": "about",
+      "source": "https://ollef.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ollef-04-values-desktop.png",
+      "mobileImagePath": "images/ollef-04-values-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated values section from ollef. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "d20faf27c846d94d010c8a9f20c34b4835d3ebd9cfc1b69cdc5c549dd717a366",
+        "mobileImagePath": "be5f5b6dfee39877249c2ab040846f3fec12f50ace0bd74ae918fd443d69597e"
+      }
+    },
+    {
+      "id": "ollef-05-work",
+      "group": "ollef-05-work",
+      "family": "feature",
+      "source": "https://ollef.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ollef-05-work-desktop.png",
+      "cue": "Generated work section from ollef. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "6d5bab130b229bdf63c22b3185b61076df7edbf79c5e51d51cffd8000dc5be58"
+      }
+    },
+    {
+      "id": "ollef-06-services",
+      "group": "ollef-06-services",
+      "family": "feature",
+      "source": "https://ollef.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ollef-06-services-desktop.png",
+      "mobileImagePath": "images/ollef-06-services-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated services section from ollef. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "e1367aa87bff967d8ed5acc0da106e749e411f79bf7c48fabe6fccba5e6e28f0",
+        "mobileImagePath": "d57d31318228543b57b529c768c55407fcfaa9c5ca803339f5f8c5ca62483008"
+      }
+    },
+    {
+      "id": "ollef-08-footer",
+      "group": "ollef-08-footer",
+      "family": "footer",
+      "source": "https://ollef.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ollef-08-footer-desktop.png",
+      "mobileImagePath": "images/ollef-08-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from ollef. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "22d533750ade460043a6b6054163cd8cf48842af67414f42667ff0d982c6ccd1",
+        "mobileImagePath": "1addbe3e4bfc5a4ca18f6099c0121b0c9d75b9542b2094c8b1f0038dc83b462a"
+      }
+    },
+    {
+      "id": "ritovex-04-services",
+      "group": "ritovex-04-services",
+      "family": "feature",
+      "source": "https://ritovex.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ritovex-04-services-desktop.png",
+      "mobileImagePath": "images/ritovex-04-services-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated services section from ritovex. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "62ecc2e88c281745099c70ff100ded4aea91b1f167d34fb35b0f5e7d89a1f006",
+        "mobileImagePath": "588837e293d48ba27d322732b4c35f56f03e88a1b8bfc073d9b36bd4ddc19925"
+      }
+    },
+    {
+      "id": "ritovex-10-articles",
+      "group": "ritovex-10-articles",
+      "family": "feature",
+      "source": "https://ritovex.webflow.io/",
+      "tags": [],
+      "imagePath": "images/ritovex-10-articles-desktop.png",
+      "mobileImagePath": "images/ritovex-10-articles-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated articles section from ritovex. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "ca50bb5077252c932deddbc48a26742c55f277eaffc11b4c6eea2d95d13ef7c3",
+        "mobileImagePath": "38b88bd5b3426c3eca8e77b36ddd78e23626bc983cac843ba57a2295b0a95775"
+      }
+    },
+    {
+      "id": "saleunion-01-hero",
+      "group": "saleunion-01-hero",
+      "family": "hero",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-01-hero-desktop.png",
+      "mobileImagePath": "images/saleunion-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "c34c061f871b0aa02ab34f259e44a9ff1cda57004b1307d16a9e0794ba1cf205",
+        "mobileImagePath": "7fe9699bc239e97e867d31b8515426e3366da75ff7674bd24ab70b172fd87178"
+      }
+    },
+    {
+      "id": "saleunion-02-about",
+      "group": "saleunion-02-about",
+      "family": "about",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-02-about-desktop.png",
+      "mobileImagePath": "images/saleunion-02-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "c7dd0a4981d4f56faba19ee2cd4f760ccb10c0ec720d3111f584259967a5f34e",
+        "mobileImagePath": "e6e82edc4b08a416a8f2472c497d7997700b5171f56a394d1aaa5a9dc759d4a9"
+      }
+    },
+    {
+      "id": "saleunion-04-services",
+      "group": "saleunion-04-services",
+      "family": "feature",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-04-services-desktop.png",
+      "mobileImagePath": "images/saleunion-04-services-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated services section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "3470fa79d3860c155f160accbd9f644a0c575e34e23414d149f24f4edb4e6dbd",
+        "mobileImagePath": "cfe62cb3afadde9f821ffedbd544b812a8f3527948ac234c8b3d591d69d76f9d"
+      }
+    },
+    {
+      "id": "saleunion-08-pricing",
+      "group": "saleunion-08-pricing",
+      "family": "pricing",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-08-pricing-desktop.png",
+      "mobileImagePath": "images/saleunion-08-pricing-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated pricing section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "7942c53a2d677733a7fb8e78688208dd245cfc94b791729b85500811348c411c",
+        "mobileImagePath": "7582201b8f8980b5a1aead3dd9adaab3679c622466521f03ad58da161811a740"
+      }
+    },
+    {
+      "id": "saleunion-09-testimonials",
+      "group": "saleunion-09-testimonials",
+      "family": "social_proof",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-09-testimonials-desktop.png",
+      "mobileImagePath": "images/saleunion-09-testimonials-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "48599dac3e5b747ea8a0575c343b65e499b6edbf6db9ddd1973e5615e5b8d203",
+        "mobileImagePath": "8902539a4c637088cd3cd0821708f47173049b4e39c8a214979bd646bd4fe50f"
+      }
+    },
+    {
+      "id": "saleunion-11-faq",
+      "group": "saleunion-11-faq",
+      "family": "faq",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-11-faq-desktop.png",
+      "mobileImagePath": "images/saleunion-11-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "6f1a0dca1b5121b3c5f5bd4ca9aedcd775bd1ece343b1c832792e7b02a02b277",
+        "mobileImagePath": "352c45838540298d03d0d3f13b1bc6eeec554c4e2decea8c9953948c0d5ff1a1"
+      }
+    },
+    {
+      "id": "saleunion-13-cta",
+      "group": "saleunion-13-cta",
+      "family": "cta",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-13-cta-desktop.png",
+      "mobileImagePath": "images/saleunion-13-cta-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "f5b97ddbf0f053f69892265ddd2941afea79c4f3cd1683825f1cf5ac92c1af1e",
+        "mobileImagePath": "9921a38b0ea5bc7897a2882e0af437b2e32eb5deb82b1d037d32633871c0c4b5"
+      }
+    },
+    {
+      "id": "saleunion-14-footer",
+      "group": "saleunion-14-footer",
+      "family": "footer",
+      "source": "https://saleunion.webflow.io/",
+      "tags": [],
+      "imagePath": "images/saleunion-14-footer-desktop.png",
+      "cue": "Generated footer section from saleunion. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "8aa8e96d6df7981b939f87e8b93eaf88e72b3473ab8c73de4f5f307d6ba612f1"
+      }
+    },
+    {
+      "id": "stodio-01-hero",
+      "group": "stodio-01-hero",
+      "family": "hero",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-01-hero-desktop.png",
+      "mobileImagePath": "images/stodio-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "c12284b7e6382297cf45876458fb053638cb51923f861fe4c533b38a6fdbb1a2",
+        "mobileImagePath": "4d7dfaabc9b25c7c6f0ede0428f84126980da7ffa98fe2e8ea19557c6a1d8845"
+      }
+    },
+    {
+      "id": "stodio-02-partners",
+      "group": "stodio-02-partners",
+      "family": "social_proof",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-02-partners-desktop.png",
+      "mobileImagePath": "images/stodio-02-partners-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated partners section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "24d69626b68f5130cf17d093ffd71bd88153f165c04db140dba2ee5718c44396",
+        "mobileImagePath": "ce509d0bb163aec78b25bacbcf8b760e4f0c778e40f9de4d8296ac9863efb61d"
+      }
+    },
+    {
+      "id": "stodio-03-about",
+      "group": "stodio-03-about",
+      "family": "about",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-03-about-desktop.png",
+      "mobileImagePath": "images/stodio-03-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "2c9b210ed24c4a7d8902a3036fcbee56c6023dc99c506d6cb763aee7cd5affa4",
+        "mobileImagePath": "85734326bb2e3721aeafebf3dd0975eda39587f66a38f5a9df553a074e68e4bb"
+      }
+    },
+    {
+      "id": "stodio-04-metrics",
+      "group": "stodio-04-metrics",
+      "family": "stats",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-04-metrics-desktop.png",
+      "mobileImagePath": "images/stodio-04-metrics-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated metrics section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "5433b4d81b3747cfa67341a4995e16ecf569fb9ff9e1a989f1f8716ee641d8cf",
+        "mobileImagePath": "3a338115591c897c668478b004cbe1860b8568bc5a357d5ad29e8c3be8ff9690"
+      }
+    },
+    {
+      "id": "stodio-05-services",
+      "group": "stodio-05-services",
+      "family": "feature",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-05-services-desktop.png",
+      "cue": "Generated services section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "49f650b3a059d892bbf700a8b751fc7b164f9757ee391500fd2910b45cb21378"
+      }
+    },
+    {
+      "id": "stodio-07-pricing",
+      "group": "stodio-07-pricing",
+      "family": "pricing",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-07-pricing-desktop.png",
+      "cue": "Generated pricing section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "6bc2e0252f7ac02c453fe473808cea7a67f6fb236d2989bc71079e63d47b90ed"
+      }
+    },
+    {
+      "id": "stodio-08-faq",
+      "group": "stodio-08-faq",
+      "family": "faq",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-08-faq-desktop.png",
+      "mobileImagePath": "images/stodio-08-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "bfad8ea1e54bcfb0c8a7fb655183f1e18877825be74cd3b4778ffead46904e70",
+        "mobileImagePath": "6d94e1603955f2936dcc1b79f9080f5d4344f503505382afe0d85f102c1096cc"
+      }
+    },
+    {
+      "id": "stodio-09-testimonials",
+      "group": "stodio-09-testimonials",
+      "family": "social_proof",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-09-testimonials-desktop.png",
+      "mobileImagePath": "images/stodio-09-testimonials-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "6fffff3c4c2ea645aa594e549fc17e11611535606d7221628271c728eaad570e",
+        "mobileImagePath": "d6bfcc00c478ebcd2524919e5d45b0b40c48c211abc759f7f1607d1572761afd"
+      }
+    },
+    {
+      "id": "stodio-11-cta",
+      "group": "stodio-11-cta",
+      "family": "cta",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-11-cta-desktop.png",
+      "mobileImagePath": "images/stodio-11-cta-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "afd46e2aef59685a52a96f011faf78677cafb72f22498ce5ff9f6ebd7fdab933",
+        "mobileImagePath": "358a816163212e1ba28611431528f842f7f4b91fce432cbe5ef6da22144e54ba"
+      }
+    },
+    {
+      "id": "stodio-12-footer",
+      "group": "stodio-12-footer",
+      "family": "footer",
+      "source": "https://stodio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/stodio-12-footer-desktop.png",
+      "mobileImagePath": "images/stodio-12-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from stodio. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "93e22e041a92199dd721d7f97fefe0b978b11a23012863b4a7c3768865738619",
+        "mobileImagePath": "05f4f130ba6cd7793106d47271203286c6580d6b6cb906ba798e6a39f09a5802"
+      }
+    },
+    {
+      "id": "waveyu-01-hero",
+      "group": "waveyu-01-hero",
+      "family": "hero",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-01-hero-desktop.png",
+      "mobileImagePath": "images/waveyu-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "298e00279548dc6c57db897a418ca29cd87ba5e45bf3399201385eb0b0211780",
+        "mobileImagePath": "32844d417c228b1de88da31e2dc32e7b848a44f9651597f3e4c870ee701c93a4"
+      }
+    },
+    {
+      "id": "waveyu-06-cta-1",
+      "group": "waveyu-06-cta-1",
+      "family": "cta",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-06-cta-1-desktop.png",
+      "mobileImagePath": "images/waveyu-06-cta-1-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta-1 section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "e28adc77c36887320b5edce43afd36272cd6428d03529f7ed68592c62f048886",
+        "mobileImagePath": "a76c526ee99690d3fc504e21a560a2a1c8e44bf3b35758c3fa606c7005cf8477"
+      }
+    },
+    {
+      "id": "waveyu-09-testimonials",
+      "group": "waveyu-09-testimonials",
+      "family": "social_proof",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-09-testimonials-desktop.png",
+      "mobileImagePath": "images/waveyu-09-testimonials-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonials section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "10756e2db1546fa38d93887b3a015d44d19e26f276a2eb84e2a1c2266ef70352",
+        "mobileImagePath": "8f5af9ae7739c75fc3b6087813df15f203ee8f0fa8a51e000a5e467cb06938c6"
+      }
+    },
+    {
+      "id": "waveyu-10-cta-2",
+      "group": "waveyu-10-cta-2",
+      "family": "cta",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-10-cta-2-desktop.png",
+      "mobileImagePath": "images/waveyu-10-cta-2-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta-2 section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "2d9b2c808be6a6232e4def285658c139f31fdd29ea4228b6dae9f06b00349d81",
+        "mobileImagePath": "574787ac79be28c18a0f78c3d969fadc6762aafa713b4692f91c2017aad41629"
+      }
+    },
+    {
+      "id": "waveyu-11-steps",
+      "group": "waveyu-11-steps",
+      "family": "how_it_works",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-11-steps-desktop.png",
+      "mobileImagePath": "images/waveyu-11-steps-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated steps section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "bab3cb3d00473ce829ccd49b9bd0c5ea96f5c5cb5b3433fdfcda86e3ad257762",
+        "mobileImagePath": "96d5b6f7e838a4d78dce8b45760995f745af337db6178906106a26e1b317d344"
+      }
+    },
+    {
+      "id": "waveyu-12-pricing",
+      "group": "waveyu-12-pricing",
+      "family": "pricing",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-12-pricing-desktop.png",
+      "mobileImagePath": "images/waveyu-12-pricing-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated pricing section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "b4260d8ebeab4960180bca64e396427a48ec42c60d830cede01aa95e3dc28771",
+        "mobileImagePath": "bde8427105c67a527684e3f25094475b1d2899d99a3956b96686d3daf23aac60"
+      }
+    },
+    {
+      "id": "waveyu-13-faq",
+      "group": "waveyu-13-faq",
+      "family": "faq",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-13-faq-desktop.png",
+      "mobileImagePath": "images/waveyu-13-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "b4d6c7cf946a0f712255b667932bf43ca71a377e14a76e523189f4dd42e081dc",
+        "mobileImagePath": "bc21f99b9b039dd529479ff055709ceba380a916702f00b15d27adcc31cf4699"
+      }
+    },
+    {
+      "id": "waveyu-14-team",
+      "group": "waveyu-14-team",
+      "family": "about",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-14-team-desktop.png",
+      "mobileImagePath": "images/waveyu-14-team-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated team section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "6d6d87f3497fb8fd5670b03e4f158c14779b94ebe605d1fe7e11e2d1df3a325c",
+        "mobileImagePath": "ba165cbc7a05c971cc1669b782b0d164536d83be121fd4026c02a4de091125b6"
+      }
+    },
+    {
+      "id": "waveyu-15-footer",
+      "group": "waveyu-15-footer",
+      "family": "footer",
+      "source": "https://waveyu.webflow.io/",
+      "tags": [],
+      "imagePath": "images/waveyu-15-footer-desktop.png",
+      "mobileImagePath": "images/waveyu-15-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from waveyu. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "63cc9a066e23c25f05102ad97c49a19f91ac0207335b3fef11deca6d1a17a5fc",
+        "mobileImagePath": "395138837895df3ce2dbb761cc1873d81aeb70a7a5dcaa16013ebe2879f0a779"
+      }
+    },
+    {
+      "id": "wedddingly-01-hero",
+      "group": "wedddingly-01-hero",
+      "family": "hero",
+      "source": "https://wedddingly.framer.website/",
+      "tags": [],
+      "imagePath": "images/wedddingly-01-hero-desktop.png",
+      "mobileImagePath": "images/wedddingly-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from wedddingly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "f3de6cad17b672b610219e4ff4e4b1756380e59885923d8fc1509826f9a12693",
+        "mobileImagePath": "f2b5ae7a5422904d707f7d9b4c9d5f81fa022ba73e4e3549fa8d6534605193c5"
+      }
+    },
+    {
+      "id": "wedddingly-04-closing",
+      "group": "wedddingly-04-closing",
+      "family": "cta",
+      "source": "https://wedddingly.framer.website/",
+      "tags": [],
+      "imagePath": "images/wedddingly-04-closing-desktop.png",
+      "mobileImagePath": "images/wedddingly-04-closing-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated closing section from wedddingly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "3ea3ccf13e19d0b91227bc2d09c84ea7de40b9ad8c1f5a99c6f29736f485a2b7",
+        "mobileImagePath": "4f8da80e03136610743319572e95d12fd3e16bd4decb4c7707d220fa711b6606"
+      }
+    },
+    {
+      "id": "xodexdesign-01-hero",
+      "group": "xodexdesign-01-hero",
+      "family": "hero",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-01-hero-desktop.png",
+      "mobileImagePath": "images/xodexdesign-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "e9716063592683e59f54e53eb97e4510137e0621cd6f46011897a83b33d5897c",
+        "mobileImagePath": "b51d4d56104d7a24d8ca5415a01a642abfb2c31b1c263f4bd522bbe31ea54c84"
+      }
+    },
+    {
+      "id": "xodexdesign-02-about-clients",
+      "group": "xodexdesign-02-about-clients",
+      "family": "social_proof",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-02-about-clients-desktop.png",
+      "mobileImagePath": "images/xodexdesign-02-about-clients-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about-clients section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "638bf090bf1f8e254cdfd2084076bea5b826ca7ebba8234dea2606854273d1ff",
+        "mobileImagePath": "fe14e4de0a438678403d61bc8b374f10f2af0726799cc9260fc2d846debd8dff"
+      }
+    },
+    {
+      "id": "xodexdesign-03-projects",
+      "group": "xodexdesign-03-projects",
+      "family": "feature",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-03-projects-desktop.png",
+      "cue": "Generated projects section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "e5a1a7fce8b17e05eb9e8ff660de311fac54ea22b87e1dd270fc85f255978365"
+      }
+    },
+    {
+      "id": "xodexdesign-04-services",
+      "group": "xodexdesign-04-services",
+      "family": "feature",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-04-services-desktop.png",
+      "mobileImagePath": "images/xodexdesign-04-services-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated services section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "9c9f98ae931020dc09fdff6e68743d76976d619aaffa16a24e9880a126983580",
+        "mobileImagePath": "f6743f790afdb2d4dbf3e1a13bc171e09d718cbaa1c31c1fe2758f60a711a6f3"
+      }
+    },
+    {
+      "id": "xodexdesign-05-image-statement",
+      "group": "xodexdesign-05-image-statement",
+      "family": "about",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-05-image-statement-desktop.png",
+      "mobileImagePath": "images/xodexdesign-05-image-statement-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated image-statement section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "f903ddc1a3544b3686735089f0bc93471c1bcd1e63c172d75c776fc8ada68933",
+        "mobileImagePath": "3d00d540e49cff7ecac55f70705a6b9c4c90b81a2740c1334bc79debf8daef5e"
+      }
+    },
+    {
+      "id": "xodexdesign-07-pricing",
+      "group": "xodexdesign-07-pricing",
+      "family": "pricing",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-07-pricing-desktop.png",
+      "cue": "Generated pricing section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "984019a238a47e3631f50f5e8aecdd85a2dd8b809e55a0a69c4a63b91f053536"
+      }
+    },
+    {
+      "id": "xodexdesign-08-faq",
+      "group": "xodexdesign-08-faq",
+      "family": "faq",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-08-faq-desktop.png",
+      "mobileImagePath": "images/xodexdesign-08-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "17d617a5d20f018eeb80737610bfaad03abf7e6462bf2a0f04dc127dcf84a22a",
+        "mobileImagePath": "f85d1e26211b875c8e5272f4d75e467c2e43b1bfc8d102f211d4db897ffd3110"
+      }
+    },
+    {
+      "id": "xodexdesign-09-cta",
+      "group": "xodexdesign-09-cta",
+      "family": "cta",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-09-cta-desktop.png",
+      "mobileImagePath": "images/xodexdesign-09-cta-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "52a63d789721118ece2d8afd23aa3a54a72a0f7c8844a84ae7283052cc46f4e9",
+        "mobileImagePath": "f5ddc936858ba5a2b799907181844091bddfdaa4c58046289dc963447dff4bf7"
+      }
+    },
+    {
+      "id": "xodexdesign-10-footer",
+      "group": "xodexdesign-10-footer",
+      "family": "footer",
+      "source": "https://xodexdesign.webflow.io/",
+      "tags": [],
+      "imagePath": "images/xodexdesign-10-footer-desktop.png",
+      "mobileImagePath": "images/xodexdesign-10-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from xodexdesign. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "sha256": {
+        "imagePath": "fe2c67c0b2bd9f85a0fd3513ba5d9dc83937be1a207f17044cb0f28b00edd5c0",
+        "mobileImagePath": "90ec47bbdfae8a159eb3d8d2a07893be482b018403c467bb1a8f5dba6ea8fab8"
+      }
+    },
+    {
+      "id": "canvasly-01-hero",
+      "group": "canvasly-01-hero",
+      "family": "hero",
+      "source": "https://canvasly-creative.webflow.io/",
+      "tags": [],
+      "imagePath": "images/canvasly-01-hero-desktop.png",
+      "mobileImagePath": "images/canvasly-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from canvasly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 826,
+          "height": 1904
+        }
+      },
+      "sha256": {
+        "imagePath": "d29935198c3986c1e401401ef6d0d7bceb2c3b04fc8e2e1028c398bc39c79063",
+        "mobileImagePath": "ea06fdace1f06c43f9f539ad74ffaf0f2d3cbba08a09bcbab10511dccd582407"
+      }
+    },
+    {
+      "id": "canvasly-02-statement",
+      "group": "canvasly-02-statement",
+      "family": "about",
+      "source": "https://canvasly-creative.webflow.io/",
+      "tags": [],
+      "imagePath": "images/canvasly-02-statement-desktop.png",
+      "mobileImagePath": "images/canvasly-02-statement-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated statement section from canvasly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2007
+        }
+      },
+      "sha256": {
+        "imagePath": "b71b6087ad5f4f34d71df24a0088ba8a0533bf7b19193a1e8ef327a3a815a310",
+        "mobileImagePath": "893a26f26bc4423b4bad92992515d67ef2701fe23c6def764a6a809d55fe9b68"
+      }
+    },
+    {
+      "id": "canvasly-03-approach",
+      "group": "canvasly-03-approach",
+      "family": "how_it_works",
+      "source": "https://canvasly-creative.webflow.io/",
+      "tags": [],
+      "imagePath": "images/canvasly-03-approach-desktop.png",
+      "mobileImagePath": "images/canvasly-03-approach-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated approach section from canvasly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2008
+        }
+      },
+      "sha256": {
+        "imagePath": "e3d9b1252678907894e4e1f60161ca3218fbc21036ccf7d08350e5cdf6cf4885",
+        "mobileImagePath": "b9a123f9e52afffe519fe9ecff327d6465987a1b4e6d64af0e17c132d74a3c8f"
+      }
+    },
+    {
+      "id": "canvasly-05-gallery",
+      "group": "canvasly-05-gallery",
+      "family": "feature",
+      "source": "https://canvasly-creative.webflow.io/",
+      "tags": [],
+      "imagePath": "images/canvasly-05-gallery-desktop.png",
+      "mobileImagePath": "images/canvasly-05-gallery-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated gallery section from canvasly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. Twelve rotating photo tiles form a circular ring around centered two-line CTA. One semantic section.",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 849,
+          "height": 1852
+        }
+      },
+      "sha256": {
+        "imagePath": "e3ba0b20da71bdb9a7f50b902b62158b3cbf2aef5b66692bd7b8016b2098851b",
+        "mobileImagePath": "c0257e318d89348d56016e5064e8a603ad6c0a3b81a18b8da8150ab4a184fb5b"
+      }
+    },
+    {
+      "id": "canvasly-07-testimonials",
+      "group": "canvasly-07-testimonials",
+      "family": "social_proof",
+      "source": "https://canvasly-creative.webflow.io/",
+      "tags": [],
+      "imagePath": "images/canvasly-07-testimonials-desktop.png",
+      "cue": "Generated testimonials section from canvasly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. Five overlapping tilted cards; middle hover raises and straightens selected card. Individual obscured cards need hover coverage.",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        }
+      },
+      "sha256": {
+        "imagePath": "c4c88626bdaa70990f135a8511be9a35d33a95cc41b57c5d82171e839d72a738"
+      }
+    },
+    {
+      "id": "canvasly-08-footer",
+      "group": "canvasly-08-footer",
+      "family": "footer",
+      "source": "https://canvasly-creative.webflow.io/",
+      "tags": [],
+      "imagePath": "images/canvasly-08-footer-desktop.png",
+      "mobileImagePath": "images/canvasly-08-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from canvasly. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. Dark contact section, centered giant CTA, lime button, social icons top and legal bottom. Pointer reveals photo circle with outlined type. Resting state still needs capture.",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1504,
+          "height": 1046
+        },
+        "mobile": {
+          "format": "png",
+          "width": 850,
+          "height": 1851
+        }
+      },
+      "sha256": {
+        "imagePath": "259ec006f87c618d761e5fad3272fa27b3d9c2c151cbe4b0c18bd4cdc187c2de",
+        "mobileImagePath": "9fc125fb503128d5ee992e5a71d4c4fe28731bfe6fc00a50e00bc4b272894a92"
+      }
+    },
+    {
+      "id": "creatiie-01-hero",
+      "group": "creatiie-01-hero",
+      "family": "hero",
+      "source": "https://creatiie.framer.website/",
+      "tags": [],
+      "imagePath": "images/creatiie-01-hero-desktop.png",
+      "mobileImagePath": "images/creatiie-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from creatiie. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1586,
+          "height": 992
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2009
+        }
+      },
+      "sha256": {
+        "imagePath": "8d2e9dc380b27f45fe7430b28153475e1757aeb63d98abc8f06ea25e2ebbccff",
+        "mobileImagePath": "b7e02bb849ed8e755a61899c285ffce7d0cd9924346dd2fe5db5d69852fba417"
+      }
+    },
+    {
+      "id": "creatiie-02-about",
+      "group": "creatiie-02-about",
+      "family": "about",
+      "source": "https://creatiie.framer.website/",
+      "tags": [],
+      "imagePath": "images/creatiie-02-about-desktop.png",
+      "mobileImagePath": "images/creatiie-02-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from creatiie. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2009
+        }
+      },
+      "sha256": {
+        "imagePath": "ecacb04efd6f05c6cc6bdc123efaed1005570a62ffae8cdfe6c8919c8bf1d860",
+        "mobileImagePath": "1a0242f057439ac5a154168ea5a15daeee69520d43200ef63d0465d049378d09"
+      }
+    },
+    {
+      "id": "creatiie-03-projects",
+      "group": "creatiie-03-projects",
+      "family": "feature",
+      "source": "https://creatiie.framer.website/",
+      "tags": [],
+      "imagePath": "images/creatiie-03-projects-desktop.png",
+      "mobileImagePath": "images/creatiie-03-projects-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated projects section from creatiie. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2009
+        }
+      },
+      "sha256": {
+        "imagePath": "14e0b7ddf4541078f0b9c16f4420e282c2664ee5b18cf3c3014bccb4dfe43cd3",
+        "mobileImagePath": "6b5f1d11241c7cc1daac80de8c912be8088ed650924b959fce611fdf65440231"
+      }
+    },
+    {
+      "id": "creatiie-04-services",
+      "group": "creatiie-04-services",
+      "family": "feature",
+      "source": "https://creatiie.framer.website/",
+      "tags": [],
+      "imagePath": "images/creatiie-04-services-desktop.png",
+      "mobileImagePath": "images/creatiie-04-services-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated services section from creatiie. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 940,
+          "height": 1672
+        }
+      },
+      "sha256": {
+        "imagePath": "d9acc3f10187046318276c8384460c539c092709dd785cd1e7b3dbeafcd283d6",
+        "mobileImagePath": "e181ef46904dc82cfe129e8fd208aefe35793d65f1a304dc950daa23b2830ff8"
+      }
+    },
+    {
+      "id": "creatiie-06-faqs",
+      "group": "creatiie-06-faqs",
+      "family": "faq",
+      "source": "https://creatiie.framer.website/",
+      "tags": [],
+      "imagePath": "images/creatiie-06-faqs-desktop.png",
+      "mobileImagePath": "images/creatiie-06-faqs-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faqs section from creatiie. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1024,
+          "height": 1536
+        }
+      },
+      "sha256": {
+        "imagePath": "c83bd419dd2901796732b19a9321e76a338471822284f888ac077ab2495da3d8",
+        "mobileImagePath": "8147f5bca5aa5d0983e413d5b2a92eef5cbcab837c7da67c2f1e3a18d4841c65"
+      }
+    },
+    {
+      "id": "creatiie-07-footer",
+      "group": "creatiie-07-footer",
+      "family": "footer",
+      "source": "https://creatiie.framer.website/",
+      "tags": [],
+      "imagePath": "images/creatiie-07-footer-desktop.png",
+      "mobileImagePath": "images/creatiie-07-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from creatiie. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 819,
+          "height": 1921
+        }
+      },
+      "sha256": {
+        "imagePath": "e6594eb6e75eafb93136bb12163564a9393b3e0f9ba1421d863d91605e3e3477",
+        "mobileImagePath": "682d90479c9b5657e0754eee26a20da4eb48fd016685b955b9644fa71a400a01"
+      }
+    },
+    {
+      "id": "lexedge-01-hero",
+      "group": "lexedge-01-hero",
+      "family": "hero",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-01-hero-desktop.png",
+      "mobileImagePath": "images/lexedge-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 941,
+          "height": 1672
+        }
+      },
+      "sha256": {
+        "imagePath": "825e74ae453c73fad1f316069a15fc2e191268b8e79bf0a2f13fccc1d8f38fe9",
+        "mobileImagePath": "e2e8ff5df97f649a2debeaad43b1696a908fbece3ccefe36a92e4ea0328d79a5"
+      }
+    },
+    {
+      "id": "lexedge-02-about",
+      "group": "lexedge-02-about",
+      "family": "about",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-02-about-desktop.png",
+      "mobileImagePath": "images/lexedge-02-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1638,
+          "height": 960
+        },
+        "mobile": {
+          "format": "png",
+          "width": 926,
+          "height": 1698
+        }
+      },
+      "sha256": {
+        "imagePath": "d27111348053779cd785f914ecd501314be634631ff873491556a8c267d2a68c",
+        "mobileImagePath": "7bc8e070c019a2b2a3f4975ebee7fe91e32d8df8658031c8c05d60f128f6e416"
+      }
+    },
+    {
+      "id": "lexedge-04-process",
+      "group": "lexedge-04-process",
+      "family": "how_it_works",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-04-process-desktop.png",
+      "cue": "Generated process section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1487,
+          "height": 1058
+        }
+      },
+      "sha256": {
+        "imagePath": "c99596f8313bb61033e2a1bc0c0419ac4b9c2d6c49ed514b867a4acc3c98190c"
+      }
+    },
+    {
+      "id": "lexedge-06-team",
+      "group": "lexedge-06-team",
+      "family": "about",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-06-team-desktop.png",
+      "cue": "Generated team section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1509,
+          "height": 1042
+        }
+      },
+      "sha256": {
+        "imagePath": "f79cba72efb6295f1438934412e3659c973049d73add5616b7cff6bcfb101c68"
+      }
+    },
+    {
+      "id": "lexedge-08-case-studies",
+      "group": "lexedge-08-case-studies",
+      "family": "feature",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-08-case-studies-desktop.png",
+      "cue": "Generated case-studies section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1501,
+          "height": 1047
+        }
+      },
+      "sha256": {
+        "imagePath": "fe071e77923f0c127b1f58ee3268712d6b4223404e38588bd4e6c3ca5b53b847"
+      }
+    },
+    {
+      "id": "lexedge-10-faq",
+      "group": "lexedge-10-faq",
+      "family": "faq",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-10-faq-desktop.png",
+      "mobileImagePath": "images/lexedge-10-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1536,
+          "height": 1024
+        },
+        "mobile": {
+          "format": "png",
+          "width": 856,
+          "height": 1838
+        }
+      },
+      "sha256": {
+        "imagePath": "812b9d5ff378cd6751ecf8b91301f5055a072c0f02e33d00c3eae002bbe43351",
+        "mobileImagePath": "a4bd34ceac586ceb6fd2291adde4d0da2acc462da672dffd039b138394085b31"
+      }
+    },
+    {
+      "id": "lexedge-11-blog",
+      "group": "lexedge-11-blog",
+      "family": "feature",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-11-blog-desktop.png",
+      "mobileImagePath": "images/lexedge-11-blog-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated blog section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1431,
+          "height": 1099
+        },
+        "mobile": {
+          "format": "png",
+          "width": 957,
+          "height": 1644
+        }
+      },
+      "sha256": {
+        "imagePath": "fe20dbd40bae92591e9354eaab4a765b195f5f8268e83fb82b632830ec2ecd83",
+        "mobileImagePath": "eb3729e1f7c84de0f417b4eafccda482912fb958ff123589660d596c9eb5c02b"
+      }
+    },
+    {
+      "id": "lexedge-12-contact",
+      "group": "lexedge-12-contact",
+      "family": "cta",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-12-contact-desktop.png",
+      "mobileImagePath": "images/lexedge-12-contact-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated contact section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1536,
+          "height": 1024
+        },
+        "mobile": {
+          "format": "png",
+          "width": 836,
+          "height": 1881
+        }
+      },
+      "sha256": {
+        "imagePath": "2e819fb4586e2f1a9fa20f3e7107bda6e194f9215d241a7f985c89d7b5d33461",
+        "mobileImagePath": "9e1c5d8b252afb01ba2ff7c10ee21ef819bf21a829dc52fb957ca4983db64a4b"
+      }
+    },
+    {
+      "id": "lexedge-13-cta",
+      "group": "lexedge-13-cta",
+      "family": "cta",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-13-cta-desktop.png",
+      "mobileImagePath": "images/lexedge-13-cta-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1554,
+          "height": 1012
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1100,
+          "height": 1430
+        }
+      },
+      "sha256": {
+        "imagePath": "f99d00e2c13502c0f8da75b968b772e860a2d9915b34efb03558b3674611db95",
+        "mobileImagePath": "e99808317f39339d46a24e68b6b64e5d5a689140bb041a14276e710815dbf1db"
+      }
+    },
+    {
+      "id": "lexedge-14-footer",
+      "group": "lexedge-14-footer",
+      "family": "footer",
+      "source": "https://lexedge.framer.website/",
+      "tags": [],
+      "imagePath": "images/lexedge-14-footer-desktop.png",
+      "mobileImagePath": "images/lexedge-14-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from lexedge. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1536,
+          "height": 1024
+        },
+        "mobile": {
+          "format": "png",
+          "width": 870,
+          "height": 1808
+        }
+      },
+      "sha256": {
+        "imagePath": "e845c36759e543124ab59dd8ce63dc52505e3434a45410e942904dc8ea6ba6ba",
+        "mobileImagePath": "7f1acc65e8a481504f41d6bb21fb15ec79cd3bf3a80920d1649540b9aa25b6f4"
+      }
+    },
+    {
+      "id": "maestroclass-01-hero",
+      "group": "maestroclass-01-hero",
+      "family": "hero",
+      "source": "https://maestroclass.framer.website/",
+      "tags": [],
+      "imagePath": "images/maestroclass-01-hero-desktop.png",
+      "mobileImagePath": "images/maestroclass-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from maestroclass. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1586,
+          "height": 992
+        },
+        "mobile": {
+          "format": "png",
+          "width": 783,
+          "height": 2009
+        }
+      },
+      "sha256": {
+        "imagePath": "360c65a800916256b69b27e1aed80dcf1cd86cc3eb85f10c2deddd8967c46126",
+        "mobileImagePath": "5df97c88e2250edf110c51167a6fc77f757ef936e9a49ad658cb84826acc472f"
+      }
+    },
+    {
+      "id": "mello-coffee-01-hero",
+      "group": "mello-coffee-01-hero",
+      "family": "hero",
+      "source": "https://mello-coffee.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mello-coffee-01-hero-desktop.png",
+      "mobileImagePath": "images/mello-coffee-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from mello-coffee. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1469,
+          "height": 1071
+        },
+        "mobile": {
+          "format": "png",
+          "width": 826,
+          "height": 1905
+        }
+      },
+      "sha256": {
+        "imagePath": "245ead94367fdd03189cda8bb6313624baa117ffd3f074106f95d2498a404eb6",
+        "mobileImagePath": "9867e2008ab0d208d0ff3c8d15e328012058c57ccbd1d5eb0e5e03d9ef7dcc8c"
+      }
+    },
+    {
+      "id": "mello-coffee-03-featured",
+      "group": "mello-coffee-03-featured",
+      "family": "feature",
+      "source": "https://mello-coffee.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mello-coffee-03-featured-desktop.png",
+      "cue": "Generated featured section from mello-coffee. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1402,
+          "height": 1122
+        }
+      },
+      "sha256": {
+        "imagePath": "08024b50cda50f542a4891d3475c2c718a4e256d0688a43430a108017cfaac2b"
+      }
+    },
+    {
+      "id": "mello-coffee-07-values",
+      "group": "mello-coffee-07-values",
+      "family": "about",
+      "source": "https://mello-coffee.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mello-coffee-07-values-desktop.png",
+      "mobileImagePath": "images/mello-coffee-07-values-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated values section from mello-coffee. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1662,
+          "height": 946
+        },
+        "mobile": {
+          "format": "png",
+          "width": 800,
+          "height": 1967
+        }
+      },
+      "sha256": {
+        "imagePath": "e779644eeae1f6df3da94ea8bc7007183541453cfdb93fe077a8561114dd4dda",
+        "mobileImagePath": "899f8534474d5d5905d1a78fb731fe58e47077aabaed2d1fb503a5664df0542f"
+      }
+    },
+    {
+      "id": "mello-coffee-11-footer",
+      "group": "mello-coffee-11-footer",
+      "family": "footer",
+      "source": "https://mello-coffee.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mello-coffee-11-footer-desktop.png",
+      "mobileImagePath": "images/mello-coffee-11-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from mello-coffee. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1978,
+          "height": 795
+        },
+        "mobile": {
+          "format": "png",
+          "width": 923,
+          "height": 1704
+        }
+      },
+      "sha256": {
+        "imagePath": "f645858342fc0d11fa68c57511912e02a34cefcdc5bcc3ca3d9867ed2d776bd6",
+        "mobileImagePath": "862ebba122905294a836999a205d2d0f9e9f6222252409d377f4cd058cc9c753"
+      }
+    },
+    {
+      "id": "mitchy-01-hero",
+      "group": "mitchy-01-hero",
+      "family": "hero",
+      "source": "https://mitchy.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mitchy-01-hero-desktop.png",
+      "mobileImagePath": "images/mitchy-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from mitchy. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1506,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1223,
+          "height": 1286
+        }
+      },
+      "sha256": {
+        "imagePath": "454e2af6f036e2181db0cd41d659aa31527689e76a8b697100ef1d47bb6d4279",
+        "mobileImagePath": "ff4ae6357ee12d63a295367e4c7798b365d242c29c20695cd99ba786fa8e6a8a"
+      }
+    },
+    {
+      "id": "mitchy-03-about",
+      "group": "mitchy-03-about",
+      "family": "about",
+      "source": "https://mitchy.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mitchy-03-about-desktop.png",
+      "mobileImagePath": "images/mitchy-03-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from mitchy. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1506,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 936,
+          "height": 1681
+        }
+      },
+      "sha256": {
+        "imagePath": "519cc72262cfa9a91048ae40f2f020736e20901881a7b21172eb268cafe62a7e",
+        "mobileImagePath": "2b32c745171314bb5913ae44481f2ac824e6cbb4b6e32ef844785f167504da41"
+      }
+    },
+    {
+      "id": "mitchy-08-faq",
+      "group": "mitchy-08-faq",
+      "family": "faq",
+      "source": "https://mitchy.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mitchy-08-faq-desktop.png",
+      "cue": "Generated faq section from mitchy. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1435,
+          "height": 1096
+        }
+      },
+      "sha256": {
+        "imagePath": "086e7c6bf851440685b5737c745af08fdeebacebffe8c5d2844078dac9c73bca"
+      }
+    },
+    {
+      "id": "mitchy-11-cta",
+      "group": "mitchy-11-cta",
+      "family": "cta",
+      "source": "https://mitchy.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mitchy-11-cta-desktop.png",
+      "mobileImagePath": "images/mitchy-11-cta-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta section from mitchy. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1942,
+          "height": 809
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1306,
+          "height": 1205
+        }
+      },
+      "sha256": {
+        "imagePath": "52056d0a59e8736c4c6162eac1ca6e22020526e3dbd39f8348c3090785cb3d63",
+        "mobileImagePath": "44a7a54da5b09ca63599be475df0acea9c765980f283751f2bd7896a7b47dc9d"
+      }
+    },
+    {
+      "id": "mitchy-12-footer",
+      "group": "mitchy-12-footer",
+      "family": "footer",
+      "source": "https://mitchy.webflow.io/",
+      "tags": [],
+      "imagePath": "images/mitchy-12-footer-desktop.png",
+      "mobileImagePath": "images/mitchy-12-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from mitchy. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1763,
+          "height": 892
+        },
+        "mobile": {
+          "format": "png",
+          "width": 837,
+          "height": 1880
+        }
+      },
+      "sha256": {
+        "imagePath": "006472b0d22b8a9d776c37a6639a4e9949a8099a3f1634b39bc142e4f502eaaa",
+        "mobileImagePath": "b58104a2070f0aa4586171a57070c3ac94ebb9e2848652296dd94c259cfc50b4"
+      }
+    },
+    {
+      "id": "obvia-01-hero",
+      "group": "obvia-01-hero",
+      "family": "hero",
+      "source": "https://obvia-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/obvia-01-hero-desktop.png",
+      "mobileImagePath": "images/obvia-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from obvia. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1506,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 768,
+          "height": 2048
+        }
+      },
+      "sha256": {
+        "imagePath": "bff2248213c5438455cd7c9e8b975af90ea33c1c37e95793ba0cd4a6539c7644",
+        "mobileImagePath": "d8036ffd70357799ddb2213c1451086895467affc0ea78d2895432b6a5dddee6"
+      }
+    },
+    {
+      "id": "obvia-02-manifesto",
+      "group": "obvia-02-manifesto",
+      "family": "about",
+      "source": "https://obvia-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/obvia-02-manifesto-desktop.png",
+      "mobileImagePath": "images/obvia-02-manifesto-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated manifesto section from obvia. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1681,
+          "height": 936
+        },
+        "mobile": {
+          "format": "png",
+          "width": 971,
+          "height": 1619
+        }
+      },
+      "sha256": {
+        "imagePath": "5184c2d70c58ccfd74e8cf4c9e535328c9cc6c86c30e055f82a419f0e006c0b0",
+        "mobileImagePath": "8aaa9de6235d4d174c5312369c4088d7809055d53e7dc9e4df78249641e79dab"
+      }
+    },
+    {
+      "id": "obvia-07-about",
+      "group": "obvia-07-about",
+      "family": "about",
+      "source": "https://obvia-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/obvia-07-about-desktop.png",
+      "mobileImagePath": "images/obvia-07-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from obvia. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1824,
+          "height": 862
+        },
+        "mobile": {
+          "format": "png",
+          "width": 973,
+          "height": 1616
+        }
+      },
+      "sha256": {
+        "imagePath": "e674506b6dbae64c10e422db9a816d31d07f1deafeaadafebbd7b34ee8cb93e9",
+        "mobileImagePath": "24eac197ea13bb99149aa9adca19680c650ccf88eab793cb22df57a220248bec"
+      }
+    },
+    {
+      "id": "obvia-10-clients",
+      "group": "obvia-10-clients",
+      "family": "social_proof",
+      "source": "https://obvia-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/obvia-10-clients-desktop.png",
+      "cue": "Generated clients section from obvia. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2030,
+          "height": 775
+        }
+      },
+      "sha256": {
+        "imagePath": "0cc462a1d7180560e68803ac18626fd2e94a380aec174e0db90604cb0d7d92c9"
+      }
+    },
+    {
+      "id": "obvia-11-testimonial",
+      "group": "obvia-11-testimonial",
+      "family": "social_proof",
+      "source": "https://obvia-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/obvia-11-testimonial-desktop.png",
+      "mobileImagePath": "images/obvia-11-testimonial-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated testimonial section from obvia. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2011,
+          "height": 782
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1490,
+          "height": 1055
+        }
+      },
+      "sha256": {
+        "imagePath": "01d8ff7f0e98340efca77391443ad878c99e7ace22fe63ce67d4b626c008713e",
+        "mobileImagePath": "e679e7cd94d89b360ecef0de9aa5a76f9dcc9414c65daf32e7f56817bcb75c15"
+      }
+    },
+    {
+      "id": "obvia-12-contact",
+      "group": "obvia-12-contact",
+      "family": "cta",
+      "source": "https://obvia-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/obvia-12-contact-desktop.png",
+      "mobileImagePath": "images/obvia-12-contact-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated contact section from obvia. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1787,
+          "height": 880
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1190,
+          "height": 1322
+        }
+      },
+      "sha256": {
+        "imagePath": "18d0970e12ba7cad1131c8d74c7c3f73ffb9b2ce5d39cf13e339940816ac3619",
+        "mobileImagePath": "9db35ef701264b92ad0880ee0df0a50347169de29c7191489c111bf956c616a9"
+      }
+    },
+    {
+      "id": "obvia-13-footer",
+      "group": "obvia-13-footer",
+      "family": "footer",
+      "source": "https://obvia-studio.webflow.io/",
+      "tags": [],
+      "imagePath": "images/obvia-13-footer-desktop.png",
+      "mobileImagePath": "images/obvia-13-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from obvia. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 718,
+          "height": 2191
+        }
+      },
+      "sha256": {
+        "imagePath": "fd70df133a9f0234ca992a6ab7a5a0178f4e99d8b7bbac3194465993eb454eff",
+        "mobileImagePath": "b580b5a0927a66d6d6bf10baec6fa3e509d710f067d5666c945adcbac7e1b19f"
+      }
+    },
+    {
+      "id": "sidrano-01-hero",
+      "group": "sidrano-01-hero",
+      "family": "hero",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-01-hero-desktop.png",
+      "mobileImagePath": "images/sidrano-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1435,
+          "height": 1096
+        },
+        "mobile": {
+          "format": "png",
+          "width": 817,
+          "height": 1925
+        }
+      },
+      "sha256": {
+        "imagePath": "c1cd9c20a792b4422d2558670176fc529aaa52c24e9a2156a75c660a20b0471e",
+        "mobileImagePath": "1d9edf33e4243b79d7f37572e5578086cb01502a3cc5a3fe073de487a13e7718"
+      }
+    },
+    {
+      "id": "sidrano-02-partners",
+      "group": "sidrano-02-partners",
+      "family": "social_proof",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-02-partners-desktop.png",
+      "mobileImagePath": "images/sidrano-02-partners-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated partners section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2029,
+          "height": 775
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1479,
+          "height": 1063
+        }
+      },
+      "sha256": {
+        "imagePath": "d106be6803bec125f3bf64ba51b467219b599bcaa09c0343088951fa59bebbed",
+        "mobileImagePath": "16afda535deaab304e919cff42fc5946da9e76bdce7672d9e4df94caf64927c3"
+      }
+    },
+    {
+      "id": "sidrano-03-about",
+      "group": "sidrano-03-about",
+      "family": "about",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-03-about-desktop.png",
+      "mobileImagePath": "images/sidrano-03-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1706,
+          "height": 922
+        },
+        "mobile": {
+          "format": "png",
+          "width": 849,
+          "height": 1852
+        }
+      },
+      "sha256": {
+        "imagePath": "cd027291d5d799d68601a18ecd87e6963d0cdc41ab88a16eb39d225b85ada686",
+        "mobileImagePath": "acd452a60555d1bc3fff50edcf718a72796e4050284101d9519542222d6c0a0d"
+      }
+    },
+    {
+      "id": "sidrano-07-benefits",
+      "group": "sidrano-07-benefits",
+      "family": "feature",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-07-benefits-desktop.png",
+      "mobileImagePath": "images/sidrano-07-benefits-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated benefits section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 826,
+          "height": 1904
+        }
+      },
+      "sha256": {
+        "imagePath": "4781b0e8757deae44dd5708ef0696d7ed3724826b13fa5df2d029ad9142073f8",
+        "mobileImagePath": "6b91fbfc959d8c8b50714b5e2a05c6b43b1a4ca4d7e663c7547e3dcb45da9a33"
+      }
+    },
+    {
+      "id": "sidrano-09-team",
+      "group": "sidrano-09-team",
+      "family": "about",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-09-team-desktop.png",
+      "cue": "Generated team section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        }
+      },
+      "sha256": {
+        "imagePath": "a88c69060a3b875a5d192c17889a54850ed71314f10cfc99d78daf1282590fab"
+      }
+    },
+    {
+      "id": "sidrano-10-pricing",
+      "group": "sidrano-10-pricing",
+      "family": "pricing",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-10-pricing-desktop.png",
+      "cue": "Generated pricing section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        }
+      },
+      "sha256": {
+        "imagePath": "9729943d5deb8d2c65c0382f885254e6fbfec21b3d3b3a2d891cd22628df823c"
+      }
+    },
+    {
+      "id": "sidrano-11-process",
+      "group": "sidrano-11-process",
+      "family": "how_it_works",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-11-process-desktop.png",
+      "cue": "Generated process section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1681,
+          "height": 936
+        }
+      },
+      "sha256": {
+        "imagePath": "21c84e813d7519b8a3b441b73c10cbb84386e64e2869a467704c0828143d3f13"
+      }
+    },
+    {
+      "id": "sidrano-14-closing-cta",
+      "group": "sidrano-14-closing-cta",
+      "family": "cta",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-14-closing-cta-desktop.png",
+      "cue": "Generated closing-cta section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2172,
+          "height": 724
+        }
+      },
+      "sha256": {
+        "imagePath": "ed3f220f0be473880a2b84a1ecf10ec5898cabebf828ec8811c8ec033fb3254c"
+      }
+    },
+    {
+      "id": "sidrano-15-footer",
+      "group": "sidrano-15-footer",
+      "family": "footer",
+      "source": "https://sidrano.webflow.io/",
+      "tags": [],
+      "imagePath": "images/sidrano-15-footer-desktop.png",
+      "cue": "Generated footer section from sidrano. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 2012,
+          "height": 782
+        }
+      },
+      "sha256": {
+        "imagePath": "3c61528d955eec3986b0da44c93caf187824aa578346bb79002ce53431aacbc5"
+      }
+    },
+    {
+      "id": "vistal-01-hero",
+      "group": "vistal-01-hero",
+      "family": "hero",
+      "source": "https://vistal.webflow.io/",
+      "tags": [],
+      "imagePath": "images/vistal-01-hero-desktop.png",
+      "mobileImagePath": "images/vistal-01-hero-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated hero section from vistal. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1505,
+          "height": 1045
+        },
+        "mobile": {
+          "format": "png",
+          "width": 764,
+          "height": 2057
+        }
+      },
+      "sha256": {
+        "imagePath": "7ced563192396fc8ed705de9c7b8e9cff5aae7c90e4e864b6d5c6a717a762175",
+        "mobileImagePath": "e221098544ae68cde9ca946cf60137f4144e55653e6c589c1115bcd3eff36002"
+      }
+    },
+    {
+      "id": "vistal-03-about",
+      "group": "vistal-03-about",
+      "family": "about",
+      "source": "https://vistal.webflow.io/",
+      "tags": [],
+      "imagePath": "images/vistal-03-about-desktop.png",
+      "mobileImagePath": "images/vistal-03-about-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated about section from vistal. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. ",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1229,
+          "height": 1280
+        },
+        "mobile": {
+          "format": "png",
+          "width": 724,
+          "height": 2172
+        }
+      },
+      "sha256": {
+        "imagePath": "5466eaaddfc2f9041849f2902f98a62b9e91436073693c170312913007fb49ea",
+        "mobileImagePath": "ca3e3ca950c784b4b001510db8f886d25ac27807e639ef167eb86c3139a8557a"
+      }
+    },
+    {
+      "id": "vistal-06-studio",
+      "group": "vistal-06-studio",
+      "family": "about",
+      "source": "https://vistal.webflow.io/",
+      "tags": [],
+      "imagePath": "images/vistal-06-studio-desktop.png",
+      "mobileImagePath": "images/vistal-06-studio-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated studio section from vistal. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. Small label left third, right two-thirds heading, paragraph then very large portrait interior photo. Three overlapping captures, one section.",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1161,
+          "height": 1355
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1003,
+          "height": 1568
+        }
+      },
+      "sha256": {
+        "imagePath": "064faec350175025bf872bc5660a060e0c09a81bb6e74713e10bd1bcb4122a29",
+        "mobileImagePath": "a7c36df1badbecba54cd788beee1a7679270ebb4596da362ed7e5691d5d274be"
+      }
+    },
+    {
+      "id": "vistal-08-faq",
+      "group": "vistal-08-faq",
+      "family": "faq",
+      "source": "https://vistal.webflow.io/",
+      "tags": [],
+      "imagePath": "images/vistal-08-faq-desktop.png",
+      "mobileImagePath": "images/vistal-08-faq-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated faq section from vistal. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. White section with left-third label, heading and five dotted-divider rows in right two-thirds; first answer expanded, remaining states pending.",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1738,
+          "height": 905
+        },
+        "mobile": {
+          "format": "png",
+          "width": 849,
+          "height": 1852
+        }
+      },
+      "sha256": {
+        "imagePath": "e5efb3e2e3f2af60f521f4ee052bda9cf4284f4b959758b19f5e198487e03574",
+        "mobileImagePath": "813e409a81d4490b01820e9f9f1143b62ec37d0e0fbe1137110a668d5a0f61d7"
+      }
+    },
+    {
+      "id": "vistal-09-cta",
+      "group": "vistal-09-cta",
+      "family": "cta",
+      "source": "https://vistal.webflow.io/",
+      "tags": [],
+      "imagePath": "images/vistal-09-cta-desktop.png",
+      "mobileImagePath": "images/vistal-09-cta-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated cta section from vistal. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. Yellow band: small left label, large right-column two-line heading, paragraph and black pill CTA.",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1942,
+          "height": 809
+        },
+        "mobile": {
+          "format": "png",
+          "width": 1142,
+          "height": 1377
+        }
+      },
+      "sha256": {
+        "imagePath": "ac0389bce83f21bfc79709a4dfc03651f102ce1e2d509686eb7903e45668fb3e",
+        "mobileImagePath": "dba7ace1c3e170d2f7104090fb646d4464021e917d6feeffb476eef8601175af"
+      }
+    },
+    {
+      "id": "vistal-10-footer",
+      "group": "vistal-10-footer",
+      "family": "footer",
+      "source": "https://vistal.webflow.io/",
+      "tags": [],
+      "imagePath": "images/vistal-10-footer-desktop.png",
+      "mobileImagePath": "images/vistal-10-footer-mobile.png",
+      "pairEvidence": "Candidate pairing from section labels, not a verified responsive match. Inspect both images and reconcile differences before planning.",
+      "cue": "Generated footer section from vistal. Preserve the composition visible in the image.",
+      "reviewStatus": "candidate",
+      "reviewNotes": "Visual review is pending. Inspect the selected pixels before use; generation alone is not quality approval. Black footer, logo/description left, three columns of four links right; giant yellow wordmark beneath. End of homepage verified.",
+      "viewports": {
+        "desktop": {
+          "format": "png",
+          "width": 1681,
+          "height": 936
+        },
+        "mobile": {
+          "format": "png",
+          "width": 887,
+          "height": 1774
+        }
+      },
+      "sha256": {
+        "imagePath": "85efff70e64ee1fec215b36d94761e026d83ec2ab0293ac7fa6273eb327ffb73",
+        "mobileImagePath": "144cc92d0ea45e97a117b56fac3bcaf836d468a47d8875a23a3a305ad7d28d56"
+      }
+    }
+  ]
+}

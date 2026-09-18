@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { desktopPath } from './desktop-path.js'
+import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
 
 /**
@@ -50,10 +50,12 @@ export function isInstalled(
   }
 
   return new Promise((resolve) => {
+    const env = { ...environment }
+    applyDesktopPath(env)
     const child = spawn('where.exe', [command], {
       stdio: 'ignore',
       windowsHide: true,
-      env: { ...environment, PATH: desktopPath(environment.PATH ?? '', { env: environment }) },
+      env,
     })
     child.on('error', () => resolve(false))
     child.on('exit', (code) => resolve(code === 0))
@@ -66,7 +68,7 @@ function childEnvironment(options: {
 }): NodeJS.ProcessEnv | undefined {
   if (options.replaceEnv) return options.env
   const env = { ...process.env, ...options.env }
-  env.PATH = desktopPath(env.PATH ?? '', { env })
+  applyDesktopPath(env)
   return env
 }
 

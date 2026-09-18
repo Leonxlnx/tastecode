@@ -170,6 +170,8 @@ describe('model catalog', () => {
     ['gpt-5.4', false],
     ['gpt-5.4-mini', false],
     ['fable', true],
+    ['claude-fable-5-1', true],
+    ['claude-fable-5-1[1m]', true],
     ['opus', true],
     ['sonnet', true],
     ['claude-opus-4-8', true],

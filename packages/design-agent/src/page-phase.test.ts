@@ -89,6 +89,12 @@ const page = {
 describe('page phase', () => {
   it('passes both upstream artifacts through clear data boundaries', () => {
     const prompt = designPagePrompt(brief, brand, ['/tmp/reference-home.png'])
+    expect(prompt).toContain('visible hero entrance on load')
+    expect(prompt).toContain('distinct scroll-triggered reveals for at least two later')
+    expect(prompt).toContain('Unless the user explicitly requests no animation')
+    expect(prompt).toContain('replace such unsupported assumptions in the page plan')
+    expect(prompt).toContain('normally plan at least eight substantive, relevant content sections')
+    expect(prompt).toContain('Visibly identify concept work or an illustrative catalog')
     expect(prompt).toContain('<design-brief>')
     expect(prompt).toContain('<brand-system>')
     expect(prompt).toContain('<reference-direction-deck>')
@@ -104,14 +110,16 @@ describe('page phase', () => {
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
     expect(prompt).toContain('Treat the selected reference images as composition requirements')
     expect(prompt).toContain('Do not add a section to use an available reference')
-    expect(prompt).toContain('one related base card language and at most one emphasized variant')
+    expect(prompt).toContain("Retain each selected reference's actual card geometry")
     expect(prompt).toContain('record stable assetNeeds for every meaningful image')
     expect(prompt).toContain('Carry the approved brand accent into primary actions')
     expect(prompt).toContain('Give every section one explicit motion decision')
     expect(prompt).toContain('Derive heading placement, scale, image proportions')
-    expect(prompt).toContain('Unify typography, spacing tokens, buttons and section transitions')
+    expect(prompt).toContain('Unify font families, brand colors and controls')
     expect(prompt).toContain('Never use an em dash')
-    expect(prompt).toContain('Do not write eyebrow copy')
+    expect(prompt).toContain(
+      'Use optional copy.eyebrow only when the selected reference actually contains a label',
+    )
     expect(prompt).toContain(
       'Use the following beta layout cases as the source material for Hero, Navigation, About, Feature, How It Works, Social Proof, Stats, FAQ, CTA, Pricing, Contact, and Footer',
     )
