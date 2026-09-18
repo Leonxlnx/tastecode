@@ -712,10 +712,10 @@ test('one exact draft is created, remotely hash checked, and reruns are read-onl
   assert.equal(result.release.draft, true)
   assert.equal(result.release.target_commitish, approvedSha)
   assert.equal(mock.state.releases.length, 1)
-  assert.deepEqual(result.assets.map((asset) => asset.name).sort(), releaseAssets())
+  assert.deepEqual(result.assets.map((asset) => asset.name).sort(), releaseUploadAssets())
   for (const asset of result.assets)
     assert.equal(asset.digest, `sha256:${await hashFile(path.join(directory, asset.name))}`)
-  assert.equal(mock.state.mutations.length, releaseAssets().length + 1)
+  assert.equal(mock.state.mutations.length, releaseUploadAssets().length + 1)
   const count = mock.state.mutations.length
   await upload(directory, mock)
   assert.equal(mock.state.mutations.length, count)
@@ -783,7 +783,7 @@ test('partial upload failures can resume matching bytes without deleting or repl
         fail &&
         method === 'POST' &&
         url.hostname === 'uploads.github.com' &&
-        state.assets.length === 2
+        state.assets.length === 1
       )
         return json({ message: 'private reflected input' }, 502)
     },
@@ -792,20 +792,20 @@ test('partial upload failures can resume matching bytes without deleting or repl
     upload(directory, mock),
     (error) => /HTTP 502/.test(error.message) && !error.message.includes('private reflected input'),
   )
-  assert.equal(mock.state.assets.length, 2)
+  assert.equal(mock.state.assets.length, 1)
   const firstIds = mock.state.assets.map((asset) => asset.id)
   fail = false
   await upload(directory, mock)
   assert.deepEqual(
-    mock.state.assets.slice(0, 2).map((asset) => asset.id),
+    mock.state.assets.slice(0, 1).map((asset) => asset.id),
     firstIds,
   )
-  assert.equal(mock.state.assets.length, releaseAssets().length)
+  assert.equal(mock.state.assets.length, releaseUploadAssets().length)
 })
 
 test('unexpected, bad-digest, duplicate, or unfinished remote assets prevent all writes', async (t) => {
   const directory = await fixture(t)
-  const name = releaseAssets()[0]
+  const name = releaseUploadAssets()[0]
   const bytes = await readFile(path.join(directory, name))
   const valid = {
     id: 20,
@@ -910,7 +910,7 @@ test('upload response bytes and local source mutations cannot pass on size alone
   const changed = github({
     beforeRequest: async ({ url, state }) => {
       if (url.pathname.endsWith('/git/ref/heads/main') && state.releases.length === 1)
-        await writeFile(path.join(directory, releaseAssets()[0]), 'modified')
+        await writeFile(path.join(directory, releaseUploadAssets()[0]), 'modified')
     },
   })
   await assert.rejects(upload(directory, changed), /changed before upload/)
