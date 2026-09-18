@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -69,6 +70,10 @@ function extraDirectories(
     join(home, '.deno', 'bin'),
     join(home, '.volta', 'bin'),
     join(home, '.asdf', 'shims'),
+    // pnpm's default PNPM_HOME and mise's shims directory.
+    join(home, '.local', 'share', 'pnpm'),
+    join(home, '.local', 'share', 'mise', 'shims'),
+    nvmBin(home, join),
   ]
   if (platform === 'win32') {
     return [
@@ -87,8 +92,44 @@ function extraDirectories(
       '/snap/bin',
       '/var/lib/flatpak/exports/bin',
       join(home, '.local', 'share', 'flatpak', 'exports', 'bin'),
+      '/home/linuxbrew/.linuxbrew/bin',
       '/usr/local/bin',
     ]
   }
   return [...userBins, join(home, 'Library', 'pnpm', 'bin'), '/opt/homebrew/bin', '/usr/local/bin']
+}
+
+/**
+ * `~/.nvm/versions/node/<newest>/bin`, or undefined when nvm is not installed.
+ * nvm never puts a stable directory on PATH — a GUI-launched app must pick the
+ * newest installed version itself or provider CLIs installed via npm are
+ * invisible.
+ */
+function nvmBin(home: string, join: (...parts: string[]) => string): string | undefined {
+  const versionsDirectory = join(home, '.nvm', 'versions', 'node')
+  let names: string[]
+  try {
+    names = readdirSync(versionsDirectory, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    return undefined
+  }
+  const newest = names
+    .map((name) => {
+      const parts = /^v?(\d+(?:\.\d+){0,2})/.exec(name)?.[1]?.split('.').map(Number)
+      return parts === undefined ? undefined : { name, parts }
+    })
+    .filter((entry): entry is { name: string; parts: number[] } => entry !== undefined)
+    .sort((a, b) => compareVersionParts(a.parts, b.parts))
+    .at(-1)
+  return newest ? join(versionsDirectory, newest.name, 'bin') : undefined
+}
+
+function compareVersionParts(left: number[], right: number[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const delta = (left[index] ?? 0) - (right[index] ?? 0)
+    if (delta !== 0) return delta
+  }
+  return 0
 }
