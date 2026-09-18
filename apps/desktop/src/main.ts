@@ -46,7 +46,7 @@ import {
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
-import { createApplicationMenuTemplate } from './app-menu.js'
+import { autoHidesMenuBar, createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
@@ -496,6 +496,7 @@ function createWindow(): void {
     ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
+    autoHideMenuBar: autoHidesMenuBar(process.platform),
     // Height and colour must match --titlebar-h and --titlebar-bg in the renderer's
     // tokens. Windows sizes the caption buttons from this number, so if the two
     // drift the buttons stand taller than the bar they sit in — which is

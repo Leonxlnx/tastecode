@@ -1,6 +1,10 @@
 import type { MenuItemConstructorOptions } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
-import { createApplicationMenuTemplate, electronAccelerator } from './app-menu.js'
+import {
+  autoHidesMenuBar,
+  createApplicationMenuTemplate,
+  electronAccelerator,
+} from './app-menu.js'
 import {
   NATIVE_MENU_ACTIONS,
   parseNativeMenuShortcuts,
@@ -64,6 +68,14 @@ describe('application menu', () => {
     )
     expect(electronAccelerator({ key: 'f8' })).toBe('F8')
     expect(electronAccelerator({ key: 'not-a-key', primary: true })).toBeUndefined()
+  })
+
+  it.each([
+    ['linux', true],
+    ['win32', false],
+    ['darwin', false],
+  ] as const)('autoHidesMenuBar(%s) -> %s', (platform, expected) => {
+    expect(autoHidesMenuBar(platform)).toBe(expected)
   })
 
   it('rejects malformed or unknown shortcut updates from the renderer', () => {

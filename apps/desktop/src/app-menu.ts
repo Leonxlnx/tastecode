@@ -155,6 +155,16 @@ export function createApplicationMenuTemplate(options: AppMenuOptions): MenuItem
   ]
 }
 
+/**
+ * Frameless Linux windows never create the views menu bar, which also leaves
+ * application-menu accelerators (Ctrl+Q, Ctrl+W) dead. autoHideMenuBar keeps
+ * the bar hidden while wiring both — Alt reveals it. macOS already shows the
+ * app menu in the system bar; Windows draws the menu inside its title bar.
+ */
+export function autoHidesMenuBar(platform: NodeJS.Platform): boolean {
+  return platform === 'linux'
+}
+
 export function electronAccelerator(
   shortcut: NativeMenuShortcut | null | undefined,
 ): string | undefined {
