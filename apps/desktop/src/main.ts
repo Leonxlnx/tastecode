@@ -222,6 +222,12 @@ if (process.platform === 'linux') {
   // without this the running window never groups with tastecode.desktop and
   // GNOME/COSMIC show a generic icon for the app.
   app.setDesktopName('dev.tastecode.desktop')
+  // Chromium's Wayland IME path is off unless requested; without it ibus/
+  // fcitx5 cannot deliver composed text and Cyrillic/CJK input is dead under
+  // Wayland. text-input-version=3 selects the v3 protocol every current
+  // compositor implements.
+  app.commandLine.appendSwitch('enable-wayland-ime', 'true')
+  app.commandLine.appendSwitch('wayland-text-input-version', '3')
 }
 app.setName(nativeAppName)
 // Diagnostics for the field: software rendering and a DevTools port, both
