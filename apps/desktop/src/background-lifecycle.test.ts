@@ -4,6 +4,7 @@ import {
   dbusNamesIncludeStatusNotifierWatcher,
   probeLinuxTrayHost,
   shouldHideWindowOnClose,
+  shouldQuitWhenAllWindowsClosed,
   type LinuxTrayHostProbeRun,
 } from './background-lifecycle.js'
 
@@ -23,6 +24,17 @@ describe('desktop background lifecycle', () => {
     expect(shouldHideWindowOnClose('darwin', false, true)).toBe(false)
     expect(shouldHideWindowOnClose('win32', true, true)).toBe(false)
     expect(shouldHideWindowOnClose('linux', true, true)).toBe(false)
+  })
+})
+
+describe('shouldQuitWhenAllWindowsClosed', () => {
+  it('quits only on Linux without a tray', () => {
+    expect(shouldQuitWhenAllWindowsClosed('linux', false)).toBe(true)
+    expect(shouldQuitWhenAllWindowsClosed('linux', true)).toBe(false)
+    expect(shouldQuitWhenAllWindowsClosed('win32', false)).toBe(false)
+    expect(shouldQuitWhenAllWindowsClosed('win32', true)).toBe(false)
+    expect(shouldQuitWhenAllWindowsClosed('darwin', false)).toBe(false)
+    expect(shouldQuitWhenAllWindowsClosed('darwin', true)).toBe(false)
   })
 })
 

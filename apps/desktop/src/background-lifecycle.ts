@@ -9,6 +9,19 @@ export function shouldHideWindowOnClose(
   return (platform === 'win32' || (platform === 'linux' && hasTray)) && !appIsQuitting
 }
 
+/**
+ * Whether losing the last window should quit the app. Only Linux without a
+ * tray: Windows keeps a tray and macOS keeps the dock, so those stay alive,
+ * but a Linux desktop without a StatusNotifier host would leave a headless
+ * process with no affordance to bring it back.
+ */
+export function shouldQuitWhenAllWindowsClosed(
+  platform: NodeJS.Platform,
+  hasTray: boolean,
+): boolean {
+  return platform === 'linux' && !hasTray
+}
+
 const STATUS_NOTIFIER_WATCHER = 'org.kde.StatusNotifierWatcher'
 
 /**

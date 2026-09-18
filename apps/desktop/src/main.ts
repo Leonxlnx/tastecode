@@ -38,6 +38,7 @@ import {
   appImageUserNamespaceBlocked,
   probeLinuxTrayHost,
   shouldHideWindowOnClose,
+  shouldQuitWhenAllWindowsClosed,
 } from './background-lifecycle.js'
 import {
   appUpdateMode,
@@ -1168,6 +1169,9 @@ function isOwnRenderer(webContents: WebContents): boolean {
 }
 
 app.on('window-all-closed', () => {
-  // The core server belongs to the application lifecycle, not to a renderer
-  // window. A real app quit still tears down the server process.
+  // Windows keeps the tray and macOS the dock, so the app stays alive there.
+  // On Linux without a StatusNotifier host a headless process would have no
+  // way back, so closing the last window quits through the normal
+  // before-quit teardown (server and children disposed, port released).
+  if (shouldQuitWhenAllWindowsClosed(process.platform, tray !== undefined)) app.quit()
 })
