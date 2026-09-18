@@ -10,11 +10,12 @@ import {
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
   BackgroundModelSettingsSchema,
-  CustomHarnessSchema,
+  CustomHarnessUpdateSchema,
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
   ProviderIdSchema,
+  PublicCustomHarnessSchema,
   ProviderSetupSchema,
   ProviderStatusSchema,
   ProviderUpdateSchema,
@@ -197,6 +198,12 @@ export type PreviewCaptureResult = z.infer<typeof PreviewCaptureResultSchema>
 export const McpConfigValueSchema = z.discriminatedUnion('source', [
   /** Non-secret config only. Credentials must use the reference shape below. */
   z.object({ source: z.literal('literal'), value: z.string() }),
+  /**
+   * An OS credential store reference. The server accepts client-supplied
+   * references only in the `mcp/` namespace, so this boundary cannot point a
+   * model-connection or harness secret at an arbitrary endpoint; references
+   * already stored keep working.
+   */
   z.object({ source: z.literal('credential'), credentialRef: z.string().min(1) }),
 ])
 export type McpConfigValue = z.infer<typeof McpConfigValueSchema>
@@ -610,15 +617,15 @@ export const methods = {
   /** User-owned protocol-compatible CLIs. Secrets never belong in these fields. */
   'harnesses.list': {
     params: z.object({}),
-    result: z.object({ harnesses: z.array(CustomHarnessSchema) }),
+    result: z.object({ harnesses: z.array(PublicCustomHarnessSchema) }),
   },
   'harnesses.upsert': {
-    params: CustomHarnessSchema,
-    result: z.object({ harness: CustomHarnessSchema }),
+    params: CustomHarnessUpdateSchema,
+    result: z.object({ harness: PublicCustomHarnessSchema }),
   },
   'harnesses.verify': {
     params: z.object({
-      harness: CustomHarnessSchema,
+      harness: CustomHarnessUpdateSchema,
       workspacePath: z.string().min(1).optional(),
     }),
     result: z.object({ verification: CustomHarnessVerificationSchema }),

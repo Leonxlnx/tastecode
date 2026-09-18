@@ -12,6 +12,7 @@ import type { StartOptions } from './adapters.js'
 const constructed: FakeOpenCodeAdapter[] = []
 let failOpenCodeThreadStart = false
 let openingFailure: 'initialize' | 'session' | undefined
+let scriptedFailure: string | undefined
 let release: (() => void) | undefined
 const turnAdapters: FakeTurnAdapter[] = []
 
@@ -32,6 +33,7 @@ class FakeTurnAdapter {
   resume: { threadId: string; providerSessionId: string; workspacePath: string } | undefined
   acpResume: { threadId: string; workspacePath: string } | undefined
   #providerSessionListeners: Array<(providerSessionId: string) => void> = []
+  readonly #channelListeners = new Map<string, Array<(payload: unknown) => void>>()
 
   constructor(provider: FakeTurnAdapter['provider'], options?: Record<string, unknown>) {
     this.provider = provider
@@ -40,7 +42,13 @@ class FakeTurnAdapter {
   }
 
   on(event?: string, listener?: (providerSessionId: string) => void): this {
-    if (event === 'providerSessionId' && listener) this.#providerSessionListeners.push(listener)
+    if (event === 'providerSessionId' && listener) {
+      this.#providerSessionListeners.push(listener)
+    } else if (event && listener) {
+      const listeners = this.#channelListeners.get(event) ?? []
+      listeners.push(listener as (payload: unknown) => void)
+      this.#channelListeners.set(event, listeners)
+    }
     return this
   }
 
@@ -49,8 +57,14 @@ class FakeTurnAdapter {
     for (const listener of this.#providerSessionListeners) listener(providerSessionId)
   }
 
+  /** Drive the 'event' and 'log' channels the real adapters expose. */
+  emitChannel(event: string, payload: unknown): void {
+    for (const listener of this.#channelListeners.get(event) ?? []) listener(payload)
+  }
+
   async startThread(workspacePath: string, options: Record<string, unknown>) {
     if (openingFailure === 'session') throw new Error('session failed')
+    if (scriptedFailure) throw new Error(scriptedFailure)
     this.startOptions = options
     return {
       id: `${this.provider}-thread`,
@@ -66,6 +80,7 @@ class FakeTurnAdapter {
     _attachments: string[] | undefined,
     options: Record<string, unknown> | undefined,
   ) {
+    if (scriptedFailure) throw new Error(scriptedFailure)
     this.turnOptions = options
     return `${this.provider}-turn`
   }
@@ -202,6 +217,7 @@ afterEach(() => {
   constructed.length = 0
   failOpenCodeThreadStart = false
   openingFailure = undefined
+  scriptedFailure = undefined
   turnAdapters.length = 0
   release = undefined
   vi.restoreAllMocks()
@@ -524,6 +540,109 @@ describe('one-shot provider turn options', () => {
     await expect(runtime.start('/repo', { agent: 'removed-grok' })).rejects.toThrow(
       'custom harness "removed-grok" no longer exists',
     )
+  })
+})
+
+describe('custom harness redaction', () => {
+  const source: CustomHarness = {
+    id: 'secret-source',
+    displayName: 'Secret Source',
+    provider: 'opencode',
+    command: 'custom-agent',
+    args: [],
+    environment: { API_TOKEN: 'env-secret-value' },
+  }
+
+  it('redacts configured environment and MCP credential values on every session channel', async () => {
+    const logs: string[] = []
+    const runtime = providerRuntime(
+      'opencode',
+      (line) => logs.push(line),
+      () => source,
+    )
+    const { session } = await runtime.start('/repo', {
+      agent: source.id,
+      mcpCredentials: { 'mcp-ref': 'mcp-secret-value' },
+    })
+    const adapter = turnAdapters.at(-1)!
+
+    // Domain events can quote provider output that echoes the environment.
+    const events: unknown[] = []
+    session.on('event', (event) => events.push(event))
+    adapter.emitChannel('event', {
+      type: 'thread.error',
+      threadId: 'opencode-thread',
+      message: 'provider saw env-secret-value and mcp-secret-value',
+    })
+    const emitted = JSON.stringify(events)
+    expect(emitted).not.toContain('env-secret-value')
+    expect(emitted).not.toContain('mcp-secret-value')
+    expect(emitted).toContain('[redacted]')
+
+    // The adapter log channel redacts MCP env values in addition to the
+    // harness's own environment.
+    adapter.emitChannel('log', 'trace env-secret-value mcp-secret-value done')
+    expect(logs).toEqual(['trace [redacted] [redacted] done'])
+
+    // Rejected session calls lose the secret but keep the error class.
+    scriptedFailure = 'provider rejected with env-secret-value'
+    await expect(session.sendTurn('opencode-thread', 'hi')).rejects.toThrow(
+      'provider rejected with [redacted]',
+    )
+    await expect(session.sendTurn('opencode-thread', 'hi')).rejects.toBeInstanceOf(Error)
+    scriptedFailure = undefined
+  })
+
+  it('redacts secrets from a rejected start or resume before a session exists', async () => {
+    const runtime = providerRuntime(
+      'opencode',
+      () => {},
+      () => source,
+    )
+    scriptedFailure = 'open blew up with env-secret-value'
+    await expect(runtime.start('/repo', { agent: source.id })).rejects.toThrow(
+      'open blew up with [redacted]',
+    )
+    await expect(runtime.resume!('existing-thread', '/repo', { agent: source.id })).rejects.toThrow(
+      'open blew up with [redacted]',
+    )
+  })
+
+  it('leaves sessions unwrapped when there is nothing secret to leak', async () => {
+    const bare: CustomHarness = {
+      id: 'bare-source',
+      displayName: 'Bare',
+      provider: 'opencode',
+      command: 'custom-agent',
+      args: [],
+    }
+    const runtime = providerRuntime(
+      'opencode',
+      () => {},
+      () => bare,
+    )
+    const { session } = await runtime.start('/repo', { agent: bare.id })
+    expect(session).toBe(turnAdapters.at(-1)!)
+  })
+
+  it('feeds configured environment values to the Claude redactor', async () => {
+    const claude: CustomHarness = {
+      id: 'claude-source',
+      displayName: 'Claude Source',
+      provider: 'claude-code',
+      command: process.execPath,
+      args: [],
+      environment: { CLAUDE_TOKEN: 'claude-env-secret' },
+    }
+    const runtime = providerRuntime(
+      'claude-code',
+      () => {},
+      () => claude,
+    )
+    await runtime.start(process.cwd(), { agent: claude.id })
+    expect(turnAdapters.at(-1)!.launchOptions).toMatchObject({
+      secrets: ['claude-env-secret'],
+    })
   })
 })
 
