@@ -209,7 +209,7 @@ export function roleAccelerator(
   platform: NodeJS.Platform,
 ): string | undefined {
   if (!role || !(role in ROLE_ACCELERATORS)) return undefined
-  const perPlatform = ROLE_ACCELERATORS[role]
+  const perPlatform = ROLE_ACCELERATORS[role as keyof typeof ROLE_ACCELERATORS]
   return perPlatform[platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'linux']
 }
 
