@@ -313,6 +313,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #options: ClaudeStartOptions = {}
   #reportedModel: string | undefined
   #sessionId: string | undefined
+  #resumeOnRestart = false
   #query: ClaudeQueryRuntime | undefined
   #queryAbort: AbortController | undefined
   #bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
@@ -612,6 +613,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#sessionGeneration += 1
     this.#threadId = threadId
     this.#sessionId = sessionId
+    this.#resumeOnRestart = resume
     this.#workspacePath = workspacePath
     this.#options = options
     this.#reportedModel = options.model
@@ -751,7 +753,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#query = undefined
     this.#clearStreamingState()
     try {
-      await this.#startQuery(this.#sessionId, options)
+      // An unused session has no transcript yet, so it must keep --session-id.
+      await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
     } catch (error) {
       const message = this.#redactor.redact(error instanceof Error ? error.message : String(error))
       await this.dispose()
@@ -837,6 +840,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     if (message.type === 'result') {
       const turnId = this.#activeTurnId
       if (!turnId) return
+      this.#resumeOnRestart = true
       const usage = toUsage(message.usage, message.total_cost_usd)
       if (usage) {
         this.emit('event', {

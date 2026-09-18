@@ -38,28 +38,24 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
   })
 }
 
-const DEFAULT_VISIBLE_MODELS = new Set([
-  'gpt-5.6-sol',
-  'gpt-5.6-terra',
-  'gpt-5.6-luna',
+const DEFAULT_HIDDEN_MODELS = new Set([
+  'gpt-5.2',
   'gpt-5.3-codex-spark',
-  'claude-fable-5',
-  'claude-fable-5-1',
-  'fable',
-  'claude-opus-5',
-  'opus',
-  'claude-sonnet-5',
-  'sonnet',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.5',
   'claude-haiku-4-5',
   'haiku',
+  'claude-opus-4-5',
+  'claude-opus-4-6',
+  'claude-opus-4-7',
   'claude-opus-4-8',
-  'grok-4.5',
-  'grok-4.6',
+  'claude-sonnet-4-6',
 ])
 
-/** Curate the first-run picker without removing any model from Settings. */
+/** Hide known older models while letting newly discovered models start enabled. */
 export function modelVisibleByDefault(model: Model): boolean {
-  return DEFAULT_VISIBLE_MODELS.has(model.id.toLowerCase().replace(/\[1m\]$/, ''))
+  return !DEFAULT_HIDDEN_MODELS.has(model.id.toLowerCase().replace(/\[1m\]$/, ''))
 }
 
 const REASONING_EFFORT_RANKS = new Map([

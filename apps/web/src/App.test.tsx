@@ -734,6 +734,8 @@ describe('web client', () => {
 
     releaseModels({
       models: [
+        { ...cachedCodexChoice().model, id: 'gpt-6-astra', displayName: 'GPT-6 Astra' },
+        { ...cachedCodexChoice().model, id: 'new-model', displayName: 'New model' },
         {
           id: 'gpt-5.6-sol',
           displayName: 'GPT-5.6 Sol',
@@ -810,7 +812,7 @@ describe('web client', () => {
   )
 
   it('keeps a visibility edit made while live discovery is pending', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '3')
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem(
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()]),
@@ -854,7 +856,7 @@ describe('web client', () => {
 
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
     const saved = '["codex:gpt-5.6-sol"]'
-    localStorage.setItem('harness.modelVisibilityVersion', '3')
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', saved)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -890,7 +892,8 @@ describe('web client', () => {
   })
 
   it('migrates an existing profile to the exact public-beta model defaults once', async () => {
-    localStorage.setItem('harness.hiddenModels', '["codex:gpt-5.3-codex-spark"]')
+    localStorage.setItem('harness.modelVisibilityVersion', '3')
+    localStorage.setItem('harness.hiddenModels', '["codex:gpt-6-astra"]')
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) =>
@@ -898,6 +901,7 @@ describe('web client', () => {
         ? Promise.resolve({
             models: [
               cachedCodexChoice().model,
+              { ...cachedCodexChoice().model, id: 'gpt-6-astra', displayName: 'GPT-6 Astra' },
               {
                 id: 'gpt-5.2',
                 displayName: 'GPT-5.2',
@@ -920,9 +924,11 @@ describe('web client', () => {
     render(<App />)
 
     await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.2"]'),
+      expect(localStorage.getItem('harness.hiddenModels')).toBe(
+        '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
+      ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('3')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
   })
 
   it('explains project loading failures and recovers after reconnect', async () => {
@@ -5314,7 +5320,7 @@ describe('new chats', () => {
   })
 
   it('keeps highest reasoning effort at the highest stop when switching models', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '3')
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -5398,7 +5404,7 @@ describe('new chats', () => {
   it.each([false, true])(
     'keeps each chat model setup after switching and reloading (same model: %s)',
     async (sameModel) => {
-      localStorage.setItem('harness.modelVisibilityVersion', '3')
+      localStorage.setItem('harness.modelVisibilityVersion', '4')
       localStorage.setItem('harness.hiddenModels', '[]')
       serverProjects[0]!.sessions = [
         { id: 'chat-a', title: 'Chat A', provider: 'codex', createdAt: 1 },
@@ -5477,7 +5483,7 @@ describe('new chats', () => {
   )
 
   it('restores a chat setup after late discovery instead of the provider setup', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '3')
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
     localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
     localStorage.setItem('harness.effort', 'low')
@@ -8020,6 +8026,7 @@ describe('reopening a session', () => {
   })
 
   it('uses a visible same-source model when the remembered one is hidden', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
