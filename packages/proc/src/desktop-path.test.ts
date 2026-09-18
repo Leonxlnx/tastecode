@@ -55,25 +55,22 @@ describe('desktopPath', () => {
     expect(entries).not.toContain('/opt/homebrew/bin')
   })
 
-  it.skipIf(process.platform === 'win32')(
-    'adds the newest nvm version bin on Linux',
-    () => {
-      const home = mkdtempSync(path.join(os.tmpdir(), 'harness-nvm-path-'))
-      roots.push(home)
-      for (const version of ['v18.19.0', 'v24.12.0', 'v20.5.1', 'not-a-version']) {
-        mkdirSync(path.join(home, '.nvm', 'versions', 'node', version, 'bin'), {
-          recursive: true,
-        })
-      }
-      const result = desktopPath('/usr/bin', { platform: 'linux', home, env: {} })
-      expect(result.split(path.posix.delimiter)).toContain(
-        path.posix.join(home, '.nvm', 'versions', 'node', 'v24.12.0', 'bin'),
-      )
-      expect(result.split(path.posix.delimiter)).not.toContain(
-        path.posix.join(home, '.nvm', 'versions', 'node', 'v18.19.0', 'bin'),
-      )
-    },
-  )
+  it.skipIf(process.platform === 'win32')('adds the newest nvm version bin on Linux', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'harness-nvm-path-'))
+    roots.push(home)
+    for (const version of ['v18.19.0', 'v24.12.0', 'v20.5.1', 'not-a-version']) {
+      mkdirSync(path.join(home, '.nvm', 'versions', 'node', version, 'bin'), {
+        recursive: true,
+      })
+    }
+    const result = desktopPath('/usr/bin', { platform: 'linux', home, env: {} })
+    expect(result.split(path.posix.delimiter)).toContain(
+      path.posix.join(home, '.nvm', 'versions', 'node', 'v24.12.0', 'bin'),
+    )
+    expect(result.split(path.posix.delimiter)).not.toContain(
+      path.posix.join(home, '.nvm', 'versions', 'node', 'v18.19.0', 'bin'),
+    )
+  })
 
   it('skips the nvm bin cleanly when nvm is not installed', () => {
     const result = desktopPath('/usr/bin', {

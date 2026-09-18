@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import {
-  compareDottedVersions,
-  declaredLibcFloor,
-  maxSymbolVersion,
-} from './linux-acceptance.js'
+import { compareDottedVersions, declaredLibcFloor, maxSymbolVersion } from './linux-acceptance.js'
 
 test('maxSymbolVersion picks the highest GLIBC tag in objdump output', () => {
   const output = [

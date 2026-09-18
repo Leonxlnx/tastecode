@@ -67,8 +67,8 @@ minimal or headless desktops need gnome-keyring, KWallet, or KeePassXC installed
 - **The AppArmor prompt asks about the profile.** The deb installs
   `/etc/apparmor.d/tastecode` at install time and removes it on uninstall.
 - **No tray icon on GNOME.** Stock GNOME has no StatusNotifier host, so the window close
-  button quits the app instead of hiding to a tray. Install the *AppIndicator and KStatusNotifierItem
-  Support* extension to get the tray icon and close-to-tray behavior.
+  button quits the app instead of hiding to a tray. Install the _AppIndicator and KStatusNotifierItem
+  Support_ extension to get the tray icon and close-to-tray behavior.
 - **Credential errors mention gnome-keyring or KWallet.** Install and unlock a Secret Service
   provider; TasteCode stores nothing when none is available.
 - **Collecting logs.** Settings → Local diagnostics writes a secret-scrubbed
