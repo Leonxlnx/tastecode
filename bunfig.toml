@@ -1,4 +1,0 @@
-[run]
-# Avoid Bun's macOS system-shell spawn failure (EBADF in /bin/bash).
-# This only selects the script shell; dev still runs through Node and pnpm.
-shell = "bun"
