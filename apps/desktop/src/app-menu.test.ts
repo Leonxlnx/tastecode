@@ -1,9 +1,13 @@
 import type { MenuItemConstructorOptions } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  acceleratorMatches,
   autoHidesMenuBar,
   createApplicationMenuTemplate,
   electronAccelerator,
+  menuItemForKeyInput,
+  roleAccelerator,
+  type MenuKeyInput,
 } from './app-menu.js'
 import {
   NATIVE_MENU_ACTIONS,
@@ -76,6 +80,102 @@ describe('application menu', () => {
     ['darwin', false],
   ] as const)('autoHidesMenuBar(%s) -> %s', (platform, expected) => {
     expect(autoHidesMenuBar(platform)).toBe(expected)
+  })
+
+  it('matches accelerators against before-input-event keys', () => {
+    const key = (partial: Partial<MenuKeyInput>): MenuKeyInput => ({
+      key: '',
+      control: false,
+      alt: false,
+      shift: false,
+      meta: false,
+      ...partial,
+    })
+
+    expect(acceleratorMatches('Ctrl+Q', key({ key: 'q', control: true }), 'linux')).toBe(true)
+    expect(acceleratorMatches('Ctrl+Q', key({ key: 'w', control: true }), 'linux')).toBe(false)
+    expect(acceleratorMatches('Ctrl+Q', key({ key: 'q' }), 'linux')).toBe(false)
+    // CommandOrControl resolves to the platform's primary modifier.
+    expect(
+      acceleratorMatches(
+        'CommandOrControl+Shift+S',
+        key({ key: 's', control: true, shift: true }),
+        'linux',
+      ),
+    ).toBe(true)
+    expect(acceleratorMatches('CommandOrControl+S', key({ key: 's', meta: true }), 'darwin')).toBe(
+      true,
+    )
+    // Extra modifiers must not match.
+    expect(acceleratorMatches('Ctrl+Q', key({ key: 'q', control: true, alt: true }), 'linux')).toBe(
+      false,
+    )
+    expect(acceleratorMatches('F11', key({ key: 'F11' }), 'linux')).toBe(true)
+    // Electron accelerator and DOM key spellings converge.
+    expect(
+      acceleratorMatches(
+        'CommandOrControl+Down',
+        key({ key: 'ArrowDown', control: true }),
+        'linux',
+      ),
+    ).toBe(true)
+    expect(acceleratorMatches('Alt+Esc', key({ key: 'Escape', alt: true }), 'linux')).toBe(true)
+    expect(acceleratorMatches(undefined, key({ key: 'q', control: true }), 'linux')).toBe(false)
+  })
+
+  it('derives role accelerators per platform', () => {
+    expect(roleAccelerator('quit', 'linux')).toBe('Ctrl+Q')
+    expect(roleAccelerator('close', 'linux')).toBe('Ctrl+W')
+    expect(roleAccelerator('togglefullscreen', 'linux')).toBe('F11')
+    expect(roleAccelerator('quit', 'darwin')).toBe('Cmd+Q')
+    expect(roleAccelerator('about', 'linux')).toBeUndefined()
+    expect(roleAccelerator(undefined, 'linux')).toBeUndefined()
+  })
+
+  it('finds the menu item for a Linux key event', () => {
+    const template = createApplicationMenuTemplate({
+      appName: 'Taste Code',
+      isMacOS: false,
+      isDevelopment: false,
+      shortcuts: { newChat: { key: 'n', primary: true, shift: true } },
+      onAction: vi.fn(),
+      onZoom: vi.fn(),
+      onOpenDiagnostics: vi.fn(),
+    })
+    const key = (partial: Partial<MenuKeyInput>): MenuKeyInput => ({
+      key: '',
+      control: false,
+      alt: false,
+      shift: false,
+      meta: false,
+      ...partial,
+    })
+
+    expect(menuItemForKeyInput(template, key({ key: 'q', control: true }), 'linux')?.role).toBe(
+      'quit',
+    )
+    expect(menuItemForKeyInput(template, key({ key: 'w', control: true }), 'linux')?.role).toBe(
+      'close',
+    )
+    expect(menuItemForKeyInput(template, key({ key: 'F11' }), 'linux')?.role).toBe(
+      'togglefullscreen',
+    )
+    expect(
+      menuItemForKeyInput(template, key({ key: 'n', control: true, shift: true }), 'linux')?.label,
+    ).toBe('New Chat')
+    // Custom accelerators resolve to the platform's real modifier.
+    expect(
+      menuItemForKeyInput(template, key({ key: 'n', meta: true, shift: true }), 'darwin')?.label,
+    ).toBe('New Chat')
+    // Unbound keys hit nothing; disabled items are skipped.
+    expect(menuItemForKeyInput(template, key({ key: 'j', control: true }), 'linux')).toBeUndefined()
+    expect(
+      menuItemForKeyInput(
+        [{ label: 'X', accelerator: 'Ctrl+X', enabled: false }],
+        key({ key: 'x', control: true }),
+        'linux',
+      ),
+    ).toBeUndefined()
   })
 
   it('rejects malformed or unknown shortcut updates from the renderer', () => {

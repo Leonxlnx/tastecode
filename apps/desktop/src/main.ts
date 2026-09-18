@@ -22,6 +22,9 @@ import {
   Tray,
   utilityProcess,
   type Event as ElectronEvent,
+  type KeyboardEvent as ElectronKeyboardEvent,
+  type MenuItem,
+  type MenuItemConstructorOptions,
   type OpenDialogOptions,
   type OpenDialogReturnValue,
   type WebContents,
@@ -46,7 +49,12 @@ import {
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
-import { autoHidesMenuBar, createApplicationMenuTemplate } from './app-menu.js'
+import {
+  autoHidesMenuBar,
+  createApplicationMenuTemplate,
+  menuItemForKeyInput,
+  type MenuKeyInput,
+} from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
@@ -325,6 +333,9 @@ if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
   })
 }
 let nativeMenuShortcuts: NativeMenuShortcuts = {}
+// Kept for Linux accelerator dispatch — the template, not the built Menu, is
+// what the pure matcher walks.
+let applicationMenuTemplate: MenuItemConstructorOptions[] = []
 const macOSHaptics = new MacOSHaptics()
 
 protocol.registerSchemesAsPrivileged([
@@ -616,9 +627,17 @@ function createWindow(): void {
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
     const action = zoomShortcut(input)
-    if (!action) return
-    event.preventDefault()
-    applyZoom(window, action)
+    if (action) {
+      event.preventDefault()
+      applyZoom(window, action)
+      return
+    }
+    // Frameless Linux windows never create the views menu bar, so the
+    // application menu's accelerators are never registered — dispatch them
+    // here. macOS and Windows menus handle their own accelerators.
+    if (process.platform === 'linux' && dispatchMenuAccelerator(window, input)) {
+      event.preventDefault()
+    }
   })
 
   // If the user closes the last real window while a hidden capture is in
@@ -684,22 +703,82 @@ function createBackgroundTray(): void {
 }
 
 function installApplicationMenu(): void {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate(
-      createApplicationMenuTemplate({
-        appName: nativeAppName,
-        isMacOS: process.platform === 'darwin',
-        isDevelopment: !app.isPackaged,
-        shortcuts: nativeMenuShortcuts,
-        onAction: sendNativeMenuAction,
-        onZoom: (action) => {
-          const window = mainWindow
-          if (window && !window.isDestroyed()) applyZoom(window, action)
-        },
-        onOpenDiagnostics: () => void openDiagnosticsDirectory(),
-      }),
-    ),
-  )
+  applicationMenuTemplate = createApplicationMenuTemplate({
+    appName: nativeAppName,
+    isMacOS: process.platform === 'darwin',
+    isDevelopment: !app.isPackaged,
+    shortcuts: nativeMenuShortcuts,
+    onAction: sendNativeMenuAction,
+    onZoom: (action) => {
+      const window = mainWindow
+      if (window && !window.isDestroyed()) applyZoom(window, action)
+    },
+    onOpenDiagnostics: () => void openDiagnosticsDirectory(),
+  })
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate))
+}
+
+/**
+ * Runs the accelerator the window's (nonexistent) menu bar would have run.
+ * Custom items call their template click handler; role items map to the
+ * equivalent window/webContents call.
+ */
+function dispatchMenuAccelerator(window: BrowserWindow, input: MenuKeyInput): boolean {
+  const item = menuItemForKeyInput(applicationMenuTemplate, input, process.platform)
+  if (!item) return false
+  if (item.click) {
+    // Template click handlers ignore the synthesized MenuItem/event args.
+    item.click({} as MenuItem, window, { triggeredByAccelerator: true } as ElectronKeyboardEvent)
+    return true
+  }
+  const contents = window.webContents
+  switch (item.role) {
+    case 'quit':
+      app.quit()
+      return true
+    case 'close':
+      window.close()
+      return true
+    case 'minimize':
+    case 'zoom':
+      window.minimize()
+      return true
+    case 'togglefullscreen':
+      window.setFullScreen(!window.isFullScreen())
+      return true
+    case 'reload':
+      contents.reload()
+      return true
+    case 'forceReload':
+      contents.reloadIgnoringCache()
+      return true
+    case 'toggleDevTools':
+      contents.toggleDevTools()
+      return true
+    case 'undo':
+      contents.undo()
+      return true
+    case 'redo':
+      contents.redo()
+      return true
+    case 'cut':
+      contents.cut()
+      return true
+    case 'copy':
+      contents.copy()
+      return true
+    case 'paste':
+      contents.paste()
+      return true
+    case 'pasteAndMatchStyle':
+      contents.pasteAndMatchStyle()
+      return true
+    case 'selectAll':
+      contents.selectAll()
+      return true
+    default:
+      return false
+  }
 }
 
 function sendNativeMenuAction(action: NativeMenuAction): void {
