@@ -42,7 +42,7 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
     const pageHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
     const step = Math.max(1, innerHeight * 0.8)
     for (let y = 0, count = 0; y < pageHeight && count < 40; y += step, count += 1) {
-      scrollTo(0, y)
+      scrollTo({ left: 0, top: y, behavior: 'instant' })
       await frame()
     }
     await Promise.all([
@@ -50,11 +50,11 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
       bounded(document.fonts?.ready, 2000),
       bounded(images, 2000),
     ])
-    scrollTo(start.x, start.y)
+    scrollTo({ left: start.x, top: start.y, behavior: 'instant' })
     await frame()
     await frame()
   } finally {
-    scrollTo(start.x, start.y)
+    scrollTo({ left: start.x, top: start.y, behavior: 'instant' })
     for (const timer of timers) clearTimeout(timer)
     for (const id of frames) cancelAnimationFrame(id)
     for (const remove of listeners) remove()

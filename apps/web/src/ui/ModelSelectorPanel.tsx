@@ -256,6 +256,7 @@ function DitherChoiceRow(props: {
       left: rect.left,
       width: rect.width,
       stopCount: props.optionLabels.length,
+      currentIndex: pointerIndexRef.current,
     })
     if (pointerIndexRef.current !== nextIndex) {
       const previousIndex = pointerIndexRef.current ?? displayIndex
@@ -342,6 +343,7 @@ function DitherChoiceRow(props: {
           left: rect.left,
           width: rect.width,
           stopCount: props.optionLabels.length,
+          currentIndex: pointerIndexRef.current,
         })
         releasePointerCaptureSafe(event.currentTarget, event.pointerId)
         pointerIndexRef.current = null

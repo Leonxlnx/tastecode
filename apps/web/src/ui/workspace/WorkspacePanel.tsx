@@ -33,6 +33,7 @@ import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { RowIssue } from '../RowIssue.js'
+import { Skeleton, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
 import '../workspace-panel.css'
 
 const WorkspaceReview = lazy(() =>
@@ -510,5 +511,13 @@ function WorkspaceSelector({ onOpen }: { onOpen: (kind: WorkspaceTool) => void }
 }
 
 function WorkspaceLoading() {
-  return <div className="workspace-panel__loading" aria-label="Loading workspace tool" />
+  return (
+    <SkeletonStatus label="Loading workspace tool" className="workspace-panel__loading">
+      <div className="workspace-panel__loading-bar">
+        <Skeleton className="skeleton--icon" />
+        <Skeleton width={128} height={9} />
+      </div>
+      <SkeletonRows rows={7} icon detail density="tall" />
+    </SkeletonStatus>
+  )
 }

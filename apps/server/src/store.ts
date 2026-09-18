@@ -11,7 +11,6 @@ import {
   writeSync,
 } from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import {
   ApprovalModeSchema,
   BackgroundModelPreferenceSchema,
@@ -27,6 +26,7 @@ import type {
   DomainEvent,
   JsonValue,
   ProviderId,
+  ProviderHistorySession,
   SidebarSettings,
   SessionSearchResult,
   ThreadLifecycle,
@@ -35,6 +35,7 @@ import type {
 import { z } from 'zod'
 import type { TurnOptions } from './adapters.js'
 import { canonicalDataPath } from './data-lease.js'
+import { DatabaseSync, type SQLInputValue, type StatementSync } from './sqlite.js'
 import {
   affectsInboxProjection,
   applyInboxProjectionEvent,
@@ -287,6 +288,24 @@ CREATE TABLE IF NOT EXISTS sidebar_settings (
   mode             TEXT NOT NULL CHECK (mode IN ('classic', 'inbox')),
   auto_settle_days INTEGER CHECK (auto_settle_days BETWEEN 1 AND 90)
 );
+
+CREATE TABLE IF NOT EXISTS provider_history (
+  provider TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL UNIQUE,
+  metadata TEXT NOT NULL,
+  loaded_revision TEXT,
+  PRIMARY KEY (provider, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS provider_history_events (
+  thread_id TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  event_seq INTEGER NOT NULL REFERENCES events(seq) ON DELETE CASCADE,
+  active INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (thread_id, event_seq)
+);
+CREATE INDEX IF NOT EXISTS provider_history_event_seq ON provider_history_events (event_seq);
 
 INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
@@ -788,7 +807,7 @@ export class Store {
       this.#readAppSetting = this.#db.prepare(`SELECT value FROM app_settings WHERE key = ?`)
       this.#writeAppSetting = this.#db.prepare(
         `INSERT INTO app_settings (key, value) VALUES (?, ?)
-       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
       )
       this.#searchResultKey = this.#loadSearchResultKey()
       // These statements run for every persisted event. Preparing them once
@@ -798,161 +817,161 @@ export class Store {
       )
       this.#insertSearchEntry = this.#db.prepare(
         `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
       this.#insertUsageEvent = this.#db.prepare(
         `INSERT OR REPLACE INTO usage_events (event_seq, thread_id, at, payload)
-       VALUES (?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?)`,
       )
       this.#insertInboxEvent = this.#db.prepare(
         `INSERT OR REPLACE INTO inbox_events (event_seq, thread_id, payload) VALUES (?, ?, ?)`,
       )
       this.#deleteInboxStatus = this.#db.prepare(
         `DELETE FROM inbox_events
-       WHERE thread_id = ?
-         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type')
-           IN ('thread.error', 'turn.completed')`,
+         WHERE thread_id = ?
+           AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type')
+             IN ('thread.error', 'turn.completed')`,
       )
       this.#deleteInboxRequest = this.#db.prepare(
         `DELETE FROM inbox_events
-       WHERE thread_id = ?
-         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') = ?
-         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.request.id') = ?`,
+         WHERE thread_id = ?
+           AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') = ?
+           AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.request.id') = ?`,
       )
       this.#deleteThreadInboxEvents = this.#db.prepare(
         `DELETE FROM inbox_events WHERE thread_id = ?`,
       )
       this.#insertUserSubmission = this.#db.prepare(
         `INSERT OR IGNORE INTO user_submission_items (thread_id, item_id, event_seq)
-       VALUES (?, ?, ?)`,
+         VALUES (?, ?, ?)`,
       )
       this.#hasUserSubmission = this.#db.prepare(
         `SELECT 1 FROM user_submission_items WHERE thread_id = ? AND item_id = ?`,
       )
       this.#insertTurnDiffEvent = this.#db.prepare(
         `INSERT OR REPLACE INTO turn_diff_events (event_seq, thread_id, turn_id)
-       VALUES (?, ?, ?)`,
+         VALUES (?, ?, ?)`,
       )
       this.#readTurnDiff = this.#db.prepare(
         `SELECT events.payload
-       FROM turn_diff_events
-       INNER JOIN events ON events.seq = turn_diff_events.event_seq
-       WHERE turn_diff_events.thread_id = ? AND turn_diff_events.turn_id = ?
-       ORDER BY turn_diff_events.event_seq DESC LIMIT 1`,
+         FROM turn_diff_events
+         INNER JOIN events ON events.seq = turn_diff_events.event_seq
+         WHERE turn_diff_events.thread_id = ? AND turn_diff_events.turn_id = ?
+         ORDER BY turn_diff_events.event_seq DESC LIMIT 1`,
       )
       this.#upsertRecoveryStart = this.#db.prepare(
         `INSERT INTO recovery_lifecycles
-         (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
-       VALUES (?, ?, ?, ?, NULL, ?)
-       ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
-         event_type = excluded.event_type,
-         started_seq = excluded.started_seq,
-         payload = excluded.payload
-       WHERE recovery_lifecycles.terminal_seq IS NULL`,
+           (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
+         VALUES (?, ?, ?, ?, NULL, ?)
+         ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
+           event_type = excluded.event_type,
+           started_seq = excluded.started_seq,
+           payload = excluded.payload
+         WHERE recovery_lifecycles.terminal_seq IS NULL`,
       )
       this.#settleRecoveryLifecycle = this.#db.prepare(
         `INSERT INTO recovery_lifecycles
-         (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
-       VALUES (?, ?, NULL, NULL, ?, NULL)
-       ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
-         event_type = NULL,
-         started_seq = NULL,
-         terminal_seq = excluded.terminal_seq,
-         payload = NULL`,
+           (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
+         VALUES (?, ?, NULL, NULL, ?, NULL)
+         ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
+           event_type = NULL,
+           started_seq = NULL,
+           terminal_seq = excluded.terminal_seq,
+           payload = NULL`,
       )
       this.#upsertRecoveryError = this.#db.prepare(
         `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
-       ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
+         ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
       )
       this.#readInterruptedThreads = this.#db.prepare(
         `SELECT recovery.thread_id, recovery.payload,
-              CASE WHEN recovery.event_type = 'user_input.requested'
-                AND EXISTS (
-                  SELECT 1 FROM design_runs
-                  WHERE design_runs.thread_id = recovery.thread_id
-                    AND json_extract(
-                      CASE WHEN json_valid(design_runs.payload) THEN design_runs.payload END,
-                      '$.phase'
-                    ) = 'brief'
-                ) THEN 1 ELSE 0 END AS resumable
-       FROM recovery_lifecycles AS recovery
-       INNER JOIN threads ON threads.id = recovery.thread_id
-       LEFT JOIN recovery_errors AS errors ON errors.thread_id = recovery.thread_id
-       WHERE threads.closed_at IS NULL
-         AND recovery.started_seq IS NOT NULL
-         AND recovery.terminal_seq IS NULL
-         AND recovery.payload IS NOT NULL
-         AND (recovery.event_type <> 'turn.started' OR errors.event_seq IS NULL
-              OR errors.event_seq < recovery.started_seq)
-       ORDER BY recovery.started_seq`,
+                CASE WHEN recovery.event_type = 'user_input.requested'
+                  AND EXISTS (
+                    SELECT 1 FROM design_runs
+                    WHERE design_runs.thread_id = recovery.thread_id
+                      AND json_extract(
+                        CASE WHEN json_valid(design_runs.payload) THEN design_runs.payload END,
+                        '$.phase'
+                      ) = 'brief'
+                  ) THEN 1 ELSE 0 END AS resumable
+         FROM recovery_lifecycles AS recovery
+         INNER JOIN threads ON threads.id = recovery.thread_id
+         LEFT JOIN recovery_errors AS errors ON errors.thread_id = recovery.thread_id
+         WHERE threads.closed_at IS NULL
+           AND recovery.started_seq IS NOT NULL
+           AND recovery.terminal_seq IS NULL
+           AND recovery.payload IS NOT NULL
+           AND (recovery.event_type <> 'turn.started' OR errors.event_seq IS NULL
+                OR errors.event_seq < recovery.started_seq)
+         ORDER BY recovery.started_seq`,
       )
       this.#insertQueuedTurnEvent = this.#db.prepare(
         `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
-       VALUES (?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?)`,
       )
       this.#listQueuedTurns = this.#db.prepare(
         `SELECT queued_turns.* FROM queued_turns
-       INNER JOIN threads ON threads.id = queued_turns.thread_id
-       WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
-         AND threads.closed_at IS NULL
-       ORDER BY queued_turns.position`,
+         INNER JOIN threads ON threads.id = queued_turns.thread_id
+         WHERE queued_turns.thread_id = ? AND queued_turns.state = 'queued'
+           AND threads.closed_at IS NULL
+         ORDER BY queued_turns.position`,
       )
       this.#hasQueuedSubmission = this.#db.prepare(
         `SELECT 1 FROM queued_turns
-       WHERE thread_id = ? AND client_submission_id = ? LIMIT 1`,
+         WHERE thread_id = ? AND client_submission_id = ? LIMIT 1`,
       )
       this.#openThread = this.#db.prepare(
         `SELECT 1 FROM threads WHERE id = ? AND closed_at IS NULL`,
       )
       this.#nextQueuedPosition = this.#db.prepare(
         `SELECT COALESCE(MAX(position), -1) + 1 AS position
-       FROM queued_turns WHERE thread_id = ?`,
+         FROM queued_turns WHERE thread_id = ?`,
       )
       this.#insertQueuedTurn = this.#db.prepare(
         `INSERT INTO queued_turns
-         (thread_id, queue_id, client_submission_id, position, state, intent, payload, created_at)
-       VALUES (?, ?, ?, ?, 'queued', 'normal', ?, ?)`,
+           (thread_id, queue_id, client_submission_id, position, state, intent, payload, created_at)
+         VALUES (?, ?, ?, ?, 'queued', 'normal', ?, ?)`,
       )
       this.#deleteQueuedTurn = this.#db.prepare(
         `DELETE FROM queued_turns WHERE thread_id = ? AND queue_id = ?`,
       )
       this.#queuedTurnPosition = this.#db.prepare(
         `SELECT position FROM queued_turns
-       WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+         WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
       )
       this.#previousQueuedTurn = this.#db.prepare(
         `SELECT queue_id, position FROM queued_turns
-       WHERE thread_id = ? AND state = 'queued' AND position < ?
-       ORDER BY position DESC LIMIT 1`,
+         WHERE thread_id = ? AND state = 'queued' AND position < ?
+         ORDER BY position DESC LIMIT 1`,
       )
       this.#nextQueuedTurn = this.#db.prepare(
         `SELECT queue_id, position FROM queued_turns
-       WHERE thread_id = ? AND state = 'queued' AND position > ?
-       ORDER BY position ASC LIMIT 1`,
+         WHERE thread_id = ? AND state = 'queued' AND position > ?
+         ORDER BY position ASC LIMIT 1`,
       )
       this.#swapQueuedTurnPositions = this.#db.prepare(
         `UPDATE queued_turns SET position = CASE queue_id WHEN ? THEN ? WHEN ? THEN ? END
-       WHERE thread_id = ? AND queue_id IN (?, ?)`,
+         WHERE thread_id = ? AND queue_id IN (?, ?)`,
       )
       this.#findQueuedTurn = this.#db.prepare(
         `SELECT * FROM queued_turns
-       WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
+         WHERE thread_id = ? AND queue_id = ? AND state = 'queued'`,
       )
       this.#dispatchQueuedTurn = this.#db.prepare(
         `UPDATE queued_turns SET state = 'dispatching', intent = ?
-       WHERE thread_id = ? AND queue_id = ?`,
+         WHERE thread_id = ? AND queue_id = ?`,
       )
       this.#restoreQueuedTurn = this.#db.prepare(
         `UPDATE queued_turns SET state = 'queued', intent = 'normal'
-       WHERE thread_id = ? AND queue_id = ?`,
+         WHERE thread_id = ? AND queue_id = ?`,
       )
       this.#claimedQueuedTurn = this.#db.prepare(
         `SELECT 1 FROM queued_turns
-       WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+         WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
       )
       this.#deleteClaimedQueuedTurn = this.#db.prepare(
         `DELETE FROM queued_turns
-       WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
+         WHERE thread_id = ? AND queue_id = ? AND state = 'dispatching'`,
       )
       this.#queuedTurnInState = this.#db.prepare(
         `SELECT 1 FROM queued_turns WHERE thread_id = ? AND queue_id = ? AND state = ?`,
@@ -967,15 +986,15 @@ export class Store {
       this.#db.exec(LIFECYCLE_INDEXES)
       this.#insertProject = this.#db.prepare(
         `INSERT INTO projects (path, name, pinned, created_at) VALUES (?, ?, 0, ?)
-       ON CONFLICT (path) DO NOTHING`,
+         ON CONFLICT (path) DO NOTHING`,
       )
       this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
       this.#insertThread = this.#db.prepare(
         `INSERT INTO threads
-        (id, project_path, provider, agent, provider_session_id, title, created_at,
-          worktree_path, worktree_branch,
-          lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+          (id, project_path, provider, agent, provider_session_id, title, created_at,
+            worktree_path, worktree_branch,
+            lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
       )
       this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
       this.#listProjectThreads = this.#db.prepare(
@@ -986,9 +1005,9 @@ export class Store {
       )
       this.#listSidebarThreads = this.#db.prepare(
         `SELECT id, project_path, provider, agent, title, pinned, created_at, closed_at,
-              worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
-              keep_active, woke_at, unread
-       FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
+                worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
+                keep_active, woke_at, unread
+         FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
       )
       for (let mask = 0; mask < 4; mask += 1) {
         const clauses = ['session_search MATCH ?']
@@ -1000,117 +1019,120 @@ export class Store {
         if (threadFilters.length > 0) {
           clauses.push(
             `session_search.thread_id IN (
-             SELECT threads.id FROM threads WHERE ${threadFilters.join(' AND ')}
-           )`,
+               SELECT threads.id FROM threads WHERE ${threadFilters.join(' AND ')}
+             )`,
           )
         }
         this.#selectSearchSnapshot.set(
           mask,
           this.#db.prepare(
             `SELECT json_group_array(search_rowid) AS search_rowids
-           FROM (
-             SELECT session_search.rowid AS search_rowid
-             FROM session_search
-             WHERE ${clauses.join(' AND ')}
-             ORDER BY rank, session_search.created_at DESC,
-                      session_search.rowid DESC
-           )`,
+             FROM (
+               SELECT session_search.rowid AS search_rowid
+               FROM session_search
+               WHERE ${clauses.join(' AND ')}
+               ORDER BY rank, session_search.created_at DESC,
+                        session_search.rowid DESC
+             )`,
           ),
         )
       }
       this.#readSearchResults = this.#db.prepare(
         `SELECT projects.path AS project_path, projects.name AS project_name,
-              threads.id AS thread_id, threads.title AS thread_title,
-              threads.provider, session_search.event_seq, session_search.turn_id,
-              session_search.created_at,
-              CAST(page.key AS INTEGER) + ? + 1 AS position,
-              session_search.text
-       FROM json_each(?) AS page
-       JOIN session_search ON session_search.rowid = CAST(page.value AS INTEGER)
-       JOIN threads ON threads.id = session_search.thread_id
-       JOIN projects ON projects.path = threads.project_path
-       ORDER BY CAST(page.key AS INTEGER)
-       `,
+                threads.id AS thread_id, threads.title AS thread_title,
+                threads.provider, session_search.event_seq, session_search.turn_id,
+                session_search.created_at,
+                CAST(page.key AS INTEGER) + ? + 1 AS position,
+                session_search.text
+         FROM json_each(?) AS page
+         JOIN session_search ON session_search.rowid = CAST(page.value AS INTEGER)
+         JOIN threads ON threads.id = session_search.thread_id
+         JOIN projects ON projects.path = threads.project_path
+         ORDER BY CAST(page.key AS INTEGER)
+         `,
       )
       this.#findThread = this.#db.prepare(`SELECT * FROM threads WHERE id = ?`)
       this.#threadHistory = this.#db.prepare(
-        `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
+        `SELECT e.seq, e.payload FROM events e
+         LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+         WHERE e.thread_id = ? AND e.seq > ? AND (p.active IS NULL OR p.active = 1) ORDER BY e.seq`,
       )
       this.#threadInboxEvents = this.#db.prepare(
         `SELECT thread_id, payload FROM inbox_events ORDER BY event_seq`,
       )
       this.#queuedThreadIds = this.#db.prepare(
         `SELECT DISTINCT queued_turns.thread_id
-       FROM queued_turns
-       INNER JOIN threads ON threads.id = queued_turns.thread_id
-       WHERE queued_turns.state = 'queued' AND threads.closed_at IS NULL`,
+         FROM queued_turns
+         INNER JOIN threads ON threads.id = queued_turns.thread_id
+         WHERE queued_turns.state = 'queued' AND threads.closed_at IS NULL`,
       )
       this.#settleThreadStatement = this.#db.prepare(
         `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
-       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ?`,
+         wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ? AND closed_at IS NULL`,
       )
       this.#settleInactiveThreadStatement = this.#db.prepare(
         `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?,
-       lifecycle_reason = 'inactivity', wake_at = NULL, keep_active = 0, woke_at = NULL
-       WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'active'
-       AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?`,
+         lifecycle_reason = 'inactivity', wake_at = NULL, keep_active = 0, woke_at = NULL
+         WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'active'
+         AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?`,
       )
       this.#activateThreadStatement = this.#db.prepare(
         `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
-       lifecycle_reason = NULL, wake_at = NULL,
-       woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END
-       WHERE id = ? RETURNING woke_at, keep_active`,
+         lifecycle_reason = NULL, wake_at = NULL,
+         woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END
+         WHERE id = ? RETURNING woke_at, keep_active`,
       )
       this.#wakeSnoozedThreadStatement = this.#db.prepare(
         `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
-       lifecycle_reason = NULL, wake_at = NULL, woke_at = ?, last_active_at = ?
-       WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'snoozed'
-         AND ephemeral = 0 AND wake_at <= ? RETURNING woke_at, keep_active`,
+         lifecycle_reason = NULL, wake_at = NULL, woke_at = ?, last_active_at = ?
+         WHERE id = ? AND closed_at IS NULL AND lifecycle_state = 'snoozed'
+           AND ephemeral = 0 AND wake_at <= ? RETURNING woke_at, keep_active`,
       )
       this.#touchActiveThreadStatement = this.#db.prepare(
-        `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`,
+        `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?)
+         WHERE id = ? AND closed_at IS NULL`,
       )
       this.#touchThreadStatement = this.#db.prepare(
         `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
-       lifecycle_reason = NULL, wake_at = NULL,
-       woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END,
-       last_active_at = ?, unread = MAX(unread, ?)
-       WHERE id = ? RETURNING woke_at, keep_active`,
+         lifecycle_reason = NULL, wake_at = NULL,
+         woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END,
+         last_active_at = ?, unread = MAX(unread, ?)
+         WHERE id = ? AND closed_at IS NULL RETURNING woke_at, keep_active`,
       )
       this.#dueSnoozedThreadIds = this.#db.prepare(
         `SELECT id FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
-       AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
+         AND ephemeral = 0 AND wake_at <= ? ORDER BY wake_at`,
       )
       this.#nextSnoozedThread = this.#db.prepare(
         `SELECT MIN(wake_at) AS at FROM threads
-       WHERE closed_at IS NULL AND lifecycle_state = 'snoozed' AND ephemeral = 0`,
+         WHERE closed_at IS NULL AND lifecycle_state = 'snoozed' AND ephemeral = 0`,
       )
       this.#oldestActiveThread = this.#db.prepare(
         `SELECT MIN(last_active_at) AS at FROM threads
-       WHERE closed_at IS NULL AND lifecycle_state = 'active'
-         AND ephemeral = 0 AND keep_active = 0`,
+         WHERE closed_at IS NULL AND lifecycle_state = 'active'
+           AND ephemeral = 0 AND keep_active = 0`,
       )
       this.#inactiveThreadCandidates = this.#db.prepare(
         `SELECT id, unread FROM threads
-       WHERE closed_at IS NULL AND lifecycle_state = 'active'
-         AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?
-       ORDER BY last_active_at`,
+         WHERE closed_at IS NULL AND lifecycle_state = 'active'
+           AND ephemeral = 0 AND keep_active = 0 AND last_active_at <= ?
+         ORDER BY last_active_at`,
       )
       this.#readReplaySnapshotBase = this.#db.prepare(
         `SELECT seq, payload FROM thread_replay_snapshots WHERE thread_id = ?`,
       )
       this.#readTailReplaySnapshot = this.#db.prepare(
         `SELECT snapshot.seq, snapshot.payload
-       FROM thread_replay_snapshots AS snapshot
-       WHERE snapshot.thread_id = ?
-         AND snapshot.seq = COALESCE(
-           (SELECT MAX(events.seq) FROM events WHERE events.thread_id = snapshot.thread_id),
-           0
-         )`,
+         FROM thread_replay_snapshots AS snapshot
+         WHERE snapshot.thread_id = ?
+           AND snapshot.seq = COALESCE(
+             (SELECT MAX(events.seq) FROM events WHERE events.thread_id = snapshot.thread_id),
+             0
+           )`,
       )
       this.#writeReplaySnapshot = this.#db.prepare(
         `INSERT INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)
-       ON CONFLICT (thread_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload`,
+         ON CONFLICT (thread_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload`,
       )
       this.#deleteReplaySnapshot = this.#db.prepare(
         `DELETE FROM thread_replay_snapshots WHERE thread_id = ?`,
@@ -1339,6 +1361,22 @@ export class Store {
     })
   }
 
+  addProviderThread(id: string, provider: ProviderId, session: ProviderHistorySession): void {
+    const thread = this.addThread({
+      id,
+      provider,
+      providerSessionId: session.id,
+      projectPath: session.workspacePath,
+      title: session.title || 'Untitled chat',
+      createdAt: session.createdAt,
+    })
+    const closedAt = session.archived ? session.updatedAt : undefined
+    this.#db
+      .prepare('UPDATE threads SET closed_at = ?, last_active_at = ? WHERE id = ?')
+      .run(closedAt ?? null, session.updatedAt, id)
+    this.#cacheThread(id, { ...thread, closedAt, lastActiveAt: session.updatedAt })
+  }
+
   forgetWorktree(threadId: string): void {
     this.#db
       .prepare(`UPDATE threads SET worktree_path = NULL, worktree_branch = NULL WHERE id = ?`)
@@ -1408,6 +1446,8 @@ export class Store {
         return this.#transaction(operation)
       } catch (error) {
         this.#threadCache.clear()
+        this.#projectCache.clear()
+        this.#projectsCache = undefined
         this.#invalidateSidebarThreads()
         throw error
       }
@@ -1446,6 +1486,171 @@ export class Store {
     )
   }
 
+  providerHistories(): Array<{
+    provider: ProviderId
+    threadId: string
+    session: ProviderHistorySession
+    loadedRevision: string | null
+  }> {
+    return sqliteRows<{
+      provider: string
+      thread_id: string
+      metadata: string
+      loaded_revision: string | null
+    }>(this.#db.prepare('SELECT * FROM provider_history')).map((row) => ({
+      provider: ProviderIdSchema.parse(row.provider),
+      threadId: row.thread_id,
+      session: JSON.parse(row.metadata) as ProviderHistorySession,
+      loadedRevision: row.loaded_revision,
+    }))
+  }
+
+  /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
+  nativeProviderThreads(provider: ProviderId): StoredThread[] {
+    return sqliteRows<ThreadRow>(
+      this.#db.prepare("SELECT * FROM threads WHERE provider = ? AND id NOT LIKE 'external:%'"),
+      provider,
+    ).flatMap((row) => {
+      const thread = toThread(row)
+      return thread ? [thread] : []
+    })
+  }
+
+  providerHistoryChangedAfter(threadId: string, seq: number): boolean {
+    return (
+      this.#db
+        .prepare(
+          'SELECT 1 FROM provider_history_events WHERE thread_id = ? AND event_seq > ? LIMIT 1',
+        )
+        .get(threadId, seq) !== undefined
+    )
+  }
+
+  saveProviderHistory(
+    provider: ProviderId,
+    threadId: string,
+    session: ProviderHistorySession,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_history (provider, session_id, thread_id, metadata)
+      VALUES (?, ?, ?, ?) ON CONFLICT(provider, session_id) DO UPDATE SET
+        metadata = excluded.metadata,
+        loaded_revision = CASE WHEN provider_history.thread_id = excluded.thread_id
+          THEN provider_history.loaded_revision ELSE NULL END,
+        thread_id = excluded.thread_id`,
+      )
+      .run(provider, session.id, threadId, JSON.stringify(session))
+    const thread = this.thread(threadId)
+    if (thread && Number.isFinite(session.updatedAt) && session.updatedAt > thread.lastActiveAt) {
+      this.#db
+        .prepare('UPDATE threads SET last_active_at = ? WHERE id = ?')
+        .run(session.updatedAt, threadId)
+      this.#updateCachedThread(threadId, (current) => ({
+        ...current,
+        lastActiveAt: session.updatedAt,
+      }))
+      this.#updateSidebarThread(threadId, (current) => ({
+        ...current,
+        lastActiveAt: session.updatedAt,
+      }))
+    }
+  }
+
+  /** Only locally recorded events, used to identify provider echoes of our own turns. */
+  localHistory(threadId: string): Array<{ seq: number; event: DomainEvent }> {
+    return sqliteRows<HistoryRow>(
+      this.#db.prepare(`SELECT e.seq, e.payload FROM events e
+      LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+      WHERE e.thread_id = ? AND p.event_seq IS NULL ORDER BY e.seq`),
+      threadId,
+    ).flatMap((row) => {
+      const event = parseDomainEvent(row.payload, `local history for thread ${threadId}`)
+      return event === undefined ? [] : [{ seq: Number(row.seq), event }]
+    })
+  }
+
+  /** Keep stable log positions so imported updates cannot invalidate local checkpoints. */
+  mergeProviderHistory(
+    threadId: string,
+    revision: string,
+    entries: Array<{ key: string; event: DomainEvent }>,
+  ): boolean {
+    const previous = new Map(
+      sqliteRows<{ event_key: string; event_seq: number; payload: string; active: number }>(
+        this.#db
+          .prepare(`SELECT p.event_key, p.event_seq, p.active, e.payload FROM provider_history_events p
+        JOIN events e ON e.seq = p.event_seq WHERE p.thread_id = ? ORDER BY p.event_seq`),
+        threadId,
+      ).map((row) => [row.event_key, row]),
+    )
+    const link = this.#db.prepare(
+      'INSERT INTO provider_history_events (thread_id, event_key, event_seq) VALUES (?, ?, ?)',
+    )
+    let changed = false
+    this.#transaction(() => {
+      const keys = JSON.stringify(entries.map(({ key }) => key))
+      const retired = this.#db
+        .prepare(
+          `UPDATE provider_history_events SET active = 0
+        WHERE thread_id = ? AND active = 1 AND event_key NOT IN (SELECT value FROM json_each(?))`,
+        )
+        .run(threadId, keys).changes
+      if (retired) changed = true
+      let turnAt = this.thread(threadId)?.createdAt ?? 0
+      for (const { key, event } of entries) {
+        const payload = JSON.stringify(event)
+        const existing = previous.get(key)
+        if (event.type === 'turn.started') turnAt = event.turn.createdAt
+        if (
+          existing?.active &&
+          existing.payload === payload &&
+          !(retired && event.type === 'thread.started')
+        )
+          continue
+        if (existing)
+          this.#db
+            .prepare(
+              'UPDATE provider_history_events SET active = 0 WHERE thread_id = ? AND event_key = ?',
+            )
+            .run(threadId, key)
+        const at =
+          event.type === 'item.completed' || event.type === 'item.started'
+            ? event.item.createdAt
+            : event.type === 'turn.started'
+              ? event.turn.createdAt
+              : turnAt
+        const seq = this.#appendEventPayload(threadId, event, at, payload)
+        link.run(threadId, key, seq)
+        previous.set(key, { event_key: key, event_seq: seq, payload, active: 1 })
+        changed = true
+      }
+      this.#db
+        .prepare('UPDATE provider_history SET loaded_revision = ? WHERE thread_id = ?')
+        .run(revision, threadId)
+      if (changed) {
+        this.#db
+          .prepare(
+            `DELETE FROM session_search WHERE rowid IN
+          (SELECT event_seq FROM provider_history_events WHERE thread_id = ? AND active = 0)`,
+          )
+          .run(threadId)
+        this.#db
+          .prepare(
+            `DELETE FROM usage_events WHERE event_seq IN
+          (SELECT event_seq FROM provider_history_events WHERE thread_id = ? AND active = 0)`,
+          )
+          .run(threadId)
+        this.#searchRevision += 1
+        this.#deleteReplaySnapshot.run(threadId)
+        this.#deleteCachedReplaySnapshot(threadId)
+        this.#rebuildThreadInboxState(threadId)
+        this.#rebuildThreadRecoveryState(threadId)
+      }
+    })
+    return changed
+  }
+
   settleThread(
     id: string,
     reason: 'manual' | 'inactivity' | 'change_request',
@@ -1473,7 +1678,8 @@ export class Store {
     this.#updateThread(
       id,
       `UPDATE threads SET lifecycle_state = 'snoozed', lifecycle_at = ?,
-       lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL WHERE id = ?`,
+       lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL
+       WHERE id = ? AND closed_at IS NULL`,
       (thread) => ({ ...thread, lifecycle }),
       at,
       wakeAt,
@@ -1515,9 +1721,14 @@ export class Store {
   }
 
   touchThread(id: string, unread = false, at = Date.now()): ThreadLifecycle {
-    const retained = this.#threadCache.get(id)
+    const retained = this.thread(id)
+    if (retained === undefined) throw new Error('thread not found')
+    // A closed thread is frozen history. An event still landing after close
+    // must not resurrect it, and must not fail the dispatch that already
+    // appended the event either.
+    if (retained.closedAt !== undefined) return retained.lifecycle
     let lifecycle: ThreadLifecycle
-    if (retained?.lifecycle.state === 'active') {
+    if (retained.lifecycle.state === 'active') {
       const result = this.#touchActiveThreadStatement.run(at, unread ? 1 : 0, id)
       if (Number(result.changes) === 0) throw new Error('thread not found')
       lifecycle = retained.lifecycle
@@ -1548,18 +1759,22 @@ export class Store {
   }
 
   markThreadRead(id: string): void {
-    this.#updateThread(
-      id,
-      `UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ?`,
-      (thread) => ({
-        ...thread,
-        lifecycle:
-          thread.lifecycle.state === 'active'
-            ? activeLifecycle(thread.lifecycle.keepActive, undefined)
-            : thread.lifecycle,
-        unread: false,
-      }),
-    )
+    const result = this.#db
+      .prepare(`UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ? AND closed_at IS NULL`)
+      .run(id)
+    if (result.changes === 0) {
+      // Closed history is read-only; a missing id is still a caller error.
+      if (this.thread(id) === undefined) throw new Error('thread not found')
+      return
+    }
+    this.#updateCachedThread(id, (thread) => ({
+      ...thread,
+      lifecycle:
+        thread.lifecycle.state === 'active'
+          ? activeLifecycle(thread.lifecycle.keepActive, undefined)
+          : thread.lifecycle,
+      unread: false,
+    }))
     this.#updateSidebarThread(id, (thread) => {
       const lifecycle =
         thread.lifecycle.state === 'active'
@@ -2162,8 +2377,6 @@ export class Store {
           row.payload,
           `recovery for interrupted thread ${row.thread_id}`,
         )
-        // A lifecycle payload only a newer build reads must not abort
-        // recovery of the threads this build does understand.
         if (event === undefined) continue
         const state = states.get(row.thread_id) ?? {
           openTurns: new Set<string>(),
@@ -2753,6 +2966,7 @@ export class Store {
       `SELECT seq, thread_id, at, payload FROM events
        WHERE seq > ?
          AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (${placeholders})
+         AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
        ORDER BY seq LIMIT 5000`,
     )
     const saveMigration = this.#db.prepare(
@@ -2826,6 +3040,7 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
+           AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
            AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'turn.started', 'turn.completed', 'thread.error',
              'item.started', 'item.completed',
@@ -2854,6 +3069,7 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
+           AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
            AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'approval.requested', 'approval.resolved',
              'user_input.requested', 'user_input.resolved',
@@ -2894,7 +3110,7 @@ export class Store {
       const rows = sqliteRows<PayloadRow>(
         this.#db.prepare(
           `SELECT payload FROM usage_events
-           WHERE thread_id = ? ORDER BY event_seq`,
+           WHERE thread_id = ? ORDER BY at, event_seq`,
         ),
         threadId,
       )
@@ -2917,11 +3133,11 @@ export class Store {
       const previous = new Map<string, UsageTotal>()
       const seeds = sqliteRows<ThreadPayloadRow>(
         this.#db.prepare(
-          `SELECT u.thread_id, u.payload
-           FROM usage_events u
-           JOIN (SELECT thread_id, MAX(event_seq) AS event_seq FROM usage_events
-                 WHERE at < ? GROUP BY thread_id) last
-             ON u.thread_id = last.thread_id AND u.event_seq = last.event_seq`,
+          `SELECT thread_id, payload FROM (
+             SELECT thread_id, payload,
+               ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY at DESC, event_seq DESC) AS position
+             FROM usage_events WHERE at < ?
+           ) WHERE position = 1`,
         ),
         since,
       )
@@ -2935,7 +3151,7 @@ export class Store {
           `SELECT u.thread_id, u.payload, t.provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
            WHERE u.at >= ?
-           ORDER BY u.thread_id, u.event_seq`,
+           ORDER BY u.thread_id, u.at, u.event_seq`,
         ),
         since,
       )

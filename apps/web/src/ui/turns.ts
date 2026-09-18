@@ -43,8 +43,7 @@ export type TurnPresentation = {
   workStartedAt: number
   prompt: Item | undefined
   complete: boolean
-  /** Turns carrying a design:* phase marker tell their story through the
-   *  phase labels; raw provider activity stays out of the transcript. */
+  /** Turns carrying a design:* marker retain their phase labels alongside provider work. */
   design: boolean
 }
 
@@ -283,6 +282,7 @@ function presentTurnsRange(
       if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
       draft.latestOutputAt = item.createdAt
 
+      if (item.type === 'reasoning') draft.workEntries.push({ item, index })
       if (item.type === 'message' && item.role === 'user') draft.prompt ??= item
       if (item.type === 'message' && item.role === 'assistant') {
         draft.latestAssistantOutputAt = item.createdAt

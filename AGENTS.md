@@ -110,6 +110,9 @@ and resolving conflicts without rewriting published history. Do not un-park a pr
   unless Leon explicitly asks for it.**
 - Platform-specific changes still need a local run on the affected OS before release.
 - Keep local binds on `127.0.0.1`.
+- If the agent shell exports `ELECTRON_RUN_AS_NODE`, unset it for `pnpm dev`; otherwise
+  Electron starts as Node and cannot import `BrowserWindow`. On macOS, reference-library
+  tests need `TMPDIR` set to its canonical `/private/var/...` path rather than `/var/...`.
 
 ## Traps in this repo
 
@@ -117,6 +120,11 @@ Each of these cost someone hours. They are not preferences.
 
 - **TypeScript is pinned to 5.9.3.** 7.x cannot resolve `@types/node` under pnpm. Do not
   "upgrade" it.
+- **`tsc -b` in a `packages/*` adapter restarts the running dev server.** The server
+  imports adapters from their `dist/`, and `tsx watch` restarts on any change there — which
+  kills every live provider session (running Codex/Claude threads included). While someone's
+  `pnpm dev` is up, typecheck adapters with `tsc --noEmit -p packages/<name>` and leave
+  `pnpm typecheck`/`pnpm build` for when no turn is running.
 - **Use `127.0.0.1`, never `localhost`.** On Windows `localhost` resolves to IPv6 first and
   Electron gets a blank window.
 - **Shiki runs the JavaScript regex engine, not WASM**, because our CSP blocks

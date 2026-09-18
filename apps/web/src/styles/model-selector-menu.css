@@ -165,6 +165,16 @@
   background: color-mix(in srgb, var(--effort-value) 84%, transparent);
 }
 
+.model-selector__slider .dither-slider {
+  opacity: 0.45;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .model-selector__slider:hover .model-selector__slider-stop.is-active {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--effort-value) 8%, transparent);
+  }
+}
+
 .dither-slider {
   position: absolute;
   inset: 0;

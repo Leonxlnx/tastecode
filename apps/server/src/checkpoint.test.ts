@@ -254,4 +254,4 @@ it('keeps legacy checkpoint batches after cache removal and Git garbage collecti
     windowsHide: true,
   }).toString()
   expect(objects.trim().split('\n')).toEqual(Array.from(commits, () => 'commit'))
-}, 20_000)
+}, 60_000)

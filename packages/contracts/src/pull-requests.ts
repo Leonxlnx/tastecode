@@ -293,3 +293,36 @@ export type PullRequestAction = z.infer<typeof PullRequestActionSchema>
 
 export const PullRequestActionResultSchema = z.object({ message: z.string().min(1) })
 export type PullRequestActionResult = z.infer<typeof PullRequestActionResultSchema>
+
+/** A repository file or GitHub upload embedded in pull-request Markdown. */
+export const PullRequestImageUrlSchema = z
+  .string()
+  .url()
+  .max(2048)
+  .regex(
+    /^https:\/\/(?:github\.com|raw\.githubusercontent\.com|private-user-images\.githubusercontent\.com)\//,
+  )
+export type PullRequestImageUrl = z.infer<typeof PullRequestImageUrlSchema>
+
+export const PULL_REQUEST_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+
+export const PullRequestImageSchema = z.object({
+  mediaType: z.enum([
+    'image/png',
+    'image/jpeg',
+    'image/gif',
+    'image/webp',
+    'image/avif',
+    'image/svg+xml',
+    'image/bmp',
+    'image/x-icon',
+  ]),
+  /** Base64-encoded image bytes. */
+  data: z
+    .string()
+    .min(1)
+    .max(Math.ceil(PULL_REQUEST_IMAGE_MAX_BYTES / 3) * 4)
+    .regex(/^[A-Za-z0-9+/]+={0,2}$/)
+    .refine((data) => data.length % 4 === 0),
+})
+export type PullRequestImage = z.infer<typeof PullRequestImageSchema>

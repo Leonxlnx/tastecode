@@ -6,13 +6,14 @@ import {
   useState,
   type ComponentPropsWithoutRef,
 } from 'react'
-import { Streamdown, type Components } from 'streamdown'
+import { Streamdown, defaultRehypePlugins, type Components } from 'streamdown'
 import 'streamdown/styles.css'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import { preserveProjectFileLinks, projectFileReference } from '../project-file-link.js'
 import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
+import { MarkdownImage, MarkdownImageContext } from './MarkdownImage.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
@@ -121,6 +122,27 @@ const STREAMDOWN_COMPONENTS = {
   a: MarkdownLink,
   inlineCode: InlineCode,
 } satisfies Components
+const IMAGE_COMPONENTS = { ...STREAMDOWN_COMPONENTS, img: MarkdownImage } satisfies Components
+
+type ImageTreeNode = {
+  type: string
+  tagName?: string
+  properties?: Record<string, unknown>
+  children?: ImageTreeNode[]
+}
+
+function normalizeImageSources(normalize: (source: string) => string) {
+  return (tree: ImageTreeNode) => {
+    const pending = [tree]
+    while (pending.length) {
+      const node = pending.pop()!
+      if (node.tagName === 'img' && typeof node.properties?.['src'] === 'string') {
+        node.properties['src'] = normalize(node.properties['src'])
+      }
+      if (node.children) pending.push(...node.children)
+    }
+  }
+}
 
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
@@ -142,6 +164,15 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
   projectPath?: string | undefined
 }) {
   const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
+  const imageSource = useContext(MarkdownImageContext)
+  const rehypePlugins = useMemo(() => {
+    if (!imageSource) return undefined
+    const plugins = Object.values(defaultRehypePlugins)
+    // Resolve repository-relative paths after raw HTML parsing, before the
+    // existing sanitizer/hardener can discard an origin-less image URL.
+    plugins.splice(1, 0, [normalizeImageSources, imageSource.normalize])
+    return plugins
+  }, [imageSource])
 
   return (
     <ProjectPathContext.Provider value={projectPath}>
@@ -154,7 +185,8 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
         plugins={STREAMDOWN_PLUGINS}
         controls={STREAMDOWN_CONTROLS}
         icons={STREAMDOWN_ICONS}
-        components={STREAMDOWN_COMPONENTS}
+        components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
+        {...(rehypePlugins ? { rehypePlugins } : {})}
       >
         {renderedText}
       </Streamdown>

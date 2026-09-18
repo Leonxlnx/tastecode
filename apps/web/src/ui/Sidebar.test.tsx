@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Profiler } from 'react'
 import { Sidebar } from './Sidebar.js'
+import type { AccountLimitsState } from './AccountLimits.js'
 
 const hapticMocks = vi.hoisted(() => ({
   perform: vi.fn(),
@@ -62,14 +63,16 @@ const session = (id: string, title: string) => ({
 function renderProjectCatalog(
   projects: Array<{ path: string; name: string; sessions: [] }>,
   active?: string,
+  usageStates?: AccountLimitsState[],
 ) {
-  return render(
+  const content = (active: string | undefined) => (
     <Sidebar
       projects={projects}
       activeProjectPath={active}
       activeSessionId={undefined}
       account={undefined}
       providerName="Codex"
+      usageStates={usageStates}
       collapsed={false}
       width={248}
       onWidthChange={vi.fn()}
@@ -86,8 +89,10 @@ function renderProjectCatalog(
       onReorderSession={vi.fn()}
       onOpenSearch={vi.fn()}
       onOpenSettings={vi.fn()}
-    />,
+    />
   )
+  const view = render(content(active))
+  return { ...view, navigate: (active?: string) => view.rerender(content(active)) }
 }
 
 function controlledIdleCallbacks() {
@@ -101,6 +106,44 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('hides unavailable plan limits while the account component is loading', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    renderProjectCatalog([], undefined, [
+      {
+        provider: 'grok',
+        status: 'ready',
+        summary: {
+          session: usage,
+          today: usage,
+          limits: [],
+          limitSource: { provider: 'grok', status: 'unavailable' },
+        },
+      },
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+  })
+
+  it('shows Usage on the first menu render while limits are still loading', () => {
+    renderProjectCatalog([], undefined, [{ provider: 'codex', status: 'loading' }])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    const usage = within(dialog).getByRole('button', { name: 'Usage, Checking…' })
+    expect(dialog.firstElementChild?.contains(usage)).toBe(true)
+    expect(document.activeElement).toBe(usage)
+  })
+
   it('mounts a large project catalog in bounded idle batches', () => {
     const callbacks = controlledIdleCallbacks()
     const projects = Array.from({ length: 100 }, (_, index) => ({
@@ -388,7 +431,7 @@ describe('Sidebar chat actions', () => {
     expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
-    expect(document.querySelector('.account__name')?.textContent).toBe('private@example.com')
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
     expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('15%')
     expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
@@ -848,6 +891,36 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Quiet' }))
     expect(view.container.querySelectorAll('.sess')).toHaveLength(1)
     vi.useRealTimers()
+  })
+
+  it('keeps opened projects expanded when switching projects or leaving the active chat', () => {
+    const projects = [
+      { path: '/work/first', name: 'First', sessions: [] as [] },
+      { path: '/work/second', name: 'Second', sessions: [] as [] },
+      { path: '/work/third', name: 'Third', sessions: [] as [] },
+    ]
+    const view = renderProjectCatalog(projects, '/work/first')
+    const expanded = (name: string) =>
+      screen.getByRole('button', { name }).getAttribute('aria-expanded')
+    fireEvent.click(screen.getByRole('button', { name: 'Second' }))
+    view.navigate('/work/second')
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Second')).toBe('true')
+    expect(expanded('Third')).toBe('false')
+
+    view.navigate()
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Second')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'First' }))
+    view.navigate('/work/third')
+    expect(expanded('First')).toBe('false')
+    expect(expanded('Second')).toBe('true')
+    expect(expanded('Third')).toBe('true')
+
+    view.navigate('/work/first')
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Third')).toBe('true')
   })
 
   it('reorders chats when one is dragged between sidebar rows', () => {

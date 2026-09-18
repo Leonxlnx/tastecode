@@ -127,12 +127,19 @@ export {
 } from './preview.js'
 export {
   DESIGN_BRIEF_ATTACHMENT,
-  FINAL_BRIEFING_QUESTION,
   designBriefingContinuation,
   designBriefingPrompt,
   designPhaseCorrectionPrompt,
+  designTaskContinuation,
   isDesignBriefAttachment,
   parseBriefingOutput,
   type BriefingOutput,
   type BriefingQuestion,
 } from './workflow.js'
+export {
+  loadReviewedReferences,
+  parseReferenceDeck,
+  selectReviewedReferences,
+} from './reference-library.js'
+export { selectTypographyCandidates, validateTypographySelection } from './typography.js'
+export type { TypographyCandidates } from './typography.js'

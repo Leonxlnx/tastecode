@@ -11,6 +11,7 @@ import type { McpServer, ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { IconBox as Box, IconServer as Server } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import '../styles/composer-resource-picker.css'
+import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
   type ComposerResource,
@@ -22,6 +23,8 @@ export type { ComposerResource } from './composer-resource.js'
 
 type SkillsInventory = ResultOf<'skills.list'>
 type McpInventory = ResultOf<'mcp.list'>
+// Name widths for placeholder rows while the first inventory arrives.
+const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
 
 export const ComposerResourcePicker = forwardRef<
   ComposerResourcePickerHandle,
@@ -181,10 +184,11 @@ export const ComposerResourcePicker = forwardRef<
 
   if (!props.trigger) return null
 
+  const loadingEmpty = Boolean(props.projectPath) && loading && resources.length === 0
   const status = !props.projectPath
     ? 'Choose a project to browse skills and MCP servers.'
-    : loading && resources.length === 0
-      ? 'Loading skills and MCP servers…'
+    : loadingEmpty
+      ? undefined
       : filtered.length === 0
         ? query
           ? `No skills or MCP servers match “${props.trigger.query}”.`
@@ -244,6 +248,10 @@ export const ComposerResourcePicker = forwardRef<
           <p className="composer-resource-picker__status" role="status">
             {message}
           </p>
+        ) : loadingEmpty ? (
+          <SkeletonStatus label="Loading skills and MCP servers…">
+            <SkeletonRows rows={4} icon widths={RESOURCE_SKELETON_WIDTHS} />
+          </SkeletonStatus>
         ) : null}
       </div>
     </div>

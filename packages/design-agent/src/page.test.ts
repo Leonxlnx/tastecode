@@ -109,8 +109,8 @@ describe('page blueprint', () => {
     ).toThrow('depends on unknown section missing-proof')
   })
 
-  it('rejects eyebrow copy at the artifact boundary', () => {
-    expect(() =>
+  it('preserves reference eyebrow copy at the artifact boundary', () => {
+    expect(
       parsePageBlueprint({
         ...validBlueprint,
         sections: [
@@ -120,7 +120,7 @@ describe('page blueprint', () => {
           },
         ],
       }),
-    ).toThrow('copy.eyebrow is forbidden')
+    ).toMatchObject({ sections: [{ copy: { eyebrow: 'Roasted weekly' } }] })
   })
 
   it('validates motion purpose, trigger, and timing together', () => {

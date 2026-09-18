@@ -62,6 +62,57 @@ describe('app update controller', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
+  it('keeps a downloaded update installable after a stray error', async () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('update-available', info)
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce())
+    updater.emit('update-downloaded', info)
+    updater.emit('error', new Error('post-download signature probe failed'))
+
+    expect(controller.state()).toMatchObject({ status: 'ready', version: info.version })
+    expect(controller.install()).toBe(true)
+  })
+
+  it('does not replace a live download with an error state', () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('update-available', info)
+    updater.emit('download-progress', { percent: 40 })
+    updater.emit('error', new Error('flaky network'))
+
+    expect(controller.state()).toMatchObject({ status: 'downloading', progress: 40 })
+  })
+
+  it('does not leak a stale error field into download progress', () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('error', new Error('check failed'))
+    expect(controller.state()).toMatchObject({ status: 'error' })
+
+    updater.emit('download-progress', { percent: 12 })
+    expect(controller.state()).toEqual({
+      status: 'downloading',
+      currentVersion: '0.1.0-beta.1',
+      progress: 12,
+    })
+  })
+
   it('stays inert outside a packaged build', async () => {
     const updater = fakeUpdater()
     const controller = createAppUpdateController({
@@ -94,7 +145,7 @@ describe('app update controller', () => {
     expect(loadUpdater).not.toHaveBeenCalled()
   })
 
-  it('checks automatically after startup', async () => {
+  it('checks after startup and hourly while open, then stops on disposal', async () => {
     vi.useFakeTimers()
     const updater = fakeUpdater()
     const controller = createAppUpdateController({
@@ -108,6 +159,25 @@ describe('app update controller', () => {
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    controller.start()
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+    controller.dispose()
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps stable installs out of prereleases and retains a ready download', async () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '1.0.0',
+      mode: 'install',
+    })
+    expect(updater.allowPrerelease).toBe(false)
+    updater.emit('update-downloaded', { version: '1.0.1' })
+    await expect(controller.check()).resolves.toMatchObject({ status: 'ready', version: '1.0.1' })
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
   })
 
   it('does not load the optional updater before the automatic check', async () => {

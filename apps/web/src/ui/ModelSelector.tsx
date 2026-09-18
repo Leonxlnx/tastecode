@@ -2,6 +2,7 @@ import { lazy, memo, Suspense } from 'react'
 import { IconChevronDown as ChevronDown, IconBolt as Zap } from '@tabler/icons-react'
 import { Menu } from './Menu.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import {
   getCompactModelName,
   getFriendlyEffortLabel,
@@ -85,9 +86,9 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
         return (
           <Suspense
             fallback={
-              <div className="model-selector__loading" role="status">
-                Loading models…
-              </div>
+              <SkeletonStatus label="Loading models…" className="model-selector__loading">
+                <SkeletonRows rows={5} icon />
+              </SkeletonStatus>
             }
           >
             <ModelSelectorPanel {...props} />

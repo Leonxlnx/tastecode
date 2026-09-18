@@ -4,13 +4,14 @@ import {
   containedWorkspaceFile,
   normalizeWorkspaceFile,
   readWorkspaceFile,
+  workspaceEntries,
 } from './workspace-files.js'
 import path from 'node:path'
 import { readRasterMetadata } from './raster-metadata.js'
 import type { PageBlueprint } from './page.js'
 import { member, optionalString, record, string, strings } from './parse.js'
 
-const ASSET_KINDS = ['image', 'illustration', 'video', 'icon', 'font', 'component'] as const
+const ASSET_KINDS = ['image', 'illustration', 'video', 'icon', 'font', 'component', 'data'] as const
 const ASSET_STATUSES = ['existing', 'needed', 'ready'] as const
 const SOURCE_KINDS = ['project', 'user', 'origin-kit', 'generated', 'external'] as const
 const ASSET_ROLES = [
@@ -24,6 +25,7 @@ const ASSET_ROLES = [
   'video',
   'font',
   'component',
+  'data',
 ] as const
 
 export type AssetKind = (typeof ASSET_KINDS)[number]
@@ -148,6 +150,8 @@ export function validateAssetManifestForPage(
   workspacePath?: string,
   suppliedReferences: readonly string[] = [],
 ): AssetManifest {
+  const workspaceRoot = workspacePath ? realpathSync(workspacePath) : undefined
+  if (workspaceRoot) manifest = expandFontDirectories(manifest, workspaceRoot)
   const expected = new Map<string, { kind: 'asset' | 'component'; sectionIds: Set<string> }>()
   for (const section of page.sections) {
     for (const [kind, ids] of [
@@ -164,6 +168,16 @@ export function validateAssetManifestForPage(
         expected.set(id, entry)
       }
     }
+  }
+
+  // Brand fonts can serve several sections without a separate page-level asset need.
+  const pageSectionIds = new Set(page.sections.map(({ id }) => id))
+  for (const asset of manifest.assets) {
+    if (asset.kind !== 'font' || asset.role !== 'font' || expected.has(asset.id)) continue
+    if (!asset.sectionIds?.length || asset.sectionIds.some((id) => !pageSectionIds.has(id))) {
+      throw new Error(`font asset ${asset.id} must name existing consuming page sections`)
+    }
+    expected.set(asset.id, { kind: 'asset', sectionIds: new Set(asset.sectionIds) })
   }
 
   const actualIds = new Set(manifest.assets.map(({ id }) => id))
@@ -184,7 +198,6 @@ export function validateAssetManifestForPage(
     )
   }
 
-  const workspaceRoot = workspacePath ? realpathSync(workspacePath) : undefined
   const suppliedReferenceFiles = new Map<string, string>(
     suppliedReferences.map((filePath, index) => {
       if (!existsSync(filePath) || !statSync(filePath).isFile()) {
@@ -217,7 +230,10 @@ export function validateAssetManifestForPage(
     } else if (asset.kind === 'component' || asset.role === 'component') {
       throw new Error(`asset need ${asset.id} cannot use kind or role component`)
     }
-    const requiredKind = asset.role === 'font' || asset.role === 'video' ? asset.role : undefined
+    const requiredKind =
+      asset.role === 'font' || asset.role === 'video' || asset.role === 'data'
+        ? asset.role
+        : undefined
     if (
       (requiredKind && asset.kind !== requiredKind) ||
       (RASTER_VISUAL_ROLES.has(asset.role) && !['image', 'illustration'].includes(asset.kind))
@@ -310,6 +326,13 @@ export function validateAssetManifestForPage(
       if (localFile && RASTER_VISUAL_ROLES.has(asset.role)) {
         validateRasterAsset(asset, localFile)
       }
+      if (localFile && asset.role === 'data') {
+        try {
+          JSON.parse(readWorkspaceFile(localFile, 1_000_000).toString('utf8'))
+        } catch {
+          throw new Error(`data asset ${asset.id} must contain valid JSON within 1 MB`)
+        }
+      }
     }
   }
   return manifest
@@ -371,13 +394,55 @@ function sameSet(left: Set<string>, right: Set<string>): boolean {
   return left.size === right.size && [...left].every((value) => right.has(value))
 }
 
+function expandFontDirectories(manifest: AssetManifest, workspaceRoot: string): AssetManifest {
+  const ids = new Set(manifest.assets.map(({ id }) => id))
+  const assets = manifest.assets.flatMap((asset) => {
+    if (asset.kind !== 'font' || asset.role !== 'font' || asset.status === 'needed') return [asset]
+    const relative =
+      asset.destination ?? (asset.source?.kind === 'project' ? asset.source.reference : undefined)
+    if (!relative) return [asset]
+    const directory = containedWorkspaceFile(
+      workspaceRoot,
+      relative,
+      `font asset ${asset.id}`,
+      true,
+    )
+    if (!statSync(directory).isDirectory()) return [asset]
+    const files = workspaceEntries(directory).filter(
+      ({ file, relative }) => file && /\.(?:ttf|otf|woff2?)$/iu.test(relative),
+    )
+    if (!files.length) throw new Error(`font asset ${asset.id} directory contains no font files`)
+    let suffix = 1
+    return files.map((file, index) => {
+      let id = asset.id
+      if (index > 0) {
+        do {
+          id = `${asset.id}_file_${++suffix}`
+        } while (ids.has(id))
+        ids.add(id)
+      }
+      const destination = normalizeWorkspaceFile(path.join(relative, file.relative))!
+      return {
+        ...asset,
+        id,
+        destination,
+        ...(asset.source?.kind === 'project'
+          ? { source: { ...asset.source, reference: destination } }
+          : {}),
+      }
+    })
+  })
+  return parseAssetManifest({ ...manifest, assets })
+}
+
 function isSvg(filePath: string): boolean {
   if (path.extname(filePath).toLowerCase() === '.svg') return true
-  return readWorkspaceFile(filePath, 32_000_000)
+  const header = readWorkspaceFile(filePath, 32_000_000)
     .subarray(0, 1024)
     .toString('utf8')
+    .trimStart()
     .toLowerCase()
-    .includes('<svg')
+  return header.startsWith('<') && header.includes('<svg')
 }
 
 function validateRasterAsset(asset: DesignAsset, filePath: string): void {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { comparePullRequestText } from './pull-request-text.js'
+import { comparePullRequestText, countLabel } from './pull-request-text.js'
 
 describe('comparePullRequestText', () => {
   it('matches the previous case-insensitive locale ordering', () => {
@@ -9,5 +9,15 @@ describe('comparePullRequestText', () => {
       .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
 
     expect(values.slice().sort(comparePullRequestText)).toEqual(legacy)
+  })
+})
+
+describe('countLabel', () => {
+  it.each([
+    [0, '0 files'],
+    [1, '1 file'],
+    [2, '2 files'],
+  ])('formats %i as %s', (count, expected) => {
+    expect(countLabel(count, 'file')).toBe(expected)
   })
 })

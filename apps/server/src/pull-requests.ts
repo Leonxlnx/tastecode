@@ -20,6 +20,7 @@ import type {
 import { isInstalled, spawnCli } from '@harness/proc/cli'
 import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
+import { PullRequestImageService } from './pull-request-images.js'
 
 const runFile = promisify(execFile)
 const LIST_TTL_MS = 30_000
@@ -59,6 +60,7 @@ type GhRunOptions = {
   stdin?: string
   timeoutMs?: number
   maxBytes?: number
+  encoding?: 'utf8' | 'base64'
 }
 
 export type GhRunner = (args: string[], options?: GhRunOptions) => Promise<string>
@@ -382,6 +384,7 @@ const PULL_REQUEST_SEARCH_FIELDS = [
  * the token; neither its token nor GitHub response headers cross into the UI.
  */
 export class PullRequestService {
+  readonly images: PullRequestImageService
   readonly #run: GhRunner
   readonly #installed: () => Promise<boolean>
   readonly #now: () => number
@@ -414,6 +417,7 @@ export class PullRequestService {
     this.#installed = options.installed ?? (() => isInstalled('gh'))
     this.#now = options.now ?? Date.now
     this.#resolveProjects = options.resolveProjects ?? resolveProjectRepositories
+    this.images = new PullRequestImageService(this.#run, this.#now)
   }
 
   async list(projectPaths: readonly string[], refresh = false): Promise<PullRequestListResult> {
@@ -1445,6 +1449,7 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
   return new Promise((resolve, reject) => {
     const child = spawnCli('gh', args)
     let stdout = ''
+    const binary: Buffer[] = []
     let stderr = ''
     let bytes = 0
     let settled = false
@@ -1462,16 +1467,17 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       finish(new Error('GitHub did not respond in time'))
     }, options.timeoutMs ?? 30_000)
 
-    child.stdout.setEncoding('utf8')
+    if (options.encoding !== 'base64') child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
+    child.stdout.on('data', (chunk: string | Buffer) => {
       if (settled) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > maxBytes) {
         finish(new Error('GitHub response was too large to display safely'))
         return
       }
-      stdout += chunk
+      if (typeof chunk === 'string') stdout += chunk
+      else binary.push(chunk)
     })
     child.stderr.on('data', (chunk: string) => {
       if (settled) return
@@ -1484,7 +1490,8 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
     })
     child.on('error', (error) => finish(error))
     child.on('close', (code) => {
-      if (code === 0) finish(stdout)
+      if (code === 0)
+        finish(options.encoding === 'base64' ? Buffer.concat(binary).toString('base64') : stdout)
       else
         finish(new Error(firstUsefulLine(stderr) || firstUsefulLine(stdout) || 'GitHub CLI failed'))
     })

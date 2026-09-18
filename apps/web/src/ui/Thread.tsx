@@ -1,8 +1,12 @@
 import {
+  createContext,
+  Fragment,
   lazy,
   memo,
   Suspense,
+  type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -32,6 +36,7 @@ import {
   IconSearch as Search,
   IconTerminal2 as SquareTerminal,
   IconTool as Wrench,
+  IconWorldSearch as WorldSearch,
 } from '@tabler/icons-react'
 import {
   previewViewedImage,
@@ -39,14 +44,16 @@ import {
   writeClipboardText,
   type PickedAttachment,
 } from '../bridge.js'
-import { isEditableTarget } from '../shortcuts.js'
+import { isEditableTarget, matchesShortcut } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
-import { Diff } from './Diff.js'
+import { ChangeStats, Diff, parseDiff } from './Diff.js'
+import { parseToolCall, toolArgumentEntries, toolArgumentSnippet } from './tool-call-text.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
+import { ThreadSkeleton } from './Skeleton.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -87,6 +94,18 @@ const ThreadSearch = lazy(() =>
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
+
+/**
+ * Lets a disclosure re-measure its virtual row in the same commit that its
+ * reveal enters or leaves flow. Waiting for the ResizeObserver would move the
+ * rows below one frame after the reveal starts animating.
+ */
+const RowMeasureContext = createContext<
+  ((row: Element, header: Element | null) => void) | undefined
+>(undefined)
+
+/** Space kept between a disclosure's summary and the viewport edge it moves toward. */
+const HEADER_MARGIN = 12
 
 /**
  * The thread.
@@ -134,6 +153,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
   const currentApproval = thread.approvals[0]
   const scroller = useRef<HTMLDivElement>(null)
+  const runwayRef = useRef<HTMLDivElement>(null)
+  /** Scroll to apply once the runway has committed a disclosure's new height. */
+  const pendingEndAnchor = useRef<{ target: number; delta: number } | undefined>(undefined)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
   const completedSearchJump = useRef(0)
@@ -290,8 +312,12 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   useEffect(() => {
     if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return
-      if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+      if (event.defaultPrevented || isEditableTarget(event.target)) return
+      if (
+        !matchesShortcut(event, { key: 'arrowup', alt: true }) &&
+        !matchesShortcut(event, { key: 'arrowdown', alt: true })
+      )
+        return
       // The first VISIBLE row, not rows[0] — that one is up to `overscan`
       // items above the viewport, and navigating from it could send the user
       // backwards to a turn they had already scrolled past.
@@ -310,18 +336,56 @@ export const Thread = memo(function Thread(props: ThreadProps) {
 
   const rows = virtualizer.getVirtualItems()
 
-  // The generic rail only covers the gap before the first response, plus
-  // design turns whose phase owns the status line. Normal reasoning, tool
-  // activity and answer text carry their own visible state in chronological
-  // rows, so the rail must disappear instead of duplicating them.
+  // measureElement without a ResizeObserver entry returns the cached size, so
+  // a disclosure that just changed its row's height has to hand over a fresh
+  // measurement. Rounded like the observer's border box so the observer's own
+  // notification a frame later finds nothing left to change.
+  const measureRow = useCallback(
+    (row: Element, header: Element | null) => {
+      const el = scroller.current
+      const index = virtualizer.indexFromElement(row)
+      const size = Math.round(row.getBoundingClientRect().height)
+      // resizeItem's rerender is flushed after this layout effect, so the
+      // runway has not changed yet; the cache says by how much it will.
+      const delta = size - (virtualizer.measurementsCache[index]?.size ?? size)
+      virtualizer.resizeItem(index, size)
+      if (!el || delta === 0) return
+      // The text after the disclosure is what the user is reading, so it must
+      // not move: the summary travels instead. Scroll by the row's growth in
+      // the same step that commits the runway height, then slide the runway
+      // back from the old offset on the compositor over the same curve as the
+      // rows, so both share one clock. When the scroll cannot follow (a thread
+      // shorter than its viewport, closing at the very top) the runway height
+      // glides instead and the rows below move, which is the only honest
+      // option left.
+      const nextMax = Math.max(0, el.scrollHeight + delta - el.clientHeight)
+      // The summary the user just clicked must stay on screen: it may rise to
+      // the top edge or sink to the bottom edge, no further. Past that the
+      // details push the text below instead, so a long reveal never scrolls
+      // its own header — and its virtual row — out of view.
+      const viewport = el.getBoundingClientRect()
+      const headerBox = (header ?? row).getBoundingClientRect()
+      const headerTop = headerBox.top - viewport.top
+      const roomAbove = Math.max(0, headerTop - HEADER_MARGIN)
+      const roomBelow = Math.max(0, viewport.height - headerTop - headerBox.height - HEADER_MARGIN)
+      const shift = delta > 0 ? Math.min(delta, roomAbove) : Math.max(delta, -roomBelow)
+      const target = Math.min(Math.max(el.scrollTop + shift, 0), nextMax)
+      if (Math.abs(target - el.scrollTop) < 1) return
+      // Commit the height in one step; the follower applies the scroll before
+      // paint and lifts the attribute again.
+      el.dataset['anchoringEnd'] = ''
+      pendingEndAnchor.current = { target, delta }
+    },
+    [virtualizer],
+  )
+
+  // Keep the turn timer above its first response until the whole turn ends.
+  // The anchor row reserves the rail's height as more content arrives.
   //
   // measurementsCache, not getOffsetForIndex: the latter clamps to the
   // maximum scroll offset, which is below the anchor row's true start
   // whenever the thread is shorter than the viewport.
-  const showWorkingRail =
-    running &&
-    thread.activeTurn !== undefined &&
-    (activePresentation?.design === true || activePresentation?.firstResponseIndex === undefined)
+  const showWorkingRail = running && thread.activeTurn !== undefined
   const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   const railOffset =
     railIndex === undefined
@@ -333,158 +397,171 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // of a scroll container scrolls away with the content — Ctrl+F used to
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
-    <div className="thread-shell">
-      <FrameScrollFollower
-        frameStore={props.frameStore}
-        revealRequest={props.revealRequest ?? 0}
-        completedRevealRequest={completedRevealRequest}
-        scroller={scroller}
-        modeRef={modeRef}
-        anchorIndex={anchorIndex}
-        virtualizer={virtualizer}
-        writeScrollTop={writeScrollTop}
-        setMode={setMode}
-      />
-      {finding ? (
-        <Suspense fallback={null}>
-          <ThreadSearch
-            items={thread.items}
-            liveItems={liveItems}
-            frameStore={props.frameStore}
-            threadId={props.threadId}
-            onJump={jumpTo}
-            onClose={() => setFinding(false)}
-          />
-        </Suspense>
-      ) : null}
-      {thread.items.length === 0 && !running ? (
-        props.loading ? (
-          <div className="empty thread__empty" role="status">
-            Loading conversation…
-          </div>
-        ) : (
-          <div className="empty thread__empty">
-            <div className="empty__prompt" role="heading" aria-level={1}>
-              Tell the agent what you want to build, then send it below.
-            </div>
-          </div>
-        )
-      ) : null}
-      <div className="thread" ref={scroller} onScroll={onScroll}>
-        <div className="thread__col">
-          <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
-            {rows.map((row) => {
-              const item = threadItemAt(thread.items, liveItems, row.index)
-              if (!item) return null
-              const presentation = presentations.get(item.turnId)
-              const activityGroup =
-                presentation && presentation.design !== true
-                  ? activityGroupAt(presentation.activityGroups, row.index)
-                  : undefined
-              return (
-                <ThreadFrameRow
-                  key={row.key}
-                  index={row.index}
-                  start={row.start}
-                  measureElement={virtualizer.measureElement}
-                  frameStore={props.frameStore}
-                  items={thread.items}
-                  presentation={presentation}
-                  activityGroup={activityGroup}
-                  running={running}
-                  errorsInComposer={props.errorsInComposer ?? false}
-                  activeTurnId={thread.activeTurn?.id}
-                  repeatedDesignRowAt={repeatedDesignRowAt}
-                  entering={enteringItemIds.has(item.id)}
-                  settlingTurnId={settledTurnId}
-                  showWorkingRail={showWorkingRail}
-                  projectPath={props.projectPath}
-                  onEditMessage={props.onEditMessage}
-                  checkpointIndex={checkpointIndex}
-                  onRevertCheckpoint={props.onRevertCheckpoint}
-                />
-              )
-            })}
-            {showWorkingRail && thread.activeTurn ? (
-              // Deliberately not keyed by turn id: the optimistic turn's id is
-              // replaced by the server's a few seconds in, and a key would
-              // remount the rail at exactly the moment this render position
-              // exists to survive. Before any response row exists the rail
-              // sits at the end of the runway, over the space the spacer
-              // below holds.
-              <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                <FrameWorkingRail
-                  frameStore={props.frameStore}
-                  items={thread.items}
-                  turnId={thread.activeTurn.id}
-                  liveStart={thread.liveStart}
-                  activityIndices={activeActivityIndices}
-                  startedAt={activePresentation?.workStartedAt ?? thread.activeTurn.startedAt}
-                />
+    <RowMeasureContext.Provider value={measureRow}>
+      <div className="thread-shell">
+        {finding ? (
+          <Suspense fallback={null}>
+            <ThreadSearch
+              items={thread.items}
+              liveItems={liveItems}
+              frameStore={props.frameStore}
+              threadId={props.threadId}
+              onJump={jumpTo}
+              onClose={() => setFinding(false)}
+            />
+          </Suspense>
+        ) : null}
+        {thread.items.length === 0 && !running ? (
+          props.loading ? (
+            <ThreadSkeleton className="thread__empty" />
+          ) : (
+            <div className="empty thread__empty">
+              <div className="empty__prompt" role="heading" aria-level={1}>
+                Tell the agent what you want to build, then send it below.
               </div>
+            </div>
+          )
+        ) : null}
+        <div className="thread" ref={scroller} onScroll={onScroll}>
+          <div className="thread__col">
+            <div
+              className="thread__runway"
+              ref={runwayRef}
+              style={{ height: virtualizer.getTotalSize() }}
+            >
+              {rows.map((row) => {
+                const item = threadItemAt(thread.items, liveItems, row.index)
+                if (!item) return null
+                const presentation = presentations.get(item.turnId)
+                const activityGroup =
+                  presentation && presentation.design !== true
+                    ? activityGroupAt(presentation.activityGroups, row.index)
+                    : undefined
+                return (
+                  <ThreadFrameRow
+                    key={row.key}
+                    index={row.index}
+                    start={row.start}
+                    measureElement={virtualizer.measureElement}
+                    frameStore={props.frameStore}
+                    items={thread.items}
+                    presentation={presentation}
+                    activityGroup={activityGroup}
+                    running={running}
+                    errorsInComposer={props.errorsInComposer ?? false}
+                    activeTurnId={thread.activeTurn?.id}
+                    repeatedDesignRowAt={repeatedDesignRowAt}
+                    entering={enteringItemIds.has(item.id)}
+                    settlingTurnId={settledTurnId}
+                    showWorkingRail={showWorkingRail}
+                    projectPath={props.projectPath}
+                    onEditMessage={props.onEditMessage}
+                    checkpointIndex={checkpointIndex}
+                    onRevertCheckpoint={props.onRevertCheckpoint}
+                  />
+                )
+              })}
+              {showWorkingRail && thread.activeTurn ? (
+                // Deliberately not keyed by turn id: the optimistic turn's id is
+                // replaced by the server's a few seconds in, and a key would
+                // remount the rail at exactly the moment this render position
+                // exists to survive. Before any response row exists the rail
+                // sits at the end of the runway, over the space the spacer
+                // below holds.
+                <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
+                  {activePresentation?.design ? (
+                    <FrameWorkingRail
+                      frameStore={props.frameStore}
+                      items={thread.items}
+                      turnId={thread.activeTurn.id}
+                      liveStart={thread.liveStart}
+                      activityIndices={activeActivityIndices}
+                      startedAt={activePresentation.workStartedAt}
+                    />
+                  ) : (
+                    <TurnDuration startedAt={thread.activeTurn.startedAt} />
+                  )}
+                </div>
+              ) : null}
+            </div>
+
+            {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
+              <div className="thread__rail-spacer" aria-hidden />
+            ) : null}
+
+            {/* Above the plan and the diff: it is the only thing here that blocks
+            the agent, so it should be the first thing the eye lands on. */}
+            {thread.userInputs.map((request) => (
+              <UserInput
+                key={request.id}
+                request={request}
+                onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
+              />
+            ))}
+
+            {currentApproval ? (
+              <Approval
+                key={currentApproval.id}
+                request={currentApproval}
+                onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
+              />
+            ) : null}
+
+            {running ? <Plan steps={thread.plan} compact /> : null}
+            {!running ? (
+              <Diff
+                diff={thread.diff}
+                threadId={props.threadId}
+                transport={props.transport}
+                onUndo={
+                  props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
+                    ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
+                    : undefined
+                }
+              />
             ) : null}
           </div>
-
-          {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
-            <div className="thread__rail-spacer" aria-hidden />
-          ) : null}
-
-          {/* Above the plan and the diff: it is the only thing here that blocks
-            the agent, so it should be the first thing the eye lands on. */}
-          {thread.userInputs.map((request) => (
-            <UserInput
-              key={request.id}
-              request={request}
-              onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
-            />
-          ))}
-
-          {currentApproval ? (
-            <Approval
-              key={currentApproval.id}
-              request={currentApproval}
-              onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
-            />
-          ) : null}
-
-          {running ? <Plan steps={thread.plan} compact /> : null}
-          {!running ? (
-            <Diff
-              diff={thread.diff}
-              threadId={props.threadId}
-              transport={props.transport}
-              onUndo={
-                props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
-                  ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
-                  : undefined
-              }
-            />
-          ) : null}
         </div>
-      </div>
 
-      {mode === 'free' ? (
-        <button
-          className="jump"
-          onClick={() => {
-            const el = scroller.current
-            if (!el) return
-            // Stay in free mode for the whole glide. Flipping to follow-end
-            // here unmounts the button, and the first mid-flight scroll event
-            // then flips it straight back — remounting it with its entrance
-            // animation — until the scroll lands. The onScroll handler hands
-            // over to follow-end once the glide actually reaches the bottom.
-            el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
-            // Already at the bottom? Nothing animates and no scroll event
-            // comes, so there would be no handover — hide right away.
-            if (isAtBottom(el)) setMode('follow-end')
-          }}
-        >
-          <ArrowDownToLine size={13} aria-hidden />
-          Jump to latest
-        </button>
-      ) : null}
-    </div>
+        {/* Mount after the scroller so its ref is set before the layout effect. */}
+        <FrameScrollFollower
+          frameStore={props.frameStore}
+          threadId={props.threadId}
+          revealRequest={props.revealRequest ?? 0}
+          completedRevealRequest={completedRevealRequest}
+          scroller={scroller}
+          modeRef={modeRef}
+          anchorIndex={anchorIndex}
+          pendingEndAnchor={pendingEndAnchor}
+          runway={runwayRef}
+          virtualizer={virtualizer}
+          writeScrollTop={writeScrollTop}
+          setMode={setMode}
+        />
+
+        {mode === 'free' ? (
+          <button
+            className="jump"
+            onClick={() => {
+              const el = scroller.current
+              if (!el) return
+              // Stay in free mode for the whole glide. Flipping to follow-end
+              // here unmounts the button, and the first mid-flight scroll event
+              // then flips it straight back — remounting it with its entrance
+              // animation — until the scroll lands. The onScroll handler hands
+              // over to follow-end once the glide actually reaches the bottom.
+              el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
+              // Already at the bottom? Nothing animates and no scroll event
+              // comes, so there would be no handover — hide right away.
+              if (isAtBottom(el)) setMode('follow-end')
+            }}
+          >
+            <ArrowDownToLine size={13} aria-hidden />
+            Jump to latest
+          </button>
+        ) : null}
+      </div>
+    </RowMeasureContext.Provider>
   )
 })
 
@@ -495,35 +572,88 @@ export const Thread = memo(function Thread(props: ThreadProps) {
  */
 function FrameScrollFollower({
   frameStore,
+  threadId,
   revealRequest,
   completedRevealRequest,
   scroller,
   modeRef,
   anchorIndex,
+  pendingEndAnchor,
+  runway,
   virtualizer,
   writeScrollTop,
   setMode,
 }: {
   frameStore: ThreadFrameStore
+  threadId: string | undefined
   revealRequest: number
   completedRevealRequest: { current: number }
   scroller: { current: HTMLDivElement | null }
   modeRef: { current: ScrollMode }
   anchorIndex: { current: number }
+  pendingEndAnchor: { current: { target: number; delta: number } | undefined }
+  runway: { current: HTMLDivElement | null }
   virtualizer: Virtualizer<HTMLDivElement, Element>
   writeScrollTop: (element: HTMLElement, top: number) => void
   setMode: (mode: ScrollMode) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
-  const itemVersion = useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+  useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+  const openedThread = useRef(threadId)
 
-  // Layout effect, not effect: this runs before paint, so the correction is
-  // never visible as a jump.
+  // Images and change previews can resize below the virtual list without a
+  // transcript render. Keep the end pinned until the user takes over.
+  useLayoutEffect(() => {
+    const element = scroller.current
+    const content = element?.firstElementChild
+    if (!element || !content) return
+    const observer = new ResizeObserver(() => {
+      if (modeRef.current === 'follow-end') {
+        writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      }
+    })
+    observer.observe(element)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [scroller, modeRef, writeScrollTop])
+
+  // Follow every render before paint: replay and virtual row measurements can
+  // change the scroll height without changing the live text frame version.
   useLayoutEffect(() => {
     const element = scroller.current
     if (!element) return
 
-    if (completedRevealRequest.current !== revealRequest) {
+    // A disclosure just committed its row's new height: keep the text after
+    // it where it was (see measureRow), whatever the mode.
+    const anchor = pendingEndAnchor.current
+    if (anchor) {
+      pendingEndAnchor.current = undefined
+      const before = element.scrollTop
+      writeScrollTop(element, anchor.target)
+      delete element.dataset['anchoringEnd']
+      const shift = element.scrollTop - before
+      if (
+        shift !== 0 &&
+        runway.current &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      ) {
+        slideRunwayBack(runway.current, shift, anchor.delta > 0)
+      }
+      // Opening something taller than the space above it leaves the viewport
+      // short of the end. That was the user's choice; following the end now
+      // would drag the summary they just clicked out of view.
+      if (
+        modeRef.current !== 'free' &&
+        element.scrollHeight - element.scrollTop - element.clientHeight > 1
+      ) {
+        modeRef.current = 'free'
+        setMode('free')
+      }
+      return
+    }
+
+    if (openedThread.current !== threadId || completedRevealRequest.current !== revealRequest) {
+      openedThread.current = threadId
       completedRevealRequest.current = revealRequest
       modeRef.current = 'follow-end'
       setMode('follow-end')
@@ -546,23 +676,29 @@ function FrameScrollFollower({
       }
       writeScrollTop(element, start)
     }
-  }, [
-    anchorIndex,
-    completedRevealRequest,
-    itemVersion,
-    modeRef,
-    revealRequest,
-    scroller,
-    setMode,
-    virtualizer,
-    writeScrollTop,
-  ])
+  })
 
   return null
 }
 
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
+
+/**
+ * The scroll just moved by `shift` in one step; start the runway that far
+ * off and let it settle over the reveal's own curve, so the rows above the
+ * disclosure travel while the text below holds still. A reversal mid-flight
+ * keeps whatever offset the previous slide had left to unwind.
+ */
+function slideRunwayBack(runway: HTMLElement, shift: number, opening: boolean) {
+  const running = runway.getAnimations()[0]
+  const current = running ? new DOMMatrix(getComputedStyle(runway).transform).m42 : 0
+  running?.cancel()
+  runway.animate([{ transform: `translateY(${current + shift}px)` }, { transform: 'none' }], {
+    duration: opening ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS,
+    easing: REVEAL_EASING,
+  })
+}
 
 function useFrameLiveItems(
   frameStore: ThreadFrameStore,
@@ -645,8 +781,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     activityGroup !== undefined &&
     (isStackedActivity(item) ||
       (presentation?.complete === true &&
-        item.type === 'message' &&
-        item.role === 'assistant' &&
+        isWorkDisclosureItem(item) &&
         index !== presentation.finalAnswerIndex))
   const activityLead = compactedActivity && activityGroup.firstIndex === index
   const itemAfterActivity = activityGroup
@@ -662,12 +797,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     (errorsInComposer && item.type === 'error') ||
     isBlankReasoning(item) ||
     (compactedActivity && !activityLead) ||
-    repeatedDesignRowAt(item, index) ||
-    // A design turn tells its story through the phase labels and TasteCode
-    // notes; raw provider work would drown that story in noise.
-    (presentation?.design === true &&
-      !compactedActivity &&
-      ((isActivity(item) && !designPhaseLabel(toolText(item))) || item.type === 'error'))
+    repeatedDesignRowAt(item, index)
   const nextVisibleItem = threadItemAt(
     items,
     liveItems,
@@ -675,13 +805,24 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   )
   const compactToNext =
     !suppressed &&
-    nextVisibleItem?.turnId === item.turnId &&
+    nextVisibleItem !== undefined &&
+    (nextVisibleItem.turnId === item.turnId ||
+      (item.type === 'message' &&
+        item.role === 'assistant' &&
+        item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
   const activitySource =
-    activityLead && activityGroup ? { group: activityGroup, items, liveItems } : undefined
+    activityLead && activityGroup
+      ? {
+          group: activityGroup,
+          items,
+          liveItems,
+          complete: presentation?.complete === true && !live,
+        }
+      : undefined
   const liveItemUpdate = liveItems.get(index)
 
   return (
@@ -691,6 +832,9 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
       ref={measureElement}
       style={{ transform: `translateY(${start}px)` }}
     >
+      {responseLead && !presentation.design && presentation.activityGroups.length === 0 ? (
+        <TurnDuration elapsedMs={presentation.elapsedMs} />
+      ) : null}
       <Row
         item={item}
         liveTextUpdate={liveItemUpdate?.textUpdate}
@@ -850,6 +994,7 @@ const Row = memo(function Row({
   if (activity) {
     return (
       <ActivityStack
+        key={activity.complete ? 'complete' : 'working'}
         activity={activity}
         live={activityLive}
         projectPath={projectPath}
@@ -908,8 +1053,9 @@ const Row = memo(function Row({
 
   if (item.type === 'message') {
     const text = responseText ?? item.text ?? ''
+    const notice = item.id.startsWith('design-not-applicable-')
     return (
-      <div className={`reply${live ? ' is-streaming' : ''}`}>
+      <div className={`reply${notice ? ' reply--notice' : ''}${live ? ' is-streaming' : ''}`}>
         <Markdown
           text={text}
           projectPath={projectPath}
@@ -917,7 +1063,7 @@ const Row = memo(function Row({
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
         />
-        {finalResponse && !live && item.status === 'completed' && text ? (
+        {finalResponse && !notice && !live && item.status === 'completed' && text ? (
           <ResponseActions
             text={text}
             createdAt={item.createdAt}
@@ -982,8 +1128,14 @@ type ActivityRenderSource = {
   group: TurnActivityGroup
   items: readonly Item[]
   liveItems: ReadonlyMap<number, LiveItemUpdate>
+  complete: boolean
 }
 
+/**
+ * What the live summary names. Reasoning that is still open counts even when
+ * its summary is empty — some models never send one — because the alternative
+ * is a row that keeps saying "Used …" in the past tense while the model thinks.
+ */
 function lastActivityItemForRender({
   group,
   items,
@@ -991,7 +1143,10 @@ function lastActivityItemForRender({
 }: ActivityRenderSource): Item | undefined {
   for (let index = group.lastIndex; index >= group.firstIndex; index -= 1) {
     const item = threadItemAt(items, liveItems, index)
-    if (item && isWorkDisclosureItem(item)) return item
+    if (!item) continue
+    if (isWorkDisclosureItem(item) || (item.type === 'reasoning' && item.status === 'started')) {
+      return item
+    }
   }
   return undefined
 }
@@ -1024,12 +1179,16 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
           {glyph(item)}
         </span>
         <span className="aux__label">
-          {live
-            ? summariseLive(item)
-            : item.type === 'command' || item.type === 'file_change'
-              ? activityItemLabel(item)
-              : summarise(item)}
+          {activityLabelParts(
+            item,
+            live
+              ? summariseLive(item)
+              : item.type === 'command' || item.type === 'file_change'
+                ? activityItemLabel(item)
+                : summarise(item),
+          )}
         </span>
+        {item.type === 'file_change' ? <ItemChangeStats item={item} /> : null}
         {item.exitCode !== undefined && item.exitCode !== 0 ? (
           <span className="aux__code">exit {item.exitCode}</span>
         ) : null}
@@ -1044,13 +1203,14 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
       {/* Design markers have no output worth expanding — their text is the slug. */}
       {detail && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
         <div
+          ref={disclosure.revealRef}
           className="aux__reveal"
           data-open={disclosure.dataOpen}
           aria-hidden={!disclosure.expanded}
           inert={!disclosure.expanded}
           onTransitionEnd={(event) => {
             if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-              disclosure.finishClosing()
+              disclosure.finishTransition()
           }}
         >
           {disclosure.contentMounted ? (
@@ -1062,7 +1222,7 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
                   fallbackClassName="aux__out"
                 />
               ) : (
-                <pre className="aux__out">{detail}</pre>
+                <ActivityDetail item={item} detail={detail} className="aux__out" />
               )}
             </div>
           ) : null}
@@ -1072,7 +1232,124 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   )
 }
 
-type DisclosurePhase = 'closed' | 'open' | 'closing'
+/**
+ * What opens under a tool row. A tool call shows what it was asked and what
+ * it answered as two things, not one blob; a file change shows the diff the
+ * way the turn summary does; everything else is the plain output.
+ */
+function ActivityDetail({
+  item,
+  detail,
+  className,
+}: {
+  item: Item
+  detail: string
+  className: string
+}) {
+  if (item.type === 'file_change') {
+    const diff = fileChangeDiff(item)
+    if (diff) return <FileChangeDetail diff={diff} className={className} />
+  }
+  if (item.type === 'tool_call') {
+    const call = parseToolCall(item.text)
+    const entries = toolArgumentEntries(call.args)
+    if (entries.length > 0 || call.output) {
+      return (
+        <div className={`${className} tool-detail`}>
+          {entries.length > 0 ? (
+            <dl className="tool-detail__args">
+              {entries.map(([key, value]) => (
+                <Fragment key={key}>
+                  <dt>{key}</dt>
+                  <dd>{value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          ) : null}
+          {call.output ? <pre className="tool-detail__output">{call.output}</pre> : null}
+        </div>
+      )
+    }
+  }
+  return <pre className={className}>{detail}</pre>
+}
+
+function FileChangeDetail({
+  diff,
+  className,
+}: {
+  diff: ReturnType<typeof parseDiff>
+  className: string
+}) {
+  return (
+    <div className={`${className} change-detail`}>
+      {diff.fileEntries.length > 1 ? (
+        <ul className="change-detail__files">
+          {diff.fileEntries.map((file, index) => (
+            <li key={`${file.path}:${index}`}>
+              <span className="change-detail__path">{file.path}</span>
+              <ChangeStats
+                added={file.added}
+                removed={file.removed}
+                className="change-detail__stat"
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <pre className="change-detail__diff">
+        {diff.lines
+          .filter((line) => line.kind !== 'meta')
+          .map((line, index) => (
+            <span key={index} className={`dline dline--${line.kind}`}>
+              {line.text || ' '}
+            </span>
+          ))}
+      </pre>
+    </div>
+  )
+}
+
+/** The unified diff a file change carries, when its text is one. */
+function fileChangeDiff(item: Item): ReturnType<typeof parseDiff> | undefined {
+  const text = item.text ?? ''
+  if (!/^(diff --git|--- |@@ )/m.test(text)) return undefined
+  const diff = parseDiff(text)
+  return diff.lines.some((line) => line.kind === 'add' || line.kind === 'del') ? diff : undefined
+}
+
+function ItemChangeStats({ item }: { item: Item }) {
+  const added = item.linesAdded ?? 0
+  const removed = item.linesRemoved ?? 0
+  if (added === 0 && removed === 0) return null
+  return <ChangeStats added={added} removed={removed} className="aux__stat" />
+}
+
+/**
+ * A tool's name is an identifier, so it renders as code inside an otherwise
+ * plain label. The label text stays a single string for accessible names.
+ */
+function activityLabelParts(item: Item, label: string): ReactNode {
+  if (item.type !== 'tool_call') return label
+  const { name } = parseToolCall(item.text)
+  if (!name || !looksLikeIdentifier(name)) return label
+  const index = label.indexOf(name)
+  if (index === -1) return label
+  return (
+    <>
+      {label.slice(0, index)}
+      <code className="activity__tool">{name}</code>
+      {label.slice(index + name.length)}
+    </>
+  )
+}
+
+/** `cua_repl.js`, `github.search_issues`, `WebFetch` — not "Searched thoughtLabel". */
+function looksLikeIdentifier(name: string): boolean {
+  return !/\s/.test(name) && /[._\-A-Z0-9]/.test(name)
+}
+
+type DisclosurePhase = 'closed' | 'opening' | 'open' | 'closing'
 
 function ReasoningDisclosure({
   item,
@@ -1137,17 +1414,18 @@ function ReasoningDisclosure({
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="aux__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+            disclosure.finishTransition()
         }}
       >
         <div className="aux__reveal-clip">
-          {disclosure.expanded || disclosure.dataOpen === 'closing' ? (
+          {disclosure.contentMounted ? (
             <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
               <Markdown
                 text={text}
@@ -1188,36 +1466,68 @@ function thoughtDuration(ms: number): string {
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
 }
 
+/** Must match the reveal transitions in thread.css. */
+const REVEAL_OPEN_MS = 180
+const REVEAL_CLOSE_MS = 120
+const REVEAL_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
+
+function settledPhase(phase: DisclosurePhase): DisclosurePhase {
+  return phase === 'opening' ? 'open' : phase === 'closing' ? 'closed' : phase
+}
+
 function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
-  const expanded = phase === 'open'
+  const revealRef = useRef<HTMLDivElement>(null)
+  const measureRow = useContext(RowMeasureContext)
+  const expanded = phase === 'open' || phase === 'opening'
+  const transitioning = phase === 'opening' || phase === 'closing'
+
+  // The reveal enters or leaves flow in this commit. Measuring the row now,
+  // before paint, starts the rows below in the same frame as the wipe; the
+  // ResizeObserver would only catch up a frame later.
+  useLayoutEffect(() => {
+    if (!transitioning || !measureRow) return
+    const reveal = revealRef.current
+    const row = reveal?.closest('.thread__row')
+    // The summary button sits right before its reveal in every disclosure.
+    if (row) measureRow(row, reveal?.previousElementSibling ?? null)
+  }, [phase, transitioning, measureRow])
 
   useEffect(() => {
-    if (phase !== 'closing') return
+    if (!transitioning) return
     // A reversal before the first paint can leave no transition to finish.
     const timer = window.setTimeout(
-      () => setPhase((current) => (current === 'closing' ? 'closed' : current)),
-      180,
+      () => setPhase((current) => (current === phase ? settledPhase(phase) : current)),
+      (phase === 'opening' ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS) + 60,
     )
     return () => window.clearTimeout(timer)
-  }, [phase])
+  }, [phase, transitioning])
 
   const toggle = useCallback(() => {
     const reduceMotion =
       globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    setPhase((current) => (current === 'open' ? (reduceMotion ? 'closed' : 'closing') : 'open'))
+    setPhase((current) =>
+      current === 'open' || current === 'opening'
+        ? reduceMotion
+          ? 'closed'
+          : 'closing'
+        : reduceMotion
+          ? 'open'
+          : 'opening',
+    )
   }, [])
 
-  const finishClosing = useCallback(() => {
-    setPhase((current) => (current === 'closing' ? 'closed' : current))
+  const finishTransition = useCallback(() => {
+    setPhase(settledPhase)
   }, [])
 
   return {
     expanded,
     contentMounted: phase !== 'closed',
-    dataOpen: phase === 'open' ? 'true' : phase === 'closing' ? 'closing' : 'false',
+    dataOpen: phase === 'open' ? 'true' : phase === 'closed' ? 'false' : phase,
+    revealRef,
     toggle,
-    finishClosing,
+    finishTransition,
   } as const
 }
 
@@ -1264,13 +1574,14 @@ function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="activity__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+            disclosure.finishTransition()
         }}
       >
         {disclosure.contentMounted ? (
@@ -1304,13 +1615,13 @@ function ActivityStack({
   const current = live
     ? lastActivityItemForRender(activity)
     : (operationalActivity.at(-1) ?? completedActivity.at(-1))
-  const hasCommentary = completedActivity.some(
-    (item) => item.type === 'message' && item.role === 'assistant',
+  const hasWorkNotes = completedActivity.some(
+    (item) => item.type === 'reasoning' || (item.type === 'message' && item.role === 'assistant'),
   )
   const label =
     live && current
       ? liveActivityLabel(current)
-      : hasCommentary
+      : activity.complete || hasWorkNotes
         ? `Worked for ${workedFor(activity.group.elapsedMs)}`
         : activityStackLabel(operationalActivity)
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
@@ -1359,24 +1670,25 @@ function ActivityStack({
         title={label}
         onClick={disclosure.toggle}
       >
-        {live || !hasCommentary ? (
+        {live || (!activity.complete && !hasWorkNotes) ? (
           <span className="activity__glyph" aria-hidden>
             {glyph(summaryItem)}
           </span>
         ) : null}
         <span className="activity__label" aria-live="polite" aria-atomic="true">
-          {label}
+          {live && current ? activityLabelParts(current, label) : label}
         </span>
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="activity__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+            disclosure.finishTransition()
         }}
       >
         {disclosure.contentMounted ? (
@@ -1385,6 +1697,19 @@ function ActivityStack({
               {(visibleActivity ? groupCommandRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
                   return <CommandRun key={item[0]!.id} items={item} live={live} />
+                }
+                if (item.type === 'reasoning') {
+                  return (
+                    <ReasoningDisclosure
+                      key={item.id}
+                      item={item}
+                      text={item.text ?? ''}
+                      live={false}
+                      projectPath={projectPath}
+                      liveTextUpdate={undefined}
+                      liveUpdateVersion={undefined}
+                    />
+                  )
                 }
                 if (item.type === 'command' || item.type === 'file_change') {
                   return <AuxDisclosure key={item.id} item={item} live={false} />
@@ -1410,7 +1735,7 @@ function ActivityStack({
                     <div className="activity__file-change">
                       {glyph(item)}
                       <span className="activity__item-label" title={itemLabel}>
-                        {itemLabel}
+                        {activityLabelParts(item, itemLabel)}
                       </span>
                       {item.exitCode !== undefined && item.exitCode !== 0 ? (
                         <span className="aux__code">exit {item.exitCode}</span>
@@ -1427,7 +1752,7 @@ function ActivityStack({
                           fallbackClassName="activity__detail"
                         />
                       ) : (
-                        <pre className="activity__detail">{detail}</pre>
+                        <ActivityDetail item={item} detail={detail} className="activity__detail" />
                       )
                     ) : null}
                   </div>
@@ -1444,6 +1769,7 @@ function ActivityStack({
 function isWorkDisclosureItem(item: Item): boolean {
   return (
     isStackedActivity(item) ||
+    (item.type === 'reasoning' && !isBlankReasoning(item)) ||
     (item.type === 'message' && item.role === 'assistant' && Boolean(item.text?.trim()))
   )
 }
@@ -1454,31 +1780,34 @@ function activityDetail(item: Item): string | undefined {
   const image = imageViewDetail(item)
   if (image !== undefined) return image
   if (item.type === 'tool_call') return toolCallDetail(item)
-  if (item.type === 'command' && item.command) {
-    const detail = toolCallDetail(item)
-    if (detail !== undefined) return detail
-    if (/\s[[{]/.test(item.text ?? '')) return undefined
-  }
-  const details =
-    item.type === 'command' ? [item.text] : item.type === 'file_change' ? [item.text] : [item.text]
-  const unique = details.filter(
-    (detail, index) =>
-      detail &&
-      detail !== activityItemLabel(item) &&
-      detail !== item.command &&
-      detail !== item.path &&
-      details.indexOf(detail) === index,
-  )
-  return unique.length > 0 ? unique.join('\n') : undefined
+  if (item.type === 'command') return commandOutput(item)
+  const text = item.text?.trim()
+  if (!text || text === activityItemLabel(item) || text === item.path) return undefined
+  return text
+}
+
+/**
+ * A command's text is its output. Rows persisted by an older adapter wrapped
+ * it in the tool's result envelope (`Bash [ … ]\n{ … }`); those unwrap to the
+ * text inside, and an empty envelope means there was no output.
+ */
+function commandOutput(item: Item): string | undefined {
+  const text = item.text?.trim()
+  if (!text) return undefined
+  if (/^\S+\s[[{]/.test(text.split('\n', 1)[0] ?? '')) return parseToolCall(text).output
+  return text
 }
 
 function toolCallHeadline(item: Item): string {
-  const firstLine = (item.text ?? '').split('\n', 1)[0]?.trim() ?? ''
-  const withoutPayload = firstLine.replace(/\s*[[{].*$/, '').trim()
-  const raw = withoutPayload || firstLine
-  return raw ? humanToolHeadline(raw) : 'Tool call'
+  const { name } = parseToolCall(item.text)
+  return name ? humanToolHeadline(name) : 'Tool call'
 }
 
+/**
+ * Tool names some agents use for reading and searching read as verbs. Any
+ * other identifier stays exactly as the agent named it: `cua_repl.js` is a
+ * tool, not "Cua repl.js".
+ */
 function humanToolHeadline(raw: string): string {
   const space = raw.indexOf(' ')
   const token = (space === -1 ? raw : raw.slice(0, space)).toLowerCase()
@@ -1490,112 +1819,40 @@ function humanToolHeadline(raw: string): string {
   if (token === 'list_dir' || token === 'list_files') {
     return rest ? `Listed ${rest}` : 'Listed files'
   }
-  if (/[_-]/.test(token)) {
-    const named = token.replaceAll(/[_-]+/g, ' ')
-    const titled = `${named.charAt(0).toUpperCase()}${named.slice(1)}`
-    return rest ? `${titled} ${rest}` : titled
-  }
   return raw
 }
 
+/** Arguments and output as one text, for consumers that want a string. */
 function toolCallDetail(item: Item): string | undefined {
-  const text = item.text?.trim()
-  if (!text) return undefined
-  const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
-  const rest = text.includes('\n') ? text.slice(firstLine.length + 1).trim() : ''
-  const payloadIndex = firstLine.search(/\s[[{]/)
-  const firstLinePayload = payloadIndex > 0 ? firstLine.slice(payloadIndex).trim() : ''
-  const payload = [firstLinePayload, rest].filter(Boolean).join('\n') || undefined
-  return payload ? unwrapToolPayload(payload) : undefined
+  const call = parseToolCall(item.text)
+  const args = toolArgumentEntries(call.args).map(([key, value]) => `${key}: ${value}`)
+  const detail = [...args, call.output].filter(Boolean).join('\n')
+  return detail || undefined
 }
 
-function unwrapToolPayload(text: string): string | undefined {
-  const trimmed = text.trim()
-  const values = parseJsonSequence(trimmed)
-  if (!values) return trimmed
-  const parts = values
-    .map((value) => readableToolJson(value))
-    .filter((value): value is string => value !== undefined)
-  const unique = [...new Set(parts)]
-  return unique.length > 0 ? unique.join('\n') : undefined
+/**
+ * A finished tool call in the expanded list. Adapters that already chose a
+ * human label ("Searched thoughtLabel") keep it; a bare identifier gets a
+ * verb and the argument it acted on, like the command rows beside it.
+ */
+function toolCallRowLabel(item: Item): string {
+  const headline = toolCallHeadline(item)
+  if (isWebSearch(item)) {
+    const query = webSearchQuery(item)
+    return query ? `Searched the web for “${query}”` : 'Searched the web'
+  }
+  if (headline === 'Tool call' || !looksLikeIdentifier(headline)) return headline
+  const verb =
+    item.status === 'failed' ? 'Failed' : item.status === 'started' ? 'Interrupted' : 'Used'
+  const snippet = toolCallSnippet(item, headline)
+  return `${verb} ${headline}${snippet ? ` · ${snippet}` : ''}`
 }
 
-function parseJsonSequence(text: string): unknown[] | undefined {
-  const values: unknown[] = []
-  let index = 0
-  while (index < text.length) {
-    while (/\s/.test(text[index] ?? '')) index += 1
-    if (index >= text.length) break
-    if (text[index] !== '{' && text[index] !== '[') return undefined
-
-    const start = index
-    let depth = 0
-    let inString = false
-    let escaped = false
-    let closed = false
-    for (; index < text.length; index += 1) {
-      const character = text[index]
-      if (inString) {
-        if (escaped) escaped = false
-        else if (character === '\\') escaped = true
-        else if (character === '"') inString = false
-        continue
-      }
-      if (character === '"') inString = true
-      else if (character === '{' || character === '[') depth += 1
-      else if (character === '}' || character === ']') {
-        depth -= 1
-        if (depth === 0) {
-          index += 1
-          closed = true
-          break
-        }
-      }
-    }
-    if (!closed) return undefined
-    try {
-      values.push(JSON.parse(text.slice(start, index)) as unknown)
-    } catch {
-      return undefined
-    }
-  }
-  return values.length > 0 ? values : undefined
-}
-
-function readableToolJson(value: unknown, depth = 0): string | undefined {
-  if (depth > 8 || value === null || value === undefined || value === '') return undefined
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    if (!trimmed) return undefined
-    if (
-      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-      (trimmed.startsWith('[') && trimmed.endsWith(']'))
-    ) {
-      try {
-        return readableToolJson(JSON.parse(trimmed) as unknown, depth + 1) ?? value
-      } catch {
-        return value
-      }
-    }
-    return value
-  }
-  if (typeof value !== 'object') return undefined
-  if (Array.isArray(value)) {
-    if (value.every((entry) => typeof entry === 'number')) return undefined
-    const parts = value
-      .map((entry) => readableToolJson(entry, depth + 1))
-      .filter((entry): entry is string => entry !== undefined)
-    const unique = [...new Set(parts)]
-    return unique.length ? unique.join('\n') : undefined
-  }
-  const record = value as Record<string, unknown>
-  for (const key of ['text', 'stdout', 'output', 'result', 'message', 'content']) {
-    if (key in record) {
-      const extracted = readableToolJson(record[key], depth + 1)
-      if (extracted) return extracted
-    }
-  }
-  return undefined
+/** The tool call's target, short enough to sit beside its name. */
+function toolCallSnippet(item: Item, name: string): string | undefined {
+  const snippet = toolArgumentSnippet(parseToolCall(item.text).args)
+  if (!snippet || name.toLowerCase().includes(snippet.toLowerCase())) return undefined
+  return snippet
 }
 
 function isSearchTool(text: string): boolean {
@@ -1717,10 +1974,14 @@ function ViewedImagePreview({
 const IMAGE_ATTACHMENT_RE = /\.(?:apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 
 function isImageAttachment(reference: string): boolean {
-  return IMAGE_ATTACHMENT_RE.test(reference)
+  return (
+    IMAGE_ATTACHMENT_RE.test(reference) ||
+    /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/.test(reference)
+  )
 }
 
 function attachmentName(reference: string): string {
+  if (reference.startsWith('data:image/')) return 'Attached image'
   return reference.split(/[\\/]/).filter(Boolean).at(-1) ?? reference
 }
 
@@ -1757,6 +2018,7 @@ function activityCategoryLabel(item: Item): string {
       const text = toolText(item)
       if (isContextCompaction(item)) return 'Compacted context window'
       if (isImageView(item) || text.includes('image')) return 'Viewed images'
+      if (isWebSearch(item)) return 'Searched the web'
       if (isSearchTool(text)) return 'Searched'
       if (text.match(/read|open|file|list/)) return 'Read files'
       return 'Used tools'
@@ -1779,9 +2041,11 @@ function liveActivityLabel(item: Item): string {
       return `${ongoing ? 'Running' : 'Ran'} ${command}`
     }
     case 'file_change': {
-      const path = inlineActivityText(item.path)
-      if (!path) return ongoing ? 'Editing files' : 'Edited files'
-      return `${ongoing ? 'Editing' : 'Edited'} ${path}`
+      const target = fileChangeTarget(item)
+      if (item.status === 'failed')
+        return target ? `Could not edit ${target}` : 'Could not edit files'
+      if (!target) return ongoing ? 'Editing files' : 'Edited files'
+      return `${ongoing ? 'Editing' : 'Edited'} ${target}`
     }
     case 'tool_call': {
       const text = toolText(item)
@@ -1790,11 +2054,20 @@ function liveActivityLabel(item: Item): string {
         return ongoing ? 'Viewing image' : 'Viewed image'
       }
       if (text.includes('image')) return ongoing ? 'Viewing images' : 'Viewed images'
+      if (isWebSearch(item)) {
+        const query = webSearchQuery(item)
+        const verb = ongoing ? 'Searching' : 'Searched'
+        return query ? `${verb} the web for “${query}”` : `${verb} the web`
+      }
       if (isSearchTool(text)) return ongoing ? 'Searching' : 'Searched'
       if (text.match(/read|open|file|list/)) return ongoing ? 'Reading files' : 'Read files'
       const tool = inlineActivityText(toolCallHeadline(item))
       if (!tool || tool === 'Tool call') return ongoing ? 'Using a tool' : 'Used a tool'
-      return `${ongoing ? 'Using' : 'Used'} ${tool}`
+      const verb = item.status === 'failed' ? 'Failed' : ongoing ? 'Using' : 'Used'
+      // The argument the tool acts on keeps consecutive calls of the same
+      // tool from reading as one stuck row.
+      const snippet = toolCallSnippet(item, tool)
+      return `${verb} ${tool}${snippet ? ` · ${snippet}` : ''}`
     }
     case 'plan':
       return ongoing ? 'Updating the plan' : 'Updated the plan'
@@ -1815,15 +2088,34 @@ function activityItemLabel(item: Item): string {
   }
 
   if (item.type === 'file_change') {
-    const path = inlineActivityText(item.path)
-    if (item.status === 'started') return path ? `Edit interrupted: ${path}` : 'Edit interrupted'
-    if (item.status === 'failed') return path ? `Could not edit ${path}` : 'Could not edit files'
-    return path ? `Edited ${path}` : 'Edited files'
+    const target = fileChangeTarget(item)
+    if (item.status === 'started')
+      return target ? `Edit interrupted: ${target}` : 'Edit interrupted'
+    if (item.status === 'failed')
+      return target ? `Could not edit ${target}` : 'Could not edit files'
+    return target ? `Edited ${target}` : 'Edited files'
   }
 
   if (item.type === 'plan') return 'Updated plan'
 
   return summarise(item)
+}
+
+/** One path reads as the path; a patch across several files reads as a count. */
+function fileChangeTarget(item: Item): string {
+  const files = fileChangeDiff(item)?.fileEntries.length ?? 0
+  if (files > 1) return `${files} files`
+  return inlineActivityText(item.path)
+}
+
+function isWebSearch(item: Item): boolean {
+  return item.type === 'tool_call' && /^web ?search$/i.test(parseToolCall(item.text).name)
+}
+
+function webSearchQuery(item: Item): string | undefined {
+  const { args } = parseToolCall(item.text)
+  const query = args && !Array.isArray(args) ? args['query'] : undefined
+  return typeof query === 'string' && query.trim() ? inlineActivityText(query) : undefined
 }
 
 function inlineActivityText(text: string | undefined): string {
@@ -1903,6 +2195,25 @@ function CopyAction({ text, label }: { text: string; label: string }) {
         </span>
       ) : null}
     </span>
+  )
+}
+
+function TurnDuration(props: { startedAt: number } | { elapsedMs: number }) {
+  const working = 'startedAt' in props
+  return (
+    <div className={`activity activity--duration${working ? ' activity--working' : ''}`}>
+      <div className="activity__summary">
+        <span className="activity__label">
+          {working ? (
+            <>
+              Working for <WorkingTimer startedAt={props.startedAt} />
+            </>
+          ) : (
+            `Worked for ${workedFor(props.elapsedMs)}`
+          )}
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -2111,12 +2422,15 @@ function glyph(item: Item) {
       return <Brain size={13} />
     case 'file_change':
       return <FilePenLine size={13} />
-    case 'tool_call':
-      if (toolText(item).includes('image')) return <Images size={14} />
-      if (designPhaseLabel(toolText(item))) return <Palette size={13} />
-      if (isSearchTool(toolText(item))) return <Search size={14} />
-      if (toolText(item).match(/read|open|file|list/)) return <BookOpen size={14} />
+    case 'tool_call': {
+      const name = toolText(item)
+      if (name.includes('image')) return <Images size={14} />
+      if (designPhaseLabel(name)) return <Palette size={13} />
+      if (isWebSearch(item)) return <WorldSearch size={14} />
+      if (isSearchTool(name)) return <Search size={14} />
+      if (name.match(/read|open|file|list/)) return <BookOpen size={14} />
       return <Wrench size={13} />
+    }
     case 'plan':
       return <ListChecks size={13} />
     default:
@@ -2163,7 +2477,7 @@ function summariseLive(item: Item): string {
 }
 
 function designPhaseLabel(text: string): string | undefined {
-  if (text.includes('design:brief')) return 'Preparing questions'
+  if (text.includes('design:brief')) return 'Understanding the request'
   if (text.includes('design:brand')) return 'Creating brand direction'
   if (text.includes('design:page')) return 'Planning the page'
   if (text.includes('design:assets')) return 'Gathering assets'
@@ -2174,8 +2488,13 @@ function designPhaseLabel(text: string): string | undefined {
   return undefined
 }
 
+/**
+ * What a tool is, for the read/search/image heuristics: its name and the
+ * command line, never its arguments or output — a screenshot script that
+ * mentions "file" is not a file read.
+ */
 function toolText(item: Item): string {
-  return `${item.text ?? ''} ${item.command ?? ''}`.toLowerCase()
+  return `${parseToolCall(item.text).name} ${item.command ?? ''}`.toLowerCase()
 }
 
 function summarise(item: Item): string {
@@ -2208,7 +2527,7 @@ function summarise(item: Item): string {
               : item.status === 'started'
                 ? 'Image inspection interrupted'
                 : 'Viewed image'
-            : toolCallHeadline(item))
+            : toolCallRowLabel(item))
       )
     case 'plan':
       return 'Plan'

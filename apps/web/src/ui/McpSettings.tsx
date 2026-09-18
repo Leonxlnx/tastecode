@@ -15,6 +15,7 @@ import {
 import type { Transport } from '../transport.js'
 import { useProviderWatch } from '../provider-watch.js'
 import { AppSelect } from './AppSelect.js'
+import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 
 type Inventory = ResultOf<'mcp.list'>
 type Editor = {
@@ -392,10 +393,11 @@ function ProviderMcpSettings(props: {
       : !currentInventory
         ? `Checking ${props.providerName} MCP support…`
         : `${props.providerName} · MCP inventory ${currentInventory.capabilities.inventory ? 'available' : 'unavailable'}`
+  const loadingInventory = Boolean(props.projectPath) && loading && !inventory
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
-    : loading && !inventory
-      ? 'Loading MCP servers…'
+    : loadingInventory
+      ? undefined
       : !currentInventory
         ? undefined
         : projectServers.length === 0
@@ -472,6 +474,11 @@ function ProviderMcpSettings(props: {
         <p className="mcp-settings__scope-note">
           Changes apply when you start or resume a session.
         </p>
+      ) : null}
+      {loadingInventory ? (
+        <SkeletonStatus label="Loading MCP servers…" className="settings__group">
+          <SkeletonRows rows={3} detail control density="roomy" />
+        </SkeletonStatus>
       ) : null}
       {status ? <p className="mcp-settings__empty">{status}</p> : null}
       {editor ? (

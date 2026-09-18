@@ -1,5 +1,5 @@
 export function windowThemeOptions(themeValue: unknown) {
-  if (themeValue !== 'light' && themeValue !== 'dark' && themeValue !== 'codex') {
+  if (themeValue !== 'light' && themeValue !== 'dark') {
     throw new Error('Invalid window theme')
   }
   const theme = themeValue
@@ -13,12 +13,6 @@ export function windowThemeOptions(themeValue: unknown) {
       titleBarOverlay: { color: '#fcfcfc', symbolColor: '#27272a', height: 34 },
     }
   }
-  if (theme === 'codex') {
-    return {
-      backgroundColor: '#2d2d2b',
-      titleBarOverlay: { color: '#353533', symbolColor: '#dededc', height: 34 },
-    }
-  }
   return {
     backgroundColor: '#202020',
     titleBarOverlay: { color: '#131313', symbolColor: '#ffffff', height: 34 },
@@ -26,13 +20,8 @@ export function windowThemeOptions(themeValue: unknown) {
 }
 
 export function windowThemeSource(preference: unknown): 'system' | 'light' | 'dark' {
-  if (
-    preference !== 'system' &&
-    preference !== 'light' &&
-    preference !== 'dark' &&
-    preference !== 'codex'
-  ) {
+  if (preference !== 'system' && preference !== 'light' && preference !== 'dark') {
     throw new Error('Invalid window theme preference')
   }
-  return preference === 'codex' ? 'dark' : preference
+  return preference
 }

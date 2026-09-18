@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   rmSync,
@@ -13,6 +14,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { runCli } from '@harness/proc/cli'
 
 const PTY_MARKER = 'TASTECODE_NATIVE_PTY_OK'
 const CREDENTIAL_SERVICE = 'TasteCode Native Binding Proof'
@@ -164,19 +166,35 @@ export function assertPackagedNativeModules(
   }
 }
 
-function loadPackagedNativeModules(): PackagedNativeModules {
+async function loadPackagedNativeModules(): Promise<PackagedNativeModules> {
   const desktopRequire = createRequire(import.meta.url)
   // These bindings belong to the packaged server workspace. Resolve from its
   // entry so pnpm's strict dependency layout is exercised exactly as it is by
   // the real server instead of relying on accidental desktop-level hoisting.
-  const serverRequire = createRequire(desktopRequire.resolve('@harness/server'))
+  const serverEntry = desktopRequire.resolve('@harness/server')
+  const serverRequire = createRequire(serverEntry)
   const before = new Set(Object.keys(serverRequire.cache))
+  const serverDirectory = path.dirname(serverEntry)
+  const { dependencies } = JSON.parse(
+    readFileSync(path.join(serverDirectory, '..', 'package.json'), 'utf8'),
+  ) as { dependencies: Record<string, string> }
+  // Exercise the actual ESM entries after release-only files are excluded. This
+  // catches a future adapter importing a removed SDK variant or generated file.
+  const runtimeEntries = Object.keys(dependencies)
+    .filter((name) => name.startsWith('@harness/'))
+    .map((name) => serverRequire.resolve(name))
+  runtimeEntries.push(path.join(serverDirectory, 'design-static-preview.js'))
+  for (const entry of runtimeEntries) await import(pathToFileURL(entry).href)
   const pty: PtyModule = serverRequire('node-pty')
   const keyring: KeyringModule = serverRequire('@napi-rs/keyring')
   return {
     pty,
     keyring,
-    moduleEntries: [serverRequire.resolve('node-pty'), serverRequire.resolve('@napi-rs/keyring')],
+    moduleEntries: [
+      ...runtimeEntries,
+      serverRequire.resolve('node-pty'),
+      serverRequire.resolve('@napi-rs/keyring'),
+    ],
     designEntry: serverRequire.resolve('@harness/design-agent'),
     get nativeBindings() {
       return Object.keys(serverRequire.cache).filter(
@@ -298,8 +316,15 @@ export async function runNativeBindingProof(
   if (!isNativeBindingProofPlatform(process.platform)) {
     throw new Error('native proof is a Windows, macOS, and Linux release gate')
   }
-  const modules = options.modules ?? loadPackagedNativeModules()
+  const modules = options.modules ?? (await loadPackagedNativeModules())
   assertPackagedDesignReferences(proofFile, modules.designEntry)
+  if (process.platform === 'win32') {
+    // Exercise the provider launcher inside Electron, where inherited PATH may be spelled Path.
+    const result = await runCli('cmd.exe', ['/d', '/c', 'echo TASTECODE_CLI_PATH_OK'])
+    if (result.code !== 0 || result.stdout.trim() !== 'TASTECODE_CLI_PATH_OK') {
+      throw new Error('packaged Windows provider launcher could not start a system command')
+    }
+  }
   await provePtyBinding(modules.pty)
   assertPackagedNativeModules(proofFile, modules)
   proveSqliteRuntime()

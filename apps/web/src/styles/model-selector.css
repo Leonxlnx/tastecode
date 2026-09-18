@@ -86,9 +86,6 @@
 }
 
 .model-selector__loading {
-  display: grid;
   min-height: 120px;
-  place-items: center;
-  color: var(--text-3);
-  font-size: var(--t-sm);
+  padding: 4px;
 }

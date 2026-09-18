@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from './sqlite.js'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ItemTypeSchema, type DomainEvent, type ItemType } from '@harness/contracts'
@@ -642,6 +642,7 @@ describe('a database written by a newer build', () => {
       expect(reopened.history('mixed').map(({ event }) => event)).toEqual([
         message('before the unknown rows'),
       ])
+      expect(reopened.localHistory('mixed')).toEqual(reopened.history('mixed'))
       // The unreadable row is skipped; the readable open turn still recovers.
       expect(reopened.recoverInterruptedThreads()).toEqual(['good'])
       // The tombstoned rows stay stored for a build that can read them.
@@ -826,16 +827,14 @@ describe('a database written by a newer build', () => {
 
     const reopened = new Store(file)
     try {
-      // A lifecycle state only a newer build knows reads as plainly active.
       expect(reopened.thread('weird')?.lifecycle).toEqual({ state: 'active', keepActive: false })
       expect(reopened.sidebarThreads()[0]?.lifecycle).toEqual({
         state: 'active',
         keepActive: false,
       })
-      // The unknown intent degrades to a normal turn; the unreadable prompt
-      // is a tombstone: never listed, never claimed, still stored for a
-      // build that understands it.
       expect(reopened.queuedTurns('weird').map((turn) => turn.intent)).toEqual(['normal'])
+      // The unreadable prompt is a tombstone: never listed, never claimed,
+      // still stored for a build that understands it.
       expect(reopened.claimQueuedTurn('weird', 'q2', 'normal')).toBeUndefined()
       expect(reopened.diffDecision('weird', 'hunk:1')).toBeUndefined()
     } finally {
@@ -882,6 +881,28 @@ describe('a database written by a newer build', () => {
       reopened.close()
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('leaves a closed thread untouched by lifecycle writes', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'closed', projectPath: '/repo', provider: 'codex', title: 'Closed' })
+    store.touchThread('closed', true, 10)
+    store.closeThread('closed')
+
+    expect(() => store.settleThread('closed', 'manual')).toThrow('thread not found')
+    expect(() => store.snoozeThread('closed', 100)).toThrow('thread not found')
+    // Reading closed history marks it read: a no-op, not an error.
+    expect(() => store.markThreadRead('closed')).not.toThrow()
+    // An event still landing after close must not resurrect the thread.
+    expect(store.touchThread('closed', false, 20)).toEqual({ state: 'active', keepActive: false })
+
+    expect(store.thread('closed')).toMatchObject({
+      lifecycle: { state: 'active', keepActive: false },
+      unread: true,
+      lastActiveAt: 10,
+    })
+    expect(store.thread('closed')?.closedAt).toBeTypeOf('number')
+    expect(() => store.markThreadRead('missing')).toThrow('thread not found')
   })
 })
 
@@ -2327,6 +2348,7 @@ describe('usage totals across providers', () => {
     expect(summary.today).toEqual(expect.objectContaining({ totalTokens: 140 }))
   })
 })
+
 describe('sensitive file permissions', () => {
   const posixOnly = process.platform === 'win32' ? it.skip : it
 

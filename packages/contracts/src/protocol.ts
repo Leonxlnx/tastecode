@@ -27,6 +27,8 @@ import {
   PullRequestActionSchema,
   PullRequestDetailSchema,
   PullRequestFilesResultSchema,
+  PullRequestImageSchema,
+  PullRequestImageUrlSchema,
   PullRequestListResultSchema,
   PullRequestMetadataOptionsSchema,
 } from './pull-requests.js'
@@ -823,6 +825,15 @@ export const methods = {
     }),
     result: PullRequestActionResultSchema,
   },
+  /**
+   * Load a repository file or upload embedded as an image. The
+   * renderer has no GitHub session, so the server fetches the bytes through
+   * the authenticated CLI and private repositories render like public ones.
+   */
+  'pullRequests.image': {
+    params: z.object({ url: PullRequestImageUrlSchema }),
+    result: PullRequestImageSchema,
+  },
   'auth.status': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: AccountSchema,
@@ -1172,6 +1183,8 @@ export const methods = {
     result: z.object({
       events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
       running: z.boolean(),
+      /** Older provider turns were found; replace the partial client history. */
+      reset: z.boolean().optional(),
       /** Effective access mode used when this task resumes. */
       approval: ApprovalModeSchema.optional(),
     }),
@@ -1485,6 +1498,8 @@ export const channels = {
      */
     seq: z.number().optional(),
   }),
+  /** Provider metadata or saved transcripts changed outside TasteCode. */
+  'providerHistory.changed': z.object({ threadIds: z.array(z.string()) }),
   /** Events from an ephemeral Side chat stay out of the main conversation stream. */
   'sideChat.event': z.object({
     threadId: z.string(),

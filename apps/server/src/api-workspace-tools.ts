@@ -237,12 +237,23 @@ function runCommand(
   const args = input.args
   if (args.some((arg) => UNSAFE_ARG.test(arg))) throw new Error('command argument is unsafe')
   const cwd = existingWorkspacePath(workspace, input.cwd, true)
+  let environment: NodeJS.ProcessEnv
+  try {
+    environment = safeCommandEnvironment(workspace)
+  } catch (error) {
+    // A refused runtime directory is actionable ("Remove it and retry"), but a
+    // throw would be collapsed into "Tool execution failed." by the runtime.
+    return Promise.resolve({
+      content: error instanceof Error ? error.message : String(error),
+      isError: true,
+    })
+  }
 
   return new Promise((resolve, reject) => {
     const child = spawnCli(command, args, {
       cwd,
       replaceEnv: true,
-      env: safeCommandEnvironment(workspace),
+      env: environment,
     })
     let output = ''
     let settled = false

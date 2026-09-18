@@ -65,6 +65,16 @@ describe('TerminalManager', () => {
     expect(platformShell('linux', {})).toBe('/bin/sh')
   })
 
+  it.skipIf(process.platform !== 'win32')(
+    'retains a copied Windows Path in terminal sessions',
+    () => {
+      const env = terminalEnvironment({ Path: 'C:\\Windows\\System32', CUSTOM: 'kept' })
+      expect(env.PATH?.split(';')[0]).toBe('C:\\Windows\\System32')
+      expect(Object.keys(env).filter((key) => key.toLowerCase() === 'path')).toEqual(['PATH'])
+      expect(env.CUSTOM).toBe('kept')
+    },
+  )
+
   it('advertises true color without dropping the native process environment', () => {
     const environment = terminalEnvironment({ PATH: '/system/bin', CUSTOM: 'kept' })
     expect(environment.CUSTOM).toBe('kept')

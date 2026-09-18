@@ -27,7 +27,13 @@ import { z } from 'zod'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
-import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
+import {
+  ClaudeEventSchema,
+  toDomainEvents,
+  toolUseItemFields,
+  toUsage,
+  type ClaudeEvent,
+} from './events.js'
 import {
   claudeSdkSpawner,
   createClaudeQuery,
@@ -86,6 +92,12 @@ type ToolInput = z.infer<typeof ToolInputSchema>
  */
 const FULL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 export const CLAUDE_MODELS: Model[] = [
+  claudeModel(
+    'claude-fable-5-1',
+    'Claude Fable 5.1',
+    'Long-horizon reasoning and coding',
+    FULL_EFFORTS,
+  ),
   claudeModel(
     'claude-fable-5',
     'Claude Fable 5',
@@ -319,6 +331,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #streamMessageId: string | undefined
   readonly #streamBlocks = new Map<number, StreamBlock>()
   readonly #streamItems = new Map<string, Item>()
+  /** Tool calls awaiting their result, by tool_use id, so the result lands on the call. */
+  readonly #toolCalls = new Map<string, Item>()
   readonly #streamedMessageIds = new Set<string>()
 
   constructor(
@@ -804,7 +818,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
               },
             }
           : event
-      this.#emitDomainEvents(toDomainEvents(filtered, this.#activeTurnId))
+      this.#emitDomainEvents(toDomainEvents(filtered, this.#activeTurnId, this.#toolCalls))
       this.#emitTodoPlan(event)
       return
     }
@@ -816,7 +830,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#log(`ignored malformed Claude user event: ${parsed.error.message}`)
         return
       }
-      this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId))
+      this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId, this.#toolCalls))
       return
     }
 
@@ -906,7 +920,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           id,
           turnId,
           status: 'started',
-          ...toolItemFields(raw.name, input),
+          ...toolUseItemFields(raw.name, input),
           createdAt: Date.now(),
         }
         this.#streamItems.set(id, item)
@@ -1157,6 +1171,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#streamMessageId = undefined
     this.#streamBlocks.clear()
     this.#streamItems.clear()
+    this.#toolCalls.clear()
     this.#streamedMessageIds.clear()
   }
 
@@ -1165,7 +1180,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const { text: _streamedText, ...started } = item
       this.emit('event', { type: 'item.completed', item: { ...started, status } })
     }
+    // A call whose result never came back ends with the turn, not as "running".
+    for (const call of this.#toolCalls.values()) {
+      this.emit('event', { type: 'item.completed', item: { ...call, status } })
+    }
     this.#streamItems.clear()
+    this.#toolCalls.clear()
     this.#streamBlocks.clear()
   }
 
@@ -1216,22 +1236,6 @@ function approvalRequest(
     ...(pathValue ? { path: String(pathValue) } : {}),
     createdAt: Date.now(),
   }
-}
-
-function toolItemFields(
-  toolName: string,
-  input: ToolInput,
-):
-  | { type: 'command'; command: string }
-  | { type: 'file_change'; path: string }
-  | { type: 'tool_call'; text: string } {
-  if (SHELL_TOOLS.has(toolName)) {
-    return { type: 'command', command: String(input['command'] ?? toolName) }
-  }
-  if (EDIT_TOOLS.has(toolName)) {
-    return { type: 'file_change', path: String(input['file_path'] ?? '') }
-  }
-  return { type: 'tool_call', text: toolName }
 }
 
 function parseUserInputQuestions(input: ToolInput): UserInputQuestion[] {

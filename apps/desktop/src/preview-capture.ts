@@ -258,6 +258,7 @@ export class PreviewCaptureOwner {
       if (!allowsPreviewNavigation(request.url, preview.webContents.getURL())) {
         throw new Error('Preview navigated outside its local origin')
       }
+      preview.webContents.debugger.attach('1.3')
       const screenshots: PreviewScreenshot[] = []
       const captured = new Map<string, PreviewScreenshot>()
       for (const viewport of request.viewports) {
@@ -281,13 +282,25 @@ export class PreviewCaptureOwner {
           await evaluate(PREVIEW_PAGE_HEIGHT_SCRIPT),
           viewport.height,
         )
-        const image = await whileActive(
-          () => preview!.webContents.capturePage({ x: 0, y: 0, width: viewport.width, height }),
+        // capturePage clips to the visible viewport even when given the document height.
+        const image: { data: string } = await whileActive(
+          () =>
+            preview!.webContents.debugger.sendCommand('Page.captureScreenshot', {
+              format: 'png',
+              captureBeyondViewport: true,
+              fromSurface: true,
+              clip: { x: 0, y: 0, width: viewport.width, height, scale: 1 },
+            }),
           signal,
         )
         const destination = path.join(directory, `${key}.png`)
         await whileActive(
-          () => files.writeFile(destination, image.toPNG(), { flag: 'wx', mode: 0o600, signal }),
+          () =>
+            files.writeFile(destination, Buffer.from(image.data, 'base64'), {
+              flag: 'wx',
+              mode: 0o600,
+              signal,
+            }),
           signal,
         )
         const screenshot = { path: destination, ...viewport, domAudit }

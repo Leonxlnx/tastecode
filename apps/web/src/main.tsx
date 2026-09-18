@@ -9,22 +9,28 @@ import {
 } from './bridge.js'
 import {
   applyAccentPreference,
+  applyBackdropPreference,
   applyFontPreference,
   applyTheme,
   readAccentPreference,
+  readBackdropPreference,
   readFontPreference,
   readThemePreference,
   resolveTheme,
 } from './theme.js'
+import { backdropColorScheme } from './theme-colors.js'
 import './styles/tokens.css'
 import './styles/app.css'
 
 const root = document.getElementById('root')
 if (!root) throw new Error('missing #root')
 
-applyTheme(resolveTheme(readThemePreference()))
-applyFontPreference(readFontPreference())
-applyAccentPreference(readAccentPreference())
+const appearanceMode = resolveTheme(readThemePreference())
+const backdrop = readBackdropPreference(appearanceMode)
+applyTheme(backdropColorScheme(backdrop) ?? appearanceMode)
+applyBackdropPreference(backdrop)
+applyFontPreference(readFontPreference(appearanceMode))
+applyAccentPreference(readAccentPreference(appearanceMode))
 
 // The stylesheet needs to know whether an OS blur material exists behind the
 // window (Electron acrylic/vibrancy) — that is what the sidebar glass shows.

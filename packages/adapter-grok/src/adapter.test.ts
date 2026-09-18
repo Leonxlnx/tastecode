@@ -10,6 +10,7 @@ import {
   GROK_CAPABILITIES,
   GrokAdapter,
   grokPromptJson,
+  grokDiff,
   grokToolLabel,
   grokToolOutput,
   grokTurnArgs,
@@ -796,22 +797,52 @@ describe('Grok adapter', () => {
     child.emit('close', 0)
     await new Promise((resolve) => setImmediate(resolve))
 
+    // Headline, then the input as one JSON line, then the output: the same
+    // text convention every provider's tool calls use.
+    const arguments_ = '{"path":"apps/web/src/ui/Thread.tsx","pattern":"thoughtLabel"}'
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'item.started',
-          item: expect.objectContaining({ type: 'tool_call', text: 'Searched thoughtLabel' }),
+          item: expect.objectContaining({
+            type: 'tool_call',
+            text: `Searched thoughtLabel\n${arguments_}`,
+          }),
         }),
         expect.objectContaining({
           type: 'item.completed',
           item: expect.objectContaining({
             type: 'tool_call',
-            text: 'Searched thoughtLabel\nfound 12 matches',
+            text: `Searched thoughtLabel\n${arguments_}\nfound 12 matches`,
           }),
         }),
       ]),
     )
     await adapter.dispose()
+  })
+
+  it('renders an edit as a unified diff with line counts', () => {
+    expect(
+      grokDiff([
+        { type: 'diff', path: 'C:\\repo\\one.txt', oldText: 'a\nb\n', newText: 'a\nc\n' },
+        { type: 'content', content: { type: 'text', text: 'ignored' } },
+      ]),
+    ).toBe(
+      [
+        'diff --git a/C:\\repo\\one.txt b/C:\\repo\\one.txt',
+        '--- a/C:\\repo\\one.txt',
+        '+++ b/C:\\repo\\one.txt',
+        '@@ -1,2 +1,2 @@',
+        '-a',
+        '-b',
+        '+a',
+        '+c',
+      ].join('\n'),
+    )
+    expect(grokDiff([{ type: 'diff', path: 'new.txt', oldText: '', newText: 'x' }])).toContain(
+      '--- /dev/null',
+    )
+    expect(grokDiff([{ type: 'content', content: 'nothing' }])).toBeUndefined()
   })
 
   it('declares the one-shot print-mode capability set', () => {

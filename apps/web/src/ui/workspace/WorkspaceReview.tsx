@@ -17,6 +17,7 @@ import {
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
+import { SkeletonCode, SkeletonStatus } from '../Skeleton.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import {
   buildReviewTree,
@@ -321,13 +322,13 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
             </button>
           </div>
         ) : null}
-
-        {!diff && loading ? (
-          <div className="workspace-review__message" role="status">
-            <LoaderCircle className="spinner" size={15} aria-hidden /> Loading diff…
-          </div>
-        ) : null}
       </div>
+
+      {!diff && loading ? (
+        <SkeletonStatus label="Loading diff…" className="workspace-review__skeleton">
+          <SkeletonCode lines={22} gutter />
+        </SkeletonStatus>
+      ) : null}
 
       {diff && diff.files.length === 0 ? (
         <WorkspaceEmptyState

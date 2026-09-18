@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync } from './sqlite.js'
 
 /** Resolve directory and file aliases before choosing a database's lock. */
 export function canonicalDataPath(database: string): string {

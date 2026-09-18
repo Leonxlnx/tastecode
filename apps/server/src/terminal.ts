@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import type { IPty, spawn as NodePtySpawn } from 'node-pty'
-import { desktopPath } from '@harness/proc/desktop-path'
+import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cleanupExitedPtySession, ownPtySession, terminatePtySession } from '@harness/proc'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
@@ -455,11 +455,12 @@ export function platformShell(
 export function terminalEnvironment(
   environment: NodeJS.ProcessEnv = globalThis.process.env,
 ): NodeJS.ProcessEnv {
-  return {
+  const env = {
     ...environment,
-    PATH: desktopPath(environment.PATH ?? '', { env: environment }),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     TERM_PROGRAM: 'TasteCode',
   }
+  applyDesktopPath(env)
+  return env
 }

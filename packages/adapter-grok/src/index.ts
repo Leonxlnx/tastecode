@@ -13,3 +13,4 @@ export {
   signOutGrok,
 } from './adapter.js'
 export { grokLimitSource, grokLimits, mapGrokBilling, type GrokLimitSource } from './limits.js'
+export { createGrokHistorySource, type GrokHistoryOptions } from './history.js'

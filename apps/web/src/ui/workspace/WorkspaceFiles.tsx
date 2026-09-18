@@ -23,12 +23,17 @@ import {
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
+import { Skeleton, SkeletonCode, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
 import { indexedTextLine, indexTextLines } from '../text-line-index.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 
 type Entry = ResultOf<'workspace.listDirectory'>['entries'][number]
 type FileContents = ResultOf<'workspace.readFile'>
 const EMPTY_WORKSPACE_ENTRIES: Entry[] = []
+const WORKSPACE_TREE_INDENT = 18
+// Name widths for placeholder rows, in pixels: the tree column is narrow and
+// percentages of it would all look alike.
+const TREE_SKELETON_WIDTHS = [96, 128, 72, 112, 88, 140, 64, 104, 120]
 
 class FileSelectionStore {
   readonly #listeners = new Map<string, Set<() => void>>()
@@ -262,9 +267,16 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       <div className="workspace-files__split">
         <main className="workspace-files__viewer">
           {loadingFile ? (
-            <div className="workspace-files__loading" role="status">
-              <LoaderCircle className="spinner" size={16} aria-hidden /> Opening file…
-            </div>
+            <SkeletonStatus
+              label="Opening file…"
+              className="workspace-files__document workspace-files__document-skeleton"
+            >
+              <header>
+                <Skeleton className="skeleton--icon" />
+                <Skeleton width={164} height={9} />
+              </header>
+              <SkeletonCode lines={26} gutter />
+            </SkeletonStatus>
           ) : file ? (
             <FileViewer file={file} />
           ) : error && selectedPath ? (
@@ -363,9 +375,9 @@ const WorkspaceFileTree = memo(function WorkspaceFileTree(props: {
         />
       ))}
       {props.loadingDirectories.has('') ? (
-        <div className="workspace-files__tree-loading">
-          <LoaderCircle className="spinner" size={13} aria-hidden /> Loading files…
-        </div>
+        <SkeletonStatus label="Loading files…" className="workspace-files__tree-skeleton">
+          <SkeletonRows rows={9} icon widths={TREE_SKELETON_WIDTHS} />
+        </SkeletonStatus>
       ) : null}
     </div>
   )
@@ -470,20 +482,33 @@ const FileTreeEntry = memo(function FileTreeEntry(props: FileTreeEntryProps) {
   }
 
   const open = props.expanded.has(entry.path)
+  const loading = props.loadingDirectories.has(entry.path)
   const children = filterEntries(
     props.directories.get(entry.path) ?? [],
     props.directories,
     props.filter,
   )
+  // A first listing gets placeholder rows where its children will appear; a
+  // refresh of a listed folder keeps the rows and spins on the folder instead.
+  const pending = open && loading && children.length === 0
   return (
     <div className="workspace-files__directory">
       <FileTreeDirectoryButton
         entry={entry}
         depth={props.depth}
         open={open}
-        loading={props.loadingDirectories.has(entry.path)}
+        loading={loading && !pending}
         onToggle={props.onToggle}
       />
+      {pending ? (
+        <SkeletonRows
+          rows={3}
+          icon
+          widths={TREE_SKELETON_WIDTHS}
+          indents={[12 + (props.depth + 1) * WORKSPACE_TREE_INDENT]}
+          className="workspace-files__tree-skeleton skeleton-group"
+        />
+      ) : null}
       {open
         ? children.map((child) => (
             <FileTreeEntry {...props} key={child.path} entry={child} depth={props.depth + 1} />
@@ -504,7 +529,7 @@ function FileTreeDirectoryButton(props: {
     <button
       type="button"
       className="workspace-files__entry is-directory"
-      style={{ paddingLeft: 9 + props.depth * 18 }}
+      style={{ paddingLeft: 9 + props.depth * WORKSPACE_TREE_INDENT }}
       aria-expanded={props.entry.restricted ? undefined : props.open}
       title={props.entry.restricted ? `${props.entry.name} is protected` : props.entry.path}
       onClick={() => props.onToggle(props.entry)}
@@ -557,7 +582,7 @@ function FileTreeFile(props: {
     <button
       type="button"
       className={`workspace-files__entry is-file${selected ? ' is-selected' : ''}`}
-      style={{ paddingLeft: 12 + props.depth * 18 }}
+      style={{ paddingLeft: 12 + props.depth * WORKSPACE_TREE_INDENT }}
       title={props.entry.restricted ? `${props.entry.name} is protected` : props.entry.path}
       disabled={props.entry.restricted}
       onClick={() => props.onSelect(props.entry)}

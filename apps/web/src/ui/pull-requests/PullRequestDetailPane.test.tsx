@@ -144,6 +144,33 @@ describe('PullRequestDetailPane inline editing', () => {
     )
   })
 
+  it('surfaces a failed refresh as a notice without replacing the loaded detail', async () => {
+    let detailRequests = 0
+    const request = vi.fn<TestRequestResolver>(async (method) => {
+      if (method === 'pullRequests.detail') {
+        detailRequests += 1
+        if (detailRequests > 1) throw new Error('GitHub is unreachable')
+        return detail
+      }
+      if (method === 'pullRequests.metadataOptions') return metadataOptions
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    render(
+      <PullRequestDetailPane
+        item={detail}
+        transport={new TestTransport(request)}
+        onOpenChat={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    )
+
+    await screen.findByText('Editable pull request')
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
+
+    expect((await screen.findByRole('status')).textContent).toContain('GitHub is unreachable')
+    expect(screen.getByText('Editable pull request')).toBeTruthy()
+  })
+
   it('keeps empty label and milestone triggers at their readable width', async () => {
     setup({ ...detail, labels: [], milestone: undefined })
 

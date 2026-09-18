@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { deflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
+import { snapshotDesignAssets } from './file-snapshot.js'
 import {
   parseAssetManifest,
   validateAssetManifestForPage,
@@ -70,6 +71,221 @@ function crc32(buffer: Buffer): number {
 }
 
 describe('asset manifest', () => {
+  it('accepts generated PNG provenance metadata containing an SVG icon unchanged', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-png-provenance-'))
+    const page = {
+      sections: [{ id: 'hero', assetNeeds: ['photo'], componentNeeds: [] }],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const image = png(1600, 900)
+    const original = Buffer.concat([
+      image.subarray(0, 33),
+      pngChunk('caBX', Buffer.from('Provenance icon: <svg viewBox="0 0 10 10"></svg>')),
+      image.subarray(33),
+    ])
+    const assets = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'photo',
+          kind: 'image',
+          role: 'photography',
+          status: 'ready',
+          purpose: 'Hero photograph',
+          requirements: [],
+          sectionIds: ['hero'],
+          aspectRatio: '16:9',
+          composition: 'Wide café interior',
+          source: { kind: 'generated', reference: 'image generation' },
+          destination: 'photo.png',
+        },
+      ],
+    })
+    try {
+      writeFileSync(path.join(workspace, 'photo.png'), original)
+      expect(validateAssetManifestForPage(assets, page, workspace)).toEqual(assets)
+      expect(readFileSync(path.join(workspace, 'photo.png'))).toEqual(original)
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('expands a font family directory into concrete snapshotted files', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-font-family-'))
+    const page = {
+      sections: [{ id: 'hero', assetNeeds: ['font_bodoni'], componentNeeds: [] }],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const assets = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'font_bodoni',
+          kind: 'font',
+          role: 'font',
+          status: 'ready',
+          purpose: 'Headings and real italic',
+          requirements: [],
+          sectionIds: ['hero'],
+          source: { kind: 'project', reference: 'fonts/bodoni' },
+          destination: 'fonts/bodoni',
+        },
+      ],
+    })
+    try {
+      mkdirSync(path.join(workspace, 'fonts/bodoni'), { recursive: true })
+      writeFileSync(path.join(workspace, 'fonts/bodoni/regular.ttf'), 'regular font')
+      writeFileSync(path.join(workspace, 'fonts/bodoni/italic.ttf'), 'italic font')
+      writeFileSync(path.join(workspace, 'fonts/bodoni/OFL.txt'), 'font license')
+      const resolved = validateAssetManifestForPage(assets, page, workspace)
+      expect(resolved.assets).toHaveLength(2)
+      expect(resolved.assets[0]?.id).toBe('font_bodoni')
+      expect(resolved.assets.map(({ destination }) => destination).sort()).toEqual([
+        'fonts/bodoni/italic.ttf',
+        'fonts/bodoni/regular.ttf',
+      ])
+      expect(snapshotDesignAssets(workspace, resolved)).toHaveLength(2)
+      expect(validateAssetManifestForPage(resolved, page, workspace)).toEqual(resolved)
+      mkdirSync(path.join(workspace, 'empty'))
+      expect(() =>
+        validateAssetManifestForPage(
+          {
+            ...assets,
+            assets: [{ ...assets.assets[0]!, destination: 'empty' }],
+          },
+          page,
+          workspace,
+        ),
+      ).toThrow('directory contains no font files')
+      expect(() =>
+        validateAssetManifestForPage(
+          {
+            ...assets,
+            assets: [{ ...assets.assets[0]!, destination: '../' }],
+          },
+          page,
+          workspace,
+        ),
+      ).toThrow('must stay inside the workspace')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a credited photograph assigned to its consuming section', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-credited-photo-'))
+    const page = {
+      sections: [
+        { id: 'hero', assetNeeds: ['office-photo'], componentNeeds: [] },
+        { id: 'footer', assetNeeds: [], componentNeeds: [] },
+      ],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const photo = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'office-photo',
+          kind: 'image',
+          role: 'photography',
+          status: 'ready',
+          purpose: 'Hero photograph with a footer credit',
+          requirements: ['Credit the photographer in the footer'],
+          sectionIds: ['hero'],
+          aspectRatio: '16:9',
+          composition: 'Wide office photograph',
+          source: {
+            kind: 'external',
+            reference: 'https://example.com/photo',
+            license: 'Photographer; licensed for reuse',
+          },
+          destination: 'office.png',
+        },
+      ],
+    })
+    try {
+      writeFileSync(path.join(workspace, 'office.png'), png(1600, 900))
+      expect(validateAssetManifestForPage(photo, page, workspace)).toEqual(photo)
+      expect(() =>
+        validateAssetManifestForPage(
+          {
+            ...photo,
+            assets: [{ ...photo.assets[0]!, sectionIds: ['hero', 'footer'] }],
+          },
+          page,
+          workspace,
+        ),
+      ).toThrow('sectionIds must exactly match hero')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('validates real attribution JSON as data without treating it as a component', () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-data-asset-'))
+    const page = {
+      sections: [{ id: 'footer', assetNeeds: ['credits'], componentNeeds: [] }],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const credits = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'credits',
+          kind: 'data',
+          role: 'data',
+          status: 'ready',
+          purpose: 'Photo credits',
+          requirements: [],
+          sectionIds: ['footer'],
+          source: { kind: 'project', reference: 'credits.json' },
+          destination: 'credits.json',
+        },
+      ],
+    })
+    try {
+      writeFileSync(
+        path.join(workspace, 'credits.json'),
+        JSON.stringify({ creator: 'Photographer', source: 'https://example.com/photo' }),
+      )
+      expect(validateAssetManifestForPage(credits, page, workspace)).toEqual(credits)
+      writeFileSync(path.join(workspace, 'credits.json'), '<html>not data</html>')
+      expect(() => validateAssetManifestForPage(credits, page, workspace)).toThrow(
+        'valid JSON within 1 MB',
+      )
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+  it('accepts shared brand fonts while rejecting unknown consuming sections and extra visuals', () => {
+    const page = {
+      sections: [{ id: 'hero', assetNeeds: [], componentNeeds: [] }],
+    } as unknown as Parameters<typeof validateAssetManifestForPage>[1]
+    const fonts = parseAssetManifest({
+      version: 1,
+      assets: [
+        {
+          id: 'brand-font',
+          kind: 'font',
+          role: 'font',
+          status: 'needed',
+          purpose: 'Approved heading typography',
+          requirements: [],
+          sectionIds: ['hero'],
+        },
+      ],
+    })
+    expect(validateAssetManifestForPage(fonts, page)).toEqual(fonts)
+    expect(() =>
+      validateAssetManifestForPage(
+        { version: 1, assets: [{ ...fonts.assets[0]!, sectionIds: ['missing'] }] },
+        page,
+      ),
+    ).toThrow('existing consuming')
+    expect(() =>
+      validateAssetManifestForPage(
+        { version: 1, assets: [{ ...fonts.assets[0]!, kind: 'image', role: 'photography' }] },
+        page,
+      ),
+    ).toThrow('extra: brand-font')
+  })
+
   it('rejects malformed ratios and credential-bearing external source URLs', () => {
     const asset = { ...manifest.assets[0], aspectRatio: `${'9'.repeat(400)}:1` }
     expect(() => parseAssetManifest({ version: 1, assets: [asset] })).toThrow(
