@@ -33,7 +33,9 @@ app
     window.webContents.on('console-message', (_event, details) => {
       if (details.level === 'error') errors.push(details.message)
     })
-    await window.loadFile(process.env.HARNESS_PERF_RENDERER)
+    await window.loadFile(process.env.HARNESS_PERF_RENDERER, {
+      search: process.env.HARNESS_PERF_QUERY || undefined,
+    })
     const sample = await window.webContents.executeJavaScript('window.runPerformanceFixture()')
     if (errors.length > 0) throw new Error(errors.join('\n'))
     const metrics = app.getAppMetrics()
