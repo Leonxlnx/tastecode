@@ -47,6 +47,9 @@
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
     "compression": "maximum",
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "electronLanguages": [
       "en-US"
     ],
