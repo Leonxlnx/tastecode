@@ -45,7 +45,7 @@ describe('prompt progress lifecycle', () => {
     expect(run.deltaPrompt).toBe(run.optimisticPrompt)
     expect(run.canonicalRail).toBe(run.optimisticRail)
     expect(run.deltaReply).toBe(run.startedReply)
-    expect(run.rendered.container.querySelectorAll('.activity--working')).toHaveLength(0)
+    expect(run.rendered.container.querySelectorAll('.activity--duration')).toHaveLength(1)
     expect(threadItems(run.finalState).at(-1)?.text).toHaveLength(scenario.liveCharacters)
     expect(run.deltaReply.textContent).toHaveLength(scenario.liveCharacters)
 

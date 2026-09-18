@@ -92,7 +92,7 @@ describe('thread at scale', () => {
     ).toBe('Searching…')
   })
 
-  it('hands the placeholder rail to the first visible response without duplication', () => {
+  it('keeps one timer above the first visible response', () => {
     cleanup() // earlier renders would satisfy the queries below with stale DOM
     const view = (items: Item[]) => (
       <Thread
@@ -118,8 +118,8 @@ describe('thread at scale', () => {
       createdAt: 1,
     }
     const rendered = render(view([asked]))
-    const orb = rendered.container.querySelector('.activity__working-orb canvas')
-    expect(orb).not.toBeNull()
+    const rail = rendered.container.querySelector('.activity--working')
+    expect(rail?.textContent).toContain('Working for ')
 
     const reply: Item = {
       id: 'a1',
@@ -131,7 +131,8 @@ describe('thread at scale', () => {
       createdAt: 2,
     }
     rendered.rerender(view([asked, reply]))
-    expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(0)
+    expect(rendered.container.querySelectorAll('.activity--working')).toHaveLength(1)
+    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
     expect(rendered.container.querySelector('.activity__working-orb canvas')).toBeNull()
     cleanup()
   })

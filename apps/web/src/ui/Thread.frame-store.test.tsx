@@ -37,6 +37,107 @@ import { ThreadSearch } from './ThreadSearch.js'
 afterEach(cleanup)
 
 describe('Thread live frame isolation', () => {
+  it.each([false, true])(
+    'keeps the turn timer through streaming and freezes the final duration (tools: %s)',
+    (withTools) => {
+      vi.useFakeTimers({ now: 60_000 })
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+      try {
+        const prompt: Item = {
+          id: 'prompt',
+          turnId: 'turn-1',
+          type: 'message',
+          role: 'user',
+          status: 'completed',
+          text: 'Check this',
+          createdAt: 1_000,
+        }
+        const initial = {
+          ...emptyThread,
+          items: [prompt],
+          running: true,
+          activeTurn: { id: 'turn-1', startedAt: 1_000 },
+          turnTiming: { 'turn-1': { startedAt: 1_000 } },
+        }
+        const store = new ThreadFrameStore(initial)
+        const view = render(
+          <Thread
+            frameStore={store}
+            onDecide={() => undefined}
+            onAnswerUserInput={() => undefined}
+          />,
+        )
+        const rail = view.container.querySelector('.activity--working')
+        expect(rail?.textContent).toBe('Working for 59s')
+        const rendersBeforeTick = virtualizerRender.mock.calls.length
+        act(() => vi.advanceTimersByTime(1_000))
+        expect(rail?.textContent).toBe('Working for 1m')
+        expect(virtualizerRender).toHaveBeenCalledTimes(rendersBeforeTick)
+
+        const work: Item[] = withTools
+          ? [
+              {
+                ...prompt,
+                id: 'note',
+                role: 'assistant',
+                phase: 'commentary',
+                text: 'Checking.',
+                createdAt: 61_000,
+              },
+              {
+                id: 'cmd',
+                turnId: 'turn-1',
+                type: 'command',
+                status: 'completed',
+                command: 'pwd',
+                createdAt: 61_000,
+              },
+            ]
+          : []
+        const answer: Item = {
+          ...prompt,
+          id: 'answer',
+          role: 'assistant',
+          phase: 'final_answer',
+          status: 'started',
+          text: 'The result',
+          createdAt: 61_000,
+        }
+        act(() => store.publish({ ...initial, items: [prompt, ...work, answer] }))
+        expect(view.container.querySelector('.activity--working')).toBe(rail)
+        expect(view.container.querySelectorAll('.is-rail-anchor')).toHaveLength(1)
+        act(() => vi.advanceTimersByTime(2_000))
+        expect(rail?.textContent).toBe('Working for 1m 2s')
+
+        act(() =>
+          store.publish({
+            ...initial,
+            items: [prompt, ...work, { ...answer, status: 'completed' }],
+            running: false,
+            activeTurn: undefined,
+            turnTiming: { 'turn-1': { startedAt: 1_000, completedAt: 63_000 } },
+          }),
+        )
+        expect(view.container.querySelector('.activity--working')).toBeNull()
+        expect(view.getAllByText('Worked for 1m 2s')).toHaveLength(1)
+        expect(view.getByText('The result')).toBeTruthy()
+        if (withTools) {
+          fireEvent.click(view.getByRole('button', { name: 'Worked for 1m 2s' }))
+          expect(view.getByText('Checking.')).toBeTruthy()
+          expect(view.getByText('Ran pwd')).toBeTruthy()
+        }
+        act(() => vi.advanceTimersByTime(10_000))
+        expect(view.getAllByText('Worked for 1m 2s')).toHaveLength(1)
+        view.unmount()
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        cleanup()
+        visibility.mockRestore()
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it('finds text that arrives after thread search opens', () => {
     const item: Item = {
       id: 'answer-1',
