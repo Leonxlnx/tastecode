@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from './sqlite.js'
@@ -576,6 +576,37 @@ describe('recovering interrupted turns', () => {
     }
   })
 
+  it('skips an unparseable recovery payload without losing other threads', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-payload-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seedThread(seeded, 'good')
+    seedThread(seeded, 'corrupt')
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(`UPDATE recovery_lifecycles SET payload = 'not-json' WHERE thread_id = 'corrupt'`)
+      .run()
+    raw.close()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const restarted = new Store(file)
+    try {
+      expect(restarted.recoverInterruptedThreads()).toEqual(['good'])
+      expect(restarted.history('good').map(({ event }) => event)).toContainEqual({
+        type: 'turn.completed',
+        turnId: 'good-turn',
+        status: 'interrupted',
+      })
+    } finally {
+      warn.mockRestore()
+      restarted.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('filters old lifecycle history within the cold-start budget', () => {
     store.addProject('/repo')
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Scale' })
@@ -1009,6 +1040,42 @@ describe('opening a database written by an older build', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('skips an unparseable event row instead of bricking every startup', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-bad-event-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'good', projectPath: '/repo', provider: 'codex', title: 'Good' })
+    seeded.append('good', message('findable needle'))
+    seeded.addThread({ id: 'corrupt', projectPath: '/repo', provider: 'codex', title: 'Corrupt' })
+    seeded.append('corrupt', message('poisoned later'))
+    seeded.close()
+
+    // Forward-incompatible payload: valid JSON a newer build wrote, failing the
+    // schema a downgraded build knows. Plus a torn write that is not JSON at
+    // all — json_valid keeps it out of the rebuild scan entirely.
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(`UPDATE events SET payload = ? WHERE thread_id = 'corrupt'`)
+      .run('{"type":"item.completed","item":{"future":true}}')
+    raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES ('corrupt', 3, '{')`).run()
+    raw.exec(`DELETE FROM schema_migrations`)
+    raw.close()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('good')?.title).toBe('Good')
+      expect(reopened.searchSessions({ query: 'findable' }).results).toHaveLength(1)
+      // The skipped row stays in the log — derived indexes just cannot see it.
+      expect(reopened.searchSessions({ query: 'poisoned' }).results).toHaveLength(0)
+    } finally {
+      warn.mockRestore()
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('design runs', () => {
@@ -1151,6 +1218,38 @@ describe('threads', () => {
     // Ending the process is not the same as wanting the transcript gone.
     expect(store.thread('t1')?.closedAt).toBeGreaterThan(0)
     expect(store.history('t1')).toHaveLength(1)
+  })
+
+  it('keeps the first close time on a repeated close and reports a missing thread', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-close-thread-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'main', projectPath: '/repo', provider: 'codex', title: 'Main' })
+    const now = vi.spyOn(Date, 'now')
+    try {
+      now.mockReturnValue(1111)
+      seeded.closeThread('main')
+      now.mockReturnValue(2222)
+      seeded.closeThread('main')
+    } finally {
+      now.mockRestore()
+      seeded.close()
+    }
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('main')?.closedAt).toBe(1111)
+      expect(() => reopened.closeThread('missing')).toThrow('thread not found')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ignores a second close instead of throwing', () => {
+    store.close()
+    expect(() => store.close()).not.toThrow()
   })
 
   it('separates threads by project', () => {
@@ -2346,5 +2445,111 @@ describe('usage totals across providers', () => {
     const summary = store.usageSummary('one', 0)
     expect(summary.session).toEqual(expect.objectContaining({ totalTokens: 100 }))
     expect(summary.today).toEqual(expect.objectContaining({ totalTokens: 140 }))
+  })
+})
+describe('sensitive file permissions', () => {
+  const posixOnly = process.platform === 'win32' ? it.skip : it
+
+  posixOnly('creates the database, its sidecars, and its directory with user-only access', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-'))
+    const file = path.join(dir, 'nested', 'harness.db')
+    const db = new Store(file)
+    try {
+      db.addProject('/repo')
+      db.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'One' })
+      db.append('t1', message('hello'))
+
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      expect(statSync(path.dirname(file)).mode & 0o777).toBe(0o700)
+      // WAL carries the same rows while the connection is open; SHM goes away
+      // on a clean shutdown, so only assert it when present.
+      expect(existsSync(`${file}-wal`)).toBe(true)
+      expect(statSync(`${file}-wal`).mode & 0o777).toBe(0o600)
+      if (existsSync(`${file}-shm`)) {
+        expect(statSync(`${file}-shm`).mode & 0o777).toBe(0o600)
+      }
+    } finally {
+      db.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  posixOnly('creates private files even under a permissive umask', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-umask-'))
+    const file = path.join(dir, 'harness.db')
+    const previous = process.umask(0o022)
+    try {
+      const db = new Store(file)
+      try {
+        expect(statSync(file).mode & 0o777).toBe(0o600)
+        expect(statSync(dir).mode & 0o777).toBe(0o700)
+        expect(statSync(`${file}-wal`).mode & 0o777).toBe(0o600)
+      } finally {
+        db.close()
+      }
+    } finally {
+      process.umask(previous)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('closes the handle when opening a corrupt database fails', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-corrupt-'))
+    const file = path.join(dir, 'harness.db')
+    writeFileSync(file, 'not a database at all')
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close')
+    try {
+      expect(() => new Store(file)).toThrow()
+      expect(closeSpy).toHaveBeenCalled()
+    } finally {
+      closeSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('closes the handle when post-open setup fails', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-key-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.close()
+    const raw = new DatabaseSync(file)
+    try {
+      raw
+        .prepare(`UPDATE app_settings SET value = ? WHERE key = ?`)
+        .run('bogus', 'search_result_key_v1')
+    } finally {
+      raw.close()
+    }
+    const closeSpy = vi.spyOn(DatabaseSync.prototype, 'close')
+    try {
+      expect(() => new Store(file)).toThrow('Search result identity key')
+      expect(closeSpy).toHaveBeenCalled()
+    } finally {
+      closeSpy.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  posixOnly('tightens files and directories left readable by an older build', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-store-perms-loose-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.close()
+    chmodSync(file, 0o644)
+    chmodSync(dir, 0o755)
+    if (existsSync(`${file}-wal`)) chmodSync(`${file}-wal`, 0o644)
+
+    const reopened = new Store(file)
+    try {
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      expect(statSync(dir).mode & 0o777).toBe(0o700)
+      if (existsSync(`${file}-wal`)) {
+        expect(statSync(`${file}-wal`).mode & 0o777).toBe(0o600)
+      }
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
