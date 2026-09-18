@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 
 function packagedPaths(argument) {
   const supplied = path.resolve(argument)
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' || process.platform === 'linux') {
     return {
       executable: supplied,
       resources: path.join(path.dirname(supplied), 'resources'),
@@ -22,7 +22,7 @@ function packagedPaths(argument) {
       resources: path.join(app, 'Contents', 'Resources'),
     }
   }
-  throw new Error('packaged native proof is supported only on Windows and macOS')
+  throw new Error('packaged native proof is supported only on Windows, macOS, and Linux')
 }
 
 function singleMacExecutable(directory) {
@@ -37,20 +37,25 @@ function singleMacExecutable(directory) {
   return candidates[0]
 }
 
+// The hardened fuse wire disables ELECTRON_RUN_AS_NODE, so the proof runs
+// inside the real packaged app: main.ts checks HARNESS_NATIVE_BINDING_PROOF
+// before any app state is created and exits after the proof. This exercises
+// the exact process the bindings ship in, on every platform.
 const arguments_ = process.argv.slice(2).filter((argument) => argument !== '--')
-if (arguments_.length !== 1) {
+const positional = arguments_.filter((argument) => !argument.startsWith('--'))
+if (positional.length !== 1) {
   throw new Error('usage: pnpm --filter @harness/desktop verify:native-bindings -- <app-or-exe>')
 }
-const [argument] = arguments_
+const [argument] = positional
 const { executable, resources } = packagedPaths(argument)
 const archive = path.join(resources, 'app.asar')
 if (!existsSync(executable)) throw new Error(`packaged executable does not exist: ${executable}`)
 if (!existsSync(archive)) throw new Error(`packaged app.asar does not exist: ${archive}`)
 
-const proof = path.join(archive, 'dist', 'native-binding-proof.js')
-const result = spawnSync(executable, [proof], {
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+const result = spawnSync(executable, [], {
+  env: { ...process.env, HARNESS_NATIVE_BINDING_PROOF: '1' },
   stdio: 'inherit',
+  timeout: 120000,
   windowsHide: true,
 })
 if (result.error) throw result.error

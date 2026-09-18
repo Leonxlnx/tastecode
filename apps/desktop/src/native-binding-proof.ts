@@ -251,11 +251,19 @@ export async function runNativeBindingProof(
   options: { proofFile?: string; modules?: PackagedNativeModules } = {},
 ): Promise<void> {
   const proofFile = options.proofFile ?? fileURLToPath(import.meta.url)
-  if (!process.versions.electron || process.env.ELECTRON_RUN_AS_NODE !== '1') {
-    throw new Error('native proof must run through the packaged Electron executable in Node mode')
+  // Runs inside the packaged app's main process — the hardened fuse wire turns
+  // the old ELECTRON_RUN_AS_NODE re-exec into a no-op.
+  if (!process.versions.electron || process.env.HARNESS_NATIVE_BINDING_PROOF !== '1') {
+    throw new Error(
+      'native proof must run inside the packaged app via HARNESS_NATIVE_BINDING_PROOF',
+    )
   }
-  if (process.platform !== 'win32' && process.platform !== 'darwin') {
-    throw new Error('native proof is a Windows and macOS release gate')
+  if (
+    process.platform !== 'win32' &&
+    process.platform !== 'darwin' &&
+    process.platform !== 'linux'
+  ) {
+    throw new Error('native proof is a packaged-build release gate')
   }
   const modules = options.modules ?? (await loadPackagedNativeModules())
   assertPackagedDesignReferences(proofFile, modules.designEntry)

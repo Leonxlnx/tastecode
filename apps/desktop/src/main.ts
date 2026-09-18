@@ -26,7 +26,7 @@ import {
   type WebContents,
 } from 'electron'
 import type { PreviewCaptureRequest } from '@harness/contracts'
-import { applyDesktopPath, desktopPath } from '@harness/proc/desktop-path'
+import { applyDesktopPath } from '@harness/proc/desktop-path'
 import {
   ATTACHMENT_PREVIEW_SCHEME,
   attachmentByteRange,
@@ -79,6 +79,23 @@ import {
 import { viewedImagePath } from './viewed-image-path.js'
 
 applyDesktopPath()
+
+// Packaged native-binding proof runs inside the real app so the fuse wire can
+// disable ELECTRON_RUN_AS_NODE: the shipped binary is re-launched with this
+// env set and exits before any Electron app state is touched.
+if (process.env['HARNESS_NATIVE_BINDING_PROOF'] === '1') {
+  try {
+    const { runNativeBindingProof } = await import('./native-binding-proof.js')
+    await runNativeBindingProof()
+    process.stdout.write('packaged PTY and keyring proofs passed\n')
+    process.exit(0)
+  } catch (error) {
+    process.stderr.write(
+      `[native-proof] ${error instanceof Error ? error.message : String(error)}\n`,
+    )
+    process.exit(1)
+  }
+}
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -314,18 +331,10 @@ function startOwnedServer(): void {
       }
     },
   }
-  serverSupervisor =
-    process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
-      ? new ServerSupervisor({
-          command: process.execPath,
-          args: [serverEntry],
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
-          ...supervisorCallbacks,
-        })
-      : new ServerSupervisor({
-          launch: () => launchUtilityServer(serverEntry),
-          ...supervisorCallbacks,
-        })
+  serverSupervisor = new ServerSupervisor({
+    launch: () => launchUtilityServer(serverEntry),
+    ...supervisorCallbacks,
+  })
   serverSupervisor.start()
   logStartupMilestone('server-spawned')
 }
