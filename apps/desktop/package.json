@@ -128,7 +128,6 @@
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
     "linux": {
       "executableName": "tastecode",
-      "publish": null,
       "icon": "assets/tastecode-app-icon.png",
       "category": "Development",
       "synopsis": "Local desktop workspace for coding agents",

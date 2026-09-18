@@ -909,6 +909,8 @@ if (ownsSingleInstance) {
         platform: process.platform,
         packaged: app.isPackaged,
         developmentServer: devServer,
+        // The AppImage runtime exports APPIMAGE with the mounted image path.
+        appImage: process.env.APPIMAGE !== undefined,
       }),
     })
     appUpdater.subscribe((state) => {

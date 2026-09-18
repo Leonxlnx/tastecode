@@ -20,8 +20,9 @@ const info = { version: '0.1.0-beta.2' }
 afterEach(() => vi.useRealTimers())
 
 describe('app update controller', () => {
-  it('installs updates only for packaged Windows and macOS builds', () => {
+  it('installs updates for packaged Windows, macOS, and AppImage builds', () => {
     expect(appUpdateMode({ platform: 'linux', packaged: true })).toBe('manual')
+    expect(appUpdateMode({ platform: 'linux', packaged: true, appImage: true })).toBe('install')
     expect(appUpdateMode({ platform: 'win32', packaged: true })).toBe('install')
     expect(appUpdateMode({ platform: 'darwin', packaged: true })).toBe('install')
     expect(appUpdateMode({ platform: 'freebsd', packaged: true })).toBe('unsupported')

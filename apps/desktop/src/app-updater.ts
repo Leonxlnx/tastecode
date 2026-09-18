@@ -29,9 +29,12 @@ export function appUpdateMode(options: {
   platform: NodeJS.Platform
   packaged: boolean
   developmentServer?: string | undefined
+  appImage?: boolean | undefined
 }): AppUpdateMode {
   if (!options.packaged || options.developmentServer) return 'unsupported'
-  if (options.platform === 'linux') return 'manual'
+  // electron-updater replaces an AppImage in place; a deb install is owned by
+  // the system package manager and stays on manual updates.
+  if (options.platform === 'linux') return options.appImage ? 'install' : 'manual'
   if (options.platform === 'win32' || options.platform === 'darwin') return 'install'
   return 'unsupported'
 }
