@@ -224,7 +224,8 @@ async function main() {
   }
   const glibcFloorByBinary = {}
   for (const binary of nativeBinaryCandidates(unpackedDirectory, executableName)) {
-    const symbols = command('objdump', ['-T', binary])
+    // The Electron binary's dynamic symbol table alone is several megabytes.
+    const symbols = command('objdump', ['-T', binary], { maxBuffer: 64 * 1024 * 1024 })
     const measured = maxSymbolVersion(symbols, 'GLIBC')
     if (measured === undefined) continue
     glibcFloorByBinary[path.relative(unpackedDirectory, binary)] = measured
