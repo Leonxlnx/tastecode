@@ -58,8 +58,23 @@ renderer setting intact. The reopened beta 7 updater also read the public releas
 The test used isolated app and data directories; its relaunch was controlled to keep those
 test-only data paths. The earlier signed fixtures separately proved automatic relaunch.
 
-Windows beta 7 remains pending and must use the exact same tagged source commit. Its
-signing and native upgrade checks are still the Windows maintainer's release gates.
+Windows beta 7 is now published from that same tagged source commit. The release owner
+explicitly approved another unsigned Windows release because no trusted signing identity
+was available. Both the application and installer report `NotSigned`; Windows may display
+an unknown-publisher or SmartScreen warning.
+
+Windows validation: lint, type checking, the full test suite, build, license verification,
+packaged resources and PTY/keyring checks passed. An initial Markdown timing test failed
+during concurrent checks, then passed unchanged both in isolation and in the full rerun.
+All five uploaded asset digests match local files. An anonymous public installer download
+matches SHA-256 `ff8f0dd8f08b3165da8a714f42e3311f9560c462be374e6792efc3247c075129`.
+Both the legacy beta 6 GitHub provider and the new asset provider discover beta 7 without
+credentials. The legacy provider successfully falls back to `latest.yml`.
+
+A parallel fresh-profile startup attempt collided with the existing desktop's server on
+port 4311. The active installation was left running. A beta 7 Windows clean installation
+and real beta 6-to-7 installed upgrade remain unverified; metadata discovery and native
+binding checks do not establish those results.
 
 ## Prepare, build, then publish
 
@@ -85,7 +100,7 @@ release below, subsequent releases must stage both
 platforms together before publication, because GitHub-connected macOS clients would
 otherwise discover a release without matching metadata.
 
-[Direct Windows download](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.6/TasteCode-0.1.0-beta.6-win-x64.exe)
+[Direct Windows download](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.7/TasteCode-0.1.0-beta.7-win-x64.exe)
 works without a GitHub login and can be used on the landing page.
 
 1. Finish the intended merges, choose a version higher than every distributed build, and
@@ -154,10 +169,11 @@ Reference: [electron-builder auto-update documentation](https://www.electron.bui
 
 ## Add Windows to the macOS-first beta 7 release
 
-Beta 7 is published as a normal GitHub release. Windows remains on beta 6 until the
-Windows maintainer adds the beta 7 files to that same release. Old Windows clients may
-report a missing update feed until `latest.yml` is added; do not publish a new tag to fix it.
-Do not remove beta 6 or alter any existing macOS asset.
+Beta 7 is published as a normal GitHub release with both platforms. The Windows maintainer
+added the five Windows files below to the existing release, with `latest.yml` uploaded last.
+The owner approved unsigned Windows publication for this beta; trusted signing and an
+installed Windows upgrade proof remain outstanding. Do not repeat these uploads, replace
+published bytes, remove beta 6, or alter any existing macOS asset.
 
 1. Fetch `v0.1.0-beta.7` and use its exact commit in a clean checkout. Set `APPROVED_SHA`
    and `EVENT_SHA` to `git rev-parse v0.1.0-beta.7^{commit}` and `EVENT_REF=refs/heads/main`.
