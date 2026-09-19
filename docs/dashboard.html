@@ -320,6 +320,12 @@
           adapter suite. These source fixes require the next desktop release.
         </p>
         <p class="sub">
+          Codex cold startup has a separate 30-second initialization budget and retries a timeout
+          once after disposing its first process. Concurrent callers share startup, and stopping the
+          adapter cancels recovery. Account reads retain their shorter timeout. Source changes
+          require the next desktop release.
+        </p>
+        <p class="sub">
           <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.7"
             >Windows and macOS beta 7</a
           >
