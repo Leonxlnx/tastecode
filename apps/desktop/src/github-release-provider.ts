@@ -51,10 +51,19 @@ export function releaseUpdateInfo(
 ): AssetUpdateInfo {
   const version = versionFromTag(release.tag_name)
   if (!version || !release.published_at) throw new Error('Invalid release version or date.')
-  const target = platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : undefined
-  if (!target) throw new Error('App updates are supported on Windows and macOS.')
-  const extension = target === 'mac' ? 'dmg' : 'exe'
-  const name = `TasteCode-${version}-${target}-${arch}.${extension}`
+  // Artifact names follow the artifactName template (release-manifest.js). The
+  // AppImage target writes the Debian-style x86_64 where Node reports x64.
+  const target =
+    platform === 'darwin'
+      ? { os: 'mac', extension: 'dmg', artifactArch: arch }
+      : platform === 'win32'
+        ? { os: 'win', extension: 'exe', artifactArch: arch }
+        : platform === 'linux'
+          ? { os: 'linux', extension: 'AppImage', artifactArch: arch === 'x64' ? 'x86_64' : arch }
+          : undefined
+  if (!target)
+    throw new Error('App updates are supported on Windows, macOS, and Linux AppImage installs.')
+  const name = `TasteCode-${version}-${target.os}-${target.artifactArch}.${target.extension}`
   const matches = release.assets.filter(
     (asset) =>
       typeof asset === 'object' && asset !== null && 'name' in asset && asset.name === name,

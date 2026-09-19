@@ -244,7 +244,7 @@ test('version, channel, product, and artifact names come from package config', a
   assert.throws(() => createReleaseConfig(desktop), /Unsupported artifactName/)
 })
 
-test('beta 7 keeps beta 6 metadata; beta 8 uploads only EXE and DMG with verified digests', async (t) => {
+test('beta 7 keeps beta 6 metadata; beta 8 uploads the updater artifacts with verified digests', async (t) => {
   const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
   desktop.version = '0.1.0-beta.7'
   const bridge = createReleaseConfig(desktop)
@@ -258,11 +258,13 @@ test('beta 7 keeps beta 6 metadata; beta 8 uploads only EXE and DMG with verifie
     const mock = github()
     const result = await upload(directory, mock, { config })
     assert.deepEqual(result.assets.map((asset) => asset.name).sort(), [
+      `TasteCode-${version}-linux-x86_64.AppImage`,
       `TasteCode-${version}-mac-arm64.dmg`,
       `TasteCode-${version}-win-x64.exe`,
     ])
     assert.equal(result.release.draft, true)
-    // Local proof is still complete even though only two files reach GitHub.
+    // Local proof is still complete even though only the updater artifacts
+    // reach GitHub.
     await verifyReleaseDirectory(directory, { approvedSha, config })
   }
 })

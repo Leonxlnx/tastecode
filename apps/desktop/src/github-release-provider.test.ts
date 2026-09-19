@@ -16,6 +16,7 @@ function release(version = '0.1.0-beta.8', date = '2026-09-20T00:00:00Z') {
     assets: [
       ['mac-arm64', 'dmg'],
       ['win-x64', 'exe'],
+      ['linux-x86_64', 'AppImage'],
     ].map(([target, ext]) => {
       const name = `TasteCode-${version}-${target}.${ext}`
       return {
@@ -48,12 +49,18 @@ describe('GitHub asset releases', () => {
     ).toBe(beta.tag_name)
   })
 
-  it('needs only the matching EXE or DMG and a GitHub digest', () => {
+  it('needs only the matching installer and a GitHub digest', () => {
     const latest = selectLatestRelease([release()])
     expect(releaseUpdateInfo(latest, 'darwin', 'arm64').asset.name).toMatch(/\.dmg$/)
     expect(releaseUpdateInfo(latest, 'win32', 'x64').asset.name).toMatch(/\.exe$/)
-    expect(latest.assets).toHaveLength(2)
+    // electron-builder's AppImage arch token is x86_64 where Node reports x64.
+    expect(releaseUpdateInfo(latest, 'linux', 'x64').asset.name).toBe(
+      'TasteCode-0.1.0-beta.8-linux-x86_64.AppImage',
+    )
+    expect(latest.assets).toHaveLength(3)
     expect(() => releaseUpdateInfo(latest, 'darwin', 'x64')).toThrow(/missing/)
+    expect(() => releaseUpdateInfo(latest, 'linux', 'arm64')).toThrow(/missing/)
+    expect(() => releaseUpdateInfo(latest, 'freebsd', 'x64')).toThrow(/supported/)
   })
 
   it('does not silently choose an older release when the newest one is incomplete', () => {
