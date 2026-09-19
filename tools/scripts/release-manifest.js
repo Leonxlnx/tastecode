@@ -188,11 +188,15 @@ export function releaseAssets(platform = 'all', config = releaseConfig) {
 
 // Beta 7 is the bridge for beta 6's YAML/ZIP updater. Proof files remain local
 // after that bridge; GitHub supplies the public asset SHA-256 digests itself.
+// Each uploaded file is the artifact that platform's in-app updater downloads:
+// the custom release provider resolves names and hashes over the GitHub API,
+// so the latest*.yml metadata files are not needed on the release.
 export function releaseUploadAssets(config = releaseConfig) {
   if (/^0\.1\.0-beta\.[0-7]$/.test(config.version)) return releaseAssets('all', config)
   return [
     ...config.platforms.windows.artifacts.filter((name) => name.endsWith('.exe')),
     ...config.platforms.macos.artifacts.filter((name) => name.endsWith('.dmg')),
+    ...config.platforms.linux.artifacts.filter((name) => name.endsWith('.AppImage')),
   ].sort()
 }
 
