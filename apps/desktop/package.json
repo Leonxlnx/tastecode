@@ -59,6 +59,8 @@
       "node_modules/**/node-pty/prebuilds/**/spawn-helper",
       "node_modules/@harness/design-agent/references/library/**/*"
     ],
+    "beforePack": "../../tools/scripts/normalize-linux-perms.js",
+    "afterPack": "../../tools/scripts/normalize-linux-perms.js",
     "files": [
       "dist/{main.js,preload.cjs,native-binding-proof.js}",
       "assets/tastecode-app-icon.png",
@@ -190,6 +192,7 @@
         "libayatana-appindicator3-1 | libappindicator3-1"
       ],
       "fpm": [
+        "--description=Local desktop workspace for coding agents\nA local desktop workspace for coding agents.",
         "--deb-user=root",
         "--deb-group=root",
         "assets/linux/dev.tastecode.metainfo.xml=/usr/share/metainfo/dev.tastecode.metainfo.xml",

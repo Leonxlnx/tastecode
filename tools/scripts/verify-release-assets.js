@@ -19,6 +19,7 @@ import {
 } from './release-manifest.js'
 import { verifyReleaseCheckout } from './verify-release-input.js'
 import { assertGlibcFloor, declaredLibcFloor } from './linux-acceptance.js'
+import { verifyConfiguredDebDependencies, verifyDebContents } from './linux-release-evidence.js'
 
 function run(executable, args, options = {}) {
   const result = spawnSync(executable, args, {
@@ -173,6 +174,12 @@ export async function verifyPackageContainers(directory, platform, config = rele
     if (libcFloor === undefined)
       throw new Error('apps/desktop deb depends must declare a libc6 (>= <version>) floor')
     assertGlibcFloor(unpacked, executableName, libcFloor, '[release-proof]')
+    // The deb is the package-manager artifact: declared dependencies and the
+    // sandbox helper, AppArmor profile, desktop entry and icon payload need
+    // dpkg-deb checks the unpacked tree cannot cover. Same gates as the local
+    // linux-release-evidence run.
+    verifyConfiguredDebDependencies(directory, desktopPackage)
+    await verifyDebContents(directory, desktopPackage)
     // The node-mode proof needs no display; the utility-launcher proof is
     // covered by the local Wayland acceptance run, not by a headless runner.
     run(process.execPath, [
