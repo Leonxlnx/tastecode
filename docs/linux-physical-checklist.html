@@ -785,7 +785,7 @@ Minimized window + second launch: lock refused (exit 0, stderr line), first wind
               <label
                 ><span>Observed result</span
                 ><textarea placeholder="Say whether COSMIC showed a tray icon">
-NOT YET VERIFIED — close-to-tray is new on Linux. Startup probes the session D-Bus for org.kde.StatusNotifierWatcher and logs "[desktop] linux tray host: present|absent". On COSMIC (host present) the window must hide on close and restore via the tray Open entry or a second launch.</textarea>
+PARTIALLY VERIFIED — on COSMIC at 0a399aad the probe logged "linux tray host: present", the tray was created, and a real close fired hide=true → preventDefault + hide(): window hidden, renderer alive, server still on 127.0.0.1:4311; a second launch restored it. Confirmed again at 2a7e6bb5 (Ctrl+W → hide to tray). A human tray-menu Open click is still pending — see the tray-menu check.</textarea>
               </label>
             </div>
           </article>
@@ -1243,7 +1243,7 @@ NOT YET VERIFIED — requires a live panel to judge icon rendering and menu inte
               <label
                 ><span>Observed result</span
                 ><textarea placeholder="Required for FAIL or BLOCKED">
-NOT YET VERIFIED — stock GNOME without an AppIndicator extension is the real-world case; a broken DBUS_SESSION_BUS_ADDRESS is the quick proxy. Either way the app must not leave an invisible hidden process.</textarea>
+PARTIALLY VERIFIED — with DBUS_SESSION_BUS_ADDRESS pointed at a nonexistent socket at 0a399aad, the probe logged "linux tray host: absent", no tray was created, close destroyed the window and the process exited code 0 with port 4311 released. Proven again on a real nested compositor: gnome-shell --nested --wayland + private dbus-run-session at 2a7e6bb5 (notray-wayland.log). Stock GNOME without the AppIndicator extension on a physical desktop remains the human check.</textarea>
               </label>
             </div>
           </article>
@@ -1286,7 +1286,7 @@ NOT YET VERIFIED — stock GNOME without an AppIndicator extension is the real-w
               <label
                 ><span>Observed result</span
                 ><textarea placeholder="Required for FAIL or BLOCKED">
-NOT YET VERIFIED — updater wiring is confirmed statically (latest-linux.yml + app-update.yml in the package) but no live check against GitHub has been run yet. Draft releases mean the check may legitimately report "up to date" until a release is published.</textarea>
+PARTIALLY VERIFIED — self-update E2E proven against a local generic provider (resources/app-update.yml repointed): "Found version 0.1.0-beta.7" → sha512-verified download → updateState ready → quitAndInstall unlinked the old file, placed the new one beside it, and relaunched beta.7 from its own mount (update-app.log). A live check against GitHub Releases has not been run yet — draft releases may legitimately report "up to date" until one is published.</textarea>
               </label>
             </div>
           </article>
