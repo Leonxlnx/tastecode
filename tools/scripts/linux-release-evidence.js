@@ -233,6 +233,12 @@ export async function verifyDebContents(releaseDirectory, desktopPackage) {
         )
       }
     }
+    const execLine = /^Exec=(.+)$/m.exec(desktopEntry)?.[1]?.trim()
+    if (execLine?.includes('--no-sandbox')) {
+      throw new Error(
+        `[linux-release-evidence] ${desktopEntryName} Exec disables the Chromium sandbox`,
+      )
+    }
     const iconName = /^Icon=(.+)$/m.exec(desktopEntry)?.[1]?.trim()
     if (!iconName) {
       throw new Error('[linux-release-evidence] desktop entry has no Icon name')
@@ -242,6 +248,19 @@ export async function verifyDebContents(releaseDirectory, desktopPackage) {
     })
     if (!icons.some((entry) => path.basename(entry) === `${iconName}.png`)) {
       throw new Error(`[linux-release-evidence] no hicolor icon named ${iconName}.png in the deb`)
+    }
+    // AppStream resolves the component by the desktop file basename; lintian's
+    // no-copyright-file tag resolves the doc directory by the deb package name.
+    const metainfoName = `${path.basename(desktopEntryName, '.desktop')}.metainfo.xml`
+    const packageName = desktopPackage.build?.deb?.packageName ?? executable
+    for (const payload of [
+      path.join('usr', 'share', 'metainfo', metainfoName),
+      path.join('usr', 'share', 'doc', packageName, 'copyright'),
+    ]) {
+      const entry = statSync(path.join(extractionRoot, payload), { throwIfNoEntry: false })
+      if (!entry?.isFile()) {
+        throw new Error(`[linux-release-evidence] deb payload is missing ${payload}`)
+      }
     }
   } finally {
     await rm(extractionRoot, { recursive: true, force: true })
