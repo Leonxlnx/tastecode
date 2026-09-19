@@ -829,6 +829,7 @@ describe('web client', () => {
 
     render(<App />)
     openSettings()
+    await act(() => vi.dynamicImportSettled())
     fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
     fireEvent.click(
       await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
