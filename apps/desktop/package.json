@@ -59,6 +59,7 @@
       "node_modules/**/node-pty/prebuilds/**/spawn-helper",
       "node_modules/@harness/design-agent/references/library/**/*"
     ],
+    "beforePack": "../../tools/scripts/normalize-linux-perms.js",
     "afterPack": "../../tools/scripts/normalize-linux-perms.js",
     "files": [
       "dist/{main.js,preload.cjs,native-binding-proof.js}",

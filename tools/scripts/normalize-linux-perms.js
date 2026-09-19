@@ -73,11 +73,11 @@ export async function stripPayloadBinaries(binaries, run = execFileSync) {
   for (const binary of binaries) run('strip', ['--strip-unneeded', binary], { stdio: 'inherit' })
 }
 
-// Icons, metainfo and copyright reach the deb through fpm's src=dest mappings,
-// which clone the source file's mode — the payload walk cannot see them. Asset
-// sources are pure data, always 0644; git only tracks the exec bit, so the
-// checkout stays clean for the provenance gate.
-export async function normalizeAssetSources(assetsDirectory) {
+// Files mapped verbatim into the deb — icon, metainfo, copyright sources and
+// the templates electron-builder renders into its temp dir — carry whatever
+// mode the source or render-time umask left. All of them are payload data or
+// maintainer scripts, which fpm chmods to 0755 itself, so 0644 is always right.
+export async function normalizeDataTree(assetsDirectory) {
   const walk = async (directory) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const full = path.join(directory, entry.name)
@@ -92,16 +92,30 @@ export async function normalizeAssetSources(assetsDirectory) {
   await walk(assetsDirectory)
 }
 
+// Everything electron-builder stages after packing — the .desktop entry,
+// app-update.yml, package-type, the rendered AppArmor profile — takes the
+// process umask, so pin it to the Debian-normal 022 before any of it is
+// written. beforePack fires early enough to cover files rendered lazily
+// inside the deb target's build step.
+export function beforePack(context) {
+  if (context?.electronPlatformName !== 'linux') return
+  process.umask(0o022)
+}
+
 export async function afterPack(context) {
   if (context?.electronPlatformName !== 'linux') return
-  // Everything electron-builder stages after this hook (the .desktop entry,
-  // app-update.yml, package-type, mime data) takes the process umask — pin it
-  // to the Debian-normal 022 so staged files are not group-writable.
-  process.umask(0o022)
   const { appOutDir, packager } = context
   const { directories, files, strippable } = await normalizePayloadTree(appOutDir)
   await stripPayloadBinaries(strippable)
-  await normalizeAssetSources(path.join(packager.projectDir, 'assets'))
+  // The AppArmor profile and maintainer scripts are rendered into the packager
+  // temp dir when the deb target is constructed — before any hook runs — so
+  // they carry the ambient umask; fpm clones those modes into the payload.
+  try {
+    await normalizeDataTree(await packager.info.tempDirManager.rootTempDir)
+  } catch {
+    // No temp dir means nothing was rendered yet — nothing to normalize.
+  }
+  await normalizeDataTree(path.join(packager.projectDir, 'assets'))
   process.stdout.write(
     `${TAG} normalized ${files} files and ${directories} directories, ` +
       `stripped ${strippable.length} binaries in ${appOutDir}\n`,

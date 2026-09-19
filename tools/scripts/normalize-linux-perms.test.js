@@ -5,7 +5,7 @@ import path from 'node:path'
 import test from 'node:test'
 
 import {
-  normalizeAssetSources,
+  normalizeDataTree,
   normalizePayloadTree,
   payloadFileMode,
   stripPayloadBinaries,
@@ -67,13 +67,13 @@ test('normalizePayloadTree leaves symlinks untouched', () =>
     assert.equal((await lstat(link)).isSymbolicLink(), true)
   }))
 
-test('normalizeAssetSources forces asset data to 0644', () =>
+test('normalizeDataTree forces mapped data files to 0644', () =>
   withDir(async (root) => {
     const icon = path.join(root, 'icons', '512x512.png')
     await mkdir(path.dirname(icon), { recursive: true })
     await writeFile(icon, 'png', { mode: 0o664 })
     await writeFile(path.join(root, 'copyright'), 'license', { mode: 0o664 })
-    await normalizeAssetSources(root)
+    await normalizeDataTree(root)
     assert.equal(await modeOf(icon), 0o644)
     assert.equal(await modeOf(path.join(root, 'copyright')), 0o644)
   }))
