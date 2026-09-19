@@ -44,11 +44,12 @@ beta 6 to switch to GitHub in-app updates. See [release details](docs/RELEASING.
 
 ### Linux
 
-Linux is qualified on Pop!_OS 24.04 (COSMIC) and Ubuntu 24.04 (GNOME); other Wayland desktops
-are best-effort. Two artifacts ship per release:
+Linux is qualified on Pop!_OS 24.04 (COSMIC/Wayland); Ubuntu 24.04 (GNOME/Wayland) is the
+second qualification target — its physical desktop pass is not yet verified. Other Wayland
+desktops are best-effort. Two artifacts ship per release:
 
-- **deb** — the primary artifact. Installs to `/opt`, registers the desktop entry and AppArmor
-  profile, and declares its dependencies to apt.
+- **deb** — the primary artifact. Installs to `/opt/Taste Code/`, registers the desktop entry
+  and AppArmor profile, and declares its dependencies to apt.
 - **AppImage** — portable, with a statically linked runtime that needs no host FUSE library.
   It still needs unprivileged user namespaces for the Chromium sandbox; Ubuntu 23.10+ disables
   them by default (`kernel.apparmor_restrict_unprivileged_userns`), so prefer the deb there.
@@ -75,8 +76,8 @@ minimal or headless desktops need gnome-keyring, KWallet, or KeePassXC installed
   `errors.log` (512 KB, one rotated generation) under
   `~/.config/TasteCode/diagnostics/text/`. The button next to the toggle opens that directory.
   For console output, launch `tastecode` from a terminal.
-- **Full uninstall.** `sudo apt remove tastecode`, then delete `~/.config/TasteCode` and
-  `~/.tastecode`.
+- **Full uninstall.** `sudo apt remove tastecode`, then delete `~/.config/TasteCode`,
+  `~/.local/share/TasteCode` (the local database), and `~/.tastecode`.
 
 For local development, install Node 24 LTS and pnpm, then run:
 

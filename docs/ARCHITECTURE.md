@@ -52,8 +52,8 @@ to a TypeScript client).
 
 ## Desktop shell: Electron
 
-**The primary desktop client is Electron on macOS and Windows.** One Chromium renderer gives
-both platforms the same layout, text and motion implementation. Tauri and other system-webview
+**The primary desktop client is Electron on macOS, Windows, and Linux.** One Chromium renderer
+gives all platforms the same layout, text and motion implementation. Tauri and other system-webview
 shells are smaller, but their Chromium/WebKit split would make visual parity a permanent
 cross-platform problem.
 
@@ -204,7 +204,7 @@ package-agnostic self-update.
 | ------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------- |
 | Language / runtime | TypeScript 5.9.3, Node >=22.18 tooling / Electron Node 24 | One language across the server, adapters, web client, and desktop shell |
 | Monorepo           | pnpm workspaces + Vite                                    | pnpm's store keeps worktree-heavy development cheap                     |
-| Desktop            | Electron 43                                               | One Chromium renderer across macOS and Windows                          |
+| Desktop            | Electron 43                                               | One Chromium renderer across macOS, Windows, and Linux                  |
 | UI                 | React 19                                                  | Shared renderer behavior and app-owned controls                         |
 | Chat list          | TanStack Virtual, end-anchored                            | Variable-height streamed rows keep stable keys and cached measurement   |
 | Markdown           | Streamdown + Shiki's JavaScript engine                    | Incomplete streamed blocks stay cheap without weakening the CSP         |
@@ -463,11 +463,11 @@ without parsing the event log. When a few newer events exist, the server reads o
 folds them over the prior compact replay, and replaces the snapshot. History rewrites delete the
 snapshot first, so a stale branch can never survive a restore.
 
-|             | Windows                     | macOS                                      |
-| ----------- | --------------------------- | ------------------------------------------ |
-| DB + logs   | `%APPDATA%\TasteCode\`      | `~/Library/Application Support/TasteCode/` |
-| User config | `%USERPROFILE%\.tastecode\` | `~/.tastecode/`                            |
-| Credentials | Credential Manager          | Keychain                                   |
+|             | Windows                     | macOS                                      | Linux                                                            |
+| ----------- | --------------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| DB + logs   | `%APPDATA%\TasteCode\`      | `~/Library/Application Support/TasteCode/` | DB `~/.local/share/TasteCode/`; app state `~/.config/TasteCode/` |
+| User config | `%USERPROFILE%\.tastecode\` | `~/.tastecode/`                            | `~/.tastecode/`                                                  |
+| Credentials | Credential Manager          | Keychain                                   | Secret Service (gnome-keyring, KWallet, KeePassXC)               |
 
 On first use, TasteCode moves legacy Personal Harness files into these locations without
 overwriting an existing TasteCode file.
