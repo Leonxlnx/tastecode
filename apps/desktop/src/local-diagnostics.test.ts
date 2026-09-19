@@ -187,6 +187,20 @@ describe('local diagnostics', () => {
     expect(diagnostics.isEnabled()).toBe(false)
   })
 
+  it('rotates a full log before writing a fatal record', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
+    directories.push(directory)
+    const diagnostics = new LocalDiagnostics(directory)
+    await diagnostics.setEnabled(true)
+    await writeFile(path.join(directory, 'errors.log'), 'x'.repeat(512 * 1024))
+
+    diagnostics.recordSync('main crash', 'fatal record')
+
+    expect((await stat(path.join(directory, 'errors.previous.log'))).size).toBe(512 * 1024)
+    expect((await stat(path.join(directory, 'errors.log'))).size).toBeLessThan(4 * 1024)
+    expect(await readFile(path.join(directory, 'errors.log'), 'utf8')).toContain('fatal record')
+  })
+
   it('invalidates queued records immediately when disabled', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
     directories.push(directory)

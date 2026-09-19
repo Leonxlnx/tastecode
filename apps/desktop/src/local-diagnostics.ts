@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
@@ -107,6 +107,12 @@ export class LocalDiagnostics {
     try {
       mkdirSync(this.directory, { recursive: true, mode: 0o700 })
       const entry = boundedEntry(`${new Date().toISOString()} [${scrub(source)}] ${scrub(text)}`)
+      const size = statSync(this.#logFile, { throwIfNoEntry: false })?.size ?? 0
+      if (size + Buffer.byteLength(entry) > MAX_LOG_BYTES) {
+        rmSync(this.#previousLogFile, { force: true })
+        if (size <= MAX_LOG_BYTES) renameSync(this.#logFile, this.#previousLogFile)
+        else rmSync(this.#logFile, { force: true })
+      }
       appendFileSync(this.#logFile, entry, { encoding: 'utf8', mode: 0o600 })
     } catch {
       // Diagnostics must never become a second app failure.
