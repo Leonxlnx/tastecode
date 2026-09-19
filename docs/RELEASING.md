@@ -14,6 +14,17 @@ digest is an error; the app does not silently fall back to an older release.
 
 ## Beta 7 bridge, then two public files
 
+Beta 9 preparation (2026-09-20): the shared version moves to `0.1.0-beta.9` from
+verified main `6c70b71db749300bda4b7dfad2ad125978ad563c`. Pin the final merged
+version commit and send its full SHA to Leon before either platform builds.
+Leave the existing beta 8 tag and draft unchanged. Keep beta 9 unpublished until
+matching Windows and macOS installers from that exact commit have passed their
+platform checks and are present in the one shared draft. macOS must pass signing,
+notarization, Gatekeeper, fresh-profile startup, and an isolated beta 7 upgrade
+with chats and settings preserved. These checks are pending, not implied by the
+version bump. Combine both platforms' local proof directories and use the release
+scripts below to verify and upload the two installers.
+
 Beta 8 preparation (2026-09-18): the release owner authorized an unsigned Windows
 build and publication, with macOS built separately by its maintainer. Build both
 platforms from the same tagged main commit. This version includes the internal
