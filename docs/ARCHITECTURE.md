@@ -77,9 +77,10 @@ on `archive/rust-rewrite-2026-08-15`; it is not part of `main`.
 **Page previews use a renderer-owned Electron `<webview>` guest, never an iframe or an
 operating-system webview.** Before attachment, the main process strips preload access, assigns a
 dedicated persistent partition, disables Node integration, and requires sandboxing, context
-isolation, and web security. The guest accepts HTTPS navigation anywhere and HTTP only on
-loopback — dev previews bind 127.0.0.1, and unrestricted HTTP would expose link-local
-metadata endpoints and LAN services to page content. It denies permissions, keeps
+isolation, and web security. Top-level navigation accepts HTTPS anywhere and HTTP only on
+loopback, where dev previews bind 127.0.0.1. Programmatic navigation is checked through the
+session request API; stopping inside `did-start-navigation` can crash Chromium. This policy
+is not a general subresource or network firewall. The guest denies permissions, keeps
 attempted new windows in the same preview, and exposes an explicit validated system-browser
 handoff.
 
