@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import type { IPty, spawn as NodePtySpawn } from 'node-pty'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cleanupExitedPtySession, ownPtySession, terminatePtySession } from '@harness/proc'
+import { isAsarRuntime, rethrowNativeBindingFailure } from './native-binding-error.js'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
@@ -22,10 +23,22 @@ type TerminatePty = (process: IPty) => Promise<void>
 const require = createRequire(import.meta.url)
 let loadedSpawn: SpawnPty | undefined
 
+function loadPtySpawn(): SpawnPty {
+  if (loadedSpawn) return loadedSpawn
+  try {
+    loadedSpawn = (require('node-pty') as { spawn: SpawnPty }).spawn
+    return loadedSpawn
+  } catch (error) {
+    // A package-manager upgrade can replace app.asar.unpacked under a running
+    // instance — the first terminal opened afterwards meets a missing or
+    // swapped pty.node, and the bare ENOENT blames a dependency that is fine.
+    rethrowNativeBindingFailure(error, 'the terminal PTY binding', isAsarRuntime(import.meta.url))
+  }
+}
+
 /** Keep the native PTY binding out of idle startup; terminals are optional. */
 const spawnPty: SpawnPty = (file, args, options) => {
-  loadedSpawn ??= (require('node-pty') as { spawn: SpawnPty }).spawn
-  const process = loadedSpawn(file, args, options)
+  const process = loadPtySpawn()(file, args, options)
   try {
     return ownPtySession(process)
   } catch (ownershipError) {

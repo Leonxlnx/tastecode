@@ -136,6 +136,12 @@ it remain manual downloads from GitHub Releases. Unpackaged or dev builds report
 never touch the updater. Updater behavior is a package policy injected into the shared updater
 state machine (`appUpdateMode`) rather than scattered platform checks.
 
+Because `dpkg` swaps the payload under a running process, the packaged Linux shell snapshots an
+install signature (`BUILD_PROVENANCE`, else the `app.asar` inode) at startup: a main-window load
+that picks up different on-disk files warns once that a restart finishes the update, a lazily
+required native binding that fails mid-run advises restart-or-reinstall rather than blaming the
+credential store, and `userData/last-run-version` lets the next launch log the version change.
+
 **The AppImage carries a sandbox requirement the deb does not.** Its FUSE mount cannot ship a
 setuid `chrome-sandbox`, so the renderer sandbox needs unprivileged user namespaces. Ubuntu
 23.10+ restricts those behind `kernel.apparmor_restrict_unprivileged_userns` and only packaged

@@ -67,6 +67,13 @@ import {
   writeGpuFallbackFlag,
 } from './gpu-fallback.js'
 import { configureImageContextMenu } from './image-context-menu.js'
+import {
+  describeVersionChange,
+  installDrifted,
+  nodeInstallIo,
+  readInstallSignature,
+  recordRunVersion,
+} from './install-drift.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
@@ -146,6 +153,15 @@ logStartupMilestone('main-module')
 // Keep the existing storage location while the OS-facing product name gains a space.
 app.setPath('userData', productDataPath)
 app.setPath('sessionData', productDataPath)
+
+// A deb upgrade swaps the whole /opt payload under the running process; the
+// old code keeps running from deleted inodes while later disk reads — a
+// renderer reload over resources/web, a re-forked server — silently pick up
+// the new version. The signature captured here is what "this process" is.
+const installSignatureAtStart =
+  process.platform === 'linux' && app.isPackaged
+    ? readInstallSignature(process.resourcesPath, nodeInstallIo)
+    : undefined
 
 function isWebUrl(value: string): boolean {
   try {
@@ -632,6 +648,35 @@ function createWindow(): void {
     )
     void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
   })
+
+  // A reload reads resources/web fresh from disk: after an apt upgrade that
+  // is the *new* frontend paired with the still-old preload, main and server.
+  // The window loads fine — the version mix is the problem, so name it once.
+  if (installSignatureAtStart !== undefined) {
+    let driftWarned = false
+    window.webContents.on('did-finish-load', () => {
+      if (driftWarned) return
+      const drift = installDrifted(
+        installSignatureAtStart,
+        readInstallSignature(process.resourcesPath, nodeInstallIo),
+      )
+      if (!drift.changed) return
+      driftWarned = true
+      console.warn(`[desktop] install changed on disk since start: ${drift.detail ?? 'unknown'}`)
+      // Unparented like the other startup dialogs — parenting goes through
+      // zxdg_exporter_v2 and crashes COSMIC/Wayland.
+      void dialog.showMessageBox({
+        type: 'warning',
+        title: nativeAppName,
+        message: 'Taste Code was updated on disk while it was running.',
+        detail:
+          'This window just loaded the new installation files while the rest of the app ' +
+          'still runs the previously loaded code. Restart Taste Code to finish updating.' +
+          (drift.detail ? `\n\n${drift.detail}` : ''),
+        buttons: ['OK'],
+      })
+    })
+  }
 
   // Avoid the white flash before React paints.
   window.once('ready-to-show', () => {
@@ -1170,6 +1215,18 @@ if (ownsSingleInstance) {
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()
     logStartupMilestone('diagnostics-ready')
+
+    // The deb is package-manager owned, so the on-disk version can change
+    // while the app runs; the marker makes the next launch able to say so.
+    if (process.platform === 'linux' && app.isPackaged) {
+      try {
+        const { previous } = recordRunVersion(productDataPath, app.getVersion(), nodeInstallIo)
+        const change = describeVersionChange(previous, app.getVersion())
+        if (change) console.info(`[desktop] ${change}`)
+      } catch (error) {
+        console.warn('[desktop] could not record the last-run version marker', error)
+      }
+    }
 
     appUpdater = createAppUpdateController({
       loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
