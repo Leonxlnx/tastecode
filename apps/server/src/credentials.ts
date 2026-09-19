@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import type { Entry as KeyringEntry } from '@napi-rs/keyring'
+import { isAsarRuntime, rethrowNativeBindingFailure } from './native-binding-error.js'
 
 const SERVICE = 'PersonalHarness'
 
@@ -14,14 +15,34 @@ const require = createRequire(import.meta.url)
 type EntryConstructor = typeof KeyringEntry
 let loadedEntry: EntryConstructor | undefined
 
+/**
+ * The binding load sits outside every store-operation try below on purpose:
+ * a keyring.node removed or replaced under a running packaged install is not
+ * a locked/absent Secret Service, and the STORE_HINT advice would send the
+ * user after a store that is healthy.
+ */
+function loadEntry(): EntryConstructor {
+  if (loadedEntry) return loadedEntry
+  try {
+    loadedEntry = (require('@napi-rs/keyring') as { Entry: EntryConstructor }).Entry
+    return loadedEntry
+  } catch (error) {
+    rethrowNativeBindingFailure(
+      error,
+      'the OS credential store binding',
+      isAsarRuntime(import.meta.url),
+    )
+  }
+}
+
 function entry(reference: string): KeyringEntry {
-  loadedEntry ??= (require('@napi-rs/keyring') as { Entry: EntryConstructor }).Entry
-  return new loadedEntry(SERVICE, reference)
+  return new (loadEntry())(SERVICE, reference)
 }
 
 export function readCredential(reference: string): string {
+  const Entry = loadEntry()
   try {
-    const value = entry(reference).getPassword()
+    const value = new Entry(SERVICE, reference).getPassword()
     if (value !== null) return value
   } catch {
     throw new Error(
@@ -40,8 +61,9 @@ export function hasCredential(reference: string): boolean {
 }
 
 export function writeCredential(reference: string, value: string): void {
+  const Entry = loadEntry()
   try {
-    entry(reference).setPassword(value)
+    new Entry(SERVICE, reference).setPassword(value)
   } catch {
     throw new Error(
       `credential "${reference}" could not be written to the OS credential store; ${STORE_HINT}`,
@@ -64,13 +86,14 @@ export function removeCredential(reference: string): void {
  * so a failed delete is only acceptable once the credential proves absent.
  */
 export function removeCredentialStrict(reference: string): void {
+  const Entry = loadEntry()
   try {
-    if (entry(reference).deleteCredential()) return
+    if (new Entry(SERVICE, reference).deleteCredential()) return
   } catch {
     // fall through to the presence check
   }
   try {
-    if (entry(reference).getPassword() === null) return
+    if (new Entry(SERVICE, reference).getPassword() === null) return
   } catch {
     // store error: cannot confirm removal
   }
