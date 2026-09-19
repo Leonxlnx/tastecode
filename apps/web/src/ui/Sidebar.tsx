@@ -63,6 +63,7 @@ import { sessionSourcePresentation } from '../provider-presentation.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
+import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
@@ -949,6 +950,7 @@ function SidebarComponent(props: {
               )
             }}
           </Menu>
+          {isDesktop ? <AppUpdateNotice /> : null}
         </div>
       </nav>
       <RailResizeHandle

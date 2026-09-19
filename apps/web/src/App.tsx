@@ -46,7 +46,6 @@ import {
 } from './shortcuts.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
-import { AppUpdateNotice } from './ui/AppUpdateNotice.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
@@ -5109,7 +5108,6 @@ export function App() {
         </Suspense>
       ) : null}
 
-      {isDesktop ? <AppUpdateNotice onReview={() => openSettings('about')} /> : null}
       <SessionSearchHost
         ref={sessionSearch}
         transport={transport}

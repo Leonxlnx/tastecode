@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react'
-import { appUpdateState, onAppUpdateState, type AppUpdateState } from '../bridge.js'
-import { NoticePresence } from './NoticePresence.js'
+import { IconDownload, IconLoader2, IconRefresh } from '@tabler/icons-react'
+import {
+  appUpdateState,
+  checkForAppUpdates,
+  installAppUpdate,
+  onAppUpdateState,
+  type AppUpdateState,
+} from '../bridge.js'
 
-export function AppUpdateNotice(props: { onReview: () => void }) {
+export function AppUpdateNotice() {
   const [state, setState] = useState<AppUpdateState>()
-  const [dismissed, setDismissed] = useState<string>()
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
   useEffect(() => {
     let initial = true
     const off = onAppUpdateState((next) => {
@@ -21,21 +28,47 @@ export function AppUpdateNotice(props: { onReview: () => void }) {
       off()
     }
   }, [])
+  if (!state || !['downloading', 'ready', 'error'].includes(state.status)) return null
+  const downloading = state.status === 'downloading'
+  const retry = state.status === 'error' || failed
+  const label = retry
+    ? 'Retry TasteCode update'
+    : downloading
+      ? `Downloading TasteCode update${state.progress === undefined ? '' : ` (${state.progress}%)`}`
+      : `Restart to update TasteCode${state.version ? ` to ${state.version}` : ''}`
+  const act = async () => {
+    setPending(true)
+    setFailed(false)
+    try {
+      if (retry) await checkForAppUpdates()
+      else if (!(await installAppUpdate())) setFailed(true)
+    } catch {
+      setFailed(true)
+    } finally {
+      setPending(false)
+    }
+  }
   return (
-    <NoticePresence
-      className="notice notice--app-update"
-      role="status"
-      visible={state?.status === 'ready' && state.version !== dismissed}
-      onDismiss={() => setDismissed(state?.version)}
-      autoDismissPaused
+    <button
+      type="button"
+      className="account-update"
+      data-state={retry ? 'error' : state.status}
+      aria-label={label}
+      aria-busy={downloading || pending}
+      title={
+        retry ? `${state.error ?? 'The update could not be completed.'} Click to retry.` : label
+      }
+      disabled={downloading || pending}
+      onClick={() => void act()}
     >
-      <span className="notice__text">TasteCode {state?.version} is ready to install.</span>
-      <button className="ghost" type="button" onClick={props.onReview}>
-        Review update
-      </button>
-      <button className="ghost" type="button" onClick={() => setDismissed(state?.version)}>
-        Later
-      </button>
-    </NoticePresence>
+      {downloading || pending ? (
+        <IconLoader2 size={16} className="spinner" aria-hidden />
+      ) : retry ? (
+        <IconRefresh size={16} aria-hidden />
+      ) : (
+        <IconDownload size={16} aria-hidden />
+      )}
+      {downloading && state.progress !== undefined ? <span>{state.progress}%</span> : null}
+    </button>
   )
 }
