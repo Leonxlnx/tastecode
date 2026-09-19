@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.tastecode</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>Taste Code</name>
+  <summary>Local desktop workspace for coding agents</summary>
+  <description>
+    <p>
+      Taste Code is a local desktop workspace for coding agents. It brings
+      chats, diffs, and reviews for multiple coding agents into one window.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.tastecode.desktop</launchable>
+  <provides>
+    <binary>tastecode</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <keywords>
+    <keyword>coding</keyword>
+    <keyword>agents</keyword>
+    <keyword>ai</keyword>
+    <keyword>development</keyword>
+  </keywords>
+  <url type="homepage">https://tastecode.dev</url>
+  <developer id="dev.tastecode">
+    <name>Tasteskill Team</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+</component>
