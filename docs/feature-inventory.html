@@ -1877,9 +1877,11 @@
                   and config into TasteCode paths without overwriting existing TasteCode data;
                   desktop background provider probes start in app storage instead of inheriting the
                   launch directory (macOS removable-volume permission verification pending); bounded
-                  local diagnostics can be revealed or copied only by the user after keyed and
-                  standalone credential shapes, private keys, emails, project paths, and
-                  cross-platform home paths are scrubbed;
+                  opt-in text diagnostics rotate at 512 KiB, stop when disabled, and exclude legacy
+                  native dumps from the revealed folder; native crash collection is removed; logs
+                  can be revealed or copied only by the user after keyed and standalone credential
+                  shapes, private keys, emails, project paths, and cross-platform home paths are
+                  scrubbed;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span
