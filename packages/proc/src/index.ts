@@ -4,7 +4,14 @@ export { LineBuffer, MAX_PROTOCOL_FRAME_BYTES, ProtocolFrameError, readSseData }
 
 export { applyDesktopPath, desktopPath } from './desktop-path.js'
 export type { DesktopPathOptions } from './desktop-path.js'
-export { killTree, spawnOwned } from './kill.js'
+export {
+  cleanupExitedPtySession,
+  killTree,
+  ownPtySession,
+  spawnOwned,
+  terminatePtySession,
+  type TerminatePtySessionOptions,
+} from './kill.js'
 export { commandVersion, isInstalled, runCli, spawnCli } from './cli.js'
 
 export {
