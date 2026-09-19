@@ -1222,7 +1222,8 @@ if (ownsSingleInstance) {
     if (!waitingForUpdateCleanup && appUpdater?.state().status === 'downloading') {
       waitingForUpdateCleanup = true
       event.preventDefault()
-      // Finish detaching a mounted update DMG before the process exits.
+      // Let dispose drain the active update download — a mounted DMG or the
+      // prepared-file server — before the process exits.
       void Promise.resolve(appUpdater.dispose()).finally(() => app.quit())
       return
     }

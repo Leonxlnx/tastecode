@@ -47,19 +47,29 @@ export async function downloadRelease(
       ? await prepareDmgUpdate(downloaded, directory, info.version, abort.signal)
       : downloaded
     if (abort.signal.aborted) throw new Error('Update download was cancelled.')
-    return servePreparedUpdate(file, info, (url, prepared) =>
-      install({
-        ...options,
-        disableDifferentialDownload: true,
-        updateInfoAndProvider: {
-          info: prepared,
-          provider: new GenericProvider({ provider: 'generic', url }, updater, {
-            executor,
-            platform: asset.name.endsWith('.dmg') ? 'darwin' : 'win32',
-            isUseMultipleRangeRequest: false,
-          }),
-        },
-      }),
+    return servePreparedUpdate(
+      file,
+      info,
+      (url, prepared) =>
+        install({
+          ...options,
+          disableDifferentialDownload: true,
+          updateInfoAndProvider: {
+            info: prepared,
+            provider: new GenericProvider({ provider: 'generic', url }, updater, {
+              executor,
+              platform: asset.name.endsWith('.dmg')
+                ? 'darwin'
+                : asset.name.endsWith('.AppImage')
+                  ? 'linux'
+                  : 'win32',
+              isUseMultipleRangeRequest: false,
+            }),
+          },
+        }),
+      // AppImageUpdater keeps the downloaded file name when it replaces the
+      // running image, so the versioned asset name must survive the local hop.
+      asset.name.endsWith('.AppImage') ? asset.name : undefined,
     )
   }).finally(() => {
     activeDownloads.delete(updater)
@@ -81,6 +91,12 @@ class ExeUpdater extends electronUpdater.NsisUpdater {
   }
 }
 
+class AppImageUpdater extends electronUpdater.AppImageUpdater {
+  protected override doDownloadUpdate(options: DownloadUpdateOptions): Promise<string[]> {
+    return downloadRelease(this, options, (prepared) => super.doDownloadUpdate(prepared))
+  }
+}
+
 export function createReleaseUpdater(): AppUpdater & { dispose: () => Promise<void> } {
   const options = { provider: 'custom' as const, updateProvider: GitHubReleaseProvider }
   const updater =
@@ -88,8 +104,14 @@ export function createReleaseUpdater(): AppUpdater & { dispose: () => Promise<vo
       ? new DmgUpdater(options)
       : process.platform === 'win32'
         ? new ExeUpdater(options)
-        : undefined
-  if (!updater) throw new Error('App updates are supported on Windows and macOS.')
+        : // The AppImage runtime exports APPIMAGE with the mounted image path;
+          // the mode gate stays ahead of this, so reaching it unset means a deb
+          // or unpackaged build slipped through — stay fail-closed.
+          process.platform === 'linux' && process.env.APPIMAGE !== undefined
+          ? new AppImageUpdater(options)
+          : undefined
+  if (!updater)
+    throw new Error('App updates are supported on Windows, macOS, and Linux AppImage installs.')
   updater.disableDifferentialDownload = true
   updater.disableWebInstaller = true
   return Object.assign(updater, {
