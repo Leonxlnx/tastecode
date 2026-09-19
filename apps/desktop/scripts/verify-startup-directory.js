@@ -23,7 +23,7 @@ try {
     probe,
     `if (process.type === 'utility' || process.env.ELECTRON_RUN_AS_NODE === '1') {
       const fs = require('node:fs');
-      fs.writeFileSync(process.env.STARTUP_CWD_REPORT, JSON.stringify({ cwd: process.cwd() }));
+      fs.writeFileSync(process.env.STARTUP_CWD_REPORT, JSON.stringify({ cwd: process.cwd(), pwd: process.env.PWD }));
       // Exit before loading the actual server or any provider CLI.
       process.exit(0);
     }`,
@@ -33,6 +33,7 @@ try {
     const report = path.join(root, `cwd-${legacy}.json`)
     const env = {
       ...process.env,
+      PWD: inherited,
       NODE_OPTIONS: `--require=${JSON.stringify(probe)}`,
       STARTUP_CWD_REPORT: report,
       HARNESS_LEGACY_SERVER_PROCESS: legacy,
@@ -69,6 +70,7 @@ try {
       }
       assert.ok(result, `Server directory probe did not run (${legacy}): ${output}`)
       assert.equal(await realpath(result.cwd), await realpath(profile))
+      assert.equal(await realpath(result.pwd), await realpath(profile))
       console.log(`PASS: ${legacy === '1' ? 'legacy' : 'utility'} server starts in app storage`)
     } finally {
       child.kill()

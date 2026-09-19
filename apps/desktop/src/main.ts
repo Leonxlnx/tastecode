@@ -321,7 +321,12 @@ function startOwnedServer(): void {
           command: process.execPath,
           args: [serverEntry],
           cwd: productDataPath,
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          env: {
+            ...process.env,
+            PWD: productDataPath,
+            ELECTRON_RUN_AS_NODE: '1',
+            PATH: desktopPath(),
+          },
           ...supervisorCallbacks,
         })
       : new ServerSupervisor({
@@ -337,7 +342,7 @@ function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
     // Finder/terminal launches may inherit a DMG or external-drive directory.
     // Background provider probes must start in app storage, not that directory.
     cwd: productDataPath,
-    env: { ...process.env },
+    env: { ...process.env, PWD: productDataPath },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
