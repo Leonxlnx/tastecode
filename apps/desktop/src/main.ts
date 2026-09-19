@@ -645,6 +645,7 @@ function createWindow(): void {
       )
       if (!drift.changed) return
       driftWarned = true
+      console.warn(`[desktop] install changed on disk since start: ${drift.detail ?? 'unknown'}`)
       // Unparented like the other startup dialogs — parenting goes through
       // zxdg_exporter_v2 and crashes COSMIC/Wayland.
       void dialog.showMessageBox({
