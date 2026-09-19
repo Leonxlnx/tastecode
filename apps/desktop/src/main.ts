@@ -224,6 +224,7 @@ let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
+let waitingForUpdateCleanup = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
@@ -860,7 +861,14 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (!waitingForUpdateCleanup && appUpdater?.state().status === 'downloading') {
+      waitingForUpdateCleanup = true
+      event.preventDefault()
+      // Finish detaching a mounted update DMG before the process exits.
+      void Promise.resolve(appUpdater.dispose()).finally(() => app.quit())
+      return
+    }
     appIsQuitting = true
     previewCaptures.cancelAll()
     mainWindowStatePersistence?.saveAndStop()
@@ -894,9 +902,9 @@ if (ownsSingleInstance) {
     logStartupMilestone('diagnostics-ready')
 
     appUpdater = createAppUpdateController({
-      loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
+      loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer,
+      enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow

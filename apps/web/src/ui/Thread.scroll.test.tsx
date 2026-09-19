@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread } from '../thread-store.js'
+import { mockKeyboardModifierState } from '../test-keyboard.js'
 import { Thread } from './Thread.js'
 
 const layout = vi.hoisted(() => ({ height: 1_200, count: 0 }))
@@ -49,6 +50,7 @@ function props(frameStore = new ThreadFrameStore({ ...emptyThread, items })) {
 }
 
 beforeEach(() => {
+  mockKeyboardModifierState()
   layout.height = 1_200
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => layout.height)
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200)
@@ -60,6 +62,18 @@ afterEach(() => {
 })
 
 describe('Thread scroll position', () => {
+  it('leaves Ctrl/Cmd+Alt+Arrow for chat switching', () => {
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      items: [...items, { ...items[0]!, id: 'next-answer', turnId: 'next-turn', createdAt: 2 }],
+    })
+    render(<Thread {...props(store)} threadId="shortcuts" />)
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) {
+      expect(fireEvent.keyDown(window, { key: 'ArrowDown', altKey: true, ...modifier })).toBe(true)
+    }
+    expect(fireEvent.keyDown(window, { key: 'ArrowDown', altKey: true })).toBe(false)
+  })
+
   it('opens cached history at the bottom before any frame update', () => {
     const view = render(<Thread {...props()} threadId="cached" />)
 
@@ -104,15 +118,42 @@ describe('Thread scroll position', () => {
     expect(view.getByRole('button', { name: 'Jump to latest' })).toBeTruthy()
   })
 
-  it('opens the next chat at the bottom after the user scrolled up', () => {
-    const view = render(<Thread key="first" {...props()} threadId="first" />)
+  it('opens the next chat at the bottom even when the view is reused', () => {
+    const view = render(<Thread {...props()} threadId="first" />)
     const scroller = view.container.querySelector('.thread')!
     scroller.scrollTop = 400
     fireEvent.scroll(scroller)
 
-    view.rerender(<Thread key="second" {...props()} threadId="second" />)
+    view.rerender(<Thread {...props()} threadId="second" />)
 
     expect(view.container.querySelector('.thread')!.scrollTop).toBe(1_000)
     expect(view.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
+  })
+
+  it('follows late content and viewport resizes but stops when the user scrolls up', () => {
+    let resize: ResizeObserverCallback | undefined
+    const observe = vi.fn()
+    const disconnect = vi.fn()
+    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(function (callback) {
+      resize = callback
+      return { observe, disconnect, unobserve: noop }
+    })
+    const view = render(<Thread {...props()} threadId="saved" />)
+    const scroller = view.container.querySelector('.thread')!
+    expect(observe).toHaveBeenCalledWith(scroller)
+    expect(observe).toHaveBeenCalledWith(scroller.firstElementChild)
+
+    layout.height = 1_700
+    act(() => resize?.([], {} as ResizeObserver))
+    expect(scroller.scrollTop).toBe(1_500)
+
+    scroller.scrollTop = 400
+    fireEvent.scroll(scroller)
+    layout.height = 2_000
+    act(() => resize?.([], {} as ResizeObserver))
+    expect(scroller.scrollTop).toBe(400)
+
+    view.unmount()
+    expect(disconnect).toHaveBeenCalledOnce()
   })
 })

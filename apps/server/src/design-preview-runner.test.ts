@@ -73,11 +73,16 @@ describe('design preview runner', () => {
     const occupied = createServer((_request, response) => response.end('unrelated preview'))
     await listen(occupied)
     const port = serverPort(occupied)
+    mkdirSync(path.join(workspace, 'dist'))
     writeFileSync(
       path.join(workspace, 'preview.mjs'),
-      previewServerSource(port, 'expected preview'),
+      `if (process.argv[2] !== 'dist' || process.argv[4] !== process.env.PORT) throw new Error('wrong script arguments')\n${previewServerSource(port, 'expected preview')}`,
     )
-    const requested = { ...plan(port), url: `http://127.0.0.1:${port}/site/?view=desktop` }
+    const requested = {
+      ...plan(port),
+      args: ['preview.mjs', 'dist', '--port', String(port)],
+      url: `http://127.0.0.1:${port}/site/?view=desktop`,
+    }
     try {
       const preview = await startDesignPreview(workspace, requested, 5_000)
       previews.push(preview)
@@ -510,9 +515,27 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
     await expect(
       startDesignPreview(workspace, plan('node', ['local.mjs', '../outside.mjs'])),
     ).rejects.toThrow()
+    expect(() =>
+      assertRunsWorkspaceCode(workspace, workspace, {
+        ...plan('node', []),
+        kind: 'command',
+        command: 'node',
+        args: ['local.mjs', '--root=../outside'],
+      }),
+    ).toThrow()
     await expect(
       startDesignPreview(workspace, plan('node', ['--import=../outside.mjs', 'local.mjs'])),
     ).rejects.toThrow()
+    for (const args of [['--eval', 'local.mjs'], ['--require', 'local.mjs'], ['-']]) {
+      expect(() =>
+        assertRunsWorkspaceCode(workspace, workspace, {
+          ...plan('node', args),
+          kind: 'command',
+          command: 'node',
+          args,
+        }),
+      ).toThrow('must start with a workspace script')
+    }
   })
 
   it.each([

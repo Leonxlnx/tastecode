@@ -40,13 +40,10 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
         files.slice(offset, offset + 32).map(async (saved) => {
           const revision = `${saved.size}:${saved.mtimeMs}`
           const indexed = byFile.get(saved.file)
-          let session = indexed?.session
-          if (!session) {
-            const cached = headers.get(saved.file)
-            const header = cached?.revision === revision ? cached.session : await readHeader(saved)
-            headers.set(saved.file, { revision, session: header })
-            session = header ?? undefined
-          }
+          const cached = headers.get(saved.file)
+          const header = cached?.revision === revision ? cached.session : await readHeader(saved)
+          headers.set(saved.file, { revision, session: header })
+          const session = indexed?.session ?? header
           if (!session) return
           const named = names.get(session.id)
           // `name` is the native user-facing title; `title`/`preview` can contain the full prompt.
@@ -57,6 +54,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
               : (indexed?.name ?? session.title)
           const result = {
             ...session,
+            ...(header?.internal ? { internal: true } : {}),
             title,
             updatedAt: Math.max(session.updatedAt, named?.updatedAt ?? 0, saved.mtimeMs),
             revision: createHash('sha256')
@@ -99,7 +97,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       if (!known.has(session.id)) await this.list()
       // Locators from callers never grant access to arbitrary local files.
       const saved = known.get(session.id)
-      if (!saved?.locator || !(await allowedFile(home, saved.locator))) return []
+      if (saved?.internal || !saved?.locator || !(await allowedFile(home, saved.locator))) return []
       const records: JsonObject[] = []
       for await (const record of jsonLines(saved.locator)) records.push(record)
       return parseCodexHistory(records, saved)
@@ -260,6 +258,7 @@ async function readHeader(saved: SavedFile): Promise<ProviderHistorySession | nu
       revision: `${saved.size}:${saved.mtimeMs}`,
       locator: saved.file,
       archived: saved.archived,
+      ...('subagent' in object(payload.source) ? { internal: true } : {}),
     }
   }
   return null

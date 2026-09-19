@@ -1717,6 +1717,82 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it('starts Design with an existing comparison HTML file larger than 2 MB', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-large-source-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      writeFileSync(
+        path.join(workspace, 'comparison-mobile.html'),
+        `<img src="data:image/png;base64,${'A'.repeat(2_100_000)}">`,
+      )
+      const thread = await orchestrator.startThread('api', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(store.designRun(thread.id)).toMatchObject({
+        phase: 'brief',
+        designSourceBaseline: [],
+      })
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it.each([false, true])(
+    'continues a different planning correction after restore and bounds repeated errors (%s)',
+    async (repeat) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-progress-'))
+      writePreviewArtifacts(workspace)
+      const store = new Store(':memory:')
+      store.addProject(workspace)
+      store.addThread({ id: 'progress', projectPath: workspace, provider: 'codex', title: 'Site' })
+      store.setDesignRun('progress', {
+        ...approvalSnapshot(workspace),
+        originalRequest: 'Build a site.',
+        phase: 'assets',
+        askedQuestions: false,
+        explicitAnswers: [],
+        correcting: true,
+        correctionErrors: ['An earlier image needed correction'],
+      })
+      const { orchestrator, sessions, received } = harness(undefined, store)
+      try {
+        const queued = await orchestrator.submitTurn('progress', 'Afterward')
+        if (queued.queued) orchestrator.deleteQueuedTurn('progress', queued.queuedTurn.id)
+        sessions[0]?.emit(message(JSON.stringify({ version: 2, assets: [] }), 's1-turn'))
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(store.designRun('progress')).toMatchObject({
+          phase: 'assets',
+          correcting: true,
+          correctionErrors: [
+            'An earlier image needed correction',
+            'asset manifest version must be 1',
+          ],
+        })
+        sessions[0]?.emit(
+          message(JSON.stringify({ version: repeat ? 2 : 1, assets: [] }), 's1-turn'),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        if (repeat) {
+          expect(store.designRun('progress')).toBeUndefined()
+          expect(received.some(({ event }) => event.type === 'thread.error')).toBe(true)
+        } else {
+          await vi.waitFor(() =>
+            expect(store.designRun('progress')).toMatchObject({ phase: 'build' }),
+          )
+          expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+        }
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
+
   it.each(ProviderIdSchema.options)(
     'continues a non-design request with %s before the queue',
     async (provider) => {
@@ -2435,7 +2511,10 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  async function previewRecoveryHarness(error: unknown) {
+  async function previewRecoveryHarness(
+    error: unknown,
+    phase: 'preview' | 'review' | 'repair' = 'preview',
+  ) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
     writePreviewArtifacts(workspace)
@@ -2456,8 +2535,31 @@ describe('provider-neutral design briefing', () => {
       ...approvalSnapshot(workspace),
       originalRequest: 'Build a site.',
       options: { effort: 'high' },
-      phase: 'preview',
-      pendingPrompt: 'Preview Setup phase',
+      phase,
+      ...(phase !== 'preview'
+        ? { previewPlan: commandPreviewPlan, previewUrl: commandPreviewPlan.url, screenshots: [] }
+        : {}),
+      ...(phase === 'repair'
+        ? {
+            review: {
+              version: 1,
+              verdict: 'repair',
+              summary: 'Restore the mobile layout.',
+              findings: [
+                {
+                  id: 'mobile',
+                  severity: 'major',
+                  area: 'layout',
+                  evidenceType: 'visual_inspection',
+                  confidence: 'high',
+                  evidence: 'The mobile footer is clipped.',
+                  repair: 'Remove clipping.',
+                },
+              ],
+            },
+          }
+        : {}),
+      pendingPrompt: phase === 'preview' ? 'Preview Setup phase' : 'Visual Review phase',
       askedQuestions: false,
       finalAsked: false,
       explicitAnswers: [],
@@ -2491,6 +2593,53 @@ describe('provider-neutral design briefing', () => {
     url: 'http://127.0.0.1:4173/',
     viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
   }
+
+  it.each(['preview', 'repair'] as const)(
+    'keeps the built preview available when capture disconnects during %s',
+    async (phase) => {
+      const { orchestrator, sessions, received, store, workspace, capturePreview } =
+        await previewRecoveryHarness(undefined, phase)
+      const stops = previewStops.count
+      capturePreview.mockReset().mockRejectedValue(new Error('Preview capture timed out'))
+      try {
+        sessions[0]?.emit(
+          message(
+            JSON.stringify(
+              phase === 'preview'
+                ? commandPreviewPlan
+                : {
+                    status: 'complete',
+                    summary: 'Repaired.',
+                    files: [],
+                    checks: ['passed'],
+                  },
+            ),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              ({ event }) =>
+                event.type === 'item.completed' &&
+                event.item.text?.includes(
+                  'Visual review skipped because Preview capture timed out',
+                ),
+            ),
+          ).toBe(true),
+        )
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+        expect(previewStops.count).toBe(stops)
+        expect(store.designRun('preview-recovery')).toBeUndefined()
+        expect(sessions[0]?.sent).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
 
   async function completedPreviewHarness() {
     const result = await previewRecoveryHarness(undefined)
@@ -3199,7 +3348,7 @@ describe('provider-neutral design briefing', () => {
       )
       sessions[0]?.emit({ type: 'thread.error', threadId: thread.id, message: 'provider failed' })
 
-      expect(store.designRun(thread.id)).toBeUndefined()
+      expect(store.designRun(thread.id)).toMatchObject({ phase: 'brief', suspended: true })
       expect(
         received.some(
           ({ event }) =>
@@ -3297,6 +3446,16 @@ describe('provider-neutral design briefing', () => {
 
   it.each([
     {
+      failure: new Error('path must be a file'),
+      name: 'directory supplied as an entry file',
+      plan: commandPreviewPlan,
+    },
+    {
+      failure: new Error('preview script "serve" is not declared in package.json'),
+      name: 'undeclared package script',
+      plan: commandPreviewPlan,
+    },
+    {
       failure: new Error('preview port 5173 is already in use; choose another port'),
       name: 'occupied port',
       plan: commandPreviewPlan,
@@ -3379,7 +3538,7 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
-  it('fails after the bounded Preview correction also fails', async () => {
+  it('suspends after the bounded Preview correction also fails', async () => {
     const failure = new Error('preview port 5173 is already in use; choose another port')
     const { orchestrator, sessions, received, store, workspace } =
       await previewRecoveryHarness(failure)
@@ -3393,7 +3552,12 @@ describe('provider-neutral design briefing', () => {
       await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
 
       sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
-      await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      await vi.waitFor(() =>
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'preview',
+          suspended: true,
+        }),
+      )
       sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       expect(sessions[0]?.sent).toHaveLength(2)
       expect(
@@ -3414,6 +3578,57 @@ describe('provider-neutral design briefing', () => {
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
+
+  it.each([
+    { restart: false, phase: 'preview' as const },
+    { restart: true, phase: 'preview' as const },
+    { restart: true, phase: 'review' as const },
+  ])(
+    'continues saved work after provider failure (phase: $phase, new runtime: $restart)',
+    async ({ restart, phase }) => {
+      const first = await previewRecoveryHarness(undefined, phase)
+      let active = first
+      const { store, workspace, artifacts } = first
+      try {
+        first.sessions[0]?.emit({
+          type: 'thread.error',
+          threadId: 'preview-recovery',
+          message: 'Usage limit reached',
+        })
+        first.sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'failed' })
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'preview',
+          suspended: true,
+        })
+        if (restart) {
+          await first.orchestrator.disposeAll()
+          active = { ...first, ...harness(undefined, store) }
+          active.capturePreview.mockResolvedValue(undefined)
+        }
+        await active.orchestrator.submitTurn('preview-recovery', 'continue', [
+          DESIGN_BRIEF_ATTACHMENT,
+        ])
+        const prompt = active.sessions[0]?.sent.at(-1)
+        expect(prompt).toContain('Preview Setup phase')
+        expect(prompt).not.toContain('Design Briefing mode')
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'preview',
+          originalRequest: 'Build a site.',
+          options: { effort: 'high' },
+        })
+        expect(artifacts.map(([file]) => readFileSync(file, 'utf8'))).toEqual(
+          artifacts.map(([, contents]) => contents),
+        )
+        active.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+        active.sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(store.designRun('preview-recovery')).toBeUndefined())
+      } finally {
+        await active.orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
 
   it.each([
     {
@@ -5323,21 +5538,21 @@ describe('rolling a session back', () => {
     sessions[1]!.turnIds.push('busy-turn')
     await orchestrator.sendTurn(second.id, 'working')
     await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     sessions[1]!.emit(turnStarted(second.id, 'busy-turn'))
     writeFileSync(path.join(repo, 'file.txt'), 'second task work\n')
     await expect(orchestrator.restoreCheckpoint(first.id, point.id)).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     await expect(orchestrator.undoRestore(first.id, 'old-token')).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     await expect(orchestrator.undoTurnChanges(first.id, 'turn', 'patch')).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     await expect(orchestrator.switchBranch(repo, 'main')).rejects.toThrow(
-      /running turns in this checkout/,
+      /Chats are still working in this folder/,
     )
     expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('second task work\n')
     sessions[1]!.emit({ type: 'turn.completed', turnId: 'busy-turn', status: 'completed' })

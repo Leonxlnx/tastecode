@@ -12,6 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import os from 'node:os'
+import { createRequire } from 'node:module'
 import path from 'node:path'
 import test from 'node:test'
 import { dump, load } from 'js-yaml'
@@ -26,6 +27,7 @@ import {
   platformConfig,
   releaseAssets,
   releaseConfig,
+  releaseUploadAssets,
   releasePayloadAssets,
   repositoryRoot,
   verifyReleaseDirectory,
@@ -225,16 +227,38 @@ test('version, channel, product, and artifact names come from package config', a
     await verifyReleaseDirectory(directory, { approvedSha, config }),
     releaseAssets('all', config),
   )
-  desktop.build.publish[0].channel = 'candidate'
-  assert.equal(createReleaseConfig(desktop).channel, 'candidate')
-  delete desktop.build.publish[0].channel
   desktop.version = '2.3.4-rc-internal.2'
-  assert.equal(createReleaseConfig(desktop).channel, 'rc-internal')
+  assert.equal(createReleaseConfig(desktop).channel, 'latest')
+  assert.equal(createReleaseConfig(desktop).updaterChannel, undefined)
+  assert.equal(createReleaseConfig(desktop).prerelease, true)
   desktop.build.mac.detectUpdateChannel = false
   assert.throws(() => createReleaseConfig(desktop), /per-platform/)
   delete desktop.build.mac.detectUpdateChannel
   desktop.build.artifactName = '${env.SECRET}.${ext}'
   assert.throws(() => createReleaseConfig(desktop), /Unsupported artifactName/)
+})
+
+test('beta 7 keeps beta 6 metadata; beta 8 uploads only EXE and DMG with verified digests', async (t) => {
+  const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
+  desktop.version = '0.1.0-beta.7'
+  const bridge = createReleaseConfig(desktop)
+  assert.ok(releaseUploadAssets(bridge).includes('latest.yml'))
+  assert.ok(releaseUploadAssets(bridge).includes('latest-mac.yml'))
+  assert.ok(releaseUploadAssets(bridge).some((name) => name.endsWith('.zip')))
+  for (const version of ['0.1.0-beta.8', '0.1.0-beta.10', '0.1.0']) {
+    desktop.version = version
+    const config = createReleaseConfig(desktop)
+    const directory = await fixture(t, { config })
+    const mock = github()
+    const result = await upload(directory, mock, { config })
+    assert.deepEqual(result.assets.map((asset) => asset.name).sort(), [
+      `TasteCode-${version}-mac-arm64.dmg`,
+      `TasteCode-${version}-win-x64.exe`,
+    ])
+    assert.equal(result.release.draft, true)
+    // Local proof is still complete even though only two files reach GitHub.
+    await verifyReleaseDirectory(directory, { approvedSha, config })
+  }
 })
 
 test('unsafe cross-platform filenames are rejected', () => {
@@ -259,6 +283,73 @@ test('unsafe cross-platform filenames are rejected', () => {
     assert.throws(() => assertAssetName(name), /safe, flat filenames/, String(name))
   }
   assert.equal(assertAssetName('Example App-1.0.0+1.exe'), 'Example App-1.0.0+1.exe')
+})
+
+test('public GitHub updates resolve beta metadata and downloads on Windows and macOS', async (t) => {
+  const desktop = createRequire(path.join(desktopDirectory, 'package.json'))
+  const updater = createRequire(desktop.resolve('electron-updater'))
+  const { GitHubProvider } = updater('./providers/GitHubProvider.js')
+  const { HttpError } = updater('builder-util-runtime')
+  const directory = await fixture(t)
+  for (const [platform, target] of [
+    ['win32', 'windows'],
+    ['darwin', 'macos'],
+  ]) {
+    const detail = platformConfig(target)
+    const requests = []
+    const provider = new GitHubProvider(
+      releaseConfig.publish,
+      {
+        allowPrerelease: true,
+        currentVersion: '0.1.0-beta.6',
+        fullChangelog: false,
+      },
+      {
+        platform,
+        executor: {
+          request: async (options) => {
+            assert.equal(options.hostname, 'github.com')
+            assert.equal(options.headers?.authorization, undefined)
+            const pathname = options.path.split('?')[0]
+            requests.push(pathname)
+            if (pathname.endsWith('.atom'))
+              return `<feed><entry><title>Beta</title><link href="https://github.com/Leonxlnx/tastecode/releases/tag/${releaseConfig.tag}"/><content>Update</content></entry></feed>`
+            if (pathname.endsWith(`/${detail.metadata}`))
+              return readFile(path.join(directory, detail.metadata), 'utf8')
+            throw new HttpError(404, 'No separate beta metadata')
+          },
+        },
+      },
+    )
+    const info = await provider.getLatestVersion()
+    assert.equal(info.version, releaseConfig.version)
+    assert.equal(
+      requests.at(-1),
+      `/Leonxlnx/tastecode/releases/download/${releaseConfig.tag}/${detail.metadata}`,
+    )
+    assert.deepEqual(
+      provider.resolveFiles(info).map((file) => file.url.href),
+      detail.artifacts.map(
+        (name) =>
+          `https://github.com/Leonxlnx/tastecode/releases/download/${releaseConfig.tag}/${name}`,
+      ),
+    )
+  }
+})
+
+test('release config refuses private, redirected, or automatic GitHub publication', async () => {
+  const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
+  for (const override of [
+    { private: true },
+    { host: 'example.com' },
+    { releaseType: 'release' },
+    { owner: '../other' },
+    { token: 'fixture' },
+  ]) {
+    const value = structuredClone(desktop)
+    Object.assign(value.build.publish[0], override)
+    assert.throws(() => createReleaseConfig(value), /public GitHub/)
+  }
 })
 
 test('untrusted updater metadata cannot redirect, omit, or corrupt artifacts', async (t) => {
@@ -621,10 +712,10 @@ test('one exact draft is created, remotely hash checked, and reruns are read-onl
   assert.equal(result.release.draft, true)
   assert.equal(result.release.target_commitish, approvedSha)
   assert.equal(mock.state.releases.length, 1)
-  assert.deepEqual(result.assets.map((asset) => asset.name).sort(), releaseAssets())
+  assert.deepEqual(result.assets.map((asset) => asset.name).sort(), releaseUploadAssets())
   for (const asset of result.assets)
     assert.equal(asset.digest, `sha256:${await hashFile(path.join(directory, asset.name))}`)
-  assert.equal(mock.state.mutations.length, releaseAssets().length + 1)
+  assert.equal(mock.state.mutations.length, releaseUploadAssets().length + 1)
   const count = mock.state.mutations.length
   await upload(directory, mock)
   assert.equal(mock.state.mutations.length, count)
@@ -692,7 +783,7 @@ test('partial upload failures can resume matching bytes without deleting or repl
         fail &&
         method === 'POST' &&
         url.hostname === 'uploads.github.com' &&
-        state.assets.length === 2
+        state.assets.length === 1
       )
         return json({ message: 'private reflected input' }, 502)
     },
@@ -701,20 +792,20 @@ test('partial upload failures can resume matching bytes without deleting or repl
     upload(directory, mock),
     (error) => /HTTP 502/.test(error.message) && !error.message.includes('private reflected input'),
   )
-  assert.equal(mock.state.assets.length, 2)
+  assert.equal(mock.state.assets.length, 1)
   const firstIds = mock.state.assets.map((asset) => asset.id)
   fail = false
   await upload(directory, mock)
   assert.deepEqual(
-    mock.state.assets.slice(0, 2).map((asset) => asset.id),
+    mock.state.assets.slice(0, 1).map((asset) => asset.id),
     firstIds,
   )
-  assert.equal(mock.state.assets.length, releaseAssets().length)
+  assert.equal(mock.state.assets.length, releaseUploadAssets().length)
 })
 
 test('unexpected, bad-digest, duplicate, or unfinished remote assets prevent all writes', async (t) => {
   const directory = await fixture(t)
-  const name = releaseAssets()[0]
+  const name = releaseUploadAssets()[0]
   const bytes = await readFile(path.join(directory, name))
   const valid = {
     id: 20,
@@ -819,7 +910,7 @@ test('upload response bytes and local source mutations cannot pass on size alone
   const changed = github({
     beforeRequest: async ({ url, state }) => {
       if (url.pathname.endsWith('/git/ref/heads/main') && state.releases.length === 1)
-        await writeFile(path.join(directory, releaseAssets()[0]), 'modified')
+        await writeFile(path.join(directory, releaseUploadAssets()[0]), 'modified')
     },
   })
   await assert.rejects(upload(directory, changed), /changed before upload/)
@@ -879,7 +970,7 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
   }
   const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
   assert.deepEqual(desktop.build.publish, [
-    { provider: 'generic', url: 'https://tastecode.dev/releases' },
+    { provider: 'github', owner: 'Leonxlnx', repo: 'tastecode', releaseType: 'draft' },
   ])
   assert.ok(
     desktop.build.asarUnpack.includes('node_modules/@harness/design-agent/references/library/**/*'),

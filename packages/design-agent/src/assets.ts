@@ -4,6 +4,7 @@ import {
   containedWorkspaceFile,
   normalizeWorkspaceFile,
   readWorkspaceFile,
+  workspaceEntries,
 } from './workspace-files.js'
 import path from 'node:path'
 import { readRasterMetadata } from './raster-metadata.js'
@@ -149,6 +150,8 @@ export function validateAssetManifestForPage(
   workspacePath?: string,
   suppliedReferences: readonly string[] = [],
 ): AssetManifest {
+  const workspaceRoot = workspacePath ? realpathSync(workspacePath) : undefined
+  if (workspaceRoot) manifest = expandFontDirectories(manifest, workspaceRoot)
   const expected = new Map<string, { kind: 'asset' | 'component'; sectionIds: Set<string> }>()
   for (const section of page.sections) {
     for (const [kind, ids] of [
@@ -195,7 +198,6 @@ export function validateAssetManifestForPage(
     )
   }
 
-  const workspaceRoot = workspacePath ? realpathSync(workspacePath) : undefined
   const suppliedReferenceFiles = new Map<string, string>(
     suppliedReferences.map((filePath, index) => {
       if (!existsSync(filePath) || !statSync(filePath).isFile()) {
@@ -392,13 +394,55 @@ function sameSet(left: Set<string>, right: Set<string>): boolean {
   return left.size === right.size && [...left].every((value) => right.has(value))
 }
 
+function expandFontDirectories(manifest: AssetManifest, workspaceRoot: string): AssetManifest {
+  const ids = new Set(manifest.assets.map(({ id }) => id))
+  const assets = manifest.assets.flatMap((asset) => {
+    if (asset.kind !== 'font' || asset.role !== 'font' || asset.status === 'needed') return [asset]
+    const relative =
+      asset.destination ?? (asset.source?.kind === 'project' ? asset.source.reference : undefined)
+    if (!relative) return [asset]
+    const directory = containedWorkspaceFile(
+      workspaceRoot,
+      relative,
+      `font asset ${asset.id}`,
+      true,
+    )
+    if (!statSync(directory).isDirectory()) return [asset]
+    const files = workspaceEntries(directory).filter(
+      ({ file, relative }) => file && /\.(?:ttf|otf|woff2?)$/iu.test(relative),
+    )
+    if (!files.length) throw new Error(`font asset ${asset.id} directory contains no font files`)
+    let suffix = 1
+    return files.map((file, index) => {
+      let id = asset.id
+      if (index > 0) {
+        do {
+          id = `${asset.id}_file_${++suffix}`
+        } while (ids.has(id))
+        ids.add(id)
+      }
+      const destination = normalizeWorkspaceFile(path.join(relative, file.relative))!
+      return {
+        ...asset,
+        id,
+        destination,
+        ...(asset.source?.kind === 'project'
+          ? { source: { ...asset.source, reference: destination } }
+          : {}),
+      }
+    })
+  })
+  return parseAssetManifest({ ...manifest, assets })
+}
+
 function isSvg(filePath: string): boolean {
   if (path.extname(filePath).toLowerCase() === '.svg') return true
-  return readWorkspaceFile(filePath, 32_000_000)
+  const header = readWorkspaceFile(filePath, 32_000_000)
     .subarray(0, 1024)
     .toString('utf8')
+    .trimStart()
     .toLowerCase()
-    .includes('<svg')
+  return header.startsWith('<') && header.includes('<svg')
 }
 
 function validateRasterAsset(asset: DesignAsset, filePath: string): void {

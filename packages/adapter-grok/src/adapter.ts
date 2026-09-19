@@ -206,6 +206,8 @@ const GrokFrameSchema = z.object({
   toolName: z.string().optional(),
   title: z.string().optional(),
   status: z.string().nullable().optional(),
+  // Passthrough: the keys below drive labels, but a generic tool's whole input
+  // is what the transcript shows as its arguments.
   rawInput: z
     .object({
       file_path: z.string().optional(),
@@ -216,6 +218,7 @@ const GrokFrameSchema = z.object({
       query: z.string().optional(),
       regex: z.string().optional(),
     })
+    .passthrough()
     .optional(),
   content: JsonRpcValueSchema.optional(),
   rawOutput: JsonRpcValueSchema.optional(),
@@ -239,6 +242,8 @@ type OpenTool = {
   itemId: string
   itemType: 'command' | 'file_change' | 'tool_call'
   label: string
+  /** The tool's input as one JSON line, the transcript's argument convention. */
+  argumentLine?: string
   command?: string
   path?: string
 }
@@ -453,7 +458,12 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     }
     /** toolCallId -> the open item it maps to. */
     const tools = new Map<string, OpenTool>()
-    const completeTool = (entry: OpenTool, status: 'completed' | 'failed', output?: string) => {
+    const completeTool = (
+      entry: OpenTool,
+      status: 'completed' | 'failed',
+      output?: string,
+      diff?: string,
+    ) => {
       this.emit('event', {
         type: 'item.completed',
         item: {
@@ -468,9 +478,21 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               }
             : {}),
           ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
-          ...(entry.itemType === 'file_change' && output ? { text: output } : {}),
+          ...(entry.itemType === 'file_change' && (diff || output)
+            ? {
+                text: diff ?? output,
+                ...(diff
+                  ? {
+                      linesAdded: diff.split('\n').filter((line) => /^\+(?!\+\+ )/.test(line))
+                        .length,
+                      linesRemoved: diff.split('\n').filter((line) => /^-(?!-- )/.test(line))
+                        .length,
+                    }
+                  : {}),
+              }
+            : {}),
           ...(entry.itemType === 'tool_call'
-            ? { text: output ? `${entry.label}\n${output}` : entry.label }
+            ? { text: [entry.label, entry.argumentLine, output].filter(Boolean).join('\n') }
             : {}),
           createdAt: Date.now(),
         },
@@ -517,10 +539,15 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
                 : 'tool_call'
           const itemId = `${turnId}-tool-${++toolCounter}`
           const path = grokToolPath(frame.rawInput)
+          const argumentLine =
+            itemType === 'tool_call' && frame.rawInput && Object.keys(frame.rawInput).length > 0
+              ? JSON.stringify(frame.rawInput)
+              : undefined
           const entry = {
             itemId,
             itemType,
             label: grokToolLabel(name, frame.title, frame.rawInput),
+            ...(argumentLine ? { argumentLine } : {}),
             ...(frame.rawInput?.command
               ? {
                   command: frame.rawInput.command,
@@ -550,7 +577,9 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
                     path: entry.path,
                   }
                 : {}),
-              ...(itemType === 'tool_call' ? { text: entry.label } : {}),
+              ...(itemType === 'tool_call'
+                ? { text: [entry.label, argumentLine].filter(Boolean).join('\n') }
+                : {}),
               createdAt: Date.now(),
             },
           })
@@ -560,7 +589,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           const entry = tools.get(frame.toolCallId)
           if (!entry) return
           const output = grokToolOutput(frame)
-          completeTool(entry, frame.status === 'failed' ? 'failed' : 'completed', output)
+          const diff = entry.itemType === 'file_change' ? grokDiff(frame.content) : undefined
+          completeTool(entry, frame.status === 'failed' ? 'failed' : 'completed', output, diff)
           tools.delete(frame.toolCallId)
           return
         }
@@ -764,6 +794,36 @@ export function grokToolOutput(frame: {
   )
   const unique = [...new Set(parts)]
   return unique.length ? unique.join('\n') : undefined
+}
+
+/**
+ * Grok reports an edit as `{ type: 'diff', path, oldText, newText }` content
+ * parts. The transcript renders file changes as unified diffs, so build one.
+ */
+export function grokDiff(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined
+  const files = content.flatMap((part) => {
+    if (typeof part !== 'object' || part === null) return []
+    const record = part as Record<string, unknown>
+    if (record.type !== 'diff') return []
+    const path = typeof record.path === 'string' ? record.path : 'file'
+    const lines = (value: unknown) =>
+      typeof value === 'string' && value !== '' ? value.replace(/\n$/, '').split('\n') : []
+    const removed = lines(record.oldText)
+    const added = lines(record.newText)
+    if (removed.length === 0 && added.length === 0) return []
+    return [
+      [
+        `diff --git a/${path} b/${path}`,
+        removed.length ? `--- a/${path}` : '--- /dev/null',
+        `+++ b/${path}`,
+        `@@ -${removed.length ? `1,${removed.length}` : '0,0'} +${added.length ? `1,${added.length}` : '0,0'} @@`,
+        ...removed.map((line) => `-${line}`),
+        ...added.map((line) => `+${line}`),
+      ].join('\n'),
+    ]
+  })
+  return files.length ? files.join('\n') : undefined
 }
 
 function grokToolPath(input: GrokFrame['rawInput']): string | undefined {

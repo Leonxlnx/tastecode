@@ -41,6 +41,36 @@ function promptAdapter() {
 }
 
 describe('Codex prompt transport', () => {
+  it.each(['ask', 'auto'] as const)(
+    'resumes and sends with %s access scoped to the selected project',
+    async (approval) => {
+      const { adapter, rpc } = promptAdapter()
+      try {
+        await adapter.start()
+        const thread = await adapter.resumeThread('thread-1', 'C:\\parent\\project', { approval })
+        await expect(adapter.sendTurn(thread.id, 'Hello')).resolves.toBe('turn-1')
+
+        expect(rpc.calls.find((call) => call.method === 'thread/resume')?.params).toEqual({
+          threadId: 'thread-1',
+          cwd: 'C:\\parent\\project',
+          excludeTurns: true,
+          approvalPolicy: approval === 'ask' ? 'untrusted' : 'on-request',
+          approvalsReviewer: 'user',
+          sandbox: approval === 'ask' ? 'read-only' : 'workspace-write',
+        })
+        expect(rpc.calls.find((call) => call.method === 'turn/start')?.params).toMatchObject({
+          approvalPolicy: approval === 'ask' ? 'untrusted' : 'on-request',
+          sandboxPolicy:
+            approval === 'ask'
+              ? { type: 'readOnly', networkAccess: false }
+              : { type: 'workspaceWrite', writableRoots: [], networkAccess: false },
+        })
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
   it('keeps product-internal work out of provider history when requested', async () => {
     const { adapter, rpc } = promptAdapter()
     await adapter.start()

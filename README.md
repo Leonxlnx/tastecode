@@ -2,11 +2,12 @@
 
 # TasteCode
 
+[Download Windows](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.7/TasteCode-0.1.0-beta.7-win-x64.exe) · [Download macOS](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.7/TasteCode-0.1.0-beta.7-mac-arm64.dmg)
+
 > A local desktop workspace for AI coding agents, with Design Mode built in.
 
-**Status: public beta (`0.1.0-beta.1`).** TasteCode currently supports Windows x64 and
-macOS Apple Silicon. Expect beta rough edges and report them through
-[GitHub Issues](https://github.com/Leonxlnx/tastecode/issues).
+**Early beta (`0.1.0-beta.7`).** Expect bugs, rough edges, and changes as we keep working
+on TasteCode. Please [report any issues](https://github.com/Leonxlnx/tastecode/issues) you find.
 
 ## What TasteCode does
 
@@ -28,11 +29,13 @@ pretending every provider supports the same features.
 
 ## Download
 
-Download the latest beta from [tastecode.dev](https://tastecode.dev).
+- [Download for Windows x64 (.exe)](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.7/TasteCode-0.1.0-beta.7-win-x64.exe)
+- [Download for macOS Apple Silicon (.dmg)](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.7/TasteCode-0.1.0-beta.7-mac-arm64.dmg)
+- [Release notes, checksums, and all versions](https://github.com/Leonxlnx/tastecode/releases)
 
-Beta builds may be unsigned. Verify the published filename and SHA-256 checksum before
-installing. Windows SmartScreen or macOS Gatekeeper may show an additional warning for
-unsigned builds.
+The Windows beta is unsigned and may show a SmartScreen warning. The macOS beta is
+Developer ID signed and notarized. Beta 5 and earlier need one manual installation of
+beta 7 to switch to GitHub in-app updates. See [release details](docs/RELEASING.md).
 
 ## Requirements
 

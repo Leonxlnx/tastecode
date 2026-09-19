@@ -183,14 +183,19 @@ export class ThreadController {
     isProtected: (id: string) => boolean,
     retry = true,
   ): Promise<
-    { history: ThreadState | undefined; state: QueueState; previousItems: QueuedTurn[] } | undefined
+    | {
+        history: ThreadState | undefined
+        approval?: ApprovalMode | undefined
+        state: QueueState
+        previousItems: QueuedTurn[]
+      }
+    | undefined
   > {
     const owner = {}
     const owners = this.#recoveries.get(id) ?? new Set<object>()
     owners.add(owner)
     this.#recoveries.set(id, owners)
     const history = this.loadHistory(id, this.cursor(id))
-      .then((loaded) => loaded?.authority)
       .catch(() => undefined)
       .finally(() => this.prune(isProtected))
     this.beginQueueRead(id)
@@ -208,7 +213,7 @@ export class ThreadController {
       }
       const previousItems = this.queue(id)?.items ?? []
       this.setQueue(id, state)
-      return { history: loaded, state, previousItems }
+      return { history: loaded?.authority, approval: loaded?.approval, state, previousItems }
     } catch {
       return undefined
     } finally {

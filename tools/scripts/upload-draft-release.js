@@ -5,6 +5,7 @@ import {
   isMain,
   openRegularFile,
   releaseConfig,
+  releaseUploadAssets,
   verifyReleaseDirectory,
 } from './release-manifest.js'
 import { verifyReleaseCheckout } from './verify-release-input.js'
@@ -30,7 +31,8 @@ export async function uploadDraftRelease({
   if (!token || !/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository ?? ''))
     throw new Error('A token and valid owner/repository are required')
   const directory = path.resolve(releaseDirectory)
-  const names = await verifyReleaseDirectory(directory, { approvedSha, config })
+  await verifyReleaseDirectory(directory, { approvedSha, config })
+  const names = releaseUploadAssets(config)
   const local = new Map()
   for (const name of names) {
     const handle = await openRegularFile(path.join(directory, name))

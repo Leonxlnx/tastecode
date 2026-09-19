@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-17 base main 9a5b9755 + Windows provider PATH correction</span>
+        <span class="meta">2026-09-18 main 52d67abf · Beta 8 preparing; beta 7 published</span>
       </div>
     </div>
 
@@ -804,8 +804,9 @@
                 and a direction-aware 75% drag threshold; the flat list is the first-run layout,
                 while both layouts share full-catalog search, arrow-key entry into filtered results,
                 and selection preservation; new-chat source changes keep readiness checks silent;
-                first-run visibility favors current Codex and Claude families while saved visibility
-                and future unknown models remain authoritative</span
+                default visibility includes Astra, Sol, Terra, Luna, Fable 5.1, Opus 5, Sonnet 5,
+                Fable 5, Grok 4.6, and Grok 4.5; new models start enabled, and saved visibility
+                choices persist after the one-time defaults update</span
               ></label
             >
           </li>
@@ -820,11 +821,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model, effort, and tier remembered per provider across sessions
+                >Model, effort, speed, Design mode, and permissions remembered per chat
                 <span class="d"
-                  >catalog failures, hidden models, late discovery, and restart preserve the last
-                  valid same-source choice; cross-provider overrides never reach a bound
-                  thread</span
+                  >chat switches, catalog failures, hidden models, late discovery, and restart
+                  preserve the last valid same-source choice; cross-provider overrides never reach a
+                  bound thread. Design completion resets only that chat's one-shot Design mode.
+                  Permission edits during startup reach the created chat; reconnect and pending-turn
+                  recovery restore the saved approval mode.</span
                 ></span
               ></label
             >
@@ -885,10 +888,10 @@
                 videos get lightweight composer previews, sent image previews above their message,
                 and an app-native full-window viewer that opens without a reveal delay or photo size
                 animation; desktop image previews and browser images offer a native Copy Image
-                context menu; selected images reach ACP image blocks only after the agent advertises
-                image prompts; attachments can send without typed text and name a new session from
-                their filenames, while rejected sends restore the original draft and attachment
-                set</span
+                context menu; links offer a native Open, separator, and Copy Link menu; selected
+                images reach ACP image blocks only after the agent advertises image prompts;
+                attachments can send without typed text and name a new session from their filenames,
+                while rejected sends restore the original draft and attachment set</span
               ></label
             >
           </li>
@@ -917,14 +920,22 @@
                   30-second start-only watchdog fails silent starts visibly without timing out
                   running work; terminal provider errors end briefing activity, remain visible, and
                   cannot idle a newer turn; retired approval warnings are omitted from new and saved
-                  transcripts; recoverable preview startup retries once; package-manager selectors
-                  cannot escape the selected workspace; exact-file build reports are checked against
-                  the bounded before-and-after tree; legacy page artifacts record a validated beta
-                  layout family and human-authored case IDs, while v0.5 artifacts lock each section
-                  to its selected image reference and carry those compositions into Build and
-                  Review; supplied reference pixels and locked direction IDs persist across phases;
-                  approved artifacts and assets are checked before reuse, duplicate briefing IDs
-                  fail validation, and exact output rules inspect nested files; v0.5 new runs sample
+                  transcripts; recoverable preview startup retries once, including invalid entry
+                  types and missing package scripts; Node script directory and port arguments are
+                  accepted with workspace boundaries intact; provider failures and exhausted preview
+                  retries preserve the phase for explicit continue/retry without new references,
+                  including across runtime restart; Codex history replies have a finite 128 MiB
+                  allowance while other protocol frame limits remain unchanged; capture reconnects
+                  retry within the original deadline, and capture outages preserve the built preview
+                  with an explicit skipped-review notice; slash-prefixed Windows drive links resolve
+                  within the project boundary; package-manager selectors cannot escape the selected
+                  workspace; exact-file build reports are checked against the bounded
+                  before-and-after tree; legacy page artifacts record a validated beta layout family
+                  and human-authored case IDs, while v0.5 artifacts lock each section to its
+                  selected image reference and carry those compositions into Build and Review;
+                  supplied reference pixels and locked direction IDs persist across phases; approved
+                  artifacts and assets are checked before reuse, duplicate briefing IDs fail
+                  validation, and exact output rules inspect nested files; v0.5 new runs sample
                   uniformly across catalog and complete generated candidate groups, without style
                   filtering or extra votes for revisions; repeated feature/about sections use
                   distinct references before reuse; fresh checkouts and packages bundle 172
@@ -934,39 +945,48 @@
                   hashes across restart, and reject changed references; older runs retain their
                   bundled direction deck; four live Astra medium website checks finished with two
                   complete flows and three built sites in PR #1159; one asset-stage failure remains
-                  without a live rerun; brand palettes supply optional dependency-free card,
-                  section, and page gradient recipes; page validation retains reference labels and
-                  line lengths while rejecting internal placeholders, unsupported claims and
-                  redundant Hero support copy; Brand limits typography to two approved families,
-                  with a persisted random draw from forty verified families for new identities;
-                  every section records purposeful motion plus its reduced-motion equivalent;
-                  visible hero entrances and distinct scroll reveals are required unless explicitly
-                  disabled; Build receives a tested one-time reveal implementation that keeps
-                  painted content visible and restores visibility on cleanup/reduced motion; Build
-                  must exercise triggers, while still captures alone cannot prove animation;
-                  ordinary follow-ups after Design clear its phase-only JSON instructions; Page,
-                  Build, and Review require coherent card systems and meaningful brand-accent use;
-                  Asset actively reuses, generates, or searches for real imagery through available
-                  provider tools, preferring generation for missing original visuals with licensed
-                  search as fallback, and records external reuse terms; the same phases reject
-                  ornamental SVG filler, divider-grid templates and card rails absent from the
-                  reference, unstyled controls, overflow, and heading geometry that loses the
-                  reference; internal status notes stay out of page copy while concept-work
-                  identification remains visible; representative content reaches the final response
-                  as a publishing verification note; command and TasteCode-owned static previews
-                  select an available port on collision and reject missing local markup resources,
-                  including srcset candidates, and clean up child trees; rendered Chromium audits
-                  require exactly one h1 and at least 44 by 44 CSS-pixel interaction targets across
-                  the whole document, and model review cannot erase those findings; capture opens or
-                  reuses one dedicated Browser tab and same-URL repair passes reload it after the
-                  Electron guest is ready; serialized hidden capture remains the evidence authority,
-                  scrolls through lazy content, and waits within fixed deadlines for animation
-                  frames, animations, fonts, and images before bounded whole-page desktop and mobile
-                  PNGs, then clears shared browser storage and cache before the next capture; a
-                  successful preview remains reachable until thread close or a replacement Design
-                  run, with process and port release awaited before cleanup; exhausted validation
-                  corrections finish their turn and activity as failed; completed queued phases
-                  remain idle when their provider promise settles late</span
+                  without a live rerun; brand palettes select readable button text before repairing
+                  hover contrast, preserving accent seeds and explicit color locks; source checks
+                  cover the captured mid-tone failure and 864 palette combinations, with installed
+                  rollout pending; brand palettes supply optional dependency-free card, section, and
+                  page gradient recipes; visibly fictional numeric examples receive a publication
+                  review while asserted product claims retain the evidence requirement; editorial
+                  style findings remain advisory; valid PNG provenance metadata is preserved and
+                  font-family directories expand into concrete, snapshotted files; planning can
+                  correct up to three distinct validation errors while repeated failures stop; page
+                  validation retains reference labels and line lengths while rejecting internal
+                  placeholders, unsupported claims and redundant Hero support copy; Brand limits
+                  typography to two approved families, with a persisted random draw from forty
+                  verified families for new identities; every section records purposeful motion plus
+                  its reduced-motion equivalent; visible hero entrances and distinct scroll reveals
+                  are required unless explicitly disabled; Build receives a tested one-time reveal
+                  implementation that keeps painted content visible and restores visibility on
+                  cleanup/reduced motion; Build must exercise triggers, while still captures alone
+                  cannot prove animation; ordinary follow-ups after Design clear its phase-only JSON
+                  instructions; Page, Build, and Review require coherent card systems and meaningful
+                  brand-accent use; Asset actively reuses, generates, or searches for real imagery
+                  through available provider tools, preferring generation for missing original
+                  visuals with licensed search as fallback, and records external reuse terms; the
+                  same phases reject ornamental SVG filler, divider-grid templates and card rails
+                  absent from the reference, unstyled controls, overflow, and heading geometry that
+                  loses the reference; internal status notes stay out of page copy while
+                  concept-work identification remains visible; representative content reaches the
+                  final response as a publishing verification note; command and TasteCode-owned
+                  static previews select an available port on collision and reject missing local
+                  markup resources, including srcset candidates, and clean up child trees; rendered
+                  Chromium audits require exactly one h1 and at least 44 by 44 CSS-pixel interaction
+                  targets across the whole document, and model review cannot erase those findings;
+                  capture opens or reuses one dedicated Browser tab and same-URL repair passes
+                  reload it after the Electron guest is ready; serialized hidden capture remains the
+                  evidence authority, scrolls through lazy content, and waits within fixed deadlines
+                  for animation frames, animations, fonts, and images before bounded whole-page
+                  desktop and mobile PNGs, then clears shared browser storage and cache before the
+                  next capture; a successful preview remains reachable until thread close or a
+                  replacement Design run, with process and port release awaited before cleanup;
+                  exhausted validation corrections finish their turn and activity as failed;
+                  completed queued phases remain idle when their provider promise settles late;
+                  source checks accept HTML with embedded images above 2 MB while retaining a 32 MB
+                  total scan limit</span
                 ></span
               ></label
             >
@@ -1013,7 +1033,11 @@
                 <span class="d"
                   >message, reasoning, plan, command, file change, tool call, subagent activity,
                   error; completed narration stays visible while tool output remains ordered and
-                  accessible on replay</span
+                  accessible on replay. Tool calls from every provider carry the same text shape
+                  (name, arguments, output): the row names the tool as code with the argument it
+                  acted on, and opens into arguments and output apart; web searches show their
+                  query; file changes carry a unified diff with per-file line counts, opened as
+                  tinted diff lines; failed or declined tools read as failures</span
                 ></span
               ></label
             >
@@ -1036,11 +1060,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Working status with a live elapsed label during active turns
+                >Working for status above the reply throughout active turns, with a live elapsed
+                time that becomes Worked for when the reply ends
                 <span class="d"
-                  >a placeholder rail covers the gap before output; reasoning then streams as prose,
-                  while one fixed tool row changes to the current command and settles without a
-                  duplicate live status</span
+                  >the timer reserves space above live messages and tool rows, counts from the turn
+                  start, and stops at completion; completed tool details remain in the work summary;
+                  between tool calls the live row says Thinking even when the model sends no
+                  reasoning summary</span
                 ></span
               ></label
             >
@@ -1048,20 +1074,30 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Stacked tool activity with visible reasoning summaries
+                >Completed work in one collapsible summary
                 <span class="d"
-                  >each completed model reply compacts all activity into one Worked disclosure;
-                  repeated settled reasoning-only histories with no answer do the same; commands
-                  group consecutive runs under Ran commands inside the work disclosure, with
-                  failures marked on the group and each exact command and output inside the compact
-                  reveal; an arrow beside the label opens aligned steps with quiet output surfaces,
-                  elapsed times, and visible failure marks in both themes</span
+                  >each completed model reply folds thoughts, work notes, and tool activity into one
+                  closed disclosure while the final answer stays visible; the summary can be opened
+                  and closed again; repeated settled reasoning-only histories with no answer do the
+                  same; commands group consecutive runs under Ran commands inside the work
+                  disclosure, with failures marked on the group and each exact command and output
+                  inside the compact reveal; an arrow beside the label opens aligned steps with
+                  quiet output surfaces, elapsed times, and visible failure marks in both
+                  themes</span
                 ></span
               ></label
             >
           </li>
           <li>
-            <label><input type="checkbox" /><span>Turn navigation, jump between turns</span></label>
+            <label
+              ><input type="checkbox" /><span
+                >Turn navigation, jump between turns
+                <span class="d"
+                  >saved chats open at the bottom and stay there as content loads or changes size;
+                  scrolling up stops automatic following</span
+                ></span
+              ></label
+            >
           </li>
           <li>
             <label><input type="checkbox" /><span>In-thread search</span></label>
@@ -1202,8 +1238,13 @@
                 >Show outside Codex, Claude Code, and Grok chats in projects added in TasteCode
                 <span class="d"
                   >Local chat history keeps its rich formatting and refreshes in the background.
-                  Provider scans never add projects; the TasteCode project list controls
-                  imports.</span
+                  Provider scans never add projects; the TasteCode project list controls imports.
+                  Discovery preserves native task ownership across concurrent starts and reconciles
+                  accidental duplicate imports without discarding real replies or interrupting
+                  active work. Saved Claude task notifications stay internal, and Design follow-up
+                  instructions are matched to the original user message during history import. Codex
+                  helper sessions stay internal; old read-only reviewer copies are cleaned up while
+                  active chats and locally authored replies remain intact.</span
                 ></span
               ></label
             >
@@ -1227,10 +1268,12 @@
                   >project loading and failures remain explicit; Retry remains available and a
                   reconnect recovers automatically; the no-project action uses the existing folder
                   picker; dropping one or many folders onto either Desktop sidebar adds every unique
-                  valid folder with a clear drop target; the first empty Desktop run adds a compact
-                  three-provider status and one clear Choose a project action; opening an empty
-                  project's drawer reveals No chats without replacing or collapsing the current
-                  chat; switching chats reveals the selected project without collapsing other open
+                  valid folder with a clear drop target; the first empty Desktop run opens a
+                  full-window five-page setup (welcome, name with live identicon, theme applied on
+                  choice, three-provider readiness, choose a folder) with Enter to continue, Back,
+                  Skip, and a page that survives a Settings round trip; opening an empty project's
+                  drawer reveals No chats without replacing or collapsing the current chat;
+                  switching chats reveals the selected project without collapsing other open
                   projects, and manual project folding remains available; compact folder rows align
                   directly below Projects and expanded Show more actions have no extra leading
                   spacer; <a href="./screenshots/empty-project.png">production evidence</a></span
@@ -1567,7 +1610,10 @@
                   terminal, workspace, chat, search, pull request, and settings actions, while the
                   desktop File, View, Chat, Workspace, Window, and Help menus mirror the same
                   actions and current custom accelerators. Cmd+1–9 on macOS and Ctrl+1–9 on
-                  Windows/Linux open the nine newest sessions in the first sidebar project</span
+                  Windows/Linux open the nine newest sessions in the first sidebar project.
+                  Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key labels
+                  and portable recorded Option keys. Direct workspace tool shortcuts work before and
+                  after the panel opens and respect modal keyboard ownership</span
                 ></span
               ></label
             >
@@ -1773,7 +1819,10 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Profile: renderer-local display name and validated PNG, JPEG, or WebP avatar</span
+                >Profile: renderer-local display name, a pixel avatar generated from the name
+                (deterministic 8×8 sprite, curated palettes, hash-picked symmetry and ground
+                pattern) and an uploaded PNG, JPEG, or WebP photo that replaces it; Settings › Debug
+                has an avatar generator lab for previewing names at every shipped size</span
               ></label
             >
           </li>
@@ -1821,7 +1870,8 @@
               ><input type="checkbox" /><span
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
-                  >roomier action layout also applies to Debug; projects, workspaces, files,
+                  >Debug is a hidden settings category, toggled with Cmd/Ctrl+Alt+Shift+D, and
+                  offers Force onboarding without resetting saved data; projects, workspaces, files,
                   history, and provider credentials remain untouched; upgrades move legacy history
                   and config into TasteCode paths without overwriting existing TasteCode data;
                   bounded local diagnostics can be revealed or copied only by the user after keyed
@@ -1837,8 +1887,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >About: version plus check, download, install, and relaunch update status from the
-                <code>Leonxlnx/tastecode</code> generic release feed</span
+                >About: version plus check, download, install, and relaunch update status from
+                public <code>Leonxlnx/tastecode</code> GitHub Releases; hourly checks and an in-app
+                ready notice are implemented. Windows and signed/notarized macOS beta 6 are
+                published. Windows public-download clean installation, onboarding and a live update
+                check pass. Beta 7 adds newest-publication selection and verified EXE/DMG updates,
+                with beta 6 compatibility files during the transition. From beta 8, only the EXE and
+                DMG are uploaded; beta 6 users must have moved to beta 7 before that cutoff. macOS
+                beta 7 is published, signed, and notarized. Its public beta 6 to beta 7 native
+                installed update preserves the test chat and setting. Unsigned Windows beta 7 is
+                published with verified package contents, public download hashes, and legacy and new
+                update discovery; its installed upgrade proof remains pending. Beta 5 requires feed
+                migration or one manual installer update</span
               ></label
             >
           </li>
