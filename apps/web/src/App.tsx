@@ -217,7 +217,7 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-const MODEL_VISIBILITY_VERSION = '3'
+const MODEL_VISIBILITY_VERSION = '4'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -652,6 +652,7 @@ export function App() {
     readApprovalPreferences(provider),
   )
   const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
+  const pendingThreadApprovals = useRef(new Map<string, ApprovalMode>())
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
   )
@@ -745,7 +746,23 @@ export function App() {
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
   const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
   const [isolateSession, setIsolateSession] = useState(false)
-  const [designMode, setDesignMode] = useState(false)
+  const [designModes, setDesignModes] = useState<Record<string, boolean>>({})
+  const designMode = useMemo(
+    () =>
+      designModes[activeId ?? NEW_CHAT_DRAFT_KEY] ??
+      readThreadModelSelection(activeId)?.designMode ??
+      false,
+    [activeId, designModes],
+  )
+  const setThreadDesignMode = useCallback((threadId: string | undefined, enabled: boolean) => {
+    const saved = readThreadModelSelection(threadId)
+    if (threadId && saved) writeThreadModelSelection(threadId, { ...saved, designMode: enabled })
+    setDesignModes((current) => ({ ...current, [threadId ?? NEW_CHAT_DRAFT_KEY]: enabled }))
+  }, [])
+  const changeDesignMode = useCallback(
+    (enabled: boolean) => setThreadDesignMode(activeIdRef.current, enabled),
+    [setThreadDesignMode],
+  )
   const [checkoutDelete, setCheckoutDelete] = useState<
     { id: string; title: string; branch: string } | undefined
   >()
@@ -1368,9 +1385,9 @@ export function App() {
     flushPendingLifecyclePushes.current = flushLifecyclePushes
     const offEvents = transport.on('thread.event', (data) => {
       const { threadId, event } = data
+      if (endsDesignBriefing(event)) setThreadDesignMode(threadId, false)
       const next = threadController.receive(data, isThreadCacheProtected)
       if (!next) return
-      if (threadId === activeIdRef.current && endsDesignBriefing(event)) setDesignMode(false)
       if (
         event.type === 'turn.started' ||
         event.type === 'turn.completed' ||
@@ -1557,6 +1574,7 @@ export function App() {
     pruneQueueMetadata,
     isThreadCacheProtected,
     refreshProviderThreadHistory,
+    setThreadDesignMode,
   ])
 
   useEffect(() => {
@@ -2124,6 +2142,7 @@ export function App() {
       if (activeIdRef.current === id) {
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
+        if (loaded) setActiveThreadApproval(recovered.approval ?? 'ask')
       }
       if (!loaded) {
         workspaceIdleProbe.current.unknownQueues.add(id)
@@ -2384,11 +2403,12 @@ export function App() {
       return
     writeThreadModelSelection(activeId, {
       modelKey: selectedModelChoice.key,
+      designMode,
       ...(selectedEffort ? { effort: selectedEffort } : {}),
       ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
     })
     pendingThreadModelSave.current = undefined
-  }, [activeId, modelId, selectedModelChoice, selectedEffort, selectedServiceTier])
+  }, [activeId, modelId, selectedModelChoice, selectedEffort, selectedServiceTier, designMode])
 
   // Remember the active source's exact setup, so returning to a provider
   // restores what was last used there instead of a best-guess translation.
@@ -2623,8 +2643,7 @@ export function App() {
                 ? 'main'
                 : undefined
         }
-        const sessionApproval =
-          approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
+        let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
           workspacePath: projectPath,
@@ -2645,6 +2664,18 @@ export function App() {
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(isolateSession ? { isolate: true } : {}),
         })
+        let pendingApproval = pendingThreadApprovals.current.get(provisionalId)
+        while (pendingApproval && pendingApproval !== sessionApproval) {
+          try {
+            await transport.request('thread.setApproval', { threadId, approval: pendingApproval })
+            sessionApproval = pendingApproval
+          } catch (error) {
+            reportError(error instanceof Error ? error.message : String(error))
+            break
+          }
+          pendingApproval = pendingThreadApprovals.current.get(provisionalId)
+        }
+        pendingThreadApprovals.current.delete(provisionalId)
         const savedSelection = readThreadModelSelection(provisionalId)
         if (savedSelection) writeThreadModelSelection(threadId, savedSelection)
         removeSetting(`${MODEL_BY_THREAD_PREFIX}${provisionalId}`)
@@ -2711,6 +2742,7 @@ export function App() {
           .catch(() => undefined)
         return threadId
       } catch (error) {
+        pendingThreadApprovals.current.delete(provisionalId)
         const path = releaseWorkspaceStart(provisionalId)
         removeSetting(`${MODEL_BY_THREAD_PREFIX}${provisionalId}`)
         if (path) refreshWorkspaceAfterCompletion(path)
@@ -2920,6 +2952,7 @@ export function App() {
         }
         writeThreadModelSelection(provisionalId, {
           modelKey: choice.key,
+          designMode,
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
         })
@@ -3527,8 +3560,12 @@ export function App() {
         current[provider] === mode ? current : { ...current, [provider]: mode },
       )
       const threadId = activeIdRef.current
-      if (!threadId || threadId.startsWith('pending:')) return
+      if (!threadId) return
       setActiveThreadApproval(mode)
+      if (threadId.startsWith('pending:')) {
+        pendingThreadApprovals.current.set(threadId, mode)
+        return
+      }
       void transport
         .request('thread.setApproval', { threadId, approval: mode })
         .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
@@ -4300,7 +4337,7 @@ export function App() {
       },
       toggleFastMode,
       toggleDesignMode: () => {
-        if (!thread.running) setDesignMode((enabled) => !enabled)
+        if (!thread.running) changeDesignMode(!designMode)
       },
       toggleIsolatedSession: () => {
         if (!activeId) setIsolateSession((enabled) => !enabled)
@@ -4311,6 +4348,8 @@ export function App() {
       activePath,
       addProject,
       checkpoints.length,
+      changeDesignMode,
+      designMode,
       cycleChat,
       deleteSidebarSession,
       interrupt,
@@ -4872,7 +4911,7 @@ export function App() {
                       onServiceTierChange={changeServiceTier}
                       onApprovalChange={changeApproval}
                       onIsolateChange={setIsolateSession}
-                      onDesignModeChange={setDesignMode}
+                      onDesignModeChange={changeDesignMode}
                       onTranscribeVoice={transcribeVoice}
                       onCancelVoice={cancelVoice}
                       onProjectChange={selectProject}
@@ -5364,7 +5403,9 @@ type SourceSelection = {
   serviceTier?: string
 }
 
-function readThreadModelSelection(threadId: string | undefined): SourceSelection | undefined {
+type ThreadSelection = SourceSelection & { designMode?: boolean }
+
+function readThreadModelSelection(threadId: string | undefined): ThreadSelection | undefined {
   if (!threadId) return undefined
   try {
     const value: unknown = JSON.parse(readSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`) ?? 'null')
@@ -5372,20 +5413,22 @@ function readThreadModelSelection(threadId: string | undefined): SourceSelection
       !isRecord(value) ||
       typeof value['modelKey'] !== 'string' ||
       (value['effort'] !== undefined && typeof value['effort'] !== 'string') ||
-      (value['serviceTier'] !== undefined && typeof value['serviceTier'] !== 'string')
+      (value['serviceTier'] !== undefined && typeof value['serviceTier'] !== 'string') ||
+      (value['designMode'] !== undefined && typeof value['designMode'] !== 'boolean')
     )
       return undefined
     return {
       modelKey: value['modelKey'],
       ...(value['effort'] !== undefined ? { effort: value['effort'] } : {}),
       ...(value['serviceTier'] !== undefined ? { serviceTier: value['serviceTier'] } : {}),
+      ...(value['designMode'] !== undefined ? { designMode: value['designMode'] } : {}),
     }
   } catch {
     return undefined
   }
 }
 
-function writeThreadModelSelection(threadId: string, selection: SourceSelection): void {
+function writeThreadModelSelection(threadId: string, selection: ThreadSelection): void {
   writeSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`, JSON.stringify(selection))
 }
 

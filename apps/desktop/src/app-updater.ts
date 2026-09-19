@@ -10,7 +10,7 @@ export type UpdateClient = Pick<
   | 'downloadUpdate'
   | 'on'
   | 'quitAndInstall'
->
+> & { dispose?: () => void | Promise<void> }
 
 export type AppUpdateState = {
   status:
@@ -88,7 +88,7 @@ export function createAppUpdateController(
     updaterConfigured = true
     client.autoDownload = false
     client.autoInstallOnAppQuit = true
-    client.allowPrerelease = options.currentVersion.includes('-')
+    client.allowPrerelease = true
     client.allowDowngrade = false
     client.on('checking-for-update', () =>
       publish({ status: 'checking', currentVersion: options.currentVersion }),
@@ -181,6 +181,7 @@ export function createAppUpdateController(
       if (timer) clearTimeoutFn(timer)
       timer = undefined
       listeners.clear()
+      return updater?.dispose?.()
     },
   }
 }

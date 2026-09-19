@@ -1717,6 +1717,29 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it('starts Design with an existing comparison HTML file larger than 2 MB', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-large-source-'))
+    const { orchestrator, sessions, received, store } = harness()
+    try {
+      writeFileSync(
+        path.join(workspace, 'comparison-mobile.html'),
+        `<img src="data:image/png;base64,${'A'.repeat(2_100_000)}">`,
+      )
+      const thread = await orchestrator.startThread('api', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(store.designRun(thread.id)).toMatchObject({
+        phase: 'brief',
+        designSourceBaseline: [],
+      })
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it.each([false, true])(
     'continues a different planning correction after restore and bounds repeated errors (%s)',
     async (repeat) => {

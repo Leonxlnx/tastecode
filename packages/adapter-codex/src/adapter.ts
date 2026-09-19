@@ -547,7 +547,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     try {
       await rpc.request(
         'initialize',
-        { clientInfo: { name: CLIENT_NAME, title: 'TasteCode', version: '0.0.0' } },
+        {
+          clientInfo: { name: CLIENT_NAME, title: 'TasteCode', version: '0.0.0' },
+          // thread/resume.excludeTurns requires this protocol capability.
+          capabilities: { experimentalApi: true },
+        },
         { timeoutMs: CONTROL_READ_TIMEOUT_MS },
       )
     } catch (error) {

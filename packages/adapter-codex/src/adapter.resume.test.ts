@@ -5,11 +5,19 @@ import { CodexAdapter } from './adapter.js'
 // Use the real stdio transport so a full-history reply crosses its 16 MiB cap.
 const provider = String.raw`
 const { createInterface } = require('node:readline');
+let experimentalApi = false;
 createInterface({ input: process.stdin }).on('line', (line) => {
   const { id, method, params } = JSON.parse(line);
   if (id === undefined) return;
   let result = {};
+  if (method === 'initialize') experimentalApi = params.capabilities?.experimentalApi === true;
   if (method === 'thread/resume') {
+    // Captured from Codex 0.146.0: this field is gated by the initialize handshake.
+    if (params.excludeTurns && !experimentalApi) {
+      process.stdout.write(JSON.stringify({ id, error: { code: -32600,
+        message: 'thread/resume.excludeTurns requires experimentalApi capability' } }) + '\n');
+      return;
+    }
     result = {
       thread: {
         id: params.threadId,
