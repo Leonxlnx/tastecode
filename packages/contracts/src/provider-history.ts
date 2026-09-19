@@ -9,6 +9,8 @@ export type ProviderHistorySession = {
   updatedAt: number
   /** Changes whenever the saved transcript changes. */
   revision: string
+  /** Provider-owned helper conversation; never import as a user-facing chat. */
+  internal?: boolean
   archived?: boolean
   /** Provider-owned locator, interpreted only by its history adapter. */
   locator?: string

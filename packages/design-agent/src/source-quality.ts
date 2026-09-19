@@ -9,6 +9,8 @@ import {
   normalizeWorkspaceFile,
 } from './workspace-files.js'
 
+const MAX_SOURCE_SCAN_BYTES = 32_000_000
+
 export class DesignSourceQualityError extends Error {}
 
 /** Reject the recurring generated card-rail motif before Preview and after Repair. */
@@ -80,9 +82,10 @@ function designSourceViolations(
   for (const normalized of designSourceFiles(workspacePath)) {
     const extension = path.extname(normalized).toLowerCase()
     const absolute = path.join(workspacePath, normalized)
-    const bytes = readWorkspaceFile(absolute, 2_000_000)
+    // HTML can embed reference images; bound it by the same budget as the full scan.
+    const bytes = readWorkspaceFile(absolute, MAX_SOURCE_SCAN_BYTES)
     totalBytes += bytes.length
-    if (totalBytes > 32_000_000)
+    if (totalBytes > MAX_SOURCE_SCAN_BYTES)
       throw new Error('Design source scan exceeds 32 MB; reduce the workspace scope')
     const source = bytes.toString('utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 

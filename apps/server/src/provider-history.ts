@@ -70,9 +70,27 @@ export class ProviderHistory {
           const changed: string[] = []
           const imported: Imported[] = []
           const repair = new Set<string>()
+          for (const session of sessions) {
+            if (!session.internal) continue
+            const threadId = `external:${provider}:${session.id}`
+            const thread = this.store.thread(threadId)
+            // Repair old read-only imports without touching native sessions or local replies.
+            if (
+              thread &&
+              !thread.worktreePath &&
+              !this.hooks.isBusy(threadId) &&
+              !this.store.queuedTurns(threadId).length &&
+              !this.store.localHistory(threadId).length
+            ) {
+              this.store.deleteThread(threadId)
+              this.#byThread.delete(threadId)
+              changed.push(threadId)
+            }
+          }
           this.store.batchLifecycleUpdates(() => {
             for (const session of sessions) {
               if (
+                session.internal ||
                 !session.id ||
                 !path.isAbsolute(session.workspacePath) ||
                 !this.store.project(session.workspacePath) ||

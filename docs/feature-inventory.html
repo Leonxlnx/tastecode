@@ -225,7 +225,9 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-19 base main 2ef5a0b0 + 78</span>
+        <span class="meta"
+          >2026-09-19 base main d567c74c + 94 · Beta 8 preparing; beta 7 published</span
+        >
       </div>
     </div>
 
@@ -804,8 +806,9 @@
                 and a direction-aware 75% drag threshold; the flat list is the first-run layout,
                 while both layouts share full-catalog search, arrow-key entry into filtered results,
                 and selection preservation; new-chat source changes keep readiness checks silent;
-                first-run visibility favors current Codex and Claude families while saved visibility
-                and future unknown models remain authoritative</span
+                default visibility includes Astra, Sol, Terra, Luna, Fable 5.1, Opus 5, Sonnet 5,
+                Fable 5, Grok 4.6, and Grok 4.5; new models start enabled, and saved visibility
+                choices persist after the one-time defaults update</span
               ></label
             >
           </li>
@@ -820,11 +823,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Model, effort, and tier remembered per chat, with provider defaults for new chats
+                >Model, effort, speed, Design mode, and permissions remembered per chat
                 <span class="d"
                   >chat switches, catalog failures, hidden models, late discovery, and restart
                   preserve the last valid same-source choice; cross-provider overrides never reach a
-                  bound thread</span
+                  bound thread. Design completion resets only that chat's one-shot Design mode.
+                  Permission edits during startup reach the created chat; reconnect and pending-turn
+                  recovery restore the saved approval mode.</span
                 ></span
               ></label
             >
@@ -981,7 +986,9 @@
                   next capture; a successful preview remains reachable until thread close or a
                   replacement Design run, with process and port release awaited before cleanup;
                   exhausted validation corrections finish their turn and activity as failed;
-                  completed queued phases remain idle when their provider promise settles late</span
+                  completed queued phases remain idle when their provider promise settles late;
+                  source checks accept HTML with embedded images above 2 MB while retaining a 32 MB
+                  total scan limit</span
                 ></span
               ></label
             >
@@ -1237,7 +1244,9 @@
                   Discovery preserves native task ownership across concurrent starts and reconciles
                   accidental duplicate imports without discarding real replies or interrupting
                   active work. Saved Claude task notifications stay internal, and Design follow-up
-                  instructions are matched to the original user message during history import.</span
+                  instructions are matched to the original user message during history import. Codex
+                  helper sessions stay internal; old read-only reviewer copies are cleaned up while
+                  active chats and locally authored replies remain intact.</span
                 ></span
               ></label
             >
@@ -1886,11 +1895,16 @@
                 public <code>Leonxlnx/tastecode</code> GitHub Releases; hourly checks and an in-app
                 ready notice are implemented. Windows and signed/notarized macOS beta 6 are
                 published. Windows public-download clean installation, onboarding and a live update
-                check pass. The Linux AppImage consumes the same GitHub feed through
-                <code>latest-linux.yml</code> (live check not yet verified); the deb stays
-                package-manager owned and links to manual downloads. Automatic installed
-                version-to-version upgrade proof remains pending; beta 5 requires feed migration or
-                one manual installer update</span
+                check pass. Beta 7 adds newest-publication selection and verified EXE/DMG updates,
+                with beta 6 compatibility files during the transition. From beta 8, only the EXE and
+                DMG are uploaded; beta 6 users must have moved to beta 7 before that cutoff. macOS
+                beta 7 is published, signed, and notarized. Its public beta 6 to beta 7 native
+                installed update preserves the test chat and setting. Unsigned Windows beta 7 is
+                published with verified package contents, public download hashes, and legacy and new
+                update discovery; its installed upgrade proof remains pending. The Linux AppImage
+                consumes the same GitHub feed through <code>latest-linux.yml</code> (live check not
+                yet verified); the deb stays package-manager owned and links to manual downloads.
+                Beta 5 requires feed migration or one manual installer update</span
               ></label
             >
           </li>

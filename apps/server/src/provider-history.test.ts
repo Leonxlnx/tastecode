@@ -81,6 +81,46 @@ const messages = (id: string) =>
   )
 
 describe('provider history integration', () => {
+  it('never imports provider-owned helper chats', async () => {
+    const { history, source, hooks } = setup([{ ...metadata(), internal: true }])
+    await history.refresh()
+    expect(store.threads()).toEqual([])
+    expect(store.providerHistories()).toEqual([])
+    expect(source.read).not.toHaveBeenCalled()
+    expect(hooks.changed).not.toHaveBeenCalled()
+  })
+
+  it.each([false, true])(
+    'cleans up old helper mirrors while retaining local replies (reply: %s)',
+    async (reply) => {
+      const session = metadata()
+      const { history, source, hooks } = setup([session])
+      await history.refresh()
+      const id = 'external:codex:native'
+      await history.load(id)
+      if (reply)
+        for (const event of transcript('reply', 'My own reply').slice(1)) store.append(id, event)
+      session.internal = true
+      hooks.isBusy.mockReturnValue(true)
+      await history.refresh()
+      expect(store.thread(id)).toBeDefined()
+      hooks.isBusy.mockReturnValue(false)
+      hooks.changed.mockClear()
+      await history.refresh()
+      if (reply) {
+        expect(messages(id).map((item) => item.text)).toContain('My own reply')
+        expect(hooks.changed).not.toHaveBeenCalled()
+      } else {
+        expect(store.thread(id)).toBeUndefined()
+        expect(hooks.changed).toHaveBeenCalledWith([id])
+      }
+      expect(source.read).toHaveBeenCalledTimes(1)
+      await history.refresh()
+      expect(store.threads()).toHaveLength(reply ? 1 : 0)
+      expect(hooks.log).not.toHaveBeenCalled()
+    },
+  )
+
   it.each(['codex', 'claude-code', 'grok'] as const)(
     'does not import a second %s task created while discovery is pending',
     async (provider) => {
