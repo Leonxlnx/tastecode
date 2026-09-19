@@ -73,6 +73,7 @@ describe('embedded browser guest', () => {
     const owner = ownerHarness()
     configureEmbeddedBrowser(owner.contents)
     const session = {
+      webRequest: { onBeforeRequest: vi.fn() },
       setPermissionCheckHandler: vi.fn(),
       setPermissionRequestHandler: vi.fn(),
     }
@@ -114,6 +115,7 @@ describe('embedded browser guest', () => {
         guestListeners.set(name, listener),
       ),
       session: {
+        webRequest: { onBeforeRequest: vi.fn() },
         setPermissionCheckHandler: vi.fn(),
         setPermissionRequestHandler: vi.fn(),
       },
@@ -129,30 +131,22 @@ describe('embedded browser guest', () => {
     willNavigate?.(event, 'http://127.0.0.1:4311/preview')
     expect(event.preventDefault).toHaveBeenCalledTimes(2)
 
-    // Programmatic loadURL() skips will-navigate; did-start-navigation stops it.
-    const startNavigation = guestListeners.get('did-start-navigation')
-    startNavigation?.({
-      isMainFrame: true,
-      isSameDocument: false,
-      url: 'http://169.254.169.254/latest/meta-data',
-    })
-    expect(guest.stop).toHaveBeenCalledOnce()
-    startNavigation?.({
-      isMainFrame: true,
-      isSameDocument: false,
-      url: 'http://127.0.0.1:4311/preview',
-    })
-    startNavigation?.({
-      isMainFrame: false,
-      isSameDocument: false,
-      url: 'http://169.254.169.254/latest/meta-data',
-    })
-    startNavigation?.({
-      isMainFrame: true,
-      isSameDocument: false,
-      url: 'about:blank',
-    })
-    expect(guest.stop).toHaveBeenCalledOnce()
+    const beforeRequest = guest.session.webRequest.onBeforeRequest.mock.calls[0]![0]
+    for (const [url, cancel] of [
+      ['http://example.invalid/', true],
+      ['file:///private/data', true],
+      ['https://example.com/', false],
+      ['http://127.0.0.1:4311/preview', false],
+      ['about:blank', false],
+    ] as const) {
+      const callback = vi.fn()
+      beforeRequest({ resourceType: 'mainFrame', url }, callback)
+      expect(callback).toHaveBeenCalledWith({ cancel })
+    }
+    const subresource = vi.fn()
+    beforeRequest({ resourceType: 'image', url: 'https://example.com/image.png' }, subresource)
+    expect(subresource).toHaveBeenCalledWith({ cancel: false })
+    expect(guestListeners.has('did-start-navigation')).toBe(false)
   })
 })
 

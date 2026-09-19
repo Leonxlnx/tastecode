@@ -64,14 +64,6 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
     guest.on('will-redirect', (event, url) => {
       if (!isBrowserGuestUrl(url)) event.preventDefault()
     })
-    // will-navigate does not fire for programmatic loadURL() or src attribute
-    // changes; stopping a rejected main-frame navigation at start keeps its
-    // response from ever committing into the guest.
-    guest.on('did-start-navigation', (details) => {
-      if (details.isMainFrame && !details.isSameDocument && !isBrowserGuestUrl(details.url, true)) {
-        guest.stop()
-      }
-    })
     // A guest that still ends up off the web gets unloaded.
     guest.on('did-navigate', (_event, url) => {
       if (!isBrowserGuestUrl(url, true)) {
@@ -128,6 +120,13 @@ export function browserUserAgent(value: string): string {
 function configureBrowserSession(browserSession: Session): void {
   if (configuredSessions.has(browserSession)) return
   configuredSessions.add(browserSession)
+  // Programmatic loadURL/src changes skip will-navigate. Cancel through the
+  // request API: stopping inside did-start-navigation can crash Chromium.
+  browserSession.webRequest.onBeforeRequest((details, callback) => {
+    callback({
+      cancel: details.resourceType === 'mainFrame' && !isBrowserGuestUrl(details.url, true),
+    })
+  })
   browserSession.setPermissionCheckHandler(() => false)
   browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
 }
