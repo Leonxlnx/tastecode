@@ -31,7 +31,6 @@ try {
   for (const legacy of ['0', '1']) {
     const profile = path.join(root, `profile-${legacy}`)
     const report = path.join(root, `cwd-${legacy}.json`)
-    await mkdir(profile)
     const env = {
       ...process.env,
       NODE_OPTIONS: `--require=${JSON.stringify(probe)}`,

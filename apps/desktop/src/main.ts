@@ -889,6 +889,7 @@ if (ownsSingleInstance) {
 
   void app.whenReady().then(async () => {
     logStartupMilestone('app-ready')
+    await mkdir(productDataPath, { recursive: true, mode: 0o700 })
     const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
     diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
       app.setPath('crashDumps', diagnosticsDirectory)
