@@ -9,6 +9,7 @@ describe('settings status grammar', () => {
   it.each([
     ['checking', 'Checking'],
     ['ready', 'Ready'],
+    ['update-available', 'Update available'],
     ['setup-needed', 'Setup needed'],
     ['unavailable', 'Unavailable'],
     ['failed', 'Failed'],

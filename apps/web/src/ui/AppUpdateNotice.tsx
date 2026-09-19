@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { appUpdateState, onAppUpdateState, type AppUpdateState } from '../bridge.js'
+import {
+  appUpdateState,
+  onAppUpdateState,
+  openExternalUrl,
+  type AppUpdateState,
+} from '../bridge.js'
 import { NoticePresence } from './NoticePresence.js'
 
 export function AppUpdateNotice(props: { onReview: () => void }) {
@@ -21,21 +26,47 @@ export function AppUpdateNotice(props: { onReview: () => void }) {
       off()
     }
   }, [])
+  // Manual packages (deb) signal through latestVersion: nothing installs
+  // in-app, so the only actions are opening the releases page or dismissing.
+  const manual = state?.status === 'manual' ? state.latestVersion : undefined
   return (
     <NoticePresence
       className="notice notice--app-update"
       role="status"
-      visible={state?.status === 'ready' && state.version !== dismissed}
-      onDismiss={() => setDismissed(state?.version)}
+      visible={
+        (state?.status === 'ready' && state.version !== dismissed) ||
+        (manual !== undefined && manual !== dismissed)
+      }
+      onDismiss={() => setDismissed(state?.status === 'ready' ? state.version : manual)}
       autoDismissPaused
     >
-      <span className="notice__text">TasteCode {state?.version} is ready to install.</span>
-      <button className="ghost" type="button" onClick={props.onReview}>
-        Review update
-      </button>
-      <button className="ghost" type="button" onClick={() => setDismissed(state?.version)}>
-        Later
-      </button>
+      {manual !== undefined ? (
+        <>
+          <span className="notice__text">TasteCode {manual} is available to download.</span>
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => {
+              if (state?.releasesUrl) void openExternalUrl(state.releasesUrl)
+            }}
+          >
+            Download
+          </button>
+          <button className="ghost" type="button" onClick={() => setDismissed(manual)}>
+            Later
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="notice__text">TasteCode {state?.version} is ready to install.</span>
+          <button className="ghost" type="button" onClick={props.onReview}>
+            Review update
+          </button>
+          <button className="ghost" type="button" onClick={() => setDismissed(state?.version)}>
+            Later
+          </button>
+        </>
+      )}
     </NoticePresence>
   )
 }

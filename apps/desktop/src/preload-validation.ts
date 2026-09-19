@@ -34,6 +34,8 @@ export function isAppUpdateState(value: unknown): value is AppUpdateState {
     typeof state['currentVersion'] === 'string' &&
     (state['version'] === undefined || typeof state['version'] === 'string') &&
     (state['progress'] === undefined || isFiniteNumber(state['progress'])) &&
-    (state['error'] === undefined || typeof state['error'] === 'string')
+    (state['error'] === undefined || typeof state['error'] === 'string') &&
+    (state['latestVersion'] === undefined || typeof state['latestVersion'] === 'string') &&
+    (state['releasesUrl'] === undefined || typeof state['releasesUrl'] === 'string')
   )
 }

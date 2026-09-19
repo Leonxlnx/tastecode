@@ -153,7 +153,9 @@ AppImage is the portable Linux artifact and gets in-app updates: the desktop sha
 publisher (`Leonxlnx/tastecode`, draft releases), so packaging emits `latest-linux.yml` and
 `app-update.yml` alongside both targets. `electron-updater` replaces the AppImage in place via its
 embedded block map; no `.blockmap` sidecar ships. The deb stays package-manager owned — updates for
-it remain manual downloads from GitHub Releases. Unpackaged or dev builds report `unsupported` and
+it remain manual downloads from GitHub Releases, but it still runs a read-only
+`/releases/latest` probe (after startup, then every six hours) so the UI can point at the newest
+published version. Unpackaged or dev builds report `unsupported` and
 never touch the updater. Updater behavior is a package policy injected into the shared updater
 state machine (`appUpdateMode`) rather than scattered platform checks.
 

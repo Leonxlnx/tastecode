@@ -1790,6 +1790,7 @@ function AboutSettings(props: { transport: Transport }) {
   const nativeDownloading = nativeUpdate?.status === 'downloading'
   const nativeReady = nativeUpdate?.status === 'ready'
   const manualUpdate = nativeUpdate?.status === 'manual'
+  const manualLatest = nativeUpdate?.status === 'manual' ? nativeUpdate.latestVersion : undefined
   // Verdicts stay on the row's one line; a failure goes behind the red dot.
   const updateStatus = !result
     ? undefined
@@ -1807,7 +1808,12 @@ function AboutSettings(props: { transport: Transport }) {
             }
           : { state: 'unavailable' as const, detail: 'No verdict' }
   const nativeStatus = manualUpdate
-    ? { state: 'unavailable' as const, detail: 'Download and install updates manually from GitHub' }
+    ? manualLatest
+      ? { state: 'update-available' as const, detail: `Version ${manualLatest}` }
+      : {
+          state: 'unavailable' as const,
+          detail: 'Download and install updates manually from GitHub',
+        }
     : nativeUpdate?.status === 'current'
       ? { state: 'ready' as const, detail: 'Up to date' }
       : nativeDownloading
@@ -1852,7 +1858,8 @@ function AboutSettings(props: { transport: Transport }) {
           onClick={() => {
             if (manualUpdate) {
               window.open(
-                'https://github.com/Leonxlnx/tastecode/releases/latest',
+                nativeUpdate?.releasesUrl ??
+                  'https://github.com/Leonxlnx/tastecode/releases/latest',
                 '_blank',
                 'noopener,noreferrer',
               )
@@ -1863,7 +1870,9 @@ function AboutSettings(props: { transport: Transport }) {
         >
           <RotateCcw size={13} aria-hidden />
           {manualUpdate
-            ? 'Open downloads'
+            ? manualLatest
+              ? 'Download'
+              : 'Open downloads'
             : nativeReady
               ? 'Restart to update'
               : nativeDownloading

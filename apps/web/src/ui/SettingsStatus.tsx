@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 const STATE_LABELS = {
   checking: 'Checking',
   ready: 'Ready',
+  'update-available': 'Update available',
   'setup-needed': 'Setup needed',
   unavailable: 'Unavailable',
   failed: 'Failed',

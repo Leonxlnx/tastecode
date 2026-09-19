@@ -12,12 +12,26 @@ describe('preload validation', () => {
       }),
     ).toBe(true)
     expect(isAppUpdateState({ status: 'manual', currentVersion: '0.1.0-beta.1' })).toBe(true)
+    expect(
+      isAppUpdateState({
+        status: 'manual',
+        currentVersion: '0.1.0-beta.8',
+        latestVersion: '0.1.0-beta.9',
+        releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+      }),
+    ).toBe(true)
     expect(isFiniteNumber(1.1)).toBe(true)
   })
 
   it('rejects malformed update states and non-finite zoom factors', () => {
     expect(isAppUpdateState({ status: 'ready', currentVersion: 1 })).toBe(false)
     expect(isAppUpdateState({ status: 'unknown', currentVersion: '0.1.0' })).toBe(false)
+    expect(isAppUpdateState({ status: 'manual', currentVersion: '0.1.0', latestVersion: 2 })).toBe(
+      false,
+    )
+    expect(isAppUpdateState({ status: 'manual', currentVersion: '0.1.0', releasesUrl: null })).toBe(
+      false,
+    )
     expect(
       isAppUpdateState({ status: 'downloading', currentVersion: '0.1.0', progress: Infinity }),
     ).toBe(false)

@@ -164,6 +164,140 @@ describe('app update controller', () => {
     expect(loadUpdater).not.toHaveBeenCalled()
   })
 
+  it('reports a newer published release for manual packages', async () => {
+    const loadUpdater = vi.fn()
+    const fetchLatest = vi.fn().mockResolvedValue({
+      version: '0.1.0-beta.9',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+    const controller = createAppUpdateController({
+      loadUpdater,
+      fetchLatest,
+      currentVersion: '0.1.0-beta.8',
+      mode: 'manual',
+    })
+
+    await expect(controller.check()).resolves.toEqual({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+      latestVersion: '0.1.0-beta.9',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+    expect(controller.install()).toBe(false)
+    expect(loadUpdater).not.toHaveBeenCalled()
+  })
+
+  it('signals a manual update when a stable release supersedes the running beta', async () => {
+    const fetchLatest = vi.fn().mockResolvedValue({
+      version: '0.1.0',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+    const controller = createAppUpdateController({
+      loadUpdater: vi.fn(),
+      fetchLatest,
+      currentVersion: '0.1.0-beta.9',
+      mode: 'manual',
+    })
+
+    await expect(controller.check()).resolves.toEqual({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.9',
+      latestVersion: '0.1.0',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+  })
+
+  it('stays silent for manual packages when nothing newer is published', async () => {
+    const fetchLatest = vi.fn().mockResolvedValue({
+      version: '0.1.0-beta.8',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+    const controller = createAppUpdateController({
+      loadUpdater: vi.fn(),
+      fetchLatest,
+      currentVersion: '0.1.0-beta.8',
+      mode: 'manual',
+    })
+
+    await expect(controller.check()).resolves.toEqual({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+  })
+
+  it('drops a stale manual signal when the published release is no longer newer', async () => {
+    const fetchLatest = vi
+      .fn()
+      .mockResolvedValueOnce({
+        version: '0.1.0-beta.9',
+        releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+      })
+      .mockResolvedValueOnce({
+        version: '0.1.0-beta.8',
+        releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+      })
+    const controller = createAppUpdateController({
+      loadUpdater: vi.fn(),
+      fetchLatest,
+      currentVersion: '0.1.0-beta.8',
+      mode: 'manual',
+    })
+
+    await expect(controller.check()).resolves.toMatchObject({ latestVersion: '0.1.0-beta.9' })
+    await expect(controller.check()).resolves.toEqual({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+  })
+
+  it('keeps the last manual signal when a release check fails', async () => {
+    const fetchLatest = vi
+      .fn()
+      .mockResolvedValueOnce({
+        version: '0.1.0-beta.9',
+        releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+      })
+      .mockRejectedValueOnce(new Error('offline'))
+    const controller = createAppUpdateController({
+      loadUpdater: vi.fn(),
+      fetchLatest,
+      currentVersion: '0.1.0-beta.8',
+      mode: 'manual',
+    })
+
+    await expect(controller.check()).resolves.toMatchObject({ latestVersion: '0.1.0-beta.9' })
+    await expect(controller.check()).resolves.toMatchObject({
+      status: 'manual',
+      latestVersion: '0.1.0-beta.9',
+    })
+  })
+
+  it('checks manual packages once after startup then every six hours', async () => {
+    vi.useFakeTimers()
+    const fetchLatest = vi.fn().mockResolvedValue(undefined)
+    const controller = createAppUpdateController({
+      loadUpdater: vi.fn(),
+      fetchLatest,
+      currentVersion: '0.1.0-beta.8',
+      mode: 'manual',
+    })
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(fetchLatest).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchLatest).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 - 1)
+    expect(fetchLatest).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchLatest).toHaveBeenCalledTimes(2)
+    controller.dispose()
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000)
+    expect(fetchLatest).toHaveBeenCalledTimes(2)
+  })
+
   it('checks after startup and hourly while open, then stops on disposal', async () => {
     vi.useFakeTimers()
     const updater = fakeUpdater()
