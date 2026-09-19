@@ -89,6 +89,27 @@ fixed modes retain their requested CSS viewport and scale the complete guest to 
 stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
 Linux.
 
+### Desktop update assets
+
+From beta 7, the desktop updater reads public releases in `Leonxlnx/tastecode` and selects
+the newest publication with an app version tag, including prereleases. The installed
+version must still be lower than the offered version. The client requires the matching
+EXE or DMG and verifies its size and SHA-256 against GitHub's asset metadata.
+
+Installation remains owned by electron-updater's NSIS and Squirrel.Mac paths. On macOS,
+the client mounts the DMG read-only, validates its app ID, version and signature, and
+creates Squirrel's ZIP locally. A private loopback endpoint supplies the verified file
+with locally computed SHA-512 metadata. It closes after the native updater consumes the
+file. Quit waits for active download cleanup so a mounted DMG is detached.
+
+Beta 7 retains the public YAML/ZIP assets needed by beta 6. Starting at beta 8, only the
+EXE and DMG are uploaded; the complete checksums and packaging proof remain local.
+The cutoff and remaining beta 6 users are covered in [RELEASING.md](./RELEASING.md).
+
+_Rejected:_ replacing app bundles with a custom shell/helper installer would duplicate
+native signing checks and replacement logic; a second release repository would split
+the release process. Removing compatibility files in beta 7 would strand beta 6 users.
+
 ---
 
 ## Stack
@@ -478,3 +499,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-08 | Added checkpoint reachability and checkout guards, explicit history maintenance, provider controls, task-state ownership, bounded leases and local Electron performance gates. |
 | 2026-09-15 | Added authenticated repository and upload image previews, isolated SVG rendering, lazy loading, and byte-bounded caches for pull-request Markdown.                             |
 | 2026-09-15 | Dropped the Claude Agent SDK's bundled per-platform CLI from the dependency graph and the desktop package; the adapter always spawns the user's `claude`.                      |
+| 2026-09-18 | Added the beta 7 updater bridge and verified EXE/DMG transport, with two public assets from beta 8 and native installers retained.                                             |

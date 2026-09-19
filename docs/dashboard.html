@@ -290,13 +290,91 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-17 base main 9a5b9755 + Windows provider PATH correction</span>
+        <span class="meta">2026-09-19 main d567c74c · Beta 8 preparing; beta 7 published</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
-        <h2>Private Beta Preparation</h2>
+        <p>
+          Desktop startup runs its core server and background provider probes from app storage,
+          rather than inheriting a mounted installer or external-drive working directory. Both
+          launch paths pass the Windows regression check; clean-profile macOS permission testing
+          remains required before including this fix in a macOS release.
+        </p>
+        <p>
+          Chat composer settings now retain Design mode alongside model, reasoning, and speed.
+          Approval edits during chat startup survive task creation, and recovery restores the saved
+          permission mode.
+        </p>
+        <p>
+          Codex internal approval-review sessions are excluded from imported chats. Existing
+          read-only helper copies are removed without touching native history, active work, or local
+          replies.
+        </p>
+        <h2>Public Windows and macOS Beta</h2>
+        <p class="sub">
+          <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.7"
+            >Windows and macOS beta 7</a
+          >
+          is published from 82f714614. The owner approved unsigned Windows publication; macOS is
+          signed and notarized. Windows local checks, packaged resources, native bindings, public
+          download hashes and both update-provider discovery paths pass. Windows clean installation
+          and an installed beta 6-to-7 upgrade remain unverified; the parallel startup test
+          encountered the active app's occupied server port. The macOS installed update preserves
+          its test chat and setting.
+        </p>
+        <p class="sub">
+          <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.6"
+            >Windows and macOS beta 6</a
+          >
+          is published from 2bc6d252. Its unsigned installer, packaged resources, native
+          PTY/keyring, metadata, remote hashes and anonymous GitHub update/download path passed
+          verification. A public-download Windows clean install, onboarding and live update check
+          passed after preserving the previous profile. The macOS owner's report records signed,
+          notarized DMG/ZIP files and fresh-data startup checks. Automatic installed old-to-new
+          upgrade proof remains pending. Two obsolete beta 1 drafts were removed.
+        </p>
+        <p class="sub">
+          Long Codex chats resume without loading full provider history. Provider tool activity
+          retains arguments, results, failures and file diffs. The transcript shows readable tool
+          details, per-file line counts and a turn timer; disclosure headers stay visible as they
+          open. Desktop links offer Open and Copy Link. Local checks and macOS Electron interaction
+          checks passed; these changes are included in the published beta 6 packages.
+        </p>
+        <p class="sub">
+          Design preview validates the Node entry file separately from directory and port arguments,
+          retaining workspace and credential boundaries. Correctable preview plans retry locally;
+          provider failures and exhausted preview retries preserve a suspended phase for explicit
+          continue/retry, including across runtime restart, without resampling references. Codex
+          accepts bounded history replies up to 128 MiB. Preview capture retries client reconnects
+          within its original deadline; unavailable capture leaves the built preview open and
+          explicitly skips visual review. URL-style Windows file links resolve inside their project.
+          A local 18.29 MiB history reply previously exceeded the shared 16 MiB cap. These source
+          fixes are included in the published beta 6 packages.
+        </p>
+        <p class="sub">
+          Provider history now rechecks task ownership after discovery and defers imports while
+          sessions start. Existing duplicate imports are reconciled after the canonical transcript
+          loads successfully; real replies and active or queued work are preserved. Internal Design
+          prompts stay behind the original task's turn filtering. This fix is included in beta 6.
+        </p>
+        <p class="sub">
+          Saved Claude history now excludes SDK background-task notifications and matches Design
+          follow-up envelopes to the original user submission. Existing imports refresh through the
+          corrected parser without changing genuine user messages or stopping active tasks.
+        </p>
+        <p class="sub">
+          Design palettes now choose readable button text before repairing hover contrast. The
+          captured coffee-site failure and 864 generated light/dark palette cases pass without
+          changing their accent seeds or relaxing contrast requirements. Explicitly fictional
+          numeric examples receive a publication review instead of aborting Page; customer proof,
+          rankings and performance assertions still require evidence. Both captured failures pass
+          locally. PNG provenance metadata stays intact and font folders expand to real font files.
+          Planning can correct up to three different errors; repeated failures still stop. Pure
+          copy-style checks are advisory. Deployment is pending; installed beta 3 and active user
+          tests remain running.
+        </p>
         <p class="sub">
           Windows provider startup now preserves Explorer's mixed-case Path environment through CLI
           discovery, provider commands and terminals. Missing executables are distinguished from
@@ -892,9 +970,16 @@
                   <span class="d"
                     >Release packages omit source files and unused dependency formats; packaged
                     import, PTY and keyring checks pass on arm64 macOS. NSIS packaging produces the
-                    installer, blockmap, and beta metadata; the About surface checks, downloads, and
-                    installs updates from the TasteCode feed. Public feed publication, signing, and
-                    version-to-version proof remain release tasks</span
+                    installer, blockmap, and update metadata. New beta 6 packages use public GitHub
+                    Releases, check hourly, and show a ready-to-install notice linking to About.
+                    macOS beta 7 is published with the asset updater: newest public release,
+                    verified EXE/DMG, and beta 6 compatibility files for the transition. From beta 8
+                    the draft uploader selects only EXE and DMG.
+                    <a href="./RELEASING.md">Release and migration steps</a> document the cutoff for
+                    beta 6. Signed/notarized macOS beta 7 passes native installation, clean startup,
+                    and a public beta 6 to beta 7 installed update with saved test data. Unsigned
+                    Windows beta 7 is published with verified package contents, download hashes and
+                    update discovery. Its installed upgrade proof remains pending</span
                   >
                 </span>
               </li>

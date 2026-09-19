@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Profiler } from 'react'
 import { Sidebar } from './Sidebar.js'
+import type { AccountLimitsState } from './AccountLimits.js'
 
 const hapticMocks = vi.hoisted(() => ({
   perform: vi.fn(),
@@ -62,6 +63,7 @@ const session = (id: string, title: string) => ({
 function renderProjectCatalog(
   projects: Array<{ path: string; name: string; sessions: [] }>,
   active?: string,
+  usageStates?: AccountLimitsState[],
 ) {
   const content = (active: string | undefined) => (
     <Sidebar
@@ -70,6 +72,7 @@ function renderProjectCatalog(
       activeSessionId={undefined}
       account={undefined}
       providerName="Codex"
+      usageStates={usageStates}
       collapsed={false}
       width={248}
       onWidthChange={vi.fn()}
@@ -103,6 +106,44 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('hides unavailable plan limits while the account component is loading', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    renderProjectCatalog([], undefined, [
+      {
+        provider: 'grok',
+        status: 'ready',
+        summary: {
+          session: usage,
+          today: usage,
+          limits: [],
+          limitSource: { provider: 'grok', status: 'unavailable' },
+        },
+      },
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+  })
+
+  it('shows Usage on the first menu render while limits are still loading', () => {
+    renderProjectCatalog([], undefined, [{ provider: 'codex', status: 'loading' }])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    const usage = within(dialog).getByRole('button', { name: 'Usage, Checking…' })
+    expect(dialog.firstElementChild?.contains(usage)).toBe(true)
+    expect(document.activeElement).toBe(usage)
+  })
+
   it('mounts a large project catalog in bounded idle batches', () => {
     const callbacks = controlledIdleCallbacks()
     const projects = Array.from({ length: 100 }, (_, index) => ({
@@ -390,7 +431,7 @@ describe('Sidebar chat actions', () => {
     expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
-    expect(document.querySelector('.account__name')?.textContent).toBe('private@example.com')
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
     expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('15%')
     expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(

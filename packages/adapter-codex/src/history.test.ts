@@ -36,6 +36,55 @@ afterEach(async () => {
 })
 
 describe('native Codex history', () => {
+  it.each([false, true])(
+    'identifies internal reviewers from rollout metadata (indexed: %s)',
+    async (indexed) => {
+      const { root, file, source } = await store([])
+      const content =
+        [
+          record('session_meta', {
+            id: 'native-session',
+            cwd: '/project',
+            timestamp: at,
+            source: { subagent: { other: 'guardian' } },
+            parent_thread_id: 'user-chat',
+          }),
+          event({ type: 'user_message', message: 'Assess this command' }),
+        ]
+          .map((line) => JSON.stringify(line))
+          .join('\n') + '\n'
+      await writeFile(file, content)
+      if (indexed) {
+        const db = new DatabaseSync(path.join(root, 'state_5.sqlite'))
+        db.exec(
+          'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, created_at INTEGER, updated_at INTEGER)',
+        )
+        db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)').run(
+          'native-session',
+          file,
+          '/project',
+          'Codex chat',
+          1,
+          2,
+        )
+        db.close()
+      }
+      const session = (await source.list())[0]!
+      expect(session.internal).toBe(true)
+      expect((await source.list())[0]?.internal).toBe(true)
+      expect(await source.read(session)).toEqual([])
+      expect(await readFile(file, 'utf8')).toBe(content)
+      const normal = await store([
+        event({ type: 'user_message', message: 'Explain the guardian subagent' }),
+      ])
+      const userSession = (await normal.source.list())[0]!
+      expect(userSession.internal).toBeUndefined()
+      expect(items(await normal.source.read(userSession))[0]?.text).toBe(
+        'Explain the guardian subagent',
+      )
+    },
+  )
+
   it('bounds native prompt previews and hashes revisions without truncating chat content', async () => {
     const prompt = 'Full user prompt '.repeat(7000)
     const { root, file, source } = await store([event({ type: 'user_message', message: prompt })])

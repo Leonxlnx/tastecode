@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Account } from '@harness/contracts'
-import { IconPhotoPlus as ImagePlus, IconTrash as Trash2 } from '@tabler/icons-react'
+import { IconPencil as Pencil, IconTrash as Trash2 } from '@tabler/icons-react'
 import {
   PROFILE_IMAGE_ACCEPT,
-  profileInitials,
   readProfileImage,
   type ProfileIdentityPreferences,
 } from '../profile-preferences.js'
+import { GeneratedAvatar } from './GeneratedAvatar.js'
 
 export function ProfileSettings(props: {
   account: Account | undefined
@@ -33,7 +33,8 @@ export function ProfileSettings(props: {
 
   useEffect(() => () => void (imageRequest.current += 1), [])
 
-  const identity = profileIdentity(props.account, props.providerName, props.identity?.displayName)
+  const name = props.identity?.displayName?.trim() || 'Local profile'
+  const hasPhoto = Boolean(props.identity?.avatarDataUrl)
 
   return (
     <section className="profile-page" aria-labelledby="profile-title">
@@ -41,18 +42,37 @@ export function ProfileSettings(props: {
         <h1 id="profile-title">Profile</h1>
       </header>
       <section className="profile-identity" aria-label="Profile identity">
-        <div className="profile-identity__avatar" aria-hidden>
-          {props.identity?.avatarDataUrl ? (
-            <img src={props.identity.avatarDataUrl} alt="" />
-          ) : (
-            identity.initials
-          )}
+        <div className="profile-identity__portrait">
+          <div className="profile-identity__avatar" aria-hidden>
+            {props.identity?.avatarDataUrl ? (
+              <img src={props.identity.avatarDataUrl} alt="" />
+            ) : (
+              <GeneratedAvatar name={name} />
+            )}
+          </div>
+          <label
+            className="profile-identity__edit"
+            title={hasPhoto ? 'Change photo' : 'Upload photo'}
+          >
+            <Pencil size={13} aria-hidden />
+            <span className="visually-hidden">{hasPhoto ? 'Change photo' : 'Upload photo'}</span>
+            <input
+              className="visually-hidden"
+              type="file"
+              accept={PROFILE_IMAGE_ACCEPT}
+              onChange={(event) => {
+                void chooseImage(event.target.files?.[0])
+                event.target.value = ''
+              }}
+            />
+          </label>
         </div>
-        <h2>{identity.name}</h2>
-        <div className="profile-identity__meta">
-          <span>{identity.handle}</span>
-          {props.account?.plan ? <span>{props.account.plan}</span> : null}
-        </div>
+        <h2>{name}</h2>
+        {props.account?.plan ? (
+          <div className="profile-identity__meta">
+            <span>{props.account.plan}</span>
+          </div>
+        ) : null}
         <div className="profile-identity__editor">
           <label className="profile-identity__field">
             <span>Display name</span>
@@ -60,25 +80,12 @@ export function ProfileSettings(props: {
               type="text"
               maxLength={64}
               value={props.identity?.displayName ?? ''}
-              placeholder={identity.name}
+              placeholder={name}
               onChange={(event) => props.onIdentityChange?.({ displayName: event.target.value })}
             />
           </label>
-          <div className="profile-identity__photo-actions">
-            <label className="settings__action profile-identity__photo">
-              <ImagePlus size={14} aria-hidden />
-              <span>{props.identity?.avatarDataUrl ? 'Change photo' : 'Add photo'}</span>
-              <input
-                className="visually-hidden"
-                type="file"
-                accept={PROFILE_IMAGE_ACCEPT}
-                onChange={(event) => {
-                  void chooseImage(event.target.files?.[0])
-                  event.target.value = ''
-                }}
-              />
-            </label>
-            {props.identity?.avatarDataUrl ? (
+          {hasPhoto ? (
+            <div className="profile-identity__photo-actions">
               <button
                 className="settings__action profile-identity__remove-photo"
                 type="button"
@@ -89,11 +96,17 @@ export function ProfileSettings(props: {
                 }}
               >
                 <Trash2 size={14} aria-hidden />
-                <span>Remove</span>
+                <span>Remove photo</span>
               </button>
-            ) : null}
-          </div>
-          <p className="profile-identity__photo-note">PNG, JPEG, or WebP · 1 MB maximum</p>
+            </div>
+          ) : null}
+          <p className="profile-identity__photo-note">
+            {hasPhoto
+              ? 'Remove the photo to go back to the picture generated from your name.'
+              : 'Generated from your name. Use the pencil to upload your own photo.'}
+            <br />
+            PNG, JPEG, or WebP · 1 MB maximum
+          </p>
           {imageError ? (
             <p className="profile-identity__photo-error" role="alert">
               {imageError}
@@ -103,22 +116,4 @@ export function ProfileSettings(props: {
       </section>
     </section>
   )
-}
-
-function profileIdentity(
-  account: Account | undefined,
-  providerName: string,
-  displayName: string | undefined,
-) {
-  const localPart = account?.email?.split('@')[0]?.trim()
-  const name = displayName?.trim() || (localPart ? titleCase(localPart) : 'Local profile')
-  return {
-    name,
-    handle: localPart ? `@${localPart}` : providerName,
-    initials: profileInitials(name || providerName),
-  }
-}
-
-function titleCase(value: string): string {
-  return value.replace(/[._-]+/g, ' ').replace(/\b\p{L}/gu, (letter) => letter.toUpperCase())
 }

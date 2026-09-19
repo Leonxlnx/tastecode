@@ -72,7 +72,7 @@ describe('turn boundaries', () => {
     expect(neighbourTurn(turns, 3, 'prev')).toBe(1)
   })
 
-  it('keeps reasoning visible and groups the following tool activity', () => {
+  it('folds reasoning and tool activity into one completed work summary', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', createdAt: 1_000 },
       {
@@ -91,7 +91,7 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentationsOf(items).get('t1')).toMatchObject({
-      activityGroups: [{ items: [items[2]], firstIndex: 2 }],
+      activityGroups: [{ items: [items[1], items[2]], firstIndex: 1 }],
       responseText: 'Done.',
       firstResponseIndex: 1,
       finalAnswerIndex: 3,
@@ -181,9 +181,9 @@ describe('turn boundaries', () => {
 
     expect(presentationsOf(items).get('t1')?.activityGroups).toMatchObject([
       {
-        items: [items[1], items[3], items[5]],
+        items: [items[1], items[3], items[5], items[6]],
         firstIndex: 1,
-        lastIndex: 5,
+        lastIndex: 6,
       },
     ])
   })

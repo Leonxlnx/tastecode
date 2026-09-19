@@ -39,12 +39,14 @@ import {
   matchesShortcut,
   readKeybindings,
   shortcutLabel,
+  WORKSPACE_TOOL_SHORTCUTS,
   writeKeybindings,
   type KeybindingId,
   type Shortcut,
 } from './shortcuts.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
+import { AppUpdateNotice } from './ui/AppUpdateNotice.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
 import { OptimisticMutations } from './optimistic-mutations.js'
 import {
@@ -211,10 +213,11 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
+const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-const MODEL_VISIBILITY_VERSION = '3'
+const MODEL_VISIBILITY_VERSION = '4'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -261,8 +264,8 @@ const CheckoutDiscardDialog = lazy(() =>
 const RollbackDialog = lazy(() =>
   import('./ui/RollbackDialog.js').then((module) => ({ default: module.RollbackDialog })),
 )
-const WelcomeDialog = lazy(() =>
-  import('./ui/WelcomeDialog.js').then((module) => ({ default: module.WelcomeDialog })),
+const Onboarding = lazy(() =>
+  import('./ui/Onboarding.js').then((module) => ({ default: module.Onboarding })),
 )
 
 /**
@@ -513,6 +516,8 @@ export function App() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => readSetting(ONBOARDING_KEY) === 'done',
   )
+  const [debugSettingsVisible, setDebugSettingsVisible] = useState(false)
+  const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
 
@@ -642,10 +647,12 @@ export function App() {
   const [serviceTier, setServiceTier] = useState<string | undefined>(
     () => readSetting(SERVICE_TIER_KEY) ?? undefined,
   )
+  const pendingThreadModelSave = useRef<string | undefined>(undefined)
   const [approvalByProvider, setApprovalByProvider] = useState<ApprovalPreferences>(() =>
     readApprovalPreferences(provider),
   )
   const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
+  const pendingThreadApprovals = useRef(new Map<string, ApprovalMode>())
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
   )
@@ -739,7 +746,23 @@ export function App() {
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
   const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
   const [isolateSession, setIsolateSession] = useState(false)
-  const [designMode, setDesignMode] = useState(false)
+  const [designModes, setDesignModes] = useState<Record<string, boolean>>({})
+  const designMode = useMemo(
+    () =>
+      designModes[activeId ?? NEW_CHAT_DRAFT_KEY] ??
+      readThreadModelSelection(activeId)?.designMode ??
+      false,
+    [activeId, designModes],
+  )
+  const setThreadDesignMode = useCallback((threadId: string | undefined, enabled: boolean) => {
+    const saved = readThreadModelSelection(threadId)
+    if (threadId && saved) writeThreadModelSelection(threadId, { ...saved, designMode: enabled })
+    setDesignModes((current) => ({ ...current, [threadId ?? NEW_CHAT_DRAFT_KEY]: enabled }))
+  }, [])
+  const changeDesignMode = useCallback(
+    (enabled: boolean) => setThreadDesignMode(activeIdRef.current, enabled),
+    [setThreadDesignMode],
+  )
   const [checkoutDelete, setCheckoutDelete] = useState<
     { id: string; title: string; branch: string } | undefined
   >()
@@ -1362,9 +1385,9 @@ export function App() {
     flushPendingLifecyclePushes.current = flushLifecyclePushes
     const offEvents = transport.on('thread.event', (data) => {
       const { threadId, event } = data
+      if (endsDesignBriefing(event)) setThreadDesignMode(threadId, false)
       const next = threadController.receive(data, isThreadCacheProtected)
       if (!next) return
-      if (threadId === activeIdRef.current && endsDesignBriefing(event)) setDesignMode(false)
       if (
         event.type === 'turn.started' ||
         event.type === 'turn.completed' ||
@@ -1551,31 +1574,8 @@ export function App() {
     pruneQueueMetadata,
     isThreadCacheProtected,
     refreshProviderThreadHistory,
+    setThreadDesignMode,
   ])
-
-  useEffect(() => {
-    if (workspacePanelHasMounted) return
-    const openWorkspaceTool = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return
-      const key = event.key.toLowerCase()
-      const kind: WorkspaceTool | undefined =
-        key === 'g' && event.shiftKey
-          ? 'review'
-          : key === 't' && !event.shiftKey
-            ? 'browser'
-            : key === 'p' && event.altKey && !event.shiftKey
-              ? 'files'
-              : key === 's' && event.altKey
-                ? 'side-chat'
-                : undefined
-      if (!kind) return
-      event.preventDefault()
-      setWorkspacePanelHasMounted(true)
-      setWorkspaceToolRequest({ request: ++nextWorkspaceToolRequest.current, kind })
-    }
-    window.addEventListener('keydown', openWorkspaceTool)
-    return () => window.removeEventListener('keydown', openWorkspaceTool)
-  }, [workspacePanelHasMounted])
 
   useEffect(() => {
     let cancelled = false
@@ -1800,7 +1800,9 @@ export function App() {
           ? preferredPool
           : visible
       const selections = readSourceSelections()
+      const threadSelection = readThreadModelSelection(activeIdRef.current)
       const storedSelection =
+        selectionPool.find((choice) => choice.key === threadSelection?.modelKey) ??
         selectionPool.find((choice) => choice.key === stored) ??
         selectionPool.find((choice) => choice.model.id === stored)
       const fallback = selectionPool.find((choice) => choice.model.isDefault) ?? selectionPool[0]
@@ -1820,7 +1822,10 @@ export function App() {
       const previous =
         modelsRef.current.find((choice) => choice.key === stored) ??
         modelsRef.current.find((choice) => choice.model.id === stored)
-      const remembered = selections[modelSource(selected)]
+      const remembered =
+        threadSelection?.modelKey === selected.key
+          ? threadSelection
+          : selections[modelSource(selected)]
       const remembersSelected = remembered?.modelKey === selected.key
       setModelId(selected.key)
       setProvider(selected.provider)
@@ -2137,6 +2142,7 @@ export function App() {
       if (activeIdRef.current === id) {
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
+        if (loaded) setActiveThreadApproval(recovered.approval ?? 'ask')
       }
       if (!loaded) {
         workspaceIdleProbe.current.unknownQueues.add(id)
@@ -2385,6 +2391,25 @@ export function App() {
 
   usePersistedSettingChange(SERVICE_TIER_KEY, serviceTier)
 
+  // Save deliberate edits and the first setup of an existing chat. Catalog
+  // fallbacks must not replace a saved choice while its source is unavailable.
+  useEffect(() => {
+    if (
+      !activeId ||
+      pendingThreadModelSave.current !== activeId ||
+      !selectedModelChoice?.model.id ||
+      selectedModelChoice.key !== modelId
+    )
+      return
+    writeThreadModelSelection(activeId, {
+      modelKey: selectedModelChoice.key,
+      designMode,
+      ...(selectedEffort ? { effort: selectedEffort } : {}),
+      ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+    })
+    pendingThreadModelSave.current = undefined
+  }, [activeId, modelId, selectedModelChoice, selectedEffort, selectedServiceTier, designMode])
+
   // Remember the active source's exact setup, so returning to a provider
   // restores what was last used there instead of a best-guess translation.
   useEffect(() => {
@@ -2433,7 +2458,7 @@ export function App() {
   // then restore the effort/tier that source was last used with — or translate
   // the current setup onto the new model's ladder.
   const commitModelChoice = useCallback(
-    (selected: ModelChoice) => {
+    (selected: ModelChoice, threadSelection?: SourceSelection) => {
       setModelId(selected.key)
       setProvider(selected.provider)
       setAcpAgent(selected.agent?.id)
@@ -2452,6 +2477,7 @@ export function App() {
       // effort and tier that were active then. Any other pick translates the
       // current effort onto the new model's ladder, as before.
       const remembered =
+        threadSelection ??
         readSourceSelections()[
           sourceKey({
             provider: selected.provider,
@@ -2536,10 +2562,20 @@ export function App() {
     (id: string) => {
       const selected = models.find((model) => model.key === id)
       if (!selected) return
+      pendingThreadModelSave.current = activeIdRef.current
       commitModelChoice(selected)
     },
     [models, commitModelChoice],
   )
+
+  const changeEffort = useCallback((value: string | undefined) => {
+    pendingThreadModelSave.current = activeIdRef.current
+    setEffort(value)
+  }, [])
+  const changeServiceTier = useCallback((value: string | undefined) => {
+    pendingThreadModelSave.current = activeIdRef.current
+    setServiceTier(value)
+  }, [])
 
   const addProjects = useCallback(
     async (paths: readonly string[]) => {
@@ -2607,8 +2643,7 @@ export function App() {
                 ? 'main'
                 : undefined
         }
-        const sessionApproval =
-          approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
+        let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
           workspacePath: projectPath,
@@ -2629,6 +2664,23 @@ export function App() {
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(isolateSession ? { isolate: true } : {}),
         })
+        let pendingApproval = pendingThreadApprovals.current.get(provisionalId)
+        while (pendingApproval && pendingApproval !== sessionApproval) {
+          try {
+            await transport.request('thread.setApproval', { threadId, approval: pendingApproval })
+            sessionApproval = pendingApproval
+          } catch (error) {
+            reportError(error instanceof Error ? error.message : String(error))
+            break
+          }
+          pendingApproval = pendingThreadApprovals.current.get(provisionalId)
+        }
+        pendingThreadApprovals.current.delete(provisionalId)
+        const savedSelection = readThreadModelSelection(provisionalId)
+        if (savedSelection) writeThreadModelSelection(threadId, savedSelection)
+        removeSetting(`${MODEL_BY_THREAD_PREFIX}${provisionalId}`)
+        if (pendingThreadModelSave.current === provisionalId)
+          pendingThreadModelSave.current = threadId
         const provisional = threadController.snapshot(provisionalId) ?? emptyThread
         threadController.discardSnapshot(provisionalId)
         threadController.update(threadId, provisional)
@@ -2690,7 +2742,9 @@ export function App() {
           .catch(() => undefined)
         return threadId
       } catch (error) {
+        pendingThreadApprovals.current.delete(provisionalId)
         const path = releaseWorkspaceStart(provisionalId)
+        removeSetting(`${MODEL_BY_THREAD_PREFIX}${provisionalId}`)
         if (path) refreshWorkspaceAfterCompletion(path)
         threadController.discardSnapshot(provisionalId)
         setProjects((current) =>
@@ -2896,6 +2950,12 @@ export function App() {
           restoreDraft()
           return
         }
+        writeThreadModelSelection(provisionalId, {
+          modelKey: choice.key,
+          designMode,
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+        })
         workspaceStartId = provisionalId
         workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
         optimisticTurnId = provisional.activeTurn?.id
@@ -3380,6 +3440,8 @@ export function App() {
   const selectSession = useCallback(
     async (id: string) => {
       setSurface('chat')
+      const threadSelection = readThreadModelSelection(id)
+      pendingThreadModelSave.current = threadSelection ? undefined : id
       const found = findSession(projectsRef.current, id)
       if (found?.session.provider) {
         const source = sourceKey({
@@ -3394,6 +3456,9 @@ export function App() {
           }) === source
         const rememberedModelKey = readSourceSelections()[source]?.modelKey
         const matchingChoice =
+          visibleModels.find(
+            (choice) => choice.key === threadSelection?.modelKey && matchesSource(choice),
+          ) ??
           (selectedModelChoice && matchesSource(selectedModelChoice)
             ? selectedModelChoice
             : undefined) ??
@@ -3402,7 +3467,10 @@ export function App() {
           ) ??
           visibleModels.find(matchesSource)
         if (matchingChoice) {
-          commitModelChoice(matchingChoice)
+          commitModelChoice(
+            matchingChoice,
+            threadSelection?.modelKey === matchingChoice.key ? threadSelection : undefined,
+          )
         } else {
           setProvider(found.session.provider)
           setAcpAgent(found.session.agent)
@@ -3492,8 +3560,12 @@ export function App() {
         current[provider] === mode ? current : { ...current, [provider]: mode },
       )
       const threadId = activeIdRef.current
-      if (!threadId || threadId.startsWith('pending:')) return
+      if (!threadId) return
       setActiveThreadApproval(mode)
+      if (threadId.startsWith('pending:')) {
+        pendingThreadApprovals.current.set(threadId, mode)
+        return
+      }
       void transport
         .request('thread.setApproval', { threadId, approval: mode })
         .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
@@ -4265,7 +4337,7 @@ export function App() {
       },
       toggleFastMode,
       toggleDesignMode: () => {
-        if (!thread.running) setDesignMode((enabled) => !enabled)
+        if (!thread.running) changeDesignMode(!designMode)
       },
       toggleIsolatedSession: () => {
         if (!activeId) setIsolateSession((enabled) => !enabled)
@@ -4276,6 +4348,8 @@ export function App() {
       activePath,
       addProject,
       checkpoints.length,
+      changeDesignMode,
+      designMode,
       cycleChat,
       deleteSidebarSession,
       interrupt,
@@ -4298,7 +4372,20 @@ export function App() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return
+      if (event.defaultPrevented || event.repeat || event.isComposing) return
+
+      const debugModifier = macOS
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+      if (
+        debugModifier &&
+        matchesShortcut(event, { key: 'd', primary: true, alt: true, shift: true })
+      ) {
+        event.preventDefault()
+        setDebugSettingsVisible((visible) => !visible)
+        return
+      }
+      if (onboardingPreview && !settingsOpen) return
 
       // Settings owns all keys while open. Its two app shortcuts can close
       // the sheet or jump directly to the keybind editor.
@@ -4330,16 +4417,24 @@ export function App() {
       const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
         matchesShortcut(event, keybindings[candidate.id]),
       )
-      if (!definition) return
+      if (definition) {
+        event.preventDefault()
+        keybindingActions[definition.id]()
+        return
+      }
 
+      const tool = WORKSPACE_TOOL_SHORTCUTS.find(({ shortcut }) => matchesShortcut(event, shortcut))
+      if (!tool) return
       event.preventDefault()
-      keybindingActions[definition.id]()
+      setWorkspacePanelHasMounted(true)
+      setWorkspaceToolRequest({ request: ++nextWorkspaceToolRequest.current, kind: tool.kind })
     }
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [
     checkoutDelete,
+    onboardingPreview,
     keybindingActions,
     keybindings,
     macOS,
@@ -4812,11 +4907,11 @@ export function App() {
                       queuedTurns={queuedTurns}
                       canSteerQueue={canSteerQueue}
                       onModelChange={selectModel}
-                      onEffortChange={setEffort}
-                      onServiceTierChange={setServiceTier}
+                      onEffortChange={changeEffort}
+                      onServiceTierChange={changeServiceTier}
                       onApprovalChange={changeApproval}
                       onIsolateChange={setIsolateSession}
-                      onDesignModeChange={setDesignMode}
+                      onDesignModeChange={changeDesignMode}
                       onTranscribeVoice={transcribeVoice}
                       onCancelVoice={cancelVoice}
                       onProjectChange={selectProject}
@@ -4926,6 +5021,7 @@ export function App() {
         <Suspense fallback={null}>
           <Settings
             initialSection={settingsSection}
+            showDebug={debugSettingsVisible}
             provider={provider}
             providerName={providerName(provider, acpAgentName)}
             transport={transport}
@@ -4961,22 +5057,35 @@ export function App() {
             authRefreshRevision={providerAuthRefreshRevision}
             onProviderLoginTerminalOpen={openProviderLoginTerminal}
             onReset={resetSettings}
+            onForceOnboarding={() => {
+              setSettingsOpen(false)
+              setOnboardingPreview(true)
+            }}
             onClose={closeSettings}
           />
         </Suspense>
       ) : null}
 
-      {isDesktop &&
-      projectsStatus === 'ready' &&
-      projects.length === 0 &&
-      !onboardingDismissed &&
-      !settingsOpen ? (
+      {onboardingPreview ||
+      (isDesktop && projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed) ? (
         <Suspense fallback={null}>
-          <WelcomeDialog
+          <Onboarding
+            hidden={settingsOpen}
+            displayName={profileIdentity.displayName}
+            onDisplayNameChange={(displayName) => updateProfileIdentity({ displayName })}
+            themePreference={themePreference}
+            onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
-            onAddProject={() => void addProject()}
+            onAddProject={() => {
+              setOnboardingPreview(false)
+              void addProject()
+            }}
             onOpenProviders={() => openSettings('providers')}
             onDismiss={() => {
+              if (onboardingPreview) {
+                setOnboardingPreview(false)
+                return
+              }
               writeSetting(ONBOARDING_KEY, 'done')
               setOnboardingDismissed(true)
             }}
@@ -5000,6 +5109,7 @@ export function App() {
         </Suspense>
       ) : null}
 
+      {isDesktop ? <AppUpdateNotice onReview={() => openSettings('about')} /> : null}
       <SessionSearchHost
         ref={sessionSearch}
         transport={transport}
@@ -5291,6 +5401,35 @@ type SourceSelection = {
   modelKey: string
   effort?: string
   serviceTier?: string
+}
+
+type ThreadSelection = SourceSelection & { designMode?: boolean }
+
+function readThreadModelSelection(threadId: string | undefined): ThreadSelection | undefined {
+  if (!threadId) return undefined
+  try {
+    const value: unknown = JSON.parse(readSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`) ?? 'null')
+    if (
+      !isRecord(value) ||
+      typeof value['modelKey'] !== 'string' ||
+      (value['effort'] !== undefined && typeof value['effort'] !== 'string') ||
+      (value['serviceTier'] !== undefined && typeof value['serviceTier'] !== 'string') ||
+      (value['designMode'] !== undefined && typeof value['designMode'] !== 'boolean')
+    )
+      return undefined
+    return {
+      modelKey: value['modelKey'],
+      ...(value['effort'] !== undefined ? { effort: value['effort'] } : {}),
+      ...(value['serviceTier'] !== undefined ? { serviceTier: value['serviceTier'] } : {}),
+      ...(value['designMode'] !== undefined ? { designMode: value['designMode'] } : {}),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function writeThreadModelSelection(threadId: string, selection: ThreadSelection): void {
+  writeSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`, JSON.stringify(selection))
 }
 
 type ApprovalPreferences = Partial<Record<ProviderId, ApprovalMode>>

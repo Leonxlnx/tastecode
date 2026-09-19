@@ -224,6 +224,7 @@ let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
+let waitingForUpdateCleanup = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
@@ -319,7 +320,13 @@ function startOwnedServer(): void {
       ? new ServerSupervisor({
           command: process.execPath,
           args: [serverEntry],
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          cwd: productDataPath,
+          env: {
+            ...process.env,
+            PWD: productDataPath,
+            ELECTRON_RUN_AS_NODE: '1',
+            PATH: desktopPath(),
+          },
           ...supervisorCallbacks,
         })
       : new ServerSupervisor({
@@ -332,7 +339,10 @@ function startOwnedServer(): void {
 
 function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env },
+    // Finder/terminal launches may inherit a DMG or external-drive directory.
+    // Background provider probes must start in app storage, not that directory.
+    cwd: productDataPath,
+    env: { ...process.env, PWD: productDataPath },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
@@ -860,7 +870,14 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (!waitingForUpdateCleanup && appUpdater?.state().status === 'downloading') {
+      waitingForUpdateCleanup = true
+      event.preventDefault()
+      // Finish detaching a mounted update DMG before the process exits.
+      void Promise.resolve(appUpdater.dispose()).finally(() => app.quit())
+      return
+    }
     appIsQuitting = true
     previewCaptures.cancelAll()
     mainWindowStatePersistence?.saveAndStop()
@@ -877,6 +894,7 @@ if (ownsSingleInstance) {
 
   void app.whenReady().then(async () => {
     logStartupMilestone('app-ready')
+    await mkdir(productDataPath, { recursive: true, mode: 0o700 })
     const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
     diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
       app.setPath('crashDumps', diagnosticsDirectory)
@@ -894,9 +912,9 @@ if (ownsSingleInstance) {
     logStartupMilestone('diagnostics-ready')
 
     appUpdater = createAppUpdateController({
-      loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
+      loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer,
+      enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow

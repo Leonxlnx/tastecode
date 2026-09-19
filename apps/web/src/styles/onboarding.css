@@ -1,0 +1,949 @@
+/* ---------- first-run onboarding ----------
+   A full-window page, not a sheet: the app has nothing to show behind it yet.
+   Every step keeps the same silhouette — bar on top, one column in the middle,
+   actions under the content — so moving through it feels like paging, not
+   like five different dialogs. */
+
+.onboarding {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  animation: fade-in var(--dur-fast) var(--ease-out);
+}
+
+.onboarding[hidden] {
+  display: none;
+}
+
+/* Empty drag strip where the native window controls live. It stays the page
+   colour so the canvas reads as one surface. */
+.onboarding__titlebar {
+  position: absolute;
+  z-index: 3;
+  inset: 0 0 auto;
+  height: var(--titlebar-h);
+  -webkit-app-region: drag;
+}
+
+.onboarding__bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: calc(var(--titlebar-h) + 6px) 20px 6px;
+}
+
+.onboarding__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.onboarding__brand svg {
+  flex: none;
+  color: var(--text);
+}
+
+.onboarding__progress {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Each segment fills from its left edge, so progress is seen travelling
+   rather than a colour swapping; stepping back drains it the same way. */
+.onboarding__progress li {
+  position: relative;
+  width: 28px;
+  height: 3px;
+  overflow: hidden;
+  background: var(--line-strong);
+  border-radius: var(--r-pill);
+}
+
+.onboarding__progress li::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--text);
+  border-radius: inherit;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 320ms var(--ease-out);
+}
+
+.onboarding__progress li.is-done::after {
+  transform: scaleX(1);
+}
+
+.onboarding__bar-end {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.onboarding__skip {
+  color: var(--text-3);
+}
+
+.onboarding__skip:hover {
+  color: var(--text);
+}
+
+/* Flex + auto margins centre the page and still let a tall step scroll from
+   its top instead of clipping the heading, which grid centring would do. */
+.onboarding__body {
+  display: flex;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 32px 48px;
+}
+
+/* Paging: the old page slips out along the travel direction, then the new
+   one assembles top to bottom — mark, heading, copy, control, actions — with a
+   short stagger so it reads as one page arriving rather than a block fading.
+   Going back reverses the travel so the pages feel stacked in order. */
+.onboarding__step {
+  --onboarding-shift: 12px;
+  --onboarding-exit: -10px;
+
+  width: 100%;
+  max-width: 560px;
+  margin: auto;
+}
+
+.onboarding__step[data-direction='back'] {
+  --onboarding-shift: -12px;
+  --onboarding-exit: 10px;
+}
+
+.onboarding[data-step='welcome'] .onboarding__step {
+  max-width: 940px;
+}
+
+.onboarding__step[data-phase='entering'] > :not(.onboarding__cover),
+.onboarding__step[data-phase='entering'] .onboarding__cover-copy > *,
+.onboarding__step[data-phase='entering'] .onboarding__hero {
+  animation: onboarding-rise 380ms var(--ease-out) both;
+}
+
+.onboarding__step[data-phase='entering'] > :nth-child(2),
+.onboarding__step[data-phase='entering'] .onboarding__cover-copy > :nth-child(2) {
+  animation-delay: 45ms;
+}
+
+.onboarding__step[data-phase='entering'] > :nth-child(3),
+.onboarding__step[data-phase='entering'] .onboarding__cover-copy > :nth-child(3) {
+  animation-delay: 90ms;
+}
+
+.onboarding__step[data-phase='entering'] > :nth-child(4),
+.onboarding__step[data-phase='entering'] .onboarding__cover-copy > :nth-child(4) {
+  animation-delay: 135ms;
+}
+
+.onboarding__step[data-phase='entering'] > :nth-child(5) {
+  animation-delay: 180ms;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__hero {
+  animation-delay: 120ms;
+}
+
+.onboarding__step[data-phase='leaving'] {
+  animation: onboarding-step-out 160ms var(--ease-out) both;
+  pointer-events: none;
+}
+
+@keyframes onboarding-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--onboarding-shift));
+  }
+}
+
+@keyframes onboarding-step-out {
+  to {
+    opacity: 0;
+    transform: translateY(var(--onboarding-exit));
+  }
+}
+
+/* The whole page dissolves into the app behind it instead of vanishing. */
+.onboarding[data-closing] {
+  animation: onboarding-out 200ms var(--ease-out) both;
+  pointer-events: none;
+}
+
+@keyframes onboarding-out {
+  to {
+    opacity: 0;
+  }
+}
+
+.onboarding__title {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: var(--t-2xl);
+  font-weight: 580;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  outline: none;
+}
+
+.onboarding__title--display {
+  margin-top: 20px;
+  font-size: calc(var(--t-2xl) * 1.35);
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+}
+
+.onboarding__lead {
+  max-width: 46ch;
+  margin: 0 0 28px;
+  color: var(--text-2);
+  font-size: var(--t-lg);
+  line-height: 1.55;
+}
+
+/* ---------- cover ---------- */
+
+.onboarding__cover {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  align-items: center;
+  gap: 56px;
+}
+
+.onboarding__cover-copy {
+  min-width: 0;
+}
+
+.onboarding__mark {
+  display: block;
+  color: var(--text);
+}
+
+.onboarding__hero {
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-modal);
+}
+
+@media (max-width: 840px) {
+  .onboarding__cover {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 36px;
+  }
+
+  .onboarding__hero {
+    max-width: 440px;
+  }
+}
+
+/* ---------- actions ---------- */
+
+.onboarding__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.onboarding__actions--split {
+  justify-content: space-between;
+  margin-top: 28px;
+}
+
+.onboarding__actions-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboarding__primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 6px 9px 6px 14px;
+  border-radius: var(--r-xl);
+  font-size: var(--t-md);
+  font-weight: 520;
+}
+
+.onboarding__primary:hover {
+  background: color-mix(in srgb, var(--light) 88%, var(--on-light));
+}
+
+/* Buttons keep the app-wide no-transition rule; the press itself is an
+   instant, physical 2% — it is the release the eye reads. */
+.onboarding__primary:active {
+  transform: scale(0.98);
+}
+
+.onboarding__ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px;
+  color: var(--text-2);
+}
+
+.onboarding__ghost > svg {
+  transition: transform 160ms var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .onboarding__ghost:hover > svg {
+    transform: translateX(-2px);
+  }
+}
+
+/* The Enter hint is a key, not a badge: a soft tint of the button's own ink
+   and the return glyph, no stroke competing with the button edge. It presses
+   along with the physical key, and with the pointer, so the hint is seen to
+   be the thing that fires. */
+.onboarding kbd {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: var(--r-sm);
+  color: inherit;
+  opacity: 0.8;
+  transition:
+    transform 120ms var(--ease-out),
+    background 120ms var(--ease-out),
+    opacity 160ms var(--ease-out);
+}
+
+.onboarding kbd svg {
+  display: block;
+}
+
+.onboarding__primary:hover kbd {
+  opacity: 1;
+}
+
+.onboarding__primary:active kbd,
+.onboarding kbd[data-pressed] {
+  background: color-mix(in srgb, currentColor 24%, transparent);
+  opacity: 1;
+  transform: translateY(1px) scale(0.92);
+  transition-duration: 60ms;
+}
+
+/* ---------- name ---------- */
+
+/* The identicon redraws as the name is typed: the same picture that will sit
+   in the rail, so the answer has a visible consequence. */
+.onboarding__avatar {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 22px;
+  overflow: hidden;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-circle);
+  box-shadow: 0 13px 28px -18px rgb(0 0 0 / 58%);
+}
+
+.onboarding__avatar-art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: onboarding-redraw 240ms var(--ease-out) both;
+}
+
+.onboarding__avatar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Every keystroke remounts the picture; while typing fast it hovers in the
+   half-drawn state, which is exactly what it is doing. */
+@keyframes onboarding-redraw {
+  from {
+    opacity: 0.35;
+    transform: scale(0.96);
+  }
+}
+
+.onboarding__field {
+  display: grid;
+  gap: 8px;
+}
+
+.onboarding__field label {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 550;
+}
+
+.onboarding__field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 14px;
+  background: var(--chrome-recessed);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--chrome-inset-shadow);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-lg);
+  outline: none;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.onboarding__field input::placeholder {
+  color: var(--text-3);
+}
+
+.onboarding__field input:hover {
+  border-color: var(--line-strong);
+}
+
+.onboarding__field input:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+/* ---------- appearance ---------- */
+
+.onboarding__themes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.onboarding__theme {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.onboarding__theme input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+/* The cards arrive one after another, and the chosen one sits a touch
+   proud of the others — lifted and shadowed, the way a selected swatch
+   would be picked up off a table. */
+.onboarding__step[data-phase='entering'] .onboarding__theme {
+  animation: onboarding-rise 380ms var(--ease-out) both;
+  animation-delay: 140ms;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__theme:nth-child(3) {
+  animation-delay: 190ms;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__theme:nth-child(4) {
+  animation-delay: 240ms;
+}
+
+.onboarding__theme-preview {
+  --mini-stroke: color-mix(in oklab, var(--text) 16%, transparent);
+  --mini-stroke-width: 1px;
+
+  margin-bottom: 8px;
+  transition:
+    transform 220ms var(--ease-out),
+    box-shadow 220ms var(--ease-out);
+}
+
+.onboarding__theme:not(.is-selected):hover .onboarding__theme-preview {
+  --mini-stroke: color-mix(in oklab, var(--text) 32%, transparent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .onboarding__theme:not(.is-selected):hover .onboarding__theme-preview {
+    transform: translateY(-2px);
+  }
+}
+
+.onboarding__theme.is-selected .onboarding__theme-preview,
+.onboarding__theme input:focus-visible ~ .onboarding__theme-preview {
+  --mini-stroke: var(--text);
+  --mini-stroke-width: 2px;
+}
+
+.onboarding__theme.is-selected .onboarding__theme-preview {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-flyout);
+}
+
+.onboarding__theme-label {
+  color: var(--text-2);
+  font-size: var(--t-md);
+  font-weight: 550;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.onboarding__theme.is-selected .onboarding__theme-label {
+  color: var(--text);
+}
+
+.onboarding__theme-note {
+  font-size: var(--t-xs);
+}
+
+@media (max-width: 560px) {
+  .onboarding__themes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- providers ---------- */
+
+.onboarding__providers {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+
+.onboarding__provider {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  padding: 0 16px;
+}
+
+.onboarding__provider + .onboarding__provider {
+  border-top: 1px solid var(--line);
+}
+
+/* The frame lands first, then the rows populate it. */
+.onboarding__step[data-phase='entering'] .onboarding__provider {
+  animation: onboarding-rise 380ms var(--ease-out) both;
+  animation-delay: 160ms;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__provider:nth-child(2) {
+  animation-delay: 210ms;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__provider:nth-child(3) {
+  animation-delay: 260ms;
+}
+
+.onboarding__provider-mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  background: var(--surface-2);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+}
+
+.onboarding__provider-name {
+  display: grid;
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 550;
+  line-height: 1.3;
+}
+
+.onboarding__provider-name small {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 450;
+}
+
+/* Status is plain text: a ready row has nothing to ask for and stays quiet,
+   a pending row carries its own action instead of a coloured badge. */
+.onboarding__provider-status {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.onboarding__provider[data-tone='ready'] .onboarding__provider-status {
+  color: var(--text-2);
+}
+
+.onboarding__provider[data-tone='checking'] .onboarding__provider-status {
+  animation: onboarding-pulse 1.4s var(--ease-in-out) infinite;
+}
+
+.onboarding__provider-action {
+  min-height: 28px;
+  padding: 4px 10px;
+  background: var(--control-hover);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.onboarding__provider-action:hover {
+  background: var(--surface-3);
+}
+
+.onboarding__provider-action:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+@keyframes onboarding-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ---------- app miniature ----------
+   Pinned schemes carry their own greys so a card previews the theme it names
+   regardless of the live one; without a scheme the block inherits the live
+   tokens and the cover shows exactly what the user will get. */
+
+.mini {
+  --mini-bg: var(--bg);
+  --mini-rail: var(--bg-rail);
+  --mini-line: var(--line);
+  --mini-surface: var(--surface-2);
+  --mini-ink: var(--text-3);
+  --mini-ink-soft: var(--surface-3);
+  --mini-orb: var(--text);
+  --mini-stroke: var(--line-strong);
+  --mini-stroke-width: 1px;
+
+  position: relative;
+  display: grid;
+  grid-template-columns: 27% minmax(0, 1fr);
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  background: var(--mini-bg);
+  border-radius: var(--r-card);
+  container-type: inline-size;
+}
+
+.mini::after,
+.mini-split::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+  border: var(--mini-stroke-width) solid var(--mini-stroke);
+  border-radius: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.mini[data-scheme='light'] {
+  --mini-bg: #fdfdfd;
+  --mini-rail: #f6f6f7;
+  --mini-line: #e6e6e9;
+  --mini-surface: #efeff1;
+  --mini-ink: #b9b9be;
+  --mini-ink-soft: #e2e2e5;
+  --mini-orb: #27272a;
+}
+
+.mini[data-scheme='dark'] {
+  --mini-bg: #0f0f0f;
+  --mini-rail: #151515;
+  --mini-line: #262626;
+  --mini-surface: #222222;
+  --mini-ink: #6f6f6f;
+  --mini-ink-soft: #2e2e2e;
+  --mini-orb: #ededed;
+}
+
+.mini-split {
+  --mini-stroke: var(--line-strong);
+  --mini-stroke-width: 1px;
+
+  position: relative;
+  display: grid;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--r-card);
+}
+
+.mini-split > .mini {
+  grid-area: 1 / 1;
+}
+
+.mini-split > .mini::after {
+  content: none;
+}
+
+.mini--half {
+  clip-path: inset(0 0 0 50%);
+}
+
+.mini__rail {
+  display: grid;
+  align-content: start;
+  gap: 6cqi;
+  padding: 7cqi 4cqi;
+  background: var(--mini-rail);
+  border-right: 1px solid var(--mini-line);
+}
+
+.mini__rail-head,
+.mini__nav,
+.mini__turn,
+.mini__turn--agent > span,
+.mini__composer {
+  display: block;
+  border-radius: var(--r-pill);
+}
+
+.mini__rail-head {
+  width: 55%;
+  height: 3.2cqi;
+  margin-bottom: 2cqi;
+  background: var(--mini-ink);
+}
+
+.mini__nav {
+  width: 82%;
+  height: 2.6cqi;
+  background: var(--mini-ink-soft);
+}
+
+.mini__nav.is-active {
+  width: 100%;
+  background: var(--mini-ink);
+}
+
+.mini__stage {
+  position: relative;
+  display: grid;
+  align-content: end;
+  gap: 5cqi;
+  padding: 6cqi 8cqi 6cqi 7cqi;
+}
+
+.mini__turn--user {
+  width: 42%;
+  height: 4.4cqi;
+  margin-left: auto;
+  background: var(--mini-surface);
+}
+
+.mini__turn--short {
+  width: 30%;
+}
+
+.mini__turn--agent {
+  display: grid;
+  gap: 2.2cqi;
+  width: 74%;
+}
+
+.mini__turn--agent > span {
+  height: 2.2cqi;
+  background: var(--mini-ink-soft);
+}
+
+.mini__turn--agent > span:nth-child(1) {
+  width: 92%;
+}
+
+.mini__turn--agent > span:nth-child(2) {
+  width: 100%;
+}
+
+.mini__turn--agent > span:nth-child(3) {
+  width: 58%;
+}
+
+.mini__composer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 9cqi;
+  margin-top: 3cqi;
+  padding: 0 2.4cqi 0 3cqi;
+  background: var(--mini-surface);
+  border: 1px solid var(--mini-line);
+  border-radius: var(--r-lg);
+}
+
+.mini__caret {
+  width: 1px;
+  height: 3.6cqi;
+  background: var(--mini-ink);
+}
+
+.mini__orb {
+  width: 5cqi;
+  height: 5cqi;
+  background: var(--mini-orb);
+  border-radius: var(--r-circle);
+}
+
+/* Cover only: the frame lands, then the exchange assembles inside it — rail
+   first, then the conversation in reading order, the composer last, and the
+   caret keeps time once everything is in place. */
+.mini[data-animate] {
+  --mini-delay: 220ms;
+}
+
+.mini[data-animate] :is(.mini__nav, .mini__turn, .mini__composer) {
+  animation: mini-in 420ms var(--ease-out) both;
+  animation-delay: var(--mini-delay);
+}
+
+.mini[data-animate] .mini__nav:nth-child(2) {
+  animation-delay: calc(var(--mini-delay) + 60ms);
+}
+
+.mini[data-animate] .mini__nav:nth-child(3) {
+  animation-delay: calc(var(--mini-delay) + 110ms);
+}
+
+.mini[data-animate] .mini__nav:nth-child(4) {
+  animation-delay: calc(var(--mini-delay) + 160ms);
+}
+
+.mini[data-animate] .mini__nav:nth-child(5) {
+  animation-delay: calc(var(--mini-delay) + 210ms);
+}
+
+.mini[data-animate] .mini__nav:nth-child(6) {
+  animation-delay: calc(var(--mini-delay) + 260ms);
+}
+
+.mini[data-animate] .mini__turn:nth-child(1) {
+  animation-delay: calc(var(--mini-delay) + 240ms);
+}
+
+.mini[data-animate] .mini__turn:nth-child(2) {
+  animation-delay: calc(var(--mini-delay) + 360ms);
+}
+
+.mini[data-animate] .mini__turn:nth-child(3) {
+  animation-delay: calc(var(--mini-delay) + 480ms);
+}
+
+.mini[data-animate] .mini__composer {
+  animation-delay: calc(var(--mini-delay) + 560ms);
+}
+
+.mini[data-animate] .mini__orb {
+  animation: mini-orb-in 360ms var(--ease-out) both;
+  animation-delay: calc(var(--mini-delay) + 720ms);
+}
+
+.mini[data-animate] .mini__caret {
+  animation: mini-caret 1.1s steps(1, end) infinite;
+  animation-delay: calc(var(--mini-delay) + 900ms);
+}
+
+@keyframes mini-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@keyframes mini-orb-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+}
+
+@keyframes mini-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion keeps the paging legible through opacity alone: nothing
+   travels, lifts, presses or pulses, but pages still cross-fade so a change
+   of place is not a hard cut. */
+@media (prefers-reduced-motion: reduce) {
+  .onboarding,
+  .onboarding__step[data-phase='entering'] > :not(.onboarding__cover),
+  .onboarding__step[data-phase='entering'] .onboarding__cover-copy > *,
+  .onboarding__step[data-phase='entering'] .onboarding__hero,
+  .onboarding__step[data-phase='entering'] .onboarding__theme,
+  .onboarding__step[data-phase='entering'] .onboarding__provider,
+  .onboarding__avatar-art,
+  .mini[data-animate] :is(.mini__nav, .mini__turn, .mini__composer, .mini__orb) {
+    animation: fade-in var(--dur-fast) var(--ease-out) both !important;
+  }
+
+  .onboarding__step[data-phase='leaving'],
+  .onboarding[data-closing] {
+    animation: onboarding-out var(--dur-fast) var(--ease-out) both !important;
+  }
+
+  .mini[data-animate] .mini__caret,
+  .onboarding__provider[data-tone='checking'] .onboarding__provider-status {
+    animation: none !important;
+  }
+
+  .onboarding__progress li::after,
+  .onboarding__theme-preview,
+  .onboarding__ghost > svg,
+  .onboarding kbd {
+    transition: opacity var(--dur-fast) var(--ease-out) !important;
+  }
+
+  .onboarding__progress li::after {
+    transform: none;
+    opacity: 0;
+  }
+
+  .onboarding__progress li.is-done::after {
+    opacity: 1;
+  }
+
+  .onboarding__theme.is-selected .onboarding__theme-preview,
+  .onboarding__theme:hover .onboarding__theme-preview,
+  .onboarding__ghost:hover > svg,
+  .onboarding kbd[data-pressed],
+  .onboarding__primary:active kbd,
+  .onboarding__primary:active {
+    transform: none;
+  }
+}

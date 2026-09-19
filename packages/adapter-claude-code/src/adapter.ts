@@ -27,7 +27,13 @@ import { z } from 'zod'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
-import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
+import {
+  ClaudeEventSchema,
+  toDomainEvents,
+  toolUseItemFields,
+  toUsage,
+  type ClaudeEvent,
+} from './events.js'
 import {
   claudeSdkSpawner,
   createClaudeQuery,
@@ -307,6 +313,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #options: ClaudeStartOptions = {}
   #reportedModel: string | undefined
   #sessionId: string | undefined
+  #resumeOnRestart = false
   #query: ClaudeQueryRuntime | undefined
   #queryAbort: AbortController | undefined
   #bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
@@ -325,6 +332,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #streamMessageId: string | undefined
   readonly #streamBlocks = new Map<number, StreamBlock>()
   readonly #streamItems = new Map<string, Item>()
+  /** Tool calls awaiting their result, by tool_use id, so the result lands on the call. */
+  readonly #toolCalls = new Map<string, Item>()
   readonly #streamedMessageIds = new Set<string>()
 
   constructor(
@@ -604,6 +613,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#sessionGeneration += 1
     this.#threadId = threadId
     this.#sessionId = sessionId
+    this.#resumeOnRestart = resume
     this.#workspacePath = workspacePath
     this.#options = options
     this.#reportedModel = options.model
@@ -743,7 +753,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#query = undefined
     this.#clearStreamingState()
     try {
-      await this.#startQuery(this.#sessionId, options)
+      // An unused session has no transcript yet, so it must keep --session-id.
+      await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
     } catch (error) {
       const message = this.#redactor.redact(error instanceof Error ? error.message : String(error))
       await this.dispose()
@@ -810,7 +821,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
               },
             }
           : event
-      this.#emitDomainEvents(toDomainEvents(filtered, this.#activeTurnId))
+      this.#emitDomainEvents(toDomainEvents(filtered, this.#activeTurnId, this.#toolCalls))
       this.#emitTodoPlan(event)
       return
     }
@@ -822,13 +833,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#log(`ignored malformed Claude user event: ${parsed.error.message}`)
         return
       }
-      this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId))
+      this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId, this.#toolCalls))
       return
     }
 
     if (message.type === 'result') {
       const turnId = this.#activeTurnId
       if (!turnId) return
+      this.#resumeOnRestart = true
       const usage = toUsage(message.usage, message.total_cost_usd)
       if (usage) {
         this.emit('event', {
@@ -912,7 +924,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           id,
           turnId,
           status: 'started',
-          ...toolItemFields(raw.name, input),
+          ...toolUseItemFields(raw.name, input),
           createdAt: Date.now(),
         }
         this.#streamItems.set(id, item)
@@ -1163,6 +1175,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#streamMessageId = undefined
     this.#streamBlocks.clear()
     this.#streamItems.clear()
+    this.#toolCalls.clear()
     this.#streamedMessageIds.clear()
   }
 
@@ -1171,7 +1184,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const { text: _streamedText, ...started } = item
       this.emit('event', { type: 'item.completed', item: { ...started, status } })
     }
+    // A call whose result never came back ends with the turn, not as "running".
+    for (const call of this.#toolCalls.values()) {
+      this.emit('event', { type: 'item.completed', item: { ...call, status } })
+    }
     this.#streamItems.clear()
+    this.#toolCalls.clear()
     this.#streamBlocks.clear()
   }
 
@@ -1222,22 +1240,6 @@ function approvalRequest(
     ...(pathValue ? { path: String(pathValue) } : {}),
     createdAt: Date.now(),
   }
-}
-
-function toolItemFields(
-  toolName: string,
-  input: ToolInput,
-):
-  | { type: 'command'; command: string }
-  | { type: 'file_change'; path: string }
-  | { type: 'tool_call'; text: string } {
-  if (SHELL_TOOLS.has(toolName)) {
-    return { type: 'command', command: String(input['command'] ?? toolName) }
-  }
-  if (EDIT_TOOLS.has(toolName)) {
-    return { type: 'file_change', path: String(input['file_path'] ?? '') }
-  }
-  return { type: 'tool_call', text: toolName }
 }
 
 function parseUserInputQuestions(input: ToolInput): UserInputQuestion[] {
