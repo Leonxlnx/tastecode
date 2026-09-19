@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-19 main d567c74c · Beta 8 preparing; beta 7 published</span>
+        <span class="meta">2026-09-19 main b6a6f987 · Next beta preparing; beta 7 published</span>
       </div>
     </div>
 
@@ -313,6 +313,12 @@
           replies.
         </p>
         <h2>Public Windows and macOS Beta</h2>
+        <p class="sub">
+          Codex cold startup has a separate 30-second initialization budget and retries a timeout
+          once after disposing its first process. Concurrent callers share startup, and stopping the
+          adapter cancels recovery. Account reads retain their shorter timeout. Source changes
+          require the next desktop release.
+        </p>
         <p class="sub">
           <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.7"
             >Windows and macOS beta 7</a

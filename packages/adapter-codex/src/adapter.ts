@@ -100,6 +100,7 @@ export { CODEX_CAPABILITIES } from './capabilities.js'
 
 const CLIENT_NAME = 'tastecode'
 const CONTROL_READ_TIMEOUT_MS = 10_000
+const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
 
 /** Provider state TasteCode either does not expose or already derives from shared events. */
@@ -467,6 +468,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   readonly #spawn: Spawn
   #rpc: CodexRpc | undefined
   #started = false
+  #starting: Promise<void> | undefined
+  #startupGeneration = 0
   #mcpStartup = new Map<string, McpStartupStatus>()
   #mcpInventory = new Map<string, McpServer[]>()
   #mcpInventoryLoads = new Map<string, Promise<void>>()
@@ -512,9 +515,35 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   /** Spawn the app-server and complete the handshake. Idempotent. */
-  async start(): Promise<void> {
-    if (this.#started) return
+  start(): Promise<void> {
+    if (this.#started) return Promise.resolve()
+    if (this.#starting) return this.#starting
+    const generation = this.#startupGeneration
+    this.#starting = (async () => {
+      await this.#processStop
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (generation !== this.#startupGeneration) throw new Error('Codex startup was cancelled')
+        try {
+          await this.#initialize()
+          return
+        } catch (error) {
+          if (
+            attempt !== 0 ||
+            generation !== this.#startupGeneration ||
+            !(error instanceof Error) ||
+            error.message !== 'Codex request timed out: initialize'
+          )
+            throw error
+          this.emit('log', 'Codex initialization timed out; restarting the local process once.')
+        }
+      }
+    })().finally(() => {
+      this.#starting = undefined
+    })
+    return this.#starting
+  }
 
+  async #initialize(): Promise<void> {
     // Structured questions are gated in Codex's default collaboration mode.
     // Enable the native tool at process startup so every advertised user-input
     // capability is real rather than a request the model can never make.
@@ -552,13 +581,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           // thread/resume.excludeTurns requires this protocol capability.
           capabilities: { experimentalApi: true },
         },
-        { timeoutMs: CONTROL_READ_TIMEOUT_MS },
+        { timeoutMs: INITIALIZE_TIMEOUT_MS },
       )
     } catch (error) {
-      await rpc.dispose()
-      this.#rpc = undefined
+      this.#processStop = Promise.resolve(rpc.dispose())
+      await this.#processStop
+      if (this.#rpc === rpc) this.#rpc = undefined
       throw error
     }
+    if (this.#rpc !== rpc) throw new Error('Codex startup was cancelled')
     rpc.notify('initialized', {})
     this.#started = true
   }
@@ -1052,6 +1083,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   dispose(): Promise<void> {
+    this.#startupGeneration += 1
     const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#started = false
