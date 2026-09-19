@@ -3,6 +3,7 @@ import type { AppUpdateState } from './app-updater.js'
 function isUpdateStatus(value: unknown): value is AppUpdateState['status'] {
   switch (value) {
     case 'unsupported':
+    case 'manual':
     case 'idle':
     case 'checking':
     case 'downloading':

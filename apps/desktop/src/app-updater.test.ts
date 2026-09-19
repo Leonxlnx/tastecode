@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createAppUpdateController } from './app-updater.js'
+import { appUpdateMode, createAppUpdateController } from './app-updater.js'
 
 function fakeUpdater() {
   const emitter = new EventEmitter()
@@ -20,6 +20,21 @@ const info = { version: '0.1.0-beta.2' }
 afterEach(() => vi.useRealTimers())
 
 describe('app update controller', () => {
+  it('installs updates only for packaged Windows and macOS builds', () => {
+    expect(appUpdateMode({ platform: 'linux', packaged: true })).toBe('manual')
+    expect(appUpdateMode({ platform: 'win32', packaged: true })).toBe('install')
+    expect(appUpdateMode({ platform: 'darwin', packaged: true })).toBe('install')
+    expect(appUpdateMode({ platform: 'freebsd', packaged: true })).toBe('unsupported')
+    expect(appUpdateMode({ platform: 'linux', packaged: false })).toBe('unsupported')
+    expect(
+      appUpdateMode({
+        platform: 'win32',
+        packaged: true,
+        developmentServer: 'http://127.0.0.1:5173',
+      }),
+    ).toBe('unsupported')
+  })
+
   it('waits for updater cleanup on disposal', async () => {
     let finish!: () => void
     const cleanup = new Promise<void>((resolve) => {
@@ -29,7 +44,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.7',
-      enabled: true,
+      mode: 'install',
     })
     const result = controller.dispose()
     expect(result).toBe(cleanup)
@@ -44,7 +59,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
     controller.subscribe((state) => states.push(state.status))
 
@@ -65,16 +80,87 @@ describe('app update controller', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
+  it('keeps a downloaded update installable after a stray error', async () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('update-available', info)
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce())
+    updater.emit('update-downloaded', info)
+    updater.emit('error', new Error('post-download signature probe failed'))
+
+    expect(controller.state()).toMatchObject({ status: 'ready', version: info.version })
+    expect(controller.install()).toBe(true)
+  })
+
+  it('does not replace a live download with an error state', () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('update-available', info)
+    updater.emit('download-progress', { percent: 40 })
+    updater.emit('error', new Error('flaky network'))
+
+    expect(controller.state()).toMatchObject({ status: 'downloading', progress: 40 })
+  })
+
+  it('does not leak a stale error field into download progress', () => {
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('error', new Error('check failed'))
+    expect(controller.state()).toMatchObject({ status: 'error' })
+
+    updater.emit('download-progress', { percent: 12 })
+    expect(controller.state()).toEqual({
+      status: 'downloading',
+      currentVersion: '0.1.0-beta.1',
+      progress: 12,
+    })
+  })
+
   it('stays inert outside a packaged build', async () => {
     const updater = fakeUpdater()
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.1',
-      enabled: false,
+      mode: 'unsupported',
     })
 
     await expect(controller.check()).resolves.toMatchObject({ status: 'unsupported' })
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(updater.autoDownload).toBe(true)
+    expect(updater.autoInstallOnAppQuit).toBe(false)
+    expect(updater.listenerCount('error')).toBe(0)
+  })
+
+  it('keeps packaged Linux updates manual without loading the updater', async () => {
+    const loadUpdater = vi.fn()
+    const controller = createAppUpdateController({
+      loadUpdater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'manual',
+    })
+
+    controller.start()
+    await expect(controller.check()).resolves.toEqual({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.1',
+    })
+    expect(controller.install()).toBe(false)
+    expect(loadUpdater).not.toHaveBeenCalled()
   })
 
   it('checks after startup and hourly while open, then stops on disposal', async () => {
@@ -83,7 +169,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     controller.start()
@@ -104,7 +190,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       updater,
       currentVersion: '1.0.0',
-      enabled: true,
+      mode: 'install',
     })
     expect(updater.allowPrerelease).toBe(true)
     expect(updater.allowDowngrade).toBe(false)
@@ -120,7 +206,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     controller.start()
@@ -139,7 +225,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     const first = controller.check()
@@ -156,7 +242,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     await expect(controller.check()).resolves.toEqual({
@@ -175,7 +261,7 @@ describe('app update controller', () => {
     const controller = createAppUpdateController({
       loadUpdater,
       currentVersion: '0.1.0-beta.1',
-      enabled: true,
+      mode: 'install',
     })
 
     await expect(controller.check()).resolves.toMatchObject({ status: 'error' })

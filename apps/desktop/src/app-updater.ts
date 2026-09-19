@@ -13,7 +13,8 @@ export type UpdateClient = Pick<
 > & { dispose?: () => void | Promise<void> }
 
 export type AppUpdateState = {
-  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
+  status:
+    'unsupported' | 'manual' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
   version?: string
   progress?: number
@@ -22,10 +23,23 @@ export type AppUpdateState = {
 
 type Timer = ReturnType<typeof setTimeout>
 
+export type AppUpdateMode = 'unsupported' | 'manual' | 'install'
+
+export function appUpdateMode(options: {
+  platform: NodeJS.Platform
+  packaged: boolean
+  developmentServer?: string | undefined
+}): AppUpdateMode {
+  if (!options.packaged || options.developmentServer) return 'unsupported'
+  if (options.platform === 'linux') return 'manual'
+  if (options.platform === 'win32' || options.platform === 'darwin') return 'install'
+  return 'unsupported'
+}
+
 export function createAppUpdateController(
   options: {
     currentVersion: string
-    enabled: boolean
+    mode: AppUpdateMode
     setTimeoutFn?: typeof setTimeout
     clearTimeoutFn?: typeof clearTimeout
   } & (
@@ -44,7 +58,7 @@ export function createAppUpdateController(
   let updater = options.updater
   let updaterConfigured = false
   let state: AppUpdateState = {
-    status: options.enabled ? 'idle' : 'unsupported',
+    status: options.mode === 'install' ? 'idle' : options.mode,
     currentVersion: options.currentVersion,
   }
 
@@ -57,12 +71,16 @@ export function createAppUpdateController(
     currentVersion: options.currentVersion,
     version: info.version,
   })
-  const fail = (cause: unknown) =>
+  const fail = (cause: unknown) => {
+    // A stray late error — a post-download signature probe, a racing second
+    // check — must not throw away an installable update or a live download.
+    if (state.status === 'ready' || state.status === 'downloading') return
     publish({
       status: 'error',
       currentVersion: options.currentVersion,
       error: cause instanceof Error ? cause.message : String(cause),
     })
+  }
 
   const configureUpdater = (client: UpdateClient): UpdateClient => {
     if (updaterConfigured) return client
@@ -80,20 +98,25 @@ export function createAppUpdateController(
       publish(versioned('downloading', info))
       void client.downloadUpdate().catch(fail)
     })
-    client.on('download-progress', (progress) =>
+    client.on('download-progress', (progress) => {
+      // A state left over from a failed check would otherwise leak its stale
+      // error field into the live download.
+      const { error: _stale, ...rest } = state
       publish({
-        ...state,
+        ...rest,
         status: 'downloading',
         currentVersion: options.currentVersion,
         progress: Math.round(progress.percent),
-      }),
-    )
+      })
+    })
     client.on('update-downloaded', (info) => publish(versioned('ready', info)))
     client.on('error', fail)
     return client
   }
 
-  if (updater) configureUpdater(updater)
+  // Outside a packaged build the controller stays inert: touching the updater
+  // would attach listeners and flip flags on a client nobody will ever check.
+  if (options.mode === 'install' && updater) configureUpdater(updater)
 
   const loadUpdater = (): Promise<UpdateClient> => {
     if (updater) return Promise.resolve(updater)
@@ -108,7 +131,7 @@ export function createAppUpdateController(
   }
 
   const check = (): Promise<AppUpdateState> => {
-    if (!options.enabled) return Promise.resolve(state)
+    if (options.mode !== 'install') return Promise.resolve(state)
     if (checking) return checking
     if (state.status === 'downloading' || state.status === 'ready') return Promise.resolve(state)
     checking = loadUpdater()
@@ -149,7 +172,7 @@ export function createAppUpdateController(
       return () => listeners.delete(listener)
     },
     start: () => {
-      if (!options.enabled || started) return
+      if (options.mode !== 'install' || started) return
       started = true
       schedule(15_000)
     },

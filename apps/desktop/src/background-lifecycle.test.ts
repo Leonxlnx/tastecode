@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 
 describe('desktop background lifecycle', () => {
-  it('keeps the host alive behind a hidden window on Windows and Linux', () => {
+  it('keeps the host alive behind a hidden window on Windows', () => {
     expect(shouldHideWindowOnClose('win32', false)).toBe(true)
-    expect(shouldHideWindowOnClose('linux', false)).toBe(true)
+  })
+
+  it('closes the last Linux window instead of relying on tray availability', () => {
+    expect(shouldHideWindowOnClose('linux', false)).toBe(false)
   })
 
   it('uses native macOS window closing and never blocks a real app quit', () => {

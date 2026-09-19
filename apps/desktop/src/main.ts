@@ -23,6 +23,8 @@ import {
   Tray,
   utilityProcess,
   type Event as ElectronEvent,
+  type OpenDialogOptions,
+  type OpenDialogReturnValue,
   type WebContents,
 } from 'electron'
 import type { PreviewCaptureRequest } from '@harness/contracts'
@@ -35,6 +37,7 @@ import {
 } from './attachment-preview.js'
 import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import {
+  appUpdateMode,
   createAppUpdateController,
   type AppUpdateController,
   type AppUpdateState,
@@ -42,7 +45,8 @@ import {
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
-import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { configureEmbeddedBrowser } from './embedded-browser.js'
+import { assertSupportedExternalUrl } from './external-urls.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { LocalDiagnostics } from './local-diagnostics.js'
@@ -58,8 +62,15 @@ import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
+import {
+  clearServerOwner,
+  readServerOwner,
+  resolveStaleServer,
+  writeServerOwner,
+  type StaleServerVerdict,
+} from './stale-server.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
-import { restoreMainWindowPresence } from './window-presence.js'
+import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
   loadMainWindowState,
@@ -79,6 +90,13 @@ import {
 import { viewedImagePath } from './viewed-image-path.js'
 
 applyDesktopPath()
+
+// Owned children — the utility-process server below and the provider CLIs it
+// spawns — inherit this environment wholesale. A stale ELECTRON_RUN_AS_NODE
+// would boot the utility process as NodeMain instead of the server entry (a
+// restart loop), and NODE_OPTIONS would inject flags into every child.
+delete process.env['ELECTRON_RUN_AS_NODE']
+delete process.env['NODE_OPTIONS']
 
 /**
  * Electron shell. Deliberately thin: it opens a window and nothing else.
@@ -137,6 +155,11 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+// The supervised child inherits this env, so it binds the same port the
+// renderer targets (apps/web/src/server-url.ts defaults to 4311).
+const coreServerPort = Number(process.env['HARNESS_PORT']) || 4311
+const coreServerUrl = `ws://127.0.0.1:${coreServerPort}`
+const serverOwnerPath = path.join(productDataPath, 'server-owner.json')
 let startupWindowReady = false
 let startupServerReady = Boolean(devServer)
 let startupRendererReady = false
@@ -216,12 +239,33 @@ if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration(
 if (process.env['HARNESS_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
 }
+// Chromium stops respawning the GPU process after a few crashes — the outcome
+// a flaky Wayland/Vulkan stack hits until the cap leaves the app stuck without
+// a working GPU. Lifting the cap lets respawns keep retrying; the counter
+// still surfaces a stack that never recovers. Software rendering stays opt-in
+// via HARNESS_DISABLE_GPU.
+if (process.env['HARNESS_DISABLE_GPU'] !== '1') {
+  app.commandLine.appendSwitch('disable-gpu-process-crash-limit')
+}
+let gpuProcessDeaths = 0
+app.on('child-process-gone', (_event, details) => {
+  if (details.type !== 'GPU' || details.reason === 'clean-exit') return
+  gpuProcessDeaths += 1
+  if (gpuProcessDeaths === 8) {
+    const line =
+      'GPU process keeps crashing; relaunch with HARNESS_DISABLE_GPU=1 for software rendering'
+    console.error(`[desktop] ${line}`)
+    void diagnostics?.record('gpu', line)
+  }
+})
 
 const ownsSingleInstance = app.requestSingleInstanceLock()
 let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+/** Set when the port was held by a compatible core server we connected to. */
+let serverAdopted = false
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let waitingForUpdateCleanup = false
@@ -280,6 +324,80 @@ if (!ownsSingleInstance) {
   app.quit()
 }
 
+function markCoreServerReady(): void {
+  if (startupServerReady) return
+  startupServerReady = true
+  logStartupMilestone('server-ready')
+  finishStartupBenchmarkIfReady()
+}
+
+function showServerFailureDialog(message: string, detail: string): void {
+  const options = { type: 'error' as const, title: nativeAppName, message, detail }
+  // macOS and Linux keep the app alive after the last window closes, so the
+  // dialog must stand alone when there is no window to parent it to.
+  const window = mainWindow
+  if (window && !window.isDestroyed()) void dialog.showMessageBox(window, options)
+  else void dialog.showMessageBox(options)
+}
+
+function reportServerConflict(
+  reason: Extract<StaleServerVerdict, { kind: 'blocked' }>['reason'],
+): void {
+  const detail =
+    reason === 'lease-held'
+      ? 'The TasteCode data folder is locked by another process. Close other TasteCode servers or history commands, then start the app again.'
+      : reason === 'incompatible-server'
+        ? 'An incompatible TasteCode server is still running. Close it, then start the app again.'
+        : reason === 'kill-failed'
+          ? 'An old TasteCode server did not stop when asked. End it manually, then start the app again.'
+          : `Another application is already using the local server port (${coreServerPort}). Close it, or set HARNESS_PORT to a free port, then start the app again.`
+  console.error(`[desktop] core server startup blocked: ${reason}`)
+  void diagnostics?.record('server conflict', reason)
+  showServerFailureDialog('The core server could not start.', detail)
+}
+
+/**
+ * Map a stale-server verdict onto the launch path: a compatible holder is
+ * adopted (the renderer connects to it either way), a cleared conflict frees
+ * the spawn, and an unresolvable one is reported rather than restarted into.
+ */
+function applyStaleServerVerdict(
+  verdict: StaleServerVerdict,
+  ownerPid: number | undefined,
+): 'spawn' | 'ready' | 'reported' {
+  if (verdict.kind === 'adopted') {
+    serverAdopted = true
+    if (ownerPid !== undefined && verdict.holderPids.includes(ownerPid)) {
+      // Re-write the record: a doomed respawn may already have overwritten it
+      // with its own (now dead) pid. The adopted orphan is the live holder.
+      void writeServerOwner(serverOwnerPath, {
+        pid: ownerPid,
+        port: coreServerPort,
+        recordedAt: Date.now(),
+      })
+    } else {
+      // A pid that is not the holder would misattribute a later conflict.
+      void clearServerOwner(serverOwnerPath)
+    }
+    console.log('[desktop] adopted the already-running core server')
+    void diagnostics?.record('server', `adopted running server on ${coreServerUrl}`)
+    markCoreServerReady()
+    return 'ready'
+  }
+  if (verdict.kind === 'blocked') {
+    reportServerConflict(verdict.reason)
+    return 'reported'
+  }
+  if (verdict.kind === 'cleared') void clearServerOwner(serverOwnerPath)
+  return 'spawn'
+}
+
+/** Recent supervised output, kept so an early death can be classified. */
+const recentServerLines: string[] = []
+const MAX_RECENT_SERVER_LINES = 40
+/** Printed by the server when the data lease is held (apps/server data-lease.ts). */
+const LEASE_CONFLICT_MARKER = 'Close TasteCode and its core server'
+
 /**
  * Outside development the shell owns its core server: without this a packaged
  * app has nothing listening on the socket and every feature sits behind a
@@ -289,30 +407,67 @@ if (!ownsSingleInstance) {
  * Packaged builds use Electron's Node utility process so the service stays
  * isolated without paying for a second full app executable launch. The legacy
  * Node-mode child remains available as a field fallback.
+ *
+ * A hard main-process death leaves the last server running as an orphan that
+ * still holds the port and the data lease. Before spawning, the port holder is
+ * probed and resolved (adopt / attribute-and-kill / report) — without this the
+ * supervisor restarts into a wall and the renderer can land on the stale one.
  */
-function startOwnedServer(): void {
-  if (devServer || serverSupervisor) return
+async function startOwnedServer(): Promise<void> {
+  if (devServer || serverSupervisor || serverAdopted) return
+  const previousOwner = await readServerOwner(serverOwnerPath)
+  // The record only applies to the port this run would bind.
+  const ownerPid =
+    previousOwner && previousOwner.port === coreServerPort ? previousOwner.pid : undefined
+  // A failed probe must not block a normal launch — the supervisor's early-exit
+  // check runs the same resolution again if the spawn actually dies.
+  let verdict: StaleServerVerdict = { kind: 'none' }
+  try {
+    verdict = await resolveStaleServer({
+      url: coreServerUrl,
+      ownerPid,
+      log: (line) => console.log(`[desktop] ${line}`),
+    })
+  } catch (error) {
+    console.error('[desktop] stale-server probe failed', error)
+    void diagnostics?.record('server conflict probe', error)
+  }
+  if (applyStaleServerVerdict(verdict, ownerPid) !== 'spawn') return
+
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
   const supervisorCallbacks = {
     onLog: (line: string) => {
       console.log('[server]', line)
-      if (!startupServerReady && line.startsWith('[server] listening on ')) {
-        startupServerReady = true
-        logStartupMilestone('server-ready')
-        finishStartupBenchmarkIfReady()
-      }
+      recentServerLines.push(line)
+      if (recentServerLines.length > MAX_RECENT_SERVER_LINES) recentServerLines.shift()
+      if (line.startsWith('[server] listening on ')) markCoreServerReady()
+    },
+    onSpawned: (pid: number | undefined) => {
+      recentServerLines.length = 0
+      if (pid === undefined) return
+      void writeServerOwner(serverOwnerPath, {
+        pid,
+        port: coreServerPort,
+        recordedAt: Date.now(),
+      })
+    },
+    onEarlyExit: async () => {
+      const leaseSuspected = recentServerLines.some((line) => line.includes(LEASE_CONFLICT_MARKER))
+      const verdict = await resolveStaleServer({
+        url: coreServerUrl,
+        ownerPid,
+        leaseSuspected,
+        log: (line) => console.log(`[desktop] ${line}`),
+      })
+      return applyStaleServerVerdict(verdict, ownerPid) === 'spawn' ? 'restart' : 'stop'
     },
     onGaveUp: () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        void dialog.showMessageBox(mainWindow, {
-          type: 'error',
-          title: nativeAppName,
-          message: 'The core server keeps crashing.',
-          detail: 'Restart the app. If this keeps happening, reinstall it.',
-        })
-      }
+      showServerFailureDialog(
+        'The core server keeps crashing.',
+        'Restart the app. If this keeps happening, reinstall it.',
+      )
     },
   }
   serverSupervisor =
@@ -333,11 +488,23 @@ function startOwnedServer(): void {
 
 function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
+  let exitCode: number | null = null
+  child.once('exit', (code) => {
+    exitCode = code
+  })
   return {
+    get pid() {
+      return child.pid
+    },
+    get exitCode() {
+      return exitCode
+    },
+    get signalCode() {
+      return null
+    },
     get stdout() {
       return child.stdout
     },
@@ -411,13 +578,15 @@ function createWindow(): void {
       // downloads Hunspell dictionaries at first run — the only network
       // traffic the app would ever do outside the renderer's own CSP.
       spellcheck: false,
+      // Zoom at creation, not on did-finish-load: a post-load setZoomFactor
+      // re-rasterizes while the first frame is pending, and on Wayland the
+      // invalidated frame is never reproduced for an unmapped window — the
+      // app would sit invisible forever, ready-to-show never firing.
+      zoomFactor: DEFAULT_ZOOM_FACTOR,
       preload: path.join(here, 'preload.cjs'),
     },
   })
   mainWindow = window
-  window.webContents.once('did-finish-load', () =>
-    window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
-  )
   configureEmbeddedBrowser(window.webContents)
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
@@ -459,11 +628,22 @@ function createWindow(): void {
   window.on('responsive', () => {
     console.info('[desktop] main window renderer recovered')
   })
+  let rendererReloaded = false
   window.webContents.on('render-process-gone', (_event, details) => {
     console.error(
       `[desktop] main window renderer exited: ${details.reason} (code ${details.exitCode})`,
     )
     void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
+    // A renderer that dies before ready-to-show never paints, so the window
+    // would stay hidden forever. Give it one reload; if that dies too, show
+    // whatever is left — an invisible app is worse than a broken page.
+    if (window.isVisible() || details.reason === 'clean-exit') return
+    if (!rendererReloaded) {
+      rendererReloaded = true
+      window.webContents.reload()
+    } else {
+      window.show()
+    }
   })
 
   // Avoid the white flash before React paints.
@@ -542,10 +722,9 @@ function showMainWindow(): void {
     createWindow()
     return
   }
-  restoreMainWindowPresence(process.platform, app, window)
-  if (window.isMinimized()) window.restore()
-  window.show()
-  window.focus()
+  // app.focus() matters on macOS: a second-instance or dock activation arrives
+  // while another app is frontmost, and window.focus() alone stays behind it.
+  presentMainWindow(process.platform, app, window)
 }
 
 function createBackgroundTray(): void {
@@ -708,7 +887,7 @@ ipcMain.handle('harness:cancelPreviewCapture', (event, value: unknown) => {
 
 ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
   requireOwnRenderer(event.sender)
-  await shell.openExternal(browserGuestUrl(url))
+  await shell.openExternal(assertSupportedExternalUrl(url))
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {
@@ -780,9 +959,19 @@ async function sweepStaleCaptures(): Promise<void> {
  * itself — the user's own picker or operating-system drop is the only way a
  * path enters the app.
  */
+async function showOpenDialogForSender(
+  sender: WebContents,
+  options: OpenDialogOptions,
+): Promise<OpenDialogReturnValue> {
+  const owner = BrowserWindow.fromWebContents(sender)
+  return owner && !owner.isDestroyed()
+    ? dialog.showOpenDialog(owner, options)
+    : dialog.showOpenDialog(options)
+}
+
 ipcMain.handle('harness:pickFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory', 'createDirectory'],
     title: 'Choose a project folder',
   })
@@ -807,7 +996,7 @@ ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
 
 ipcMain.handle('harness:pickSkillFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory'],
     title: 'Choose an Agent Skill folder',
   })
@@ -816,7 +1005,7 @@ ipcMain.handle('harness:pickSkillFolder', async (event) => {
 
 ipcMain.handle('harness:pickFiles', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openFile', 'multiSelections'],
     title: 'Attach files',
   })
@@ -879,6 +1068,9 @@ if (ownsSingleInstance) {
     macOSHaptics.stop()
     serverSupervisor?.stop()
     serverSupervisor = undefined
+    // A clean quit reaps our child, so its record is never the live holder.
+    // An adopted server keeps running — keep the record for attribution.
+    if (!serverAdopted) void clearServerOwner(serverOwnerPath)
     tray?.destroy()
     tray = undefined
   })
@@ -904,21 +1096,25 @@ if (ownsSingleInstance) {
     appUpdater = createAppUpdateController({
       loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
+      mode: appUpdateMode({
+        platform: process.platform,
+        packaged: app.isPackaged,
+        developmentServer: devServer,
+      }),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
       if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
     })
     appUpdater.start()
-    startOwnedServer()
+    void startOwnedServer()
     configureAttachmentPreviews()
     configureRendererPermissions()
     void sweepStaleCaptures()
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()
-    createBackgroundTray()
+    if (process.platform === 'win32') createBackgroundTray()
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
       app.on('did-become-active', () => {

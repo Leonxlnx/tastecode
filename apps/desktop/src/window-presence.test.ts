@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { restoreMainWindowPresence } from './window-presence.js'
+import { presentMainWindow, restoreMainWindowPresence } from './window-presence.js'
 
 function presenceDoubles() {
   return {
@@ -9,6 +9,20 @@ function presenceDoubles() {
       setHiddenInMissionControl: vi.fn(),
       setMovable: vi.fn(),
       setSkipTaskbar: vi.fn(),
+    },
+  }
+}
+
+function presentationDoubles(minimized = false) {
+  const { application, window } = presenceDoubles()
+  return {
+    application: { ...application, focus: vi.fn() },
+    window: {
+      ...window,
+      focus: vi.fn(),
+      isMinimized: vi.fn(() => minimized),
+      restore: vi.fn(),
+      show: vi.fn(),
     },
   }
 }
@@ -48,5 +62,46 @@ describe('restoreMainWindowPresence', () => {
     expect(window.setHiddenInMissionControl).not.toHaveBeenCalled()
     expect(window.setFocusable).toHaveBeenCalledWith(true)
     expect(window.setMovable).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('presentMainWindow', () => {
+  it('restores macOS presence before presenting the window', () => {
+    const { application, window } = presentationDoubles(true)
+
+    presentMainWindow('darwin', application, window)
+
+    expect(application.setActivationPolicy).toHaveBeenCalledWith('regular')
+    expect(window.setHiddenInMissionControl).toHaveBeenCalledWith(false)
+    expect(window.restore).toHaveBeenCalledOnce()
+    expect(window.show).toHaveBeenCalledOnce()
+    expect(application.focus).toHaveBeenCalledOnce()
+    expect(window.focus).toHaveBeenCalledOnce()
+  })
+
+  it('does not restore a window that is not minimized', () => {
+    const { window } = presentationDoubles(false)
+
+    presentMainWindow('win32', { setActivationPolicy: vi.fn(), focus: vi.fn() }, window)
+
+    expect(window.restore).not.toHaveBeenCalled()
+    expect(window.show).toHaveBeenCalledOnce()
+  })
+
+  it('shows a Linux window before requesting application and window focus', () => {
+    const { application, window } = presentationDoubles(true)
+
+    presentMainWindow('linux', application, window)
+
+    expect(window.restore).toHaveBeenCalledOnce()
+    expect(window.show).toHaveBeenCalledOnce()
+    expect(application.focus).toHaveBeenCalledOnce()
+    expect(window.focus).toHaveBeenCalledOnce()
+    expect(window.show.mock.invocationCallOrder[0]).toBeLessThan(
+      application.focus.mock.invocationCallOrder[0],
+    )
+    expect(application.focus.mock.invocationCallOrder[0]).toBeLessThan(
+      window.focus.mock.invocationCallOrder[0],
+    )
   })
 })

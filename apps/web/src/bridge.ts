@@ -100,7 +100,8 @@ const NATIVE_MENU_ACTION_IDS = [
 export type NativeMenuAction = (typeof NATIVE_MENU_ACTION_IDS)[number]
 type NativeMenuShortcuts = Record<NativeMenuAction, Shortcut | null>
 export type AppUpdateState = {
-  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
+  status:
+    'unsupported' | 'manual' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
   version?: string
   progress?: number
