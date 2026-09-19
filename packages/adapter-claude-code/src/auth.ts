@@ -4,8 +4,8 @@ import { z } from 'zod'
 
 const ClaudeAccountSchema = z.object({
   loggedIn: z.boolean(),
-  email: z.string().optional(),
-  subscriptionType: z.string().optional(),
+  email: z.string().nullish(),
+  subscriptionType: z.string().nullish(),
 })
 
 export type ClaudeAccountOptions = {
