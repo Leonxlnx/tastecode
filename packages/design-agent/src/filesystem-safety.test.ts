@@ -22,6 +22,9 @@ import {
   readWorkspaceFile,
   workspaceEntries,
 } from './workspace-files.js'
+import { canCreateSymlinks } from './symlink.test-support.js'
+
+const canSymlink = canCreateSymlinks()
 
 const roots: string[] = []
 function workspace() {
@@ -34,18 +37,21 @@ afterEach(() => {
 })
 
 describe('Design filesystem boundaries', () => {
-  it('writes and restores artifacts without following an artifact symlink', () => {
-    const root = workspace()
-    const outside = workspace()
-    const unrelated = path.join(outside, 'untouched.json')
-    writeFileSync(unrelated, 'keep me')
-    mkdirSync(path.join(root, '.taste'))
-    symlinkSync(unrelated, path.join(root, '.taste', 'brief.json'))
-    expect(() => readDesignArtifact(root, 'brief.json')).toThrow('regular file')
-    writeDesignArtifact(root, 'brief.json', { approved: true })
-    expect(readDesignArtifact(root, 'brief.json')).toEqual({ approved: true })
-    expect(readFileSync(unrelated, 'utf8')).toBe('keep me')
-  })
+  it.skipIf(!canSymlink)(
+    'writes and restores artifacts without following an artifact symlink',
+    () => {
+      const root = workspace()
+      const outside = workspace()
+      const unrelated = path.join(outside, 'untouched.json')
+      writeFileSync(unrelated, 'keep me')
+      mkdirSync(path.join(root, '.taste'))
+      symlinkSync(unrelated, path.join(root, '.taste', 'brief.json'))
+      expect(() => readDesignArtifact(root, 'brief.json')).toThrow('regular file')
+      writeDesignArtifact(root, 'brief.json', { approved: true })
+      expect(readDesignArtifact(root, 'brief.json')).toEqual({ approved: true })
+      expect(readFileSync(unrelated, 'utf8')).toBe('keep me')
+    },
+  )
 
   it('rejects an artifact directory symlink before writing outside the workspace', () => {
     const root = workspace()
@@ -88,38 +94,41 @@ describe('Design filesystem boundaries', () => {
     expect(() => readWorkspaceFile(file, 2_000_000)).toThrow('exceeds 2000000 bytes')
   })
 
-  it('tracks the current target of approved asset links and leaves native components editable', () => {
-    const root = workspace()
-    writeFileSync(path.join(root, 'one.svg'), '<svg id="one" />')
-    writeFileSync(path.join(root, 'two.svg'), '<svg id="two" />')
-    const link = path.join(root, 'logo.svg')
-    symlinkSync(path.join(root, 'one.svg'), link)
-    const manifest = {
-      version: 1 as const,
-      assets: [
-        {
-          id: 'logo',
-          kind: 'icon' as const,
-          status: 'ready' as const,
-          purpose: 'Logo',
-          requirements: [],
-          role: 'logo' as const,
-          source: { kind: 'project' as const, reference: 'one.svg' },
-          destination: 'logo.svg',
-        },
-      ],
-    }
-    const snapshot = snapshotDesignAssets(root, manifest)
-    rmSync(link)
-    symlinkSync(path.join(root, 'two.svg'), link)
-    expect(snapshotDesignAssets(root, manifest)).not.toEqual(snapshot)
-    expect(
-      snapshotDesignAssets(root, {
-        version: 1,
-        assets: [{ ...manifest.assets[0]!, kind: 'component', role: 'component' }],
-      }),
-    ).toEqual([])
-  })
+  it.skipIf(!canSymlink)(
+    'tracks the current target of approved asset links and leaves native components editable',
+    () => {
+      const root = workspace()
+      writeFileSync(path.join(root, 'one.svg'), '<svg id="one" />')
+      writeFileSync(path.join(root, 'two.svg'), '<svg id="two" />')
+      const link = path.join(root, 'logo.svg')
+      symlinkSync(path.join(root, 'one.svg'), link)
+      const manifest = {
+        version: 1 as const,
+        assets: [
+          {
+            id: 'logo',
+            kind: 'icon' as const,
+            status: 'ready' as const,
+            purpose: 'Logo',
+            requirements: [],
+            role: 'logo' as const,
+            source: { kind: 'project' as const, reference: 'one.svg' },
+            destination: 'logo.svg',
+          },
+        ],
+      }
+      const snapshot = snapshotDesignAssets(root, manifest)
+      rmSync(link)
+      symlinkSync(path.join(root, 'two.svg'), link)
+      expect(snapshotDesignAssets(root, manifest)).not.toEqual(snapshot)
+      expect(
+        snapshotDesignAssets(root, {
+          version: 1,
+          assets: [{ ...manifest.assets[0]!, kind: 'component', role: 'component' }],
+        }),
+      ).toEqual([])
+    },
+  )
 
   it('fails on excessive nesting instead of skipping files', () => {
     const root = workspace()

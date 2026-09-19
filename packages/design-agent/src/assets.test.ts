@@ -10,6 +10,9 @@ import {
   validateResolvedDesignAssets,
   writeAssetManifest,
 } from './assets.js'
+import { canCreateSymlinks } from './symlink.test-support.js'
+
+const canSymlink = canCreateSymlinks()
 
 const manifest = {
   version: 1,
@@ -580,93 +583,96 @@ describe('asset manifest', () => {
     }
   })
 
-  it('allows only attached user IDs and rejects workspace symlink escapes', () => {
-    const workspace = mkdtempSync(path.join(tmpdir(), 'harness-asset-boundary-'))
-    const outside = mkdtempSync(path.join(tmpdir(), 'harness-asset-outside-'))
-    const page = {
-      version: 1 as const,
-      sections: [{ id: 'hero', assetNeeds: ['hero-photo'], componentNeeds: [] }],
-    } as Parameters<typeof validateAssetManifestForPage>[1]
-    const referencePath = path.join(outside, 'reference.png')
-    const baseAsset = {
-      id: 'hero-photo',
-      kind: 'image' as const,
-      status: 'existing' as const,
-      purpose: 'Supplied hero photograph.',
-      requirements: [],
-      role: 'photography' as const,
-      sectionIds: ['hero'],
-      aspectRatio: '16:9',
-      composition: 'Wide environmental scene.',
-      source: { kind: 'user' as const, reference: referencePath },
-    }
-    try {
-      writeFileSync(referencePath, png(1600, 900))
-      expect(() =>
-        validateAssetManifestForPage({ version: 1, assets: [baseAsset] }, page, workspace, [
-          referencePath,
-        ]),
-      ).toThrow('must use an attached user-reference-# ID')
-
-      const attached = {
-        ...baseAsset,
-        source: { kind: 'user' as const, reference: 'user-reference-1' },
-        destination: 'supplied.png',
+  it.skipIf(!canSymlink)(
+    'allows only attached user IDs and rejects workspace symlink escapes',
+    () => {
+      const workspace = mkdtempSync(path.join(tmpdir(), 'harness-asset-boundary-'))
+      const outside = mkdtempSync(path.join(tmpdir(), 'harness-asset-outside-'))
+      const page = {
+        version: 1 as const,
+        sections: [{ id: 'hero', assetNeeds: ['hero-photo'], componentNeeds: [] }],
+      } as Parameters<typeof validateAssetManifestForPage>[1]
+      const referencePath = path.join(outside, 'reference.png')
+      const baseAsset = {
+        id: 'hero-photo',
+        kind: 'image' as const,
+        status: 'existing' as const,
+        purpose: 'Supplied hero photograph.',
+        requirements: [],
+        role: 'photography' as const,
+        sectionIds: ['hero'],
+        aspectRatio: '16:9',
+        composition: 'Wide environmental scene.',
+        source: { kind: 'user' as const, reference: referencePath },
       }
-      writeFileSync(path.join(workspace, 'supplied.png'), readFileSync(referencePath))
-      expect(
-        validateAssetManifestForPage({ version: 1, assets: [attached] }, page, workspace, [
-          referencePath,
-        ]),
-      ).toEqual({ version: 1, assets: [attached] })
-      writeFileSync(path.join(workspace, 'supplied.png'), png(1280, 720))
-      expect(() =>
-        validateAssetManifestForPage({ version: 1, assets: [attached] }, page, workspace, [
-          referencePath,
-        ]),
-      ).toThrow('must contain the supplied file unchanged')
+      try {
+        writeFileSync(referencePath, png(1600, 900))
+        expect(() =>
+          validateAssetManifestForPage({ version: 1, assets: [baseAsset] }, page, workspace, [
+            referencePath,
+          ]),
+        ).toThrow('must use an attached user-reference-# ID')
 
-      symlinkSync(referencePath, path.join(workspace, 'escaped.png'))
-      expect(() =>
-        validateAssetManifestForPage(
-          {
-            version: 1,
-            assets: [
-              {
-                ...baseAsset,
-                source: { kind: 'project', reference: 'escaped.png' },
-              },
-            ],
-          },
-          page,
-          workspace,
-        ),
-      ).toThrow('must stay inside the workspace after resolving symlinks')
+        const attached = {
+          ...baseAsset,
+          source: { kind: 'user' as const, reference: 'user-reference-1' },
+          destination: 'supplied.png',
+        }
+        writeFileSync(path.join(workspace, 'supplied.png'), readFileSync(referencePath))
+        expect(
+          validateAssetManifestForPage({ version: 1, assets: [attached] }, page, workspace, [
+            referencePath,
+          ]),
+        ).toEqual({ version: 1, assets: [attached] })
+        writeFileSync(path.join(workspace, 'supplied.png'), png(1280, 720))
+        expect(() =>
+          validateAssetManifestForPage({ version: 1, assets: [attached] }, page, workspace, [
+            referencePath,
+          ]),
+        ).toThrow('must contain the supplied file unchanged')
 
-      const outsideDestination = path.join(outside, 'ready.png')
-      writeFileSync(outsideDestination, png(1600, 900))
-      mkdirSync(path.join(workspace, 'public'))
-      symlinkSync(outsideDestination, path.join(workspace, 'public', 'ready.png'))
-      expect(() =>
-        validateAssetManifestForPage(
-          {
-            version: 1,
-            assets: [
-              {
-                ...baseAsset,
-                status: 'ready',
-                source: { kind: 'generated', reference: 'generation' },
-                destination: 'public/ready.png',
-              },
-            ],
-          },
-          page,
-          workspace,
-        ),
-      ).toThrow('must stay inside the workspace after resolving symlinks')
-    } finally {
-      rmSync(workspace, { recursive: true, force: true })
-      rmSync(outside, { recursive: true, force: true })
-    }
-  })
+        symlinkSync(referencePath, path.join(workspace, 'escaped.png'))
+        expect(() =>
+          validateAssetManifestForPage(
+            {
+              version: 1,
+              assets: [
+                {
+                  ...baseAsset,
+                  source: { kind: 'project', reference: 'escaped.png' },
+                },
+              ],
+            },
+            page,
+            workspace,
+          ),
+        ).toThrow('must stay inside the workspace after resolving symlinks')
+
+        const outsideDestination = path.join(outside, 'ready.png')
+        writeFileSync(outsideDestination, png(1600, 900))
+        mkdirSync(path.join(workspace, 'public'))
+        symlinkSync(outsideDestination, path.join(workspace, 'public', 'ready.png'))
+        expect(() =>
+          validateAssetManifestForPage(
+            {
+              version: 1,
+              assets: [
+                {
+                  ...baseAsset,
+                  status: 'ready',
+                  source: { kind: 'generated', reference: 'generation' },
+                  destination: 'public/ready.png',
+                },
+              ],
+            },
+            page,
+            workspace,
+          ),
+        ).toThrow('must stay inside the workspace after resolving symlinks')
+      } finally {
+        rmSync(workspace, { recursive: true, force: true })
+        rmSync(outside, { recursive: true, force: true })
+      }
+    },
+  )
 })
