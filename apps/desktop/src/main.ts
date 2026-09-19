@@ -82,6 +82,11 @@ import {
   type NativeMenuAction,
   type NativeMenuShortcuts,
 } from './menu-contract.js'
+import {
+  argvSpecifiesOzonePlatform,
+  linuxDisplayEnv,
+  ozonePlatformForLinux,
+} from './ozone-platform.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
@@ -253,6 +258,24 @@ const previewCaptures = new PreviewCaptureOwner({
     return PreviewDomAuditSchema.parse(value)
   },
 })
+// Chromium resolves the Ozone platform before this script runs — this script's
+// appendSwitch cannot undo it — and only honors XDG_SESSION_TYPE=wayland.
+// An env-stripped launch (SSH, cron, systemd units, `env -i` launchers) that
+// keeps WAYLAND_DISPLAY but drops XDG_SESSION_TYPE and DISPLAY therefore picks
+// x11 and exits "Missing X server or $DISPLAY". When the resolved platform has
+// no reachable display, relaunch once with the platform on argv; the injected
+// flag doubles as the stop condition for the second hop.
+function relaunchWithReachableOzonePlatform(): void {
+  if (argvSpecifiesOzonePlatform(process.argv)) return
+  const platform = ozonePlatformForLinux(linuxDisplayEnv())
+  if (!platform || platform === app.commandLine.getSwitchValue('ozone-platform')) return
+  console.info(
+    `[desktop] no display for the resolved ozone platform; relaunching with --ozone-platform=${platform}`,
+  )
+  app.relaunch({ args: [...process.argv.slice(1), `--ozone-platform=${platform}`] })
+  app.exit(0)
+}
+
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -263,6 +286,7 @@ if (process.platform === 'win32') {
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 }
 if (process.platform === 'linux') {
+  relaunchWithReachableOzonePlatform()
   // Desktop environments match windows to launcher entries by WM_CLASS/app_id;
   // without this the running window never groups with tastecode.desktop and
   // GNOME/COSMIC show a generic icon for the app.
