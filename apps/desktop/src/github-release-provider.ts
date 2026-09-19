@@ -1,8 +1,8 @@
 import type { AppUpdater, ResolvedUpdateFileInfo, UpdateInfo } from 'electron-updater'
 import { Provider, type ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
 import { z } from 'zod'
+import { releaseRepository, versionFromTag } from './release-check.js'
 
-export const releaseRepository = 'Leonxlnx/tastecode'
 const assetSchema = z.object({
   name: z.string(),
   state: z.literal('uploaded'),
@@ -23,16 +23,6 @@ const releaseSchema = z.object({
 type Release = z.infer<typeof releaseSchema>
 export type ReleaseAsset = z.infer<typeof assetSchema>
 export type AssetUpdateInfo = UpdateInfo & { asset: ReleaseAsset }
-
-function versionFromTag(tag: string): string | undefined {
-  const version = tag.replace(/^v/, '')
-  const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+[\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*)?$/.exec(
-      version,
-    )
-  if (!match || match[4]?.split('.').some((part) => /^0\d+$/.test(part))) return undefined
-  return version
-}
 
 export function selectLatestRelease(rows: unknown[]): Release {
   const releases = rows
