@@ -14,6 +14,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  net,
   protocol,
   screen,
   session,
@@ -49,6 +50,7 @@ import {
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
+import { fetchLatestRelease } from './release-check.js'
 import {
   autoHidesMenuBar,
   createApplicationMenuTemplate,
@@ -1263,6 +1265,9 @@ if (ownsSingleInstance) {
 
     appUpdater = createAppUpdateController({
       loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
+      // The deb has no updater backend: a read-only GitHub probe through the
+      // Chromium net stack (system proxy aware, same as ElectronHttpExecutor).
+      fetchLatest: () => fetchLatestRelease(net.fetch),
       currentVersion: app.getVersion(),
       mode: appUpdateMode({
         platform: process.platform,

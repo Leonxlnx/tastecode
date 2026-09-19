@@ -110,6 +110,9 @@ export type AppUpdateState = {
   version?: string
   progress?: number
   error?: string
+  // Manual (deb) packages only: a newer published release and where to get it.
+  latestVersion?: string
+  releasesUrl?: string
 }
 
 const bridge = window.harness

@@ -1,4 +1,5 @@
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
+import { isNewerVersion, type LatestRelease } from './release-check.js'
 
 export type UpdateClient = Pick<
   AppUpdater,
@@ -19,6 +20,10 @@ export type AppUpdateState = {
   version?: string
   progress?: number
   error?: string
+  // Manual-mode signal only: a published release newer than the running one,
+  // plus the releases page to download it from. Install states never set these.
+  latestVersion?: string
+  releasesUrl?: string
 }
 
 type Timer = ReturnType<typeof setTimeout>
@@ -43,6 +48,9 @@ export function createAppUpdateController(
   options: {
     currentVersion: string
     mode: AppUpdateMode
+    // Read-only "is a newer release published" probe for manual packages; the
+    // injected function resolves undefined when the lookup is impossible.
+    fetchLatest?: () => Promise<LatestRelease | undefined>
     setTimeoutFn?: typeof setTimeout
     clearTimeoutFn?: typeof clearTimeout
   } & (
@@ -133,11 +141,36 @@ export function createAppUpdateController(
     return loading
   }
 
-  const check = (): Promise<AppUpdateState> => {
-    if (options.mode !== 'install') return Promise.resolve(state)
-    if (checking) return checking
-    if (state.status === 'downloading' || state.status === 'ready') return Promise.resolve(state)
-    checking = loadUpdater()
+  // Manual mode keeps its own status for both outcomes: the renderer learns
+  // "newer release exists" from latestVersion rather than a status flip, and a
+  // deb swapped by dpkg under a running process drops a stale signal cleanly.
+  const checkLatestRelease = (): Promise<AppUpdateState> => {
+    const fetchLatest = options.fetchLatest
+    if (!fetchLatest) return Promise.resolve(state)
+    return fetchLatest()
+      .then((latest) => {
+        if (!latest) return state
+        publish(
+          isNewerVersion(options.currentVersion, latest.version)
+            ? {
+                status: 'manual',
+                currentVersion: options.currentVersion,
+                latestVersion: latest.version,
+                releasesUrl: latest.releasesUrl,
+              }
+            : {
+                status: 'manual',
+                currentVersion: options.currentVersion,
+                releasesUrl: latest.releasesUrl,
+              },
+        )
+        return state
+      })
+      .catch(() => state)
+  }
+
+  const installCheck = (): Promise<AppUpdateState> =>
+    loadUpdater()
       .then((client) => client.checkForUpdates())
       .then(
         () => state,
@@ -146,17 +179,26 @@ export function createAppUpdateController(
           return state
         },
       )
-      .finally(() => {
-        checking = undefined
-      })
+
+  const check = (): Promise<AppUpdateState> => {
+    if (options.mode === 'unsupported') return Promise.resolve(state)
+    if (checking) return checking
+    if (state.status === 'downloading' || state.status === 'ready') return Promise.resolve(state)
+    checking = (options.mode === 'manual' ? checkLatestRelease() : installCheck()).finally(() => {
+      checking = undefined
+    })
     return checking
   }
+
+  // Install mode polls hourly like before; the manual probe is one cheap GET
+  // against a public API, so six hours is plenty of freshness for a banner.
+  const checkInterval = options.mode === 'manual' ? 6 * 60 * 60 * 1000 : 60 * 60 * 1000
 
   const schedule = (delay: number) => {
     timer = setTimeoutFn(() => {
       timer = undefined
       void check().finally(() => {
-        if (started) schedule(60 * 60 * 1000)
+        if (started) schedule(checkInterval)
       })
     }, delay)
     timer.unref?.()
@@ -175,7 +217,7 @@ export function createAppUpdateController(
       return () => listeners.delete(listener)
     },
     start: () => {
-      if (options.mode !== 'install' || started) return
+      if (options.mode === 'unsupported' || started) return
       started = true
       schedule(15_000)
     },

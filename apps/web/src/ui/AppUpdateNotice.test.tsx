@@ -7,6 +7,7 @@ import { AppUpdateNotice } from './AppUpdateNotice.js'
 const bridge = vi.hoisted(() => ({
   read: vi.fn(),
   off: vi.fn(),
+  openExternal: vi.fn(),
   listener: undefined as ((state: AppUpdateState) => void) | undefined,
 }))
 vi.mock('../bridge.js', () => ({
@@ -15,6 +16,7 @@ vi.mock('../bridge.js', () => ({
     bridge.listener = listener
     return bridge.off
   },
+  openExternalUrl: bridge.openExternal,
 }))
 afterEach(() => {
   cleanup()
@@ -51,4 +53,40 @@ it('keeps a live update over a stale initial read and only opens review on click
   expect(screen.getByText('TasteCode 0.1.0-beta.8 is ready to install.')).toBeTruthy()
   view.unmount()
   expect(bridge.off).toHaveBeenCalledOnce()
+})
+
+it('points manual packages at the releases page without an install path', async () => {
+  bridge.read.mockResolvedValue({ status: 'manual', currentVersion: '0.1.0-beta.8' })
+  const review = vi.fn()
+  const view = render(<AppUpdateNotice onReview={review} />)
+  await vi.waitFor(() => expect(bridge.read).toHaveBeenCalledOnce())
+
+  act(() =>
+    bridge.listener?.({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+    }),
+  )
+  expect(screen.queryByText(/available to download/)).toBeNull()
+
+  act(() =>
+    bridge.listener?.({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+      latestVersion: '0.1.0-beta.9',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    }),
+  )
+  expect(screen.getByText('TasteCode 0.1.0-beta.9 is available to download.')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Review update' })).toBeNull()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Download' }))
+  expect(bridge.openExternal).toHaveBeenCalledWith(
+    'https://github.com/Leonxlnx/tastecode/releases/latest',
+  )
+  expect(review).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Later' }))
+  expect(view.container.querySelector('.notice')?.getAttribute('data-state')).toBe('closing')
+  view.unmount()
 })

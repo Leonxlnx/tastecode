@@ -1650,6 +1650,10 @@
   background: var(--success);
 }
 
+.state-label.is-update-available::before {
+  background: var(--attention);
+}
+
 .state-label.is-setup-needed::before {
   background: var(--attention);
 }
