@@ -12,7 +12,7 @@ release list and chooses the newest publication, including prereleases, regardle
 GitHub "Latest" badge. Downgrades remain disabled. A missing matching installer or SHA-256
 digest is an error; the app does not silently fall back to an older release.
 
-## Beta 7 bridge, then two public files
+## Beta 7 bridge, then the updater assets
 
 Beta 8 preparation (2026-09-18): the release owner authorized an unsigned Windows
 build and publication, with macOS built separately by its maintainer. Build both
@@ -25,20 +25,24 @@ Beta 7 is the transition release. It includes the new asset updater **and** the 
 ZIP, and blockmap files so beta 6 can install it through its existing updater. Keep beta 7
 available long enough for users to update before publishing beta 8.
 
-From **0.1.0-beta.8**, `upload-draft-release.js` uploads exactly two public assets:
+From **0.1.0-beta.8**, `upload-draft-release.js` uploads exactly the updater assets:
 
 - `TasteCode-<version>-win-x64.exe`
 - `TasteCode-<version>-mac-arm64.dmg`
+- `TasteCode-<version>-linux-x86_64.AppImage`
 
 The local package proof still includes generated metadata, ZIP, blockmaps, checksums, and
 provenance. These remain local/CI proof files. The upload script verifies the complete
-local proof and checks GitHub's SHA-256 digest for each of the two uploaded files.
+local proof and checks GitHub's SHA-256 digest for each uploaded file.
 
 The new client checks the downloaded installer against GitHub's digest and size. On macOS,
 it mounts the DMG read-only, checks the bundle ID, version, and code signature, and makes a
 temporary ZIP locally. Electron's native Squirrel.Mac installer still verifies signing
 identity and performs the replacement. Windows still uses electron-updater's NSIS installer
-and configured publisher verification. Neither path needs public YAML or blockmaps.
+and configured publisher verification. On Linux, only AppImage installs self-update:
+electron-updater's AppImageUpdater downloads the verified image and atomically replaces the
+running file next to it; the deb stays package-manager owned and updates manually. None of
+these paths need public YAML or blockmaps.
 
 **Beta 6 users must install beta 7 during the transition.** Once beta 8 is the newest
 release, beta 6 will look for YAML in beta 8 and fail. Keeping beta 7's assets alone does
@@ -103,9 +107,9 @@ Both primary downloads and the macOS ZIP returned HTTP 200. The two obsolete uns
 beta 1 draft releases were removed before beta 7 publication.
 
 Never replace published files or change the tag. Except for the approved beta 7 macOS-first
-release below, subsequent releases must stage both
-platforms together before publication, because GitHub-connected macOS clients would
-otherwise discover a release without matching metadata.
+release below, subsequent releases must stage every updater platform together before
+publication, because GitHub-connected clients would otherwise discover a release without
+their matching installer.
 
 [Direct Windows download](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.7/TasteCode-0.1.0-beta.7-win-x64.exe)
 works without a GitHub login and can be used on the landing page.
@@ -113,8 +117,8 @@ works without a GitHub login and can be used on the landing page.
 1. Finish the intended merges, choose a version higher than every distributed build, and
    merge the version change. `0.1.0-beta.6` is already published. Do not reuse
    a version or replace files in a published release.
-2. Pin the final clean `main` commit. Build Windows and macOS from that same commit and
-   configuration. Set `APPROVED_SHA` and `EVENT_SHA` to its full SHA and `EVENT_REF` to
+2. Pin the final clean `main` commit. Build Windows, macOS, and Linux from that same
+   commit and configuration. Set `APPROVED_SHA` and `EVENT_SHA` to its full SHA and `EVENT_REF` to
    `refs/heads/main`, then run `node tools/scripts/verify-release-input.js`.
 3. Run `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, and `pnpm licenses:verify`.
    Package with `--publish never`. Always use the draft upload script below to select public
@@ -128,7 +132,7 @@ works without a GitHub login and can be used on the landing page.
    Run the Windows installer proof only on its isolated runner; never install/uninstall a
    test package over an active developer installation.
 5. Generate each platform's checksums/provenance with
-   `node tools/scripts/release-checksums.js <output-directory> <windows|macos>`, then use
+   `node tools/scripts/release-checksums.js <output-directory> <windows|macos|linux>`, then use
    `stage-release-assets.js` to copy its exact assets into a new directory. Combine both
    staged directories and run `node tools/scripts/verify-release-assets.js <combined-directory>`.
 6. There must be one draft for the version. A preparation draft is an empty reservation,
@@ -150,7 +154,8 @@ For the beta 7 bridge, GitHub metadata is named **`latest.yml`** for Windows and
 **`latest-mac.yml`** for macOS. Beta 6's updater selects the beta tag and falls back to those
 files inside that tag. The packager generates them; do not handwrite hashes or rename them
 to the generic provider's `beta.yml`. Upload the installers/ZIP, blockmaps, metadata,
-checksums and provenance together for beta 7. From beta 8, only the EXE and DMG are uploaded.
+checksums and provenance together for beta 7. From beta 8, only the EXE, DMG, and AppImage
+are uploaded.
 Builder debug output and unpacked app directories are not release assets.
 
 After the first publication, verify a real old-to-new installed upgrade with existing
