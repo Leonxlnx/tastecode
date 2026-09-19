@@ -82,6 +82,7 @@ import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { parsePortConflict, probePortOwner } from './server-port-conflict.js'
+import { parseServerPort, resolveServerPort } from './server-port.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -162,6 +163,17 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+// One port decision for the whole process: the owned server's environment, the
+// renderer's `harnessPort` page query, and the port named in conflict dialogs
+// all follow it. An unusable HARNESS_PORT falls back to the default so the app
+// still starts; the resolved port is what logs and dialogs name.
+const configuredServerPort = process.env['HARNESS_PORT']
+const serverPort = resolveServerPort(configuredServerPort)
+if (configuredServerPort !== undefined && parseServerPort(configuredServerPort) === undefined) {
+  console.warn(
+    `[desktop] HARNESS_PORT=${configuredServerPort} is not an unprivileged port; using ${serverPort}`,
+  )
+}
 let startupWindowReady = false
 let startupServerReady = Boolean(devServer)
 let startupRendererReady = false
@@ -461,7 +473,12 @@ function startOwnedServer(): void {
       ? new ServerSupervisor({
           command: process.execPath,
           args: [serverEntry],
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          env: {
+            ...process.env,
+            HARNESS_PORT: String(serverPort),
+            ELECTRON_RUN_AS_NODE: '1',
+            PATH: desktopPath(),
+          },
           ...supervisorCallbacks,
         })
       : new ServerSupervisor({
@@ -474,7 +491,7 @@ function startOwnedServer(): void {
 
 function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env },
+    env: { ...process.env, HARNESS_PORT: String(serverPort) },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
@@ -676,10 +693,18 @@ function createWindow(): void {
     }
   })
 
+  // The renderer learns the resolved port through the page query — the ws URL
+  // is baked at build time and cannot see HARNESS_PORT (see
+  // apps/web/src/server-url.ts). Dev gets the same query so a HARNESS_PORT dev
+  // run stays consistent end to end.
   if (devServer) {
-    void window.loadURL(devServer)
+    const rendererUrl = new URL(devServer)
+    rendererUrl.searchParams.set('harnessPort', String(serverPort))
+    void window.loadURL(rendererUrl.toString())
   } else {
-    void window.loadFile(rendererIndexPath())
+    void window.loadFile(rendererIndexPath(), {
+      query: { harnessPort: String(serverPort) },
+    })
   }
 }
 

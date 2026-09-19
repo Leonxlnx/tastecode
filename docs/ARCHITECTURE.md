@@ -60,7 +60,9 @@ cross-platform problem.
 The local Node server remains a separate long-lived process behind the typed WebSocket
 protocol. Closing or restarting the Electron window does not stop active agents. The renderer
 stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
-credentials.
+credentials. `HARNESS_PORT` selects the loopback port (default 4311); the desktop resolves it
+once, passes it to the spawned server's environment, and hands it to the renderer as a
+`harnessPort` page-query parameter so the socket moves as one hop.
 
 _Known limitation (v1):_ the loopback WebSocket authenticates origins, not clients. Any local
 process — including a page served from a workspace preview port — can open the socket and reach
