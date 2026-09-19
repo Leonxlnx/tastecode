@@ -1,7 +1,8 @@
 import path from 'node:path'
 import os from 'node:os'
+import { realpath } from 'node:fs/promises'
 
-export function projectFilePath(value: unknown, projectRootValue: unknown): string {
+export async function projectFilePath(value: unknown, projectRootValue: unknown): Promise<string> {
   const file = safePath(value)
   const projectRoot = expandHomePath(safePath(projectRootValue))
   const flavor = windowsPath(projectRoot) ? path.win32 : path.posix
@@ -19,7 +20,25 @@ export function projectFilePath(value: unknown, projectRootValue: unknown): stri
   if (relative === '..' || relative.startsWith(`..${flavor.sep}`) || flavor.isAbsolute(relative)) {
     throw new Error('File path is outside the selected project')
   }
-  return candidate
+
+  // The lexical check alone lets a symlink inside the project point outside it;
+  // resolve both sides and confine again in host semantics. Paths that do not
+  // exist on this host (including foreign-platform inputs) keep the lexical
+  // result — they cannot be followed anyway.
+  const [resolvedRoot, resolvedCandidate] = await Promise.all([
+    realpath(root).catch(() => undefined),
+    realpath(candidate).catch(() => undefined),
+  ])
+  if (resolvedRoot === undefined || resolvedCandidate === undefined) return candidate
+  const resolvedRelative = path.relative(resolvedRoot, resolvedCandidate)
+  if (
+    resolvedRelative === '..' ||
+    resolvedRelative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(resolvedRelative)
+  ) {
+    throw new Error('File path is outside the selected project')
+  }
+  return resolvedCandidate
 }
 
 function expandHomePath(value: string): string {

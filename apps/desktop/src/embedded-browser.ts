@@ -38,6 +38,9 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
     webPreferences.sandbox = true
     webPreferences.spellcheck = false
     webPreferences.webSecurity = true
+    // A guest with webviewTag could nest webviews whose will-attach-webview
+    // fires on the guest's own webContents — outside this hardening listener.
+    webPreferences.webviewTag = false
 
     if (!isBrowserGuestUrl(params['src'], true)) event.preventDefault()
   })
@@ -60,6 +63,13 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
     })
     guest.on('will-redirect', (event, url) => {
       if (!isBrowserGuestUrl(url)) event.preventDefault()
+    })
+    // will-navigate does not fire for programmatic loadURL() or src attribute
+    // changes; a guest that still ends up off the web gets unloaded.
+    guest.on('did-navigate', (_event, url) => {
+      if (!isBrowserGuestUrl(url, true)) {
+        void guest.loadURL('about:blank').catch(() => {})
+      }
     })
   })
 }

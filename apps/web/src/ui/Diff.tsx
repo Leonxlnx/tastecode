@@ -147,7 +147,7 @@ export function Diff({
   )
 }
 
-function ChangeStats({
+export function ChangeStats({
   added,
   removed,
   className,

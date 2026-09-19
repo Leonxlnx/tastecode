@@ -183,14 +183,19 @@ export class ThreadController {
     isProtected: (id: string) => boolean,
     retry = true,
   ): Promise<
-    { history: ThreadState | undefined; state: QueueState; previousItems: QueuedTurn[] } | undefined
+    | {
+        history: ThreadState | undefined
+        approval?: ApprovalMode | undefined
+        state: QueueState
+        previousItems: QueuedTurn[]
+      }
+    | undefined
   > {
     const owner = {}
     const owners = this.#recoveries.get(id) ?? new Set<object>()
     owners.add(owner)
     this.#recoveries.set(id, owners)
     const history = this.loadHistory(id, this.cursor(id))
-      .then((loaded) => loaded?.authority)
       .catch(() => undefined)
       .finally(() => this.prune(isProtected))
     this.beginQueueRead(id)
@@ -208,7 +213,7 @@ export class ThreadController {
       }
       const previousItems = this.queue(id)?.items ?? []
       this.setQueue(id, state)
-      return { history: loaded, state, previousItems }
+      return { history: loaded?.authority, approval: loaded?.approval, state, previousItems }
     } catch {
       return undefined
     } finally {
@@ -366,12 +371,13 @@ export class ThreadController {
     this.#historyOwners.set(id, buffer)
     const base = afterSeq === undefined ? emptyThread : (this.snapshot(id) ?? emptyThread)
     try {
-      const { events, running, approval } = await this.transport.request(
+      const { events, running, approval, reset } = await this.transport.request(
         'thread.history',
         afterSeq === undefined ? { threadId: id } : { threadId: id, afterSeq },
       )
       if (this.#historyOwners.get(id) !== buffer) return
-      const restored = reduceEventLog(base, events, afterSeq)
+      if (reset) afterSeq = undefined
+      const restored = reduceEventLog(reset ? emptyThread : base, events, afterSeq)
       const lastSeq = events.at(-1)?.seq ?? afterSeq ?? 0
       const live = reduceEventLog(
         { ...restored, running, activeTurn: running ? restored.activeTurn : undefined },

@@ -104,7 +104,7 @@
 
 .model-selector__slider {
   position: relative;
-  height: 28px;
+  height: 36px;
   width: 100%;
   touch-action: none;
   user-select: none;
@@ -124,9 +124,9 @@
 
 .model-selector__slider-track {
   position: absolute;
-  inset: 3px 0;
+  inset: 0;
   overflow: hidden;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-pill);
   background: var(--effort-track);
   box-shadow: var(--effort-track-shadow);
 }
@@ -138,14 +138,14 @@
   width: var(--model-selector-slider-width);
   overflow: hidden;
   background: var(--effort-fill);
-  border-radius: var(--r-md);
+  border-radius: var(--r-pill);
   box-shadow: var(--effort-fill-shadow);
 }
 
 .model-selector__slider-stops {
   position: absolute;
   z-index: 2;
-  inset: 0 18px;
+  inset: 0 22px;
   pointer-events: none;
 }
 
@@ -153,8 +153,8 @@
   position: absolute;
   top: 50%;
   left: calc(var(--model-selector-stop) * 100%);
-  width: 3px;
-  height: 3px;
+  width: 4px;
+  height: 4px;
   background: color-mix(in srgb, var(--text-3) 52%, transparent);
   border-radius: var(--r-circle);
   box-shadow: 0 0 0 1px color-mix(in srgb, black 10%, transparent);

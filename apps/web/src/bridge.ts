@@ -211,6 +211,9 @@ export function revealProjectFile(path: string, projectPath: string): Promise<vo
 }
 
 export async function previewViewedImage(reference: string): Promise<PickedAttachment | undefined> {
+  if (/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[a-zA-Z0-9+/=\s]+$/.test(reference)) {
+    return { path: reference, name: 'Attached image', mediaType: 'image', previewUrl: reference }
+  }
   const cached = attachmentPreviews.get(reference)
   if (cached) {
     rememberAttachmentPreview(reference, cached)

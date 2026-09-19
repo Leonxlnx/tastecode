@@ -37,7 +37,7 @@ describe('sidebar theme CSS', () => {
 
   it('uses compact regular-weight sidebar type', () => {
     expect(appCss).toMatch(
-      /\.rail \{[^}]*--rail-font-size: 13px;[^}]*--rail-font-weight: 380;[^}]*--rail-letter-spacing: -0\.01em;/s,
+      /\.rail \{[^}]*--rail-font-size: 13px;[^}]*--rail-font-weight: 400;[^}]*--rail-letter-spacing: -0\.01em;/s,
     )
     expect(appCss).toMatch(
       /\.navitem \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*letter-spacing: var\(--rail-letter-spacing\);/s,
@@ -138,7 +138,7 @@ describe('sidebar theme CSS', () => {
   })
 
   it('keeps the account trigger compact and shows its disclosure state on the right', () => {
-    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 4px 9px 10px;/s)
+    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 6px;/s)
     expect(appCss).toMatch(/\.rail__foot \.menutrigger \{[^}]*width: 100%;/s)
     expect(appCss).toMatch(/\.account \{[^}]*gap: 8px;[^}]*width: 100%;/s)
     expect(appCss).toMatch(/\.account__avatar \{[^}]*width: 18px;[^}]*height: 18px;/s)

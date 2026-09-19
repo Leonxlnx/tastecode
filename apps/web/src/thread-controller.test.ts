@@ -28,6 +28,20 @@ afterEach(() => {
 })
 
 describe('ThreadController lifecycle owner', () => {
+  it('replaces a partial replay when older provider turns are discovered', async () => {
+    const transport = new TestTransport(() => ({ ...history('replaced'), reset: true }))
+    const controller = new ThreadController(transport)
+    controller.update(
+      'thread',
+      reduce(emptyThread, {
+        ...started,
+        item: { ...started.item, id: 'stale', text: 'Old branch' },
+      }),
+    )
+    controller.setCursor('thread', 50)
+    const result = await controller.loadHistory('thread', 50)
+    expect(result!.visible.items.map((item) => item.text)).toEqual(['replaced'])
+  })
   it.each(['local', 'server'] as const)(
     'retries recovery after a newer %s queue revision and publishes only the fresh queue',
     async (source) => {

@@ -27,6 +27,8 @@ describe('provider-neutral briefing workflow', () => {
     'Create a modern studio website.',
     'Make it pop.',
     'Calm, motion-free page with animation everywhere.',
+    'Design a case-study portfolio for a hospitality brand designer.',
+    'Design a site for an independent record label with 12 artists and a small catalog.',
   ])('completes %s autonomously', (request) => {
     const prompt = designBriefingPrompt(request)
     expect(prompt).toContain('Never ask questions')
@@ -34,6 +36,15 @@ describe('provider-neutral briefing workflow', () => {
     expect(prompt).toContain('Return "complete" with an empty questions array')
     expect(prompt).not.toContain('"status":"questions"')
     expect(prompt).toContain(request)
+    expect(prompt).toContain('normally plan at least eight substantive, relevant content sections')
+    expect(prompt).toContain('Respect an explicit smaller scope')
+    expect(prompt).toContain('Never invent a section layout from scratch')
+    expect(prompt).toContain(
+      'portfolio concept studies, an illustrative artist roster and releases',
+    )
+    expect(prompt).toContain(
+      'If the user explicitly requires real subjects, preserve that requirement',
+    )
     expect(designBriefingContinuation([], {})).toContain('Never ask questions')
   })
 

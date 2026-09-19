@@ -223,15 +223,18 @@ let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
+let waitingForUpdateCleanup = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
-  ipcMain.on('harness:startupPreloadReady', (_event, elapsed: unknown) => {
+  ipcMain.on('harness:startupPreloadReady', (event, elapsed: unknown) => {
+    if (!isOwnRenderer(event.sender)) return
     if (typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0) {
       console.log(`[startup] preload-ready ${Math.round(elapsed)}ms`)
     }
   })
-  ipcMain.on('harness:startupRendererMilestone', (_event, name: unknown) => {
+  ipcMain.on('harness:startupRendererMilestone', (event, name: unknown) => {
+    if (!isOwnRenderer(event.sender)) return
     if (
       name !== 'module-loaded' &&
       name !== 'react-commit' &&
@@ -316,7 +319,13 @@ function startOwnedServer(): void {
       ? new ServerSupervisor({
           command: process.execPath,
           args: [serverEntry],
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          cwd: productDataPath,
+          env: {
+            ...process.env,
+            PWD: productDataPath,
+            ELECTRON_RUN_AS_NODE: '1',
+            PATH: desktopPath(),
+          },
           ...supervisorCallbacks,
         })
       : new ServerSupervisor({
@@ -329,7 +338,10 @@ function startOwnedServer(): void {
 
 function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env },
+    // Finder/terminal launches may inherit a DMG or external-drive directory.
+    // Background provider probes must start in app storage, not that directory.
+    cwd: productDataPath,
+    env: { ...process.env, PWD: productDataPath },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
@@ -483,15 +495,18 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  window.webContents.on('will-navigate', (event, url) => {
+  const restrictWindowNavigation = (event: ElectronEvent, url: string) => {
     // Origin comparison, not a prefix check — "http://localhost:5173.evil.example"
-    // starts with the dev server string but is not it.
+    // starts with the dev server string but is not it. will-navigate does not
+    // fire for server-side redirects, so will-redirect applies the same policy.
     const allowed = devServer !== undefined && sameOrigin(url, devServer)
     if (!allowed) {
       event.preventDefault()
       if (isWebUrl(url)) void shell.openExternal(url)
     }
-  })
+  }
+  window.webContents.on('will-navigate', restrictWindowNavigation)
+  window.webContents.on('will-redirect', restrictWindowNavigation)
 
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
@@ -512,13 +527,17 @@ function createWindow(): void {
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(
-      startupRendererPath ??
-        (app.isPackaged
-          ? path.join(process.resourcesPath, 'web', 'index.html')
-          : path.join(here, '../../web/dist/index.html')),
-    )
+    void window.loadFile(rendererIndexPath())
   }
+}
+
+function rendererIndexPath(): string {
+  return (
+    startupRendererPath ??
+    (app.isPackaged
+      ? path.join(process.resourcesPath, 'web', 'index.html')
+      : path.join(here, '../../web/dist/index.html'))
+  )
 }
 
 function appWindows(): BrowserWindow[] {
@@ -617,7 +636,7 @@ ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
 })
 
 ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
-  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
+  if (!isOwnRenderer(event.sender) || typeof value !== 'string' || value.length > 8_192) return
   void diagnostics?.record('renderer', value)
 })
 
@@ -787,6 +806,8 @@ function parseDroppedFolderPaths(value: unknown): Promise<string[]> {
   return droppedFolderPathsSchema.then((schema) => schema.parse(value))
 }
 
+// The schema bounds shape, not provenance: the channel cannot tell a real OS
+// drop from a fabricated list, so it stays a bounded directory-existence oracle.
 ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
   requireOwnRenderer(event.sender)
   return droppedFolderPaths(await parseDroppedFolderPaths(value))
@@ -828,10 +849,13 @@ ipcMain.handle('harness:revealPath', (event, value: unknown) => {
   shell.showItemInFolder(revealablePath(value))
 })
 
-ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootValue: unknown) => {
-  requireOwnRenderer(event.sender)
-  shell.showItemInFolder(projectFilePath(value, projectRootValue))
-})
+ipcMain.handle(
+  'harness:revealProjectFile',
+  async (event, value: unknown, projectRootValue: unknown) => {
+    requireOwnRenderer(event.sender)
+    shell.showItemInFolder(await projectFilePath(value, projectRootValue))
+  },
+)
 
 ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
@@ -845,7 +869,14 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (!waitingForUpdateCleanup && appUpdater?.state().status === 'downloading') {
+      waitingForUpdateCleanup = true
+      event.preventDefault()
+      // Finish detaching a mounted update DMG before the process exits.
+      void Promise.resolve(appUpdater.dispose()).finally(() => app.quit())
+      return
+    }
     appIsQuitting = true
     previewCaptures.cancelAll()
     mainWindowStatePersistence?.saveAndStop()
@@ -862,6 +893,7 @@ if (ownsSingleInstance) {
 
   void app.whenReady().then(async () => {
     logStartupMilestone('app-ready')
+    await mkdir(productDataPath, { recursive: true, mode: 0o700 })
     diagnostics = new LocalDiagnostics(localDiagnosticsDirectory(app.getPath('userData')))
     process.on('uncaughtExceptionMonitor', (error) =>
       diagnostics?.recordSync('main crash', error.stack ?? String(error)),
@@ -871,9 +903,9 @@ if (ownsSingleInstance) {
     logStartupMilestone('diagnostics-ready')
 
     appUpdater = createAppUpdateController({
-      loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
+      loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer,
+      enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
@@ -1023,16 +1055,28 @@ function configureRendererPermissions(): void {
   // enumeration) never consults the request handler below and defaults to
   // permissive, so it needs its own answer.
   session.defaultSession.setPermissionCheckHandler(
-    (webContents, permission) =>
-      isOwnRendererPermission(permission) && webContents !== null && isOwnRenderer(webContents),
+    (webContents, permission, _origin, details) =>
+      webContents !== null &&
+      webContents === mainWindow?.webContents &&
+      isOwnRenderer(webContents) &&
+      details?.isMainFrame === true &&
+      isOwnRendererPermission(permission, details.mediaType),
   )
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
-      if (permission !== 'media') {
-        callback(isOwnRendererPermission(permission) && isOwnRenderer(webContents))
+      if (
+        webContents !== mainWindow?.webContents ||
+        !isOwnRenderer(webContents) ||
+        details?.isMainFrame !== true
+      ) {
+        callback(false)
         return
       }
-      if (!isOwnRenderer(webContents) || !allowsMicrophoneRequest(details)) {
+      if (permission !== 'media') {
+        callback(isOwnRendererPermission(permission))
+        return
+      }
+      if (!allowsMicrophoneRequest(details)) {
         callback(false)
         return
       }
@@ -1061,7 +1105,18 @@ function requireOwnRenderer(webContents: WebContents): void {
 
 function isOwnRenderer(webContents: WebContents): boolean {
   const url = webContents.getURL()
-  return devServer ? sameOrigin(url, devServer) : url.startsWith('file:')
+  if (devServer) return sameOrigin(url, devServer)
+  // Only the file the app itself loaded is our renderer — a bare scheme check
+  // would trust any file: page that ever reaches this session.
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'file:') return false
+    parsed.hash = ''
+    parsed.search = ''
+    return fileURLToPath(parsed) === rendererIndexPath()
+  } catch {
+    return false
+  }
 }
 
 app.on('window-all-closed', () => {

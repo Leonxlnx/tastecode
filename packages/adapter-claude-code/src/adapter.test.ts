@@ -727,6 +727,72 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it.each([undefined, 'medium', 'high', 'xhigh', 'max'])(
+    'keeps a new session when the first turn lowers effort from %s',
+    async (effort) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      try {
+        const thread = await adapter.startThread('/repo', { effort })
+        const sessionId = fake.inputs[0]!.options.sessionId
+        await adapter.sendTurn(thread.id, 'Start the design brief', [], { effort: 'low' })
+
+        expect(fake.queries).toHaveLength(2)
+        expect(fake.queries[0]!.closed).toBe(true)
+        expect(fake.inputs[1]!.options.sessionId).toBe(sessionId)
+        expect(fake.inputs[1]!.options.resume).toBeUndefined()
+        expect(fake.inputs[1]!.options.effort).toBe('low')
+        const prompts = fake.inputs[1]!.prompt[Symbol.asyncIterator]()
+        expect((await prompts.next()).value?.message.content).toEqual([
+          { type: 'text', text: 'Start the design brief' },
+        ])
+
+        fake.queries[1]!.emitMessage(resultMessage(false))
+        await tick()
+        await adapter.sendTurn(thread.id, 'Build the design', [], { effort: 'high' })
+        expect(fake.inputs[2]!.options.resume).toBe('session-1')
+        expect(fake.inputs[2]!.options.sessionId).toBeUndefined()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('preserves saved history when effort changes before the first resumed turn', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const thread = await adapter.resumeThread('claude-existing', '/repo', { effort: 'high' })
+      await adapter.sendTurn(thread.id, 'Start the design brief', [], { effort: 'low' })
+
+      expect(fake.queries).toHaveLength(2)
+      expect(fake.inputs[1]!.options.resume).toBe('existing')
+      expect(fake.inputs[1]!.options.sessionId).toBeUndefined()
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('resets resume eligibility when a used adapter opens a new thread', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const first = await adapter.startThread('/repo')
+      await adapter.sendTurn(first.id, 'One')
+      fake.queries[0]!.emitMessage(resultMessage(false))
+      await tick()
+      await adapter.dispose()
+
+      const next = await adapter.startThread('/repo', { effort: 'high' })
+      const sessionId = fake.inputs[1]!.options.sessionId
+      await adapter.sendTurn(next.id, 'Start the design brief', [], { effort: 'low' })
+      expect(fake.inputs[2]!.options.sessionId).toBe(sessionId)
+      expect(fake.inputs[2]!.options.resume).toBeUndefined()
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('resumes through a fresh SDK query when effort changes between turns', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -918,6 +984,14 @@ describe('Claude Agent SDK session', () => {
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
       {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
         value: 'sonnet',
         resolvedModel: 'claude-sonnet-5',
         displayName: 'Sonnet',
@@ -941,6 +1015,7 @@ describe('Claude Agent SDK session', () => {
         isDefault: model.isDefault,
       })),
     ).toEqual([
+      { id: 'claude-fable-5-1[1m]', displayName: 'Claude Fable 5.1', isDefault: false },
       { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
       { id: 'opus[1m]', displayName: 'Claude Opus 5', isDefault: true },
       { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },

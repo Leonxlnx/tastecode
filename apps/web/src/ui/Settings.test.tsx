@@ -54,14 +54,11 @@ function renderSettings(
       themeColorScheme="dark"
       themePreference="system"
       onThemePreferenceChange={() => {}}
-      fontPreference="geist"
-      onFontPreferenceChange={() => {}}
-      accentPreference="neutral"
-      onAccentPreferenceChange={() => {}}
-      backdropPreference="default"
-      onBackdropPreferenceChange={() => {}}
-      sidebarGlass={0}
-      onSidebarGlassChange={() => {}}
+      appearancePreferences={{
+        light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+        dark: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+      }}
+      onAppearancePreferenceChange={() => {}}
       showMacOSFontSmoothing={false}
       macOSFontSmoothing={true}
       onMacOSFontSmoothingChange={() => {}}
@@ -144,12 +141,14 @@ describe('settings viewport layout', () => {
       'dark',
     ])
 
-    const details = screen.getByRole('region', { name: 'Appearance controls' })
+    expect(screen.getByRole('heading', { name: 'Light mode' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Dark mode' })).toBeTruthy()
+    const details = screen.getByRole('region', { name: 'Dark mode' })
     expect(
       within(details)
         .getAllByRole('combobox')
         .map((control) => control.getAttribute('aria-label')),
-    ).toEqual(['Interface font', 'Sidebar translucency'])
+    ).toEqual(['Dark mode theme', 'Interface font', 'Sidebar translucency'])
     expect(within(details).getByRole('button', { name: 'Accent palette: #4C9DFF' })).toBeTruthy()
     expect(within(details).getByRole('button', { name: 'Background: #0F0F0F' })).toBeTruthy()
   })
@@ -229,7 +228,9 @@ describe('settings dialog keyboard behavior', () => {
     renderSettings()
     const dialog = screen.getByRole('dialog', { name: 'Settings' })
     const first = screen.getByRole('button', { name: 'Back to app' })
-    const last = screen.getByRole('combobox', { name: 'Sidebar translucency' })
+    const last = within(screen.getByRole('region', { name: 'Dark mode' })).getByRole('combobox', {
+      name: 'Sidebar translucency',
+    })
 
     last.focus()
     fireEvent.keyDown(last, { key: 'Tab' })
@@ -270,7 +271,10 @@ describe('settings dialog keyboard behavior', () => {
   it('leaves Escape to a nested control that handles it', () => {
     const onClose = vi.fn()
     renderSettings({ onClose })
-    const nestedControl = screen.getByRole('combobox', { name: 'Sidebar translucency' })
+    const nestedControl = within(screen.getByRole('region', { name: 'Dark mode' })).getByRole(
+      'combobox',
+      { name: 'Sidebar translucency' },
+    )
     nestedControl.addEventListener('keydown', (event) => event.preventDefault())
 
     nestedControl.focus()
@@ -775,14 +779,11 @@ describe('model settings', () => {
         themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
-        fontPreference="geist"
-        onFontPreferenceChange={() => {}}
-        accentPreference="neutral"
-        onAccentPreferenceChange={() => {}}
-        backdropPreference="default"
-        onBackdropPreferenceChange={() => {}}
-        sidebarGlass={0}
-        onSidebarGlassChange={() => {}}
+        appearancePreferences={{
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+        }}
+        onAppearancePreferenceChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
@@ -901,14 +902,11 @@ describe('model settings', () => {
         themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
-        fontPreference="geist"
-        onFontPreferenceChange={() => {}}
-        accentPreference="neutral"
-        onAccentPreferenceChange={() => {}}
-        backdropPreference="default"
-        onBackdropPreferenceChange={() => {}}
-        sidebarGlass={0}
-        onSidebarGlassChange={() => {}}
+        appearancePreferences={{
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+        }}
+        onAppearancePreferenceChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
@@ -968,14 +966,11 @@ describe('model settings', () => {
         themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
-        fontPreference="geist"
-        onFontPreferenceChange={() => {}}
-        accentPreference="neutral"
-        onAccentPreferenceChange={() => {}}
-        backdropPreference="default"
-        onBackdropPreferenceChange={() => {}}
-        sidebarGlass={0}
-        onSidebarGlassChange={() => {}}
+        appearancePreferences={{
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+        }}
+        onAppearancePreferenceChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
@@ -1130,14 +1125,11 @@ describe('provider settings', () => {
         themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
-        fontPreference="geist"
-        onFontPreferenceChange={() => {}}
-        accentPreference="neutral"
-        onAccentPreferenceChange={() => {}}
-        backdropPreference="default"
-        onBackdropPreferenceChange={() => {}}
-        sidebarGlass={0}
-        onSidebarGlassChange={() => {}}
+        appearancePreferences={{
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+        }}
+        onAppearancePreferenceChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
@@ -1248,14 +1240,11 @@ describe('provider settings', () => {
         themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
-        fontPreference="geist"
-        onFontPreferenceChange={() => {}}
-        accentPreference="neutral"
-        onAccentPreferenceChange={() => {}}
-        backdropPreference="default"
-        onBackdropPreferenceChange={() => {}}
-        sidebarGlass={0}
-        onSidebarGlassChange={() => {}}
+        appearancePreferences={{
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+        }}
+        onAppearancePreferenceChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}
@@ -1407,14 +1396,11 @@ describe('provider settings', () => {
         themeColorScheme="dark"
         themePreference="system"
         onThemePreferenceChange={() => {}}
-        fontPreference="geist"
-        onFontPreferenceChange={() => {}}
-        accentPreference="neutral"
-        onAccentPreferenceChange={() => {}}
-        backdropPreference="default"
-        onBackdropPreferenceChange={() => {}}
-        sidebarGlass={0}
-        onSidebarGlassChange={() => {}}
+        appearancePreferences={{
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+        }}
+        onAppearancePreferenceChange={() => {}}
         showMacOSFontSmoothing={false}
         macOSFontSmoothing={true}
         onMacOSFontSmoothingChange={() => {}}

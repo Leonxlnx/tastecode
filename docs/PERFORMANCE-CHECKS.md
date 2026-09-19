@@ -23,10 +23,11 @@ Other platforms use working-set bytes. A missing footprint falls back to the lar
 working-set accounting for that process; missing or zero data fails the gate.
 
 GPU resources can retire several seconds after the final paint. Idle measurement waits
-for four samples at least one second apart with the same process identities and at most
+for four samples whose capture starts are at least one second apart with the same process identities and at most
 2% variation across the whole window. Every sample in that window must be below
 500,000,000 bytes. The wait ends after ten seconds and fails if memory does not settle.
-The report retains every sample and the transient peak. It does not force garbage
+OS read time is included in the sampling interval, so a slow read does not add another
+full second of delay. The report retains every sample and the transient peak. It does not force garbage
 collection, unload the page, purge caches, or change GPU flags.
 
 Keep the machine otherwise quiet during measurement. A failure is a failed check; inspect

@@ -63,8 +63,8 @@ export function AppearanceColorPicker<Value extends string>(props: {
         className="appearance-color"
         style={
           {
-            backgroundColor: props.color,
-            color: colorForeground(props.color),
+            '--appearance-color': props.color,
+            '--appearance-color-foreground': colorForeground(props.color),
             '--control-pressed': props.color,
           } as CSSProperties
         }
