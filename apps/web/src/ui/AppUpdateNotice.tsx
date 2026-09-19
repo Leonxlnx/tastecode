@@ -12,6 +12,10 @@ export function AppUpdateNotice() {
   const [state, setState] = useState<AppUpdateState>()
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
+  const visible = !!state && ['downloading', 'ready', 'error'].includes(state.status)
+  useEffect(() => {
+    if (visible) void import('../styles/app-update.css')
+  }, [visible])
   useEffect(() => {
     let initial = true
     const off = onAppUpdateState((next) => {
@@ -28,7 +32,7 @@ export function AppUpdateNotice() {
       off()
     }
   }, [])
-  if (!state || !['downloading', 'ready', 'error'].includes(state.status)) return null
+  if (!state || !visible) return null
   const downloading = state.status === 'downloading'
   const retry = state.status === 'error' || failed
   const label = retry
