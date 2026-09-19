@@ -29,6 +29,12 @@ describe('GitHub Markdown image CSP', () => {
     expect(directives.get('img-src')).not.toEqual(expect.arrayContaining(['*']))
     expect(directives.get('img-src')).not.toContain('https:')
     expect(directives.get('default-src')).toEqual(["'self'"])
-    expect(directives.get('connect-src')).toEqual(["'self'", '__HARNESS_SERVER_ORIGIN__'])
+    // The loopback ws wildcard exists so HARNESS_PORT can move the socket at
+    // runtime; keep it scoped to 127.0.0.1 — never a bare `ws:` or `*`.
+    expect(directives.get('connect-src')).toEqual([
+      "'self'",
+      '__HARNESS_SERVER_ORIGIN__',
+      'ws://127.0.0.1:*',
+    ])
   })
 })
