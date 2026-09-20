@@ -54,6 +54,7 @@ import { fetchLatestRelease } from './release-check.js'
 import {
   autoHidesMenuBar,
   createApplicationMenuTemplate,
+  dispatchMenuRole,
   menuItemForKeyInput,
   type MenuKeyInput,
 } from './app-menu.js'
@@ -859,54 +860,11 @@ function dispatchMenuAccelerator(window: BrowserWindow, input: MenuKeyInput): bo
     item.click({} as MenuItem, window, { triggeredByAccelerator: true } as ElectronKeyboardEvent)
     return true
   }
-  const contents = window.webContents
-  switch (item.role) {
-    case 'quit':
-      app.quit()
-      return true
-    case 'close':
-      window.close()
-      return true
-    case 'minimize':
-    case 'zoom':
-      window.minimize()
-      return true
-    case 'togglefullscreen':
-      window.setFullScreen(!window.isFullScreen())
-      return true
-    case 'reload':
-      contents.reload()
-      return true
-    case 'forceReload':
-      contents.reloadIgnoringCache()
-      return true
-    case 'toggleDevTools':
-      contents.toggleDevTools()
-      return true
-    case 'undo':
-      contents.undo()
-      return true
-    case 'redo':
-      contents.redo()
-      return true
-    case 'cut':
-      contents.cut()
-      return true
-    case 'copy':
-      contents.copy()
-      return true
-    case 'paste':
-      contents.paste()
-      return true
-    case 'pasteAndMatchStyle':
-      contents.pasteAndMatchStyle()
-      return true
-    case 'selectAll':
-      contents.selectAll()
-      return true
-    default:
-      return false
-  }
+  return dispatchMenuRole(item.role, {
+    quit: () => app.quit(),
+    window,
+    contents: window.webContents,
+  })
 }
 
 function sendNativeMenuAction(action: NativeMenuAction): void {

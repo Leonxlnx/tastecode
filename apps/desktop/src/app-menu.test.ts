@@ -4,10 +4,12 @@ import {
   acceleratorMatches,
   autoHidesMenuBar,
   createApplicationMenuTemplate,
+  dispatchMenuRole,
   electronAccelerator,
   menuItemForKeyInput,
   roleAccelerator,
   type MenuKeyInput,
+  type MenuRoleTarget,
 } from './app-menu.js'
 import {
   NATIVE_MENU_ACTIONS,
@@ -186,6 +188,75 @@ describe('application menu', () => {
     expect(parseNativeMenuShortcuts({ toggleSidebar: { key: 'b', command: true } })).toBeUndefined()
     expect(parseNativeMenuShortcuts(new Date())).toBeUndefined()
     expect(parseNativeMenuShortcuts(new Map())).toBeUndefined()
+  })
+})
+
+describe('dispatchMenuRole', () => {
+  function targetDouble() {
+    return {
+      quit: vi.fn(),
+      window: {
+        close: vi.fn(),
+        isFullScreen: vi.fn(() => false),
+        isMaximized: vi.fn(() => false),
+        maximize: vi.fn(),
+        minimize: vi.fn(),
+        setFullScreen: vi.fn(),
+        unmaximize: vi.fn(),
+      },
+      contents: {
+        copy: vi.fn(),
+        cut: vi.fn(),
+        paste: vi.fn(),
+        pasteAndMatchStyle: vi.fn(),
+        redo: vi.fn(),
+        reload: vi.fn(),
+        reloadIgnoringCache: vi.fn(),
+        selectAll: vi.fn(),
+        toggleDevTools: vi.fn(),
+        undo: vi.fn(),
+      },
+    } satisfies MenuRoleTarget
+  }
+
+  it('maps window roles to the matching window call', () => {
+    const target = targetDouble()
+
+    expect(dispatchMenuRole('quit', target)).toBe(true)
+    expect(target.quit).toHaveBeenCalledOnce()
+    expect(dispatchMenuRole('close', target)).toBe(true)
+    expect(target.window.close).toHaveBeenCalledOnce()
+    expect(dispatchMenuRole('minimize', target)).toBe(true)
+    expect(target.window.minimize).toHaveBeenCalledOnce()
+    expect(dispatchMenuRole('togglefullscreen', target)).toBe(true)
+    expect(target.window.setFullScreen).toHaveBeenCalledWith(true)
+  })
+
+  it('maps edit and devtools roles to the matching webContents call', () => {
+    const target = targetDouble()
+
+    for (const [role, call] of [
+      ['reload', 'reload'],
+      ['forceReload', 'reloadIgnoringCache'],
+      ['toggleDevTools', 'toggleDevTools'],
+      ['undo', 'undo'],
+      ['redo', 'redo'],
+      ['cut', 'cut'],
+      ['copy', 'copy'],
+      ['paste', 'paste'],
+      ['pasteAndMatchStyle', 'pasteAndMatchStyle'],
+      ['selectAll', 'selectAll'],
+    ] as const) {
+      expect(dispatchMenuRole(role, target)).toBe(true)
+      expect(target.contents[call]).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('returns false for roles without a dispatched equivalent', () => {
+    const target = targetDouble()
+
+    expect(dispatchMenuRole('about', target)).toBe(false)
+    expect(dispatchMenuRole(undefined, target)).toBe(false)
   })
 })
 

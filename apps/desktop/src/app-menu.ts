@@ -1,4 +1,4 @@
-import type { MenuItemConstructorOptions } from 'electron'
+import type { BrowserWindow, MenuItemConstructorOptions, WebContents } from 'electron'
 import type { NativeMenuAction, NativeMenuShortcut, NativeMenuShortcuts } from './menu-contract.js'
 
 type AppMenuOptions = {
@@ -309,6 +309,92 @@ export function menuItemForKeyInput(
     if (hit) return hit
   }
   return undefined
+}
+
+/**
+ * The window and webContents surface a dispatched menu role touches. The
+ * shape is structural so tests do not need an Electron BrowserWindow.
+ */
+export type MenuRoleTarget = {
+  quit: () => void
+  window: Pick<
+    BrowserWindow,
+    | 'close'
+    | 'isFullScreen'
+    | 'isMaximized'
+    | 'maximize'
+    | 'minimize'
+    | 'setFullScreen'
+    | 'unmaximize'
+  >
+  contents: Pick<
+    WebContents,
+    | 'copy'
+    | 'cut'
+    | 'paste'
+    | 'pasteAndMatchStyle'
+    | 'redo'
+    | 'reload'
+    | 'reloadIgnoringCache'
+    | 'selectAll'
+    | 'toggleDevTools'
+    | 'undo'
+  >
+}
+
+/**
+ * Runs the call a menu role maps to. Returns false for roles with no
+ * Linux-side equivalent so the keypress falls through untouched.
+ */
+export function dispatchMenuRole(role: MenuItem['role'], target: MenuRoleTarget): boolean {
+  const { contents, window } = target
+  switch (role) {
+    case 'quit':
+      target.quit()
+      return true
+    case 'close':
+      window.close()
+      return true
+    case 'minimize':
+    case 'zoom':
+      window.minimize()
+      return true
+    case 'togglefullscreen':
+      window.setFullScreen(!window.isFullScreen())
+      return true
+    case 'reload':
+      contents.reload()
+      return true
+    case 'forceReload':
+      contents.reloadIgnoringCache()
+      return true
+    case 'toggleDevTools':
+      contents.toggleDevTools()
+      return true
+    case 'undo':
+      contents.undo()
+      return true
+    case 'redo':
+      contents.redo()
+      return true
+    case 'cut':
+      contents.cut()
+      return true
+    case 'copy':
+      contents.copy()
+      return true
+    case 'paste':
+      contents.paste()
+      return true
+    case 'pasteAndMatchStyle':
+      contents.pasteAndMatchStyle()
+      return true
+    case 'selectAll':
+      contents.selectAll()
+      return true
+    default:
+      return false
+  }
 }
 
 export function electronAccelerator(
