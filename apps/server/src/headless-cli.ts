@@ -1,5 +1,5 @@
 import process from 'node:process'
-import { DEFAULT_PORT } from './server-config.js'
+import { DEFAULT_PORT, parsePort } from './server-config.js'
 
 type CliOptions = {
   command: 'serve' | 'help'
@@ -59,15 +59,6 @@ export function parseCliOptions(args: string[], env: NodeJS.ProcessEnv = process
   }
 
   return { command, port }
-}
-
-function parsePort(value: string, source: string): number {
-  if (!/^\d+$/.test(value)) throw new Error(`${source} must be a whole port number.`)
-  const port = Number(value)
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`${source} must be between 1 and 65535.`)
-  }
-  return port
 }
 
 function installShutdownHandlers(server: { close(): Promise<void> }): void {
