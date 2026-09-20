@@ -479,23 +479,27 @@ function startOwnedServer(): void {
         if (portConflict === undefined) portConflict = { port: conflictPort, checked: false }
         if (!portConflict.checked) {
           portConflict.checked = true
-          void probePortOwner('127.0.0.1', conflictPort).then((owner) => {
-            if (owner === 'harness') {
-              console.log(
-                `[desktop] port ${conflictPort} is held by a compatible server; adopting it`,
-              )
-              serverSupervisor?.stop()
-              if (!startupServerReady) {
-                startupServerReady = true
-                logStartupMilestone('server-ready')
-                finishStartupBenchmarkIfReady()
+          void import('@harness/contracts')
+            .then(({ PROTOCOL_VERSION }) =>
+              probePortOwner('127.0.0.1', conflictPort, PROTOCOL_VERSION),
+            )
+            .then((owner) => {
+              if (owner === 'harness') {
+                console.log(
+                  `[desktop] port ${conflictPort} is held by a compatible server; adopting it`,
+                )
+                serverSupervisor?.stop()
+                if (!startupServerReady) {
+                  startupServerReady = true
+                  logStartupMilestone('server-ready')
+                  finishStartupBenchmarkIfReady()
+                }
+              } else if (owner === 'foreign') {
+                serverSupervisor?.stop()
+                portConflictDialog(conflictPort)
               }
-            } else if (owner === 'foreign') {
-              serverSupervisor?.stop()
-              portConflictDialog(conflictPort)
-            }
-            // 'unknown' keeps the normal restart path: the port may free itself.
-          })
+              // 'unknown' keeps the normal restart path: the port may free itself.
+            })
         }
       }
     },
