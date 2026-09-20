@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, opendir, rm, symlink, writeFile } from 'node:fs/promise
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import {
   compareWorkspaceEntries,
   listWorkspaceDirectory,
@@ -9,6 +10,8 @@ import {
   searchWorkspaceFiles,
   type WorkspaceFileEntry,
 } from './workspace-files.js'
+
+const canSymlink = canCreateSymlinks()
 
 const temporary: string[] = []
 
@@ -61,16 +64,23 @@ describe('workspace files', () => {
     ])
   })
 
-  it('lists an empty directory and ignores child symlinks', async () => {
+  it('lists an empty directory and ignores child links', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-empty-'))
     const outside = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-linked-file-'))
     temporary.push(root, outside)
 
     await expect(listWorkspaceDirectory(root)).resolves.toEqual({ path: '', entries: [] })
 
-    const target = path.join(outside, 'target.txt')
-    await writeFile(target, 'outside')
-    await symlink(target, path.join(root, 'linked.txt'))
+    // A directory junction stands in for the link on hosts that deny symlinks,
+    // so the listing rule stays covered on Windows without Developer Mode.
+    if (canSymlink) {
+      const target = path.join(outside, 'target.txt')
+      await writeFile(target, 'outside')
+      await symlink(target, path.join(root, 'linked.txt'))
+    } else {
+      await mkdir(path.join(outside, 'target-dir'))
+      await symlink(outside, path.join(root, 'linked'), 'junction')
+    }
     await expect(listWorkspaceDirectory(root)).resolves.toEqual({ path: '', entries: [] })
   })
 
@@ -91,7 +101,9 @@ describe('workspace files', () => {
     const outside = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-outside-'))
     temporary.push(outside)
     await writeFile(path.join(outside, 'outside.txt'), 'outside')
-    await symlink(outside, path.join(root, 'linked'))
+    // A junction keeps this covered where symlink creation is denied.
+    if (canSymlink) await symlink(outside, path.join(root, 'linked'))
+    else await symlink(outside, path.join(root, 'linked'), 'junction')
 
     await expect(listWorkspaceDirectory(root, 'linked')).rejects.toThrow('path escapes')
     await expect(readWorkspaceTextFile(root, '../outside.txt')).rejects.toThrow('path escapes')
