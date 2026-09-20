@@ -38,6 +38,38 @@ export function ozonePlatformForLinux(env: LinuxDisplayEnv): LinuxOzonePlatform 
   return undefined
 }
 
+/**
+ * The platform worth relaunching with, or undefined when the platform
+ * Chromium resolved already reaches a display — or when neither protocol can.
+ *
+ * Chromium resolves the platform before this script runs: an explicit
+ * --ozone-platform switch wins, otherwise XDG_SESSION_TYPE=wayland selects
+ * wayland and every other session gets x11 (ui::SetOzonePlatformForLinuxIfNeeded).
+ * A relaunch only helps when that resolved platform's own display is missing
+ * while the other protocol's is reachable; comparing the probe to the switch
+ * value instead relaunched every healthy session whose environment simply
+ * preferred a different platform.
+ */
+export function ozoneRelaunchTarget(
+  env: LinuxDisplayEnv,
+  switchValue: string,
+): LinuxOzonePlatform | undefined {
+  const resolved: LinuxOzonePlatform =
+    switchValue === 'wayland' || switchValue === 'x11'
+      ? switchValue
+      : env.xdgSessionType === 'wayland'
+        ? 'wayland'
+        : 'x11'
+  const resolvedReachable =
+    resolved === 'wayland'
+      ? Boolean(env.waylandDisplay) || env.hasWaylandSocket
+      : Boolean(env.display)
+  if (resolvedReachable) return undefined
+  // The resolved platform names nothing reachable; the probe answers whether
+  // the other protocol can be — or returns undefined when nothing can.
+  return ozonePlatformForLinux(env)
+}
+
 /** Collects the display environment, probing for the default Wayland socket. */
 export function linuxDisplayEnv(environment: NodeJS.ProcessEnv = process.env): LinuxDisplayEnv {
   const xdgRuntimeDir = environment['XDG_RUNTIME_DIR']

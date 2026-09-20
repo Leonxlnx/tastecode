@@ -8,6 +8,7 @@ import {
   argvSpecifiesOzonePlatform,
   linuxDisplayEnv,
   ozonePlatformForLinux,
+  ozoneRelaunchTarget,
 } from './ozone-platform.js'
 
 const dirs: string[] = []
@@ -140,6 +141,142 @@ describe('ozonePlatformForLinux', () => {
         xdgSessionType: undefined,
         hasWaylandSocket: false,
       }),
+    ).toBeUndefined()
+  })
+})
+
+describe('ozoneRelaunchTarget', () => {
+  it('does not relaunch a healthy wayland session', () => {
+    // COSMIC/Wayland exports both variables: DISPLAY via XWayland. The
+    // resolved platform (wayland) reaches its display, so nothing happens —
+    // the old probe-vs-switch comparison relaunched here on every launch.
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: 'wayland-1',
+          display: ':0',
+          xdgSessionType: 'wayland',
+          hasWaylandSocket: true,
+        },
+        '',
+      ),
+    ).toBeUndefined()
+  })
+
+  it('does not relaunch a session that exports both displays without a hint', () => {
+    // Some sessions leave XDG_SESSION_TYPE unset or at a value Chromium does
+    // not map to wayland; Chromium resolves x11, and DISPLAY is reachable.
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: 'wayland-1',
+          display: ':0',
+          xdgSessionType: undefined,
+          hasWaylandSocket: true,
+        },
+        '',
+      ),
+    ).toBeUndefined()
+  })
+
+  it('relaunches wayland when only WAYLAND_DISPLAY survives the launcher', () => {
+    // SSH, cron, systemd units and `env -i` launchers keep WAYLAND_DISPLAY but
+    // drop XDG_SESSION_TYPE and DISPLAY: Chromium resolves x11 and exits with
+    // "Missing X server or $DISPLAY".
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: 'wayland-1',
+          display: undefined,
+          xdgSessionType: undefined,
+          hasWaylandSocket: false,
+        },
+        '',
+      ),
+    ).toBe('wayland')
+  })
+
+  it('relaunches wayland when only the runtime-dir socket survives', () => {
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: undefined,
+          display: undefined,
+          xdgSessionType: undefined,
+          hasWaylandSocket: true,
+        },
+        '',
+      ),
+    ).toBe('wayland')
+  })
+
+  it('does not relaunch an x11-only session', () => {
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: undefined,
+          display: ':0',
+          xdgSessionType: 'x11',
+          hasWaylandSocket: false,
+        },
+        '',
+      ),
+    ).toBeUndefined()
+  })
+
+  it('relaunches x11 when a resolved wayland display is gone but DISPLAY exists', () => {
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: undefined,
+          display: ':0',
+          xdgSessionType: 'wayland',
+          hasWaylandSocket: false,
+        },
+        '',
+      ),
+    ).toBe('x11')
+  })
+
+  it('does nothing when no display is reachable', () => {
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: undefined,
+          display: undefined,
+          xdgSessionType: undefined,
+          hasWaylandSocket: false,
+        },
+        '',
+      ),
+    ).toBeUndefined()
+  })
+
+  it('lets an explicit switch stand in for the resolved platform', () => {
+    // A switch injected outside argv (an earlier appendSwitch or a launcher
+    // wrapper) resolves wayland; with no wayland display but DISPLAY present
+    // the relaunch target is x11.
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: undefined,
+          display: ':0',
+          xdgSessionType: undefined,
+          hasWaylandSocket: false,
+        },
+        'wayland',
+      ),
+    ).toBe('x11')
+    expect(
+      ozoneRelaunchTarget(
+        {
+          waylandDisplay: 'wayland-1',
+          display: ':0',
+          xdgSessionType: undefined,
+          hasWaylandSocket: false,
+        },
+        'x11',
+      ),
     ).toBeUndefined()
   })
 })

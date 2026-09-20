@@ -87,7 +87,7 @@ import {
 import {
   argvSpecifiesOzonePlatform,
   linuxDisplayEnv,
-  ozonePlatformForLinux,
+  ozoneRelaunchTarget,
 } from './ozone-platform.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
@@ -269,12 +269,15 @@ const previewCaptures = new PreviewCaptureOwner({
 // flag doubles as the stop condition for the second hop.
 function relaunchWithReachableOzonePlatform(): void {
   if (argvSpecifiesOzonePlatform(process.argv)) return
-  const platform = ozonePlatformForLinux(linuxDisplayEnv())
-  if (!platform || platform === app.commandLine.getSwitchValue('ozone-platform')) return
-  console.info(
-    `[desktop] no display for the resolved ozone platform; relaunching with --ozone-platform=${platform}`,
+  const target = ozoneRelaunchTarget(
+    linuxDisplayEnv(),
+    app.commandLine.getSwitchValue('ozone-platform'),
   )
-  app.relaunch({ args: [...process.argv.slice(1), `--ozone-platform=${platform}`] })
+  if (!target) return
+  console.info(
+    `[desktop] no display for the resolved ozone platform; relaunching with --ozone-platform=${target}`,
+  )
+  app.relaunch({ args: [...process.argv.slice(1), `--ozone-platform=${target}`] })
   app.exit(0)
 }
 
