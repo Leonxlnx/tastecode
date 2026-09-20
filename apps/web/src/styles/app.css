@@ -105,17 +105,19 @@
   -webkit-app-region: drag;
 }
 
-/* Renderer-drawn caption buttons for Linux, where the frameless window gets
-   no native controls. Slightly larger than .icon-btn so they are easy to hit. */
+/* Frameless-Linux caption buttons: hit areas fill the bar height, glyphs
+   stay small. */
 .titlebar__controls {
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  align-self: stretch;
   gap: 2px;
 }
 
 .icon-btn.titlebar__winbtn {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: auto;
+  border-radius: 0;
   color: var(--titlebar-symbol);
   -webkit-app-region: no-drag;
 }

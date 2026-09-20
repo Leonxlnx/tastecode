@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   IconCopy as Restore,
   IconLayoutSidebar as PanelLeft,
@@ -74,8 +74,20 @@ function TitleBarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const controls = useMemo(() => (isLinux() ? windowControlApi() : undefined), [])
+  // A frameless window has no native caption to double-click. Pointer events
+  // inside a -webkit-app-region: drag surface are consumed before they reach
+  // the DOM on some platforms, so the no-drag gaps and padding are the part
+  // of the bar this can guarantee — everywhere the event does arrive, it
+  // should behave like a caption.
+  const onTitlebarDoubleClick =
+    controls === undefined
+      ? undefined
+      : (event: ReactMouseEvent<HTMLElement>) => {
+          if (event.target instanceof Element && event.target.closest('button')) return
+          void controls.toggleMaximize()
+        }
   return (
-    <header className="titlebar">
+    <header className="titlebar" onDoubleClick={onTitlebarDoubleClick}>
       <button
         type="button"
         className="icon-btn icon-btn--always titlebar__toggle"
@@ -88,6 +100,8 @@ function TitleBarComponent(props: {
         <PanelLeft size={15} aria-hidden />
       </button>
       <span className="titlebar__drag-region" aria-hidden />
+      {/* No bridge: the WM still owns close (taskbar menu, Alt+F4), so the
+          bar renders without controls instead of drawing dead buttons. */}
       {controls !== undefined ? <LinuxWindowControls controls={controls} /> : null}
     </header>
   )

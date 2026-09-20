@@ -47,6 +47,29 @@ describe('TitleBar', () => {
     expect(harness.windowControl).toHaveBeenCalledWith('close')
   })
 
+  it('toggles maximize on a titlebar double-click outside its buttons', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64')
+    const harness = stubWindowControlBridge()
+    const view = render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
+
+    fireEvent.doubleClick(view.container.querySelector('.titlebar__drag-region')!)
+    expect(harness.windowControl).toHaveBeenCalledWith('toggle-maximize')
+
+    // Buttons keep their own behavior; a double-click on one must not toggle.
+    harness.windowControl.mockClear()
+    fireEvent.doubleClick(screen.getByRole('button', { name: 'Hide sidebar' }))
+    expect(harness.windowControl).not.toHaveBeenCalled()
+  })
+
+  it('ignores titlebar double-clicks when there is no window control API', () => {
+    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64')
+    const view = render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
+
+    expect(
+      fireEvent.doubleClick(view.container.querySelector('.titlebar__drag-region')!),
+    ).toBe(true)
+  })
+
   it('hides caption buttons on Linux without a bridge', () => {
     vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64')
     render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
