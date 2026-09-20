@@ -45,9 +45,14 @@ import {
  * validation is what keeps three client surfaces from silently drifting apart.
  */
 
-export const PROTOCOL_VERSION = 2
+/**
+ * Bumped whenever a client and server can no longer understand each other.
+ * Version 3: harnesses.* shapes went write-only (`environment` is now
+ * `environmentUpdates`/`environmentKeys` under strict schemas), which both
+ * directions of a version-2 pairing reject.
+ */
+export const PROTOCOL_VERSION = 3
 
-/** Bumped whenever a client and server can no longer understand each other. */
 export const ErrorCode = {
   BAD_REQUEST: 'bad_request',
   FORBIDDEN: 'forbidden',
