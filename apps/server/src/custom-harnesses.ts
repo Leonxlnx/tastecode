@@ -159,7 +159,21 @@ export class CustomHarnessStore {
   }
 
   list(): PublicCustomHarness[] {
-    return this.#read().harnesses.map(publicHarness)
+    try {
+      return this.#read().harnesses.map(publicHarness)
+    } catch (error) {
+      // Environment values are write-only, so a locked or absent credential
+      // store must not hide the entries themselves. Whatever #read could not
+      // finish — pending cleanup or the v1 migration — stays pending and
+      // still fails the next write.
+      const harnesses = this.#listStored()
+      console.warn(
+        `[custom-harnesses] listing entries while credential work is pending: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+      return harnesses
+    }
   }
 
   get(id: string): CustomHarness {
@@ -285,6 +299,24 @@ export class CustomHarnessStore {
       }
     }
     return environment
+  }
+
+  /**
+   * Public metadata read straight from the config file, skipping recovery
+   * and migration so an unreachable credential store cannot hide entries.
+   * Version 1 files still carry plaintext values; only the key names are
+   * exposed, matching the write-only contract.
+   */
+  #listStored(): PublicCustomHarness[] {
+    if (!existsSync(this.location)) return []
+    const file = parseConfig(readFileSync(this.location, 'utf8'))
+    if (file.version === 1) {
+      return file.harnesses.map((harness) => {
+        const { environment: _environment, ...metadata } = harness
+        return { ...metadata, environmentKeys: Object.keys(_environment ?? {}) }
+      })
+    }
+    return file.harnesses.map(publicHarness)
   }
 
   #applyValues(

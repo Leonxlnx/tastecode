@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CustomHarnessStore, type CustomHarnessCredentialStore } from './custom-harnesses.js'
 
 const roots: string[] = []
@@ -134,9 +134,21 @@ describe('custom harnesses', () => {
     credentials.failWrite = true
     const store = new CustomHarnessStore(location, credentials)
 
+    // Listing stays readable — key names are metadata — while reads and
+    // writes that need the values still surface the migration failure.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.list()).toEqual([
+        expect.objectContaining({ id: 'deepseek-pi', environmentKeys: ['TOKEN'] }),
+      ])
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+
     let failure = ''
     try {
-      store.list()
+      store.get('deepseek-pi')
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error)
     }
@@ -144,8 +156,44 @@ describe('custom harnesses', () => {
       'the original configuration was preserved. Unlock the OS credential store and try again',
     )
     expect(failure).not.toContain('blocked-migration-sentinel')
+    expect(() => store.upsert({ ...input(), displayName: 'Still blocked' })).toThrow(
+      'the original configuration was preserved',
+    )
     expect(readFileSync(location, 'utf8')).toBe(legacy)
     expect(readFileSync(location, 'utf8')).toContain('blocked-migration-sentinel')
+  })
+
+  it('keeps listing entries while credential cleanup waits for the store', () => {
+    const { location } = fixture()
+    const credentials = memoryCredentials()
+    const store = new CustomHarnessStore(location, credentials)
+    store.upsert({
+      ...input(),
+      environmentUpdates: { set: { TOKEN: 'first' }, unset: [] },
+    })
+    credentials.failRemove = true
+    expect(() =>
+      store.upsert({
+        ...input(),
+        environmentUpdates: { set: { TOKEN: 'second' }, unset: [] },
+      }),
+    ).toThrow('cleanup is pending')
+
+    // The obsolete reference cannot be removed while the store is locked,
+    // but that pending cleanup must not hide the harness from list().
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(store.list()).toEqual([
+        expect.objectContaining({ id: 'deepseek-pi', environmentKeys: ['TOKEN'] }),
+      ])
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+    expect(() => store.get('deepseek-pi')).toThrow('cleanup is pending')
+
+    credentials.failRemove = false
+    expect(store.get('deepseek-pi').environment).toEqual({ TOKEN: 'second' })
   })
 
   it('never treats a foreign credential reference as custom-environment cleanup', () => {
@@ -162,7 +210,11 @@ describe('custom harnesses', () => {
       }),
     )
 
-    expect(() => new CustomHarnessStore(location, credentials).list()).toThrow(
+    const store = new CustomHarnessStore(location, credentials)
+    // Reads tolerate the unreadable record — nothing in it is ever removed —
+    // but the next write still refuses to touch a foreign reference.
+    expect(store.list()).toEqual([])
+    expect(() => store.upsert({ ...input() })).toThrow(
       'invalid custom harness recovery record',
     )
     expect(credentials.values.get('model-connections/keep')).toBe('unrelated-secret')
