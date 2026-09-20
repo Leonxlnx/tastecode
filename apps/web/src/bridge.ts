@@ -144,12 +144,14 @@ export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)
 }
 
+// navigator.platform is deprecated; the user agent keeps the OS token and
+// stays correct inside Electron.
 export function isMacOS(): boolean {
-  return navigator.platform.startsWith('Mac')
+  return navigator.userAgent.includes('Mac')
 }
 
 export function isLinux(): boolean {
-  return navigator.platform.startsWith('Linux')
+  return navigator.userAgent.includes('Linux')
 }
 
 export type WindowControls = {

@@ -26,9 +26,12 @@ describe('settings status grammar', () => {
       <StateLabel state="checking" detail="Scan started" live />,
     )
     expect(screen.getByRole('status').textContent).toBe('Checking · Scan started')
+    expect(screen.getByRole('status').getAttribute('aria-label')).toBe('Checking · Scan started')
 
     rerender(<StateLabel state="ready" detail="Up to date" />)
     expect(container.querySelector('.state-label')?.getAttribute('role')).toBeNull()
+    // A plain span may not carry aria-label — the visible text already says it.
+    expect(container.querySelector('.state-label')?.getAttribute('aria-label')).toBeNull()
   })
 
   it('separates plain metadata from semantic states', () => {

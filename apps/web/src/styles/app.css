@@ -3113,7 +3113,7 @@
   border-radius: var(--r-lg);
 }
 
-.ghost:hover {
+.ghost:is(:hover, :focus-visible) {
   color: var(--text);
   background: var(--surface-3);
 }

@@ -35,7 +35,7 @@ describe('TitleBar', () => {
   })
 
   it('renders caption buttons on Linux when the bridge exposes window control', async () => {
-    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64')
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('X11; Linux x86_64')
     const harness = stubWindowControlBridge()
     render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
 
@@ -48,7 +48,7 @@ describe('TitleBar', () => {
   })
 
   it('toggles maximize on a titlebar double-click outside its buttons', () => {
-    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64')
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('X11; Linux x86_64')
     const harness = stubWindowControlBridge()
     const view = render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
 
@@ -62,7 +62,7 @@ describe('TitleBar', () => {
   })
 
   it('ignores titlebar double-clicks when there is no window control API', () => {
-    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64')
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('X11; Linux x86_64')
     const view = render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
 
     expect(
@@ -71,14 +71,14 @@ describe('TitleBar', () => {
   })
 
   it('hides caption buttons on Linux without a bridge', () => {
-    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Linux x86_64')
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('X11; Linux x86_64')
     render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
 
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
   })
 
   it('hides caption buttons off Linux even with a bridge', () => {
-    vi.spyOn(navigator, 'platform', 'get').mockReturnValue('Win32')
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Windows NT 10.0; Win64; x64')
     stubWindowControlBridge()
     render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
 

@@ -24,7 +24,8 @@ export function StateLabel(props: {
       className={`state-label is-${props.state}`}
       role={props.live ? 'status' : undefined}
       aria-atomic={props.live || undefined}
-      aria-label={title}
+      // aria-label is only valid with a role; a plain span must not carry one.
+      aria-label={props.live ? title : undefined}
       title={title}
     >
       <span className="state-label__state">{label}</span>
