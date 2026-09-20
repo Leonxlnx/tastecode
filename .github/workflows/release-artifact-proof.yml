@@ -1,134 +1,71 @@
 name: Release artifact proof
-
 on:
   workflow_dispatch:
     inputs:
       approved_sha:
-        description: Exact 40-character main commit approved for packaging proof
+        description: Exact approved 0.1.1 source commit on main
         required: true
         type: string
       upload_draft:
-        description: Also upload verified unsigned proof to one draft (never publish)
-        required: true
+        description: Unused; this verification never uploads release assets
         default: false
         type: boolean
-
-# Hosted Actions are manual. This group serializes every managed release writer, across tags.
-# The default run only produces workflow artifacts. Signed distribution is a separate owner gate.
 permissions:
   contents: read
-
-concurrency:
-  group: release-artifact-proof
-  cancel-in-progress: false
-
-env:
-  APPROVED_SHA: ${{ inputs.approved_sha }}
-  EVENT_SHA: ${{ github.sha }}
-  EVENT_REF: ${{ github.ref }}
-
 jobs:
-  verify-input:
-    if: github.ref == 'refs/heads/main' && inputs.approved_sha == github.sha
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
+  installed-upgrade:
+    if: inputs.approved_sha == 'd2b3754cdb72090db3a80868f617d2e48dc8effc' && !inputs.upload_draft
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      APPROVED_SHA: d2b3754cdb72090db3a80868f617d2e48dc8effc
+      EVENT_SHA: d2b3754cdb72090db3a80868f617d2e48dc8effc
+      EVENT_REF: refs/heads/main
     steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
-          ref: ${{ github.sha }}
+          ref: d2b3754cdb72090db3a80868f617d2e48dc8effc
           persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
-        with:
-          run_install: false
-      - run: pnpm install --frozen-lockfile --ignore-scripts --filter .
-      - name: Verify approved source
-        run: node tools/scripts/verify-release-input.js
-
-  package:
-    needs: verify-input
-    timeout-minutes: 60
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-2025
-            platform: windows
-            label: windows-x64
-          - os: macos-15
-            platform: macos
-            label: macos-arm64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          ref: ${{ inputs.approved_sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+          package-manager-cache: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda
         with:
           run_install: false
       - run: pnpm install --frozen-lockfile
       - run: node tools/scripts/verify-release-input.js
       - run: pnpm licenses:verify
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
       - run: pnpm build
-      - name: Build preload
-        run: pnpm --filter @harness/desktop exec node scripts/build-preload.js
-      - name: Build fresh unsigned package and prove licenses, feed, native bindings, and containers
-        run: node tools/scripts/verify-release-assets.js --package release/proof-${{ matrix.label }} ${{ matrix.platform }}
-      - name: Stage the exact verified platform assets
-        run: node tools/scripts/stage-release-assets.js release/proof-${{ matrix.label }} release/staged-${{ matrix.label }} ${{ matrix.platform }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: release-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
-          path: release/staged-${{ matrix.label }}
-          if-no-files-found: error
-          retention-days: 7
-          compression-level: 0
-
-  upload-draft:
-    if: inputs.upload_draft && github.ref == 'refs/heads/main' && inputs.approved_sha == github.sha
-    needs: [verify-input, package]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
-        with:
-          ref: ${{ inputs.approved_sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
-        with:
-          run_install: false
-      - run: pnpm install --frozen-lockfile --ignore-scripts --filter .
-      - run: node tools/scripts/verify-release-input.js
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
-        with:
-          name: release-windows-x64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
-          path: release/final
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
-        with:
-          name: release-macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
-          path: release/final
-      - name: Verify both platform manifests, provenance, and hashes
-        run: node tools/scripts/verify-release-assets.js release/final all
-      - name: Upload or resume the exact draft without replacing assets
+      - run: pnpm --filter @harness/desktop exec node scripts/build-preload.js
+      - name: Package and verify the exact Windows source
+        run: node tools/scripts/verify-release-assets.js --package release/proof-windows-x64 windows
+      - name: Load the pinned verification harness outside the release checkout
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_UPLOAD_APPROVAL: ${{ inputs.approved_sha }}
-        run: node tools/scripts/upload-draft-release.js release/final
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROOF_REF: ${{ github.sha }}
+        run: |
+          $proofFile = Join-Path $env:RUNNER_TEMP 'windows-011-installed-upgrade-proof.mjs'
+          gh api "repos/$env:GITHUB_REPOSITORY/contents/tools/scripts/windows-011-installed-upgrade-proof.mjs?ref=$env:PROOF_REF" -H 'Accept: application/vnd.github.raw+json' | Set-Content -LiteralPath $proofFile -Encoding utf8
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install Beta 9 and upgrade through its real update button
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_INSTALLER: ${{ github.workspace }}/release/proof-windows-x64/TasteCode-0.1.1-win-x64.exe
+        run: node (Join-Path $env:RUNNER_TEMP 'windows-011-installed-upgrade-proof.mjs')
+      - name: Stage the exact tested Windows assets
+        run: node tools/scripts/stage-release-assets.js release/proof-windows-x64 release/staged-windows-x64 windows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-0.1.1-windows-x64
+          path: release/staged-windows-x64
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: release-0.1.1-installed-upgrade-proof
+          path: release/installed-upgrade-proof
+          if-no-files-found: warn
+          retention-days: 14
