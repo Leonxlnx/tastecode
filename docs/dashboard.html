@@ -290,22 +290,20 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta"
-          >2026-09-20 main c8a96280 · Beta 9 published; follow-up fixes pending</span
-        >
+        <span class="meta">2026-09-20 main d2b3754c · 0.1.1 published for Windows and macOS</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
-          Pending the planned 0.1.1 release: Codex setup uses the official standalone installer
-          without requiring npm; Design repair validation retains its correction guard so a repeated
-          failure cannot launch unlimited turns; large history replies no longer consume the
-          live-update buffer allowance. Regression checks cover bounded repairs, a 10 MiB history
-          with concurrent updates over a real local WebSocket, five full-server history reloads
-          alongside 75 queue requests, and Windows installer command execution without npm.
-          Clean-macOS installation still needs platform verification before release.
+          Published in 0.1.1: Codex setup uses the official standalone installer without requiring
+          npm; Design repair validation retains its correction guard so a repeated failure cannot
+          launch unlimited turns; large history replies no longer consume the live-update buffer
+          allowance. Regression checks cover bounded repairs, a 10 MiB history with concurrent
+          updates over a real local WebSocket, five full-server history reloads alongside 75 queue
+          requests, and Windows installer command execution without npm. Packaged macOS installation
+          without npm or Node on PATH also passed.
         </p>
         <p>
           Follow-up Windows source checks: <code>pnpm lint</code>, <code>pnpm typecheck</code>,
@@ -315,13 +313,12 @@
           package and release-tool suites. The running installed app was not restarted.
         </p>
         <p>
-          <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.9">Beta 9</a>
-          is published from b65a844f with unsigned Windows x64 and signed, notarized macOS arm64
-          installers. An isolated Windows beta 7 update-button test passed installation, automatic
-          relaunch and chat/settings preservation. The macOS maintainer verified its installed beta
-          7 upgrade. Beta 7 users can update in Settings; beta 9 adds the sidebar update button.
-          <a href="./verification/beta9-release-2026-09-20/README.md">Release evidence and limits</a
-          >.
+          <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.1">0.1.1</a>
+          is published from d2b3754c with unsigned Windows x64 and signed, notarized macOS arm64
+          installers. Installed Beta 9 update tests preserved chats and settings on both platforms;
+          Windows automatic relaunch also passed. Public update discovery and both download URLs
+          pass. Beta 7 and Beta 9 users can update in Settings; Beta 9 also has the sidebar control.
+          <a href="./RELEASING.md#011-published">Release evidence and limits</a>.
         </p>
         <p>
           Desktop startup runs its core server and background provider probes from app storage,

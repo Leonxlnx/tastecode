@@ -12,19 +12,43 @@ release list and chooses the newest publication, including prereleases, regardle
 GitHub "Latest" badge. Downgrades remain disabled. A missing matching installer or SHA-256
 digest is an error; the app does not silently fall back to an older release.
 
-## 0.1.1 preparation
+## 0.1.1 published
 
-The next planned version is `0.1.1`. Its source changes address npm-free Codex installation,
-unbounded Design repair corrections, and local disconnections while large chat histories drain.
-Beta 9 remains the published release until both new installers are verified and published.
+[Version 0.1.1](https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.1) was published on
+2026-09-20 at 19:10 UTC from `d2b3754cdb72090db3a80868f617d2e48dc8effc`, with both installers
+and the GitHub Latest badge. It fixes npm-dependent Codex installation, unbounded Design
+repair corrections, and local disconnections when live updates arrive during large history
+replies. Windows remains unsigned by the release owner's choice; macOS is Developer ID
+signed, notarized and stapled.
 
-Merge the fixes and version change before selecting the final clean `main` commit. Windows
-and the macOS maintainer must build that exact commit as `0.1.1`; do not reuse a Beta 9 DMG
-or relabel an existing installer. macOS must verify Codex installation on a profile without
-npm, plus signing, notarization, and installation. Both platforms must verify an installed
-Beta 9 update with chat/settings preservation. Keep any `v0.1.1` release draft unpublished
-until both `TasteCode-0.1.1-win-x64.exe` and `TasteCode-0.1.1-mac-arm64.dmg` pass the release
-checks below. No final release commit is approved by this preparation note.
+The [Windows installed-upgrade run](https://github.com/Leonxlnx/tastecode/actions/runs/35528051951)
+built this exact source and passed the real Beta 9 Settings update button, installer checksum,
+NSIS replacement, automatic relaunch, and chat/settings preservation. The
+[macOS maintainer's report](https://github.com/Leonxlnx/tastecode/pull/1271#issuecomment-5751844653)
+records fresh-profile startup, Codex installation without npm or Node on PATH, signing,
+notarization, Gatekeeper, native bindings, a 2,000-message chat reopened three times, and a
+21,994,782-byte history response followed by another RPC on the same connection. The installed
+Beta 9 updater verified the DMG and Squirrel replaced the app while preserving chats/settings.
+macOS relaunch was controlled to retain isolated test paths; automatic macOS relaunch and
+authenticated model calls were not established by these tests. Before publication, only
+release metadata/download transport was redirected to the verified candidates on loopback;
+the Windows installer wizard was automated silently.
+
+The macOS maintainer combined both platform manifests and passed `verify-release-assets.js`
+on all 12 proof files before adding the DMG with the strict draft uploader. Both assets share
+configuration hash `349106a665e31726c85880ef43d80e9b73b7f7e46ed8cb990cd9598ab0d72f1b`.
+After publication, anonymous production updater discovery selected 0.1.1 for Windows x64
+and macOS arm64. Both public URLs returned HTTP 200 with the expected size, and GitHub's
+SHA-256 digests matched the tested artifacts. The release tag points to the approved source.
+
+| Installer                       |     Bytes | SHA-256                                                            |
+| ------------------------------- | --------: | ------------------------------------------------------------------ |
+| `TasteCode-0.1.1-win-x64.exe`   | 510259160 | `2fb21221b779562b20eb6aecce064d260b0644e4776931285c344ce59cea7fa0` |
+| `TasteCode-0.1.1-mac-arm64.dmg` | 533904193 | `440c18c2ca2143ac4a6746a3757f3f784ab5256db620ff16996b42eb47678231` |
+
+Beta 7 and Beta 9 users can select **Settings → About → Check for updates**, then
+**Restart to update** after the download finishes. Beta 9 also shows the sidebar update
+control. Beta 6 and earlier users who missed the bridge need the current installer.
 
 ## Beta 7 bridge, then two public files
 
