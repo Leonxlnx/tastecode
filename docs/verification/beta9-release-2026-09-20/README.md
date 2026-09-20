@@ -34,6 +34,12 @@ recorded on PRs 1262 and 1263. Live generation with every provider was not repea
 
 ## Public update compatibility
 
+After publication, anonymous GitHub discovery selected beta 9 for both platforms.
+Both public downloads returned HTTP 200 and matched their expected size and SHA-256.
+The production Windows updater independently downloaded the public installer and reached
+`ready` with a simulated beta 7 version; installation was disabled in that separate local
+download check. The real installed upgrade is covered by the isolated Windows run above.
+
 Beta 7 discovers the new release through its existing Settings updater. The new sidebar
 button appears after installing beta 9. Beta 6 and earlier installations which missed
 the beta 7 bridge need a manual installer. Windows remains unsigned and may show a
