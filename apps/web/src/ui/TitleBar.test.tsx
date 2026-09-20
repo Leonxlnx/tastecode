@@ -65,9 +65,9 @@ describe('TitleBar', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('X11; Linux x86_64')
     const view = render(<TitleBar collapsed={false} onToggleRail={vi.fn()} />)
 
-    expect(
-      fireEvent.doubleClick(view.container.querySelector('.titlebar__drag-region')!),
-    ).toBe(true)
+    expect(fireEvent.doubleClick(view.container.querySelector('.titlebar__drag-region')!)).toBe(
+      true,
+    )
   })
 
   it('hides caption buttons on Linux without a bridge', () => {
