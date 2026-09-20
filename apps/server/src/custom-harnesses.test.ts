@@ -214,9 +214,7 @@ describe('custom harnesses', () => {
     // Reads tolerate the unreadable record — nothing in it is ever removed —
     // but the next write still refuses to touch a foreign reference.
     expect(store.list()).toEqual([])
-    expect(() => store.upsert({ ...input() })).toThrow(
-      'invalid custom harness recovery record',
-    )
+    expect(() => store.upsert({ ...input() })).toThrow('invalid custom harness recovery record')
     expect(credentials.values.get('model-connections/keep')).toBe('unrelated-secret')
   })
 
