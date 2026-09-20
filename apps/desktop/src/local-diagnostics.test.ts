@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -160,6 +160,43 @@ describe('local diagnostics', () => {
 
     expect((await stat(path.join(directory, 'errors.log'))).size).toBeLessThan(4 * 1024)
     await expect(stat(path.join(directory, 'errors.previous.log'))).rejects.toThrow()
+  })
+
+  it('adopts an enabled flag left at the pre-move directory level', async () => {
+    // The flag lived in <userData>/diagnostics before the text logs moved
+    // into diagnostics/text/; a leftover there is still the user's opt-in.
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
+    directories.push(root)
+    const legacyDirectory = path.join(root, 'diagnostics')
+    await mkdir(legacyDirectory, { recursive: true })
+    await writeFile(path.join(legacyDirectory, 'enabled'), 'true')
+    const directory = localDiagnosticsDirectory(root)
+    const diagnostics = new LocalDiagnostics(directory)
+    await diagnostics.initialize()
+
+    expect(diagnostics.isEnabled()).toBe(true)
+    await diagnostics.record('main', 'adopted opt-in')
+    expect(await readFile(path.join(directory, 'errors.log'), 'utf8')).toContain('adopted opt-in')
+    // Migrated forward and consumed, so a later disable cannot resurrect it.
+    expect(await readFile(path.join(directory, 'enabled'), 'utf8')).toBe('true')
+    await expect(readFile(path.join(legacyDirectory, 'enabled'), 'utf8')).rejects.toThrow()
+  })
+
+  it('stays disabled on restart after adopting and then disabling', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'tastecode-diagnostics-'))
+    directories.push(root)
+    const legacyDirectory = path.join(root, 'diagnostics')
+    await mkdir(legacyDirectory, { recursive: true })
+    await writeFile(path.join(legacyDirectory, 'enabled'), 'true')
+
+    const first = new LocalDiagnostics(localDiagnosticsDirectory(root))
+    await first.initialize()
+    expect(first.isEnabled()).toBe(true)
+    await first.setEnabled(false)
+
+    const second = new LocalDiagnostics(localDiagnosticsDirectory(root))
+    await second.initialize()
+    expect(second.isEnabled()).toBe(false)
   })
 
   it('keeps legacy native files outside the text diagnostics directory', async () => {
