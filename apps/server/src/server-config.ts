@@ -5,10 +5,12 @@ export const DEFAULT_PORT = 4311
  * knob (`HARNESS_PORT`, `--port`) so the error tells the user what to fix.
  */
 export function parsePort(value: string, source: string): number {
-  if (!/^\d+$/.test(value)) throw new Error(`${source} must be a whole port number.`)
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${source} must be a whole port number, got "${value}".`)
+  }
   const port = Number(value)
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`${source} must be between 1 and 65535.`)
+    throw new Error(`${source} must be between 1 and 65535, got "${value}".`)
   }
   return port
 }

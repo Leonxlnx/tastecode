@@ -1,6 +1,10 @@
-import { DEFAULT_PORT, startServer } from './server.js'
+import { DEFAULT_PORT, parsePort } from './server-config.js'
+import { startServer } from './server.js'
 
-const port = Number(process.env['HARNESS_PORT'] ?? DEFAULT_PORT)
+// Unset or empty keeps the default; anything else must parse like the
+// headless CLI's --port, or listen() fails on NaN with no usable message.
+const configuredPort = process.env['HARNESS_PORT']
+const port = configuredPort ? parsePort(configuredPort, 'HARNESS_PORT') : DEFAULT_PORT
 const server = await startServer({
   port,
   host: process.env['HARNESS_HOST'] ?? '127.0.0.1',
