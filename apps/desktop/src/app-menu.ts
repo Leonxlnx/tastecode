@@ -356,8 +356,12 @@ export function dispatchMenuRole(role: MenuItem['role'], target: MenuRoleTarget)
       window.close()
       return true
     case 'minimize':
-    case 'zoom':
       window.minimize()
+      return true
+    case 'zoom':
+      // The zoom role is a maximize toggle, not a second minimize.
+      if (window.isMaximized()) window.unmaximize()
+      else window.maximize()
       return true
     case 'togglefullscreen':
       window.setFullScreen(!window.isFullScreen())

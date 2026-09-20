@@ -232,6 +232,18 @@ describe('dispatchMenuRole', () => {
     expect(target.window.setFullScreen).toHaveBeenCalledWith(true)
   })
 
+  it('toggles maximize for the zoom role', () => {
+    const target = targetDouble()
+
+    expect(dispatchMenuRole('zoom', target)).toBe(true)
+    expect(target.window.maximize).toHaveBeenCalledOnce()
+    expect(target.window.minimize).not.toHaveBeenCalled()
+
+    target.window.isMaximized.mockReturnValue(true)
+    expect(dispatchMenuRole('zoom', target)).toBe(true)
+    expect(target.window.unmaximize).toHaveBeenCalledOnce()
+  })
+
   it('maps edit and devtools roles to the matching webContents call', () => {
     const target = targetDouble()
 
