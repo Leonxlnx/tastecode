@@ -48,8 +48,9 @@ describe('GitHub asset releases', () => {
     ).toBe(beta.tag_name)
   })
 
-  it('needs only the matching EXE or DMG and a GitHub digest', () => {
-    const latest = selectLatestRelease([release()])
+  it.each(['0.1.0-beta.8', '0.1.1'])('resolves the matching EXE and DMG for %s', (version) => {
+    const latest = selectLatestRelease([release(version)])
+    expect(releaseUpdateInfo(latest, 'win32', 'x64').version).toBe(version)
     expect(releaseUpdateInfo(latest, 'darwin', 'arm64').asset.name).toMatch(/\.dmg$/)
     expect(releaseUpdateInfo(latest, 'win32', 'x64').asset.name).toMatch(/\.exe$/)
     expect(latest.assets).toHaveLength(2)

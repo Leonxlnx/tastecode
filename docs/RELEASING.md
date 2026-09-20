@@ -12,6 +12,20 @@ release list and chooses the newest publication, including prereleases, regardle
 GitHub "Latest" badge. Downgrades remain disabled. A missing matching installer or SHA-256
 digest is an error; the app does not silently fall back to an older release.
 
+## 0.1.1 preparation
+
+The next planned version is `0.1.1`. Its source changes address npm-free Codex installation,
+unbounded Design repair corrections, and local disconnections while large chat histories drain.
+Beta 9 remains the published release until both new installers are verified and published.
+
+Merge the fixes and version change before selecting the final clean `main` commit. Windows
+and the macOS maintainer must build that exact commit as `0.1.1`; do not reuse a Beta 9 DMG
+or relabel an existing installer. macOS must verify Codex installation on a profile without
+npm, plus signing, notarization, and installation. Both platforms must verify an installed
+Beta 9 update with chat/settings preservation. Keep any `v0.1.1` release draft unpublished
+until both `TasteCode-0.1.1-win-x64.exe` and `TasteCode-0.1.1-mac-arm64.dmg` pass the release
+checks below. No final release commit is approved by this preparation note.
+
 ## Beta 7 bridge, then two public files
 
 Beta 9 was published on 2026-09-20 from
