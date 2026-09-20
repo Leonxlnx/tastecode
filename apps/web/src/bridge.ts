@@ -115,6 +115,9 @@ export type AppUpdateState = {
   releasesUrl?: string
 }
 
+/** Releases page — the download target when the bridge does not report one. */
+export const RELEASES_URL = 'https://github.com/Leonxlnx/tastecode/releases/latest'
+
 const bridge = window.harness
 export const MAX_CACHED_ATTACHMENT_PREVIEWS = 128
 const attachmentPreviews = new Map<string, PickedAttachment>()

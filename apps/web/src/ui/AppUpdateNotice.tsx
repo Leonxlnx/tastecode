@@ -3,6 +3,7 @@ import {
   appUpdateState,
   onAppUpdateState,
   openExternalUrl,
+  RELEASES_URL,
   type AppUpdateState,
 } from '../bridge.js'
 import { NoticePresence } from './NoticePresence.js'
@@ -46,9 +47,7 @@ export function AppUpdateNotice(props: { onReview: () => void }) {
           <button
             className="ghost"
             type="button"
-            onClick={() => {
-              if (state?.releasesUrl) void openExternalUrl(state.releasesUrl)
-            }}
+            onClick={() => void openExternalUrl(state?.releasesUrl ?? RELEASES_URL)}
           >
             Download
           </button>

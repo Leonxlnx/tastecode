@@ -10,7 +10,8 @@ const bridge = vi.hoisted(() => ({
   openExternal: vi.fn(),
   listener: undefined as ((state: AppUpdateState) => void) | undefined,
 }))
-vi.mock('../bridge.js', () => ({
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
   appUpdateState: bridge.read,
   onAppUpdateState: (listener: (state: AppUpdateState) => void) => {
     bridge.listener = listener
@@ -85,6 +86,19 @@ it('points manual packages at the releases page without an install path', async 
     'https://github.com/Leonxlnx/tastecode/releases/latest',
   )
   expect(review).not.toHaveBeenCalled()
+
+  // A deb that reports no releases URL still lands on the releases page.
+  act(() =>
+    bridge.listener?.({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+      latestVersion: '0.1.0-beta.10',
+    }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Download' }))
+  expect(bridge.openExternal).toHaveBeenLastCalledWith(
+    'https://github.com/Leonxlnx/tastecode/releases/latest',
+  )
 
   fireEvent.click(screen.getByRole('button', { name: 'Later' }))
   expect(view.container.querySelector('.notice')?.getAttribute('data-state')).toBe('closing')

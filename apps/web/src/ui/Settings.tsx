@@ -65,6 +65,7 @@ import {
   localDiagnosticsEnabled,
   onAppUpdateState,
   openLocalDiagnostics,
+  RELEASES_URL,
   setLocalDiagnosticsEnabled,
   type AppUpdateState,
 } from '../bridge.js'
@@ -1858,8 +1859,7 @@ function AboutSettings(props: { transport: Transport }) {
           onClick={() => {
             if (manualUpdate) {
               window.open(
-                nativeUpdate?.releasesUrl ??
-                  'https://github.com/Leonxlnx/tastecode/releases/latest',
+                nativeUpdate?.releasesUrl ?? RELEASES_URL,
                 '_blank',
                 'noopener,noreferrer',
               )
