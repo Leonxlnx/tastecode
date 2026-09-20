@@ -290,17 +290,26 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-20 main 1fcddc94 · Beta 9 preparing; beta 7 published</span>
+        <span class="meta">2026-09-20 main b65a844f · Windows and macOS Beta 9 published</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
+          <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.9">Beta 9</a>
+          is published from b65a844f with unsigned Windows x64 and signed, notarized macOS arm64
+          installers. An isolated Windows beta 7 update-button test passed installation, automatic
+          relaunch and chat/settings preservation. The macOS maintainer verified its installed beta
+          7 upgrade. Beta 7 users can update in Settings; beta 9 adds the sidebar update button.
+          <a href="./verification/beta9-release-2026-09-20/README.md">Release evidence and limits</a
+          >.
+        </p>
+        <p>
           Desktop startup runs its core server and background provider probes from app storage,
           rather than inheriting a mounted installer or external-drive working directory. Both
-          launch paths pass the Windows regression check; clean-profile macOS permission testing
-          remains required before including this fix in a macOS release.
+          launch paths pass the Windows regression check. The macOS maintainer completed
+          clean-profile startup and installation checks for beta 9.
         </p>
         <p>
           Chat composer settings now retain Design mode alongside model, reasoning, and speed.
@@ -318,19 +327,19 @@
           Side-chat routing, browser navigation, text diagnostics, and test/tooling fixes. Eight PRs
           and 20 issues remain open with explicit next actions in the
           <a href="./verification/pr-review-2026-09-19.md">September 19 review</a>. Local checks
-          pass; final installer qualification remains a release step.
+          pass; beta 9 installer qualification and publication are complete.
         </p>
         <p class="sub">
           Claude account checks accept null email and subscription metadata without treating a
           signed-in account as unavailable (#1253). First-turn Design effort changes retain a new
           session until Claude can resume saved history (#1238); both regressions are covered by the
-          adapter suite. These source fixes require the next desktop release.
+          adapter suite. These source fixes are included in beta 9.
         </p>
         <p class="sub">
           Codex cold startup has a separate 30-second initialization budget and retries a timeout
           once after disposing its first process. Concurrent callers share startup, and stopping the
-          adapter cancels recovery. Account reads retain their shorter timeout. Source changes
-          require the next desktop release.
+          adapter cancels recovery. Account reads retain their shorter timeout. These changes are
+          included in beta 9.
         </p>
         <p class="sub">
           <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.7"
