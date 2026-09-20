@@ -32,6 +32,14 @@ The publication review reran 451 automated tests: 147 Design Agent, 49 preview, 
 and 43 update/Design UI tests. All passed. Earlier full source and packaging gates are
 recorded on PRs 1262 and 1263. Live generation with every provider was not repeated.
 
+The documentation follow-up passed `pnpm lint`, `pnpm typecheck` and `pnpm build`.
+The additional `pnpm test` run hit lazy-UI wait limits, and a parallel server run hit
+5-second Git/filesystem limits plus cleanup locks. These are recorded failures, not a
+single clean full-suite invocation. Bounded reruns passed all affected cases without
+source changes: all 31 Markdown tests, the two affected App cases, and all 277 cases in
+the five affected server files. The latter used one worker and 30-second test/hook
+limits on Windows. The other 185 web files and 54 server files passed their broad runs.
+
 ## Public update compatibility
 
 After publication, anonymous GitHub discovery selected beta 9 for both platforms.
