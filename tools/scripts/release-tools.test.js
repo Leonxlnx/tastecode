@@ -258,13 +258,14 @@ test('beta 7 keeps beta 6 metadata; beta 8 uploads the updater artifacts with ve
     const mock = github()
     const result = await upload(directory, mock, { config })
     assert.deepEqual(result.assets.map((asset) => asset.name).sort(), [
+      `TasteCode-${version}-linux-amd64.deb`,
       `TasteCode-${version}-linux-x86_64.AppImage`,
       `TasteCode-${version}-mac-arm64.dmg`,
       `TasteCode-${version}-win-x64.exe`,
     ])
     assert.equal(result.release.draft, true)
-    // Local proof is still complete even though only the updater artifacts
-    // reach GitHub.
+    // Local proof is still complete even though only the updater artifacts and
+    // the manual-download deb reach GitHub.
     await verifyReleaseDirectory(directory, { approvedSha, config })
   }
 })

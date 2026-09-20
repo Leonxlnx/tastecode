@@ -25,11 +25,13 @@ Beta 7 is the transition release. It includes the new asset updater **and** the 
 ZIP, and blockmap files so beta 6 can install it through its existing updater. Keep beta 7
 available long enough for users to update before publishing beta 8.
 
-From **0.1.0-beta.8**, `upload-draft-release.js` uploads exactly the updater assets:
+From **0.1.0-beta.8**, `upload-draft-release.js` uploads exactly the updater assets
+plus the deb for manual installs:
 
 - `TasteCode-<version>-win-x64.exe`
 - `TasteCode-<version>-mac-arm64.dmg`
 - `TasteCode-<version>-linux-x86_64.AppImage`
+- `TasteCode-<version>-linux-amd64.deb`
 
 The local package proof still includes generated metadata, ZIP, blockmaps, checksums, and
 provenance. These remain local/CI proof files. The upload script verifies the complete
@@ -41,8 +43,9 @@ temporary ZIP locally. Electron's native Squirrel.Mac installer still verifies s
 identity and performs the replacement. Windows still uses electron-updater's NSIS installer
 and configured publisher verification. On Linux, only AppImage installs self-update:
 electron-updater's AppImageUpdater downloads the verified image and atomically replaces the
-running file next to it; the deb stays package-manager owned and updates manually. None of
-these paths need public YAML or blockmaps.
+running file next to it; the deb stays package-manager owned and updates manually, so it
+is uploaded for the manual-download flow — the in-app update notice on deb installs links
+to the release page. None of these paths need public YAML or blockmaps.
 
 **Beta 6 users must install beta 7 during the transition.** Once beta 8 is the newest
 release, beta 6 will look for YAML in beta 8 and fail. Keeping beta 7's assets alone does
@@ -154,8 +157,8 @@ For the beta 7 bridge, GitHub metadata is named **`latest.yml`** for Windows and
 **`latest-mac.yml`** for macOS. Beta 6's updater selects the beta tag and falls back to those
 files inside that tag. The packager generates them; do not handwrite hashes or rename them
 to the generic provider's `beta.yml`. Upload the installers/ZIP, blockmaps, metadata,
-checksums and provenance together for beta 7. From beta 8, only the EXE, DMG, and AppImage
-are uploaded.
+checksums and provenance together for beta 7. From beta 8, only the EXE, DMG, AppImage,
+and deb are uploaded.
 Builder debug output and unpacked app directories are not release assets.
 
 After the first publication, verify a real old-to-new installed upgrade with existing

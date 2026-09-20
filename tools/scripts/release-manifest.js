@@ -188,15 +188,20 @@ export function releaseAssets(platform = 'all', config = releaseConfig) {
 
 // Beta 7 is the bridge for beta 6's YAML/ZIP updater. Proof files remain local
 // after that bridge; GitHub supplies the public asset SHA-256 digests itself.
-// Each uploaded file is the artifact that platform's in-app updater downloads:
-// the custom release provider resolves names and hashes over the GitHub API,
-// so the latest*.yml metadata files are not needed on the release.
+// The exe, dmg, and AppImage are what each platform's in-app updater downloads.
+// The deb is not updater-downloaded — deb installs stay package-manager owned —
+// but the app's manual-update notice sends those users to the release page, so
+// the deb ships there as the manual-download artifact. The custom release
+// provider resolves names and hashes over the GitHub API, so the latest*.yml
+// metadata files are not needed on the release.
 export function releaseUploadAssets(config = releaseConfig) {
   if (/^0\.1\.0-beta\.[0-7]$/.test(config.version)) return releaseAssets('all', config)
   return [
     ...config.platforms.windows.artifacts.filter((name) => name.endsWith('.exe')),
     ...config.platforms.macos.artifacts.filter((name) => name.endsWith('.dmg')),
-    ...config.platforms.linux.artifacts.filter((name) => name.endsWith('.AppImage')),
+    ...config.platforms.linux.artifacts.filter(
+      (name) => name.endsWith('.AppImage') || name.endsWith('.deb'),
+    ),
   ].sort()
 }
 
