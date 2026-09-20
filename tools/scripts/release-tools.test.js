@@ -245,7 +245,7 @@ test('beta 7 keeps beta 6 metadata; beta 8 uploads only EXE and DMG with verifie
   assert.ok(releaseUploadAssets(bridge).includes('latest.yml'))
   assert.ok(releaseUploadAssets(bridge).includes('latest-mac.yml'))
   assert.ok(releaseUploadAssets(bridge).some((name) => name.endsWith('.zip')))
-  for (const version of ['0.1.0-beta.8', '0.1.0-beta.10', '0.1.0']) {
+  for (const version of ['0.1.0-beta.8', '0.1.0-beta.10', '0.1.0', '0.1.1']) {
     desktop.version = version
     const config = createReleaseConfig(desktop)
     const directory = await fixture(t, { config })
