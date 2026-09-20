@@ -2,7 +2,7 @@ import { codexLoginStatus } from '@harness/adapter-codex/auth'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
-import { CODEX_UPDATES } from '@harness/adapter-codex/updates'
+import { CODEX_UPDATES, codexInstallCommand } from '@harness/adapter-codex/updates'
 import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
 import { GROK_UPDATES } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
@@ -46,7 +46,7 @@ const PROBES: Probe[] = [
     capabilities: CODEX_CAPABILITIES,
     setup: {
       installUrl: 'https://developers.openai.com/codex/cli',
-      installCommand: 'npm install -g @openai/codex',
+      installCommand: codexInstallCommand(),
       login: 'provider',
       loginOpensBrowser: true,
     },

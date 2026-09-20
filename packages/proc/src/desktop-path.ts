@@ -75,6 +75,7 @@ function extraDirectories(
       env.APPDATA ? join(env.APPDATA, 'npm') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'pnpm') : undefined,
+      env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin') : undefined,
       ...userBins,
       join(home, 'scoop', 'shims'),
       env.ProgramData ? join(env.ProgramData, 'chocolatey', 'bin') : undefined,
