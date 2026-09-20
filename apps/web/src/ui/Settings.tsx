@@ -1764,10 +1764,15 @@ function AboutSettings(props: { transport: Transport }) {
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<ResultOf<'system.updateCheck'>>()
   const [nativeUpdate, setNativeUpdate] = useState<AppUpdateState>()
+  const [installFailed, setInstallFailed] = useState(false)
 
   useEffect(() => {
     void appUpdateState().then(setNativeUpdate)
-    return onAppUpdateState(setNativeUpdate)
+    // A fresh update state means the failed install attempt is stale.
+    return onAppUpdateState((next) => {
+      setInstallFailed(false)
+      setNativeUpdate(next)
+    })
   }, [])
 
   const check = async () => {
@@ -1845,6 +1850,12 @@ function AboutSettings(props: { transport: Transport }) {
         ) : result?.error ? (
           <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
         ) : null}
+        {installFailed ? (
+          <RowIssue
+            message="Update install failed"
+            tip="Retry, or download the release manually from GitHub."
+          />
+        ) : null}
         {checking || nativeChecking ? <StateLabel state="checking" live /> : null}
         {!checking && !nativeChecking && nativeStatus ? (
           <StateLabel {...nativeStatus} live />
@@ -1865,7 +1876,18 @@ function AboutSettings(props: { transport: Transport }) {
               )
               return
             }
-            void (nativeReady ? installAppUpdate() : check())
+            if (nativeReady) {
+              // installAppUpdate resolves false when the restart-and-install
+              // handoff fails — leaving "Restart to update" looking idle.
+              void installAppUpdate().then(
+                (installed) => {
+                  if (!installed) setInstallFailed(true)
+                },
+                () => setInstallFailed(true),
+              )
+              return
+            }
+            void check()
           }}
         >
           <RotateCcw size={13} aria-hidden />
