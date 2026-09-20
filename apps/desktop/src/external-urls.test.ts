@@ -22,6 +22,13 @@ describe('external url policy', () => {
     }
   })
 
+  it('accepts scheme spellings URL resolves to http(s)', () => {
+    // 'https:example.com' parses to https://example.com/ — the scheme
+    // allowlist is the security boundary, not the spelling.
+    expect(isSupportedExternalUrl('https:example.com')).toBe(true)
+    expect(isSupportedExternalUrl('HTTP://EXAMPLE.COM')).toBe(true)
+  })
+
   it('names the rejected scheme so the failure is actionable', () => {
     expect(assertSupportedExternalUrl('https://example.com/')).toBe('https://example.com/')
     expect(() => assertSupportedExternalUrl('file:///etc/passwd')).toThrow('file:')

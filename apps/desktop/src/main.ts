@@ -61,7 +61,8 @@ import {
 import { clipboardText } from './clipboard-text.js'
 import { writableOrCreatable } from './userdata-writable.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
-import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { configureEmbeddedBrowser } from './embedded-browser.js'
+import { assertSupportedExternalUrl, isSupportedExternalUrl } from './external-urls.js'
 import {
   GPU_CRASH_WINDOW_MS,
   gpuFallbackRequested,
@@ -171,14 +172,6 @@ const installSignatureAtStart =
     ? readInstallSignature(process.resourcesPath, nodeInstallIo)
     : undefined
 
-function isWebUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
 function sameOrigin(url: string, base: string): boolean {
   try {
     return new URL(url).origin === new URL(base).origin
@@ -730,7 +723,7 @@ function createWindow(): void {
   // Web links only: renderer content includes agent- and vendor-authored
   // URLs, and handing a file:/smb:/ms-*: URL to the OS is code execution.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isWebUrl(url)) void shell.openExternal(url)
+    if (isSupportedExternalUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -741,7 +734,7 @@ function createWindow(): void {
     const allowed = devServer !== undefined && sameOrigin(url, devServer)
     if (!allowed) {
       event.preventDefault()
-      if (isWebUrl(url)) void shell.openExternal(url)
+      if (isSupportedExternalUrl(url)) void shell.openExternal(url)
     }
   }
   window.webContents.on('will-navigate', restrictWindowNavigation)
@@ -1022,7 +1015,7 @@ ipcMain.handle('harness:cancelPreviewCapture', (event, value: unknown) => {
 
 ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
   requireOwnRenderer(event.sender)
-  await shell.openExternal(browserGuestUrl(url))
+  await shell.openExternal(assertSupportedExternalUrl(url))
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {

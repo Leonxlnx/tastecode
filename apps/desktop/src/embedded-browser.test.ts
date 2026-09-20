@@ -1,13 +1,20 @@
 import type { Event, WebContents, WebPreferences } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
-import { browserGuestUrl, browserUserAgent, configureEmbeddedBrowser } from './embedded-browser.js'
+import { browserUserAgent, configureEmbeddedBrowser } from './embedded-browser.js'
 
 describe('embedded browser guest', () => {
-  it('accepts only HTTP pages and a blank bootstrap document', () => {
-    expect(browserGuestUrl('http://127.0.0.1:4311/preview')).toBe('http://127.0.0.1:4311/preview')
-    expect(browserGuestUrl('https://example.com/')).toBe('https://example.com/')
-    expect(() => browserGuestUrl('file:///etc/passwd')).toThrow('Invalid browser URL')
-    expect(() => browserGuestUrl('javascript:alert(1)')).toThrow('Invalid browser URL')
+  it('accepts a blank bootstrap document but not a privileged one', () => {
+    const owner = ownerHarness()
+    configureEmbeddedBrowser(owner.contents)
+    const willAttach = owner.listener('will-attach-webview')
+
+    const allowed = { preventDefault: vi.fn() }
+    willAttach(allowed, {}, { src: 'about:blank' })
+    expect(allowed.preventDefault).not.toHaveBeenCalled()
+
+    const denied = { preventDefault: vi.fn() }
+    willAttach(denied, {}, { src: 'file:///private/data' })
+    expect(denied.preventDefault).toHaveBeenCalledOnce()
   })
 
   it('strips Electron product markers without damaging the Chromium user agent', () => {
@@ -70,6 +77,8 @@ describe('embedded browser guest', () => {
     const openWindow = guest.setWindowOpenHandler.mock.calls[0]![0]
     expect(openWindow({ url: 'https://example.com/next' })).toEqual({ action: 'deny' })
     await vi.waitFor(() => expect(guest.loadURL).toHaveBeenCalledWith('https://example.com/next'))
+    // about:blank is only a bootstrap allowance, not a navigable target.
+    expect(openWindow({ url: 'about:blank' })).toEqual({ action: 'deny' })
     expect(openWindow({ url: 'file:///etc/passwd' })).toEqual({ action: 'deny' })
     expect(guest.loadURL).toHaveBeenCalledOnce()
   })

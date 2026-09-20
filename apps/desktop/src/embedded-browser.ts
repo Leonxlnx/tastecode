@@ -1,4 +1,5 @@
 import type { Event, Session, WebContents, WebPreferences } from 'electron'
+import { isSupportedExternalUrl } from './external-urls.js'
 
 const BROWSER_PARTITION = 'persist:harness-browser'
 const configuredSessions = new WeakSet<Session>()
@@ -74,22 +75,10 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
   })
 }
 
-export function browserGuestUrl(value: unknown): string {
-  if (typeof value !== 'string' || !isBrowserGuestUrl(value)) {
-    throw new Error('Invalid browser URL')
-  }
-  return value
-}
-
+/** Guest pages are web URLs; the bootstrap document may also be about:blank. */
 function isBrowserGuestUrl(value: unknown, allowBlank = false): value is string {
-  if (typeof value !== 'string') return false
   if (allowBlank && value === 'about:blank') return true
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
-  } catch {
-    return false
-  }
+  return isSupportedExternalUrl(value)
 }
 
 /** Present the guest as Chromium instead of exposing the Electron shell. */

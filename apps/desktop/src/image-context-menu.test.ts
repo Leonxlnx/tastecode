@@ -2,11 +2,17 @@ import type { BrowserWindow, ContextMenuParams, WebContents } from 'electron'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { configureImageContextMenu } from './image-context-menu.js'
 
-const { buildFromTemplate, popup } = vi.hoisted(() => ({
+const { buildFromTemplate, openExternal, popup, writeText } = vi.hoisted(() => ({
   buildFromTemplate: vi.fn(),
+  openExternal: vi.fn(async () => {}),
   popup: vi.fn(),
+  writeText: vi.fn(),
 }))
-vi.mock('electron', () => ({ Menu: { buildFromTemplate } }))
+vi.mock('electron', () => ({
+  Menu: { buildFromTemplate },
+  clipboard: { writeText },
+  shell: { openExternal },
+}))
 
 describe('native image context menu', () => {
   beforeEach(() => {
@@ -48,5 +54,22 @@ describe('native image context menu', () => {
     contents.isDestroyed.mockReturnValue(true)
     buildFromTemplate.mock.calls[0]![0][0].click()
     expect(contents.copyImageAt).not.toHaveBeenCalled()
+  })
+
+  it('opens web links externally and keeps other schemes disabled', () => {
+    const { open } = setup()
+
+    open({ linkURL: 'https://example.com/page' })
+    const [webItem] = buildFromTemplate.mock.calls[0]![0]
+    expect(webItem.label).toBe('Open')
+    expect(webItem.enabled).toBe(true)
+    webItem.click()
+    expect(openExternal).toHaveBeenCalledWith('https://example.com/page')
+
+    open({ linkURL: 'file:///etc/passwd' })
+    const [fileItem] = buildFromTemplate.mock.calls[1]![0]
+    expect(fileItem.enabled).toBe(false)
+    fileItem.click()
+    expect(openExternal).toHaveBeenCalledOnce()
   })
 })
