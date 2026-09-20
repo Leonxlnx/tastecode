@@ -11,6 +11,7 @@ describe('settings status grammar', () => {
     ['ready', 'Ready'],
     ['update-available', 'Update available'],
     ['setup-needed', 'Setup needed'],
+    ['manual', 'Manual update'],
     ['unavailable', 'Unavailable'],
     ['failed', 'Failed'],
   ] as const)('renders the canonical %s state', (state, label) => {

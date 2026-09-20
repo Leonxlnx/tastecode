@@ -219,7 +219,7 @@ describe('about status grammar', () => {
       },
       'Setup needed · Newer: abcdef0 — pull and restart',
     ],
-    ['unavailable', { localCommit: '1234567890' }, 'Unavailable · No verdict'],
+    ['failed', { localCommit: '1234567890' }, 'Failed · Could not compare — retry'],
   ] as const)('separates %s update state from build metadata', async (state, result, label) => {
     const update = deferred<ResultOf<'system.updateCheck'>>()
     const transport = new TestTransport((method) => {

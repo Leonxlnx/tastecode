@@ -1812,12 +1812,12 @@ function AboutSettings(props: { transport: Transport }) {
               state: 'setup-needed' as const,
               detail: `Newer: ${short(result.remote.sha)} — pull and restart`,
             }
-          : { state: 'unavailable' as const, detail: 'No verdict' }
+          : { state: 'failed' as const, detail: 'Could not compare — retry' }
   const nativeStatus = manualUpdate
     ? manualLatest
       ? { state: 'update-available' as const, detail: `Version ${manualLatest}` }
       : {
-          state: 'unavailable' as const,
+          state: 'manual' as const,
           detail: 'Download and install updates manually from GitHub',
         }
     : nativeUpdate?.status === 'current'
