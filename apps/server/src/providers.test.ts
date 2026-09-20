@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { codexInstallCommand } from '@harness/adapter-codex/updates'
 import {
   detectProviders,
   installCommandFor,
@@ -164,6 +165,13 @@ describe('detectProviders', () => {
 })
 
 describe('install command resolution', () => {
+  it('offers and runs the same standalone Codex installer on a clean machine', async () => {
+    const codex = find(await detectProviders(system()), 'codex')
+    expect(codex.installed).toBe(false)
+    expect(codex.setup?.installCommand).toBe(codexInstallCommand())
+    await expect(installCommandFor('codex')).resolves.toBe(codex.setup?.installCommand)
+  })
+
   it('resolves install commands from the server-side tables only', async () => {
     await expect(installCommandFor('acp', 'kimi')).resolves.toBe(
       'npm install -g @moonshot-ai/kimi-code',
