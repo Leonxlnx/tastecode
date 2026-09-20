@@ -165,8 +165,11 @@ directory, and non-secret environment overrides in
 `~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
 never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
 desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
-adds conventional user locations such as `~/.local/bin` and Homebrew's prefix rather than
-sourcing `.zshrc`. When a mod boots from its own directory,
+adds conventional user locations such as `~/.local/bin`, Homebrew's prefix, and
+`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Codex's adapter
+owns its official standalone install command, so fresh desktops do not need npm to install
+their first provider. The server allowlists that same command for guided setup. When a mod boots
+from its own directory,
 `HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
 receive that project normally. The source gets its own model catalog and persisted identity, so
 a fork can coexist with the stock CLI without replacing it.

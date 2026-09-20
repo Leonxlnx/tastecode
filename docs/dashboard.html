@@ -290,12 +290,30 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-20 main b65a844f · Windows and macOS Beta 9 published</span>
+        <span class="meta"
+          >2026-09-20 main c8a96280 · Beta 9 published; follow-up fixes pending</span
+        >
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          Pending the next release: Codex setup uses the official standalone installer without
+          requiring npm; Design repair validation retains its correction guard so a repeated failure
+          cannot launch unlimited turns; large history replies no longer consume the live-update
+          buffer allowance. Regression checks cover bounded repairs, a 10 MiB history with
+          concurrent updates over a real local WebSocket, five full-server history reloads alongside
+          75 queue requests, and Windows installer command execution without npm. Clean-macOS
+          installation still needs platform verification before release.
+        </p>
+        <p>
+          Follow-up Windows source checks: <code>pnpm lint</code>, <code>pnpm typecheck</code>,
+          <code>pnpm build</code>, and <code>pnpm test</code> with
+          <code>VITEST_MAX_WORKERS=2</code> pass. The unrestricted parallel test attempt hit web UI
+          timeouts; the bounded run passes all 1,614 web, 814 server, and 212 desktop tests, plus
+          package and release-tool suites. The running installed app was not restarted.
+        </p>
         <p>
           <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.9">Beta 9</a>
           is published from b65a844f with unsigned Windows x64 and signed, notarized macOS arm64
