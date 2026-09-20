@@ -1910,6 +1910,81 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it.each(['reported failure', 'source validation'])(
+    'stops repeated repair corrections after %s instead of resetting the retry guard',
+    async (failure) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-repair-loop-'))
+      writePreviewArtifacts(workspace)
+      const store = new Store(':memory:')
+      store.addProject(workspace)
+      store.addThread({
+        id: 'repair-loop',
+        projectPath: workspace,
+        provider: 'codex',
+        title: 'Site',
+      })
+      store.setDesignRun('repair-loop', {
+        ...approvalSnapshot(workspace),
+        originalRequest: 'Build a site.',
+        phase: 'repair',
+        pendingPrompt: 'Repair the visual findings.',
+        previewPlan: {
+          version: 1,
+          kind: 'static',
+          entry: 'index.html',
+          cwd: '.',
+          url: 'http://127.0.0.1:4173',
+          viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+        },
+        review: {
+          version: 1,
+          verdict: 'repair',
+          summary: 'Fix overflow.',
+          findings: [
+            {
+              id: 'overflow',
+              severity: 'major',
+              area: 'hero',
+              evidence: 'Text clips.',
+              repair: 'Fit the heading.',
+            },
+          ],
+        },
+        repairAttempt: 1,
+        askedQuestions: false,
+        explicitAnswers: [],
+      })
+      const { orchestrator, sessions, received } = harness(undefined, store)
+      try {
+        const queued = await orchestrator.submitTurn('repair-loop', 'Afterward')
+        if (queued.queued) orchestrator.deleteQueuedTurn('repair-loop', queued.queuedTurn.id)
+        await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(1))
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        if (failure === 'source validation')
+          writeFileSync(path.join(workspace, 'filler.svg'), '<svg><circle r="10" /></svg>')
+        const report = JSON.stringify({
+          status: failure === 'reported failure' ? 'failed' : 'complete',
+          summary: 'Cannot resolve the same finding.',
+          files: failure === 'source validation' ? ['filler.svg'] : [],
+          checks: [],
+        })
+        for (let attempt = 0; attempt < 2; attempt++) {
+          sessions[0]!.emit(message(report, 's1-turn'))
+          sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          if (attempt === 0) await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(2))
+        }
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        expect(sessions[0]!.sent).toHaveLength(2)
+        expect(store.designRun('repair-loop')).toBeUndefined()
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
+
   it('starts Design with an existing comparison HTML file larger than 2 MB', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-large-source-'))
     const { orchestrator, sessions, received, store } = harness()

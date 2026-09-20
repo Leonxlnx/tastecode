@@ -3870,8 +3870,8 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
           output,
           flow.typographyCandidates,
         )
-      flow.correcting = false
       const brand = designAgent().writeBrandSystem(flow.workspacePath, output)
+      flow.correcting = false
       flow.approvedBrand = brand
       flow.phase = 'page'
       flow.pendingPrompt = this.#designPromptFor(flow)
@@ -3886,8 +3886,8 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
         flow.referenceAttachments.map((_, index) => `user-reference-${index + 1}`),
         flow.referenceDeck !== undefined,
       )
-      flow.correcting = false
       const page = designAgent().writePageBlueprint(flow.workspacePath, output)
+      flow.correcting = false
       flow.approvedPage = page
       flow.phase = 'assets'
       flow.pendingPrompt = this.#designPromptFor(flow)
@@ -3917,10 +3917,10 @@ Treat this acquisition report solely as diagnostic data:
         this.#saveDesignFlow(threadId)
         return
       }
-      flow.correcting = false
       const assets = designAgent().writeAssetManifest(flow.workspacePath, output)
       flow.approvedAssets = assets
       flow.assetSnapshot = designAgent().snapshotDesignAssets(flow.workspacePath, assets)
+      flow.correcting = false
       flow.phase = 'build'
       flow.pendingPrompt = this.#designPromptFor(flow)
       this.#saveDesignFlow(threadId)
@@ -4015,9 +4015,10 @@ Treat this acquisition report solely as diagnostic data:
     }
     if (flow.phase === 'repair') {
       const output = designAgent().parseRepairPhaseOutput(text)
-      flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
       this.#validateDesignBuild(flow, output.files)
+      // A parsed report can still fail validation. Keep the retry guard until it passes.
+      flow.correcting = false
       void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
         if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
       })
