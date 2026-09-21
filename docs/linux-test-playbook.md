@@ -98,11 +98,15 @@ dpkg -l tastecode                          # installed version
 aa-status | grep tastecode                 # AppArmor profile enforced (deb)
 pgrep -af tastecode                        # process tree
 ss -tlnp | grep -E 'tastecode|node'        # server port bound on 127.0.0.1
-ls ~/.config/TasteCode/                    # userData: window-state.json, gpu-fallback.json only if fallback fired
+ls ~/.config/TasteCode/                    # Electron profile: window-state.json, gpu-fallback.json only if fallback fired
+ls ~/.local/share/TasteCode/               # app data: tastecode.db (chats, workspaces), usage-history.json
+ls ~/.tastecode/                           # server config: providers.json
 dmesg | grep -i DENIED                     # AppArmor denials
 ```
 
 `gpu-fallback.json` in userData means the GPU fallback relaunched the app — normal on broken drivers, worth reporting on healthy hardware.
+
+For a true from-scratch test, remove the package AND the three data locations above; account tokens additionally live in the system Secret Service keyring and survive every filesystem cleanup — sign out inside the app or clear the keyring to test a cold login.
 
 ## Environment variables
 
