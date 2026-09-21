@@ -52,6 +52,31 @@ For deeper inspection, enable diagnostics inside the app: **Settings → Diagnos
 
 Chromium remote debugging, if needed: `HARNESS_DEBUG_PORT=9222 /usr/bin/tastecode`, then `http://127.0.0.1:9222`.
 
+## Agent monitor mode
+
+An agent watching alongside a human tester does not need terminal ownership of the app. Two capture paths, pick by how the app was launched:
+
+**App already running from the desktop menu.** Stdout is unreachable — do not restart the user's session to get it. Instead:
+
+1. Turn on diagnostics without touching the UI (takes effect on next launch; the Settings toggle applies live if the user flips it):
+   ```bash
+   mkdir -p ~/.config/TasteCode/diagnostics/text
+   printf true > ~/.config/TasteCode/diagnostics/text/enabled
+   ```
+2. Watch while the human works:
+   ```bash
+   tail -f ~/.config/TasteCode/diagnostics/text/errors.log
+   find ~/.config/TasteCode/Crashpad -type f -newermt '-10 min'   # native crash dumps
+   pgrep -af 'Taste Code'                                       # process tree alive
+   ss -tlnp | grep -E 'tastecode|node'                          # server on 127.0.0.1
+   sudo dmesg | grep -i DENIED                                  # AppArmor denials
+   ```
+3. Diagnostics files are sanitized (private keys and API-token shapes are scrubbed) — safe to copy into a report.
+
+**Agent owns the launch.** Run the terminal capture from the previous section and keep `/tmp/tastecode-run.log` open.
+
+Report findings to `/tmp/tastecode-agent-report.md`: one line per checklist item, then log excerpts with timestamps, then the commands you ran.
+
 ## Exercise the app
 
 Run through this list in order. Each item has an expected result; record deviations.
