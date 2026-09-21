@@ -1812,6 +1812,75 @@ describe('web client', () => {
     })
   })
 
+  it('reports a refused connection list instead of silently dropping its models', async () => {
+    // A build with the connection surface cached this choice. The server then
+    // refuses the stored config — the failure an installed build produced when it
+    // met a preset its schema did not know.
+    const connectionChoice: ModelChoice = {
+      key: 'api:nan-1:deepseek-v4-flash',
+      provider: 'api',
+      sourceName: 'NaN',
+      mark: 'custom',
+      connectionId: 'nan-1',
+      model: {
+        id: 'deepseek-v4-flash',
+        displayName: 'deepseek-v4-flash',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice(), connectionChoice]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') {
+        return Promise.reject(
+          new Error('invalid provider config: expected a version 1 connection list'),
+        )
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    // Silence here left the connection's models on screen with no way to tell why
+    // they stopped working, so the failure has to reach the composer, with the
+    // reason and a way to try again.
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('Could not load API connections.')
+    expect(notice.textContent).toContain('expected a version 1 connection list')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+
+  it('stays quiet when a connection list fails and no connection model was ever offered', async () => {
+    // A server too old to know the method refuses it the same way a broken
+    // connection list does. Nobody who never had a connection model needs to
+    // hear about it, so the composer stays clear.
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') {
+        return Promise.reject(new Error('Method not found'))
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+    })
+    expect(screen.queryByText(/Could not load API connections/)).toBeNull()
+  })
+
   it('defers ACP agent detection until Settings opens', async () => {
     render(<App />)
 
