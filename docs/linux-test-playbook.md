@@ -122,6 +122,7 @@ For a true from-scratch test, remove the package AND the three data locations ab
 Report these as known, not as new bugs:
 
 - The tray icon needs a StatusNotifier host; where none exists, closing the window quits instead — both behaviors are correct.
+- Provider-history mirror threads (`external:<provider>:…`) may display internal Design-mode prompts as user messages — a known import bug in this build, fixed on the release branch for the next version. Harmless; the native thread shows the clean view.
 - A flaky PTY-cleanup test exists in `terminal.test.ts` under load — unrelated to runtime behavior.
 
 ## Report back
