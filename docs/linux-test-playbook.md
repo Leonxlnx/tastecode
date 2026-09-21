@@ -3,30 +3,32 @@
 How to install Taste Code on a Linux test device, exercise it, and collect evidence.
 Written for agents running the test; a human can follow the same steps.
 
-Build under test: `0.1.0-beta.8` (fixed), branch `feat/linux-release-v1-current`, HEAD `d840b6c5`.
-Assets live on the `v0.1.0-beta.8` draft release: deb, AppImage, `latest-linux.yml`, `SHA256SUMS-linux-x64.txt`.
+Build under test: `0.1.1`, branch `feat/linux-release-v1-current`, HEAD `9a6f26e2`.
+Assets live on the public `v0.1.1` release (the Latest one, next to the win/mac installers): deb, AppImage, `latest-linux.yml`, `SHA256SUMS-linux-x64.txt`, `linux-release-evidence.json`.
 
 ## Install
 
-Pick one of two paths. Prefer the deb: it installs a desktop entry, an AppArmor profile, and the Secret Service integration.
+Pick one of two paths. Prefer the deb: it installs a desktop entry, an AppArmor profile, and the Secret Service integration. Both paths work anonymously — no GitHub account needed.
 
-**deb** (needs `gh` auth, or download from the release page in a browser):
+**deb**:
 
 ```bash
-gh release download v0.1.0-beta.8 -R Leonxlnx/tastecode -p 'TasteCode-*-linux-amd64.deb' -p 'SHA256SUMS-linux-x64.txt'
+curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-linux-amd64.deb
+curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/SHA256SUMS-linux-x64.txt
 sha256sum --check --ignore-missing SHA256SUMS-linux-x64.txt   # must print OK
-sudo apt install ./TasteCode-0.1.0-beta.8-linux-amd64.deb
+sudo apt install ./TasteCode-0.1.1-linux-amd64.deb
 ```
 
-Done when: `dpkg -l tastecode` prints `0.1.0~beta.8` and `dev.tastecode.desktop` appears in the app menu.
+Done when: `dpkg -l tastecode` prints `0.1.1` and `dev.tastecode.desktop` appears in the app menu.
 
 **AppImage** (no install, no root):
 
 ```bash
-gh release download v0.1.0-beta.8 -R Leonxlnx/tastecode -p 'TasteCode-*-x86_64.AppImage' -p 'SHA256SUMS-linux-x64.txt'
+curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-linux-x86_64.AppImage
+curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/SHA256SUMS-linux-x64.txt
 sha256sum --check --ignore-missing SHA256SUMS-linux-x64.txt
-chmod +x TasteCode-0.1.0-beta.8-linux-x86_64.AppImage
-./TasteCode-0.1.0-beta.8-linux-x86_64.AppImage
+chmod +x TasteCode-0.1.1-linux-x86_64.AppImage
+./TasteCode-0.1.1-linux-x86_64.AppImage
 ```
 
 On Ubuntu 23.10+ and derivatives, an AppImage may fail to start on user namespaces. The app shows a dialog with the fix command; the sysctl line is also in `README.md`.
@@ -85,8 +87,8 @@ Run through this list in order. Each item has an expected result; record deviati
 2. **Provider auth.** Configure at least one provider (Claude Code, Codex, or a direct API key). Keychain-backed secrets require Secret Service (`gnome-keyring` or `kwallet`) — if secrets fail to save, check `journalctl --user -u gnome-keyring*` or install a keyring.
 3. **Working task.** Run one real task end to end — for the design goal, ask the design agent to produce something and let it finish.
 4. **Window controls.** Frameless title bar: minimize/maximize/close hit areas work across the full 34px height; double-click the drag region toggles maximize.
-5. **Close behavior.** With a StatusNotifier tray host, close keeps the app in tray. Without one (COSMIC), close quits — both are correct.
-6. **Settings → Updates.** Deb installs show a manual-update notice; AppImage checks the release provider. A failure must show an error row with retry, not silence.
+5. **Close behavior.** Closing the window may only minimize to the tray — on Pop!_OS COSMIC a StatusNotifier host is present, so the app keeps running (`linux tray host: present` in the log, `pgrep -af tastecode` shows the tree). Quit is in the tray icon's menu; verify `pgrep` shows nothing after a real Quit.
+6. **Settings → Updates.** Deb installs show a manual-update notice that opens the releases page; AppImage checks the release provider and can install in place. A failure must show an error row with retry, not silence.
 7. **Idle + resume.** Leave running 10+ minutes; the app must stay responsive.
 
 ## Health checks while testing
@@ -115,8 +117,7 @@ dmesg | grep -i DENIED                     # AppArmor denials
 
 Report these as known, not as new bugs:
 
-- The deb update notice points at `releases/latest`, which currently lacks Linux assets — resolves when the branch merges and a real release ships.
-- Tray menu only appears where a StatusNotifier host exists; COSMIC sessions quit on close by design.
+- The tray icon needs a StatusNotifier host; where none exists, closing the window quits instead — both behaviors are correct.
 - A flaky PTY-cleanup test exists in `terminal.test.ts` under load — unrelated to runtime behavior.
 
 ## Report back
