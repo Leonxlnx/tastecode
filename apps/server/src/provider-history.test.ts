@@ -241,6 +241,23 @@ describe('provider history integration', () => {
     },
   )
 
+  it('never imports internal orchestration prompts stored verbatim in provider history', async () => {
+    const internal = transcript('native', '{"status":"complete","brief":{}}')
+    const user = internal[2]!
+    if (user.type === 'item.completed')
+      user.item.text =
+        'Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying.\n\nYou are running TasteCode Design Briefing mode.\n\n<user-design-request>Build me a landing page</user-design-request>'
+    const outside = transcript('outside', 'Real outside answer', 90000).slice(1)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([...internal, ...outside])
+    await history.refresh()
+    await history.load('external:codex:native')
+    expect(messages('external:codex:native').map((item) => item.text)).toEqual([
+      'Hello',
+      'Real outside answer',
+    ])
+  })
+
   it('keeps the imported copy when canonical transcript recovery fails, then retries', async () => {
     const { history, source } = setup()
     await history.refresh()

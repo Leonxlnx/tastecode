@@ -237,6 +237,34 @@ function turnId(event: DomainEvent): string | undefined {
   return 'turnId' in event ? event.turnId : undefined
 }
 
+// Provider sessions store user turns verbatim, including the internal prompts
+// the server sends on the user's behalf (Design phases, corrections, mode
+// changes — see #sendDesignTurn and the packages/design-agent prompt builders).
+// A turn opened by one of these envelopes is pure orchestration: none of its
+// items may surface in the transcript after an import.
+const INTERNAL_USER_MESSAGE_MARKERS = [
+  'Give concise, plain-language progress updates as separate assistant commentary while working:',
+  'This is an ordinary user turn, not an active TasteCode Design phase.',
+  'You are running TasteCode Design Briefing mode.',
+  'You are running the Brand phase of TasteCode Design Mode.',
+  'You are running the Page Blueprint phase of TasteCode Design Mode.',
+  'You are running the Asset phase of TasteCode Design Mode.',
+  'You are running the Build phase of TasteCode Design Mode.',
+  'You are running the visual Review phase of TasteCode Design Mode.',
+  'You are running the Preview Setup phase of TasteCode Design Mode.',
+  'Design mode is now off.',
+  'Your previous Design Mode response failed validation.',
+  'Your previous Build result failed',
+  "Your implementation failed TasteCode's deterministic source-quality gate.",
+  '<user-design-request>',
+  '<original-user-request>',
+  '<briefing-answers>',
+]
+
+function isInternalUserMessage(text: string | undefined): boolean {
+  return text !== undefined && INTERNAL_USER_MESSAGE_MARKERS.some((m) => text.includes(m))
+}
+
 export function importedEvents(
   events: DomainEvent[],
   threadId: string,
@@ -271,10 +299,17 @@ export function importedEvents(
       : [],
   )
   const echoed = new Set<string>()
+  const internalTurns = new Set<string>()
   for (const event of events) {
     const id = turnId(event)
     if (!id) continue
     if (localTurns.has(id)) echoed.add(id)
+    if (
+      (event.type === 'item.completed' || event.type === 'item.started') &&
+      event.item.role === 'user' &&
+      isInternalUserMessage(event.item.text)
+    )
+      internalTurns.add(id)
   }
   const candidates = events
     .flatMap((event) => {
@@ -305,7 +340,8 @@ export function importedEvents(
   for (const event of events) {
     const id = turnId(event)
     if (id) currentTurn = id
-    if (echoed.has(id ?? currentTurn) && event.type !== 'thread.started') continue
+    const dropped = echoed.has(id ?? currentTurn) || internalTurns.has(id ?? currentTurn)
+    if (dropped && event.type !== 'thread.started') continue
     // Historical permission requests must never become actionable approvals.
     if (
       event.type.startsWith('approval.') ||
