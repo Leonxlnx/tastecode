@@ -18,8 +18,7 @@ export function AppUpdateNotice() {
   // in-app, so the button links to the releases page instead.
   const manual = state?.status === 'manual' ? state.latestVersion : undefined
   const visible =
-    !!state &&
-    (['downloading', 'ready', 'error'].includes(state.status) || manual !== undefined)
+    !!state && (['downloading', 'ready', 'error'].includes(state.status) || manual !== undefined)
   useEffect(() => {
     if (visible) void import('../styles/app-update.css')
   }, [visible])

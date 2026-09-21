@@ -104,12 +104,12 @@ dmesg | grep -i DENIED                     # AppArmor denials
 
 ## Environment variables
 
-| Variable | Effect |
-|---|---|
-| `HARNESS_PORT` | Fixed server port; invalid values fail fast with a clear error |
-| `HARNESS_DISABLE_GPU=1` | Disable hardware acceleration |
-| `HARNESS_DEBUG_PORT` | Chromium remote-debugging port |
-| `HARNESS_DESKTOP_DATA_DIR` | Redirect userData (isolated test runs) |
+| Variable                   | Effect                                                         |
+| -------------------------- | -------------------------------------------------------------- |
+| `HARNESS_PORT`             | Fixed server port; invalid values fail fast with a clear error |
+| `HARNESS_DISABLE_GPU=1`    | Disable hardware acceleration                                  |
+| `HARNESS_DEBUG_PORT`       | Chromium remote-debugging port                                 |
+| `HARNESS_DESKTOP_DATA_DIR` | Redirect userData (isolated test runs)                         |
 
 ## Known gaps in this build
 
