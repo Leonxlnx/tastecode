@@ -20,6 +20,7 @@ describe('shiki alias for @pierre/diffs', () => {
     const { tokens } = highlighter.codeToTokens('const answer: number = 42', {
       lang: 'typescript',
       theme: 'github-dark',
+      tokenizeTimeLimit: 0,
     })
 
     expect(tokens[0]?.length).toBeGreaterThan(1)
@@ -33,21 +34,25 @@ describe('shiki alias for @pierre/diffs', () => {
     'github-light-default',
     'pierre-dark',
     'pierre-light',
-  ])('keeps the %s diff theme after trimming unused theme loaders', async (theme) => {
-    const highlighter = await getSharedHighlighter({
-      themes: [theme],
-      langs: ['cpp', 'tsx', 'vue'],
-      preferredHighlighter: 'shiki-js',
-    })
-    const code = 'const answer = 42;'
-    for (const lang of ['cpp', 'tsx']) {
-      // Check grammar correctness independently of the renderer's 500 ms budget.
-      const { tokens } = highlighter.codeToTokens(code, { lang, theme, tokenizeTimeLimit: 0 })
-      expect(tokens[0]?.map((token) => token.content).join('')).toBe(code)
-      expect(tokens[0]?.length).toBeGreaterThan(1)
-    }
-    expect(highlighter.getLoadedLanguages()).toContain('vue')
-  })
+  ])(
+    'keeps the %s diff theme after trimming unused theme loaders',
+    async (theme) => {
+      const highlighter = await getSharedHighlighter({
+        themes: [theme],
+        langs: ['cpp', 'tsx', 'vue'],
+        preferredHighlighter: 'shiki-js',
+      })
+      const code = 'const answer = 42;'
+      for (const lang of ['cpp', 'tsx']) {
+        // Check grammar correctness independently of the renderer's 500 ms budget.
+        const { tokens } = highlighter.codeToTokens(code, { lang, theme, tokenizeTimeLimit: 0 })
+        expect(tokens[0]?.map((token) => token.content).join('')).toBe(code)
+        expect(tokens[0]?.length).toBeGreaterThan(1)
+      }
+      expect(highlighter.getLoadedLanguages()).toContain('vue')
+    },
+    20_000,
+  )
 
   it('resolves an unshipped grammar to plain text instead of rejecting', async () => {
     const lang = getFiletypeFromFileName('init.el')

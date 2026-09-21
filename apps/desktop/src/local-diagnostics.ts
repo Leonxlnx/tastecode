@@ -1,12 +1,17 @@
+import { appendFileSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const MAX_LOG_BYTES = 512 * 1024
 const MAX_ENTRY_BYTES = 4 * 1024
 const PRIVATE_KEY =
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|$)/g
+  /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|$)/g
 const STANDALONE_SECRET =
-  /\b(?:sk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})\b/g
+  /(?<![A-Za-z0-9_])(?:sk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{16,}|sk_live_[0-9A-Za-z]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}|https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+){2})(?![A-Za-z0-9_])/g
+const SCHEME_SECRET = /(?<![A-Za-z0-9_])(bearer)(\s+)\S+/gi
+const BASIC_AUTH_SECRET = /(?<![A-Za-z0-9_])(authorization\s*[:=]\s*basic\s+)\S+/gi
+const KEYED_SECRET =
+  /(?<![A-Za-z0-9_])(token|api[_-]?key|password|secret)(?![A-Za-z0-9_])(["']?\s*[:=]\s*["']?)[^\s"']+/gi
 
 export function localDiagnosticsDirectory(userDataDirectory: string): string {
   return path.join(userDataDirectory, 'diagnostics', 'text')
@@ -44,10 +49,15 @@ export class LocalDiagnostics {
   }
 
   async initialize(): Promise<void> {
+    const generation = this.#generation
     const [current, legacy] = await Promise.all([
       enabledFlagSet(this.#enabledFile),
       enabledFlagSet(this.#legacyEnabledFile),
     ])
+    // A setEnabled call that landed while the marker was being read wins: its
+    // generation bump both commits its optimistic state and invalidates records
+    // queued before it.
+    if (generation !== this.#generation) return
     this.#enabled = (current ?? legacy) === true
     this.#generation += 1
     if (legacy === undefined) return
@@ -74,8 +84,8 @@ export class LocalDiagnostics {
     this.#enabled = enabled
     return this.#enqueue(async () => {
       if (generation !== this.#generation) return this.#enabled
-      await mkdir(this.directory, { recursive: true, mode: 0o700 })
       try {
+        await mkdir(this.directory, { recursive: true, mode: 0o700 })
         if (enabled) await writeFile(this.#enabledFile, 'true', { mode: 0o600 })
         else {
           // The legacy flag goes too: an orphaned 'true' must not resurrect
@@ -124,6 +134,25 @@ export class LocalDiagnostics {
     })
   }
 
+  // Synchronous variant for fatal paths such as `uncaughtExceptionMonitor`,
+  // where the process exits before the queued async write would run.
+  recordSync(source: string, text: string): void {
+    if (!this.#enabled) return
+    try {
+      mkdirSync(this.directory, { recursive: true, mode: 0o700 })
+      const entry = boundedEntry(`${new Date().toISOString()} [${scrub(source)}] ${scrub(text)}`)
+      const size = statSync(this.#logFile, { throwIfNoEntry: false })?.size ?? 0
+      if (size + Buffer.byteLength(entry) > MAX_LOG_BYTES) {
+        rmSync(this.#previousLogFile, { force: true })
+        if (size <= MAX_LOG_BYTES) renameSync(this.#logFile, this.#previousLogFile)
+        else rmSync(this.#logFile, { force: true })
+      }
+      appendFileSync(this.#logFile, entry, { encoding: 'utf8', mode: 0o600 })
+    } catch {
+      // Diagnostics must never become a second app failure.
+    }
+  }
+
   #enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.#operations.then(operation)
     this.#operations = result.then(
@@ -134,7 +163,7 @@ export class LocalDiagnostics {
   }
 }
 
-function boundedEntry(value: string): string {
+export function boundedEntry(value: string): string {
   const bytes = Buffer.from(value)
   if (bytes.length < MAX_ENTRY_BYTES) return `${value}\n`
   return `${bytes
@@ -147,8 +176,10 @@ export function scrub(value: string): string {
   return value
     .replace(PRIVATE_KEY, '[redacted]')
     .replace(STANDALONE_SECRET, '[redacted]')
-    .replace(/\b[A-Z]:\\Users\\[^\\\r\n]+/gi, '[home]')
-    .replace(/\/(?:Users|home)\/[^/\r\n]+/g, '[home]')
+    .replace(/\b[A-Z]:\\Users\\(?:[^\\\r\n]+(?=\\)|[^\\\s]+)/gi, '[home]')
+    .replace(/\/(?:Users|home)\/(?:[^/\r\n]+(?=\/)|[^/\s]+)/g, '[home]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')
-    .replace(/\b(bearer|token|api[_-]?key)(\s*[:=]?\s*)\S+/gi, '$1$2[redacted]')
+    .replace(BASIC_AUTH_SECRET, '$1[redacted]')
+    .replace(SCHEME_SECRET, '$1$2[redacted]')
+    .replace(KEYED_SECRET, '$1$2[redacted]')
 }

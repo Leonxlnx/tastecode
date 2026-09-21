@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
@@ -80,17 +80,20 @@ function harness(
   options: { start?: ReturnType<typeof gate>; resume?: ReturnType<typeof gate> } = {},
 ) {
   const sessions: Session[] = []
+  const sessionCreated = gate()
   const runtime: ProviderRuntime = {
     listModels: async () => [],
     start: async (workspacePath) => {
       const session = new Session()
       const id = `task-${sessions.push(session)}`
+      sessionCreated.release()
       await options.start?.promise
       return { thread: { id, provider: 'codex', workspacePath, createdAt: Date.now() }, session }
     },
     resume: async (id, workspacePath) => {
       const session = new Session()
       sessions.push(session)
+      sessionCreated.release()
       await options.resume?.promise
       return { thread: { id, provider: 'codex', workspacePath, createdAt: Date.now() }, session }
     },
@@ -107,7 +110,7 @@ function harness(
     customHarnesses: new CustomHarnessStore(path.join(root, 'harnesses.json')),
   })
   active.push({ orchestrator, store })
-  return { orchestrator, store, sessions }
+  return { orchestrator, store, sessions, sessionCreated: sessionCreated.promise }
 }
 afterEach(async () => {
   for (const entry of active.splice(0)) {
@@ -170,10 +173,10 @@ describe('audit integration regressions', () => {
     async (options) => {
       const { root, repo } = fixture()
       const start = gate()
-      const { orchestrator, sessions, store } = harness(root, { start })
+      const { orchestrator, sessions, store, sessionCreated } = harness(root, { start })
       const starting = orchestrator.startThread('codex', repo, options)
       const rejected = expect(starting).rejects.toThrow(/cancelled by shutdown/)
-      await vi.waitFor(() => expect(sessions).toHaveLength(1))
+      await sessionCreated
       await orchestrator.disposeAll()
       start.release()
       await rejected
@@ -187,7 +190,7 @@ describe('audit integration regressions', () => {
   it('cancels a submitted prompt across a cold resume and panic stop', async () => {
     const { root, repo } = fixture()
     const resume = gate()
-    const { orchestrator, sessions, store } = harness(root, { resume })
+    const { orchestrator, sessions, store, sessionCreated } = harness(root, { resume })
     store.addProject(repo)
     store.addThread({
       id: 'saved',
@@ -198,7 +201,7 @@ describe('audit integration regressions', () => {
     })
     const submitting = orchestrator.submitTurn('saved', 'must not run after panic')
     const rejected = expect(submitting).rejects.toThrow(/panic stop/)
-    await vi.waitFor(() => expect(sessions).toHaveLength(1))
+    await sessionCreated
     await orchestrator.panicStop()
     resume.release()
     await rejected

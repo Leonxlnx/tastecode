@@ -85,7 +85,10 @@ on `archive/rust-rewrite-2026-08-15`; it is not part of `main`.
 **Page previews use a renderer-owned Electron `<webview>` guest, never an iframe or an
 operating-system webview.** Before attachment, the main process strips preload access, assigns a
 dedicated persistent partition, disables Node integration, and requires sandboxing, context
-isolation, and web security. The guest accepts only HTTP(S) navigation, denies permissions, keeps
+isolation, and web security. Top-level navigation accepts HTTPS anywhere and HTTP only on
+loopback, where dev previews bind 127.0.0.1. Programmatic navigation is checked through the
+session request API; stopping inside `did-start-navigation` can crash Chromium. This policy
+is not a general subresource or network firewall. The guest denies permissions, keeps
 attempted new windows in the same preview, and exposes an explicit validated system-browser
 handoff.
 
@@ -273,8 +276,11 @@ directory, and non-secret environment overrides in
 `~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
 never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
 desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
-adds conventional user locations such as `~/.local/bin` and Homebrew's prefix rather than
-sourcing `.zshrc`. When a mod boots from its own directory,
+adds conventional user locations such as `~/.local/bin`, Homebrew's prefix, and
+`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Codex's adapter
+owns its official standalone install command, so fresh desktops do not need npm to install
+their first provider. The server allowlists that same command for guided setup. When a mod boots
+from its own directory,
 `HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
 receive that project normally. The source gets its own model catalog and persisted identity, so
 a fork can coexist with the stock CLI without replacing it.

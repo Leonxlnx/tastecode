@@ -1,16 +1,28 @@
 import { useEffect, useState } from 'react'
+import { IconDownload, IconLoader2, IconRefresh } from '@tabler/icons-react'
 import {
   appUpdateState,
+  checkForAppUpdates,
+  installAppUpdate,
   onAppUpdateState,
   openExternalUrl,
   RELEASES_URL,
   type AppUpdateState,
 } from '../bridge.js'
-import { NoticePresence } from './NoticePresence.js'
 
-export function AppUpdateNotice(props: { onReview: () => void }) {
+export function AppUpdateNotice() {
   const [state, setState] = useState<AppUpdateState>()
-  const [dismissed, setDismissed] = useState<string>()
+  const [pending, setPending] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // Manual packages (deb) signal through latestVersion: nothing installs
+  // in-app, so the button links to the releases page instead.
+  const manual = state?.status === 'manual' ? state.latestVersion : undefined
+  const visible =
+    !!state &&
+    (['downloading', 'ready', 'error'].includes(state.status) || manual !== undefined)
+  useEffect(() => {
+    if (visible) void import('../styles/app-update.css')
+  }, [visible])
   useEffect(() => {
     let initial = true
     const off = onAppUpdateState((next) => {
@@ -27,45 +39,54 @@ export function AppUpdateNotice(props: { onReview: () => void }) {
       off()
     }
   }, [])
-  // Manual packages (deb) signal through latestVersion: nothing installs
-  // in-app, so the only actions are opening the releases page or dismissing.
-  const manual = state?.status === 'manual' ? state.latestVersion : undefined
+  if (!state || !visible) return null
+  const downloading = state.status === 'downloading'
+  const retry = state.status === 'error' || failed
+  const label =
+    manual !== undefined
+      ? `Download TasteCode ${manual}`
+      : retry
+        ? 'Retry TasteCode update'
+        : downloading
+          ? `Downloading TasteCode update${state.progress === undefined ? '' : ` (${state.progress}%)`}`
+          : `Restart to update TasteCode${state.version ? ` to ${state.version}` : ''}`
+  const act = async () => {
+    if (manual !== undefined) {
+      void openExternalUrl(state.releasesUrl ?? RELEASES_URL)
+      return
+    }
+    setPending(true)
+    setFailed(false)
+    try {
+      if (retry) await checkForAppUpdates()
+      else if (!(await installAppUpdate())) setFailed(true)
+    } catch {
+      setFailed(true)
+    } finally {
+      setPending(false)
+    }
+  }
   return (
-    <NoticePresence
-      className="notice notice--app-update"
-      role="status"
-      visible={
-        (state?.status === 'ready' && state.version !== dismissed) ||
-        (manual !== undefined && manual !== dismissed)
+    <button
+      type="button"
+      className="account-update"
+      data-state={retry ? 'error' : state.status}
+      aria-label={label}
+      aria-busy={downloading || pending}
+      title={
+        retry ? `${state.error ?? 'The update could not be completed.'} Click to retry.` : label
       }
-      onDismiss={() => setDismissed(state?.status === 'ready' ? state.version : manual)}
-      autoDismissPaused
+      disabled={downloading || pending}
+      onClick={() => void act()}
     >
-      {manual !== undefined ? (
-        <>
-          <span className="notice__text">TasteCode {manual} is available to download.</span>
-          <button
-            className="ghost"
-            type="button"
-            onClick={() => void openExternalUrl(state?.releasesUrl ?? RELEASES_URL)}
-          >
-            Download
-          </button>
-          <button className="ghost" type="button" onClick={() => setDismissed(manual)}>
-            Later
-          </button>
-        </>
+      {downloading || pending ? (
+        <IconLoader2 size={16} className="spinner" aria-hidden />
+      ) : retry ? (
+        <IconRefresh size={16} aria-hidden />
       ) : (
-        <>
-          <span className="notice__text">TasteCode {state?.version} is ready to install.</span>
-          <button className="ghost" type="button" onClick={props.onReview}>
-            Review update
-          </button>
-          <button className="ghost" type="button" onClick={() => setDismissed(state?.version)}>
-            Later
-          </button>
-        </>
+        <IconDownload size={16} aria-hidden />
       )}
-    </NoticePresence>
+      {downloading && state.progress !== undefined ? <span>{state.progress}%</span> : null}
+    </button>
   )
 }

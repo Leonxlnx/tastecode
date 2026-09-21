@@ -225,9 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta"
-          >2026-09-19 base main d567c74c + 94 · Beta 8 preparing; beta 7 published</span
-        >
+        <span class="meta">2026-09-20 main d2b3754c · 0.1.1 published for Windows and macOS</span>
       </div>
     </div>
 
@@ -352,7 +350,8 @@
                 >CLI sign-in, redacted account email and plan, sign out from Settings
                 <span class="d"
                   >claude auth login runs in the expanded setup terminal card; SDK initialization
-                  fills account details without sending a prompt</span
+                  fills account details without sending a prompt; null email and subscription
+                  metadata preserve signed-in status without inventing account details</span
                 ></span
               ></label
             >
@@ -665,7 +664,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Guided install per provider in the expanded workspace terminal card</span
+                >Guided install per provider in the expanded workspace terminal card; since 0.1.1,
+                Codex uses the official standalone installer without npm. Packaged macOS setup with
+                npm and Node excluded from PATH passed</span
               ></label
             >
           </li>
@@ -988,7 +989,9 @@
                   exhausted validation corrections finish their turn and activity as failed;
                   completed queued phases remain idle when their provider promise settles late;
                   source checks accept HTML with embedded images above 2 MB while retaining a 32 MB
-                  total scan limit</span
+                  total scan limit; since 0.1.1, history replies and live pushes have separate
+                  bounded output budgets, and failed repair validation retains its correction guard
+                  to prevent unlimited retries</span
                 ></span
               ></label
             >
@@ -1408,13 +1411,15 @@
                   the panel returns to the picker. No manual expansion. Bottom and right terminals
                   have separate shells. Edge resizing remains. CSP-safe compact terminals with link
                   detection, distinct desktop/tablet/mobile Browser controls, lazy file trees and
-                  side chat; New chat terminals use the selected project's current checkout, while
-                  active chats use their exact session checkout; one fixed in-chat toggle opens and
-                  closes the panel by swapping its icon in place, staying visible throughout the
-                  closing transition. Aligned square dividers and the 42 px sidebar titlebar edge
-                  stay below native window chrome, resizing keeps at least 360 px for the center
-                  chat with or without the left sidebar, missing workspace items fail without raw
-                  paths, and 390 px layouts do not overflow</span
+                  side chat; queued and steered Side-chat turns keep their own channel across
+                  runtime restart, while a full app restart still purges temporary Side chats; New
+                  chat terminals use the selected project's current checkout, while active chats use
+                  their exact session checkout; one fixed in-chat toggle opens and closes the panel
+                  by swapping its icon in place, staying visible throughout the closing transition.
+                  Aligned square dividers and the 42 px sidebar titlebar edge stay below native
+                  window chrome, resizing keeps at least 360 px for the center chat with or without
+                  the left sidebar, missing workspace items fail without raw paths, and 390 px
+                  layouts do not overflow</span
                 ></span
               ></label
             >
@@ -1876,11 +1881,13 @@
                   offers Force onboarding without resetting saved data; projects, workspaces, files,
                   history, and provider credentials remain untouched; upgrades move legacy history
                   and config into TasteCode paths without overwriting existing TasteCode data;
-                  opt-in diagnostics retain at most two bounded app-error text files that can be
-                  revealed or copied only by the user after keyed and standalone credential shapes,
-                  private keys, emails, project paths, and cross-platform home paths are scrubbed;
-                  TasteCode does not start Electron crash reporting or include native dumps in this
-                  diagnostics folder;
+                  desktop background provider probes start in app storage instead of inheriting the
+                  launch directory (macOS removable-volume permission verification pending); bounded
+                  opt-in text diagnostics rotate at 512 KiB, stop when disabled, and exclude legacy
+                  native dumps from the revealed folder; native crash collection is removed; logs
+                  can be revealed or copied only by the user after keyed and standalone credential
+                  shapes, private keys, emails, project paths, and cross-platform home paths are
+                  scrubbed;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span
@@ -1893,18 +1900,26 @@
               ><input type="checkbox" /><span
                 >About: version plus check, download, install, and relaunch update status from
                 public <code>Leonxlnx/tastecode</code> GitHub Releases; hourly checks and an in-app
-                ready notice are implemented. Windows and signed/notarized macOS beta 6 are
-                published. Windows public-download clean installation, onboarding and a live update
-                check pass. Beta 7 adds newest-publication selection and verified EXE/DMG updates,
-                with beta 6 compatibility files during the transition. From beta 8, only the EXE and
-                DMG are uploaded; beta 6 users must have moved to beta 7 before that cutoff. macOS
-                beta 7 is published, signed, and notarized. Its public beta 6 to beta 7 native
-                installed update preserves the test chat and setting. Unsigned Windows beta 7 is
-                published with verified package contents, public download hashes, and legacy and new
-                update discovery; its installed upgrade proof remains pending. The Linux AppImage
-                consumes the same GitHub feed through <code>latest-linux.yml</code> (live check not
-                yet verified); the deb stays package-manager owned and links to manual downloads.
-                Beta 5 requires feed migration or one manual installer update</span
+                sidebar update button beside the profile name are implemented. The button shows
+                download progress, restarts to install a ready update, and retries failures without
+                opening Settings. Windows and signed/notarized macOS beta 6 are published. Windows
+                public-download clean installation, onboarding and a live update check pass. Beta 7
+                adds newest-publication selection and verified EXE/DMG updates, with beta 6
+                compatibility files during the transition. From beta 8, only the EXE and DMG are
+                uploaded; beta 6 users must have moved to beta 7 before that cutoff. macOS beta 7 is
+                published, signed, and notarized. Its public beta 6 to beta 7 native installed
+                update preserves the test chat and setting. Unsigned Windows beta 7 is published
+                with verified package contents, public download hashes, and legacy and new update
+                discovery. Beta 9 is published from b65a844f: the isolated Windows beta 7 update
+                button, installation, automatic relaunch, chats and settings passed; the macOS
+                maintainer verified its installed beta 7 upgrade. Version 0.1.1 is published from
+                d2b3754c with both installers: installed Beta 9 upgrades preserve chats/settings on
+                both platforms, and Windows automatic relaunch passes. Public discovery and both
+                downloads pass. Beta 6 and earlier users who missed the Beta 7 bridge need one
+                manual installer update. The Linux AppImage consumes the same
+                GitHub feed through <code>latest-linux.yml</code> (live check not yet
+                verified); the deb stays package-manager owned and links to manual
+                downloads</span
               ></label
             >
           </li>
@@ -2011,7 +2026,8 @@
               ><input type="checkbox" /><span
                 >Sandboxed in-app browser previews through Electron &lt;webview&gt; guests
                 <span class="d"
-                  >dedicated persistent site session, HTTP and HTTPS only, denied permissions,
+                  >dedicated persistent site session, top-level HTTPS and loopback HTTP navigation,
+                  programmatic navigation checked before its request proceeds, denied permissions,
                   sandboxing with Node disabled, back and forward history, and new-window navigation
                   retained inside the guest; HTTP localhost and IPv6 loopback addresses normalize to
                   127.0.0.1; Design capture requests open or reuse one dedicated tab and repair

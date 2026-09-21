@@ -391,6 +391,27 @@ describe('durable queued turns', () => {
     expect(store.hasQueuedSubmission('thread-1', 'submission-1')).toBe(false)
   })
 
+  it('persists the queued channel and reads rows written before it existed', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
+    store.enqueueQueuedTurn({ ...queued('submission-side'), channel: 'side' })
+    store.enqueueQueuedTurn(queued('submission-legacy'))
+
+    const replayed = store.queuedTurns('thread-1')
+    expect(replayed.find(({ id }) => id === 'submission-side')).toMatchObject({ channel: 'side' })
+    expect(replayed.find(({ id }) => id === 'submission-legacy')).not.toHaveProperty('channel')
+
+    expect(store.claimQueuedTurn('thread-1', 'submission-side', 'steer')).toMatchObject({
+      channel: 'side',
+      intent: 'steer',
+    })
+    expect(store.restoreQueuedTurn('thread-1', 'submission-side')).toBe(true)
+    expect(store.queuedTurns('thread-1').find(({ id }) => id === 'submission-side')).toMatchObject({
+      channel: 'side',
+      intent: 'normal',
+    })
+  })
+
   it('cleans queued state for closed and deleted threads', () => {
     store.addProject('/repo')
     for (const threadId of ['closed', 'deleted']) {

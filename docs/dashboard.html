@@ -290,14 +290,42 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta"
-          >2026-09-19 base main d567c74c + 94 · Beta 8 preparing; beta 7 published</span
-        >
+        <span class="meta">2026-09-20 main d2b3754c · 0.1.1 published for Windows and macOS</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          Published in 0.1.1: Codex setup uses the official standalone installer without requiring
+          npm; Design repair validation retains its correction guard so a repeated failure cannot
+          launch unlimited turns; large history replies no longer consume the live-update buffer
+          allowance. Regression checks cover bounded repairs, a 10 MiB history with concurrent
+          updates over a real local WebSocket, five full-server history reloads alongside 75 queue
+          requests, and Windows installer command execution without npm. Packaged macOS installation
+          without npm or Node on PATH also passed.
+        </p>
+        <p>
+          Follow-up Windows source checks: <code>pnpm lint</code>, <code>pnpm typecheck</code>,
+          <code>pnpm build</code>, and <code>pnpm test</code> with
+          <code>VITEST_MAX_WORKERS=2</code> pass. The unrestricted parallel test attempt hit web UI
+          timeouts; the bounded run passes all 1,614 web, 814 server, and 212 desktop tests, plus
+          package and release-tool suites. The running installed app was not restarted.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.1">0.1.1</a>
+          is published from d2b3754c with unsigned Windows x64 and signed, notarized macOS arm64
+          installers. Installed Beta 9 update tests preserved chats and settings on both platforms;
+          Windows automatic relaunch also passed. Public update discovery and both download URLs
+          pass. Beta 7 and Beta 9 users can update in Settings; Beta 9 also has the sidebar control.
+          <a href="./RELEASING.md#011-published">Release evidence and limits</a>.
+        </p>
+        <p>
+          Desktop startup runs its core server and background provider probes from app storage,
+          rather than inheriting a mounted installer or external-drive working directory. Both
+          launch paths pass the Windows regression check. The macOS maintainer completed
+          clean-profile startup and installation checks for beta 9.
+        </p>
         <p>
           Chat composer settings now retain Design mode alongside model, reasoning, and speed.
           Approval edits during chat startup survive task creation, and recovery restores the saved
@@ -309,6 +337,25 @@
           replies.
         </p>
         <h2>Public Windows and macOS Beta</h2>
+        <p class="sub">
+          Eight reviewed changes are merged: account metadata, Codex startup recovery, queued
+          Side-chat routing, browser navigation, text diagnostics, and test/tooling fixes. Eight PRs
+          and 20 issues remain open with explicit next actions in the
+          <a href="./verification/pr-review-2026-09-19.md">September 19 review</a>. Local checks
+          pass; beta 9 installer qualification and publication are complete.
+        </p>
+        <p class="sub">
+          Claude account checks accept null email and subscription metadata without treating a
+          signed-in account as unavailable (#1253). First-turn Design effort changes retain a new
+          session until Claude can resume saved history (#1238); both regressions are covered by the
+          adapter suite. These source fixes are included in beta 9.
+        </p>
+        <p class="sub">
+          Codex cold startup has a separate 30-second initialization budget and retries a timeout
+          once after disposing its first process. Concurrent callers share startup, and stopping the
+          adapter cancels recovery. Account reads retain their shorter timeout. These changes are
+          included in beta 9.
+        </p>
         <p class="sub">
           <a href="https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.7"
             >Windows and macOS beta 7</a
@@ -967,18 +1014,17 @@
                     >Release packages omit source files and unused dependency formats; packaged
                     import, PTY and keyring checks pass on arm64 macOS. NSIS packaging produces the
                     installer, blockmap, and update metadata. New beta 6 packages use public GitHub
-                    Releases, check hourly, and show a ready-to-install notice linking to About.
-                    macOS beta 7 is published with the asset updater: newest public release,
-                    verified EXE/DMG, and beta 6 compatibility files for the transition. From beta 8
-                    the draft uploader selects only EXE and DMG.
+                    Releases and check hourly. The sidebar profile footer now shows download
+                    progress and a persistent download icon that restarts to install directly;
+                    failed updates can be retried there without opening Settings. macOS beta 7 is
+                    published with the asset updater: newest public release, verified EXE/DMG, and
+                    beta 6 compatibility files for the transition. From beta 8 the draft uploader
+                    selects only EXE and DMG.
                     <a href="./RELEASING.md">Release and migration steps</a> document the cutoff for
                     beta 6. Signed/notarized macOS beta 7 passes native installation, clean startup,
                     and a public beta 6 to beta 7 installed update with saved test data. Unsigned
                     Windows beta 7 is published with verified package contents, download hashes and
-                    update discovery. Its installed upgrade proof remains pending. The Linux
-                    AppImage uses the same GitHub updater feed via
-                    <code>latest-linux.yml</code> (live check not yet verified), while the deb stays
-                    package-manager owned and links to manual GitHub downloads</span
+                    update discovery. Its installed upgrade proof remains pending</span
                   >
                 </span>
               </li>
@@ -988,11 +1034,10 @@
                   >First-run and private diagnostics
                   <span class="d"
                     >the empty desktop guides users to one project and the three beta providers;
-                    opt-in diagnostics retain at most two bounded app-error text files that can be
-                    revealed or copied only by the user after keyed and standalone credential
-                    shapes, private keys, emails, project paths, and cross-platform home paths are
-                    scrubbed. TasteCode does not start Electron crash reporting or include native
-                    dumps in this diagnostics folder</span
+                    opt-in text-only local logs rotate at 512 KiB and stop recording when disabled;
+                    native crash dumps are no longer collected; logs can be revealed or copied only
+                    by the user after keyed and standalone credential shapes, private keys, emails,
+                    project paths, and cross-platform home paths are scrubbed</span
                   >
                 </span>
               </li>

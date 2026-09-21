@@ -149,6 +149,12 @@ export type StoredQueuedTurn = {
   options: TurnOptions
   createdAt: number
   intent: 'normal' | 'steer'
+  /**
+   * Push channel chosen when the item was queued. Rows written before the
+   * channel was persisted omit it; readers fall back to the thread's stored
+   * side-chat linkage instead of assuming the main channel.
+   */
+  channel?: 'main' | 'side' | undefined
 }
 
 export type SessionSearchOptions = {
@@ -574,6 +580,7 @@ const StoredQueuedTurnPayloadSchema = z.object({
   text: z.string(),
   attachments: z.array(z.string()),
   options: StoredTurnOptionsSchema,
+  channel: z.enum(['main', 'side']).optional(),
 })
 type QueuedTurnRow = {
   thread_id: string
@@ -2142,6 +2149,7 @@ export class Store {
       text: turn.text,
       attachments: turn.attachments,
       options: turn.options,
+      ...(turn.channel ? { channel: turn.channel } : {}),
     })
     this.#transaction(() => {
       const open = this.#openThread.get(turn.threadId)
@@ -3889,6 +3897,7 @@ function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn | undefined {
     options: payload.options,
     createdAt: Number(row.created_at),
     intent: queuedTurnIntent(row.intent),
+    ...(payload.channel ? { channel: payload.channel } : {}),
   }
 }
 

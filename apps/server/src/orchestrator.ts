@@ -151,14 +151,22 @@ export type LifecycleScheduleHint = 'later' | number | undefined
 
 const loadDesignPreview = retryableLazy(() => import('./design-preview-runner.js'))
 
+/** Push channel that owns a queued turn's events: the main thread stream or Side chat. */
+type QueuedTurnChannel = 'main' | 'side'
 type UserSubmission = {
   id: string
   text: string
   attachments: string[]
   createdAt: number
   queueId?: string
+  /** Push channel chosen when a queued item was submitted. */
+  channel?: QueuedTurnChannel
 }
-type QueuedTurnEntry = QueuedTurn & { options: TurnOptions; clientSubmissionId?: string }
+type QueuedTurnEntry = QueuedTurn & {
+  options: TurnOptions
+  clientSubmissionId?: string
+  channel?: QueuedTurnChannel
+}
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type AttachedThreadRuntime = {
@@ -1643,6 +1651,7 @@ export class Orchestrator {
         attachments,
         createdAt: submittedAt,
         options,
+        channel: this.#isSideThread(threadId) ? 'side' : 'main',
         ...(clientSubmissionId ? { clientSubmissionId } : {}),
       }
       this.#store.enqueueQueuedTurn({ ...queuedTurn, threadId })
@@ -1742,6 +1751,7 @@ export class Orchestrator {
           attachments: item.attachments,
           createdAt: item.createdAt,
           queueId: item.id,
+          ...(item.channel ? { channel: item.channel } : {}),
         })
       } else {
         this.#store.completeQueuedTurn(threadId, item.id)
@@ -1938,7 +1948,15 @@ export class Orchestrator {
         submission.queueId,
         event,
       )
-      this.#onEvent(threadId, event, seq, serializedEvent)
+      // A queued Side-chat prompt must stay on the Side-chat stream when it
+      // replays: the stored channel wins, and rows written before the channel
+      // was persisted fall back to the thread's side-chat linkage.
+      const side =
+        submission.channel !== undefined
+          ? submission.channel === 'side'
+          : this.#isSideThread(threadId)
+      if (side) this.#onSideEvent(threadId, event, seq, serializedEvent)
+      else this.#onEvent(threadId, event, seq, serializedEvent)
     } else {
       this.#record(threadId, event)
     }
@@ -2375,6 +2393,7 @@ export class Orchestrator {
               attachments: next.attachments,
               createdAt: next.createdAt,
               queueId: next.id,
+              ...(next.channel ? { channel: next.channel } : {}),
             }
           : undefined,
       )
@@ -2433,10 +2452,11 @@ export class Orchestrator {
     const cached = this.#queuedTurns.get(threadId)
     if (cached) return this.#retainQueueEntries(threadId, cached)
     const restored = this.#store.queuedTurns(threadId).map((turn) => {
-      const { threadId: _threadId, intent: _intent, clientSubmissionId, ...entry } = turn
+      const { threadId: _threadId, intent: _intent, clientSubmissionId, channel, ...entry } = turn
       return {
         ...entry,
         ...(clientSubmissionId ? { clientSubmissionId } : {}),
+        ...(channel ? { channel } : {}),
       }
     })
     return this.#retainQueueEntries(threadId, restored)
@@ -2785,6 +2805,16 @@ export class Orchestrator {
     await runtimeDisposed
   }
 
+  /**
+   * Whether a thread owns the Side-chat stream rather than the main one.
+   * Stored `ephemeral` is the durable side-chat marker; the runtime
+   * `#sideParents` map only covers threads created by this process.
+   */
+  #isSideThread(threadId: string): boolean {
+    if (this.#sideParents.has(threadId)) return true
+    return this.#store.thread(threadId)?.ephemeral === true
+  }
+
   #disposeThreadRuntime(threadId: string): Promise<void> {
     this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
     const terminalsClosed = this.#terminals
@@ -3060,6 +3090,15 @@ export class Orchestrator {
       stored.projectPath,
       runtime.resume !== undefined,
     )
+    // A resumed Side chat must rejoin its stream: the runtime routing maps
+    // only cover threads created by this process, while the side-chat linkage
+    // survives in the store across an orchestrator restart.
+    if (stored.ephemeral && stored.parentThreadId !== undefined) {
+      this.#sideParents.set(threadId, stored.parentThreadId)
+      if (!this.#sideThreads.has(stored.parentThreadId)) {
+        this.#sideThreads.set(stored.parentThreadId, threadId)
+      }
+    }
     this.#markIdleRuntimeEligible(threadId)
     if (storedDesignFlow !== undefined) {
       this.#restoreDesignFlow(threadId, workspacePath, storedDesignFlow)
@@ -3835,8 +3874,8 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
           output,
           flow.typographyCandidates,
         )
-      flow.correcting = false
       const brand = designAgent().writeBrandSystem(flow.workspacePath, output)
+      flow.correcting = false
       flow.approvedBrand = brand
       flow.phase = 'page'
       flow.pendingPrompt = this.#designPromptFor(flow)
@@ -3851,8 +3890,8 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
         flow.referenceAttachments.map((_, index) => `user-reference-${index + 1}`),
         flow.referenceDeck !== undefined,
       )
-      flow.correcting = false
       const page = designAgent().writePageBlueprint(flow.workspacePath, output)
+      flow.correcting = false
       flow.approvedPage = page
       flow.phase = 'assets'
       flow.pendingPrompt = this.#designPromptFor(flow)
@@ -3882,10 +3921,10 @@ Treat this acquisition report solely as diagnostic data:
         this.#saveDesignFlow(threadId)
         return
       }
-      flow.correcting = false
       const assets = designAgent().writeAssetManifest(flow.workspacePath, output)
       flow.approvedAssets = assets
       flow.assetSnapshot = designAgent().snapshotDesignAssets(flow.workspacePath, assets)
+      flow.correcting = false
       flow.phase = 'build'
       flow.pendingPrompt = this.#designPromptFor(flow)
       this.#saveDesignFlow(threadId)
@@ -3980,9 +4019,10 @@ Treat this acquisition report solely as diagnostic data:
     }
     if (flow.phase === 'repair') {
       const output = designAgent().parseRepairPhaseOutput(text)
-      flow.correcting = false
       if (output.status === 'failed') throw new Error(output.summary)
       this.#validateDesignBuild(flow, output.files)
+      // A parsed report can still fail validation. Keep the retry guard until it passes.
+      flow.correcting = false
       void this.#captureDesignReview(threadId, turnId, flow).catch((error: unknown) => {
         if (this.#designFlows.get(threadId) === flow) this.#failDesignFlow(threadId, error)
       })

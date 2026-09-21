@@ -105,6 +105,18 @@ describe('desktopPath', () => {
     expect(result.split(path.win32.delimiter)).toContain(path.win32.join(home, '.local', 'bin'))
   })
 
+  it('finds a fresh standalone Codex install before Windows refreshes the process PATH', () => {
+    const local = 'C:\\Users\\tester\\AppData\\Local'
+    const result = desktopPath('C:\\Windows\\System32', {
+      platform: 'win32',
+      home: 'C:\\Users\\tester',
+      env: { LOCALAPPDATA: local },
+    })
+    expect(result.split(';')).toContain(
+      path.win32.join(local, 'Programs', 'OpenAI', 'Codex', 'bin'),
+    )
+  })
+
   it('writes the desktop-safe PATH back onto the given environment', () => {
     const home = process.platform === 'win32' ? 'C:\\Users\\tester' : '/Users/tester'
     const env: NodeJS.ProcessEnv = {

@@ -1,5 +1,4 @@
 import type { Event, Session, WebContents, WebPreferences } from 'electron'
-import { isSupportedExternalUrl } from './external-urls.js'
 
 const BROWSER_PARTITION = 'persist:harness-browser'
 const configuredSessions = new WeakSet<Session>()
@@ -65,8 +64,7 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
     guest.on('will-redirect', (event, url) => {
       if (!isBrowserGuestUrl(url)) event.preventDefault()
     })
-    // will-navigate does not fire for programmatic loadURL() or src attribute
-    // changes; a guest that still ends up off the web gets unloaded.
+    // A guest that still ends up off the web gets unloaded.
     guest.on('did-navigate', (_event, url) => {
       if (!isBrowserGuestUrl(url, true)) {
         void guest.loadURL('about:blank').catch(() => {})
@@ -75,10 +73,39 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
   })
 }
 
-/** Guest pages are web URLs; the bootstrap document may also be about:blank. */
+export function browserGuestUrl(value: unknown): string {
+  if (typeof value !== 'string' || !isBrowserGuestUrl(value)) {
+    throw new Error('Invalid browser URL')
+  }
+  return value
+}
+
 function isBrowserGuestUrl(value: unknown, allowBlank = false): value is string {
+  if (typeof value !== 'string') return false
   if (allowBlank && value === 'about:blank') return true
-  return isSupportedExternalUrl(value)
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'https:') return true
+    // Plain HTTP stays loopback-only: dev previews bind 127.0.0.1 (see
+    // LoopbackPreviewUrlSchema), while unrestricted HTTP would let a guest
+    // page pull link-local metadata endpoints or LAN services into this
+    // shared session.
+    return url.protocol === 'http:' && isLoopbackHostname(url.hostname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * WHATWG parsing already normalizes non-decimal IPv4 spellings, trailing-dot
+ * IPs and compressed IPv6 literals, so string checks cover every loopback
+ * spelling a URL can carry.
+ */
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === '[::1]') return true
+  if (/^127(?:\.\d{1,3}){3}$/.test(hostname)) return true
+  const domain = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname
+  return domain === 'localhost' || domain.endsWith('.localhost')
 }
 
 /** Present the guest as Chromium instead of exposing the Electron shell. */
@@ -93,6 +120,13 @@ export function browserUserAgent(value: string): string {
 function configureBrowserSession(browserSession: Session): void {
   if (configuredSessions.has(browserSession)) return
   configuredSessions.add(browserSession)
+  // Programmatic loadURL/src changes skip will-navigate. Cancel through the
+  // request API: stopping inside did-start-navigation can crash Chromium.
+  browserSession.webRequest.onBeforeRequest((details, callback) => {
+    callback({
+      cancel: details.resourceType === 'mainFrame' && !isBrowserGuestUrl(details.url, true),
+    })
+  })
   browserSession.setPermissionCheckHandler(() => false)
   browserSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
 }

@@ -10,6 +10,9 @@ import {
   validateResolvedDesignAssets,
   writeAssetManifest,
 } from './assets.js'
+import { canCreateSymlinks } from './symlink.test-support.js'
+
+const canSymlink = canCreateSymlinks()
 
 const manifest = {
   version: 1,
@@ -626,6 +629,7 @@ describe('asset manifest', () => {
         ]),
       ).toThrow('must contain the supplied file unchanged')
 
+      if (!canSymlink) return
       symlinkSync(referencePath, path.join(workspace, 'escaped.png'))
       expect(() =>
         validateAssetManifestForPage(

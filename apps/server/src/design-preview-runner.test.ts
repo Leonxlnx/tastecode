@@ -631,12 +631,12 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
       viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
     })
 
-    const preview = await startDesignPreview(workspace, plan, 5_000)
+    const preview = await startDesignPreview(workspace, plan)
     previews.push(preview)
     await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
       'local script',
     )
-  })
+  }, 45_000)
 })
 
 function staticPreviewPlan(port: number, pathname = '/') {

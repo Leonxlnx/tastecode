@@ -517,8 +517,10 @@ function startOwnedServer(): void {
       ? new ServerSupervisor({
           command: process.execPath,
           args: [serverEntry],
+          cwd: productDataPath,
           env: {
             ...process.env,
+            PWD: productDataPath,
             HARNESS_PORT: String(serverPort),
             ELECTRON_RUN_AS_NODE: '1',
             PATH: desktopPath(),
@@ -535,7 +537,10 @@ function startOwnedServer(): void {
 
 function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env, HARNESS_PORT: String(serverPort) },
+    // Finder/terminal launches may inherit a DMG or external-drive directory.
+    // Background provider probes must start in app storage, not that directory.
+    cwd: productDataPath,
+    env: { ...process.env, PWD: productDataPath, HARNESS_PORT: String(serverPort) },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
@@ -1203,8 +1208,11 @@ if (ownsSingleInstance) {
 
   void app.whenReady().then(async () => {
     logStartupMilestone('app-ready')
+    await mkdir(productDataPath, { recursive: true, mode: 0o700 })
     diagnostics = new LocalDiagnostics(localDiagnosticsDirectory(app.getPath('userData')))
-    process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
+    process.on('uncaughtExceptionMonitor', (error) =>
+      diagnostics?.recordSync('main crash', error.stack ?? String(error)),
+    )
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()
     logStartupMilestone('diagnostics-ready')

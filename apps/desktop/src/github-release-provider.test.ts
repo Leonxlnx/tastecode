@@ -49,13 +49,14 @@ describe('GitHub asset releases', () => {
     ).toBe(beta.tag_name)
   })
 
-  it('needs only the matching installer and a GitHub digest', () => {
-    const latest = selectLatestRelease([release()])
+  it.each(['0.1.0-beta.8', '0.1.1'])('resolves the matching installer for %s', (version) => {
+    const latest = selectLatestRelease([release(version)])
+    expect(releaseUpdateInfo(latest, 'win32', 'x64').version).toBe(version)
     expect(releaseUpdateInfo(latest, 'darwin', 'arm64').asset.name).toMatch(/\.dmg$/)
     expect(releaseUpdateInfo(latest, 'win32', 'x64').asset.name).toMatch(/\.exe$/)
     // electron-builder's AppImage arch token is x86_64 where Node reports x64.
     expect(releaseUpdateInfo(latest, 'linux', 'x64').asset.name).toBe(
-      'TasteCode-0.1.0-beta.8-linux-x86_64.AppImage',
+      `TasteCode-${version}-linux-x86_64.AppImage`,
     )
     expect(latest.assets).toHaveLength(3)
     expect(() => releaseUpdateInfo(latest, 'darwin', 'x64')).toThrow(/missing/)
