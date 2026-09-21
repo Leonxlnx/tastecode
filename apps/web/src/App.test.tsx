@@ -855,6 +855,56 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]')
   })
 
+  it('hides a model that cannot answer a turn until the user turns it on', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', '[]')
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              cachedCodexChoice().model,
+              {
+                id: 'whisper',
+                displayName: 'Whisper',
+                isDefault: false,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+
+    render(<App />)
+    openSettings()
+    await act(() => vi.dynamicImportSettled())
+    fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+
+    const chat = await screen.findByRole('switch', {
+      name: 'Include GPT-5.6 Sol in model picker',
+    })
+    expect(chat.getAttribute('aria-checked')).toBe('true')
+    expect(localStorage.getItem('harness.hiddenModels')).toBe('[]')
+    expect(
+      screen
+        .getByRole('switch', { name: 'Include Whisper in model picker' })
+        .getAttribute('aria-checked'),
+    ).toBe('false')
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Include Whisper in model picker' }))
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.enabledModels')).toBe('["codex:whisper"]'),
+    )
+    expect(
+      screen
+        .getByRole('switch', { name: 'Include Whisper in model picker' })
+        .getAttribute('aria-checked'),
+    ).toBe('true')
+  })
+
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
     const saved = '["codex:gpt-5.6-sol"]'
     localStorage.setItem('harness.modelVisibilityVersion', '4')

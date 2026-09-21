@@ -58,6 +58,78 @@ export function modelVisibleByDefault(model: Model): boolean {
   return !DEFAULT_HIDDEN_MODELS.has(model.id.toLowerCase().replace(/\[1m\]$/, ''))
 }
 
+/**
+ * What a discovered model is for. The OpenAI-compatible `/v1/models` endpoint —
+ * the only discovery an API connection has — answers with `id`, `object`,
+ * `created` and `owned_by` and nothing else, so the id is the only capability
+ * signal that exists. Relays list embedding, rerank, speech and image models
+ * beside their chat models, and offering one of those in the picker can only
+ * ever produce a failed turn.
+ *
+ * The rule classifies the model, never the provider: every source is judged
+ * the same way, and an engine that lacks the capability is simply not offered
+ * for a chat turn. It is a default rather than a verdict — any model can be
+ * turned on by hand in Settings, Models.
+ */
+export type ModelCapability =
+  'chat' | 'embedding' | 'rerank' | 'transcription' | 'speech' | 'image' | 'moderation'
+
+/**
+ * Ordered, most specific first. Each marker names a modality rather than a
+ * vendor, so the rule keeps working for a relay nobody has seen yet. `kokoro`
+ * is the one curated family: a speech model whose id carries no marker of its
+ * own, and a name that no chat model shares.
+ */
+const CAPABILITY_MARKERS = [
+  ['embedding', ['embedding', 'embed']],
+  ['rerank', ['rerank', 're-rank']],
+  ['transcription', ['whisper', 'speech-to-text', 'transcrib']],
+  ['speech', ['kokoro', 'tts', 'text-to-speech']],
+  [
+    'image',
+    ['flux', 'dall-e', 'dalle', 'stable-diffusion', 'sdxl', 'midjourney', 'image-generation'],
+  ],
+  ['moderation', ['moderation']],
+] as const
+
+export function modelCapability(model: Model): ModelCapability {
+  const id = model.id.trim().toLowerCase()
+  for (const [capability, markers] of CAPABILITY_MARKERS) {
+    if (markers.some((marker) => id.includes(marker))) return capability
+  }
+  return 'chat'
+}
+
+/**
+ * Whether a model can answer a turn. Anything else is kept out of the picker by
+ * default and stays reachable through Settings, Models.
+ */
+export function modelServesChat(model: Model): boolean {
+  return modelCapability(model) === 'chat'
+}
+
+const CAPABILITY_LABELS = {
+  chat: 'Chat',
+  embedding: 'Embedding',
+  rerank: 'Rerank',
+  transcription: 'Transcription',
+  speech: 'Speech',
+  image: 'Image',
+  moderation: 'Moderation',
+} satisfies Record<ModelCapability, string>
+
+/** The capability in one word, for a label with no room for a sentence. */
+export function modelCapabilityLabel(model: Model): string | undefined {
+  const capability = modelCapability(model)
+  return capability === 'chat' ? undefined : CAPABILITY_LABELS[capability]
+}
+
+/** Why a non-chat model is off by default, for its Settings row. */
+export function modelCapabilityNote(model: Model): string | undefined {
+  const label = modelCapabilityLabel(model)
+  return label ? `${label} model — cannot answer a turn` : undefined
+}
+
 const REASONING_EFFORT_RANKS = new Map([
   ['none', 0],
   ['minimal', 1],

@@ -7,6 +7,9 @@ import {
   customModelKey,
   filterModelChoicesByQuery,
   isCustomModelChoice,
+  modelCapability,
+  modelCapabilityNote,
+  modelServesChat,
   modelVisibleByDefault,
   providerDisplayName,
   resolveReasoningEffort,
@@ -191,6 +194,47 @@ describe('model catalog', () => {
     ['provider-model-added-tomorrow', true],
   ])('defaults %s visibility to %s', (id, visible) => {
     expect(modelVisibleByDefault({ ...model, id })).toBe(visible)
+  })
+
+  // Real ids from an OpenAI-compatible relay, plus the families one can add.
+  // Its /v1/models answers with id, object, created and owned_by and nothing
+  // else, so the id is the whole capability signal that exists.
+  it.each([
+    ['deepseek-v4-flash', 'chat'],
+    ['gemma4', 'chat'],
+    ['glm5.3-flash', 'chat'],
+    ['mimo-v2.5', 'chat'],
+    ['minimax-h3', 'chat'],
+    ['qwen3.6', 'chat'],
+    ['qwen3.8-flash', 'chat'],
+    ['qwen3-embedding', 'embedding'],
+    ['text-embedding-3-large', 'embedding'],
+    ['rerank', 'rerank'],
+    ['bge-reranker-v2', 'rerank'],
+    ['whisper', 'transcription'],
+    ['gpt-4o-transcribe', 'transcription'],
+    ['kokoro', 'speech'],
+    ['gpt-4o-mini-tts', 'speech'],
+    ['flux-2-klein', 'image'],
+    ['dall-e-3', 'image'],
+    ['stable-diffusion-xl', 'image'],
+    ['omni-moderation-latest', 'moderation'],
+    ['provider-model-added-tomorrow', 'chat'],
+  ])('classifies %s as %s', (id, capability) => {
+    expect(modelCapability({ ...model, id })).toBe(capability)
+  })
+
+  it('keeps a chat model whose name mentions another modality', () => {
+    expect(modelServesChat({ ...model, id: 'gpt-4o-audio-preview' })).toBe(true)
+    expect(modelServesChat({ ...model, id: 'gemini-2.5-flash' })).toBe(true)
+    expect(modelServesChat({ ...model, id: 'claude-sonnet-5' })).toBe(true)
+  })
+
+  it('names the capability that keeps a model out of the picker', () => {
+    expect(modelCapabilityNote({ ...model, id: 'whisper' })).toBe(
+      'Transcription model — cannot answer a turn',
+    )
+    expect(modelCapabilityNote({ ...model, id: 'deepseek-v4-flash' })).toBeUndefined()
   })
 
   it('keeps an effort that the next model supports', () => {

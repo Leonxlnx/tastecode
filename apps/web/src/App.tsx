@@ -118,6 +118,7 @@ import {
   customModelKey,
   isCustomModelChoice,
   modelChoiceKey,
+  modelServesChat,
   modelVisibleByDefault,
   providerDisplayName,
   providerMark,
@@ -215,6 +216,8 @@ const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
+/** Models the user turned on despite a default that keeps them off. */
+const ENABLED_MODELS_KEY = 'harness.enabledModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
 const MODEL_VISIBILITY_VERSION = '4'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
@@ -633,6 +636,17 @@ export function App() {
     }
   })
   const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
+  // A capability default is derived on every catalog build, so turning one of
+  // those models on has to be remembered separately from the hidden set: the
+  // user's check would otherwise be re-derived away on the next discovery.
+  const [enabledModels, setEnabledModels] = useState<Set<string>>(() => {
+    try {
+      const stored: unknown = JSON.parse(readSetting(ENABLED_MODELS_KEY) ?? '[]')
+      return new Set(isStringArray(stored) ? stored : [])
+    } catch {
+      return new Set()
+    }
+  })
   // Read via ref inside the catalog effect so toggling visibility does not
   // refetch every provider's model list.
   const hiddenModelsRef = useRef(hiddenModels)
@@ -844,9 +858,23 @@ export function App() {
   catalogModelsRef.current = catalogModels
   const modelsRef = useRef(models)
   modelsRef.current = models
+  /**
+   * What the picker and Settings both treat as off. Three inputs, in order: the
+   * saved hidden set, the capability default for anything that cannot answer a
+   * turn, and the user's own checks, which win over both. A model the user
+   * typed by hand is never gated — naming an id is already an explicit request.
+   */
+  const hiddenModelKeys = useMemo(() => {
+    const keys = new Set(hiddenModels)
+    for (const choice of rosterModels) {
+      if (enabledModels.has(choice.key)) keys.delete(choice.key)
+      else if (!isCustomModelChoice(choice) && !modelServesChat(choice.model)) keys.add(choice.key)
+    }
+    return keys
+  }, [rosterModels, hiddenModels, enabledModels])
   const visibleModels = useMemo(
-    () => rosterModels.filter((choice) => !hiddenModels.has(choice.key)),
-    [rosterModels, hiddenModels],
+    () => rosterModels.filter((choice) => !hiddenModelKeys.has(choice.key)),
+    [rosterModels, hiddenModelKeys],
   )
   // Memoised for identity: while the catalog is empty this is the selected
   // choice, and a fresh object per render would give every consumer downstream
@@ -2385,6 +2413,11 @@ export function App() {
     if (!modelVisibilityInitialized.current) return
     writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
   }, [hiddenModels])
+
+  useEffect(() => {
+    if (!modelVisibilityInitialized.current) return
+    writeSetting(ENABLED_MODELS_KEY, JSON.stringify([...enabledModels]))
+  }, [enabledModels])
 
   usePersistedSettingChange(EFFORT_KEY, effort)
 
@@ -4183,6 +4216,16 @@ export function App() {
       else next.add(key)
       return next
     })
+    // Kept alongside the hidden set rather than derived from it: a capability
+    // default is recomputed on every discovery, so this is the only record
+    // that the user asked for one of those models by hand.
+    setEnabledModels((current) => {
+      if (visible === current.has(key)) return current
+      const next = new Set(current)
+      if (visible) next.add(key)
+      else next.delete(key)
+      return next
+    })
   }, [])
   const closePalette = useCallback(() => {
     setPaletteScope(null)
@@ -5033,7 +5076,7 @@ export function App() {
             acpAgents={acpAgents}
             modelConnections={modelConnections}
             models={rosterModels}
-            hiddenModels={hiddenModels}
+            hiddenModels={hiddenModelKeys}
             onModelVisibilityChange={changeModelVisibility}
             onConnectionsChanged={refreshCatalog}
             projectCount={projects.length}
