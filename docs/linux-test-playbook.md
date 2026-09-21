@@ -21,6 +21,8 @@ sudo apt install ./TasteCode-0.1.1-linux-amd64.deb
 
 Done when: `dpkg -l tastecode` prints `0.1.1` and `dev.tastecode.desktop` appears in the app menu.
 
+If `apt` exits non-zero, check `dpkg-query -W tastecode` before reporting an install failure: `apt` also configures pending unrelated packages, and a stale DKMS module (e.g. a leftover Waydroid/anbox kernel module failing to build) can fail the command after `tastecode` already reached `install ok installed`. In that case the install succeeded; repair the package manager (`sudo dpkg --configure -a`, remove the stale DKMS package) so the next upgrade is clean.
+
 **AppImage** (no install, no root):
 
 ```bash
