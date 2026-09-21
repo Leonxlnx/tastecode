@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { CustomHarness } from '@harness/contracts'
+import { ModelConnectionPresetSchema, type CustomHarness } from '@harness/contracts'
 import type { StartOptions } from './adapters.js'
 
 /**
@@ -196,7 +196,7 @@ vi.mock('@harness/adapter-claude-code', () => ({
 vi.mock('@harness/adapter-cursor', () => ({ CursorAdapter: FakeCursorAdapter }))
 vi.mock('@harness/adapter-codex', () => ({ CodexAdapter: FakeCodexAdapter }))
 
-const { providerRuntime } = await import('./adapters.js')
+const { compatibleProviderFor, providerRuntime } = await import('./adapters.js')
 
 afterEach(() => {
   constructed.length = 0
@@ -206,6 +206,34 @@ afterEach(() => {
   release = undefined
   vi.restoreAllMocks()
   vi.useRealTimers()
+})
+
+/**
+ * The transport's provider list is narrower than the connection preset schema.
+ * These cases pin which presets keep their reviewed capabilities and which fall
+ * back to the generic OpenAI-compatible defaults.
+ */
+const COMPATIBLE_PROVIDER_CASES = [
+  ['openrouter', 'openrouter'],
+  ['kimi', 'kimi'],
+  ['zai', 'zai'],
+  ['openai', 'custom'],
+  ['anthropic', 'custom'],
+  ['custom', 'custom'],
+] as const
+
+describe('compatible provider mapping', () => {
+  it.each(COMPATIBLE_PROVIDER_CASES)('resolves the %s preset to %s', (preset, provider) => {
+    expect(compatibleProviderFor(preset)).toBe(provider)
+  })
+
+  // The mapping has a catch-all, so a preset added to the schema would silently
+  // become `custom` unless someone decides its treatment. Fail here first.
+  it('decides every preset the schema allows', () => {
+    expect(COMPATIBLE_PROVIDER_CASES.map(([preset]) => preset).sort()).toEqual(
+      [...ModelConnectionPresetSchema.options].sort(),
+    )
+  })
 })
 
 describe('resumable provider setup', () => {
