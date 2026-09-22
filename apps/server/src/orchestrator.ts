@@ -41,6 +41,7 @@ import { ProviderControls } from './provider-controls.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { providerOwnedPrompt } from './provider-history.js'
 import { orderProviderHistory } from './provider-history-order.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
@@ -3418,6 +3419,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
   ): Promise<string> {
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const designFlow = this.#designFlows.get(threadId)
+    let ownershipToken: string | undefined
     if (designFlow) {
       if (designFlow.continueNormally) {
         designFlow.phase = 'response'
@@ -3426,11 +3428,16 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       }
       if (designFlow.phase !== 'response')
         prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
+      if (designFlow.phase !== 'response') {
+        ownershipToken = crypto.randomUUID()
+        prompt = providerOwnedPrompt(ownershipToken, prompt)
+      }
       this.#validateApprovedDesignArtifacts(designFlow)
       attachments = [
         ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
       ]
     }
+    if (ownershipToken) this.#store.recordProviderOwnedPrompt(threadId, ownershipToken)
     const panicGeneration = this.#panicGeneration
     this.#checkoutAccess.beginTurn(this.#repoPath(threadId), threadId)
     for (const [turnId, owner] of this.#designTurns) {

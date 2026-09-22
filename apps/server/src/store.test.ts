@@ -1045,6 +1045,30 @@ describe('design runs', () => {
   })
 })
 
+describe('provider-owned prompts', () => {
+  it('keeps ownership receipts across a restart and removes them with the thread', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-provider-owned-prompt-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'Thread' })
+    seeded.recordProviderOwnedPrompt('t1', '11111111-1111-4111-8111-111111111111')
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerOwnedPromptTokens('t1')).toEqual([
+        '11111111-1111-4111-8111-111111111111',
+      ])
+      reopened.deleteThread('t1')
+      expect(reopened.providerOwnedPromptTokens('t1')).toEqual([])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('projects', () => {
   it('names a project after its folder when no name is given', () => {
     const project = store.addProject('/home/me/work/harness')

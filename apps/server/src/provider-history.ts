@@ -190,7 +190,8 @@ export class ProviderHistory {
           return changed
         if (events.length === 0) throw new Error('Saved provider chat is unavailable; try again')
         const local = this.store.localHistory(threadId).map(({ event }) => event)
-        const entries = importedEvents(events, threadId, local)
+        const ownedPromptTokens = this.store.providerOwnedPromptTokens(threadId)
+        const entries = importedEvents(events, threadId, local, ownedPromptTokens)
         changed =
           this.store.mergeProviderHistory(threadId, current.session.revision, entries) || changed
         current.loadedRevision = current.session.revision
@@ -209,7 +210,12 @@ export class ProviderHistory {
             this.store.mergeProviderHistory(
               duplicateId,
               current.session.revision,
-              importedEvents(events, duplicateId, [...local, ...duplicateLocal]),
+              importedEvents(
+                events,
+                duplicateId,
+                [...local, ...duplicateLocal],
+                [...ownedPromptTokens, ...this.store.providerOwnedPromptTokens(duplicateId)],
+              ),
             )
           }
           this.hooks.changed([threadId, duplicateId])
@@ -237,38 +243,38 @@ function turnId(event: DomainEvent): string | undefined {
   return 'turnId' in event ? event.turnId : undefined
 }
 
-// Provider sessions store user turns verbatim, including the internal prompts
-// the server sends on the user's behalf (Design phases, corrections, mode
-// changes — see #sendDesignTurn and the packages/design-agent prompt builders).
-// A turn opened by one of these envelopes is pure orchestration: none of its
-// items may surface in the transcript after an import.
-const INTERNAL_USER_MESSAGE_MARKERS = [
-  'Give concise, plain-language progress updates as separate assistant commentary while working:',
-  'This is an ordinary user turn, not an active TasteCode Design phase.',
-  'You are running TasteCode Design Briefing mode.',
-  'You are running the Brand phase of TasteCode Design Mode.',
-  'You are running the Page Blueprint phase of TasteCode Design Mode.',
-  'You are running the Asset phase of TasteCode Design Mode.',
-  'You are running the Build phase of TasteCode Design Mode.',
-  'You are running the visual Review phase of TasteCode Design Mode.',
-  'You are running the Preview Setup phase of TasteCode Design Mode.',
-  'Design mode is now off.',
-  'Your previous Design Mode response failed validation.',
-  'Your previous Build result failed',
-  "Your implementation failed TasteCode's deterministic source-quality gate.",
-  '<user-design-request>',
-  '<original-user-request>',
-  '<briefing-answers>',
-]
+const OWNED_PROMPT_PREFIX = '<tastecode-owned-prompt token="'
+const OWNED_PROMPT_SUFFIX = '" />\n'
+const SYSTEM_INSTRUCTIONS_END = '</system-instructions>\n\n'
 
-function isInternalUserMessage(text: string | undefined): boolean {
-  return text !== undefined && INTERNAL_USER_MESSAGE_MARKERS.some((m) => text.includes(m))
+export function providerOwnedPrompt(token: string, prompt: string): string {
+  return `${OWNED_PROMPT_PREFIX}${token}${OWNED_PROMPT_SUFFIX}${prompt}`
+}
+
+function ownedPromptToken(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined
+  // A provider adapter may prepend the configured system instructions to its first
+  // native prompt. Accept that one bounded envelope, then require our marker at the boundary.
+  if (text.startsWith('<system-instructions>\n')) {
+    const end = text.indexOf(SYSTEM_INSTRUCTIONS_END)
+    if (end === -1) return undefined
+    text = text.slice(end + SYSTEM_INSTRUCTIONS_END.length)
+  }
+  if (!text.startsWith(OWNED_PROMPT_PREFIX)) return undefined
+  const end = text.indexOf(OWNED_PROMPT_SUFFIX, OWNED_PROMPT_PREFIX.length)
+  return end === -1 ? undefined : text.slice(OWNED_PROMPT_PREFIX.length, end)
+}
+
+function consumeOwnedPrompt(text: string | undefined, tokens: Set<string>): boolean {
+  const token = ownedPromptToken(text)
+  return token === undefined ? false : tokens.delete(token)
 }
 
 export function importedEvents(
   events: DomainEvent[],
   threadId: string,
   local: DomainEvent[],
+  ownedPromptTokens: readonly string[] = [],
 ): Array<{ key: string; event: DomainEvent }> {
   const finalItems = new Map(
     projectHistoryItems(events.map((event, seq) => ({ seq, event }))).map((item) => [
@@ -300,6 +306,7 @@ export function importedEvents(
   )
   const echoed = new Set<string>()
   const internalTurns = new Set<string>()
+  const availableOwnedPrompts = new Set(ownedPromptTokens)
   for (const event of events) {
     const id = turnId(event)
     if (!id) continue
@@ -307,7 +314,7 @@ export function importedEvents(
     if (
       (event.type === 'item.completed' || event.type === 'item.started') &&
       event.item.role === 'user' &&
-      isInternalUserMessage(event.item.text)
+      consumeOwnedPrompt(event.item.text, availableOwnedPrompts)
     )
       internalTurns.add(id)
   }

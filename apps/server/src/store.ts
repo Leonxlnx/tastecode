@@ -313,6 +313,13 @@ CREATE TABLE IF NOT EXISTS provider_history_events (
 );
 CREATE INDEX IF NOT EXISTS provider_history_event_seq ON provider_history_events (event_seq);
 
+CREATE TABLE IF NOT EXISTS provider_owned_prompts (
+  thread_id  TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+  token      TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, token)
+);
+
 INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
 CREATE TABLE IF NOT EXISTS events (
@@ -1575,6 +1582,26 @@ export class Store {
       const event = parseDomainEvent(row.payload, `local history for thread ${threadId}`)
       return event === undefined ? [] : [{ seq: Number(row.seq), event }]
     })
+  }
+
+  /** Persist ownership before sending a provider-only prompt so a crash cannot erase provenance. */
+  recordProviderOwnedPrompt(threadId: string, token: string): void {
+    this.#db
+      .prepare(
+        `INSERT OR IGNORE INTO provider_owned_prompts (thread_id, token, created_at)
+         VALUES (?, ?, ?)`,
+      )
+      .run(threadId, token, Date.now())
+  }
+
+  providerOwnedPromptTokens(threadId: string): string[] {
+    return sqliteRows<StringValueRow>(
+      this.#db.prepare(
+        `SELECT token AS value FROM provider_owned_prompts
+         WHERE thread_id = ? ORDER BY created_at, token`,
+      ),
+      threadId,
+    ).map((row) => row.value)
   }
 
   /** Keep stable log positions so imported updates cannot invalidate local checkpoints. */

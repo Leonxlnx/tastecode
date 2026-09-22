@@ -1910,6 +1910,28 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it('persists provider prompt ownership before the provider accepts the turn', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]!.release = () => undefined
+      const sending = orchestrator.sendTurn(thread.id, 'Create a website.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(1))
+
+      const [token] = store.providerOwnedPromptTokens(thread.id)
+      expect(token).toBeDefined()
+      expect(sessions[0]!.sent[0]).toContain(`<tastecode-owned-prompt token="${token}" />\n`)
+
+      sessions[0]!.release?.()
+      await sending
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it.each(['reported failure', 'source validation'])(
     'stops repeated repair corrections after %s instead of resetting the retry guard',
     async (failure) => {
