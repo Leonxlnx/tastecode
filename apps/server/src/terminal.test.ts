@@ -440,7 +440,7 @@ describe('TerminalManager', () => {
   })
 
   it.runIf(process.platform === 'linux')(
-    'removes a PTY child and grandchild that ignore hangup',
+    'stops a PTY child and grandchild that ignore hangup',
     async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-tree-'))
       const fixture = path.join(cwd, 'tree.mjs')
@@ -493,7 +493,7 @@ if (process.argv[2] === 'grandchild') {
 
         await manager.close(terminalId)
 
-        expect(ownedProcesses.map(processExists)).toEqual([false, false])
+        expect(ownedProcesses.map(processCanRun)).toEqual([false, false])
       } finally {
         if (ownedProcesses) killExactProcesses(ownedProcesses)
         await manager.closeAll().catch(() => undefined)
@@ -595,7 +595,7 @@ setInterval(() => undefined, 1_000)
 
         await manager.closeAll()
 
-        expect(processExists(child)).toBe(false)
+        expect(processCanRun(child)).toBe(false)
       } finally {
         if (child) killExactProcesses([child])
         await manager.closeAll().catch(() => undefined)
@@ -688,10 +688,23 @@ function processExists(identity: ProcessIdentity): boolean {
 }
 
 function processStartTime(pid: number): string | undefined {
+  return processStatus(pid)?.startTime
+}
+
+function processCanRun(identity: ProcessIdentity): boolean {
+  const status = processStatus(identity.pid)
+  return status?.startTime === identity.startTime && status.state !== 'Z' && status.state !== 'X'
+}
+
+function processStatus(pid: number): { state: string; startTime: string } | undefined {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
     const commandEnd = stat.lastIndexOf(')')
-    return commandEnd < 0 ? undefined : stat.slice(commandEnd + 2).split(' ')[19]
+    if (commandEnd < 0) return undefined
+    const fields = stat.slice(commandEnd + 2).split(' ')
+    const state = fields[0]
+    const startTime = fields[19]
+    return state && startTime ? { state, startTime } : undefined
   } catch (error) {
     const code = processErrorCode(error)
     if (code === 'ESRCH' || code === 'ENOENT') return undefined

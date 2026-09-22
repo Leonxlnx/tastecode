@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Store } from './store.js'
 
 const control = vi.hoisted(() => ({
@@ -60,6 +60,11 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
 
 import { Orchestrator } from './orchestrator.js'
 
+beforeAll(async () => {
+  // Module transformation is outside the startup behavior these tests time.
+  await import('@harness/adapter-codex')
+})
+
 beforeEach(() => {
   control.constructed = 0
   control.started = 0
@@ -70,6 +75,11 @@ beforeEach(() => {
   control.releases = []
   control.usageChanged = undefined
   control.login = undefined
+})
+
+afterEach(() => {
+  // A failed assertion must not leave a gated startup writing into the next test.
+  for (const release of control.releases.splice(0)) release()
 })
 
 describe('control adapter startup', () => {
