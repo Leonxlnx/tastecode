@@ -73,8 +73,7 @@ export async function fetchLatestRelease(
     } catch (cause) {
       throw new Error(`GitHub release check failed: ${causeMessage(cause)}`)
     }
-    if (!response.ok)
-      throw new Error(`GitHub release check failed with HTTP ${response.status}.`)
+    if (!response.ok) throw new Error(`GitHub release check failed with HTTP ${response.status}.`)
 
     let rows: unknown
     try {
