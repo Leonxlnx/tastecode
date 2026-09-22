@@ -141,6 +141,15 @@ export function assertConfiguredDebDependencies(actualDepends, debConfig = {}) {
   }
 }
 
+export function assertDebianCopyrightMatches(packagedCopyright, generatedCopyright) {
+  if (packagedCopyright !== generatedCopyright) {
+    throw new Error(
+      '[linux-release-evidence] deb copyright does not match release/debian-copyright; ' +
+        'rerun pnpm licenses:verify and rebuild both x64 targets',
+    )
+  }
+}
+
 // Exported for programmatic callers — main() runs it, but a library consumer
 // must call it explicitly; collectLinuxReleaseEvidence deliberately stays
 // runnable without dpkg-deb for tests and non-deb environments.
@@ -212,6 +221,8 @@ export async function verifyDebContents(releaseDirectory, desktopPackage) {
     for (const required of [
       executable,
       'chrome-sandbox',
+      'LICENSE.electron.txt',
+      'LICENSES.chromium.html',
       path.join('resources', 'app.asar'),
       path.join('resources', 'apparmor-profile'),
     ]) {
@@ -253,15 +264,34 @@ export async function verifyDebContents(releaseDirectory, desktopPackage) {
     // no-copyright-file tag resolves the doc directory by the deb package name.
     const metainfoName = `${path.basename(desktopEntryName, '.desktop')}.metainfo.xml`
     const packageName = desktopPackage.build?.deb?.packageName ?? executable
-    for (const payload of [
-      path.join('usr', 'share', 'metainfo', metainfoName),
-      path.join('usr', 'share', 'doc', packageName, 'copyright'),
-    ]) {
+    const copyrightPath = path.join('usr', 'share', 'doc', packageName, 'copyright')
+    for (const payload of [path.join('usr', 'share', 'metainfo', metainfoName), copyrightPath]) {
       const entry = statSync(path.join(extractionRoot, payload), { throwIfNoEntry: false })
       if (!entry?.isFile()) {
         throw new Error(`[linux-release-evidence] deb payload is missing ${payload}`)
       }
+      if (payload === copyrightPath && (entry.mode & 0o777) !== 0o644) {
+        throw new Error(
+          `[linux-release-evidence] deb copyright mode must be 0644, received ${(entry.mode & 0o777).toString(8)}`,
+        )
+      }
     }
+    let generatedCopyright
+    try {
+      generatedCopyright = readFileSync(
+        path.join(workspaceRoot, 'release', 'debian-copyright'),
+        'utf8',
+      )
+    } catch {
+      throw new Error(
+        '[linux-release-evidence] generated release/debian-copyright is missing; ' +
+          'rerun pnpm licenses:verify',
+      )
+    }
+    assertDebianCopyrightMatches(
+      readFileSync(path.join(extractionRoot, copyrightPath), 'utf8'),
+      generatedCopyright,
+    )
   } finally {
     await rm(extractionRoot, { recursive: true, force: true })
   }
@@ -361,8 +391,8 @@ export async function collectLinuxReleaseEvidence(
       version,
     },
     schemaVersion: 4,
-    // The AppImage self-updates via latest-linux.yml; the deb stays
-    // package-manager owned and updates manually.
+    // AppImage installs update through the custom GitHub release provider; the
+    // deb stays package-manager owned and updates manually.
     updateMode: 'appimage-install',
     version,
   }

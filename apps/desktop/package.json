@@ -198,7 +198,7 @@
         "--deb-user=root",
         "--deb-group=root",
         "assets/linux/dev.tastecode.metainfo.xml=/usr/share/metainfo/dev.tastecode.metainfo.xml",
-        "assets/linux/copyright=/usr/share/doc/tastecode/copyright"
+        "../../release/debian-copyright=/usr/share/doc/tastecode/copyright"
       ]
     },
     "win": {

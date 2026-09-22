@@ -993,6 +993,11 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
     'THIRD_PARTY_LICENSES.txt',
   ])
     assert.ok(desktop.build.extraResources.some((entry) => entry.to === name))
+  assert.ok(
+    desktop.build.deb.fpm.includes(
+      '../../release/debian-copyright=/usr/share/doc/tastecode/copyright',
+    ),
+  )
   assert.match(desktop.scripts['test:release-tools'], /release-tools\.test\.js/)
   assert.ok(checksumPayloadAssets('macos').includes(releaseConfig.platforms.macos.provenance))
 })

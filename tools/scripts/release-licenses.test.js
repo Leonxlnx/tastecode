@@ -9,6 +9,7 @@ import {
   auditInstalledProductionGraph,
   deriveDirectRuntimeDependencies,
   loadLicenseInventory,
+  renderDebianCopyright,
   renderDirectRuntimeTable,
   verifyDirectRuntimeTable,
   verifyProjectLicense,
@@ -105,6 +106,33 @@ test('the installed graph report includes transitives and license-file evidence'
   assert.deepEqual(report.packages[0].licenseFiles, ['LICENSE.fixture'])
   assert.match(licenseBundle, /external-web@1\.0\.0/)
   assert.match(licenseBundle, /fixture license/)
+})
+
+test('the Debian copyright preserves the audited third-party license bundle', () => {
+  const licenseBundle = [
+    'TasteCode third-party license texts',
+    '',
+    '='.repeat(80),
+    'electron@39.8.2',
+    '',
+    '--- LICENSE ---',
+    'Copyright Electron contributors',
+    '',
+    '='.repeat(80),
+    '@fontsource/inter@5.2.8',
+    '',
+    '--- LICENSE ---',
+    'Copyright The Inter Project Authors',
+    '',
+    '',
+  ].join('\n')
+
+  const copyright = renderDebianCopyright(licenseBundle)
+
+  assert.match(copyright, /TasteCode source code[\s\S]*\/usr\/share\/common-licenses\/Apache-2\.0/)
+  assert.equal(copyright.slice(-licenseBundle.length), licenseBundle)
+  assert.equal(copyright.match(/electron@39\.8\.2/g)?.length, 1)
+  assert.equal(copyright.match(/@fontsource\/inter@5\.2\.8/g)?.length, 1)
 })
 
 test('unknown license metadata fails closed', async () => {

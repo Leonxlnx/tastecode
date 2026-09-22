@@ -10,6 +10,7 @@ import { createBuildProvenance } from './build-provenance.js'
 import {
   assertArtifactProvenance,
   assertConfiguredDebDependencies,
+  assertDebianCopyrightMatches,
   assertWorktreeClean,
   collectLinuxReleaseEvidence as collectLinuxReleaseEvidenceRaw,
   worktreePorcelainStatus,
@@ -78,6 +79,27 @@ test('requires configured FPM dependencies in the built deb', () => {
   assert.throws(
     () => assertConfiguredDebDependencies('libgtk-3-0', { fpm: ['-d='] }),
     /-d requires a dependency value/,
+  )
+})
+
+test('rejects a deb copyright that differs from the generated license inventory', () => {
+  const generated = [
+    'TasteCode copyright and distribution licenses',
+    '',
+    'Bundled third-party software',
+    'electron@43.4.0',
+    '@fontsource-variable/inter@5.3.0',
+    '',
+  ].join('\n')
+
+  assert.doesNotThrow(() => assertDebianCopyrightMatches(generated, generated))
+  assert.throws(
+    () =>
+      assertDebianCopyrightMatches(
+        generated.replace('electron@43.4.0', 'electron@0.0.0'),
+        generated,
+      ),
+    /does not match release\/debian-copyright/,
   )
 })
 
