@@ -76,11 +76,207 @@ export const RequestSchema = z.object({
 })
 export type Request = z.infer<typeof RequestSchema>
 
+export const CouturierRoleSchema = z.enum(['generation', 'finishing'])
+export type CouturierRole = z.infer<typeof CouturierRoleSchema>
+
+const CouturierTimestampSchema = z.number().int().nonnegative()
+
+export const CouturierModeSchema = z.enum([
+  'overview',
+  'directions',
+  'fitting',
+  'finishing',
+  'history',
+])
+export type CouturierMode = z.infer<typeof CouturierModeSchema>
+
+export const CouturierSourceRefSchema = z
+  .object({
+    root: z.string().min(1),
+    relativePath: z.string().refine((value) => !value.includes('\\'), 'use slash separators'),
+    state: z.enum(['readable', 'missing', 'unreadable']),
+    sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .nullable(),
+  })
+  .superRefine((source, context) => {
+    if ((source.state === 'readable') !== (source.sha256 !== null)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['sha256'],
+        message: 'sha256 is required only for readable sources',
+      })
+    }
+  })
+export type CouturierSourceRef = z.infer<typeof CouturierSourceRefSchema>
+
+export const CouturierBindingRefSchema = z.object({
+  commissionId: z.string().uuid(),
+  role: CouturierRoleSchema,
+  threadId: z.string().min(1),
+})
+export type CouturierBindingRef = z.infer<typeof CouturierBindingRefSchema>
+
+export const CouturierViewStateSchema = z.object({
+  mode: CouturierModeSchema,
+  referenceDirectionId: z.string().nullable(),
+  slicePath: z.string().nullable(),
+  productionPath: z.string().nullable(),
+  comparedDirectionIds: z.array(z.string()).max(2),
+  captureView: z.enum(['desktop', 'mobile', 'reduced-motion']),
+  captureFrame: z.enum(['initial', 'result', 'continuation']),
+  fittingFilter: z.enum(['all', 'constraint', 'detector', 'copy', 'breakage']),
+  finisherFilter: z.enum(['open', 'all', 'unresolved', 'approved-compromise', 'preserved']),
+})
+export type CouturierViewState = z.infer<typeof CouturierViewStateSchema>
+
+export const CouturierCommissionSchema = z.object({
+  id: z.string().uuid(),
+  displayName: z.string().trim().min(1),
+  projectPath: z.string().min(1),
+  generationRoot: z.string().min(1).nullable(),
+  finishingRoot: z.string().min(1).nullable(),
+  createdAt: CouturierTimestampSchema,
+  updatedAt: CouturierTimestampSchema,
+  archivedAt: CouturierTimestampSchema.nullable(),
+})
+export type CouturierCommission = z.infer<typeof CouturierCommissionSchema>
+
+export const CouturierSessionPreparationSchema = z.object({
+  id: z.string().uuid(),
+  commissionId: z.string().uuid(),
+  role: CouturierRoleSchema,
+  projectPath: z.string().min(1),
+  workingDirectory: z.string().min(1),
+  requiredSkill: z.enum(['site-couturier', 'site-couturier-finisher']),
+  createdAt: CouturierTimestampSchema,
+  updatedAt: CouturierTimestampSchema,
+  threadId: z.string().min(1).nullable(),
+})
+export type CouturierSessionPreparation = z.infer<typeof CouturierSessionPreparationSchema>
+
+export const CouturierThreadBindingSchema = CouturierBindingRefSchema.extend({
+  workingDirectory: z.string().min(1),
+  isCurrent: z.boolean(),
+  createdAt: CouturierTimestampSchema,
+})
+export type CouturierThreadBinding = z.infer<typeof CouturierThreadBindingSchema>
+
+export const CouturierDraftStateSchema = z.enum([
+  'draft',
+  'queued',
+  'sent',
+  'withheld',
+  'discarded',
+])
+
+export const CouturierDraftSchema = z.object({
+  id: z.string().uuid(),
+  commissionId: z.string().uuid(),
+  role: CouturierRoleSchema,
+  threadId: z.string().min(1),
+  originMode: CouturierModeSchema,
+  sourceRefs: z.array(CouturierSourceRefSchema),
+  itemIds: z.array(z.string()),
+  text: z.string(),
+  evidenceVersion: z.string().min(1).nullable(),
+  state: CouturierDraftStateSchema,
+  submissionId: z.string().uuid().nullable(),
+  queuedTurnId: z.string().min(1).nullable(),
+  turnId: z.string().min(1).nullable(),
+  withheldReason: z.string().nullable(),
+  withheldAt: CouturierTimestampSchema.nullable(),
+  createdAt: CouturierTimestampSchema,
+  updatedAt: CouturierTimestampSchema,
+})
+export type CouturierDraft = z.infer<typeof CouturierDraftSchema>
+
+export const CouturierSubmissionSchema = z.object({
+  clientSubmissionId: z.string().uuid(),
+  draftId: z.string().uuid(),
+  threadId: z.string().min(1),
+  submittedText: z.string(),
+  attachmentPaths: z.array(z.string()),
+  binding: CouturierBindingRefSchema,
+  sourceRefs: z.array(CouturierSourceRefSchema),
+  evidenceVersion: z.string().min(1).nullable(),
+  status: z.enum([
+    'accepted',
+    'queued',
+    'dispatching',
+    'dispatched',
+    'withheld',
+    'cancelled',
+    'dispatch-unknown',
+  ]),
+  queuedTurnId: z.string().min(1).nullable(),
+  turnId: z.string().min(1).nullable(),
+  rpcResult: z.record(z.string(), z.unknown()).nullable(),
+  reason: z.string().nullable(),
+  createdAt: CouturierTimestampSchema,
+  updatedAt: CouturierTimestampSchema,
+})
+export type CouturierSubmission = z.infer<typeof CouturierSubmissionSchema>
+
+export const CouturierQueueContextSchema = z.object({
+  draftId: z.string().uuid(),
+  clientSubmissionId: z.string().uuid(),
+  commissionId: z.string().uuid(),
+  role: CouturierRoleSchema,
+  boundThreadId: z.string().min(1),
+  workingDirectory: z.string().min(1),
+  evidenceVersion: z.string().min(1).nullable(),
+})
+export type CouturierQueueContext = z.infer<typeof CouturierQueueContextSchema>
+
+export const CouturierSectionSchema = z
+  .object({
+    readState: z.enum(['fresh', 'absent', 'error']),
+    value: z.record(z.string(), z.unknown()).nullable(),
+    reason: z.string().nullable(),
+    readAt: CouturierTimestampSchema,
+    sourceRefs: z.array(CouturierSourceRefSchema),
+    evidenceVersion: z.string().min(1).nullable(),
+  })
+  .superRefine((section, context) => {
+    if (section.readState !== 'fresh' && section.value !== null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: 'absent and error sections cannot carry a projection value',
+      })
+    }
+    if (section.readState !== 'fresh' && section.evidenceVersion !== null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['evidenceVersion'],
+        message: 'absent and error sections cannot carry an evidence version',
+      })
+    }
+    if (section.readState === 'error' && section.reason === null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['reason'],
+        message: 'error sections must name the failure',
+      })
+    }
+    if (section.readState === 'fresh' && section.value === null) {
+      context.addIssue({
+        code: 'custom',
+        path: ['value'],
+        message: 'fresh sections must carry their projection value',
+      })
+    }
+  })
+export type CouturierSection = z.infer<typeof CouturierSectionSchema>
+
 export const QueuedTurnSchema = z.object({
   id: z.string(),
   text: z.string(),
   attachments: z.array(z.string()),
   createdAt: z.number(),
+  couturierContext: CouturierQueueContextSchema.optional(),
 })
 export type QueuedTurn = z.infer<typeof QueuedTurnSchema>
 
@@ -916,6 +1112,123 @@ export const methods = {
       ),
     }),
   },
+  /** Persisted House shell state for one existing parent project. */
+  'couturier.workspace': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      commissionId: z.string().uuid().optional(),
+    }),
+    result: z.object({
+      commissions: z.array(CouturierCommissionSchema),
+      bindings: z.array(CouturierThreadBindingSchema),
+      preparations: z.array(CouturierSessionPreparationSchema),
+      drafts: z.array(CouturierDraftSchema),
+      submissions: z.array(CouturierSubmissionSchema),
+      views: z.array(
+        z.object({ commissionId: z.string().uuid(), value: CouturierViewStateSchema }),
+      ),
+    }),
+  },
+  /** Prepare a normal Chat session without starting a provider turn. */
+  'couturier.prepareSession': {
+    params: z
+      .object({
+        projectPath: z.string().min(1),
+        workingDirectory: z.string().min(1),
+        role: CouturierRoleSchema,
+        requestId: z.string().uuid(),
+        commissionId: z.string().uuid().optional(),
+        displayName: z.string().trim().min(1).optional(),
+        artifactRoot: z.string().min(1).optional(),
+      })
+      .superRefine((request, context) => {
+        if (Boolean(request.commissionId) === Boolean(request.displayName)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['commissionId'],
+            message: 'provide exactly one of commissionId or displayName',
+          })
+        }
+      }),
+    result: z.object({
+      commissionId: z.string().uuid(),
+      preparationId: z.string().uuid(),
+      readiness: z.enum(['ready', 'unverified', 'unavailable']),
+      reason: z.string().nullable(),
+      requiredSkill: z.enum(['site-couturier', 'site-couturier-finisher']),
+    }),
+  },
+  /** Bind an existing normal thread to one commission role. */
+  'couturier.bindSession': {
+    params: z.object({
+      commissionId: z.string().uuid(),
+      threadId: z.string().min(1),
+      role: CouturierRoleSchema,
+      artifactRoot: z.string().min(1).optional(),
+    }),
+    result: z.object({
+      binding: CouturierThreadBindingSchema,
+      commission: CouturierCommissionSchema,
+    }),
+  },
+  /** Explicitly rename, attach a root, or archive a shell commission. */
+  'couturier.updateCommission': {
+    params: z.object({
+      commissionId: z.string().uuid(),
+      expectedUpdatedAt: CouturierTimestampSchema,
+      changes: z
+        .object({
+          displayName: z.string().trim().min(1).optional(),
+          generationRoot: z.string().min(1).optional(),
+          finishingRoot: z.string().min(1).optional(),
+          archived: z.boolean().optional(),
+        })
+        .refine((changes) => Object.keys(changes).length > 0, 'at least one change is required'),
+    }),
+    result: z.object({ commission: CouturierCommissionSchema }),
+  },
+  /** Save an unsent decision intent. This method cannot submit it. */
+  'couturier.saveDraft': {
+    params: z.object({
+      requestId: z.string().uuid(),
+      draftId: z.string().uuid().optional(),
+      binding: CouturierBindingRefSchema,
+      originMode: CouturierModeSchema,
+      text: z.string(),
+      itemIds: z.array(z.string()),
+      sourceRefs: z.array(CouturierSourceRefSchema),
+      evidenceVersion: z.string().min(1).nullable(),
+      state: z.enum(['draft', 'discarded']),
+    }),
+    result: z.object({ draft: CouturierDraftSchema }),
+  },
+  /** Save viewing context only; it never records a pipeline decision. */
+  'couturier.saveView': {
+    params: z.object({ commissionId: z.string().uuid(), value: CouturierViewStateSchema }),
+    result: z.object({ commissionId: z.string().uuid(), value: CouturierViewStateSchema }),
+  },
+  /** Refresh every read-only projection for one selected commission. */
+  'couturier.refresh': {
+    params: z.object({
+      commissionId: z.string().uuid(),
+      requestGeneration: z.number().int().nonnegative(),
+    }),
+    result: z.object({
+      commissionId: z.string().uuid(),
+      requestGeneration: z.number().int().nonnegative(),
+      readAt: CouturierTimestampSchema,
+      sections: z.object({
+        generationOverview: CouturierSectionSchema,
+        finishingOverview: CouturierSectionSchema,
+        directions: CouturierSectionSchema,
+        fitting: CouturierSectionSchema,
+        finisherReview: CouturierSectionSchema,
+        resumeGeneration: CouturierSectionSchema,
+        resumeFinishing: CouturierSectionSchema,
+        conditionalGates: CouturierSectionSchema,
+      }),
+    }),
+  },
   /** Read a bounded public text file without exposing renderer filesystem access. */
   'workspace.readFile': {
     params: z.object({
@@ -1284,6 +1597,8 @@ export const methods = {
         isolate: z.boolean().optional(),
         /** Local branch used atomically for a shared or isolated checkout. */
         baseRef: z.string().min(1).max(1024).optional(),
+        /** Server-owned prepared Couturier context; never a caller-supplied cwd override. */
+        couturierContext: z.object({ preparationId: z.string().uuid() }).optional(),
       })
       .superRefine((request, context) => {
         if ((request.provider === 'api') !== Boolean(request.connectionId)) {
@@ -1291,6 +1606,13 @@ export const methods = {
             code: 'custom',
             path: ['connectionId'],
             message: 'connectionId is required only for api sessions',
+          })
+        }
+        if (request.couturierContext && request.isolate) {
+          context.addIssue({
+            code: 'custom',
+            path: ['isolate'],
+            message: 'prepared Couturier sessions cannot use an isolated worktree',
           })
         }
       }),
@@ -1345,17 +1667,32 @@ export const methods = {
     result: z.object({}),
   },
   'thread.sendTurn': {
-    params: z.object({
-      threadId: z.string(),
-      text: z.string(),
-      /** Stable renderer identity used to converge optimistic and durable user items. */
-      clientSubmissionId: z.string().min(1).max(256).optional(),
-      /** Absolute paths the user attached. The agent reads them itself. */
-      attachments: z.array(z.string()).optional(),
-      model: z.string().optional(),
-      effort: z.string().optional(),
-      serviceTier: z.string().optional(),
-    }),
+    params: z
+      .object({
+        threadId: z.string(),
+        text: z.string(),
+        /** Stable renderer identity used to converge optimistic and durable user items. */
+        clientSubmissionId: z.string().min(1).max(256).optional(),
+        /** Associates a normal operator send with a saved House draft. */
+        couturierDraftId: z.string().uuid().optional(),
+        /** Absolute paths the user attached. The agent reads them itself. */
+        attachments: z.array(z.string()).optional(),
+        model: z.string().optional(),
+        effort: z.string().optional(),
+        serviceTier: z.string().optional(),
+      })
+      .superRefine((request, context) => {
+        if (request.couturierDraftId) {
+          const parsed = z.string().uuid().safeParse(request.clientSubmissionId)
+          if (!parsed.success) {
+            context.addIssue({
+              code: 'custom',
+              path: ['clientSubmissionId'],
+              message: 'Couturier draft submissions require a UUID clientSubmissionId',
+            })
+          }
+        }
+      }),
     result: z.discriminatedUnion('queued', [
       z.object({ queued: z.literal(false), turnId: z.string() }),
       z.object({ queued: z.literal(true), queuedTurn: QueuedTurnSchema }),
