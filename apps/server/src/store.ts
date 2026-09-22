@@ -1023,20 +1023,19 @@ export class Store {
                 keep_active, woke_at, unread
          FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
       )
+      const providerPlaceholders = ProviderIdSchema.options.map(() => '?').join(', ')
       for (let mask = 0; mask < 4; mask += 1) {
         const clauses = ['session_search MATCH ?']
-        const threadFilters: string[] = []
+        const threadFilters = [`threads.provider IN (${providerPlaceholders})`]
         // Build the small eligible-thread set once instead of probing the thread
         // primary key for every FTS match. The visible page still joins metadata.
         if ((mask & 1) !== 0) threadFilters.push('threads.project_path = ?')
         if ((mask & 2) !== 0) threadFilters.push('threads.provider = ?')
-        if (threadFilters.length > 0) {
-          clauses.push(
-            `session_search.thread_id IN (
+        clauses.push(
+          `session_search.thread_id IN (
                SELECT threads.id FROM threads WHERE ${threadFilters.join(' AND ')}
              )`,
-          )
-        }
+        )
         this.#selectSearchSnapshot.set(
           mask,
           this.#db.prepare(
@@ -2735,7 +2734,7 @@ export class Store {
     if (terms.length === 0) return { results: [], nextCursor: null }
     const ftsQuery = toFtsQuery(terms)
     const cursor = decodeCursor(options.cursor)
-    const parameters: Array<string | number> = [ftsQuery]
+    const parameters: Array<string | number> = [ftsQuery, ...ProviderIdSchema.options]
     let filterMask = 0
 
     if (options.projectPath) {

@@ -761,8 +761,9 @@ describe('a database written by a newer build', () => {
       expect(reopened.threads().map((thread) => thread.id)).toEqual(['normal'])
       expect(reopened.sidebarThreads().map((thread) => thread.id)).toEqual(['normal'])
       expect(reopened.thread('alien')).toBeUndefined()
-      const results = reopened.searchSessions({ query: 'needle' }).results
-      expect(results.map((result) => result.threadId)).toEqual(['normal'])
+      const page = reopened.searchSessions({ query: 'needle', limit: 1 })
+      expect(page.results.map((result) => result.threadId)).toEqual(['normal'])
+      expect(page.nextCursor).toBeNull()
       expect(reopened.recoverInterruptedThreads()).toEqual([])
     } finally {
       reopened.close()
