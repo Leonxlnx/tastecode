@@ -100,8 +100,10 @@ Linux.
 
 ### Desktop update assets
 
-From beta 7, the desktop updater reads public releases in `Leonxlnx/tastecode` and selects
-the newest publication with an app version tag, including prereleases. The installed
+The desktop updater reads public releases in `Leonxlnx/tastecode` and selects
+the highest semantic app version, including prereleases, regardless of publication order.
+Beta 7 through 0.1.1 selected by publication date; those installed clients still require
+the newest public release to contain both desktop installers. The installed
 version must still be lower than the offered version. The client requires the matching
 EXE or DMG and verifies its size and SHA-256 against GitHub's asset metadata.
 
@@ -118,6 +120,8 @@ The cutoff and remaining beta 6 users are covered in [RELEASING.md](./RELEASING.
 _Rejected:_ replacing app bundles with a custom shell/helper installer would duplicate
 native signing checks and replacement logic; a second release repository would split
 the release process. Removing compatibility files in beta 7 would strand beta 6 users.
+Sorting by publication date allows an older, later-published platform proof to hide the
+current version and fail asset validation before the downgrade check runs.
 
 ---
 
@@ -600,6 +604,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |
 | 2026-07-28 | Initial decisions.                                                                                                                                                             |
 | 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                                                                                                         |
 | 2026-08-02 | Added Codex-backed voice dictation.                                                                                                                                            |

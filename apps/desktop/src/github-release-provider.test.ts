@@ -31,11 +31,27 @@ function release(version = '0.1.0-beta.8', date = '2026-09-20T00:00:00Z') {
 }
 
 describe('GitHub asset releases', () => {
-  it('uses publication time, including betas, instead of version order or the Latest badge', () => {
-    const beta = release()
-    const stable = { ...release('1.0.0', '2026-09-19T00:00:00Z'), prerelease: false }
+  it('keeps 0.1.1 ahead of an older Linux-only beta published later', () => {
+    const beta = { ...release(), assets: [{ name: 'TasteCode-0.1.0-beta.8-linux-amd64.deb' }] }
+    const stable = { ...release('0.1.1', '2026-09-19T00:00:00Z'), prerelease: false }
     const draft = { ...release('2.0.0', '2026-09-21T00:00:00Z'), draft: true }
-    expect(selectLatestRelease([stable, draft, beta]).tag_name).toBe(beta.tag_name)
+    const latest = selectLatestRelease([stable, draft, beta])
+    expect(releaseUpdateInfo(latest, 'win32', 'x64').version).toBe('0.1.1')
+    expect(releaseUpdateInfo(latest, 'darwin', 'arm64').version).toBe('0.1.1')
+  })
+
+  it.each([
+    ['0.1.0-beta.10', '0.1.0-beta.9'],
+    ['0.1.0', '0.1.0-beta.10'],
+    ['0.1.2-beta.1', '0.1.1'],
+    ['0.10.0', '0.9.0'],
+  ])('selects %s ahead of the more recently published %s', (higher, lower) => {
+    expect(
+      selectLatestRelease([
+        release(lower, '2026-09-21T00:00:00Z'),
+        release(higher, '2026-09-19T00:00:00Z'),
+      ]).tag_name,
+    ).toBe(`v${higher}`)
   })
 
   it('ignores non-app tags and invalid semantic versions', () => {
