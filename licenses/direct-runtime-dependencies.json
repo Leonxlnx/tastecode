@@ -182,6 +182,13 @@
       "source": "https://github.com/facebook/react"
     },
     {
+      "name": "semver",
+      "use": "Desktop release version ordering",
+      "license": "ISC",
+      "metadataLicenses": ["ISC"],
+      "source": "https://github.com/npm/node-semver"
+    },
+    {
       "name": "shiki",
       "use": "Syntax highlighting",
       "license": "MIT",
