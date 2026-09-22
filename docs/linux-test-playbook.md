@@ -136,3 +136,15 @@ Collect and return:
 3. Contents of `~/.config/TasteCode/diagnostics/text/` if enabled
 4. Which checklist items passed or failed, one line each
 5. Distro, version, session type (`echo $XDG_SESSION_TYPE`), compositor
+
+## Promotion gates
+
+Before the Linux release branch merges to `main` and Linux joins the published release line:
+
+1. **Merge the packaging set atomically** — package metadata, icons, AppArmor profile, deb dependency alternatives, update metadata (`latest-linux.yml`), license/provenance generation, and release scripts move together. A selective merge produces an unpackageable tree.
+2. **Clean-checkout build** — build the deb and AppImage from a clean clone, verify SHA-256 against `SHA256SUMS-linux-x64.txt`, check the provenance in `linux-release-evidence.json`, and install the produced deb on a fresh VM, not only on a dev machine.
+3. **Playbook passes on both package states** — once on a clean package database and once on a device with pending unrelated `dpkg` work (the stale-DKMS case). `dpkg-query -W tastecode` is the package-specific verdict when `apt` reports a global package-manager failure.
+4. **Functional checklist green on every test device** — onboarding, provider auth persisted through Secret Service, one real end-to-end task, window controls, close/tray behavior matching the DE's StatusNotifier support, deb manual-update notice opening the releases page, AppImage update-in-place via `latest-linux.yml`, and a 10+ minute idle/resume cycle.
+5. **Session matrix spot-check** — at least one Wayland and one X11 run; the ozone fallback must not fire on a healthy Wayland session. One AppImage smoke test on a non-Debian distro or the Ubuntu 23.10+ user-namespace path.
+6. **Evidence archived per device** — stdout capture, diagnostics files, Crashpad listing, `dmesg` DENIED lines, process liveness, and the bound `127.0.0.1` server port posted to the QA collection issue (#1283).
+7. **Known-issue regression** — the provider-history internal-prompt leak fixed in `d214ed66` is verified absent in the first build that carries it (0.1.1 still shows it in external mirror threads).
