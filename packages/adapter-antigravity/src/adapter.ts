@@ -361,9 +361,9 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
     child.on('close', (code) => {
+      if (this.#intentionalKills.has(child)) return
       if (this.#child === child) this.#child = undefined
       if (this.#turnId === turnId) this.#turnId = undefined
-      if (this.#intentionalKills.has(child)) return
       // An exit without a result frame would otherwise look like a hang.
       if (sawResult || failureEmitted) return
       failureEmitted = true
@@ -378,9 +378,10 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
     child.on('error', (error) => {
+      if (this.#intentionalKills.has(child)) return
       if (this.#child === child) this.#child = undefined
       if (this.#turnId === turnId) this.#turnId = undefined
-      if (this.#intentionalKills.has(child) || sawResult || failureEmitted) return
+      if (sawResult || failureEmitted) return
       failureEmitted = true
       this.emit('event', { type: 'thread.error', threadId, message: String(error) })
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
@@ -393,9 +394,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   async interrupt(): Promise<void> {
     const child = this.#child
     const turnId = this.#turnId
-    this.#child = undefined
+    if (!child) return
+    await this.#stop(child)
+    if (this.#child === child) this.#child = undefined
+    if (this.#turnId !== turnId) return
     this.#turnId = undefined
-    if (child) await this.#stop(child)
     if (turnId) this.emit('event', { type: 'turn.completed', turnId, status: 'interrupted' })
   }
 
@@ -441,12 +444,14 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     })
   }
 
-  dispose(): Promise<void> {
-    const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
-    this.#child = undefined
-    this.#turnId = undefined
+  async dispose(): Promise<void> {
+    const child = this.#child
+    const turnId = this.#turnId
+    const stopped = child ? this.#stop(child) : this.#processStop
     this.#processStop = stopped
-    return stopped
+    await stopped
+    if (this.#child === child) this.#child = undefined
+    if (this.#turnId === turnId) this.#turnId = undefined
   }
 
   #stop(child: ChildProcessWithoutNullStreams): Promise<void> {

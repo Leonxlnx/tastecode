@@ -44,6 +44,28 @@ class FakeChild extends ChildProcess {
   }
 }
 
+class RetryableFakeChild extends FakeChild {
+  exitOnKill = false
+  killCalls = 0
+
+  override kill(signal?: number | NodeJS.Signals): boolean {
+    this.killCalls += 1
+    if (!this.exitOnKill) {
+      this.wasKilled = true
+      return true
+    }
+    Object.defineProperty(this, 'signalCode', {
+      configurable: true,
+      value: typeof signal === 'string' ? signal : 'SIGTERM',
+    })
+    this.wasKilled = true
+    this.stdout.end()
+    this.stderr.end()
+    this.emit('close', null)
+    return true
+  }
+}
+
 type SpawnOptionsRecord = {
   cwd?: string
   stdio?: readonly string[]
@@ -246,6 +268,63 @@ describe('Antigravity subprocess ownership', () => {
     expect(events.some((event) => event.type === 'thread.error')).toBe(false)
     await adapter.dispose()
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
+  })
+
+  it('retries a failed interrupt without losing process or turn ownership', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new RetryableFakeChild()
+      const adapter = new AntigravityAdapter({ spawn: () => child })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      const thread = await adapter.startThread('/repo')
+      const turnId = await adapter.sendTurn(thread.id, 'Hello')
+      // Set the pid after spawnOwned records the injected child, keeping this
+      // test on the fake-child path while exercising bounded stop retries.
+      Object.defineProperty(child, 'pid', { configurable: true, value: 424_242 })
+
+      const failedStop = expect(adapter.interrupt()).rejects.toThrow(
+        'Child process did not exit after forced termination',
+      )
+      await vi.advanceTimersByTimeAsync(1_600)
+      await failedStop
+      expect(child.killCalls).toBe(2)
+
+      child.exitOnKill = true
+      await adapter.interrupt()
+
+      expect(child.killCalls).toBe(3)
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId, status: 'interrupted' },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries disposal after a failed process stop', async () => {
+    vi.useFakeTimers()
+    try {
+      const child = new RetryableFakeChild()
+      const adapter = new AntigravityAdapter({ spawn: () => child })
+      const thread = await adapter.startThread('/repo')
+      await adapter.sendTurn(thread.id, 'Hello')
+      Object.defineProperty(child, 'pid', { configurable: true, value: 424_242 })
+
+      const failedStop = expect(adapter.dispose()).rejects.toThrow(
+        'Child process did not exit after forced termination',
+      )
+      await vi.advanceTimersByTimeAsync(1_600)
+      await failedStop
+      expect(child.killCalls).toBe(2)
+
+      child.exitOnKill = true
+      await adapter.dispose()
+
+      expect(child.killCalls).toBe(3)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('replaces an in-flight turn without clobbering the new child', async () => {
