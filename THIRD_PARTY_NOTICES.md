@@ -38,6 +38,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `parse5` | Static preview HTML parsing | MIT | [source](https://github.com/inikulin/parse5) |
 | `react` | Renderer UI | MIT | [source](https://github.com/facebook/react) |
 | `react-dom` | Renderer DOM integration | MIT | [source](https://github.com/facebook/react) |
+| `semver` | Desktop release version ordering | ISC | [source](https://github.com/npm/node-semver) |
 | `shiki` | Syntax highlighting | MIT | [source](https://github.com/shikijs/shiki) |
 | `streamdown` | Streaming Markdown rendering | Apache-2.0 | [source](https://github.com/vercel/streamdown) |
 | `thinking-orbs` | Agent activity indicators | MIT | [source](https://github.com/Jakubantalik/thinking-orbs) |
