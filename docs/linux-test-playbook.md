@@ -1,22 +1,24 @@
 # Linux test playbook
 
-How to install Taste Code on a Linux test device, exercise it, and collect evidence.
-Written for agents running the test; a human can follow the same steps.
+How to exercise TasteCode on a Linux test device and collect evidence. For ordinary installation,
+follow the [Linux steps in the README](../README.md#linux).
 
-Build under test: `0.1.1`, branch `feat/linux-release-v1-current`, HEAD `9a6f26e2`.
-Assets live on the public `v0.1.1` release (the Latest one, next to the win/mac installers): deb, AppImage, `latest-linux.yml`, `SHA256SUMS-linux-x64.txt`, `linux-release-evidence.json`.
+Use the assets from the [Linux preview release](https://github.com/Leonxlnx/tastecode/releases/tag/linux-preview-e9ac0a03):
+the deb, AppImage, `SHA256SUMS-linux-x64.txt`, and `linux-release-evidence.json`.
+The evidence file records the source commit and package provenance. This preview is not yet
+approved for the production release line.
 
 ## Install
 
-Pick one of two paths. Prefer the deb: it installs a desktop entry, an AppArmor profile, and the Secret Service integration. Both paths work anonymously — no GitHub account needed.
+Pick one of two paths. Prefer the deb: it installs a desktop entry and an AppArmor profile.
+Neither path needs a GitHub account. Download the package and checksum file from the preview
+release before running the commands below.
 
 **deb**:
 
 ```bash
-curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-linux-amd64.deb
-curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/SHA256SUMS-linux-x64.txt
-sha256sum --check --ignore-missing SHA256SUMS-linux-x64.txt   # must print OK
-sudo apt install ./TasteCode-0.1.1-linux-amd64.deb
+sha256sum --check --ignore-missing SHA256SUMS-linux-x64.txt
+sudo apt install --reinstall ./TasteCode-0.1.1-linux-amd64.deb
 ```
 
 Done when: `dpkg -l tastecode` prints `0.1.1` and `dev.tastecode.desktop` appears in the app menu.
@@ -26,8 +28,6 @@ If `apt` exits non-zero, check `dpkg-query -W tastecode` before reporting an ins
 **AppImage** (no install, no root):
 
 ```bash
-curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-linux-x86_64.AppImage
-curl -LO https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/SHA256SUMS-linux-x64.txt
 sha256sum --check --ignore-missing SHA256SUMS-linux-x64.txt
 chmod +x TasteCode-0.1.1-linux-x86_64.AppImage
 ./TasteCode-0.1.1-linux-x86_64.AppImage
@@ -90,7 +90,7 @@ Run through this list in order. Each item has an expected result; record deviati
 3. **Working task.** Run one real task end to end — for the design goal, ask the design agent to produce something and let it finish.
 4. **Window controls.** Frameless title bar: minimize/maximize/close hit areas work across the full 34px height; double-click the drag region toggles maximize.
 5. **Close behavior.** Closing the window may only minimize to the tray — on Pop!_OS COSMIC a StatusNotifier host is present, so the app keeps running (`linux tray host: present` in the log, `pgrep -af tastecode` shows the tree). Quit is in the tray icon's menu; verify `pgrep` shows nothing after a real Quit.
-6. **Settings → Updates.** Deb installs show a manual-update notice that opens the releases page; AppImage checks the release provider and can install in place. A failure must show an error row with retry, not silence.
+6. **Settings → Updates.** Deb installs show a manual-update notice that opens the releases page. The updater excludes this non-versioned preview tag; install a newer preview manually from its release page. Check AppImage update behavior against a versioned release separately. A failed check must show an error row with retry, not silence.
 7. **Idle + resume.** Leave running 10+ minutes; the app must stay responsive.
 
 ## Health checks while testing

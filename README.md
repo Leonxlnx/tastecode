@@ -2,7 +2,7 @@
 
 # TasteCode
 
-[Download Windows](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-win-x64.exe) · [Download macOS](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-mac-arm64.dmg)
+[Download Windows](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-win-x64.exe) · [Download macOS](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-mac-arm64.dmg) · [Download Linux preview (.deb)](https://github.com/Leonxlnx/tastecode/releases/download/linux-preview-e9ac0a03/TasteCode-0.1.1-linux-amd64.deb) · [Linux AppImage](https://github.com/Leonxlnx/tastecode/releases/download/linux-preview-e9ac0a03/TasteCode-0.1.1-linux-x86_64.AppImage)
 
 > A local desktop workspace for AI coding agents, with Design Mode built in.
 
@@ -31,6 +31,8 @@ pretending every provider supports the same features.
 
 - [Download for Windows x64 (.exe)](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-win-x64.exe)
 - [Download for macOS Apple Silicon (.dmg)](https://github.com/Leonxlnx/tastecode/releases/download/v0.1.1/TasteCode-0.1.1-mac-arm64.dmg)
+- [Download Linux preview for Debian or Ubuntu x64 (.deb)](https://github.com/Leonxlnx/tastecode/releases/download/linux-preview-e9ac0a03/TasteCode-0.1.1-linux-amd64.deb)
+- [Download Linux preview AppImage for x64](https://github.com/Leonxlnx/tastecode/releases/download/linux-preview-e9ac0a03/TasteCode-0.1.1-linux-x86_64.AppImage)
 - [Release notes, checksums, and all versions](https://github.com/Leonxlnx/tastecode/releases)
 
 The Windows beta is unsigned and may show a SmartScreen warning. The macOS beta is
@@ -47,9 +49,27 @@ See [release details](docs/RELEASING.md).
 
 ### Linux
 
-Linux is qualified on Pop!_OS 24.04 (COSMIC/Wayland); Ubuntu 24.04 (GNOME/Wayland) is the
-second qualification target — its physical desktop pass is not yet verified. Other Wayland
-desktops are best-effort. Two artifacts ship per release:
+The [Linux preview release](https://github.com/Leonxlnx/tastecode/releases/tag/linux-preview-e9ac0a03)
+is available for testing, but Linux is not yet approved for the production release line.
+It has been tested on Pop!_OS 24.04 (COSMIC/Wayland). Ubuntu 24.04 (GNOME/Wayland) is the
+next qualification target; its physical desktop pass is not yet verified. Other Wayland
+desktops are best-effort.
+
+To install on Debian or Ubuntu x64, download the deb above. Open a terminal in your Downloads
+folder and run:
+
+```bash
+sudo apt install --reinstall ./TasteCode-0.1.1-linux-amd64.deb
+```
+
+Launch TasteCode from the app menu. For a portable run, download the AppImage above and run:
+
+```bash
+chmod +x TasteCode-0.1.1-linux-x86_64.AppImage
+./TasteCode-0.1.1-linux-x86_64.AppImage
+```
+
+The preview has two package options:
 
 - **deb** — the primary artifact. Installs to `/opt/Taste Code/`, registers the desktop entry
   and AppArmor profile, and declares its dependencies to apt.
@@ -61,6 +81,7 @@ desktops are best-effort. Two artifacts ship per release:
 
 Credential storage needs a Secret Service provider on the session bus — GNOME and KDE ship one;
 minimal or headless desktops need gnome-keyring, KWallet, or KeePassXC installed.
+For tester checks and evidence collection, see the [Linux test playbook](docs/linux-test-playbook.md).
 
 ### Linux troubleshooting
 
@@ -82,7 +103,9 @@ minimal or headless desktops need gnome-keyring, KWallet, or KeePassXC installed
 - **Full uninstall.** `sudo apt remove tastecode`, then delete `~/.config/TasteCode`,
   `~/.local/share/TasteCode` (the local database), and `~/.tastecode`.
 
-For local development, install Node 24 LTS and pnpm, then run:
+## Local development
+
+Install Node 24 LTS and pnpm, then run:
 
 ```text
 pnpm install
