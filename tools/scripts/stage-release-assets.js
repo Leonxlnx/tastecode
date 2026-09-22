@@ -34,7 +34,7 @@ if (isMain(import.meta.url)) {
   const [source, destination, platform] = process.argv.slice(2)
   if (!source || !destination || !platform)
     throw new Error(
-      'Usage: node stage-release-assets.js <source> <new-destination> <windows|macos>',
+      'Usage: node stage-release-assets.js <source> <new-destination> <windows|macos|linux>',
     )
   console.log(
     `Staged verified assets in ${await stageReleaseAssets(source, destination, platform, { approvedSha: process.env.APPROVED_SHA })}`,

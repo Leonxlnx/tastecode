@@ -5,6 +5,8 @@ import {
   checkForAppUpdates,
   installAppUpdate,
   onAppUpdateState,
+  openExternalUrl,
+  RELEASES_URL,
   type AppUpdateState,
 } from '../bridge.js'
 
@@ -12,7 +14,11 @@ export function AppUpdateNotice() {
   const [state, setState] = useState<AppUpdateState>()
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
-  const visible = !!state && ['downloading', 'ready', 'error'].includes(state.status)
+  // Manual packages (deb) signal through latestVersion: nothing installs
+  // in-app, so the button links to the releases page instead.
+  const manual = state?.status === 'manual' ? state.latestVersion : undefined
+  const visible =
+    !!state && (['downloading', 'ready', 'error'].includes(state.status) || manual !== undefined)
   useEffect(() => {
     if (visible) void import('../styles/app-update.css')
   }, [visible])
@@ -35,12 +41,19 @@ export function AppUpdateNotice() {
   if (!state || !visible) return null
   const downloading = state.status === 'downloading'
   const retry = state.status === 'error' || failed
-  const label = retry
-    ? 'Retry TasteCode update'
-    : downloading
-      ? `Downloading TasteCode update${state.progress === undefined ? '' : ` (${state.progress}%)`}`
-      : `Restart to update TasteCode${state.version ? ` to ${state.version}` : ''}`
+  const label =
+    manual !== undefined
+      ? `Download TasteCode ${manual}`
+      : retry
+        ? 'Retry TasteCode update'
+        : downloading
+          ? `Downloading TasteCode update${state.progress === undefined ? '' : ` (${state.progress}%)`}`
+          : `Restart to update TasteCode${state.version ? ` to ${state.version}` : ''}`
   const act = async () => {
+    if (manual !== undefined) {
+      void openExternalUrl(state.releasesUrl ?? RELEASES_URL)
+      return
+    }
     setPending(true)
     setFailed(false)
     try {

@@ -9,9 +9,11 @@ const bridge = vi.hoisted(() => ({
   off: vi.fn(),
   install: vi.fn(),
   check: vi.fn(),
+  openExternal: vi.fn(),
   listener: undefined as ((state: AppUpdateState) => void) | undefined,
 }))
-vi.mock('../bridge.js', () => ({
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
   appUpdateState: bridge.read,
   installAppUpdate: bridge.install,
   checkForAppUpdates: bridge.check,
@@ -19,6 +21,7 @@ vi.mock('../bridge.js', () => ({
     bridge.listener = listener
     return bridge.off
   },
+  openExternalUrl: bridge.openExternal,
 }))
 afterEach(() => {
   cleanup()
@@ -59,6 +62,43 @@ it('shows download progress, keeps live readiness, and installs only on click', 
   expect(bridge.off).toHaveBeenCalledOnce()
 })
 
+it('points manual packages at the releases page without an install path', async () => {
+  bridge.read.mockResolvedValue({ status: 'manual', currentVersion: '0.1.0-beta.8' })
+  render(<AppUpdateNotice />)
+  await vi.waitFor(() => expect(bridge.read).toHaveBeenCalledOnce())
+
+  // A manual check with nothing newer renders no button.
+  act(() => bridge.listener?.({ status: 'manual', currentVersion: '0.1.0-beta.8' }))
+  expect(screen.queryByRole('button')).toBeNull()
+
+  act(() =>
+    bridge.listener?.({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+      latestVersion: '0.1.0-beta.9',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.9',
+    }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Download TasteCode 0.1.0-beta.9' }))
+  expect(bridge.openExternal).toHaveBeenCalledWith(
+    'https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.0-beta.9',
+  )
+  expect(bridge.install).not.toHaveBeenCalled()
+
+  // A deb that reports no releases URL still lands on the releases page.
+  act(() =>
+    bridge.listener?.({
+      status: 'manual',
+      currentVersion: '0.1.0-beta.8',
+      latestVersion: '0.1.0-beta.10',
+    }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Download TasteCode 0.1.0-beta.10' }))
+  expect(bridge.openExternal).toHaveBeenLastCalledWith(
+    'https://github.com/Leonxlnx/tastecode/releases/latest',
+  )
+})
+
 it('keeps failed actions retryable and hides the button when the app is current', async () => {
   const ready: AppUpdateState = { status: 'ready', currentVersion: '1.0.0', version: '1.0.1' }
   bridge.read.mockResolvedValue(ready)
@@ -76,4 +116,22 @@ it('keeps failed actions retryable and hides the button when the app is current'
   expect(screen.getByRole('button', { name: 'Retry TasteCode update' }).title).toContain(
     'Download failed',
   )
+})
+
+it('makes a failed manual release check visible and retryable', async () => {
+  bridge.read.mockResolvedValue({
+    status: 'error',
+    currentVersion: '0.1.0-beta.8',
+    error: 'GitHub release check failed with HTTP 403.',
+    releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases',
+  })
+  bridge.check.mockResolvedValue({ status: 'manual', currentVersion: '0.1.0-beta.8' })
+  render(<AppUpdateNotice />)
+
+  const retry = await screen.findByRole('button', { name: 'Retry TasteCode update' })
+  expect(retry.title).toBe('GitHub release check failed with HTTP 403. Click to retry.')
+  fireEvent.click(retry)
+
+  await waitFor(() => expect(bridge.check).toHaveBeenCalledOnce())
+  expect(bridge.openExternal).not.toHaveBeenCalled()
 })

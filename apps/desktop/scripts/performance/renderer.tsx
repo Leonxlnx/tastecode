@@ -10,7 +10,16 @@ import '../../../web/src/styles/tokens.css'
 import '../../../web/src/styles/app.css'
 import './style.css'
 
-const MESSAGE_COUNT = 500
+const params = new URLSearchParams(location.search)
+const fixtureSize = (name: string, fallback: number, maximum: number) => {
+  const value = Number(params.get(name) ?? fallback)
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum)
+    throw new Error(`Fixture parameter ${name} must be an integer from 1 to ${maximum}`)
+  return value
+}
+const MESSAGE_COUNT = fixtureSize('messages', 500, 100_000)
+const SESSION_COUNT = fixtureSize('sessions', 5, 100)
+const STREAM_BATCHES = fixtureSize('batches', 120, 10_000)
 const noop = () => undefined
 const frame = () => new Promise<number>((resolve) => requestAnimationFrame(resolve))
 const paint = async () => {
@@ -21,17 +30,17 @@ const paint = async () => {
 function fixture(seed: number): Item[] {
   let messages = 0
   const items: Item[] = []
-  for (const item of makeFixtureThread(2_000, seed)) {
+  for (const item of makeFixtureThread(MESSAGE_COUNT * 4, seed)) {
     if (item.type === 'message') messages += 1
     items.push(item)
     if (messages === MESSAGE_COUNT) break
   }
-  if (messages !== MESSAGE_COUNT) throw new Error('Fixture must contain 500 messages')
+  if (messages !== MESSAGE_COUNT) throw new Error(`Fixture must contain ${MESSAGE_COUNT} messages`)
   return items
 }
 
 const stores = Array.from(
-  { length: 5 },
+  { length: SESSION_COUNT },
   (_, index) =>
     new ThreadFrameStore({
       ...emptyThread,
@@ -58,7 +67,7 @@ function Fixture() {
           onAnswerUserInput={noop}
         />
       ) : (
-        <p>Ready to open the 500-message fixture.</p>
+        <p>Ready to open the {MESSAGE_COUNT}-message fixture.</p>
       )}
     </div>
   )
@@ -119,7 +128,7 @@ async function scrollAll() {
     (index) => stores[0]!.getSnapshot().items[index]?.type === 'message',
   ).length
   if (seenMessages !== MESSAGE_COUNT)
-    throw new Error(`Only ${seenMessages}/500 messages reached the visible DOM`)
+    throw new Error(`Only ${seenMessages}/${MESSAGE_COUNT} messages reached the visible DOM`)
   return {
     frames,
     seenMessages,
@@ -159,7 +168,7 @@ async function stream() {
   const batches: number[] = []
   const frames: number[] = []
   let previous = await frame()
-  for (let batch = 0; batch < 120; batch += 1) {
+  for (let batch = 0; batch < STREAM_BATCHES; batch += 1) {
     const now = await frame()
     frames.push(now - previous)
     previous = now
@@ -197,7 +206,7 @@ async function stream() {
     completedAt: Date.now(),
   })
   flushSync(() => store.publish(snapshot))
-  return { batches, frames, deltas: 120 * 16, visibleTextLength: liveText.length }
+  return { batches, frames, deltas: STREAM_BATCHES * 16, visibleTextLength: liveText.length }
 }
 
 async function settleIdle() {
@@ -221,7 +230,7 @@ async function run() {
   const scroll = await scrollAll()
   const streaming = await stream()
   const switches = []
-  for (let index = 1; index < 5; index += 1) switches.push(await switchTo(index))
+  for (let index = 1; index < SESSION_COUNT; index += 1) switches.push(await switchTo(index))
   switches.push(await switchTo(0))
   await settleIdle()
   if (stores.some((store) => store.getSnapshot().running))

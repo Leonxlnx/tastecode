@@ -105,7 +105,7 @@ export function runCustomHarness(
         finish({ code, stdout })
         return
       }
-      const detail = stderr.trim() || stdout.trim()
+      const detail = redactCustomHarnessEnvironment(stderr.trim() || stdout.trim(), harness)
       finish(
         new Error(
           `${harness.displayName} exited with code ${code}${detail ? `: ${detail.slice(0, 500)}` : ''}`,
@@ -124,6 +124,7 @@ export function customHarnessRun(harness: CustomHarness, fallbackWorkspacePath?:
 
 export function actionableLaunchError(harness: CustomHarness, cause: unknown): Error {
   const error = cause instanceof Error ? cause : new Error(String(cause))
+  const safeMessage = redactCustomHarnessEnvironment(error.message, harness)
   const parsed = z.object({ code: z.string().optional() }).safeParse(error)
   const code = parsed.success ? parsed.data.code : undefined
   if (code === 'ENOENT') {
@@ -132,9 +133,16 @@ export function actionableLaunchError(harness: CustomHarness, cause: unknown): E
     )
   }
   if (code === 'EACCES' || code === 'EPERM') {
-    return new Error(`${harness.displayName} executable is not allowed to run: ${error.message}`)
+    return new Error(`${harness.displayName} executable is not allowed to run: ${safeMessage}`)
   }
-  return error
+  return new Error(safeMessage)
+}
+
+export function redactCustomHarnessEnvironment(value: string, harness: CustomHarness): string {
+  const secrets = [...new Set(Object.values(harness.environment ?? {}).filter(Boolean))].sort(
+    (left, right) => right.length - left.length,
+  )
+  return secrets.reduce((redacted, secret) => redacted.split(secret).join('[redacted]'), value)
 }
 
 function launchEnvironment(

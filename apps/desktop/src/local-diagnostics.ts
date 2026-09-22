@@ -17,9 +17,19 @@ export function localDiagnosticsDirectory(userDataDirectory: string): string {
   return path.join(userDataDirectory, 'diagnostics', 'text')
 }
 
+/** Whether an enabled flag file holds 'true', or undefined when it is absent. */
+async function enabledFlagSet(file: string): Promise<boolean | undefined> {
+  try {
+    return (await readFile(file, 'utf8')).trim() === 'true'
+  } catch {
+    return undefined
+  }
+}
+
 export class LocalDiagnostics {
   readonly directory: string
   readonly #enabledFile: string
+  readonly #legacyEnabledFile: string
   readonly #logFile: string
   readonly #previousLogFile: string
   #enabled = false
@@ -29,21 +39,40 @@ export class LocalDiagnostics {
   constructor(directory: string) {
     this.directory = directory
     this.#enabledFile = path.join(directory, 'enabled')
+    // The directory used to be the parent itself: <userData>/diagnostics held
+    // the flag beside the native crash dumps until the text logs moved into
+    // text/. A flag left there is still the user's opt-in — ignoring it
+    // silently turns diagnostics off for everyone who enabled them.
+    this.#legacyEnabledFile = path.join(path.dirname(directory), 'enabled')
     this.#logFile = path.join(directory, 'errors.log')
     this.#previousLogFile = path.join(directory, 'errors.previous.log')
   }
 
   async initialize(): Promise<void> {
     const generation = this.#generation
-    const enabled = await readFile(this.#enabledFile, 'utf8')
-      .then((contents) => contents.trim() === 'true')
-      .catch(() => false)
+    const [current, legacy] = await Promise.all([
+      enabledFlagSet(this.#enabledFile),
+      enabledFlagSet(this.#legacyEnabledFile),
+    ])
     // A setEnabled call that landed while the marker was being read wins: its
     // generation bump both commits its optimistic state and invalidates records
     // queued before it.
     if (generation !== this.#generation) return
-    this.#enabled = enabled
+    this.#enabled = (current ?? legacy) === true
     this.#generation += 1
+    if (legacy === undefined) return
+    try {
+      // Persist the adopted opt-in before consuming the stale flag — losing it
+      // on a failed write would silently turn diagnostics off again.
+      if (this.#enabled && current === undefined) {
+        await mkdir(this.directory, { recursive: true, mode: 0o700 })
+        await writeFile(this.#enabledFile, 'true', { mode: 0o600 })
+      }
+      await rm(this.#legacyEnabledFile, { force: true })
+    } catch {
+      // A failed migration retries on the next start; the in-memory flag
+      // already applies to this run.
+    }
   }
 
   isEnabled(): boolean {
@@ -58,7 +87,12 @@ export class LocalDiagnostics {
       try {
         await mkdir(this.directory, { recursive: true, mode: 0o700 })
         if (enabled) await writeFile(this.#enabledFile, 'true', { mode: 0o600 })
-        else await rm(this.#enabledFile, { force: true })
+        else {
+          // The legacy flag goes too: an orphaned 'true' must not resurrect
+          // the opt-in on the next start after the user disabled it.
+          await rm(this.#enabledFile, { force: true })
+          await rm(this.#legacyEnabledFile, { force: true })
+        }
       } catch (error) {
         if (generation === this.#generation) {
           this.#enabled = false

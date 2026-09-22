@@ -54,7 +54,7 @@ async function temporary(t) {
 
 async function fixture(t, { platform = 'all', config = releaseConfig } = {}) {
   const directory = await temporary(t)
-  for (const current of platform === 'all' ? ['windows', 'macos'] : [platform]) {
+  for (const current of platform === 'all' ? ['windows', 'macos', 'linux'] : [platform]) {
     const detail = platformConfig(current, config)
     for (const name of releasePayloadAssets(current, config).filter(
       (name) => name !== detail.metadata,
@@ -76,7 +76,7 @@ async function fixture(t, { platform = 'all', config = releaseConfig } = {}) {
         version: config.version,
         files,
         path: detail.primaryArtifact,
-        sha512: files[0].sha512,
+        sha512: files.find((file) => file.url === detail.primaryArtifact).sha512,
         releaseDate: '2026-09-09T00:00:00.000Z',
       }),
     )
@@ -221,6 +221,12 @@ test('version, channel, product, and artifact names come from package config', a
   assert.equal(config.tag, 'v2.3.4')
   assert.equal(config.prerelease, false)
   assert.equal(config.platforms.macos.metadata, 'latest-mac.yml')
+  assert.equal(config.platforms.linux.metadata, 'latest-linux.yml')
+  assert.equal(config.platforms.linux.primaryArtifact, 'Example App-2.3.4-linux-x86_64.AppImage')
+  assert.deepEqual(config.platforms.linux.artifacts, [
+    'Example App-2.3.4-linux-amd64.deb',
+    'Example App-2.3.4-linux-x86_64.AppImage',
+  ])
   assert.equal(config.platforms.windows.primaryArtifact, 'Example App-2.3.4-win-x64.exe')
   const directory = await fixture(t, { config })
   assert.deepEqual(
@@ -238,7 +244,7 @@ test('version, channel, product, and artifact names come from package config', a
   assert.throws(() => createReleaseConfig(desktop), /Unsupported artifactName/)
 })
 
-test('beta 7 keeps beta 6 metadata; beta 8 uploads only EXE and DMG with verified digests', async (t) => {
+test('beta 7 keeps beta 6 metadata; beta 8 uploads the updater artifacts with verified digests', async (t) => {
   const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
   desktop.version = '0.1.0-beta.7'
   const bridge = createReleaseConfig(desktop)
@@ -252,11 +258,14 @@ test('beta 7 keeps beta 6 metadata; beta 8 uploads only EXE and DMG with verifie
     const mock = github()
     const result = await upload(directory, mock, { config })
     assert.deepEqual(result.assets.map((asset) => asset.name).sort(), [
+      `TasteCode-${version}-linux-amd64.deb`,
+      `TasteCode-${version}-linux-x86_64.AppImage`,
       `TasteCode-${version}-mac-arm64.dmg`,
       `TasteCode-${version}-win-x64.exe`,
     ])
     assert.equal(result.release.draft, true)
-    // Local proof is still complete even though only two files reach GitHub.
+    // Local proof is still complete even though only the updater artifacts and
+    // the manual-download deb reach GitHub.
     await verifyReleaseDirectory(directory, { approvedSha, config })
   }
 })
@@ -285,7 +294,7 @@ test('unsafe cross-platform filenames are rejected', () => {
   assert.equal(assertAssetName('Example App-1.0.0+1.exe'), 'Example App-1.0.0+1.exe')
 })
 
-test('public GitHub updates resolve beta metadata and downloads on Windows and macOS', async (t) => {
+test('public GitHub updates resolve beta metadata and downloads on every platform', async (t) => {
   const desktop = createRequire(path.join(desktopDirectory, 'package.json'))
   const updater = createRequire(desktop.resolve('electron-updater'))
   const { GitHubProvider } = updater('./providers/GitHubProvider.js')
@@ -294,6 +303,7 @@ test('public GitHub updates resolve beta metadata and downloads on Windows and m
   for (const [platform, target] of [
     ['win32', 'windows'],
     ['darwin', 'macos'],
+    ['linux', 'linux'],
   ]) {
     const detail = platformConfig(target)
     const requests = []
@@ -983,6 +993,11 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
     'THIRD_PARTY_LICENSES.txt',
   ])
     assert.ok(desktop.build.extraResources.some((entry) => entry.to === name))
+  assert.ok(
+    desktop.build.deb.fpm.includes(
+      '../../release/debian-copyright=/usr/share/doc/tastecode/copyright',
+    ),
+  )
   assert.match(desktop.scripts['test:release-tools'], /release-tools\.test\.js/)
   assert.ok(checksumPayloadAssets('macos').includes(releaseConfig.platforms.macos.provenance))
 })

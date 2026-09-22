@@ -1,4 +1,4 @@
-import type { MenuItemConstructorOptions } from 'electron'
+import type { BrowserWindow, MenuItemConstructorOptions, WebContents } from 'electron'
 import type { NativeMenuAction, NativeMenuShortcut, NativeMenuShortcuts } from './menu-contract.js'
 
 type AppMenuOptions = {
@@ -153,6 +153,252 @@ export function createApplicationMenuTemplate(options: AppMenuOptions): MenuItem
       ],
     },
   ]
+}
+
+/**
+ * A frameless Linux window never creates the views menu bar. autoHideMenuBar
+ * keeps that true even if a later Electron change starts creating one — the
+ * bar stays hidden until Alt. Accelerators are wired separately through
+ * `menuItemForKeyInput`; macOS shows the app menu in the system bar and
+ * Windows keeps its own handling, so neither changes.
+ */
+export function autoHidesMenuBar(platform: NodeJS.Platform): boolean {
+  return platform === 'linux'
+}
+
+/**
+ * before-input-event fields needed to match a menu accelerator. The shape is
+ * structural so tests do not need an Electron `Input` object.
+ */
+export type MenuKeyInput = {
+  key: string
+  control: boolean
+  alt: boolean
+  shift: boolean
+  meta: boolean
+}
+
+/**
+ * Accelerators Electron assigns to menu roles that spell none in the
+ * template, per platform. Covers every role our menu uses on Linux and
+ * Windows; macOS entries exist for completeness and tests.
+ */
+const ROLE_ACCELERATORS = {
+  quit: { linux: 'Ctrl+Q', win32: 'Ctrl+Q', darwin: 'Cmd+Q' },
+  close: { linux: 'Ctrl+W', win32: 'Ctrl+W', darwin: 'Cmd+W' },
+  minimize: { linux: 'Ctrl+M', win32: 'Ctrl+M', darwin: 'Cmd+M' },
+  togglefullscreen: { linux: 'F11', win32: 'F11', darwin: 'Ctrl+Cmd+F' },
+  reload: { linux: 'Ctrl+R', win32: 'Ctrl+R', darwin: 'Cmd+R' },
+  forceReload: { linux: 'Shift+Ctrl+R', win32: 'Shift+Ctrl+R', darwin: 'Shift+Cmd+R' },
+  toggleDevTools: { linux: 'Ctrl+Shift+I', win32: 'Ctrl+Shift+I', darwin: 'Alt+Cmd+I' },
+  undo: { linux: 'Ctrl+Z', win32: 'Ctrl+Z', darwin: 'Cmd+Z' },
+  redo: { linux: 'Shift+Ctrl+Z', win32: 'Shift+Ctrl+Z', darwin: 'Shift+Cmd+Z' },
+  cut: { linux: 'Ctrl+X', win32: 'Ctrl+X', darwin: 'Cmd+X' },
+  copy: { linux: 'Ctrl+C', win32: 'Ctrl+C', darwin: 'Cmd+C' },
+  paste: { linux: 'Ctrl+V', win32: 'Ctrl+V', darwin: 'Cmd+V' },
+  pasteAndMatchStyle: {
+    linux: 'Shift+Ctrl+V',
+    win32: 'Shift+Ctrl+V',
+    darwin: 'Shift+Cmd+V',
+  },
+  selectAll: { linux: 'Ctrl+A', win32: 'Ctrl+A', darwin: 'Cmd+A' },
+}
+
+export function roleAccelerator(
+  role: MenuItem['role'],
+  platform: NodeJS.Platform,
+): string | undefined {
+  if (!role || !(role in ROLE_ACCELERATORS)) return undefined
+  const perPlatform = ROLE_ACCELERATORS[role as keyof typeof ROLE_ACCELERATORS]
+  return perPlatform[platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'linux']
+}
+
+const MODIFIER_ALIASES = {
+  ctrl: 'ctrl',
+  control: 'ctrl',
+  alt: 'alt',
+  option: 'alt',
+  altgr: 'alt',
+  shift: 'shift',
+  meta: 'meta',
+  super: 'meta',
+} as const
+
+const KEY_ALIASES = {
+  arrowup: 'up',
+  arrowdown: 'down',
+  arrowleft: 'left',
+  arrowright: 'right',
+  escape: 'esc',
+  ' ': 'space',
+  spacebar: 'space',
+  plus: '+',
+} as const
+
+function canonicalKey(key: string): string {
+  const normalized = key.trim().toLowerCase()
+  return normalized in KEY_ALIASES
+    ? KEY_ALIASES[normalized as keyof typeof KEY_ALIASES]
+    : normalized
+}
+
+/**
+ * Whether a `before-input-event` key event equals an Electron accelerator
+ * string like `CommandOrControl+Shift+S`. `CommandOrControl` resolves to the
+ * platform's primary modifier, matching Electron.
+ */
+export function acceleratorMatches(
+  accelerator: string | undefined,
+  input: MenuKeyInput,
+  platform: NodeJS.Platform,
+): boolean {
+  if (!accelerator) return false
+  // '+' is itself a valid accelerator key ('Ctrl++'): take it before splitting.
+  const endsOnKey = accelerator.endsWith('+')
+  const tokens = (endsOnKey ? accelerator.slice(0, -1) : accelerator).split('+')
+  const key = endsOnKey ? '+' : tokens.pop()
+  if (!key || canonicalKey(key) !== canonicalKey(input.key)) return false
+  const modifiers = new Set<string>()
+  for (const token of tokens) {
+    const name = token.trim().toLowerCase()
+    if (name === 'commandorcontrol' || name === 'cmdorctrl') {
+      modifiers.add(platform === 'darwin' ? 'meta' : 'ctrl')
+    } else if (name === 'command' || name === 'cmd') {
+      modifiers.add('meta')
+    } else {
+      const alias =
+        name in MODIFIER_ALIASES
+          ? MODIFIER_ALIASES[name as keyof typeof MODIFIER_ALIASES]
+          : undefined
+      if (alias) modifiers.add(alias)
+    }
+  }
+  return (
+    modifiers.has('ctrl') === input.control &&
+    modifiers.has('alt') === input.alt &&
+    modifiers.has('shift') === input.shift &&
+    modifiers.has('meta') === input.meta
+  )
+}
+
+function submenuItems(item: MenuItem): readonly MenuItem[] {
+  // Our menu templates only ever use array submenus.
+  return Array.isArray(item.submenu) ? item.submenu : []
+}
+
+/**
+ * First enabled, visible leaf whose explicit or role-derived accelerator
+ * matches the key event. Used on Linux, where a frameless window has no
+ * views menu bar and Electron never registers these accelerators.
+ */
+export function menuItemForKeyInput(
+  items: readonly MenuItem[],
+  input: MenuKeyInput,
+  platform: NodeJS.Platform,
+): MenuItem | undefined {
+  for (const item of items) {
+    if (item.type === 'separator') continue
+    const accelerator = item.accelerator ?? roleAccelerator(item.role, platform)
+    if (
+      item.enabled !== false &&
+      item.visible !== false &&
+      acceleratorMatches(accelerator, input, platform)
+    )
+      return item
+    const hit = menuItemForKeyInput(submenuItems(item), input, platform)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+/**
+ * The window and webContents surface a dispatched menu role touches. The
+ * shape is structural so tests do not need an Electron BrowserWindow.
+ */
+export type MenuRoleTarget = {
+  quit: () => void
+  window: Pick<
+    BrowserWindow,
+    | 'close'
+    | 'isFullScreen'
+    | 'isMaximized'
+    | 'maximize'
+    | 'minimize'
+    | 'setFullScreen'
+    | 'unmaximize'
+  >
+  contents: Pick<
+    WebContents,
+    | 'copy'
+    | 'cut'
+    | 'paste'
+    | 'pasteAndMatchStyle'
+    | 'redo'
+    | 'reload'
+    | 'reloadIgnoringCache'
+    | 'selectAll'
+    | 'toggleDevTools'
+    | 'undo'
+  >
+}
+
+/**
+ * Runs the call a menu role maps to. Returns false for roles with no
+ * Linux-side equivalent so the keypress falls through untouched.
+ */
+export function dispatchMenuRole(role: MenuItem['role'], target: MenuRoleTarget): boolean {
+  const { contents, window } = target
+  switch (role) {
+    case 'quit':
+      target.quit()
+      return true
+    case 'close':
+      window.close()
+      return true
+    case 'minimize':
+      window.minimize()
+      return true
+    case 'zoom':
+      // The zoom role is a maximize toggle, not a second minimize.
+      if (window.isMaximized()) window.unmaximize()
+      else window.maximize()
+      return true
+    case 'togglefullscreen':
+      window.setFullScreen(!window.isFullScreen())
+      return true
+    case 'reload':
+      contents.reload()
+      return true
+    case 'forceReload':
+      contents.reloadIgnoringCache()
+      return true
+    case 'toggleDevTools':
+      contents.toggleDevTools()
+      return true
+    case 'undo':
+      contents.undo()
+      return true
+    case 'redo':
+      contents.redo()
+      return true
+    case 'cut':
+      contents.cut()
+      return true
+    case 'copy':
+      contents.copy()
+      return true
+    case 'paste':
+      contents.paste()
+      return true
+    case 'pasteAndMatchStyle':
+      contents.pasteAndMatchStyle()
+      return true
+    case 'selectAll':
+      contents.selectAll()
+      return true
+    default:
+      return false
+  }
 }
 
 export function electronAccelerator(

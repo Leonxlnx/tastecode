@@ -1,7 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { closeSync, openSync, readFileSync, readSync, readdirSync } from 'node:fs'
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  rmSync,
+} from 'node:fs'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { runCli } from '@harness/proc/cli'
 
@@ -74,9 +85,22 @@ function archiveRoot(proofFile: string): string | undefined {
 function isInsideArchive(pathname: string, archive: string): boolean {
   const normalized = canonicalPath(pathname)
   const canonicalArchive = canonicalPath(archive)
-  const packed = `${canonicalArchive}/`
-  const unpacked = `${canonicalArchive}.unpacked/`
-  return normalized.startsWith(packed) || normalized.startsWith(unpacked)
+  return (
+    normalized.startsWith(`${canonicalArchive}/`) ||
+    normalized.startsWith(`${canonicalArchive}.unpacked/`)
+  )
+}
+
+function unpackedBindingPath(pathname: string, archive: string): string | undefined {
+  const normalized = canonicalPath(pathname)
+  const canonicalArchive = canonicalPath(archive)
+  if (normalized.startsWith(`${canonicalArchive}.unpacked/`)) return pathname
+  if (!normalized.startsWith(`${canonicalArchive}/`)) return undefined
+
+  // Electron keeps the virtual app.asar path as the require.cache key even
+  // when its ASAR loader reads a native module from app.asar.unpacked.
+  const physicalPath = `${archive}.unpacked${pathname.slice(archive.length)}`
+  return existsSync(physicalPath) ? physicalPath : undefined
 }
 
 export function assertPackagedDesignReferences(proofFile: string, designEntry: string): number {
@@ -130,14 +154,15 @@ export function assertPackagedNativeModules(
       throw new Error(`native module entry resolved outside the packaged application: ${entry}`)
     }
   }
-  const packagedBindings = modules.nativeBindings.filter((binding) =>
-    isInsideArchive(binding, archive),
-  )
-  if (!packagedBindings.some((binding) => binding.toLowerCase().includes('node-pty'))) {
-    throw new Error('the packaged node-pty native binding was not loaded')
+  const unpackedBindings = modules.nativeBindings.flatMap((binding) => {
+    const unpackedBinding = unpackedBindingPath(binding, archive)
+    return unpackedBinding ? [unpackedBinding] : []
+  })
+  if (!unpackedBindings.some((binding) => binding.toLowerCase().includes('node-pty'))) {
+    throw new Error('the unpacked node-pty native binding was not loaded')
   }
-  if (!packagedBindings.some((binding) => binding.toLowerCase().includes('keyring'))) {
-    throw new Error('the packaged keyring native binding was not loaded')
+  if (!unpackedBindings.some((binding) => binding.toLowerCase().includes('keyring'))) {
+    throw new Error('the unpacked keyring native binding was not loaded')
   }
 }
 
@@ -223,6 +248,31 @@ export async function provePtyBinding(pty: PtyModule, platform = process.platfor
   }
 }
 
+export function proveSqliteRuntime(): void {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'tastecode-sqlite-proof-'))
+  let database: DatabaseSync | undefined
+  try {
+    database = new DatabaseSync(path.join(directory, 'proof.sqlite'))
+    database.exec(`
+      PRAGMA journal_mode = WAL;
+      CREATE TABLE proof (value TEXT NOT NULL);
+      CREATE VIRTUAL TABLE proof_search USING fts5(value);
+    `)
+    database.prepare('INSERT INTO proof (value) VALUES (?)').run('packaged-sqlite')
+    database.prepare('INSERT INTO proof_search (value) VALUES (?)').run('packaged-search')
+    const stored = database.prepare('SELECT value FROM proof').get() as { value?: unknown }
+    const searched = database
+      .prepare('SELECT value FROM proof_search WHERE proof_search MATCH ?')
+      .get('packaged') as { value?: unknown }
+    if (stored.value !== 'packaged-sqlite' || searched.value !== 'packaged-search') {
+      throw new Error('packaged SQLite or FTS5 read-back failed')
+    }
+  } finally {
+    database?.close()
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
 export function proveKeyringBinding(keyring: KeyringModule): void {
   const account = `native-proof-${process.platform}-${process.arch}-${randomUUID()}`
   const password = `proof-${randomUUID()}`
@@ -247,15 +297,24 @@ export function proveKeyringBinding(keyring: KeyringModule): void {
   }
 }
 
+export function isNativeBindingProofPlatform(platform: NodeJS.Platform): boolean {
+  return platform === 'win32' || platform === 'darwin' || platform === 'linux'
+}
+
 export async function runNativeBindingProof(
   options: { proofFile?: string; modules?: PackagedNativeModules } = {},
 ): Promise<void> {
   const proofFile = options.proofFile ?? fileURLToPath(import.meta.url)
-  if (!process.versions.electron || process.env.ELECTRON_RUN_AS_NODE !== '1') {
-    throw new Error('native proof must run through the packaged Electron executable in Node mode')
+  const runtimeType = (process as NodeJS.Process & { type?: string }).type
+  const isUtilityProcess = runtimeType === 'utility'
+  const isElectronNodeMode = process.env.ELECTRON_RUN_AS_NODE === '1'
+  if (!process.versions.electron || (!isUtilityProcess && !isElectronNodeMode)) {
+    throw new Error(
+      'native proof must run in a packaged Electron utility process or Electron Node mode',
+    )
   }
-  if (process.platform !== 'win32' && process.platform !== 'darwin') {
-    throw new Error('native proof is a Windows and macOS release gate')
+  if (!isNativeBindingProofPlatform(process.platform)) {
+    throw new Error('native proof is a Windows, macOS, and Linux release gate')
   }
   const modules = options.modules ?? (await loadPackagedNativeModules())
   assertPackagedDesignReferences(proofFile, modules.designEntry)
@@ -268,6 +327,7 @@ export async function runNativeBindingProof(
   }
   await provePtyBinding(modules.pty)
   assertPackagedNativeModules(proofFile, modules)
+  proveSqliteRuntime()
   proveKeyringBinding(modules.keyring)
 }
 
@@ -277,11 +337,15 @@ const isEntryPoint =
 
 if (isEntryPoint) {
   runNativeBindingProof()
-    .then(() => process.stdout.write('packaged PTY and keyring proofs passed\n'))
+    .then(() =>
+      process.stdout.write('packaged PTY, SQLite, and keyring proofs passed\n', () =>
+        process.exit(0),
+      ),
+    )
     .catch((error) => {
       process.stderr.write(
         `[native-proof] ${error instanceof Error ? error.message : String(error)}\n`,
+        () => process.exit(1),
       )
-      process.exitCode = 1
     })
 }

@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-22 main 3ee7948d · 0.1.1 update feed restored</span>
+        <span class="meta">2026-09-22 main b2f5bc9d · Linux preview available</span>
       </div>
     </div>
 
@@ -1918,7 +1918,14 @@
                 later-published Linux-only Beta 8 proof was returned to draft to restore existing
                 clients. The next build selects releases by semantic version. Public discovery and
                 both downloads pass. Beta 6 and earlier users who missed the Beta 7 bridge need one
-                manual installer update</span
+                manual installer update. The Linux AppImage uses the same semantic-version GitHub
+                release provider, verifies the named asset against GitHub's size and SHA-256, and
+                prepares SHA-512 metadata locally (live installed update not yet verified). The deb
+                stays package-manager owned and links to manual downloads. The
+                <a href="https://github.com/Leonxlnx/tastecode/releases/tag/linux-preview-e9ac0a03"
+                  >Linux preview downloads</a
+                >
+                are available for external testing; Linux production acceptance is pending</span
               ></label
             >
           </li>
@@ -1982,7 +1989,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Secrets only in Windows Credential Manager or macOS Keychain</span
+                >Secrets only in the OS credential store — Windows Credential Manager, macOS
+                Keychain, or Linux Secret Service (gnome-keyring, KWallet)</span
               ></label
             >
           </li>
@@ -1998,8 +2006,9 @@
               ><input type="checkbox" /><span
                 >Windows title bar via the real Window Controls Overlay
                 <span class="d"
-                  >TasteCode icon in the window, taskbar, tray, macOS Dock, package, and
-                  README</span
+                  >TasteCode icon in the window, taskbar, tray, macOS Dock, package, and README;
+                  close-to-tray on Windows and on Linux when a StatusNotifier host is present —
+                  otherwise Linux close destroys the window and exits</span
                 ></span
               ></label
             >

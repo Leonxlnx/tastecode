@@ -52,15 +52,23 @@ to a TypeScript client).
 
 ## Desktop shell: Electron
 
-**The primary desktop client is Electron on macOS and Windows.** One Chromium renderer gives
-both platforms the same layout, text and motion implementation. Tauri and other system-webview
+**The primary desktop client is Electron on macOS, Windows, and Linux.** One Chromium renderer
+gives all platforms the same layout, text and motion implementation. Tauri and other system-webview
 shells are smaller, but their Chromium/WebKit split would make visual parity a permanent
 cross-platform problem.
 
 The local Node server remains a separate long-lived process behind the typed WebSocket
 protocol. Closing or restarting the Electron window does not stop active agents. The renderer
 stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
-credentials.
+credentials. `HARNESS_PORT` selects the loopback port (default 4311); the desktop resolves it
+once, passes it to the spawned server's environment, and hands it to the renderer as a
+`harnessPort` page-query parameter so the socket moves as one hop.
+
+_Known limitation (v1):_ the loopback WebSocket authenticates origins, not clients. Any local
+process — including a page served from a workspace preview port — can open the socket and reach
+privileged calls such as `terminal.open`. `HARNESS_ACCESS_TOKEN` is only enforced when binding
+beyond loopback. A per-launch token handoff is deferred past v1; the bind stays on `127.0.0.1`
+and preview pages run sandboxed, so exploitation needs local code execution already.
 
 Electron's weaker security defaults are fixed in the shell: `contextIsolation: true`,
 `nodeIntegration: false`, sandboxing, a strict CSP, a narrow typed `contextBridge`, and
@@ -117,21 +125,127 @@ current version and fail asset validation before the downgrade check runs.
 
 ---
 
+## Linux release boundary
+
+**Linux is a qualified release target, not a claim that every distribution and desktop is
+supported.** The first beta contract is x86_64 on Pop!_OS 24.04 with COSMIC/Wayland and Ubuntu
+24.04 with GNOME/Wayland. KDE Plasma/Wayland receives a smoke pass; XWayland is a diagnostic
+fallback, not the default. ARM64, RPM, Flatpak, Snap, and older distributions stay outside the
+v1 contract until their native and clean-install matrices exist.
+
+The Electron renderer, typed WebSocket protocol, server, adapters, storage, Git/checkpoint
+model, and security boundaries remain shared. Linux-specific code is limited to capabilities
+that actually differ: desktop/session diagnostics, process groups, native bindings, package
+identity, updater authority, and later tray/portal behavior. Shared product code must not
+branch on a distribution or desktop name.
+
+**Every cancellable subprocess has an owner.** On Unix, TasteCode-owned CLI and preview
+children start as process-group leaders. Shutdown signals only groups that TasteCode created;
+it never sends a negative-PID signal to an arbitrary child. Graceful TERM followed by bounded
+KILL escalation lives in `@harness/proc`, with the existing Windows `taskkill /T` behavior
+behind the same boundary. Provider-specific protocol code does not implement its own tree walk.
+
+Linux delivery is proved in layers:
+
+1. Source gate on a pinned `ubuntu-24.04` runner: frozen install, lint, typecheck, tests, build.
+2. Unpacked x64 Electron artifact: packaged server starts and renderer connects.
+3. Artifact-native proof: `node-pty` and keyring load from `app.asar`/unpacked resources,
+   PTY round-trips, and an isolated credential can be written, read, and deleted.
+4. Native Wayland acceptance on COSMIC and GNOME: window lifecycle, dialogs, clipboard, PTY,
+   Git/SSH, preview, GPU, second-instance, and quit cleanup.
+5. AppImage and deb release candidates built from the same tested commit, with license bundle,
+   checksums, artifact inventory, and clean-machine evidence.
+
+AppImage is the portable Linux artifact and gets in-app updates through the custom GitHub release
+provider described above. It requires the exact versioned AppImage asset plus GitHub's size and
+SHA-256 digest, verifies the download, computes SHA-512 locally, and gives `electron-updater`
+private loopback metadata for replacement. Packaging still emits `latest-linux.yml` and embedded
+`app-update.yml`, but the current updater does not fetch the YAML as its release feed. The curated
+Linux distribution keeps `latest-linux.yml` as checksummed electron-builder metadata and
+compatibility evidence; no `.blockmap` sidecar ships. The deb stays package-manager owned — updates
+for it remain manual downloads from GitHub Releases, but it still runs the same bounded public
+release scan (up to ten pages and 1,000 releases) after startup, then every six hours, so the UI can
+point at the greatest published semantic version. Unpackaged or dev builds report `unsupported` and
+never touch the updater. Updater behavior is a package policy injected into the shared updater
+state machine (`appUpdateMode`) rather than scattered platform checks.
+
+Because `dpkg` swaps the payload under a running process, the packaged Linux shell snapshots an
+install signature (`BUILD_PROVENANCE`, else the `app.asar` inode) at startup: a main-window load
+that picks up different on-disk files warns once that a restart finishes the update, a lazily
+required native binding that fails mid-run advises restart-or-reinstall rather than blaming the
+credential store, and `userData/last-run-version` lets the next launch log the version change.
+
+**The AppImage carries a sandbox requirement the deb does not.** Its FUSE mount cannot ship a
+setuid `chrome-sandbox`, so the renderer sandbox needs unprivileged user namespaces. Ubuntu
+23.10+ restricts those behind `kernel.apparmor_restrict_unprivileged_userns` and only packaged
+applications can install an AppArmor profile — the deb does (`apparmor-profile` ships in its
+resources), the AppImage cannot. On kernels enforcing that restriction the AppImage cannot start
+its sandbox; the app detects the sysctl at startup and tells the user to install the deb or set
+`kernel.apparmor_restrict_unprivileged_userns=0`, instead of exiting silently. The deb is the
+primary artifact and the AppImage claim stays limited to distributions that leave unprivileged
+user namespaces open.
+
+**Close-to-tray is conditional on Linux.** The window hides on close only when a real tray exists:
+Electron's `Tray` constructor succeeds even where no StatusNotifier host will ever draw the icon,
+so startup first probes the session D-Bus for `org.kde.StatusNotifierWatcher` (`busctl --user list`,
+`dbus-send ... ListNames` fallback). With a host (KDE, COSMIC, GNOME with an AppIndicator
+extension) close hides to the tray and Quit still exits fully; without one, close destroys the
+window and the process exits — never an unreachable ghost process. The deb `Recommends`
+`libayatana-appindicator3-1 | libappindicator3-1` so the SNI client library is present where apt
+honors recommends. macOS keeps native close semantics and has no tray.
+
+Credentials require a Secret Service provider on the session D-Bus (gnome-keyring, KWallet,
+KeePassXC). Minimal or headless desktops may have none, in which case credential-backed features
+fail with an explicit install/unlock message rather than silently storing plaintext. The deb
+declares `libc6 (>= 2.31)`, the glibc floor of the shipped Electron, so apt refuses installs on
+distributions too old to run the binary. musl-based distributions (Alpine) and arm64 are outside
+the x86_64 gnu-only artifact set.
+The curated `release/linux-x64` distribution contains the AppImage, deb, generated
+`latest-linux.yml` metadata, SHA-256 checksums, and source-bound evidence; strict staging excludes
+unexpected private builder output.
+Windows and macOS retain the shared GitHub publisher and their existing application-owned updater
+path.
+
+The unpacked artifact and native proof come before AppImage/deb configuration. A package that
+draws a window but cannot open a PTY, use the credential store, or stop descendants is not a
+release candidate. Hosted CI remains manually dispatched while Actions minutes are constrained;
+the Linux row is still part of the same platform matrix whenever that workflow is requested.
+
+Local qualification starts with `pnpm linux:acceptance` from a clean checkout on a qualified
+x64 Wayland desktop. The command freezes dependencies, runs every source gate, then invokes one
+preparation that builds once, packages both Linux targets, writes source-bound distribution
+evidence, and retains the unpacked app for native PTY, SQLite/FTS5, keyring, and notice checks. It
+writes `release/linux-acceptance.json`; environment blockers exit separately from product failures.
+Its result remains `awaiting-manual-desktop-acceptance`; automation cannot certify a real
+compositor or GPU.
+
+The manual pass launches the reported executable with the reported isolated XDG profile and must
+prove: visible native-Wayland startup without permanent reconnecting; project open and persistence;
+terminal output, resize, interrupt and descendant cleanup; Git/checkpoint and preview start/stop;
+clipboard, drag/drop, dialogs and external-browser handoff; close-to-quit cleanup; second-instance
+focus; and Quit releasing server, preview, PTY and ports. Provider-network calls, AppImage/deb,
+updater feeds, KDE/XWayland and framework upgrades are outside this first gate. A failure stops the
+layered release path instead of being converted into a warning.
+
+_Rejected:_ a second Linux backend, a giant `linux.ts`, forcing X11 globally, generic
+"supports Linux" wording, Flatpak-first distribution for a host-tooling application, and
+package-agnostic self-update.
+
 ## Stack
 
-|                    |                                            |                                                                         |
-| ------------------ | ------------------------------------------ | ----------------------------------------------------------------------- |
-| Language / runtime | TypeScript 5.9.3, Node 24 LTS              | One language across the server, adapters, web client, and desktop shell |
-| Monorepo           | pnpm workspaces + Vite                     | pnpm's store keeps worktree-heavy development cheap                     |
-| Desktop            | Electron 43                                | One Chromium renderer across macOS and Windows                          |
-| UI                 | React 19                                   | Shared renderer behavior and app-owned controls                         |
-| Chat list          | TanStack Virtual, end-anchored             | Variable-height streamed rows keep stable keys and cached measurement   |
-| Markdown           | Streamdown + Shiki's JavaScript engine     | Incomplete streamed blocks stay cheap without weakening the CSP         |
-| Styling            | CSS token layer                            | Themes, geometry, density, and motion remain app-owned                  |
-| State              | React external store + event-derived views | Deltas update the live tail without rebuilding completed history        |
-| DB                 | Node SQLite, WAL, FTS5                     | Append-only events and rebuildable read models remain unchanged         |
-| PTY                | `node-pty`                                 | The shared process layer handles Unix PTYs and Windows ConPTY           |
-| Tests              | Vitest + live Electron checks              | Captured provider frames and platform runs remain the final contract    |
+|                    |                                                           |                                                                         |
+| ------------------ | --------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Language / runtime | TypeScript 5.9.3, Node >=22.18 tooling / Electron Node 24 | One language across the server, adapters, web client, and desktop shell |
+| Monorepo           | pnpm workspaces + Vite                                    | pnpm's store keeps worktree-heavy development cheap                     |
+| Desktop            | Electron 43                                               | One Chromium renderer across macOS, Windows, and Linux                  |
+| UI                 | React 19                                                  | Shared renderer behavior and app-owned controls                         |
+| Chat list          | TanStack Virtual, end-anchored                            | Variable-height streamed rows keep stable keys and cached measurement   |
+| Markdown           | Streamdown + Shiki's JavaScript engine                    | Incomplete streamed blocks stay cheap without weakening the CSP         |
+| Styling            | CSS token layer                                           | Themes, geometry, density, and motion remain app-owned                  |
+| State              | React external store + event-derived views                | Deltas update the live tail without rebuilding completed history        |
+| DB                 | Node SQLite, WAL, FTS5                                    | Append-only events and rebuildable read models remain unchanged         |
+| PTY                | `node-pty`                                                | The shared process layer handles Unix PTYs and Windows ConPTY           |
+| Tests              | Vitest + live Electron checks                             | Captured provider frames and platform runs remain the final contract    |
 
 **On Effect-TS:** T3 Code uses it throughout and it genuinely fits this problem. We don't
 adopt it for v1 — the learning curve colors every signature and with two developers the
@@ -272,6 +386,21 @@ extra OpenAI API key for account-backed dictation.
 
 ---
 
+## Custom harness environment values are write-only
+
+Custom harness command, argument, working-directory, provider, and configured environment-key
+metadata remain human-readable. Environment values live under opaque references in the existing
+OS credential store. Public reads return only configured key names; updates explicitly set or
+unset values, and omitted updates preserve the existing bindings.
+
+Version 1 custom-harness files migrate atomically. A reference-only recovery record distinguishes
+staged credentials from obsolete credentials after interruption. If the credential store is
+locked or unavailable, migration leaves the original file intact and launch remains blocked;
+there is no plaintext fallback. This applies to every custom environment value rather than trying
+to classify which values are secrets.
+
+---
+
 ## Project-scoped MCP configuration
 
 **TasteCode owns project-scoped MCP configuration; vendor-global configuration is an
@@ -370,11 +499,11 @@ without parsing the event log. When a few newer events exist, the server reads o
 folds them over the prior compact replay, and replaces the snapshot. History rewrites delete the
 snapshot first, so a stale branch can never survive a restore.
 
-|             | Windows                     | macOS                                      |
-| ----------- | --------------------------- | ------------------------------------------ |
-| DB + logs   | `%APPDATA%\TasteCode\`      | `~/Library/Application Support/TasteCode/` |
-| User config | `%USERPROFILE%\.tastecode\` | `~/.tastecode/`                            |
-| Credentials | Credential Manager          | Keychain                                   |
+|             | Windows                     | macOS                                      | Linux                                                            |
+| ----------- | --------------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| DB + logs   | `%APPDATA%\TasteCode\`      | `~/Library/Application Support/TasteCode/` | DB `~/.local/share/TasteCode/`; app state `~/.config/TasteCode/` |
+| User config | `%USERPROFILE%\.tastecode\` | `~/.tastecode/`                            | `~/.tastecode/`                                                  |
+| Credentials | Credential Manager          | Keychain                                   | Secret Service (gnome-keyring, KWallet, KeePassXC)               |
 
 On first use, TasteCode moves legacy Personal Harness files into these locations without
 overwriting an existing TasteCode file.

@@ -1,6 +1,65 @@
-import { memo } from 'react'
-import { IconLayoutSidebar as PanelLeft } from '@tabler/icons-react'
+import { memo, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  IconCopy as Restore,
+  IconLayoutSidebar as PanelLeft,
+  IconMinus as Minimize,
+  IconSquare as Maximize,
+  IconX as Close,
+} from '@tabler/icons-react'
+import { isLinux, windowControlApi, type WindowControls } from '../bridge.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
+
+/**
+ * Caption buttons for Linux, where the window is frameless and no native
+ * controls exist — Windows draws its own through titleBarOverlay and macOS
+ * keeps the traffic lights.
+ */
+function LinuxWindowControls(props: { controls: WindowControls }) {
+  const { controls } = props
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => {
+    let live = true
+    void controls.isMaximized().then((value) => {
+      if (live) setMaximized(value)
+    })
+    const off = controls.onMaximizedChange(setMaximized)
+    return () => {
+      live = false
+      off()
+    }
+  }, [controls])
+  return (
+    <div className="titlebar__controls">
+      <button
+        type="button"
+        className="icon-btn icon-btn--always titlebar__winbtn"
+        aria-label="Minimize"
+        title="Minimize"
+        onClick={() => void controls.minimize()}
+      >
+        <Minimize size={15} aria-hidden />
+      </button>
+      <button
+        type="button"
+        className="icon-btn icon-btn--always titlebar__winbtn"
+        aria-label={maximized ? 'Restore' : 'Maximize'}
+        title={maximized ? 'Restore' : 'Maximize'}
+        onClick={() => void controls.toggleMaximize()}
+      >
+        {maximized ? <Restore size={14} aria-hidden /> : <Maximize size={14} aria-hidden />}
+      </button>
+      <button
+        type="button"
+        className="icon-btn icon-btn--always titlebar__winbtn titlebar__winbtn--close"
+        aria-label="Close"
+        title="Close"
+        onClick={() => void controls.close()}
+      >
+        <Close size={15} aria-hidden />
+      </button>
+    </div>
+  )
+}
 
 /**
  * Title bar. Holds the window-level sidebar control.
@@ -14,8 +73,21 @@ function TitleBarComponent(props: {
   onToggleRail: () => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
+  const controls = useMemo(() => (isLinux() ? windowControlApi() : undefined), [])
+  // A frameless window has no native caption to double-click. Pointer events
+  // inside a -webkit-app-region: drag surface are consumed before they reach
+  // the DOM on some platforms, so the no-drag gaps and padding are the part
+  // of the bar this can guarantee — everywhere the event does arrive, it
+  // should behave like a caption.
+  const onTitlebarDoubleClick =
+    controls === undefined
+      ? undefined
+      : (event: ReactMouseEvent<HTMLElement>) => {
+          if (event.target instanceof Element && event.target.closest('button')) return
+          void controls.toggleMaximize()
+        }
   return (
-    <header className="titlebar">
+    <header className="titlebar" onDoubleClick={onTitlebarDoubleClick}>
       <button
         type="button"
         className="icon-btn icon-btn--always titlebar__toggle"
@@ -28,6 +100,9 @@ function TitleBarComponent(props: {
         <PanelLeft size={15} aria-hidden />
       </button>
       <span className="titlebar__drag-region" aria-hidden />
+      {/* No bridge: the WM still owns close (taskbar menu, Alt+F4), so the
+          bar renders without controls instead of drawing dead buttons. */}
+      {controls !== undefined ? <LinuxWindowControls controls={controls} /> : null}
     </header>
   )
 }

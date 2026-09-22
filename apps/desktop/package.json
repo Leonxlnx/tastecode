@@ -2,8 +2,11 @@
   "name": "@harness/desktop",
   "productName": "Taste Code",
   "description": "A local desktop workspace for coding agents.",
+  "homepage": "https://tastecode.dev",
   "author": "Tasteskill Team",
+  "license": "Apache-2.0",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
+  "desktopName": "dev.tastecode.desktop",
   "version": "0.1.1",
   "private": true,
   "type": "module",
@@ -19,8 +22,9 @@
     "typecheck": "tsc -b",
     "start": "tsc -b && node scripts/build-main.js && node scripts/build-preload.js && node scripts/start.js",
     "test": "vitest run src --passWithNoTests",
-    "dist": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder",
-    "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node scripts/build-preload.js && electron-builder --dir",
+    "dist": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder",
+    "dist:dir": "pnpm -w licenses:verify && pnpm -w build && node ../../tools/scripts/build-provenance.js && node scripts/build-preload.js && electron-builder --dir",
+    "dist:linux": "node scripts/prepare-linux-release.js",
     "verify:native-bindings": "node scripts/run-native-binding-proof.js"
   },
   "dependencies": {
@@ -45,14 +49,20 @@
     "icon": "assets/tastecode-app-icon.png",
     "asar": true,
     "compression": "maximum",
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "electronLanguages": [
       "en-US"
     ],
     "npmRebuild": false,
     "asarUnpack": [
       "node_modules/**/*.node",
+      "node_modules/**/node-pty/prebuilds/**/spawn-helper",
       "node_modules/@harness/design-agent/references/library/**/*"
     ],
+    "beforePack": "../../tools/scripts/normalize-linux-perms.js",
+    "afterPack": "../../tools/scripts/normalize-linux-perms.js",
     "files": [
       "dist/{main.js,preload.cjs,native-binding-proof.js}",
       "assets/tastecode-app-icon.png",
@@ -105,6 +115,10 @@
       {
         "from": "../../release/THIRD_PARTY_LICENSES.txt",
         "to": "THIRD_PARTY_LICENSES.txt"
+      },
+      {
+        "from": "../../release/build-provenance.json",
+        "to": "BUILD_PROVENANCE.json"
       }
     ],
     "directories": {
@@ -119,6 +133,74 @@
       }
     ],
     "artifactName": "TasteCode-${version}-${os}-${arch}.${ext}",
+    "linux": {
+      "executableName": "tastecode",
+      "category": "Development",
+      "synopsis": "Local desktop workspace for coding agents",
+      "description": "A local desktop workspace for coding agents.",
+      "maintainer": "Tasteskill Team <hello@tasteskill.dev>",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "syncDesktopName": true,
+      "icon": "assets/icons",
+      "desktop": {
+        "entry": {
+          "Keywords": "coding;agents;ai;development;",
+          "StartupWMClass": "dev.tastecode.desktop"
+        }
+      },
+      "files": [
+        "!dist/**/*.map",
+        "!dist/**/*.d.ts",
+        "!node_modules/node-pty/prebuilds/darwin-*/**/*",
+        "!node_modules/node-pty/prebuilds/linux-arm64/**/*",
+        "!node_modules/node-pty/prebuilds/win32-*/**/*",
+        "!node_modules/node-pty/scripts/**/*",
+        "!node_modules/node-pty/src/win/**/*",
+        "!node_modules/node-pty/typings/**/*"
+      ]
+    },
+    "deb": {
+      "packageName": "tastecode",
+      "packageCategory": "devel",
+      "depends": [
+        "libc6 (>= 2.31)",
+        "libstdc++6",
+        "libgtk-3-0t64 | libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0t64 | libatspi2.0-0",
+        "libuuid1t64 | libuuid1",
+        "libsecret-1-0",
+        "libasound2t64 | libasound2",
+        "libgbm1"
+      ],
+      "recommends": [
+        "libayatana-appindicator3-1 | libappindicator3-1"
+      ],
+      "fpm": [
+        "--description=Local desktop workspace for coding agents\nA local desktop workspace for coding agents.",
+        "--deb-user=root",
+        "--deb-group=root",
+        "assets/linux/dev.tastecode.metainfo.xml=/usr/share/metainfo/dev.tastecode.metainfo.xml",
+        "../../release/debian-copyright=/usr/share/doc/tastecode/copyright"
+      ]
+    },
     "win": {
       "target": [
         {

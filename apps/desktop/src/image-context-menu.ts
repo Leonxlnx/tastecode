@@ -1,10 +1,11 @@
 import { clipboard, Menu, shell, type BrowserWindow, type WebContents } from 'electron'
+import { isSupportedExternalUrl } from './external-urls.js'
 
 export function configureImageContextMenu(contents: WebContents, window: BrowserWindow): void {
   contents.on('context-menu', (_event, params) => {
     if (params.linkURL) {
       const url = params.linkURL
-      const canOpen = /^https?:\/\//i.test(url)
+      const canOpen = isSupportedExternalUrl(url)
       Menu.buildFromTemplate([
         {
           label: 'Open',

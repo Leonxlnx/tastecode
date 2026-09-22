@@ -31,10 +31,15 @@ export async function servePreparedUpdate<T>(
   file: string,
   info: UpdateInfo,
   use: (url: string, prepared: UpdateInfo) => Promise<T>,
+  servedName?: string,
 ): Promise<T> {
   const { size, sha512 } = await updateFileHashes(file)
   if (!size || !(await stat(file)).isFile()) throw new Error('Empty prepared update.')
-  const route = `/${randomBytes(32).toString('hex')}/update${path.extname(file)}`
+  // The served name reaches the updater's download cache; AppImage installs
+  // keep it as the replaced file name, so callers pass the release asset name.
+  const base = servedName === undefined ? '' : path.basename(servedName)
+  const name = base === '' || base === '.' || base === '..' ? `update${path.extname(file)}` : base
+  const route = `/${randomBytes(32).toString('hex')}/${encodeURIComponent(name)}`
   const server = createServer((request, response) => {
     if (
       request.headers.origin !== undefined ||

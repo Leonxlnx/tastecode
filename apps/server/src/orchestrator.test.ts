@@ -1910,6 +1910,31 @@ function writePreviewArtifacts(workspace: string) {
 }
 
 describe('provider-neutral design briefing', () => {
+  it('persists provider prompt ownership before the provider accepts the turn', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', process.cwd())
+      sessions[0]!.release = () => undefined
+      const sending = orchestrator.sendTurn(thread.id, 'Create a website.', [
+        DESIGN_BRIEF_ATTACHMENT,
+      ])
+      await vi.waitFor(() => expect(sessions[0]!.sent).toHaveLength(1))
+
+      const [{ token } = { token: undefined }] = store.providerOwnedPromptReceipts(thread.id)
+      expect(token).toBeDefined()
+      expect(sessions[0]!.sent[0]).toContain(
+        `<tastecode-owned-prompt token="${token}" kind="internal" />\n`,
+      )
+
+      sessions[0]!.release?.()
+      await sending
+      expect(store.providerOwnedPromptReceipts(thread.id)).toEqual([{ token, turnId: 's1-turn' }])
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+    }
+  })
+
   it.each(['reported failure', 'source validation'])(
     'stops repeated repair corrections after %s instead of resetting the retry guard',
     async (failure) => {
@@ -2094,6 +2119,12 @@ describe('provider-neutral design briefing', () => {
         expect(session.sent).toHaveLength(1)
         session.emit({ type: 'turn.completed', turnId: 'brief', status: 'completed' })
         await vi.waitFor(() => expect(session.sent).toHaveLength(2))
+        const continuationOwnership =
+          /^<tastecode-owned-prompt token="([^"]+)" kind="response" \/>\n/.exec(session.sent[1]!)
+        expect(continuationOwnership).not.toBeNull()
+        expect(store.providerOwnedPromptReceipts(thread.id).map(({ token }) => token)).toContain(
+          continuationOwnership?.[1],
+        )
         expect(session.sent[1]).toContain(request)
         expect(session.sent[1]).toContain('restrictions have ended')
         expect(session.sent[1]).not.toContain('must contain only the phase result')

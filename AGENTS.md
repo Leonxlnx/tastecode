@@ -7,6 +7,13 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 **Where the project is:** M0 through M3 are done. M4 (the design agent) is next. See
 [docs/ROADMAP.md](./docs/ROADMAP.md) for durable status and GitHub issues/PRs for live work.
 
+**This is a production product in a public repository (2026-09-18).** Anyone can read the
+code, history, issues and PRs, and shipped artifacts run on real user machines. Treat every
+change accordingly: assume hostile readers, external contributors and real installs; never
+commit secrets, customer data or internal credentials anywhere in history; write PRs and
+commits as if a stranger will audit them; and verify claims against measured evidence
+before writing them into docs or release notes.
+
 **Branch model (Leon and Bluedev, 2026-08-08):** `main` is the public beta for roughly the
 next four weeks and becomes the stable release at v1. `nightly` is the integration branch:
 every new change lands there first and nothing is hidden on it — it carries the full

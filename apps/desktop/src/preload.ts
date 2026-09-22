@@ -3,7 +3,7 @@ import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contr
 import type { AppUpdateState } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuAction } from './menu-contract.js'
-import { isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import { isAppUpdateState, isFiniteNumber, type WindowControlAction } from './preload-validation.js'
 
 type PickedAttachment = {
   path: string
@@ -78,6 +78,18 @@ const api = {
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
   setMenuShortcuts: (shortcuts: unknown): void =>
     ipcRenderer.send('harness:setMenuShortcuts', shortcuts),
+  // Linux draws its own caption buttons in the title bar; Windows and macOS use
+  // the native caption controls and never call these.
+  windowControl: (action: WindowControlAction): Promise<void> =>
+    ipcRenderer.invoke('harness:windowControl', action),
+  windowIsMaximized: (): Promise<boolean> => ipcRenderer.invoke('harness:windowIsMaximized'),
+  onWindowMaximizedChange: (listener: (maximized: boolean) => void): (() => void) => {
+    const handler = (_event: IpcRendererEvent, maximized: unknown) => {
+      if (typeof maximized === 'boolean') listener(maximized)
+    }
+    ipcRenderer.on('harness:windowMaximized', handler)
+    return () => ipcRenderer.removeListener('harness:windowMaximized', handler)
+  },
   onMenuAction: (listener: (action: string) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, action: unknown) => {
       if (isNativeMenuAction(action)) listener(action)

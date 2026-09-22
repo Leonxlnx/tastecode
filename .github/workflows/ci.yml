@@ -9,15 +9,19 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   check:
-    # When manually requested, check both platforms in one run.
+    # When manually requested, check every qualified source platform in one run.
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, ubuntu-24.04]
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v5
@@ -39,7 +43,7 @@ jobs:
         run: pnpm -r typecheck
 
       - name: Test
-        run: pnpm -r test
+        run: pnpm test
 
       # Builds the renderer and every package. Not the installer — signing and
       # packaging belong to the release workflow, not to every pull request.

@@ -65,6 +65,7 @@ import {
   localDiagnosticsEnabled,
   onAppUpdateState,
   openLocalDiagnostics,
+  RELEASES_URL,
   setLocalDiagnosticsEnabled,
   type AppUpdateState,
 } from '../bridge.js'
@@ -1763,10 +1764,15 @@ function AboutSettings(props: { transport: Transport }) {
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<ResultOf<'system.updateCheck'>>()
   const [nativeUpdate, setNativeUpdate] = useState<AppUpdateState>()
+  const [installFailed, setInstallFailed] = useState(false)
 
   useEffect(() => {
     void appUpdateState().then(setNativeUpdate)
-    return onAppUpdateState(setNativeUpdate)
+    // A fresh update state means the failed install attempt is stale.
+    return onAppUpdateState((next) => {
+      setInstallFailed(false)
+      setNativeUpdate(next)
+    })
   }, [])
 
   const check = async () => {
@@ -1789,6 +1795,8 @@ function AboutSettings(props: { transport: Transport }) {
   const nativeChecking = nativeUpdate?.status === 'checking'
   const nativeDownloading = nativeUpdate?.status === 'downloading'
   const nativeReady = nativeUpdate?.status === 'ready'
+  const manualUpdate = nativeUpdate?.status === 'manual'
+  const manualLatest = nativeUpdate?.status === 'manual' ? nativeUpdate.latestVersion : undefined
   // Verdicts stay on the row's one line; a failure goes behind the red dot.
   const updateStatus = !result
     ? undefined
@@ -1804,9 +1812,15 @@ function AboutSettings(props: { transport: Transport }) {
               state: 'setup-needed' as const,
               detail: `Newer: ${short(result.remote.sha)} — pull and restart`,
             }
-          : { state: 'unavailable' as const, detail: 'No verdict' }
-  const nativeStatus =
-    nativeUpdate?.status === 'current'
+          : { state: 'failed' as const, detail: 'Could not compare — retry' }
+  const nativeStatus = manualUpdate
+    ? manualLatest
+      ? { state: 'update-available' as const, detail: `Version ${manualLatest}` }
+      : {
+          state: 'manual' as const,
+          detail: 'Download and install updates manually from GitHub',
+        }
+    : nativeUpdate?.status === 'current'
       ? { state: 'ready' as const, detail: 'Up to date' }
       : nativeDownloading
         ? {
@@ -1836,6 +1850,12 @@ function AboutSettings(props: { transport: Transport }) {
         ) : result?.error ? (
           <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
         ) : null}
+        {installFailed ? (
+          <RowIssue
+            message="Update install failed"
+            tip="Retry, or download the release manually from GitHub."
+          />
+        ) : null}
         {checking || nativeChecking ? <StateLabel state="checking" live /> : null}
         {!checking && !nativeChecking && nativeStatus ? (
           <StateLabel {...nativeStatus} live />
@@ -1847,16 +1867,41 @@ function AboutSettings(props: { transport: Transport }) {
           className="settings__action"
           type="button"
           disabled={checking || nativeChecking || nativeDownloading}
-          onClick={() => void (nativeReady ? installAppUpdate() : check())}
+          onClick={() => {
+            if (manualUpdate) {
+              window.open(
+                nativeUpdate?.releasesUrl ?? RELEASES_URL,
+                '_blank',
+                'noopener,noreferrer',
+              )
+              return
+            }
+            if (nativeReady) {
+              // installAppUpdate resolves false when the restart-and-install
+              // handoff fails — leaving "Restart to update" looking idle.
+              void installAppUpdate().then(
+                (installed) => {
+                  if (!installed) setInstallFailed(true)
+                },
+                () => setInstallFailed(true),
+              )
+              return
+            }
+            void check()
+          }}
         >
           <RotateCcw size={13} aria-hidden />
-          {nativeReady
-            ? 'Restart to update'
-            : nativeDownloading
-              ? 'Downloading…'
-              : checking || nativeChecking
-                ? 'Checking…'
-                : 'Check for updates'}
+          {manualUpdate
+            ? manualLatest
+              ? 'Download'
+              : 'Open downloads'
+            : nativeReady
+              ? 'Restart to update'
+              : nativeDownloading
+                ? 'Downloading…'
+                : checking || nativeChecking
+                  ? 'Checking…'
+                  : 'Check for updates'}
         </button>
       </SettingsRow>
       <SettingsRow title="Source">

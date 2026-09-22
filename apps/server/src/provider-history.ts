@@ -190,7 +190,8 @@ export class ProviderHistory {
           return changed
         if (events.length === 0) throw new Error('Saved provider chat is unavailable; try again')
         const local = this.store.localHistory(threadId).map(({ event }) => event)
-        const entries = importedEvents(events, threadId, local)
+        const ownedPromptReceipts = this.store.providerOwnedPromptReceipts(threadId)
+        const entries = importedEvents(events, threadId, local, ownedPromptReceipts)
         changed =
           this.store.mergeProviderHistory(threadId, current.session.revision, entries) || changed
         current.loadedRevision = current.session.revision
@@ -209,7 +210,12 @@ export class ProviderHistory {
             this.store.mergeProviderHistory(
               duplicateId,
               current.session.revision,
-              importedEvents(events, duplicateId, [...local, ...duplicateLocal]),
+              importedEvents(
+                events,
+                duplicateId,
+                [...local, ...duplicateLocal],
+                [...ownedPromptReceipts, ...this.store.providerOwnedPromptReceipts(duplicateId)],
+              ),
             )
           }
           this.hooks.changed([threadId, duplicateId])
@@ -237,10 +243,41 @@ function turnId(event: DomainEvent): string | undefined {
   return 'turnId' in event ? event.turnId : undefined
 }
 
+const SYSTEM_INSTRUCTIONS_END = '</system-instructions>\n\n'
+type ProviderOwnedPromptKind = 'internal' | 'response'
+type ProviderOwnedPromptReceipt = { token: string; turnId?: string }
+
+export function providerOwnedPrompt(
+  token: string,
+  prompt: string,
+  kind: ProviderOwnedPromptKind = 'internal',
+): string {
+  return `<tastecode-owned-prompt token="${token}" kind="${kind}" />\n${prompt}`
+}
+
+function ownedPrompt(
+  text: string | undefined,
+): { token: string; kind: ProviderOwnedPromptKind } | undefined {
+  if (text === undefined) return undefined
+  // A provider adapter may prepend the configured system instructions to its first
+  // native prompt. Accept that one bounded envelope, then require our marker at the boundary.
+  if (text.startsWith('<system-instructions>\n')) {
+    const end = text.indexOf(SYSTEM_INSTRUCTIONS_END)
+    if (end === -1) return undefined
+    text = text.slice(end + SYSTEM_INSTRUCTIONS_END.length)
+  }
+  const match = /^<tastecode-owned-prompt token="([^"\n]+)" kind="(internal|response)" \/>\n/.exec(
+    text,
+  )
+  if (!match?.[1] || !match[2]) return undefined
+  return { token: match[1], kind: match[2] === 'response' ? 'response' : 'internal' }
+}
+
 export function importedEvents(
   events: DomainEvent[],
   threadId: string,
   local: DomainEvent[],
+  ownedPromptReceipts: readonly ProviderOwnedPromptReceipt[] = [],
 ): Array<{ key: string; event: DomainEvent }> {
   const finalItems = new Map(
     projectHistoryItems(events.map((event, seq) => ({ seq, event }))).map((item) => [
@@ -265,17 +302,49 @@ export function importedEvents(
   const localTurns = new Set(
     local.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : [])),
   )
+  const completedLocalTurns = new Set(
+    local.flatMap((event) =>
+      event.type === 'turn.completed' && event.status === 'completed' ? [event.turnId] : [],
+    ),
+  )
   const users = local.flatMap((event) =>
     (event.type === 'item.completed' || event.type === 'item.started') && event.item.role === 'user'
       ? [event.item]
       : [],
   )
   const echoed = new Set<string>()
+  const internalTurns = new Set<string>()
+  const hiddenUserItems = new Set<string>()
+  const recoverableResponseTurns = new Set<string>()
+  const availableOwnedPrompts = new Map(
+    ownedPromptReceipts.map((receipt) => [receipt.token, receipt]),
+  )
   for (const event of events) {
     const id = turnId(event)
     if (!id) continue
     if (localTurns.has(id)) echoed.add(id)
+    if (
+      (event.type !== 'item.completed' && event.type !== 'item.started') ||
+      event.item.role !== 'user'
+    )
+      continue
+    const prompt = ownedPrompt(event.item.text)
+    if (!prompt) continue
+    const receipt = availableOwnedPrompts.get(prompt.token)
+    if (!receipt) continue
+    availableOwnedPrompts.delete(prompt.token)
+    if (prompt.kind === 'internal') {
+      internalTurns.add(id)
+      continue
+    }
+    hiddenUserItems.add(event.item.id)
+    if (receipt.turnId && completedLocalTurns.has(receipt.turnId)) {
+      echoed.add(id)
+      continue
+    }
+    recoverableResponseTurns.add(id)
   }
+  for (const id of recoverableResponseTurns) echoed.delete(id)
   const candidates = events
     .flatMap((event) => {
       if (
@@ -305,7 +374,13 @@ export function importedEvents(
   for (const event of events) {
     const id = turnId(event)
     if (id) currentTurn = id
-    if (echoed.has(id ?? currentTurn) && event.type !== 'thread.started') continue
+    const dropped = echoed.has(id ?? currentTurn) || internalTurns.has(id ?? currentTurn)
+    if (dropped && event.type !== 'thread.started') continue
+    if (
+      (event.type === 'item.completed' || event.type === 'item.started') &&
+      hiddenUserItems.has(event.item.id)
+    )
+      continue
     // Historical permission requests must never become actionable approvals.
     if (
       event.type.startsWith('approval.') ||

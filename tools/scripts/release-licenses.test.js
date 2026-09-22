@@ -9,6 +9,7 @@ import {
   auditInstalledProductionGraph,
   deriveDirectRuntimeDependencies,
   loadLicenseInventory,
+  renderDebianCopyright,
   renderDirectRuntimeTable,
   verifyDirectRuntimeTable,
   verifyProjectLicense,
@@ -107,6 +108,33 @@ test('the installed graph report includes transitives and license-file evidence'
   assert.match(licenseBundle, /fixture license/)
 })
 
+test('the Debian copyright preserves the audited third-party license bundle', () => {
+  const licenseBundle = [
+    'TasteCode third-party license texts',
+    '',
+    '='.repeat(80),
+    'electron@39.8.2',
+    '',
+    '--- LICENSE ---',
+    'Copyright Electron contributors',
+    '',
+    '='.repeat(80),
+    '@fontsource/inter@5.2.8',
+    '',
+    '--- LICENSE ---',
+    'Copyright The Inter Project Authors',
+    '',
+    '',
+  ].join('\n')
+
+  const copyright = renderDebianCopyright(licenseBundle)
+
+  assert.match(copyright, /TasteCode source code[\s\S]*\/usr\/share\/common-licenses\/Apache-2\.0/)
+  assert.equal(copyright.slice(-licenseBundle.length), licenseBundle)
+  assert.equal(copyright.match(/electron@39\.8\.2/g)?.length, 1)
+  assert.equal(copyright.match(/@fontsource\/inter@5\.2\.8/g)?.length, 1)
+})
+
 test('unknown license metadata fails closed', async () => {
   const transitivePackage = path.join(fixtureRoot, 'node_modules/transitive-b/package.json')
   const original = await readFile(transitivePackage, 'utf8')
@@ -187,6 +215,64 @@ test('an exact reviewed exception can supply missing metadata and bundled licens
   } finally {
     await writeFile(packageJsonPath, packageJson, 'utf8')
     await writeFile(packageLicense, 'fixture license\n', 'utf8')
+  }
+})
+
+test('the checked-in inventory reviews the Linux Claude SDK package and ships its license', async () => {
+  const checkedInInventory = await loadLicenseInventory(repositoryRoot)
+  const externalPackageJsonPath = path.join(fixtureRoot, 'node_modules/external-a/package.json')
+  const originalExternalPackageJson = await readFile(externalPackageJsonPath, 'utf8')
+  const linuxPackageName = '@anthropic-ai/claude-agent-sdk-linux-x64'
+  const linuxPackageRoot = path.join(fixtureRoot, 'node_modules', ...linuxPackageName.split('/'))
+
+  try {
+    await json(externalPackageJsonPath, {
+      name: 'external-a',
+      version: '1.0.0',
+      license: 'MIT',
+      dependencies: { [linuxPackageName]: '0.3.232' },
+    })
+    await installedPackage(linuxPackageName, {
+      version: '0.3.232',
+      license: 'SEE LICENSE IN LICENSE.md',
+    })
+    await rm(path.join(linuxPackageRoot, 'LICENSE.fixture'))
+    await writeFile(
+      path.join(linuxPackageRoot, 'LICENSE.md'),
+      'Anthropic SDK license terms\n',
+      'utf8',
+    )
+
+    const inventory = {
+      workspaceRoots: ['apps/desktop'],
+      runtimeDevDependencies: {},
+      dependencies: [
+        {
+          name: 'external-a',
+          use: 'fixture',
+          license: 'MIT',
+          metadataLicenses: ['MIT'],
+          source: 'https://example.test/a',
+        },
+      ],
+      reviewedTransitiveExceptions: checkedInInventory.reviewedTransitiveExceptions,
+    }
+    const derived = await deriveDirectRuntimeDependencies(fixtureRoot, inventory)
+    const { report, licenseBundle } = await auditInstalledProductionGraph(
+      fixtureRoot,
+      inventory,
+      derived,
+    )
+    const linuxPackage = report.packages.find(({ name }) => name === linuxPackageName)
+
+    assert.ok(linuxPackage)
+    assert.equal(linuxPackage.reviewedLicense, 'LicenseRef-Anthropic-Commercial-Terms')
+    assert.deepEqual(linuxPackage.licenseFiles, ['LICENSE.md'])
+    assert.match(licenseBundle, /claude-agent-sdk-linux-x64@0\.3\.232/)
+    assert.match(licenseBundle, /--- LICENSE\.md ---/)
+  } finally {
+    await writeFile(externalPackageJsonPath, originalExternalPackageJson, 'utf8')
+    await rm(linuxPackageRoot, { recursive: true, force: true })
   }
 })
 

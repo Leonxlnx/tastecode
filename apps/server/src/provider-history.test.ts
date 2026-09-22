@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
-import { ProviderHistory } from './provider-history.js'
+import { ProviderHistory, providerOwnedPrompt } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
@@ -240,6 +240,196 @@ describe('provider history integration', () => {
       ).toBe(false)
     },
   )
+
+  it('uses durable native-thread ownership to exclude internal prompts on every replay', async () => {
+    const ownershipToken = '11111111-1111-4111-8111-111111111111'
+    const secondOwnershipToken = '33333333-3333-4333-8333-333333333333'
+    const quotedOwnershipToken = '44444444-4444-4444-8444-444444444444'
+    const internal = transcript('native', '{"status":"complete","brief":{}}')
+    const user = internal[2]!
+    if (user.type === 'item.completed')
+      user.item.text = providerOwnedPrompt(
+        ownershipToken,
+        'You are running TasteCode Design Briefing mode.\n\n<user-design-request>Build me a landing page</user-design-request>',
+      )
+    const secondInternal = transcript(
+      'native-second',
+      '{"status":"complete","brand":{}}',
+      30000,
+    ).slice(1)
+    const secondUser = secondInternal[1]!
+    if (secondUser.type === 'item.completed')
+      secondUser.item.text = `<system-instructions>\nBe concise.\n</system-instructions>\n\n${providerOwnedPrompt(
+        secondOwnershipToken,
+        'You are running the Brand phase of TasteCode Design Mode.',
+      )}`
+    const outside = transcript('outside', 'Real outside answer', 90000).slice(1)
+    const quoted = transcript('quoted', 'The later quote stays visible', 120000).slice(1)
+    const quotedUser = quoted[1]!
+    if (quotedUser.type === 'item.completed')
+      quotedUser.item.text = `Here is a quoted envelope:\n${providerOwnedPrompt(
+        quotedOwnershipToken,
+        'Please explain this recorded prompt.',
+      )}`
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'TasteCode thread',
+    })
+    store.recordProviderOwnedPrompt('local', ownershipToken)
+    store.recordProviderOwnedPrompt('local', secondOwnershipToken)
+    store.recordProviderOwnedPrompt('local', quotedOwnershipToken)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([
+      ...internal,
+      ...secondInternal,
+      ...outside,
+      ...quoted,
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'Hello',
+      'Real outside answer',
+      `Here is a quoted envelope:\n${providerOwnedPrompt(
+        quotedOwnershipToken,
+        'Please explain this recorded prompt.',
+      )}`,
+      'The later quote stays visible',
+    ])
+    vi.mocked(source.list).mockResolvedValue([{ ...metadata(), revision: '2' }])
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'Hello',
+      'Real outside answer',
+      `Here is a quoted envelope:\n${providerOwnedPrompt(
+        quotedOwnershipToken,
+        'Please explain this recorded prompt.',
+      )}`,
+      'The later quote stays visible',
+    ])
+  })
+
+  it('keeps outside turns that quote internal prompt text', async () => {
+    const ownershipToken = '22222222-2222-4222-8222-222222222222'
+    const quoted = transcript('native', 'The marker is only text')
+    const user = quoted[2]!
+    if (user.type === 'item.completed')
+      user.item.text = providerOwnedPrompt(
+        ownershipToken,
+        'Please explain why provider-history.ts treats <user-design-request> as internal.',
+      )
+    const plain = transcript('outside', 'The sentence is also only text', 90000).slice(1)
+    const plainUser = plain[1]!
+    if (plainUser.type === 'item.completed')
+      plainUser.item.text = 'You are running TasteCode Design Briefing mode.'
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([...quoted, ...plain])
+    await history.refresh()
+    await history.load('external:codex:native')
+    expect(messages('external:codex:native').map((item) => item.text)).toEqual([
+      providerOwnedPrompt(
+        ownershipToken,
+        'Please explain why provider-history.ts treats <user-design-request> as internal.',
+      ),
+      'The marker is only text',
+      'You are running TasteCode Design Briefing mode.',
+      'The sentence is also only text',
+    ])
+  })
+
+  it('hides owned continuation prompts while preserving canonical and recovered answers', async () => {
+    const canonicalToken = '55555555-5555-4555-8555-555555555555'
+    const recoveryToken = '66666666-6666-4666-8666-666666666666'
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'TasteCode thread',
+    })
+    const canonical = transcript('local-answer', 'Canonical answer', 30000).slice(1)
+    for (const event of canonical) {
+      if (
+        (event.type === 'item.completed' || event.type === 'item.started') &&
+        event.item.role === 'user'
+      )
+        continue
+      store.append('local', event)
+    }
+    store.append('local', {
+      type: 'turn.started',
+      turn: {
+        id: 'local-recovery-turn',
+        threadId: 'local',
+        status: 'running',
+        createdAt: 60000,
+      },
+    })
+    store.append('local', {
+      type: 'turn.completed',
+      turnId: 'local-recovery-turn',
+      status: 'interrupted',
+    })
+    store.recordProviderOwnedPrompt('local', canonicalToken)
+    store.bindProviderOwnedPrompt('local', canonicalToken, 'local-answer-turn')
+    store.recordProviderOwnedPrompt('local', recoveryToken)
+    store.bindProviderOwnedPrompt('local', recoveryToken, 'local-recovery-turn')
+
+    const nativeCanonical = transcript('native-answer', 'Canonical answer', 30001)
+    const canonicalUser = nativeCanonical[2]!
+    if (canonicalUser.type === 'item.completed')
+      canonicalUser.item.text = providerOwnedPrompt(
+        canonicalToken,
+        'Design mode is now off. Continue the original request.',
+        'response',
+      )
+    const nativeRecovery = transcript('local-recovery', 'Recovered answer', 60001).slice(1)
+    const recoveryUser = nativeRecovery[1]!
+    if (recoveryUser.type === 'item.completed')
+      recoveryUser.item.text = providerOwnedPrompt(
+        recoveryToken,
+        'Design mode is now off. Continue the original request.',
+        'response',
+      )
+
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([...nativeCanonical, ...nativeRecovery])
+    await history.refresh()
+    await history.load('local')
+
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'Canonical answer',
+      'Recovered answer',
+    ])
+    expect(messages('local').some((item) => item.text?.includes('Design mode is now off.'))).toBe(
+      false,
+    )
+  })
+
+  it('keeps an owned prompt with an unknown disposition visible', async () => {
+    const token = '77777777-7777-4777-8777-777777777777'
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'TasteCode thread',
+    })
+    store.recordProviderOwnedPrompt('local', token)
+    const outside = transcript('outside', 'Visible answer', 90000)
+    const user = outside[2]!
+    const prompt = `<tastecode-owned-prompt token="${token}" kind="future" />\nVisible request`
+    if (user.type === 'item.completed') user.item.text = prompt
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue(outside)
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([prompt, 'Visible answer'])
+  })
 
   it('keeps the imported copy when canonical transcript recovery fails, then retries', async () => {
     const { history, source } = setup()

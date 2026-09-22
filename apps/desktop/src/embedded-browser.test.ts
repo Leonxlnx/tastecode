@@ -17,6 +17,20 @@ describe('embedded browser guest', () => {
     expect(() => browserGuestUrl('javascript:alert(1)')).toThrow('Invalid browser URL')
   })
 
+  it('accepts a blank bootstrap document but not a privileged one', () => {
+    const owner = ownerHarness()
+    configureEmbeddedBrowser(owner.contents)
+    const willAttach = owner.listener('will-attach-webview')
+
+    const allowed = { preventDefault: vi.fn() }
+    willAttach(allowed, {}, { src: 'about:blank' })
+    expect(allowed.preventDefault).not.toHaveBeenCalled()
+
+    const denied = { preventDefault: vi.fn() }
+    willAttach(denied, {}, { src: 'file:///private/data' })
+    expect(denied.preventDefault).toHaveBeenCalledOnce()
+  })
+
   it('rejects plain HTTP off the host machine', () => {
     // Cloud metadata endpoints, LAN services and WAN sites share one answer.
     expect(() => browserGuestUrl('http://169.254.169.254/latest/meta-data')).toThrow(
@@ -95,6 +109,8 @@ describe('embedded browser guest', () => {
     const openWindow = guest.setWindowOpenHandler.mock.calls[0]![0]
     expect(openWindow({ url: 'https://example.com/next' })).toEqual({ action: 'deny' })
     await vi.waitFor(() => expect(guest.loadURL).toHaveBeenCalledWith('https://example.com/next'))
+    // about:blank is only a bootstrap allowance, not a navigable target.
+    expect(openWindow({ url: 'about:blank' })).toEqual({ action: 'deny' })
     expect(openWindow({ url: 'file:///etc/passwd' })).toEqual({ action: 'deny' })
     expect(guest.loadURL).toHaveBeenCalledOnce()
   })

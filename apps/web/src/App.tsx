@@ -106,7 +106,7 @@ import { LazyThread } from './ui/LazyThread.js'
 import { TitleBar } from './ui/TitleBar.js'
 import { ZoomHud } from './ui/ZoomHud.js'
 import { useDeferredArchiveQueue } from './ui/useDeferredArchiveQueue.js'
-import { serverBaseUrl } from './server-url.js'
+import { runtimeServerPort, serverBaseUrl } from './server-url.js'
 import { addDesignBriefing } from './design-agent/briefing.js'
 import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
@@ -180,7 +180,10 @@ import {
   type ThemePreference,
 } from './theme.js'
 
-const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
+const SERVER_BASE_URL = serverBaseUrl(
+  import.meta.env.VITE_HARNESS_SERVER_URL,
+  runtimeServerPort(window.location.search),
+)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
 const PROVIDER_IDS = [

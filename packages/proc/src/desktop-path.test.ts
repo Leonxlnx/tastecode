@@ -40,6 +40,48 @@ describe('desktopPath', () => {
     expect(result.split(path.posix.delimiter)).toContain('/opt/homebrew/bin')
   })
 
+  it('adds snap, flatpak and nix bin directories on Linux', () => {
+    const home = '/home/tester'
+    const result = desktopPath('/usr/bin', { platform: 'linux', home, env: {} })
+    const entries = result.split(path.posix.delimiter)
+
+    expect(entries).toContain('/snap/bin')
+    expect(entries).toContain('/var/lib/flatpak/exports/bin')
+    expect(entries).toContain('/home/tester/.nix-profile/bin')
+    expect(entries).toContain('/home/tester/.local/share/flatpak/exports/bin')
+    expect(entries).toContain('/home/tester/.local/share/pnpm')
+    expect(entries).toContain('/home/tester/.local/share/mise/shims')
+    expect(entries).toContain('/home/linuxbrew/.linuxbrew/bin')
+    expect(entries).not.toContain('/opt/homebrew/bin')
+  })
+
+  it.skipIf(process.platform === 'win32')('adds the newest nvm version bin on Linux', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'harness-nvm-path-'))
+    roots.push(home)
+    for (const version of ['v18.19.0', 'v24.12.0', 'v20.5.1', 'not-a-version']) {
+      mkdirSync(path.join(home, '.nvm', 'versions', 'node', version, 'bin'), {
+        recursive: true,
+      })
+    }
+    const result = desktopPath('/usr/bin', { platform: 'linux', home, env: {} })
+    expect(result.split(path.posix.delimiter)).toContain(
+      path.posix.join(home, '.nvm', 'versions', 'node', 'v24.12.0', 'bin'),
+    )
+    expect(result.split(path.posix.delimiter)).not.toContain(
+      path.posix.join(home, '.nvm', 'versions', 'node', 'v18.19.0', 'bin'),
+    )
+  })
+
+  it('skips the nvm bin cleanly when nvm is not installed', () => {
+    const result = desktopPath('/usr/bin', {
+      platform: 'linux',
+      home: '/home/definitely-no-nvm-here',
+      env: {},
+    })
+    expect(result).toBeTruthy()
+    expect(result).not.toContain('.nvm')
+  })
+
   it('does not duplicate a user bin that is already on PATH', () => {
     const home = '/Users/tester'
     const local = path.posix.join(home, '.local', 'bin')

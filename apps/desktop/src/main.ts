@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -14,6 +14,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  net,
   protocol,
   screen,
   session,
@@ -22,6 +23,11 @@ import {
   Tray,
   utilityProcess,
   type Event as ElectronEvent,
+  type KeyboardEvent as ElectronKeyboardEvent,
+  type MenuItem,
+  type MenuItemConstructorOptions,
+  type OpenDialogOptions,
+  type OpenDialogReturnValue,
   type WebContents,
 } from 'electron'
 import type { PreviewCaptureRequest } from '@harness/contracts'
@@ -32,17 +38,46 @@ import {
   attachmentPreviewFromUrl,
   pickedAttachment,
 } from './attachment-preview.js'
-import { shouldHideWindowOnClose } from './background-lifecycle.js'
 import {
+  appImageUserNamespaceBlocked,
+  probeLinuxTrayHost,
+  shouldHideWindowOnClose,
+  shouldQuitWhenAllWindowsClosed,
+} from './background-lifecycle.js'
+import {
+  appUpdateMode,
   createAppUpdateController,
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
-import { createApplicationMenuTemplate } from './app-menu.js'
+import { fetchLatestRelease } from './release-check.js'
+import {
+  autoHidesMenuBar,
+  createApplicationMenuTemplate,
+  dispatchMenuRole,
+  menuItemForKeyInput,
+  type MenuKeyInput,
+} from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
+import { writableOrCreatable } from './userdata-writable.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
-import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
+import { configureEmbeddedBrowser } from './embedded-browser.js'
+import { assertSupportedExternalUrl, isSupportedExternalUrl } from './external-urls.js'
+import {
+  GPU_CRASH_WINDOW_MS,
+  gpuFallbackRequested,
+  isGpuProcessFailure,
+  shouldFallbackToSoftware,
+  writeGpuFallbackFlag,
+} from './gpu-fallback.js'
 import { configureImageContextMenu } from './image-context-menu.js'
+import {
+  describeVersionChange,
+  installDrifted,
+  nodeInstallIo,
+  readInstallSignature,
+  recordRunVersion,
+} from './install-drift.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
 import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
@@ -51,12 +86,19 @@ import {
   type NativeMenuAction,
   type NativeMenuShortcuts,
 } from './menu-contract.js'
+import {
+  argvSpecifiesOzonePlatform,
+  linuxDisplayEnv,
+  ozoneRelaunchTarget,
+} from './ozone-platform.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
+import { parsePortConflict, probePortOwner } from './server-port-conflict.js'
+import { parseServerPort, resolveServerPort } from './server-port.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
@@ -68,6 +110,7 @@ import {
   type MainWindowStatePersistence,
 } from './window-state.js'
 import { windowThemeOptions, windowThemeSource } from './window-theme.js'
+import { isWindowControlAction } from './preload-validation.js'
 import {
   DEFAULT_ZOOM_FACTOR,
   isZoomAction,
@@ -120,14 +163,15 @@ logStartupMilestone('main-module')
 app.setPath('userData', productDataPath)
 app.setPath('sessionData', productDataPath)
 
-function isWebUrl(value: string): boolean {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'https:' || url.protocol === 'http:'
-  } catch {
-    return false
-  }
-}
+// A deb upgrade swaps the whole /opt payload under the running process; the
+// old code keeps running from deleted inodes while later disk reads — a
+// renderer reload over resources/web, a re-forked server — silently pick up
+// the new version. The signature captured here is what "this process" is.
+const installSignatureAtStart =
+  process.platform === 'linux' && app.isPackaged
+    ? readInstallSignature(process.resourcesPath, nodeInstallIo)
+    : undefined
+
 function sameOrigin(url: string, base: string): boolean {
   try {
     return new URL(url).origin === new URL(base).origin
@@ -136,6 +180,17 @@ function sameOrigin(url: string, base: string): boolean {
   }
 }
 const devServer = process.env['HARNESS_DEV_SERVER']
+// One port decision for the whole process: the owned server's environment, the
+// renderer's `harnessPort` page query, and the port named in conflict dialogs
+// all follow it. An unusable HARNESS_PORT falls back to the default so the app
+// still starts; the resolved port is what logs and dialogs name.
+const configuredServerPort = process.env['HARNESS_PORT']
+const serverPort = resolveServerPort(configuredServerPort)
+if (configuredServerPort !== undefined && parseServerPort(configuredServerPort) === undefined) {
+  console.warn(
+    `[desktop] HARNESS_PORT=${configuredServerPort} is not an unprivileged port; using ${serverPort}`,
+  )
+}
 let startupWindowReady = false
 let startupServerReady = Boolean(devServer)
 let startupRendererReady = false
@@ -199,6 +254,27 @@ const previewCaptures = new PreviewCaptureOwner({
     return PreviewDomAuditSchema.parse(value)
   },
 })
+// Chromium resolves the Ozone platform before this script runs — this script's
+// appendSwitch cannot undo it — and only honors XDG_SESSION_TYPE=wayland.
+// An env-stripped launch (SSH, cron, systemd units, `env -i` launchers) that
+// keeps WAYLAND_DISPLAY but drops XDG_SESSION_TYPE and DISPLAY therefore picks
+// x11 and exits "Missing X server or $DISPLAY". When the resolved platform has
+// no reachable display, relaunch once with the platform on argv; the injected
+// flag doubles as the stop condition for the second hop.
+function relaunchWithReachableOzonePlatform(): void {
+  if (argvSpecifiesOzonePlatform(process.argv)) return
+  const target = ozoneRelaunchTarget(
+    linuxDisplayEnv(),
+    app.commandLine.getSwitchValue('ozone-platform'),
+  )
+  if (!target) return
+  console.info(
+    `[desktop] no display for the resolved ozone platform; relaunching with --ozone-platform=${target}`,
+  )
+  app.relaunch({ args: [...process.argv.slice(1), `--ozone-platform=${target}`] })
+  app.exit(0)
+}
+
 // Windows' native occlusion tracker can wrongly decide the window is fully
 // covered and stick there: the page keeps running with visibilityState
 // 'hidden' while the window shows nothing but its background colour — the
@@ -208,12 +284,57 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('dev.tastecode.desktop')
   app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion')
 }
+if (process.platform === 'linux') {
+  relaunchWithReachableOzonePlatform()
+  // Desktop environments match windows to launcher entries by WM_CLASS/app_id;
+  // without this the running window never groups with tastecode.desktop and
+  // GNOME/COSMIC show a generic icon for the app.
+  app.setDesktopName('dev.tastecode.desktop')
+  // Chromium's Wayland IME path is off unless requested; without it ibus/
+  // fcitx5 cannot deliver composed text and Cyrillic/CJK input is dead under
+  // Wayland. text-input-version=3 selects the v3 protocol every current
+  // compositor implements.
+  app.commandLine.appendSwitch('enable-wayland-ime', 'true')
+  app.commandLine.appendSwitch('wayland-text-input-version', '3')
+}
 app.setName(nativeAppName)
 // Diagnostics for the field: software rendering and a DevTools port, both
 // opt-in via environment so a broken machine can be inspected.
 if (process.env['HARNESS_DISABLE_GPU'] === '1') app.disableHardwareAcceleration()
+// A GPU process that keeps dying (VMs, NVIDIA+Wayland, old Mesa) leaves a
+// blank window while Chromium retries forever — the crash limit is disabled
+// below. After repeated failures persist a flag and relaunch once on software
+// rendering so the next start is usable.
+else if (gpuFallbackRequested(app.getPath('userData'))) {
+  console.info('[desktop] gpu-fallback.json present: starting with software rendering')
+  app.disableHardwareAcceleration()
+}
+const gpuFailures: number[] = []
+app.on('child-process-gone', (_event, details) => {
+  if (!isGpuProcessFailure(details)) return
+  const now = Date.now()
+  gpuFailures.push(now)
+  while (gpuFailures.length > 0 && now - gpuFailures[0]! > GPU_CRASH_WINDOW_MS) gpuFailures.shift()
+  console.error(`[desktop] GPU process gone (reason ${details.reason ?? 'unknown'})`)
+  if (!shouldFallbackToSoftware(gpuFailures, now)) return
+  const userData = app.getPath('userData')
+  void writeGpuFallbackFlag(userData)
+    .then(() => {
+      console.error('[desktop] repeated GPU failures: relaunching with software rendering')
+      app.relaunch()
+      app.quit()
+    })
+    .catch((error: unknown) => {
+      console.error('[desktop] could not persist gpu-fallback flag:', error)
+    })
+})
 if (process.env['HARNESS_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['HARNESS_DEBUG_PORT'])
+}
+// A machine whose GPU process cannot launch (some Wayland/Vulkan stacks) must
+// fall back to software rendering, not FATAL on "GPU process isn't usable".
+if (process.env['HARNESS_DISABLE_GPU'] !== '1') {
+  app.commandLine.appendSwitch('disable-gpu-process-crash-limit')
 }
 
 const ownsSingleInstance = app.requestSingleInstanceLock()
@@ -265,6 +386,9 @@ if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
   })
 }
 let nativeMenuShortcuts: NativeMenuShortcuts = {}
+// Kept for Linux accelerator dispatch — the template, not the built Menu, is
+// what the pure matcher walks.
+let applicationMenuTemplate: MenuItemConstructorOptions[] = []
 const macOSHaptics = new MacOSHaptics()
 
 protocol.registerSchemesAsPrivileged([
@@ -275,8 +399,33 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 if (!ownsSingleInstance) {
-  console.error(`[desktop] another ${nativeAppName} instance owns the single-instance lock`)
-  app.quit()
+  // The lock also fails when userData cannot be created (read-only HOME,
+  // missing XDG_CONFIG_HOME parent) — that is not a second instance, and
+  // quitting quietly would leave the user with no explanation. On Linux a
+  // pre-ready dialog only writes to stderr, so it waits for ready; the
+  // timeout keeps a wedged environment from lingering forever. The dialog is
+  // unparented — there is no window, and parenting through zxdg_exporter_v2
+  // crashes COSMIC/Wayland.
+  if (!writableOrCreatable(productDataPath)) {
+    console.error(`[desktop] cannot write to data directory ${productDataPath}`)
+    void app.whenReady().then(async () => {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: nativeAppName,
+        message: `${nativeAppName} cannot start because its data directory is not writable.`,
+        detail:
+          `${productDataPath}\n\n` +
+          'Fix the directory permissions (for example `chmod u+w` on it, or restore write access ' +
+          'to your home directory) and launch again.',
+        buttons: ['Quit'],
+      })
+      app.quit()
+    })
+    setTimeout(() => app.quit(), 60_000).unref()
+  } else {
+    console.error(`[desktop] another ${nativeAppName} instance owns the single-instance lock`)
+    app.quit()
+  }
 }
 
 /**
@@ -294,6 +443,22 @@ function startOwnedServer(): void {
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
+  // Set when the server reports EADDRINUSE. A compatible listener gets adopted
+  // after one probe; anything else stops the retries early and names the port.
+  let portConflict: { port: number; checked: boolean } | undefined
+  const portConflictDialog = (port: number) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Deliberately unparented: parenting goes through zxdg_exporter_v2, and a
+      // compositor that rejects the role kills the whole client on the
+      // resulting protocol error (observed on COSMIC).
+      void dialog.showMessageBox({
+        type: 'error',
+        title: nativeAppName,
+        message: `Port ${port} is already used by another application.`,
+        detail: `TasteCode needs local port ${port} for its core server. Stop the other application, or set HARNESS_PORT to a free port.`,
+      })
+    }
+  }
   const supervisorCallbacks = {
     onLog: (line: string) => {
       console.log('[server]', line)
@@ -302,10 +467,43 @@ function startOwnedServer(): void {
         logStartupMilestone('server-ready')
         finishStartupBenchmarkIfReady()
       }
+      const conflictPort = parsePortConflict(line)
+      if (conflictPort !== undefined) {
+        if (portConflict === undefined) portConflict = { port: conflictPort, checked: false }
+        if (!portConflict.checked) {
+          portConflict.checked = true
+          void import('@harness/contracts')
+            .then(({ PROTOCOL_VERSION }) =>
+              probePortOwner('127.0.0.1', conflictPort, PROTOCOL_VERSION),
+            )
+            .then((owner) => {
+              if (owner === 'harness') {
+                console.log(
+                  `[desktop] port ${conflictPort} is held by a compatible server; adopting it`,
+                )
+                serverSupervisor?.stop()
+                if (!startupServerReady) {
+                  startupServerReady = true
+                  logStartupMilestone('server-ready')
+                  finishStartupBenchmarkIfReady()
+                }
+              } else if (owner === 'foreign') {
+                serverSupervisor?.stop()
+                portConflictDialog(conflictPort)
+              }
+              // 'unknown' keeps the normal restart path: the port may free itself.
+            })
+        }
+      }
     },
     onGaveUp: () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        void dialog.showMessageBox(mainWindow, {
+        if (portConflict !== undefined) {
+          portConflictDialog(portConflict.port)
+          return
+        }
+        // Unparented for the same reason as portConflictDialog.
+        void dialog.showMessageBox({
           type: 'error',
           title: nativeAppName,
           message: 'The core server keeps crashing.',
@@ -323,6 +521,7 @@ function startOwnedServer(): void {
           env: {
             ...process.env,
             PWD: productDataPath,
+            HARNESS_PORT: String(serverPort),
             ELECTRON_RUN_AS_NODE: '1',
             PATH: desktopPath(),
           },
@@ -341,7 +540,7 @@ function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
     // Finder/terminal launches may inherit a DMG or external-drive directory.
     // Background provider probes must start in app storage, not that directory.
     cwd: productDataPath,
-    env: { ...process.env, PWD: productDataPath },
+    env: { ...process.env, PWD: productDataPath, HARNESS_PORT: String(serverPort) },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
@@ -400,6 +599,7 @@ function createWindow(): void {
     ...(process.platform === 'darwin' ? { vibrancy: 'sidebar' as const } : {}),
     // Draw our own top bar, but keep native window controls on Windows.
     titleBarStyle: 'hidden',
+    autoHideMenuBar: autoHidesMenuBar(process.platform),
     // Height and colour must match --titlebar-h and --titlebar-bg in the renderer's
     // tokens. Windows sizes the caption buttons from this number, so if the two
     // drift the buttons stand taller than the bar they sit in — which is
@@ -419,13 +619,15 @@ function createWindow(): void {
       // downloads Hunspell dictionaries at first run — the only network
       // traffic the app would ever do outside the renderer's own CSP.
       spellcheck: false,
+      // Zoom at creation, not on did-finish-load: a post-load setZoomFactor
+      // re-rasterizes while the first frame is pending, and on Wayland the
+      // invalidated frame is never reproduced for an unmapped window — the
+      // app would sit invisible forever, ready-to-show never firing.
+      zoomFactor: DEFAULT_ZOOM_FACTOR,
       preload: path.join(here, 'preload.cjs'),
     },
   })
   mainWindow = window
-  window.webContents.once('did-finish-load', () =>
-    window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
-  )
   configureEmbeddedBrowser(window.webContents)
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
@@ -450,8 +652,14 @@ function createWindow(): void {
 
   if (restoredWindowState.maximized && !restoredWindowState.fullScreen) window.maximize()
 
+  // The Linux title bar draws its own caption buttons and needs the maximized
+  // state to pick the right icon; the native caption controls on Windows and
+  // macOS render without renderer involvement.
+  window.on('maximize', () => window.webContents.send('harness:windowMaximized', true))
+  window.on('unmaximize', () => window.webContents.send('harness:windowMaximized', false))
+
   window.on('close', (event) => {
-    if (!shouldHideWindowOnClose(process.platform, appIsQuitting)) return
+    if (!shouldHideWindowOnClose(process.platform, appIsQuitting, tray !== undefined)) return
     event.preventDefault()
     window.hide()
   })
@@ -474,6 +682,35 @@ function createWindow(): void {
     void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
   })
 
+  // A reload reads resources/web fresh from disk: after an apt upgrade that
+  // is the *new* frontend paired with the still-old preload, main and server.
+  // The window loads fine — the version mix is the problem, so name it once.
+  if (installSignatureAtStart !== undefined) {
+    let driftWarned = false
+    window.webContents.on('did-finish-load', () => {
+      if (driftWarned) return
+      const drift = installDrifted(
+        installSignatureAtStart,
+        readInstallSignature(process.resourcesPath, nodeInstallIo),
+      )
+      if (!drift.changed) return
+      driftWarned = true
+      console.warn(`[desktop] install changed on disk since start: ${drift.detail ?? 'unknown'}`)
+      // Unparented like the other startup dialogs — parenting goes through
+      // zxdg_exporter_v2 and crashes COSMIC/Wayland.
+      void dialog.showMessageBox({
+        type: 'warning',
+        title: nativeAppName,
+        message: 'Taste Code was updated on disk while it was running.',
+        detail:
+          'This window just loaded the new installation files while the rest of the app ' +
+          'still runs the previously loaded code. Restart Taste Code to finish updating.' +
+          (drift.detail ? `\n\n${drift.detail}` : ''),
+        buttons: ['OK'],
+      })
+    })
+  }
+
   // Avoid the white flash before React paints.
   window.once('ready-to-show', () => {
     logStartupMilestone('ready-to-show')
@@ -491,7 +728,7 @@ function createWindow(): void {
   // Web links only: renderer content includes agent- and vendor-authored
   // URLs, and handing a file:/smb:/ms-*: URL to the OS is code execution.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isWebUrl(url)) void shell.openExternal(url)
+    if (isSupportedExternalUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -502,18 +739,28 @@ function createWindow(): void {
     const allowed = devServer !== undefined && sameOrigin(url, devServer)
     if (!allowed) {
       event.preventDefault()
-      if (isWebUrl(url)) void shell.openExternal(url)
+      if (isSupportedExternalUrl(url)) void shell.openExternal(url)
     }
   }
   window.webContents.on('will-navigate', restrictWindowNavigation)
   window.webContents.on('will-redirect', restrictWindowNavigation)
 
   window.webContents.on('before-input-event', (event, input) => {
-    if (input.type !== 'keyDown') return
+    // Linux delivers 'rawKeyDown' for non-text keys (Ctrl+W emits no 'char');
+    // 'keyDown' covers the rest. One press produces exactly one of them.
+    if (input.type !== 'keyDown' && input.type !== 'rawKeyDown') return
     const action = zoomShortcut(input)
-    if (!action) return
-    event.preventDefault()
-    applyZoom(window, action)
+    if (action) {
+      event.preventDefault()
+      applyZoom(window, action)
+      return
+    }
+    // Frameless Linux windows never create the views menu bar, so the
+    // application menu's accelerators are never registered — dispatch them
+    // here. macOS and Windows menus handle their own accelerators.
+    if (process.platform === 'linux' && dispatchMenuAccelerator(window, input)) {
+      event.preventDefault()
+    }
   })
 
   // If the user closes the last real window while a hidden capture is in
@@ -524,10 +771,18 @@ function createWindow(): void {
     }
   })
 
+  // The renderer learns the resolved port through the page query — the ws URL
+  // is baked at build time and cannot see HARNESS_PORT (see
+  // apps/web/src/server-url.ts). Dev gets the same query so a HARNESS_PORT dev
+  // run stays consistent end to end.
   if (devServer) {
-    void window.loadURL(devServer)
+    const rendererUrl = new URL(devServer)
+    rendererUrl.searchParams.set('harnessPort', String(serverPort))
+    void window.loadURL(rendererUrl.toString())
   } else {
-    void window.loadFile(rendererIndexPath())
+    void window.loadFile(rendererIndexPath(), {
+      query: { harnessPort: String(serverPort) },
+    })
   }
 }
 
@@ -559,7 +814,14 @@ function showMainWindow(): void {
 function createBackgroundTray(): void {
   if (process.platform === 'darwin' || tray) return
   const icon = nativeImage.createFromPath(productIconPath).resize({ width: 20, height: 20 })
-  tray = new Tray(icon)
+  try {
+    tray = new Tray(icon)
+  } catch (error) {
+    // Desktops without a StatusNotifier host (stock GNOME, minimal sessions)
+    // throw here — close then destroys the window, same as before the tray.
+    console.warn('[desktop] background tray unavailable:', error)
+    return
+  }
   tray.setToolTip(nativeAppName)
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -572,22 +834,39 @@ function createBackgroundTray(): void {
 }
 
 function installApplicationMenu(): void {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate(
-      createApplicationMenuTemplate({
-        appName: nativeAppName,
-        isMacOS: process.platform === 'darwin',
-        isDevelopment: !app.isPackaged,
-        shortcuts: nativeMenuShortcuts,
-        onAction: sendNativeMenuAction,
-        onZoom: (action) => {
-          const window = mainWindow
-          if (window && !window.isDestroyed()) applyZoom(window, action)
-        },
-        onOpenDiagnostics: () => void openDiagnosticsDirectory(),
-      }),
-    ),
-  )
+  applicationMenuTemplate = createApplicationMenuTemplate({
+    appName: nativeAppName,
+    isMacOS: process.platform === 'darwin',
+    isDevelopment: !app.isPackaged,
+    shortcuts: nativeMenuShortcuts,
+    onAction: sendNativeMenuAction,
+    onZoom: (action) => {
+      const window = mainWindow
+      if (window && !window.isDestroyed()) applyZoom(window, action)
+    },
+    onOpenDiagnostics: () => void openDiagnosticsDirectory(),
+  })
+  Menu.setApplicationMenu(Menu.buildFromTemplate(applicationMenuTemplate))
+}
+
+/**
+ * Runs the accelerator the window's (nonexistent) menu bar would have run.
+ * Custom items call their template click handler; role items map to the
+ * equivalent window/webContents call.
+ */
+function dispatchMenuAccelerator(window: BrowserWindow, input: MenuKeyInput): boolean {
+  const item = menuItemForKeyInput(applicationMenuTemplate, input, process.platform)
+  if (!item) return false
+  if (item.click) {
+    // Template click handlers ignore the synthesized MenuItem/event args.
+    item.click({} as MenuItem, window, { triggeredByAccelerator: true } as ElectronKeyboardEvent)
+    return true
+  }
+  return dispatchMenuRole(item.role, {
+    quit: () => app.quit(),
+    window,
+    contents: window.webContents,
+  })
 }
 
 function sendNativeMenuAction(action: NativeMenuAction): void {
@@ -609,6 +888,31 @@ ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   const window = BrowserWindow.fromWebContents(event.sender)
   if (!window) throw new Error('No window for zoom action')
   applyZoom(window, action)
+})
+
+ipcMain.handle('harness:windowControl', (event, action: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (!isWindowControlAction(action)) throw new Error('Invalid window control action')
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window || window.isDestroyed()) throw new Error('No window for control action')
+  switch (action) {
+    case 'minimize':
+      window.minimize()
+      break
+    case 'toggle-maximize':
+      if (window.isMaximized()) window.unmaximize()
+      else window.maximize()
+      break
+    case 'close':
+      window.close()
+      break
+  }
+})
+
+ipcMain.handle('harness:windowIsMaximized', (event) => {
+  requireOwnRenderer(event.sender)
+  const window = BrowserWindow.fromWebContents(event.sender)
+  return window !== null && !window.isDestroyed() && window.isMaximized()
 })
 
 ipcMain.handle('harness:getDiagnosticsEnabled', (event) => {
@@ -716,7 +1020,7 @@ ipcMain.handle('harness:cancelPreviewCapture', (event, value: unknown) => {
 
 ipcMain.handle('harness:openExternal', async (event, url: unknown) => {
   requireOwnRenderer(event.sender)
-  await shell.openExternal(browserGuestUrl(url))
+  await shell.openExternal(assertSupportedExternalUrl(url))
 })
 
 function applyZoom(window: BrowserWindow, action: ZoomAction): void {
@@ -788,9 +1092,19 @@ async function sweepStaleCaptures(): Promise<void> {
  * itself — the user's own picker or operating-system drop is the only way a
  * path enters the app.
  */
+async function showOpenDialogForSender(
+  sender: WebContents,
+  options: OpenDialogOptions,
+): Promise<OpenDialogReturnValue> {
+  const owner = BrowserWindow.fromWebContents(sender)
+  return owner && !owner.isDestroyed()
+    ? dialog.showOpenDialog(owner, options)
+    : dialog.showOpenDialog(options)
+}
+
 ipcMain.handle('harness:pickFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory', 'createDirectory'],
     title: 'Choose a project folder',
   })
@@ -815,7 +1129,7 @@ ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
 
 ipcMain.handle('harness:pickSkillFolder', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openDirectory'],
     title: 'Choose an Agent Skill folder',
   })
@@ -824,7 +1138,7 @@ ipcMain.handle('harness:pickSkillFolder', async (event) => {
 
 ipcMain.handle('harness:pickFiles', async (event) => {
   requireOwnRenderer(event.sender)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogForSender(event.sender, {
     properties: ['openFile', 'multiSelections'],
     title: 'Attach files',
   })
@@ -873,7 +1187,8 @@ if (ownsSingleInstance) {
     if (!waitingForUpdateCleanup && appUpdater?.state().status === 'downloading') {
       waitingForUpdateCleanup = true
       event.preventDefault()
-      // Finish detaching a mounted update DMG before the process exits.
+      // Let dispose drain the active update download — a mounted DMG or the
+      // prepared-file server — before the process exits.
       void Promise.resolve(appUpdater.dispose()).finally(() => app.quit())
       return
     }
@@ -902,16 +1217,60 @@ if (ownsSingleInstance) {
     await diagnostics.initialize()
     logStartupMilestone('diagnostics-ready')
 
+    // The deb is package-manager owned, so the on-disk version can change
+    // while the app runs; the marker makes the next launch able to say so.
+    if (process.platform === 'linux' && app.isPackaged) {
+      try {
+        const { previous } = recordRunVersion(productDataPath, app.getVersion(), nodeInstallIo)
+        const change = describeVersionChange(previous, app.getVersion())
+        if (change) console.info(`[desktop] ${change}`)
+      } catch (error) {
+        console.warn('[desktop] could not record the last-run version marker', error)
+      }
+    }
+
     appUpdater = createAppUpdateController({
       loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
+      // The deb has no updater backend: a read-only GitHub probe through the
+      // Chromium net stack (system proxy aware, same as ElectronHttpExecutor).
+      fetchLatest: () => fetchLatestRelease(net.fetch),
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
+      mode: appUpdateMode({
+        platform: process.platform,
+        packaged: app.isPackaged,
+        developmentServer: devServer,
+        // The AppImage runtime exports APPIMAGE with the mounted image path.
+        appImage: process.env.APPIMAGE !== undefined,
+      }),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
       if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
     })
     appUpdater.start()
+    // An AppImage on Ubuntu 23.10+ may reach this point yet still fail to
+    // spawn its renderer sandbox; say so instead of dying silently later.
+    if (process.platform === 'linux' && process.env['APPIMAGE']) {
+      try {
+        const restriction = await readFile(
+          '/proc/sys/kernel/apparmor_restrict_unprivileged_userns',
+          'utf8',
+        )
+        if (appImageUserNamespaceBlocked(restriction)) {
+          console.error(
+            '[desktop] kernel.apparmor_restrict_unprivileged_userns=1: the AppImage sandbox cannot start on this kernel',
+          )
+          dialog.showErrorBox(
+            nativeAppName,
+            'This system restricts unprivileged user namespaces, so the AppImage cannot start its sandbox.\n\n' +
+              'Install the deb package from GitHub Releases instead, or run:\n' +
+              'sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0',
+          )
+        }
+      } catch {
+        // No such sysctl on this kernel — the restriction does not exist.
+      }
+    }
     startOwnedServer()
     configureAttachmentPreviews()
     configureRendererPermissions()
@@ -919,7 +1278,15 @@ if (ownsSingleInstance) {
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()
-    createBackgroundTray()
+    if (process.platform === 'win32') {
+      createBackgroundTray()
+    } else if (process.platform === 'linux') {
+      // `new Tray` succeeds even where no StatusNotifier host will ever draw
+      // the icon, so the D-Bus probe decides whether close may hide.
+      const trayHost = await probeLinuxTrayHost()
+      console.info(`[desktop] linux tray host: ${trayHost ? 'present' : 'absent'}`)
+      if (trayHost) createBackgroundTray()
+    }
     app.on('activate', showMainWindow)
     if (process.platform === 'darwin') {
       app.on('did-become-active', () => {
@@ -1120,6 +1487,9 @@ function isOwnRenderer(webContents: WebContents): boolean {
 }
 
 app.on('window-all-closed', () => {
-  // The core server belongs to the application lifecycle, not to a renderer
-  // window. A real app quit still tears down the server process.
+  // Windows keeps the tray and macOS the dock, so the app stays alive there.
+  // On Linux without a StatusNotifier host a headless process would have no
+  // way back, so closing the last window quits through the normal
+  // before-quit teardown (server and children disposed, port released).
+  if (shouldQuitWhenAllWindowsClosed(process.platform, tray !== undefined)) app.quit()
 })

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -452,6 +452,34 @@ function renderLicenseBundle(sections) {
   return `${output.join('\n').trimEnd()}\n`
 }
 
+export function renderDebianCopyright(licenseBundle) {
+  if (licenseBundle.trim().length === 0) {
+    throw new Error('third-party license bundle is empty')
+  }
+
+  const header = [
+    'TasteCode copyright and distribution licenses',
+    '',
+    'Upstream project: TasteCode',
+    'Upstream contact: Tasteskill Team <hello@tasteskill.dev>',
+    'Source: https://tastecode.dev',
+    '',
+    'TasteCode source code',
+    'Copyright: 2026 TasteCode contributors',
+    'License: Apache-2.0',
+    'On Debian systems, the complete Apache License, Version 2.0 is available at',
+    '/usr/share/common-licenses/Apache-2.0.',
+    '',
+    'Electron and Chromium',
+    'The packaged application preserves their verbatim copyright and license notices at',
+    '/opt/Taste Code/LICENSE.electron.txt and /opt/Taste Code/LICENSES.chromium.html.',
+    '',
+    'Bundled third-party software',
+    'The following inventory is generated from the installed production dependency graph.',
+  ].join('\n')
+  return `${header}\n\n${licenseBundle}`
+}
+
 export async function verifyReleaseLicenses(repositoryRoot, options = {}) {
   const inventory = await loadLicenseInventory(repositoryRoot)
   const derived = await deriveDirectRuntimeDependencies(repositoryRoot, inventory)
@@ -486,7 +514,11 @@ async function main() {
   const { report, licenseBundle } = await verifyReleaseLicenses(repositoryRoot)
   const releaseDirectory = path.join(repositoryRoot, 'release')
   await mkdir(releaseDirectory, { recursive: true })
-  await writeFile(path.join(releaseDirectory, 'THIRD_PARTY_LICENSES.txt'), licenseBundle, 'utf8')
+  const thirdPartyPath = path.join(releaseDirectory, 'THIRD_PARTY_LICENSES.txt')
+  const debianCopyrightPath = path.join(releaseDirectory, 'debian-copyright')
+  await writeFile(thirdPartyPath, licenseBundle, 'utf8')
+  await writeFile(debianCopyrightPath, renderDebianCopyright(licenseBundle), 'utf8')
+  await Promise.all([chmod(thirdPartyPath, 0o644), chmod(debianCopyrightPath, 0o644)])
   const serialized = `${JSON.stringify(report, null, 2)}\n`
   if (options.output) {
     const outputPath = path.resolve(repositoryRoot, options.output)

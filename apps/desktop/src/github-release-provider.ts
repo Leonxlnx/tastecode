@@ -1,9 +1,9 @@
 import type { AppUpdater, ResolvedUpdateFileInfo, UpdateInfo } from 'electron-updater'
 import { Provider, type ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
-import { rcompare, valid } from 'semver'
+import { rcompare } from 'semver'
 import { z } from 'zod'
+import { releaseRepository, versionFromTag } from './release-check.js'
 
-export const releaseRepository = 'Leonxlnx/tastecode'
 const assetSchema = z.object({
   name: z.string(),
   state: z.literal('uploaded'),
@@ -25,11 +25,6 @@ type Release = z.infer<typeof releaseSchema>
 export type ReleaseAsset = z.infer<typeof assetSchema>
 export type AssetUpdateInfo = UpdateInfo & { asset: ReleaseAsset }
 
-function versionFromTag(tag: string): string | undefined {
-  const version = tag.replace(/^v/, '')
-  return valid(version) ? version : undefined
-}
-
 export function selectLatestRelease(rows: unknown[]): Release {
   const releases = rows
     .map((row) => releaseSchema.parse(row))
@@ -47,10 +42,19 @@ export function releaseUpdateInfo(
 ): AssetUpdateInfo {
   const version = versionFromTag(release.tag_name)
   if (!version || !release.published_at) throw new Error('Invalid release version or date.')
-  const target = platform === 'darwin' ? 'mac' : platform === 'win32' ? 'win' : undefined
-  if (!target) throw new Error('App updates are supported on Windows and macOS.')
-  const extension = target === 'mac' ? 'dmg' : 'exe'
-  const name = `TasteCode-${version}-${target}-${arch}.${extension}`
+  // Artifact names follow the artifactName template (release-manifest.js). The
+  // AppImage target writes the Debian-style x86_64 where Node reports x64.
+  const target =
+    platform === 'darwin'
+      ? { os: 'mac', extension: 'dmg', artifactArch: arch }
+      : platform === 'win32'
+        ? { os: 'win', extension: 'exe', artifactArch: arch }
+        : platform === 'linux'
+          ? { os: 'linux', extension: 'AppImage', artifactArch: arch === 'x64' ? 'x86_64' : arch }
+          : undefined
+  if (!target)
+    throw new Error('App updates are supported on Windows, macOS, and Linux AppImage installs.')
+  const name = `TasteCode-${version}-${target.os}-${target.artifactArch}.${target.extension}`
   const matches = release.assets.filter(
     (asset) =>
       typeof asset === 'object' && asset !== null && 'name' in asset && asset.name === name,

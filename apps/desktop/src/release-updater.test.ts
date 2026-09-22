@@ -6,18 +6,35 @@ import type { AppUpdater } from 'electron-updater'
 import type { DownloadUpdateOptions } from 'electron-updater/out/AppUpdater.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ download: vi.fn(), prepare: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  download: vi.fn(),
+  prepare: vi.fn(),
+  // The real updater classes pull in Electron's app adapter on construction;
+  // the factory test only needs distinguishable bases.
+  updaters: {
+    AppImageUpdater: class {},
+    MacUpdater: class {},
+    NsisUpdater: class {},
+  },
+}))
+vi.mock('electron-updater', () => ({ default: mocks.updaters }))
 vi.mock('electron-updater/out/electronHttpExecutor.js', () => ({
   ElectronHttpExecutor: class {
     download = mocks.download
   },
 }))
 vi.mock('./dmg-update.js', () => ({ prepareDmgUpdate: mocks.prepare }))
-import { downloadRelease } from './release-updater.js'
+import electronUpdater from 'electron-updater'
+import { createReleaseUpdater, downloadRelease } from './release-updater.js'
 
 const bytes = Buffer.from('trusted installer fixture')
 let destination = ''
-function options(extension = 'exe'): DownloadUpdateOptions {
+const assetNames = {
+  exe: 'win-x64.exe',
+  dmg: 'mac-arm64.dmg',
+  AppImage: 'linux-x86_64.AppImage',
+}
+function options(extension: keyof typeof assetNames = 'exe'): DownloadUpdateOptions {
   const token = Object.assign(new EventEmitter(), { cancelled: false })
   return {
     updateInfoAndProvider: {
@@ -28,7 +45,7 @@ function options(extension = 'exe'): DownloadUpdateOptions {
         sha512: '',
         releaseDate: '2026-09-20T00:00:00Z',
         asset: {
-          name: `TasteCode-0.1.0-beta.8-${extension === 'exe' ? 'win-x64.exe' : 'mac-arm64.dmg'}`,
+          name: `TasteCode-0.1.0-beta.8-${assetNames[extension]}`,
           browser_download_url:
             'https://github.com/Leonxlnx/tastecode/releases/download/v0.1.0-beta.8/fixture',
           digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`,
@@ -75,6 +92,29 @@ describe('release download and installation', () => {
     expect(mocks.download.mock.calls[0]![2].sha2).toBe(
       createHash('sha256').update(bytes).digest('hex'),
     )
+    expect(mocks.prepare).not.toHaveBeenCalled()
+    await expect(access(destination)).rejects.toThrow()
+  })
+
+  it('serves a verified AppImage under its release name for in-place replacement', async () => {
+    const install = vi.fn(async (prepared: DownloadUpdateOptions) => {
+      const info = prepared.updateInfoAndProvider.info
+      // AppImageUpdater.doInstall renames the download cache file next to the
+      // replaced image, so the served route must carry the real asset name.
+      expect(info.path).toMatch(/\/TasteCode-0\.1\.0-beta\.8-linux-x86_64\.AppImage$/)
+      const provider = prepared.updateInfoAndProvider.provider
+      const runtime = (provider as unknown as { runtimeOptions: { platform: string } })
+        .runtimeOptions
+      expect(runtime.platform).toBe('linux')
+      const file = provider.resolveFiles(info)[0]!
+      expect(file.url.pathname).toMatch(/\.AppImage$/)
+      expect(Buffer.from(await (await fetch(file.url)).arrayBuffer())).toEqual(bytes)
+      expect(file.info.sha512).toBe(createHash('sha512').update(bytes).digest('base64'))
+      return ['update-cache/TasteCode-0.1.0-beta.8-linux-x86_64.AppImage']
+    })
+    await expect(downloadRelease(updater, options('AppImage'), install)).resolves.toEqual([
+      'update-cache/TasteCode-0.1.0-beta.8-linux-x86_64.AppImage',
+    ])
     expect(mocks.prepare).not.toHaveBeenCalled()
     await expect(access(destination)).rejects.toThrow()
   })
@@ -137,5 +177,50 @@ describe('release download and installation', () => {
     expect(install).not.toHaveBeenCalled()
     expect(input.cancellationToken.listenerCount('cancel')).toBe(0)
     await expect(access(destination)).rejects.toThrow()
+  })
+})
+
+describe('release updater selection', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  const appImage = process.env.APPIMAGE
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', platform)
+    if (appImage === undefined) delete process.env.APPIMAGE
+    else process.env.APPIMAGE = appImage
+  })
+
+  function onPlatform(value: string) {
+    Object.defineProperty(process, 'platform', { ...platform, value })
+  }
+
+  it.each([
+    ['darwin', mocks.updaters.MacUpdater],
+    ['win32', mocks.updaters.NsisUpdater],
+  ])('builds the native updater on %s', (value, base) => {
+    onPlatform(value)
+    const updater = createReleaseUpdater()
+    expect(updater).toBeInstanceOf(base)
+    expect(updater.disableDifferentialDownload).toBe(true)
+    expect(updater.disableWebInstaller).toBe(true)
+  })
+
+  it('builds the AppImage updater on Linux inside an AppImage runtime', () => {
+    onPlatform('linux')
+    process.env.APPIMAGE = '/opt/TasteCode/TasteCode.AppImage'
+    expect(createReleaseUpdater()).toBeInstanceOf(electronUpdater.AppImageUpdater)
+  })
+
+  it('stays fail-closed on Linux without a live AppImage runtime', () => {
+    onPlatform('linux')
+    delete process.env.APPIMAGE
+    // The mode gate normally keeps deb installs off this path; if a caller
+    // ever reaches the factory directly it must still refuse.
+    expect(() => createReleaseUpdater()).toThrow(/AppImage/)
+  })
+
+  it('rejects platforms with no updater', () => {
+    onPlatform('freebsd')
+    expect(() => createReleaseUpdater()).toThrow(/supported/)
   })
 })

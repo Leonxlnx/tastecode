@@ -64,6 +64,9 @@ jobs:
           - os: macos-15
             platform: macos
             label: macos-arm64
+          - os: ubuntu-24.04
+            platform: linux
+            label: linux-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -79,6 +82,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: node tools/scripts/verify-release-input.js
       - run: pnpm licenses:verify
+      # release/build-provenance.json is a required extraResources input for
+      # electron-builder; local dist:linux generates it between licenses and
+      # build, so the proof mirrors that phase order on every packaging leg.
+      - run: node tools/scripts/build-provenance.js
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
@@ -125,7 +132,11 @@ jobs:
         with:
           name: release-macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
           path: release/final
-      - name: Verify both platform manifests, provenance, and hashes
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: release-linux-x64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          path: release/final
+      - name: Verify all platform manifests, provenance, and hashes
         run: node tools/scripts/verify-release-assets.js release/final all
       - name: Upload or resume the exact draft without replacing assets
         env:

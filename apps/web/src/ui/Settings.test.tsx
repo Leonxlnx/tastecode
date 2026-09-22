@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { methods, type Account, type ProviderId, type ResultOf } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
@@ -8,6 +8,7 @@ import { resetInstalls } from '../provider-install.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
+import type { AppUpdateState } from '../bridge.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
 import { ProviderSettings, Settings } from './Settings.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
@@ -19,6 +20,38 @@ vi.mock('./InstallTerminal.js', () => ({
     <div data-testid="install-terminal" data-install-key={props.installKey} />
   ),
 }))
+
+// The bridge module snapshots window.harness at import time, so the update
+// path is exercised through a partial mock instead.
+const nativeBridge = vi.hoisted(() => {
+  const unsupported: AppUpdateState = { status: 'unsupported', currentVersion: 'pre-release' }
+  return {
+    unsupported,
+    appUpdateState: vi.fn<() => Promise<AppUpdateState>>(() => Promise.resolve(unsupported)),
+    checkForAppUpdates: vi.fn<() => Promise<AppUpdateState>>(() => Promise.resolve(unsupported)),
+    installAppUpdate: vi.fn<() => Promise<boolean>>(() => Promise.resolve(false)),
+    updateListener: undefined as ((state: AppUpdateState) => void) | undefined,
+  }
+})
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
+  appUpdateState: nativeBridge.appUpdateState,
+  checkForAppUpdates: nativeBridge.checkForAppUpdates,
+  installAppUpdate: nativeBridge.installAppUpdate,
+  onAppUpdateState: (listener: (state: AppUpdateState) => void) => {
+    nativeBridge.updateListener = listener
+    return () => {}
+  },
+}))
+
+beforeEach(() => {
+  nativeBridge.appUpdateState.mockImplementation(() => Promise.resolve(nativeBridge.unsupported))
+  nativeBridge.checkForAppUpdates.mockImplementation(() =>
+    Promise.resolve(nativeBridge.unsupported),
+  )
+  nativeBridge.installAppUpdate.mockResolvedValue(false)
+  nativeBridge.updateListener = undefined
+})
 
 function renderSettings(
   options: {
@@ -186,7 +219,7 @@ describe('about status grammar', () => {
       },
       'Setup needed · Newer: abcdef0 — pull and restart',
     ],
-    ['unavailable', { localCommit: '1234567890' }, 'Unavailable · No verdict'],
+    ['failed', { localCommit: '1234567890' }, 'Failed · Could not compare — retry'],
   ] as const)('separates %s update state from build metadata', async (state, result, label) => {
     const update = deferred<ResultOf<'system.updateCheck'>>()
     const transport = new TestTransport((method) => {
@@ -207,6 +240,47 @@ describe('about status grammar', () => {
     expect((await screen.findByRole('status', { name: label })).className).toContain(`is-${state}`)
     expect(transport.requests).toContainEqual({ method: 'system.updateCheck', params: {} })
     expect(container.querySelector('.settings__status')).toBeNull()
+  })
+
+  it('surfaces a failed in-app install instead of leaving the button idle', async () => {
+    nativeBridge.appUpdateState.mockResolvedValue({
+      status: 'ready',
+      currentVersion: '0.1.0-beta.8',
+      version: '0.1.0-beta.9',
+    })
+    nativeBridge.installAppUpdate.mockResolvedValue(false)
+    renderSettings({ initialSection: 'about' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Restart to update' }))
+
+    expect(
+      await screen.findByRole('button', { name: 'Problem: Update install failed' }),
+    ).toBeTruthy()
+  })
+
+  it('shows a failed manual release check and retries it in place', async () => {
+    const manual: AppUpdateState = { status: 'manual', currentVersion: '0.1.0-beta.8' }
+    nativeBridge.appUpdateState.mockResolvedValue(manual)
+    nativeBridge.checkForAppUpdates.mockResolvedValue(manual)
+    renderSettings({ initialSection: 'about' })
+    await screen.findByRole('button', { name: 'Open downloads' })
+
+    await act(async () => {
+      nativeBridge.updateListener?.({
+        status: 'error',
+        currentVersion: '0.1.0-beta.8',
+        error: 'GitHub release check failed with HTTP 403.',
+        releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases',
+      })
+    })
+    expect(
+      screen.getByRole('button', {
+        name: 'Problem: GitHub release check failed with HTTP 403.',
+      }),
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => expect(nativeBridge.checkForAppUpdates).toHaveBeenCalledOnce())
   })
 })
 

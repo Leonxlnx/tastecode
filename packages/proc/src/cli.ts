@@ -106,7 +106,6 @@ function spawnCommandVersion(command: string, timeoutMs: number): Promise<string
     const child = spawnCli(command, ['--version'])
     let output = ''
     let settled = false
-
     const finish = (value: string | undefined) => {
       if (settled) return
       settled = true
