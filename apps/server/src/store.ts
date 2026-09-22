@@ -316,6 +316,7 @@ CREATE INDEX IF NOT EXISTS provider_history_event_seq ON provider_history_events
 CREATE TABLE IF NOT EXISTS provider_owned_prompts (
   thread_id  TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
   token      TEXT NOT NULL,
+  turn_id    TEXT,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (thread_id, token)
 );
@@ -510,11 +511,13 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
+  { table: 'provider_owned_prompts', column: 'turn_id', definition: 'TEXT' },
 ]
 
 type SqliteInteger = number | bigint
 type ColumnRow = { name: string }
 type StringValueRow = { value: string }
+type ProviderOwnedPromptRow = { token: string; turn_id: string | null }
 type MigrationRow = { name: string }
 type ProjectRow = { path: string; name: string; pinned: SqliteInteger; created_at: SqliteInteger }
 type WorktreeRow = {
@@ -1593,14 +1596,20 @@ export class Store {
       .run(threadId, token, Date.now())
   }
 
-  providerOwnedPromptTokens(threadId: string): string[] {
-    return sqliteRows<StringValueRow>(
+  bindProviderOwnedPrompt(threadId: string, token: string, turnId: string): void {
+    this.#db
+      .prepare(`UPDATE provider_owned_prompts SET turn_id = ? WHERE thread_id = ? AND token = ?`)
+      .run(turnId, threadId, token)
+  }
+
+  providerOwnedPromptReceipts(threadId: string): Array<{ token: string; turnId?: string }> {
+    return sqliteRows<ProviderOwnedPromptRow>(
       this.#db.prepare(
-        `SELECT token AS value FROM provider_owned_prompts
+        `SELECT token, turn_id FROM provider_owned_prompts
          WHERE thread_id = ? ORDER BY created_at, token`,
       ),
       threadId,
-    ).map((row) => row.value)
+    ).map((row) => ({ token: row.token, ...(row.turn_id ? { turnId: row.turn_id } : {}) }))
   }
 
   /** Keep stable log positions so imported updates cannot invalidate local checkpoints. */

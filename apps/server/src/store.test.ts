@@ -1054,15 +1054,16 @@ describe('provider-owned prompts', () => {
     seeded.addProject('/repo')
     seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'Thread' })
     seeded.recordProviderOwnedPrompt('t1', '11111111-1111-4111-8111-111111111111')
+    seeded.bindProviderOwnedPrompt('t1', '11111111-1111-4111-8111-111111111111', 'local-turn')
     seeded.close()
 
     const reopened = new Store(file)
     try {
-      expect(reopened.providerOwnedPromptTokens('t1')).toEqual([
-        '11111111-1111-4111-8111-111111111111',
+      expect(reopened.providerOwnedPromptReceipts('t1')).toEqual([
+        { token: '11111111-1111-4111-8111-111111111111', turnId: 'local-turn' },
       ])
       reopened.deleteThread('t1')
-      expect(reopened.providerOwnedPromptTokens('t1')).toEqual([])
+      expect(reopened.providerOwnedPromptReceipts('t1')).toEqual([])
     } finally {
       reopened.close()
       rmSync(dir, { recursive: true, force: true })

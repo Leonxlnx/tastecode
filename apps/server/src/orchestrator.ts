@@ -3421,6 +3421,8 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     const designFlow = this.#designFlows.get(threadId)
     let ownershipToken: string | undefined
     if (designFlow) {
+      const ownershipKind =
+        designFlow.continueNormally || designFlow.phase === 'response' ? 'response' : 'internal'
       if (designFlow.continueNormally) {
         designFlow.phase = 'response'
         delete designFlow.continueNormally
@@ -3428,10 +3430,8 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       }
       if (designFlow.phase !== 'response')
         prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
-      if (designFlow.phase !== 'response') {
-        ownershipToken = crypto.randomUUID()
-        prompt = providerOwnedPrompt(ownershipToken, prompt)
-      }
+      ownershipToken = crypto.randomUUID()
+      prompt = providerOwnedPrompt(ownershipToken, prompt, ownershipKind)
       this.#validateApprovedDesignArtifacts(designFlow)
       attachments = [
         ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
@@ -3484,6 +3484,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       ])
       const { turnId } = result
       if (panicGeneration !== this.#panicGeneration) throw new Error('turn cancelled by panic stop')
+      if (ownershipToken) this.#store.bindProviderOwnedPrompt(threadId, ownershipToken, turnId)
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       this.#startDesignActivity(threadId, turnId)
       if (result.source === 'event') {
