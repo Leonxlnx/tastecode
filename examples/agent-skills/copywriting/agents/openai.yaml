@@ -1,0 +1,7 @@
+interface:
+  display_name: 'Copywriting'
+  short_description: 'Clear, natural copy without marketing fluff'
+  default_prompt: 'Use $copywriting to write or rewrite this content in a concise, natural, direct voice while preserving facts, structure, and locked copy. Avoid redundant eyebrow headings and decorative numbering.'
+
+policy:
+  allow_implicit_invocation: true
