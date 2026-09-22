@@ -8,11 +8,22 @@ The app checks after 15 seconds and hourly while open. It downloads a newer comp
 version in the background, shows an in-app notice, and offers **Restart to update** under
 **Settings → About**. Users can defer the restart; a prepared update also installs on normal
 quit. A ready download is retained until installation. From beta 7, the app reads the GitHub
-release list and chooses the newest publication, including prereleases, regardless of the
-GitHub "Latest" badge. Downgrades remain disabled. A missing matching installer or SHA-256
+release list. Beta 7 through 0.1.1 choose the newest publication, including prereleases,
+regardless of the GitHub "Latest" badge. The next desktop build selects the highest semantic
+version instead. Downgrades remain disabled. A missing matching installer or SHA-256
 digest is an error; the app does not silently fall back to an older release.
 
 ## 0.1.1 published
+
+Update-feed incident, 2026-09-22: the Linux-only Beta 8 packaging proof was published on
+September 21 after 0.1.1. Existing clients selected it by publication date and failed on
+its missing Windows/macOS installer before checking for a downgrade. The proof was returned
+to draft with all five assets and the tag retained; its Linux downloads are private again.
+Anonymous checks using the unmodified 0.1.1 provider now resolve 0.1.1 on both platforms.
+Users can retry **Check for updates** without reinstalling. Keep that proof in draft:
+publishing it again would break existing clients even after the source fix merges.
+The next build sorts valid release tags by semantic version; missing or unsafe assets in
+the highest version still fail validation. No existing installer was replaced.
 
 [Version 0.1.1](https://github.com/Leonxlnx/tastecode/releases/tag/v0.1.1) was published on
 2026-09-20 at 19:10 UTC from `d2b3754cdb72090db3a80868f617d2e48dc8effc`, with both installers

@@ -1,5 +1,6 @@
 import type { AppUpdater, ResolvedUpdateFileInfo, UpdateInfo } from 'electron-updater'
 import { Provider, type ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
+import { rcompare, valid } from 'semver'
 import { z } from 'zod'
 
 export const releaseRepository = 'Leonxlnx/tastecode'
@@ -26,19 +27,14 @@ export type AssetUpdateInfo = UpdateInfo & { asset: ReleaseAsset }
 
 function versionFromTag(tag: string): string | undefined {
   const version = tag.replace(/^v/, '')
-  const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*))?(?:\+[\da-zA-Z-]+(?:\.[\da-zA-Z-]+)*)?$/.exec(
-      version,
-    )
-  if (!match || match[4]?.split('.').some((part) => /^0\d+$/.test(part))) return undefined
-  return version
+  return valid(version) ? version : undefined
 }
 
 export function selectLatestRelease(rows: unknown[]): Release {
   const releases = rows
     .map((row) => releaseSchema.parse(row))
     .filter((release) => !release.draft && release.published_at && versionFromTag(release.tag_name))
-  releases.sort((a, b) => Date.parse(b.published_at!) - Date.parse(a.published_at!))
+  releases.sort((a, b) => rcompare(versionFromTag(a.tag_name)!, versionFromTag(b.tag_name)!))
   const latest = releases[0]
   if (!latest) throw new Error('No published TasteCode release is available.')
   return latest
@@ -85,7 +81,7 @@ export class GitHubReleaseProvider extends Provider<AssetUpdateInfo> {
   async getLatestVersion(): Promise<AssetUpdateInfo> {
     const releases: unknown[] = []
     // Scan pages rather than trusting GitHub's "Latest" badge or excluding beta
-    // releases. Publication time decides; electron-updater still blocks downgrades.
+    // releases. Version order decides; publishing an old proof must not hide an update.
     for (let page = 1; page <= 10; page++) {
       const raw = await this.executor.request({
         ...this.createRequestOptions(
