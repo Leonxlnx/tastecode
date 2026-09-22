@@ -55,6 +55,7 @@ scratch/
 
 # Local verification ledgers
 .unlazy/
+.artifacts/
 /apps/desktop/performance-results/
 /apps/desktop/preview-results/
 .worktrees/
