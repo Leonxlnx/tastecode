@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { CapabilitiesSchema } from './domain.js'
 import { CouturierSourceRefSchema, CouturierViewStateSchema, methods } from './protocol.js'
 
 const commissionId = '11111111-1111-4111-8111-111111111111'
@@ -174,19 +173,5 @@ describe('Couturier House contracts', () => {
         sections: { ...sections, directions: { ...section, reason: null } },
       }).success,
     ).toBe(false)
-  })
-
-  it('declares linked skill reads in adapter capabilities without provider-name guessing', () => {
-    expect(
-      CapabilitiesSchema.parse({
-        steer: true,
-        fork: true,
-        interrupt: true,
-        reasoningItems: true,
-        approvals: true,
-        linkedSkillRead: 'approval',
-        images: true,
-      }).linkedSkillRead,
-    ).toBe('approval')
   })
 })

@@ -254,8 +254,6 @@ export const CapabilitiesSchema = z.object({
   userInput: z.boolean().optional(),
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
-  /** Can read a linked local skill directly or after an explicit read approval. */
-  linkedSkillRead: z.enum(['direct', 'approval']).optional(),
   images: z.boolean(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
