@@ -7,7 +7,7 @@ import {
 } from './release-check.js'
 
 function ok(body: unknown): FetchLike {
-  return vi.fn(async () => ({ ok: true, json: async () => body }))
+  return vi.fn(async () => ({ ok: true, status: 200, json: async () => body }))
 }
 
 describe('release tags and versions', () => {
@@ -50,14 +50,18 @@ describe('release tags and versions', () => {
 })
 
 describe('fetchLatestRelease', () => {
-  it('returns the published version and releases page', async () => {
-    const fetchFn = ok({ tag_name: 'v0.2.0' })
+  it('returns the greatest published semantic version and its release page', async () => {
+    const fetchFn = ok([
+      { tag_name: 'v0.1.0-beta.8', draft: false, published_at: '2026-09-22T00:00:00Z' },
+      { tag_name: 'v0.2.0', draft: false, published_at: '2026-09-21T00:00:00Z' },
+      { tag_name: 'v9.0.0', draft: true, published_at: '2026-09-23T00:00:00Z' },
+    ])
     await expect(fetchLatestRelease(fetchFn)).resolves.toEqual({
       version: '0.2.0',
-      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/tag/v0.2.0',
     })
     expect(fetchFn).toHaveBeenCalledWith(
-      'https://api.github.com/repos/Leonxlnx/tastecode/releases/latest',
+      'https://api.github.com/repos/Leonxlnx/tastecode/releases?per_page=100&page=1',
       expect.objectContaining({
         headers: expect.objectContaining({ Accept: 'application/vnd.github+json' }),
       }),
@@ -65,35 +69,83 @@ describe('fetchLatestRelease', () => {
     expect(vi.mocked(fetchFn).mock.calls[0]?.[1].signal).toBeInstanceOf(AbortSignal)
   })
 
-  it.each([404, 403, 500])('treats HTTP %i as no signal', async (status) => {
+  it.each([403, 500])('reports HTTP %i as a failed release check', async (status) => {
     const fetchFn = vi.fn(async () => ({
       ok: false,
       status,
       json: async () => ({ message: 'nope' }),
     }))
-    await expect(fetchLatestRelease(fetchFn)).resolves.toBeUndefined()
+    await expect(fetchLatestRelease(fetchFn)).rejects.toThrow(
+      `GitHub release check failed with HTTP ${status}.`,
+    )
   })
 
-  it('swallows network failures and malformed payloads', async () => {
+  it('reports network failures and malformed payloads', async () => {
     await expect(
       fetchLatestRelease(
         vi.fn(async () => {
           throw new TypeError('fetch failed')
         }),
       ),
-    ).resolves.toBeUndefined()
+    ).rejects.toThrow('GitHub release check failed: fetch failed')
     await expect(
       fetchLatestRelease(
         vi.fn(async () => ({
           ok: true,
+          status: 200,
           json: async () => {
             throw new SyntaxError('Unexpected token')
           },
         })),
       ),
+    ).rejects.toThrow('GitHub release check returned invalid JSON: Unexpected token')
+    await expect(fetchLatestRelease(ok({ tag_name: 'docs' }))).rejects.toThrow(
+      'GitHub release check returned an invalid release list.',
+    )
+    await expect(fetchLatestRelease(ok(null))).rejects.toThrow(
+      'GitHub release check returned an invalid release list.',
+    )
+  })
+
+  it('returns no signal when the repository has no published app release', async () => {
+    await expect(
+      fetchLatestRelease(
+        ok([
+          { tag_name: 'docs', draft: false, published_at: '2026-09-22T00:00:00Z' },
+          { tag_name: 'v0.2.0', draft: true, published_at: '2026-09-22T00:00:00Z' },
+        ]),
+      ),
     ).resolves.toBeUndefined()
-    await expect(fetchLatestRelease(ok({ tag_name: 'docs' }))).resolves.toBeUndefined()
-    await expect(fetchLatestRelease(ok({}))).resolves.toBeUndefined()
-    await expect(fetchLatestRelease(ok(null))).resolves.toBeUndefined()
+  })
+
+  it('scans subsequent pages while filtering drafts and non-version tags', async () => {
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      tag_name: index === 0 ? 'v0.1.0' : `docs-${index}`,
+      draft: false,
+      published_at: '2026-09-22T00:00:00Z',
+    }))
+    const fetchFn: FetchLike = vi.fn(async (url) => ({
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.endsWith('page=1')
+          ? firstPage
+          : [
+              { tag_name: 'v9.0.0', draft: true, published_at: '2026-09-23T00:00:00Z' },
+              { tag_name: 'v0.2.0', draft: false, published_at: '2026-09-21T00:00:00Z' },
+            ],
+    }))
+
+    await expect(fetchLatestRelease(fetchFn)).resolves.toEqual({
+      version: '0.2.0',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/tag/v0.2.0',
+    })
+    expect(fetchFn).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects malformed release metadata instead of trusting a partial row', async () => {
+    await expect(fetchLatestRelease(ok([{ tag_name: 'v0.2.0', draft: false }]))).rejects.toThrow(
+      'GitHub release check returned invalid release metadata.',
+    )
   })
 })

@@ -1,5 +1,5 @@
 import type { AppUpdater, UpdateInfo } from 'electron-updater'
-import { isNewerVersion, type LatestRelease } from './release-check.js'
+import { isNewerVersion, releasePageUrl, type LatestRelease } from './release-check.js'
 
 export type UpdateClient = Pick<
   AppUpdater,
@@ -49,7 +49,7 @@ export function createAppUpdateController(
     currentVersion: string
     mode: AppUpdateMode
     // Read-only "is a newer release published" probe for manual packages; the
-    // injected function resolves undefined when the lookup is impossible.
+    // injected function resolves undefined when no app release is published.
     fetchLatest?: () => Promise<LatestRelease | undefined>
     setTimeoutFn?: typeof setTimeout
     clearTimeoutFn?: typeof clearTimeout
@@ -82,15 +82,27 @@ export function createAppUpdateController(
     currentVersion: options.currentVersion,
     version: info.version,
   })
-  const fail = (cause: unknown) => {
-    // A stray late error — a post-download signature probe, a racing second
-    // check — must not throw away an installable update or a live download.
-    if (state.status === 'ready' || state.status === 'downloading') return
+  const publishError = (cause: unknown) => {
+    const releasesUrl =
+      options.mode === 'manual' ? (state.releasesUrl ?? releasePageUrl) : undefined
     publish({
       status: 'error',
       currentVersion: options.currentVersion,
       error: cause instanceof Error ? cause.message : String(cause),
+      ...(releasesUrl ? { releasesUrl } : {}),
     })
+  }
+  const ignoreLateError = (cause: unknown) => {
+    // A stray late error — a post-download signature probe, a racing second
+    // check — must not throw away an installable update or a live download.
+    if (state.status === 'ready' || state.status === 'downloading') return
+    publishError(cause)
+  }
+  const publishDownloadError = (cause: unknown) => {
+    // The ready event is the installable handoff. A later promise rejection
+    // cannot invalidate an update that the updater has already prepared.
+    if (state.status === 'ready') return
+    publishError(cause)
   }
 
   const configureUpdater = (client: UpdateClient): UpdateClient => {
@@ -107,7 +119,10 @@ export function createAppUpdateController(
     client.on('update-not-available', (info) => publish(versioned('current', info)))
     client.on('update-available', (info) => {
       publish(versioned('downloading', info))
-      void client.downloadUpdate().catch(fail)
+      // electron-updater emits `error` before rejecting this promise. Keep the
+      // event from racing a live download, then use the owned promise result as
+      // the terminal verdict for this download attempt.
+      void client.downloadUpdate().catch(publishDownloadError)
     })
     client.on('download-progress', (progress) => {
       // A state left over from a failed check would otherwise leak its stale
@@ -121,7 +136,7 @@ export function createAppUpdateController(
       })
     })
     client.on('update-downloaded', (info) => publish(versioned('ready', info)))
-    client.on('error', fail)
+    client.on('error', ignoreLateError)
     return client
   }
 
@@ -149,7 +164,14 @@ export function createAppUpdateController(
     if (!fetchLatest) return Promise.resolve(state)
     return fetchLatest()
       .then((latest) => {
-        if (!latest) return state
+        if (!latest) {
+          publish({
+            status: 'manual',
+            currentVersion: options.currentVersion,
+            releasesUrl: releasePageUrl,
+          })
+          return state
+        }
         publish(
           isNewerVersion(options.currentVersion, latest.version)
             ? {
@@ -166,7 +188,10 @@ export function createAppUpdateController(
         )
         return state
       })
-      .catch(() => state)
+      .catch((error: unknown) => {
+        publishError(error)
+        return state
+      })
   }
 
   const installCheck = (): Promise<AppUpdateState> =>
@@ -175,7 +200,7 @@ export function createAppUpdateController(
       .then(
         () => state,
         (error) => {
-          fail(error)
+          ignoreLateError(error)
           return state
         },
       )

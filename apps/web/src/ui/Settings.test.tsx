@@ -257,6 +257,31 @@ describe('about status grammar', () => {
       await screen.findByRole('button', { name: 'Problem: Update install failed' }),
     ).toBeTruthy()
   })
+
+  it('shows a failed manual release check and retries it in place', async () => {
+    const manual: AppUpdateState = { status: 'manual', currentVersion: '0.1.0-beta.8' }
+    nativeBridge.appUpdateState.mockResolvedValue(manual)
+    nativeBridge.checkForAppUpdates.mockResolvedValue(manual)
+    renderSettings({ initialSection: 'about' })
+    await screen.findByRole('button', { name: 'Open downloads' })
+
+    await act(async () => {
+      nativeBridge.updateListener?.({
+        status: 'error',
+        currentVersion: '0.1.0-beta.8',
+        error: 'GitHub release check failed with HTTP 403.',
+        releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases',
+      })
+    })
+    expect(
+      screen.getByRole('button', {
+        name: 'Problem: GitHub release check failed with HTTP 403.',
+      }),
+    ).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => expect(nativeBridge.checkForAppUpdates).toHaveBeenCalledOnce())
+  })
 })
 
 describe('model picker layout setting', () => {

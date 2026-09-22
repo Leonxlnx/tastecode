@@ -83,6 +83,12 @@ describe('app update controller', () => {
 
   it('keeps a downloaded update installable after a stray error', async () => {
     const updater = fakeUpdater()
+    let rejectDownload!: (cause: Error) => void
+    updater.downloadUpdate.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectDownload = reject
+      }),
+    )
     const controller = createAppUpdateController({
       updater,
       currentVersion: '0.1.0-beta.1',
@@ -92,7 +98,10 @@ describe('app update controller', () => {
     updater.emit('update-available', info)
     await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce())
     updater.emit('update-downloaded', info)
-    updater.emit('error', new Error('post-download signature probe failed'))
+    const lateError = new Error('post-download signature probe failed')
+    updater.emit('error', lateError)
+    rejectDownload(lateError)
+    await vi.waitFor(() => expect(controller.state()).toMatchObject({ status: 'ready' }))
 
     expect(controller.state()).toMatchObject({ status: 'ready', version: info.version })
     expect(controller.install()).toBe(true)
@@ -111,6 +120,40 @@ describe('app update controller', () => {
     updater.emit('error', new Error('flaky network'))
 
     expect(controller.state()).toMatchObject({ status: 'downloading', progress: 40 })
+  })
+
+  it('reports a rejected download and retries it through the normal update check', async () => {
+    const updater = fakeUpdater()
+    const downloadError = new Error('Update download failed: disk full.')
+    updater.downloadUpdate
+      .mockImplementationOnce(async () => {
+        updater.emit('error', downloadError)
+        throw downloadError
+      })
+      .mockResolvedValueOnce([])
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', info)
+      return null
+    })
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.0-beta.1',
+      mode: 'install',
+    })
+
+    updater.emit('update-available', info)
+    await vi.waitFor(() =>
+      expect(controller.state()).toEqual({
+        status: 'error',
+        currentVersion: '0.1.0-beta.1',
+        error: 'Update download failed: disk full.',
+      }),
+    )
+
+    await controller.check()
+    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledTimes(2))
+    updater.emit('update-downloaded', info)
+    expect(controller.state()).toMatchObject({ status: 'ready', version: info.version })
   })
 
   it('does not leak a stale error field into download progress', () => {
@@ -252,7 +295,8 @@ describe('app update controller', () => {
     })
   })
 
-  it('keeps the last manual signal when a release check fails', async () => {
+  it('reports a failed manual check and recovers on retry', async () => {
+    const loadUpdater = vi.fn()
     const fetchLatest = vi
       .fn()
       .mockResolvedValueOnce({
@@ -260,6 +304,37 @@ describe('app update controller', () => {
         releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
       })
       .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce({
+        version: '0.1.0-beta.9',
+        releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+      })
+    const controller = createAppUpdateController({
+      loadUpdater,
+      fetchLatest,
+      currentVersion: '0.1.0-beta.8',
+      mode: 'manual',
+    })
+
+    await expect(controller.check()).resolves.toMatchObject({
+      status: 'manual',
+      latestVersion: '0.1.0-beta.9',
+    })
+    await expect(controller.check()).resolves.toEqual({
+      status: 'error',
+      currentVersion: '0.1.0-beta.8',
+      error: 'offline',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases/latest',
+    })
+    await expect(controller.check()).resolves.toMatchObject({ status: 'manual' })
+    expect(fetchLatest).toHaveBeenCalledTimes(3)
+    expect(loadUpdater).not.toHaveBeenCalled()
+  })
+
+  it('clears a manual check error when a retry finds no published release', async () => {
+    const fetchLatest = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('GitHub release check failed: offline'))
+      .mockResolvedValueOnce(undefined)
     const controller = createAppUpdateController({
       loadUpdater: vi.fn(),
       fetchLatest,
@@ -267,10 +342,16 @@ describe('app update controller', () => {
       mode: 'manual',
     })
 
-    await expect(controller.check()).resolves.toMatchObject({ latestVersion: '0.1.0-beta.9' })
-    await expect(controller.check()).resolves.toMatchObject({
+    await expect(controller.check()).resolves.toEqual({
+      status: 'error',
+      currentVersion: '0.1.0-beta.8',
+      error: 'GitHub release check failed: offline',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases',
+    })
+    await expect(controller.check()).resolves.toEqual({
       status: 'manual',
-      latestVersion: '0.1.0-beta.9',
+      currentVersion: '0.1.0-beta.8',
+      releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases',
     })
   })
 

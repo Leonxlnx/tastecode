@@ -117,3 +117,21 @@ it('keeps failed actions retryable and hides the button when the app is current'
     'Download failed',
   )
 })
+
+it('makes a failed manual release check visible and retryable', async () => {
+  bridge.read.mockResolvedValue({
+    status: 'error',
+    currentVersion: '0.1.0-beta.8',
+    error: 'GitHub release check failed with HTTP 403.',
+    releasesUrl: 'https://github.com/Leonxlnx/tastecode/releases',
+  })
+  bridge.check.mockResolvedValue({ status: 'manual', currentVersion: '0.1.0-beta.8' })
+  render(<AppUpdateNotice />)
+
+  const retry = await screen.findByRole('button', { name: 'Retry TasteCode update' })
+  expect(retry.title).toBe('GitHub release check failed with HTTP 403. Click to retry.')
+  fireEvent.click(retry)
+
+  await waitFor(() => expect(bridge.check).toHaveBeenCalledOnce())
+  expect(bridge.openExternal).not.toHaveBeenCalled()
+})
