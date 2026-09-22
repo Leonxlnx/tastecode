@@ -156,13 +156,16 @@ Linux delivery is proved in layers:
 5. AppImage and deb release candidates built from the same tested commit, with license bundle,
    checksums, artifact inventory, and clean-machine evidence.
 
-AppImage is the portable Linux artifact and gets in-app updates: the desktop shares the GitHub
-publisher (`Leonxlnx/tastecode`, draft releases), so packaging emits `latest-linux.yml` and
-`app-update.yml` alongside both targets. `electron-updater` replaces the AppImage in place via its
-embedded block map; no `.blockmap` sidecar ships. The deb stays package-manager owned — updates for
-it remain manual downloads from GitHub Releases, but it still runs a read-only
-`/releases/latest` probe (after startup, then every six hours) so the UI can point at the newest
-published version. Unpackaged or dev builds report `unsupported` and
+AppImage is the portable Linux artifact and gets in-app updates through the custom GitHub release
+provider described above. It requires the exact versioned AppImage asset plus GitHub's size and
+SHA-256 digest, verifies the download, computes SHA-512 locally, and gives `electron-updater`
+private loopback metadata for replacement. Packaging still emits `latest-linux.yml` and embedded
+`app-update.yml`, but the current updater does not fetch the YAML as its release feed. The curated
+Linux distribution keeps `latest-linux.yml` as checksummed electron-builder metadata and
+compatibility evidence; no `.blockmap` sidecar ships. The deb stays package-manager owned — updates
+for it remain manual downloads from GitHub Releases, but it still runs the same bounded public
+release scan (up to ten pages and 1,000 releases) after startup, then every six hours, so the UI can
+point at the greatest published semantic version. Unpackaged or dev builds report `unsupported` and
 never touch the updater. Updater behavior is a package policy injected into the shared updater
 state machine (`appUpdateMode`) rather than scattered platform checks.
 
@@ -197,9 +200,9 @@ fail with an explicit install/unlock message rather than silently storing plaint
 declares `libc6 (>= 2.31)`, the glibc floor of the shipped Electron, so apt refuses installs on
 distributions too old to run the binary. musl-based distributions (Alpine) and arm64 are outside
 the x86_64 gnu-only artifact set.
-The curated `release/linux-x64` distribution contains the AppImage, deb, `latest-linux.yml` updater
-metadata, SHA-256 checksums, and source-bound evidence; strict staging also excludes any unexpected
-private builder output.
+The curated `release/linux-x64` distribution contains the AppImage, deb, generated
+`latest-linux.yml` metadata, SHA-256 checksums, and source-bound evidence; strict staging excludes
+unexpected private builder output.
 Windows and macOS retain the shared GitHub publisher and their existing application-owned updater
 path.
 

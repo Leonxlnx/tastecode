@@ -1918,9 +1918,10 @@
                 later-published Linux-only Beta 8 proof was returned to draft to restore existing
                 clients. The next build selects releases by semantic version. Public discovery and
                 both downloads pass. Beta 6 and earlier users who missed the Beta 7 bridge need one
-                manual installer update. The Linux AppImage consumes the same GitHub feed through
-                <code>latest-linux.yml</code> (live check not yet verified); the deb stays
-                package-manager owned and links to manual downloads</span
+                manual installer update. The Linux AppImage uses the same semantic-version GitHub
+                release provider, verifies the named asset against GitHub's size and SHA-256, and
+                prepares SHA-512 metadata locally (live installed update not yet verified). The deb
+                stays package-manager owned and links to manual downloads</span
               ></label
             >
           </li>

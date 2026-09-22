@@ -47,8 +47,9 @@ function expandArtifactName(template, values, tag) {
   })
 }
 
-// electron-updater reads latest-linux.yml on x64 (the -linux channel suffix).
-// electron-builder embeds the AppImage block map, so no .blockmap sidecar ships.
+// electron-builder emits this metadata with the x64 AppImage. The current
+// updater discovers and verifies the AppImage through the GitHub Releases API;
+// this file remains curated package evidence and compatibility metadata.
 export const LINUX_UPDATER_METADATA = 'latest-linux.yml'
 
 // Expand the desktop artifactName template the same way electron-builder does
@@ -82,8 +83,8 @@ export function expectedLinuxArtifactNames({ version, artifactName, productName,
   return names
 }
 
-// The Linux distribution set: both installable artifacts plus the updater
-// metadata the AppImage reads for in-app updates.
+// The Linux distribution set: both installable artifacts plus the generated
+// electron-builder metadata covered by checksums and release evidence.
 export function expectedLinuxDistributionFiles(options, tag) {
   return [...expectedLinuxArtifactNames(options, tag), LINUX_UPDATER_METADATA].sort(compareAscii)
 }

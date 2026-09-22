@@ -124,7 +124,7 @@ For a true from-scratch test, remove the package AND the three data locations ab
 Report these as known, not as new bugs:
 
 - The tray icon needs a StatusNotifier host; where none exists, closing the window quits instead — both behaviors are correct.
-- Provider-history mirror threads (`external:<provider>:…`) may display internal Design-mode prompts as user messages — a known import bug in this build, fixed on the release branch for the next version. Harmless; the native thread shows the clean view.
+- Provider-history mirror threads (`external:<provider>:…`) in 0.1.1 may retain old internal Design-mode prompts when no reliable ownership receipt exists. New builds suppress only envelopes carrying the turn's persisted ownership token, so ordinary quoted text remains visible.
 - A flaky PTY-cleanup test exists in `terminal.test.ts` under load — unrelated to runtime behavior.
 
 ## Report back
@@ -141,10 +141,10 @@ Collect and return:
 
 Before the Linux release branch merges to `main` and Linux joins the published release line:
 
-1. **Merge the packaging set atomically** — package metadata, icons, AppArmor profile, deb dependency alternatives, update metadata (`latest-linux.yml`), license/provenance generation, and release scripts move together. A selective merge produces an unpackageable tree.
+1. **Merge the packaging set atomically** — package metadata, icons, AppArmor profile, deb dependency alternatives, generated electron-builder metadata (`latest-linux.yml`), license/provenance generation, and release scripts move together. A selective merge produces an unpackageable tree.
 2. **Clean-checkout build** — build the deb and AppImage from a clean clone, verify SHA-256 against `SHA256SUMS-linux-x64.txt`, check the provenance in `linux-release-evidence.json`, and install the produced deb on a fresh VM, not only on a dev machine.
 3. **Playbook passes on both package states** — once on a clean package database and once on a device with pending unrelated `dpkg` work (the stale-DKMS case). `dpkg-query -W tastecode` is the package-specific verdict when `apt` reports a global package-manager failure.
-4. **Functional checklist green on every test device** — onboarding, provider auth persisted through Secret Service, one real end-to-end task, window controls, close/tray behavior matching the DE's StatusNotifier support, deb manual-update notice opening the releases page, AppImage update-in-place via `latest-linux.yml`, and a 10+ minute idle/resume cycle.
+4. **Functional checklist green on every test device** — onboarding, provider auth persisted through Secret Service, one real end-to-end task, window controls, close/tray behavior matching the DE's StatusNotifier support, deb manual-update notice opening the releases page, AppImage update-in-place through the GitHub release provider, and a 10+ minute idle/resume cycle.
 5. **Session matrix spot-check** — at least one Wayland and one X11 run; the ozone fallback must not fire on a healthy Wayland session. One AppImage smoke test on a non-Debian distro or the Ubuntu 23.10+ user-namespace path.
 6. **Evidence archived per device** — stdout capture, diagnostics files, Crashpad listing, `dmesg` DENIED lines, process liveness, and the bound `127.0.0.1` server port posted to the QA collection issue (#1283).
-7. **Known-issue regression** — the provider-history internal-prompt leak fixed in `d214ed66` is verified absent in the first build that carries it (0.1.1 still shows it in external mirror threads).
+7. **Known-issue regression** — on the first build with receipt-owned provider-history filtering, run one real Design-mode provider task. After refresh/import, its owned orchestration envelope must be absent while an ordinary user quote of similar text remains visible. Legacy 0.1.1 mirror records without reliable receipts remain visible.

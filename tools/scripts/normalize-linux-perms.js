@@ -73,8 +73,8 @@ export async function stripPayloadBinaries(binaries, run = execFileSync) {
   for (const binary of binaries) run('strip', ['--strip-unneeded', binary], { stdio: 'inherit' })
 }
 
-// Files mapped verbatim into the deb — icon, metainfo, copyright sources and
-// the templates electron-builder renders into its temp dir — carry whatever
+// Files mapped verbatim into the deb — icon and metainfo sources plus the
+// templates electron-builder renders into its temp dir — carry whatever
 // mode the source or render-time umask left. All of them are payload data or
 // maintainer scripts, which fpm chmods to 0755 itself, so 0644 is always right.
 export async function normalizeDataTree(assetsDirectory) {
