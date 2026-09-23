@@ -58,33 +58,27 @@
 
 .model-selector__controls {
   display: grid;
-  gap: 4px;
-  padding: 6px 8px 8px;
+  gap: 6px;
+  padding: 6px 8px 10px;
   background: var(--model-picker-controls-bg);
   border-top: 1px solid var(--menu-line);
 }
 
 .model-selector__controls.is-fast-only {
-  height: auto;
+  padding-bottom: 6px;
 }
 
-.model-selector__controls.is-fast-only .model-selector__fast-row {
-  margin-left: auto;
-}
-
+/* Fast mode and reset keep fixed side columns so the effort name stays
+   centered over the track whether either control is present. */
 .model-selector__controls-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
   align-items: center;
-  justify-content: space-between;
   min-height: 24px;
-  padding-left: 4px;
 }
 
-.model-selector__fast-row {
-  position: relative;
-  display: flex;
-  justify-content: flex-end;
-  min-height: 24px;
+.model-selector__controls-head > .model-selector__fast {
+  grid-column: 1;
 }
 
 .model-selector__fast-meta {
@@ -231,15 +225,42 @@
   mix-blend-mode: var(--dither-bloom-blend);
 }
 
-.model-selector__effort-title {
-  display: block;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  font-weight: 450;
+.model-selector__effort-value {
+  grid-column: 2;
+  justify-self: center;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--effort-value);
+  font-size: var(--t-md);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.model-selector__effort-title span {
-  color: var(--effort-value);
+.model-selector__effort-value > span {
+  display: inline-block;
+}
+
+.model-selector__effort-value > span[data-direction='up'] {
+  animation: effort-value-up var(--dur-fast) var(--ease-out);
+}
+
+.model-selector__effort-value > span[data-direction='down'] {
+  animation: effort-value-down var(--dur-fast) var(--ease-out);
+}
+
+@keyframes effort-value-up {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+}
+
+@keyframes effort-value-down {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
 }
 
 .model-selector__catalog {

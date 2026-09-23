@@ -385,6 +385,24 @@ function DitherChoiceRow(props: {
   )
 }
 
+/** The effort name above the slider. A new stop slides its name in from the
+ *  side the knob moved toward; the first render stays still. */
+function EffortValue(props: { index: number; label: string }) {
+  const [motion, setMotion] = useState({ index: props.index, direction: 0 })
+  if (motion.index !== props.index) {
+    setMotion({ index: props.index, direction: Math.sign(props.index - motion.index) })
+  }
+  const direction = motion.direction > 0 ? 'up' : motion.direction < 0 ? 'down' : undefined
+
+  return (
+    <span className="model-selector__effort-value">
+      <span key={props.index} data-direction={direction}>
+        {props.label}
+      </span>
+    </span>
+  )
+}
+
 export function ModelSelectorPanel(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
   const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
@@ -398,8 +416,8 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
     selectedEffort === undefined ? -1 : Math.max(0, effortOptions.indexOf(selectedEffort))
   const fastTier = getFastServiceTier(model)
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
-  const displayedEffortLabel =
-    effortLabels[previewEffortIndex ?? selectedEffortIndex] ?? effortLabel
+  const displayedEffortIndex = previewEffortIndex ?? selectedEffortIndex
+  const displayedEffortLabel = effortLabels[displayedEffortIndex] ?? effortLabel
 
   const commitEffortIndex = (nextIndex: number) => {
     const nextValue = effortOptions[nextIndex]
@@ -433,29 +451,23 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
           className={`model-selector__controls${effortOptions.length === 0 ? ' is-fast-only' : ''}`}
         >
           <div className="model-selector__controls-head">
-            {effortOptions.length > 0 ? (
-              <span className="model-selector__effort-title">
-                Effort: <span>{displayedEffortLabel}</span>
-              </span>
-            ) : null}
             {fastTier ? (
-              <div className="model-selector__fast-row">
-                <button
-                  type="button"
-                  className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
-                  aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
-                  aria-pressed={fastEnabled}
-                  onClick={() =>
-                    props.onServiceTierChange(
-                      fastEnabled ? getFastModeOffValue(model) : fastTier.id,
-                    )
-                  }
-                >
-                  <span className="model-selector__fast-icon" aria-hidden>
-                    <Zap size={15} />
-                  </span>
-                </button>
-              </div>
+              <button
+                type="button"
+                className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
+                aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
+                aria-pressed={fastEnabled}
+                onClick={() =>
+                  props.onServiceTierChange(fastEnabled ? getFastModeOffValue(model) : fastTier.id)
+                }
+              >
+                <span className="model-selector__fast-icon" aria-hidden>
+                  <Zap size={15} />
+                </span>
+              </button>
+            ) : null}
+            {effortOptions.length > 0 ? (
+              <EffortValue index={displayedEffortIndex} label={displayedEffortLabel} />
             ) : null}
           </div>
 

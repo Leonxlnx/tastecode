@@ -282,14 +282,19 @@ describe('ModelSelector', () => {
       toJSON: () => ({}),
     })
 
+    const value = () => document.querySelector('.model-selector__effort-value > span')
+    expect(value()?.textContent).toBe('Medium')
+    expect(value()?.getAttribute('data-direction')).toBeNull()
+
     fireEvent.pointerEnter(slider)
     fireEvent.pointerDown(slider, { clientX: 110, pointerId: 4 })
+    expect(value()?.textContent).toBe('Low')
+    expect(value()?.getAttribute('data-direction')).toBe('down')
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     expect(slider.getAttribute('aria-valuetext')).toBe('Extra High')
-    expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-      'Effort: Extra High',
-    )
+    expect(value()?.textContent).toBe('Extra High')
+    expect(value()?.getAttribute('data-direction')).toBe('up')
     expect(onEffortChange).not.toHaveBeenCalled()
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
