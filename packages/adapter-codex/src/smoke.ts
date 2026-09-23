@@ -14,6 +14,20 @@ const prompt =
   process.argv[3] ?? 'Reply with exactly: hello from the harness. Do not use any tools.'
 
 const adapter = new CodexAdapter()
+let finished = false
+
+const finish = async (code: number): Promise<void> => {
+  if (finished) return
+  finished = true
+  try {
+    await adapter.dispose()
+    process.exit(code)
+  } catch (error) {
+    console.error(`\nfailed to dispose Codex adapter: ${String(error)}`)
+    process.exit(1)
+  }
+}
+
 adapter.on('log', (line) => console.log(`  · ${line}`))
 
 adapter.on('event', (event) => {
@@ -34,8 +48,8 @@ adapter.on('event', (event) => {
       break
     case 'turn.completed':
       console.log(`\n▸ turn ${event.status}`)
-      adapter.dispose()
-      process.exit(0)
+      void finish(0)
+      break
     default:
       break
   }
@@ -51,7 +65,7 @@ console.log(`thread ${thread.id}`)
 await adapter.sendTurn(thread.id, prompt)
 
 setTimeout(() => {
+  if (finished) return
   console.error('\ntimed out after 90s')
-  adapter.dispose()
-  process.exit(1)
+  void finish(1)
 }, 90_000)

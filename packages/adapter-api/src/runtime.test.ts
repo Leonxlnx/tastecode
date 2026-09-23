@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { DomainEvent } from '@harness/contracts'
@@ -100,7 +100,7 @@ describe('ApiAgentSession', () => {
       executeTool: async () => {
         executions++
         if (executions === 1) {
-          rmSync(alias)
+          unlinkSync(alias)
           symlinkSync(path.join(directory, 'two'), alias, 'junction')
         }
         return { content: 'done' }
