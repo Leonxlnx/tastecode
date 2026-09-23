@@ -356,6 +356,7 @@ describe('ModelSelector', () => {
     await openSelector()
     fireEvent.click(screen.getByRole('button', { name: 'Reset effort to Medium' }))
     expect(onEffortChange).toHaveBeenCalledWith('medium')
+    expect(document.activeElement).toBe(screen.getByRole('slider', { name: 'Reasoning effort' }))
 
     cleanup()
     renderSelector({ effort: 'medium' })

@@ -423,6 +423,7 @@ function EffortValue(props: { index: number; label: string; preview: boolean }) 
 export function ModelSelectorPanel(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
   const [hoverEffortIndex, setHoverEffortIndex] = useState<number | null>(null)
+  const controls = useRef<HTMLDivElement>(null)
   const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const choice = getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
@@ -474,6 +475,7 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
 
       {effortOptions.length > 0 || fastTier ? (
         <div
+          ref={controls}
           className={`model-selector__controls${effortOptions.length === 0 ? ' is-fast-only' : ''}`}
         >
           <div className="model-selector__controls-head">
@@ -506,7 +508,12 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
                 aria-label={`Reset effort to ${getFriendlyEffortLabel(resetEffort)}`}
                 title={`Reset to ${getFriendlyEffortLabel(resetEffort)}`}
                 disabled={props.disabled}
-                onClick={() => props.onEffortChange(resetEffort)}
+                onClick={() => {
+                  props.onEffortChange(resetEffort)
+                  // The button unmounts once effort matches the default; hand
+                  // focus to the slider so the keyboard does not fall to the page.
+                  controls.current?.querySelector<HTMLElement>('[role="slider"]')?.focus()
+                }}
               >
                 <RotateCcw size={14} aria-hidden />
               </button>
