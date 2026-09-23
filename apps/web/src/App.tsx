@@ -4205,6 +4205,7 @@ export function App() {
     setPaletteScope(null)
     setPreferredNewThreadProject(undefined)
   }, [])
+  const openPaletteRoot = useCallback(() => setPaletteScope('all'), [])
   const toggleRail = useCallback(() => setCollapsed((current) => !current), [])
   const openRollback = useCallback(() => {
     setRollbackInspection(undefined)
@@ -4528,6 +4529,20 @@ export function App() {
         shortcut: keybind('newChat'),
         run: startNewChat,
       },
+      ...(projectChoices.length > 1
+        ? [
+            {
+              id: 'new-chat-in',
+              title: 'New thread in…',
+              detail: 'Choose a project for the new chat',
+              group: 'Actions' as const,
+              icon: <IconEdit size={16} />,
+              keywords: 'session conversation thread project',
+              submenu: true,
+              run: () => setPaletteScope('new-thread'),
+            },
+          ]
+        : []),
       {
         id: 'switch-project',
         title: 'Switch project…',
@@ -4536,6 +4551,7 @@ export function App() {
         icon: <IconFolder size={16} />,
         keywords: 'folder workspace',
         shortcut: keybind('switchProject'),
+        submenu: true,
         run: () => setPaletteScope('projects'),
       },
       {
@@ -5137,6 +5153,7 @@ export function App() {
                 ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
                 : undefined
             }
+            onBack={openPaletteRoot}
             onClose={closePalette}
           />
         </Suspense>
