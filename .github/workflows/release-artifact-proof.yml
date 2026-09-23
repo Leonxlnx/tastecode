@@ -58,10 +58,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2025
+          - os: windows-2022
             platform: windows
             label: windows-x64
-          - os: macos-15
+          - os: macos-26
             platform: macos
             label: macos-arm64
     runs-on: ${{ matrix.os }}
