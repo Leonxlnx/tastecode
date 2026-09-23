@@ -122,9 +122,14 @@
   --error: #e5687a;
   --success: #6fbf8e;
 
-  --effort-track: #111113;
+  /* Mixed from the surface so backdrop palettes tint the slider with it. */
+  --effort-track: color-mix(in srgb, var(--surface) 60%, #000);
   --effort-track-shadow: inset 0 0 0 1px rgb(255 255 255 / 6%), inset 0 1px 2px rgb(0 0 0 / 35%);
-  --effort-fill: linear-gradient(180deg, #3d3d40 0%, #343437 100%);
+  --effort-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--text) 20%, var(--surface)) 0%,
+    color-mix(in srgb, var(--text) 15%, var(--surface)) 100%
+  );
   --effort-fill-shadow: inset 0 1px rgb(255 255 255 / 5%);
   --effort-knob: var(--light);
   --effort-knob-shadow: 0 1px 3px rgb(0 0 0 / 45%);
@@ -366,9 +371,13 @@
   --error: #be123c;
   --success: #16803c;
 
-  --effort-track: #e9e9ec;
+  --effort-track: color-mix(in srgb, var(--text) 7%, var(--surface));
   --effort-track-shadow: inset 0 1px 2px rgb(24 24 27 / 8%);
-  --effort-fill: linear-gradient(180deg, #d5d5da 0%, #cdcdd2 100%);
+  --effort-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--text) 17%, var(--surface)) 0%,
+    color-mix(in srgb, var(--text) 21%, var(--surface)) 100%
+  );
   --effort-fill-shadow: inset 0 1px rgb(255 255 255 / 45%);
   --effort-knob: var(--light);
   --effort-knob-shadow: 0 1px 2px rgb(24 24 27 / 25%);
