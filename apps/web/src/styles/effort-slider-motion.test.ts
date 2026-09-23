@@ -4,11 +4,13 @@ import { describe, expect, it } from 'vitest'
 
 const css = readFileSync(new URL('./model-selector-menu.css', import.meta.url), 'utf8')
 
+/** Every declaration block whose selector list ends in `selector`. */
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return (
-    css.match(new RegExp(`^${escaped} \\{(?<body>[\\s\\S]*?)\\n\\}`, 'm'))?.groups?.['body'] ?? ''
-  )
+  return Array.from(
+    css.matchAll(new RegExp(`^${escaped} \\{(?<body>[\\s\\S]*?)\\n\\}`, 'gm')),
+    (match) => match.groups?.['body'] ?? '',
+  ).join('\n')
 }
 
 describe('effort slider motion', () => {

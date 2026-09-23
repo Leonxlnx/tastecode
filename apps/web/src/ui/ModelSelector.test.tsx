@@ -309,6 +309,47 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
   })
 
+  it('previews the hovered stop without choosing it', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 28,
+      right: 380,
+      bottom: 48,
+      toJSON: () => ({}),
+    })
+    const value = () => document.querySelector('.model-selector__effort-value')
+    const ghost = () => slider.querySelector('.model-selector__slider-ghost')
+
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 1, pointerType: 'mouse' })
+    expect(value()?.textContent).toBe('Extra High')
+    expect(value()?.classList.contains('is-preview')).toBe(true)
+    expect(ghost()?.classList.contains('is-visible')).toBe(true)
+    expect(slider.style.getPropertyValue('--model-selector-slider-hover')).toBe('1')
+    expect(slider.getAttribute('aria-valuetext')).toBe('Medium')
+
+    fireEvent.pointerMove(slider, { clientX: 198, pointerId: 1, pointerType: 'mouse' })
+    expect(value()?.textContent).toBe('Medium')
+    expect(value()?.classList.contains('is-preview')).toBe(false)
+    expect(ghost()?.classList.contains('is-visible')).toBe(false)
+
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 1, pointerType: 'mouse' })
+    fireEvent.pointerLeave(slider, { pointerId: 1, pointerType: 'mouse' })
+    expect(value()?.textContent).toBe('Medium')
+    expect(ghost()?.classList.contains('is-visible')).toBe(false)
+
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 2, pointerType: 'touch' })
+    expect(value()?.textContent).toBe('Medium')
+    expect(onEffortChange).not.toHaveBeenCalled()
+  })
+
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 

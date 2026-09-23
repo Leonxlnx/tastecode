@@ -130,6 +130,8 @@
   --effort-knob-shadow: 0 1px 3px rgb(0 0 0 / 45%);
   --effort-stop: rgb(255 255 255 / 22%);
   --effort-stop-active: rgb(255 255 255 / 50%);
+  --effort-ghost: rgb(237 237 237 / 55%);
+  --effort-ghost-fill: rgb(237 237 237 / 8%);
   --effort-value: #f5f5f7;
   --dither-texture-filter: none;
   --dither-texture-opacity: 1;
@@ -372,6 +374,8 @@
   --effort-knob-shadow: 0 1px 2px rgb(24 24 27 / 25%);
   --effort-stop: rgb(24 24 27 / 20%);
   --effort-stop-active: rgb(24 24 27 / 38%);
+  --effort-ghost: rgb(39 39 42 / 45%);
+  --effort-ghost-fill: rgb(39 39 42 / 6%);
   --effort-value: #27272a;
   --dither-texture-filter: invert(1);
   --dither-texture-opacity: 0.26;
