@@ -27,6 +27,13 @@ describe('effort slider motion', () => {
     }
   })
 
+  it('keeps the dither canvas still on screen while the bar travels', () => {
+    expect(rule('.model-selector__slider-bar')).toContain('overflow: hidden;')
+    const dither = rule('.model-selector__slider .dither-slider')
+    expect(dither).toContain('(1 - var(--model-selector-slider-progress))')
+    expect(dither).toContain('transition: transform var(--dur-fast) var(--ease-out);')
+  })
+
   it('never animates layout or stretches the dither cells', () => {
     expect(css).not.toMatch(/transition:[^;]*\b(width|height|left|right|inset)\b/)
     expect(css).not.toMatch(/\bscale(X|Y)?\(/)

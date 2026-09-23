@@ -166,6 +166,7 @@
 .model-selector__slider-bar {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   background: var(--effort-fill);
   border-radius: var(--r-pill);
   box-shadow: var(--effort-fill-shadow);
@@ -248,8 +249,14 @@
   box-shadow: inset 0 0 0 1.5px var(--effort-ghost);
 }
 
+/* Cancels the bar's travel so the canvas stays put on screen: the bar only
+   reveals it, and the pointer glow painted into it stays under the pointer. */
 .model-selector__slider .dither-slider {
   opacity: 0.45;
+  transform: translateX(
+    calc((1 - var(--model-selector-slider-progress)) * (100% - var(--model-selector-slider-knob)))
+  );
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .dither-slider {
