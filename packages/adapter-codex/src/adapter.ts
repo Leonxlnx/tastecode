@@ -740,7 +740,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         models.push(compatibilityModel)
       }
     }
-    return models
+    const preferred = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
+    return models.sort((left, right) => {
+      const leftRank = preferred.indexOf(left.id)
+      const rightRank = preferred.indexOf(right.id)
+      return (
+        (leftRank < 0 ? preferred.length : leftRank) -
+        (rightRank < 0 ? preferred.length : rightRank)
+      )
+    })
   }
 
   async listMcpServers(threadId?: string): Promise<McpServer[]> {

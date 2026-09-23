@@ -670,6 +670,24 @@ describe('Grok adapter', () => {
     ])
   })
 
+  it('uses the live Grok 4.7 roster and its model-specific reasoning levels', () => {
+    const models = parseGrokModels(
+      'Available models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.6\n  - grok-4.5',
+    )
+    expect(models.map((model) => model.id)).toEqual([
+      'grok-4.7',
+      'grok-4.7-build-fast',
+      'grok-4.6',
+      'grok-4.5',
+    ])
+    expect(models[0]).toMatchObject({
+      isDefault: true,
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'high',
+    })
+    expect(models[1]?.reasoningEfforts).toEqual([])
+  })
+
   it('stops parsing after the available-model rows', () => {
     const models = parseGrokModels(
       'Available models:\n  * grok-4.6 (default)\n  - grok-4.5\n\n  - install',
