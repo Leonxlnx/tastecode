@@ -1,6 +1,7 @@
 import type { DiffDecision, DiffFile, DiffHunk, DiffLine, SessionDiff } from '@harness/contracts'
 import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
+import { realpathSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -91,7 +92,7 @@ async function parseDiff(
   store: DecisionReader,
 ): Promise<ParsedDiff> {
   const root = canonicalCheckoutRoot(repoPath)
-  const scope = path.relative(root, await realpath(repoPath)) || '.'
+  const scope = path.relative(root, realpathSync(repoPath)) || '.'
   const snapshot = await takeSnapshot(repoPath)
   repoPath = root
   const version = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
