@@ -350,6 +350,19 @@ describe('ModelSelector', () => {
     expect(onEffortChange).not.toHaveBeenCalled()
   })
 
+  it('offers a reset only while effort differs from the model default', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'xhigh' })
+
+    await openSelector()
+    fireEvent.click(screen.getByRole('button', { name: 'Reset effort to Medium' }))
+    expect(onEffortChange).toHaveBeenCalledWith('medium')
+
+    cleanup()
+    renderSelector({ effort: 'medium' })
+    await openSelector()
+    expect(screen.queryByRole('button', { name: /^Reset effort/ })).toBeNull()
+  })
+
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 

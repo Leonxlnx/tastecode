@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import { IconCheck as Check, IconBolt as Zap } from '@tabler/icons-react'
+import { IconCheck as Check, IconRotate as RotateCcw, IconBolt as Zap } from '@tabler/icons-react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
@@ -432,6 +432,9 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
   const effortLabels = effortOptions.map((value) => getFriendlyEffortLabel(value))
   const selectedEffortIndex =
     selectedEffort === undefined ? -1 : Math.max(0, effortOptions.indexOf(selectedEffort))
+  const defaultEffort = getSelectedEffort(model, undefined)
+  const resetEffort =
+    effortOptions.length > 1 && selectedEffort !== defaultEffort ? defaultEffort : undefined
   const fastTier = getFastServiceTier(model)
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
   const displayedEffortIndex = previewEffortIndex ?? hoverEffortIndex ?? selectedEffortIndex
@@ -495,6 +498,18 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
                 label={displayedEffortLabel}
                 preview={previewingHover}
               />
+            ) : null}
+            {resetEffort ? (
+              <button
+                type="button"
+                className="model-selector__reset"
+                aria-label={`Reset effort to ${getFriendlyEffortLabel(resetEffort)}`}
+                title={`Reset to ${getFriendlyEffortLabel(resetEffort)}`}
+                disabled={props.disabled}
+                onClick={() => props.onEffortChange(resetEffort)}
+              >
+                <RotateCcw size={14} aria-hidden />
+              </button>
             ) : null}
           </div>
 

@@ -81,6 +81,34 @@
   grid-column: 1;
 }
 
+.model-selector__reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  grid-column: 3;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  animation: fade-in var(--dur-fast) var(--ease-out);
+}
+
+.model-selector__reset:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .model-selector__reset:hover:not(:disabled) {
+    color: var(--text);
+  }
+}
+
 .model-selector__fast-meta {
   position: absolute;
   top: 50%;
