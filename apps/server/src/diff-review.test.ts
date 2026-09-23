@@ -11,6 +11,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { takeSnapshot } from './checkpoint.js'
 import {
   readSessionDiff,
   readWorkspaceDiff,
@@ -63,6 +64,19 @@ describe('structured diff review', () => {
     writeFileSync(path.join(nested, '新 file.txt'), 'after\n')
     writeFileSync(path.join(repo, 'file.txt'), 'sibling edit\n')
     const diff = await readWorkspaceDiff(nested)
+    if (diff.files.length === 0) {
+      const snapshot = await takeSnapshot(repo)
+      throw new Error(
+        `Empty diff diagnostics: ${JSON.stringify({
+          repo,
+          nested,
+          root: git('rev-parse', '--show-toplevel').trim(),
+          status: git('status', '--short'),
+          snapshot,
+          names: git('diff', '--name-status', '-z', 'HEAD', snapshot.commit),
+        })}`,
+      )
+    }
     expect(diff.files).toHaveLength(1)
     expect(diff.files[0]?.path).toBe('nested project/新 file.txt')
     expect(diff.files[0]?.hunks[0]?.lines).toContainEqual({
