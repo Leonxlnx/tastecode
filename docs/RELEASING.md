@@ -13,6 +13,14 @@ regardless of the GitHub "Latest" badge. The next desktop build selects the high
 version instead. Downgrades remain disabled. A missing matching installer or SHA-256
 digest is an error; the app does not silently fall back to an older release.
 
+## 0.1.2 source preparation
+
+The next Windows x64 installer and macOS arm64 DMG/ZIP must be built from the same approved
+`main` commit at desktop version 0.1.2. Windows remains intentionally unsigned; the macOS
+release requires the maintainer's Developer ID signing and notarization. Keep 0.1.1 as the
+latest public release until both new installers, digests, and platform proofs are verified.
+Do not create or move a release tag before the final source commit is agreed.
+
 ## 0.1.1 published
 
 Update-feed incident, 2026-09-22: the Linux-only Beta 8 packaging proof was published on
