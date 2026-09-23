@@ -4139,6 +4139,17 @@ export function App() {
     },
     [selectSession],
   )
+  const searchSidebarMessages = useCallback(
+    async (query: string, projectPath: string | undefined) =>
+      (
+        await transport.request('search.sessions', {
+          query,
+          limit: 20,
+          ...(projectPath ? { projectPath } : {}),
+        })
+      ).results,
+    [transport],
+  )
   const selectSessionSearchResult = useCallback(
     (threadId: string, turnId?: string) => {
       setSearchJump((current) =>
@@ -4796,6 +4807,8 @@ export function App() {
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}
           onOpenSearch={openSidebarSearch}
+          onSearchMessages={searchSidebarMessages}
+          onOpenSearchResult={selectSessionSearchResult}
           onInboxOrderChange={trackInboxOrder}
           onOpenPullRequests={openPullRequests}
           onOpenSettings={openSettings}
