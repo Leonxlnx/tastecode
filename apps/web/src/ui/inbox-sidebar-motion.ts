@@ -8,8 +8,9 @@ const EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 /**
  * Slides rows to their new place when the thread order changes (settle, wake,
  * pin, a new thread). Positions are read only on commits whose `orderKey`
- * changed, so status and clock updates never measure layout. Rows are the
- * list's `[data-motion-key]` descendants.
+ * changed, so status and clock updates never measure layout. Rows and section
+ * headings are the list's `[data-motion-key]` descendants; a key that changes
+ * (a card becoming a settled row) fades in where it lands instead of sliding.
  */
 export function useListMotion(list: RefObject<HTMLElement | null>, orderKey: string): void {
   const positions = useRef(new Map<string, number>())

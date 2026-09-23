@@ -231,7 +231,7 @@ export const ThreadCard = memo(function ThreadCard(props: RowProps) {
   return (
     <li
       className={className}
-      data-motion-key={session.id}
+      data-motion-key={`${session.id}:card`}
       data-archive-session-id={session.id}
       draggable={!renaming}
       onDragStart={(event) => commands.dragStart(event, session.id)}
@@ -360,7 +360,7 @@ export const ThreadRow = memo(function ThreadRow(props: RowProps) {
       className={`thread-row${props.current ? ' is-current' : ''}${
         props.selected ? ' is-selected' : ''
       }${snoozed ? ' is-snoozed' : ' is-settled'}`}
-      data-motion-key={session.id}
+      data-motion-key={`${session.id}:row`}
       data-archive-session-id={session.id}
       draggable={!renaming}
       onDragStart={(event) => commands.dragStart(event, session.id)}

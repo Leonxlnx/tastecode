@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useId,
   useDeferredValue,
   useEffect,
   useLayoutEffect,
@@ -735,7 +736,7 @@ function InboxSidebarComponent(props: InboxSidebarProps) {
             ) : null}
             {snoozed.length > 0 ? (
               <section className="thread-shelf thread-shelf--snoozed" aria-label="Snoozed threads">
-                <h3 className="thread-shelf__head">
+                <h3 className="thread-shelf__head" data-motion-key="snoozed">
                   <span>Snoozed</span>
                   <span className="thread-shelf__count">{snoozed.length}</span>
                   <span className="thread-shelf__rule" aria-hidden />
@@ -759,7 +760,7 @@ function InboxSidebarComponent(props: InboxSidebarProps) {
                 aria-label="Settled threads"
                 {...dropZone('settled')}
               >
-                <h3 className="thread-shelf__head">
+                <h3 className="thread-shelf__head" data-motion-key="settled">
                   <span>Settled</span>
                   <span className="thread-shelf__count">{settled.length}</span>
                   <span className="thread-shelf__rule" aria-hidden />
@@ -817,7 +818,7 @@ export const InboxSidebar = memo(InboxSidebarComponent)
 
 function ShowMore(props: { count: number; onClick: () => void }) {
   return (
-    <li className="thread-more">
+    <li className="thread-more" data-motion-key={useId()}>
       <button type="button" onClick={props.onClick}>
         <Plus size={14} aria-hidden />
         <span>Show {props.count} more</span>
