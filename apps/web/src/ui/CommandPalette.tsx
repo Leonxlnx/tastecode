@@ -1,5 +1,13 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { IconSearch as Search } from '@tabler/icons-react'
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  IconArrowDown as ArrowDown,
+  IconArrowLeft as ArrowLeft,
+  IconArrowUp as ArrowUp,
+  IconChevronRight as ChevronRight,
+  IconFolder as Folder,
+  IconMessage as Message,
+  IconSearch as Search,
+} from '@tabler/icons-react'
 import '../styles/command-palette.css'
 import { useDialogFocus } from './dialog-focus.js'
 
@@ -8,8 +16,14 @@ export type CommandScope = 'all' | 'projects' | 'new-thread'
 export type PaletteCommand = {
   id: string
   title: string
+  /** Bold tail of the title, such as the project a new chat starts in. */
+  emphasis?: string | undefined
+  /** Searchable context. Project and chat rows show it; actions stay one line. */
   detail?: string
   group: 'Actions' | 'Projects' | 'Chats'
+  icon?: ReactNode
+  /** Opens another list in the palette instead of acting right away. */
+  submenu?: boolean
   keywords?: string
   projectCommand?: boolean
   newThreadProject?: boolean
@@ -30,7 +44,7 @@ class PaletteCommandSearchIndex {
     const cached = this.#searchable.get(command)
     if (cached !== undefined) return cached
     const searchable =
-      `${command.title} ${command.detail ?? ''} ${command.group} ${command.keywords ?? ''}`.toLowerCase()
+      `${command.title} ${command.emphasis ?? ''} ${command.detail ?? ''} ${command.group} ${command.keywords ?? ''}`.toLowerCase()
     this.#searchable.set(command, searchable)
     return searchable
   }
@@ -73,9 +87,18 @@ function CommandPaletteComponent(props: {
   scope: CommandScope
   preferredCommandId?: string | undefined
   deferredSearch?: PaletteDeferredSearch | undefined
+  /** Returns from a project list to every command. */
+  onBack?: (() => void) | undefined
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
+  const [shownScope, setShownScope] = useState(props.scope)
+  // A sub-list starts with an empty search, as the root list did when it opened.
+  if (shownScope !== props.scope) {
+    setShownScope(props.scope)
+    setQuery('')
+  }
+  const canGoBack = props.scope !== 'all' && props.onBack !== undefined
   const [selected, setSelected] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const results = useRef<HTMLDivElement>(null)
@@ -83,7 +106,7 @@ function CommandPaletteComponent(props: {
 
   useEffect(() => {
     input.current?.focus()
-  }, [])
+  }, [props.scope])
 
   const searchIndex = useMemo(() => new PaletteCommandSearchIndex(props.commands), [props.commands])
   const commands = useMemo(
@@ -146,7 +169,19 @@ function CommandPaletteComponent(props: {
       />
       <div className="command-palette__panel">
         <div className="command-palette__search">
-          <Search size={15} aria-hidden />
+          {canGoBack ? (
+            <button
+              type="button"
+              className="command-palette__back"
+              aria-label="Back to all commands"
+              tabIndex={-1}
+              onClick={() => props.onBack?.()}
+            >
+              <ArrowLeft size={16} aria-hidden />
+            </button>
+          ) : (
+            <Search size={16} aria-hidden />
+          )}
           <input
             ref={input}
             value={query}
@@ -155,6 +190,11 @@ function CommandPaletteComponent(props: {
               if (event.key === 'Escape') {
                 event.preventDefault()
                 props.onClose()
+                return
+              }
+              if (event.key === 'Backspace' && query === '' && canGoBack) {
+                event.preventDefault()
+                props.onBack?.()
                 return
               }
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -174,7 +214,7 @@ function CommandPaletteComponent(props: {
                 ? 'Switch project…'
                 : props.scope === 'new-thread'
                   ? 'Choose a project…'
-                  : 'Search commands, projects, chats…'
+                  : 'Search commands, projects, and chats…'
             }
             spellCheck={false}
             aria-label="Search commands"
@@ -203,19 +243,36 @@ function CommandPaletteComponent(props: {
                     id={`command-${command.id}`}
                     className={`command-palette__item ${index === selected ? 'is-selected' : ''}`}
                     onClick={() => choose(command)}
-                    onMouseEnter={() => setSelected(index)}
+                    onMouseMove={() => {
+                      if (index !== selected) setSelected(index)
+                    }}
                     role="option"
                     tabIndex={-1}
                     aria-selected={index === selected}
+                    aria-haspopup={command.submenu ? 'listbox' : undefined}
                   >
+                    <span className="command-palette__icon" aria-hidden>
+                      {command.icon ?? GROUP_ICONS[command.group]}
+                    </span>
                     <span className="command-palette__copy">
-                      <span className="command-palette__name">{command.title}</span>
-                      {command.detail ? (
+                      <span className="command-palette__name">
+                        {command.title}
+                        {command.emphasis ? (
+                          <>
+                            {' '}
+                            <strong>{command.emphasis}</strong>
+                          </>
+                        ) : null}
+                      </span>
+                      {command.detail && command.group !== 'Actions' ? (
                         <span className="command-palette__detail">{command.detail}</span>
                       ) : null}
                     </span>
                     {command.shortcut ? (
                       <kbd className="command-palette__shortcut">{command.shortcut}</kbd>
+                    ) : null}
+                    {command.submenu ? (
+                      <ChevronRight className="command-palette__chevron" size={15} aria-hidden />
                     ) : null}
                   </button>
                 </div>
@@ -223,9 +280,41 @@ function CommandPaletteComponent(props: {
             })
           )}
         </div>
+
+        <footer className="command-palette__footer" aria-hidden>
+          <span>
+            <kbd>
+              <ArrowUp size={12} />
+            </kbd>
+            <kbd>
+              <ArrowDown size={12} />
+            </kbd>
+            Navigate
+          </span>
+          <span>
+            <kbd>Enter</kbd>
+            Select
+          </span>
+          {canGoBack ? (
+            <span>
+              <kbd>Backspace</kbd>
+              Back
+            </span>
+          ) : null}
+          <span>
+            <kbd>Esc</kbd>
+            Close
+          </span>
+        </footer>
       </div>
     </div>
   )
 }
+
+const GROUP_ICONS = {
+  Actions: null,
+  Projects: <Folder size={16} />,
+  Chats: <Message size={16} />,
+} satisfies Record<PaletteCommand['group'], ReactNode>
 
 export const CommandPalette = memo(CommandPaletteComponent)
