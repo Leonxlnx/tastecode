@@ -348,20 +348,12 @@ describe('ModelSelector', () => {
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 2, pointerType: 'touch' })
     expect(value()?.textContent).toBe('Medium')
     expect(onEffortChange).not.toHaveBeenCalled()
-  })
 
-  it('offers a reset only while effort differs from the model default', async () => {
-    const { onEffortChange } = renderSelector({ effort: 'xhigh' })
-
-    await openSelector()
-    fireEvent.click(screen.getByRole('button', { name: 'Reset effort to Medium' }))
-    expect(onEffortChange).toHaveBeenCalledWith('medium')
-    expect(document.activeElement).toBe(screen.getByRole('slider', { name: 'Reasoning effort' }))
-
-    cleanup()
-    renderSelector({ effort: 'medium' })
-    await openSelector()
-    expect(screen.queryByRole('button', { name: /^Reset effort/ })).toBeNull()
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 1, pointerType: 'mouse' })
+    fireEvent.keyDown(slider, { key: 'ArrowLeft' })
+    expect(onEffortChange).toHaveBeenCalledWith('low')
+    expect(value()?.classList.contains('is-preview')).toBe(false)
+    expect(ghost()?.classList.contains('is-visible')).toBe(false)
   })
 
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {

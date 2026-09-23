@@ -235,6 +235,7 @@ function DitherChoiceRow(props: {
   const [pointerIndex, setPointerIndex] = useState<number | null>(null)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
   const pointerIndexRef = useRef<number | null>(null)
+  const hoverIndexRef = useRef<number | null>(null)
 
   const displayIndex = pointerIndex ?? props.selectedIndex
   const displayedLabel =
@@ -263,8 +264,11 @@ function DitherChoiceRow(props: {
     })
   }
 
+  // Compared against a ref: a leave can arrive before the render that
+  // applied the last hover, and a stale comparison would keep the ring.
   const updateHover = (index: number | null) => {
-    if (index === hoverIndex) return
+    if (index === hoverIndexRef.current) return
+    hoverIndexRef.current = index
     setHoverIndex(index)
     props.onHoverIndex(index)
   }
@@ -300,6 +304,9 @@ function DitherChoiceRow(props: {
       return
     }
     event.preventDefault()
+    // The keyboard now owns the value; a resting pointer should not keep
+    // previewing a different stop over it.
+    updateHover(null)
     commitIndex(nextIndex)
   }
 
