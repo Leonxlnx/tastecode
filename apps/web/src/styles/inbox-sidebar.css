@@ -8,6 +8,8 @@
   --thread-row-selected: color-mix(in oklab, var(--attention) 13%, transparent);
   --thread-title: color-mix(in srgb, var(--rail-text) 88%, transparent);
   --thread-icon: color-mix(in srgb, var(--text-3) 85%, var(--text-2));
+  /* Room the Snooze and Settle actions take from the top line of a card. */
+  --thread-actions-w: 88px;
 }
 
 :root[data-theme='light'] .rail {
@@ -450,7 +452,7 @@
 
 .thread-card.has-actions:focus-within .thread-card__top,
 .thread-card:has(.thread-card__actions [aria-expanded='true']) .thread-card__top {
-  padding-right: 74px;
+  padding-right: var(--thread-actions-w);
 }
 
 /* ---------- slim rows ---------- */
@@ -556,7 +558,7 @@
   }
 
   .thread-card.has-actions:hover .thread-card__top {
-    padding-right: 74px;
+    padding-right: var(--thread-actions-w);
   }
 
   .thread-row:hover .thread-row__action {
@@ -1115,7 +1117,7 @@
   }
 
   .thread-card.has-actions .thread-card__top {
-    padding-right: 74px;
+    padding-right: var(--thread-actions-w);
   }
 
   .thread-row .thread-row__action {
