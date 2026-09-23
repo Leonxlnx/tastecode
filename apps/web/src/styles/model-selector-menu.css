@@ -104,11 +104,11 @@
 
 .model-selector__slider {
   position: relative;
-  height: 36px;
+  height: 28px;
   width: 100%;
   touch-action: none;
   user-select: none;
-  cursor: default;
+  cursor: pointer;
 }
 
 .model-selector__slider:focus-visible {
@@ -133,19 +133,30 @@
 
 .model-selector__slider-fill {
   position: absolute;
-  inset-block: var(--model-selector-slider-inset);
-  left: var(--model-selector-slider-inset);
-  width: var(--model-selector-slider-width);
+  inset: var(--model-selector-slider-inset);
   overflow: hidden;
+  border-radius: var(--r-pill);
+}
+
+/* The bar keeps the full track width and slides under the rounded fill.
+   Transform keeps each stop change on the compositor: animating width would
+   resize the dither canvas every frame, and scaleX would stretch its cells. */
+.model-selector__slider-bar {
+  position: absolute;
+  inset: 0;
   background: var(--effort-fill);
   border-radius: var(--r-pill);
   box-shadow: var(--effort-fill-shadow);
+  transform: translateX(
+    calc((var(--model-selector-slider-progress) - 1) * (100% - var(--model-selector-slider-knob)))
+  );
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .model-selector__slider-stops {
   position: absolute;
   z-index: 2;
-  inset: 0 22px;
+  inset: 0 calc(var(--model-selector-slider-inset) + var(--model-selector-slider-knob) / 2);
   pointer-events: none;
 }
 
@@ -155,24 +166,42 @@
   left: calc(var(--model-selector-stop) * 100%);
   width: 4px;
   height: 4px;
-  background: color-mix(in srgb, var(--text-3) 52%, transparent);
+  background: var(--effort-stop);
   border-radius: var(--r-circle);
-  box-shadow: 0 0 0 1px color-mix(in srgb, black 10%, transparent);
   transform: translate(-50%, -50%);
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 
 .model-selector__slider-stop.is-active {
-  background: color-mix(in srgb, var(--effort-value) 84%, transparent);
+  background: var(--effort-stop-active);
+}
+
+/* Spans the knob's travel, so translateX(progress * 100%) lands the knob's
+   left edge on the chosen stop without measuring the track in script. */
+.model-selector__slider-knob {
+  position: absolute;
+  z-index: 3;
+  inset-block: var(--model-selector-slider-inset);
+  left: var(--model-selector-slider-inset);
+  width: calc(100% - var(--model-selector-slider-inset) * 2 - var(--model-selector-slider-knob));
+  pointer-events: none;
+  transform: translateX(calc(var(--model-selector-slider-progress) * 100%));
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.model-selector__slider-knob::after {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: var(--model-selector-slider-knob);
+  content: '';
+  background: var(--effort-knob);
+  border-radius: var(--r-circle);
+  box-shadow: var(--effort-knob-shadow);
 }
 
 .model-selector__slider .dither-slider {
   opacity: 0.45;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .model-selector__slider:hover .model-selector__slider-stop.is-active {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--effort-value) 8%, transparent);
-  }
 }
 
 .dither-slider {

@@ -241,12 +241,10 @@ function DitherChoiceRow(props: {
     displayIndex < 0 || props.optionLabels.length < 2
       ? 0.5
       : displayIndex / (props.optionLabels.length - 1)
-  const ditherWidthOffset =
-    (1 - selectedProgress) * SLIDER_DITHER_MIN_WIDTH - selectedProgress * SLIDER_DITHER_INSET * 2
-  const ditherWidth = `calc(${selectedProgress * 100}% + ${ditherWidthOffset}px)`
   const sliderVars = {
-    '--model-selector-slider-width': ditherWidth,
+    '--model-selector-slider-progress': selectedProgress,
     '--model-selector-slider-inset': `${SLIDER_DITHER_INSET}px`,
+    '--model-selector-slider-knob': `${SLIDER_DITHER_MIN_WIDTH}px`,
   } as CSSProperties
 
   const previewFromPointer = (event: PointerEvent<HTMLDivElement>) => {
@@ -364,7 +362,9 @@ function DitherChoiceRow(props: {
     >
       <div className="model-selector__slider-track">
         <div className="model-selector__slider-fill">
-          <DitherSlider active={!props.disabled && pointerIndex !== null} />
+          <div className="model-selector__slider-bar">
+            <DitherSlider active={!props.disabled && pointerIndex !== null} />
+          </div>
         </div>
         <div className="model-selector__slider-stops" aria-hidden>
           {props.optionLabels.map((option, index) => (
@@ -379,6 +379,7 @@ function DitherChoiceRow(props: {
             />
           ))}
         </div>
+        <span className="model-selector__slider-knob" aria-hidden />
       </div>
     </div>
   )

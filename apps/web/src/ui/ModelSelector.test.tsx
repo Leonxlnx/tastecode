@@ -293,7 +293,8 @@ describe('ModelSelector', () => {
     expect(onEffortChange).not.toHaveBeenCalled()
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
-    expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    expect(slider.querySelector('.model-selector__slider-knob')).not.toBeNull()
+    expect(slider.style.getPropertyValue('--model-selector-slider-progress')).toBe('1')
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
     expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
@@ -575,11 +576,13 @@ describe('ModelSelector', () => {
   })
 
   it('switches only in the final quarter of a drag in either direction', () => {
+    // 328px leaves 300px of knob travel after the 3px insets and 22px knob,
+    // so one stop is 100px and the first stop sits at 14px.
     const at = (position: number, currentIndex: number) =>
       getEffortIndexFromPointer({
-        clientX: 18 + position * 100,
+        clientX: 14 + position * 100,
         left: 0,
-        width: 336,
+        width: 328,
         stopCount: 4,
         currentIndex,
       })

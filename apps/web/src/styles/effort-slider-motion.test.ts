@@ -12,18 +12,21 @@ function rule(selector: string): string {
 }
 
 describe('effort slider motion', () => {
-  it('keeps the slider fill width but removes width animation from the fill', () => {
+  it('moves the fill and knob with transform instead of resizing the dither canvas', () => {
     const fill = rule('.model-selector__slider-fill')
-
-    expect(fill).toContain('width: var(--model-selector-slider-width)')
+    expect(fill).not.toMatch(/\bwidth:/)
     expect(fill).not.toContain('transition:')
     expect(fill).not.toContain('animation:')
+
+    for (const selector of ['.model-selector__slider-bar', '.model-selector__slider-knob']) {
+      const body = rule(selector)
+      expect(body).toContain('var(--model-selector-slider-progress)')
+      expect(body).toContain('transition: transform var(--dur-fast) var(--ease-out);')
+    }
   })
 
-  it('does not animate width inside the model selector slider styles', () => {
-    const sliderSection = css.match(
-      /\.model-selector__slider \{[\s\S]*?\.model-selector__slider-stop \{/,
-    )?.[0]
-    expect(sliderSection).not.toMatch(/transition:[\s\S]*?\bwidth\b/)
+  it('never animates layout or stretches the dither cells', () => {
+    expect(css).not.toMatch(/transition:[^;]*\b(width|height|left|right|inset)\b/)
+    expect(css).not.toMatch(/\bscale(X|Y)?\(/)
   })
 })
