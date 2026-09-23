@@ -81,7 +81,10 @@ jobs:
       - run: pnpm licenses:verify
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      - run: node --test tools/scripts/release-licenses.test.js tools/scripts/release-tools.test.js
+      - run: pnpm -r --workspace-concurrency=1 test
+        env:
+          VITEST_MAX_WORKERS: '2'
       - run: pnpm build
       - name: Build preload
         run: pnpm --filter @harness/desktop exec node scripts/build-preload.js
