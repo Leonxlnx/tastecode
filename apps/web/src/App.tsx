@@ -4115,20 +4115,27 @@ export function App() {
   const openSidebarSearch = useCallback((projectPath?: string) => {
     sessionSearch.current?.open(projectPath)
   }, [])
+  /** The V2 sidebar's visible order while it is mounted, so ⌘1–9 and chat cycling follow it. */
+  const inboxOrder = useRef<readonly string[] | undefined>(undefined)
+  const trackInboxOrder = useCallback((ids: readonly string[] | undefined) => {
+    inboxOrder.current = ids
+  }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = projectsRef.current.flatMap((project) => project.sessions)
-      if (sessions.length === 0) return
+      const ids =
+        inboxOrder.current ??
+        projectsRef.current.flatMap((project) => project.sessions.map((session) => session.id))
+      if (ids.length === 0) return
       const activeId = activeIdRef.current
-      const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
+      const current = activeId ? ids.indexOf(activeId) : -1
       const nextIndex =
         current < 0
           ? direction > 0
             ? 0
-            : sessions.length - 1
-          : (current + direction + sessions.length) % sessions.length
-      const next = sessions[nextIndex]
-      if (next) void selectSession(next.id)
+            : ids.length - 1
+          : (current + direction + ids.length) % ids.length
+      const next = ids[nextIndex]
+      if (next) void selectSession(next)
     },
     [selectSession],
   )
@@ -4400,16 +4407,19 @@ export function App() {
       }
       if (paletteScope || rollbackOpen || checkoutDelete) return
 
-      // Number keys open the newest sessions in the first sidebar project.
+      // Number keys open the first nine threads the V2 sidebar shows, or the
+      // newest sessions in the first project of the classic sidebar.
       const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
       if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        const index = Number(event.key) - 1
         const currentProjects = projectsRef.current
         const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
-        const session = project?.sessions
-          .slice()
-          .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
+        const id = inboxOrder.current
+          ? inboxOrder.current[index]
+          : project?.sessions.slice().sort((left, right) => right.createdAt - left.createdAt)[index]
+              ?.id
         event.preventDefault()
-        if (session) void selectSession(session.id)
+        if (id) void selectSession(id)
         return
       }
 
@@ -4786,6 +4796,7 @@ export function App() {
           onReorderProject={reorderSidebarProject}
           onReorderSession={reorderSidebarSession}
           onOpenSearch={openSidebarSearch}
+          onInboxOrderChange={trackInboxOrder}
           onOpenPullRequests={openPullRequests}
           onOpenSettings={openSettings}
         />

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
 import { findSession, updateSession } from '../project-store.js'
@@ -181,7 +181,7 @@ describe('InboxSidebar', () => {
         }))
         renderInbox()
       }
-      expect(container.querySelectorAll('.inbox-card')).toHaveLength(12)
+      expect(container.querySelectorAll('.thread-card')).toHaveLength(12)
     } finally {
       flushSync(() => root.unmount())
     }
@@ -215,11 +215,14 @@ describe('InboxSidebar', () => {
   it('does not wake an idle static inbox and uses the slowest accurate clock', () => {
     const noon = new Date(2026, 7, 21, 12).getTime()
 
-    expect(inboxClockDelay(false, [], false, noon)).toBeUndefined()
-    expect(inboxClockDelay(false, [noon - 10 * 60_000], false, noon)).toBe(29_500)
-    expect(inboxClockDelay(true, [noon - 10 * 60_000], true, noon)).toBe(1_000)
-    expect(inboxClockDelay(false, [], true, noon)).toBe(12 * 60 * 60 * 1_000)
-    expect(inboxClockDelay(false, [noon - 2 * 24 * 60 * 60_000], false, noon)).toBe(
+    expect(inboxClockDelay(false, [], [], noon)).toBeUndefined()
+    expect(inboxClockDelay(false, [noon - 10 * 60_000], [], noon)).toBe(29_500)
+    expect(inboxClockDelay(true, [noon - 10 * 60_000], [noon + 60_000], noon)).toBe(1_000)
+    // A three-hour countdown next reads "2h" in one hour, not at midnight.
+    expect(inboxClockDelay(false, [], [noon + 3 * 60 * 60_000], noon)).toBe(60 * 60_000)
+    // Under an hour it counts minutes, aligned to the minute clock.
+    expect(inboxClockDelay(false, [], [noon + 90_000], noon + 10_000)).toBe(50_000)
+    expect(inboxClockDelay(false, [noon - 2 * 24 * 60 * 60_000], [], noon)).toBe(
       11 * 60 * 60_000 + 29 * 60_000 + 29_500,
     )
   })
@@ -234,7 +237,7 @@ describe('InboxSidebar', () => {
     let now = start
     let wakeups = 0
     while (now < start + day) {
-      now += inboxClockDelay(false, timestamps, false, now) ?? day
+      now += inboxClockDelay(false, timestamps, [], now) ?? day
       wakeups += 1
     }
 
@@ -260,11 +263,11 @@ describe('InboxSidebar', () => {
         />,
       )
 
-      expect(screen.getByText('2d ago')).toBeTruthy()
+      expect(screen.getByText('2d')).toBeTruthy()
       act(() => vi.advanceTimersByTime(nextChange - 1))
-      expect(screen.getByText('2d ago')).toBeTruthy()
+      expect(screen.getByText('2d')).toBeTruthy()
       act(() => vi.advanceTimersByTime(1))
-      expect(screen.getByText('3d ago')).toBeTruthy()
+      expect(screen.getByText('3d')).toBeTruthy()
     } finally {
       vi.useRealTimers()
     }
@@ -300,23 +303,25 @@ describe('InboxSidebar', () => {
       <InboxSidebar {...props([{ path: '/large', name: 'Large', sessions }])} />,
     )
 
-    expect(container.querySelectorAll('.inbox-card')).toHaveLength(12)
-    expect(container.querySelectorAll('.inbox-shelf__row')).toHaveLength(10)
+    expect(container.querySelectorAll('.thread-card')).toHaveLength(12)
+    // Snoozed and settled each show their first page.
+    expect(container.querySelectorAll('.thread-row')).toHaveLength(20)
     const activeList = screen.getByRole('list', { name: 'Active threads' })
-    expect(activeList.querySelector('.inbox__more')).toBeNull()
+    expect(activeList.querySelector('.thread-more')).toBeNull()
 
     act(() => fillActivePage?.({ didTimeout: false, timeRemaining: () => 10 }))
-    expect(container.querySelectorAll('.inbox-card')).toHaveLength(25)
-    expect(activeList.querySelector('.inbox__more')).toBeTruthy()
+    expect(container.querySelectorAll('.thread-card')).toHaveLength(25)
+    expect(activeList.querySelector('.thread-more')).toBeTruthy()
 
-    const activeRows = container.querySelectorAll<HTMLButtonElement>('.inbox-card__main')
+    const activeRows = container.querySelectorAll<HTMLButtonElement>('.thread-card__main')
     activeRows[24]?.focus()
     fireEvent.keyDown(activeRows[24]!, { key: 'ArrowDown' })
-    expect(document.activeElement).toBe(container.querySelector('.inbox-shelf__main'))
+    expect(document.activeElement).toBe(container.querySelector('.thread-row__main'))
 
-    fireEvent.click(screen.getByRole('button', { name: /Snoozed/ }))
-    expect(container.querySelectorAll('.inbox-card')).toHaveLength(25)
-    expect(container.querySelectorAll('.inbox-shelf__row')).toHaveLength(35)
+    const snoozedShelf = screen.getByRole('region', { name: 'Snoozed threads' })
+    fireEvent.click(within(snoozedShelf).getByRole('button', { name: 'Show 25 more' }))
+    expect(container.querySelectorAll('.thread-card')).toHaveLength(25)
+    expect(container.querySelectorAll('.thread-row')).toHaveLength(45)
   })
 
   it('does not rescan every chat on the one-second working clock', () => {
@@ -452,22 +457,25 @@ describe('InboxSidebar', () => {
         />,
       )
 
-      expect(screen.getByText('Working · 1s')).toBeTruthy()
-      expect(screen.getByText('1m ago')).toBeTruthy()
-      expect(screen.getByText('Large · 1m ago')).toBeTruthy()
+      const elapsed = () => container.querySelector('.thread-status__elapsed')?.textContent
+      const idleTime = () => container.querySelector('.thread-time')?.textContent
+      const settledTime = () => container.querySelector('.thread-row__time')?.textContent
+      expect(elapsed()).toBe('1s')
+      expect(idleTime()).toBe('1m')
+      expect(settledTime()).toBe('1m')
 
       act(() => vi.advanceTimersByTime(1_000))
-      expect(screen.getByText('Working · 2s')).toBeTruthy()
-      expect(screen.getByText('1m ago')).toBeTruthy()
-      expect(screen.getByText('Large · 1m ago')).toBeTruthy()
+      expect(elapsed()).toBe('2s')
+      expect(idleTime()).toBe('1m')
+      expect(settledTime()).toBe('1m')
 
       for (let second = 0; second < 59; second++) {
         act(() => vi.advanceTimersByTime(1_000))
       }
-      expect(screen.getByText('Working · 1m')).toBeTruthy()
-      expect(screen.getByText('2m ago')).toBeTruthy()
-      expect(screen.getByText('Large · 2m ago')).toBeTruthy()
-      expect(container.querySelectorAll('.inbox-card')).toHaveLength(2)
+      expect(elapsed()).toBe('1m')
+      expect(idleTime()).toBe('2m')
+      expect(settledTime()).toBe('2m')
+      expect(container.querySelectorAll('.thread-card')).toHaveLength(2)
     } finally {
       vi.useRealTimers()
     }
@@ -525,11 +533,11 @@ describe('InboxSidebar', () => {
     )
 
     expect(
-      [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
+      [...container.querySelectorAll('.thread-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Beta approval', 'Older Alpha'])
     expect(screen.queryByRole('button', { name: 'Settle Beta approval' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Settle New Alpha' })).toBeNull()
-    fireEvent.pointerEnter(screen.getByText('New Alpha').closest('.inbox-card')!)
+    fireEvent.pointerEnter(screen.getByText('New Alpha').closest('.thread-card')!)
     fireEvent.click(screen.getByRole('button', { name: 'Settle New Alpha' }))
     expect(actions.onSettle).toHaveBeenCalledWith('alpha-new')
 
@@ -545,17 +553,21 @@ describe('InboxSidebar', () => {
     )
     rerender(<InboxSidebar {...props(updated)} onScopeChange={onScopeChange} />)
     expect(
-      [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
+      [...container.querySelectorAll('.thread-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Beta approval', 'Older Alpha'])
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Sidebar project filter' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Alpha' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Filter threads by project' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search projects' }), {
+      target: { value: 'alp' },
+    })
+    expect(screen.queryByRole('option', { name: /Beta/ })).toBeNull()
+    fireEvent.click(screen.getByRole('option', { name: /Alpha/ }))
     expect(onScopeChange).toHaveBeenCalledWith('/alpha')
 
     rerender(<InboxSidebar {...props(projects)} scope="/alpha" />)
     expect(screen.queryByText('Beta approval')).toBeNull()
     expect(
-      [...container.querySelectorAll('.inbox-card__title')].map((node) => node.textContent),
+      [...container.querySelectorAll('.thread-card__title')].map((node) => node.textContent),
     ).toEqual(['New Alpha', 'Older Alpha'])
   })
 
@@ -583,48 +595,57 @@ describe('InboxSidebar', () => {
       <InboxSidebar {...props([project])} activeSessionId="settled-30" />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /Snoozed/ }))
-    const shelfTitles = [...container.querySelectorAll('.inbox-shelf__row button:first-child span')]
+    const shelfTitles = [...container.querySelectorAll('.thread-row__title')]
     expect(shelfTitles.slice(0, 2).map((node) => node.textContent)).toEqual([
       'Earlier snooze',
       'Later snooze',
     ])
 
     expect(screen.getByText('Settled 30')).toBeTruthy()
-    expect(container.querySelectorAll('.inbox-shelf__row')).toHaveLength(13)
+    expect(container.querySelectorAll('.thread-row')).toHaveLength(13)
     fireEvent.click(screen.getByRole('button', { name: 'Show 25 more' }))
-    expect(container.querySelectorAll('.inbox-shelf__row')).toHaveLength(37)
+    expect(container.querySelectorAll('.thread-row')).toHaveLength(37)
     fireEvent.click(screen.getByRole('button', { name: 'Un-settle Settled 30' }))
     expect(actions.onUnsettle).toHaveBeenCalledWith('settled-30')
   })
 
-  it('keeps project controls at the top and offers all snooze presets', () => {
-    const project: Project = {
-      path: '/alpha',
-      name: 'Alpha',
-      sessions: [active('alpha', 'Alpha task', 1)],
+  it('starts new threads from the header and offers every snooze preset', () => {
+    vi.useFakeTimers()
+    try {
+      // A Friday at noon, when every preset applies.
+      vi.setSystemTime(new Date(2026, 7, 21, 12))
+      const project: Project = {
+        path: '/alpha',
+        name: 'Alpha',
+        sessions: [active('alpha', 'Alpha task', 1)],
+      }
+      const onNewSession = vi.fn()
+      render(
+        <InboxSidebar
+          {...props([project])}
+          activeProjectPath="/alpha"
+          onNewSession={onNewSession}
+        />,
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'New thread' }))
+      expect(onNewSession).toHaveBeenCalledWith('/alpha', false)
+      expect(screen.getByRole('button', { name: 'New project' })).toBeTruthy()
+
+      fireEvent.contextMenu(screen.getByText('Alpha task').closest('button')!)
+      fireEvent.click(screen.getByRole('menuitem', { name: /Snooze/ }))
+      for (const label of ['In 1 hour', 'In 3 hours', 'This evening', 'Tomorrow', 'Next week']) {
+        expect(screen.getByRole('menuitem', { name: new RegExp(label) })).toBeTruthy()
+      }
+      fireEvent.click(screen.getByRole('menuitem', { name: /In 1 hour/ }))
+      expect(actions.onSnooze).toHaveBeenCalledWith('alpha', Date.now() + 60 * 60_000)
+
+      fireEvent.contextMenu(screen.getByText('Alpha task').closest('button')!)
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Keep active' }))
+      expect(actions.onKeepActive).toHaveBeenCalledWith('alpha', true)
+    } finally {
+      vi.useRealTimers()
     }
-    const onNewSession = vi.fn()
-    render(
-      <InboxSidebar {...props([project])} activeProjectPath="/alpha" onNewSession={onNewSession} />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
-    expect(onNewSession).toHaveBeenCalledWith('/alpha', false)
-    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
-
-    expect(screen.queryByRole('button', { name: 'Thread options for Alpha task' })).toBeNull()
-    fireEvent.focusIn(screen.getByText('Alpha task').closest('button')!)
-    fireEvent.click(screen.getByRole('button', { name: 'Thread options for Alpha task' }))
-    expect(screen.getByRole('menuitem', { name: 'This evening' })).toBeTruthy()
-    expect(screen.getByRole('menuitem', { name: 'Tomorrow morning' })).toBeTruthy()
-    expect(screen.getByRole('menuitem', { name: 'Next week' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('menuitem', { name: 'In one hour' }))
-    expect(actions.onSnooze).toHaveBeenCalledWith('alpha', expect.any(Number))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Thread options for Alpha task' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Keep active' }))
-    expect(actions.onKeepActive).toHaveBeenCalledWith('alpha', true)
   })
 
   it('mounts row actions immediately when the narrow layout shows them', () => {
@@ -648,14 +669,14 @@ describe('InboxSidebar', () => {
     const view = render(<InboxSidebar {...props([project])} />)
     try {
       expect(screen.getByRole('button', { name: 'Settle Alpha task' })).toBeTruthy()
-      expect(screen.getByRole('button', { name: 'Thread options for Alpha task' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Snooze Alpha task' })).toBeTruthy()
     } finally {
       view.unmount()
       matchMedia.mockRestore()
     }
   })
 
-  it('searches titles across collapsed lifecycle shelves without changing their order', () => {
+  it('searches every lifecycle in order and opens the highlighted result', () => {
     const project: Project = {
       path: '/alpha',
       name: 'Alpha',
@@ -671,28 +692,77 @@ describe('InboxSidebar', () => {
         },
       ],
     }
-    const { container } = render(<InboxSidebar {...props([project])} activeSessionId="settled" />)
+    const onSelectSession = vi.fn()
+    const { container } = render(
+      <InboxSidebar {...props([project])} onSelectSession={onSelectSession} />,
+    )
 
-    expect(screen.queryByText('Snoozed result')).toBeNull()
-    const search = screen.getByRole('textbox', { name: 'Search threads' })
-    fireEvent.change(search, {
-      target: { value: 'result' },
-    })
+    const search = screen.getByRole('combobox', { name: 'Search threads' })
+    fireEvent.change(search, { target: { value: 'result' } })
     expect(
-      [...container.querySelectorAll('.inbox-card__title, .inbox-shelf__row > button span')].map(
-        (node) => node.textContent,
-      ),
+      [...container.querySelectorAll('.thread-result__title')].map((node) => node.textContent),
     ).toEqual(['Active result', 'Snoozed result', 'Settled result'])
 
     fireEvent.keyDown(search, { key: 'ArrowDown' })
-    expect(document.activeElement).toBe(screen.getByText('Active result').closest('button'))
-    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' })
-    expect(document.activeElement).toBe(screen.getByText('Snoozed result').closest('button'))
+    expect(screen.getByRole('option', { selected: true }).textContent).toContain('Snoozed result')
+    fireEvent.keyDown(search, { key: 'Enter' })
+    expect(onSelectSession).toHaveBeenCalledWith('snoozed')
+    expect((search as HTMLInputElement).value).toBe('')
 
     fireEvent.change(search, { target: { value: 'active' } })
     expect(screen.getByText('Active result')).toBeTruthy()
     expect(screen.queryByText('Snoozed result')).toBeNull()
-    expect(screen.queryByText('Settled result')).toBeNull()
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect((search as HTMLInputElement).value).toBe('')
+  })
+
+  it('adds message matches from the server and opens them at the matching turn', async () => {
+    vi.useFakeTimers()
+    try {
+      const project: Project = {
+        path: '/alpha',
+        name: 'Alpha',
+        sessions: [active('quiet', 'Quiet title', 30), active('other', 'Other', 20)],
+      }
+      const onSearchMessages = vi.fn(async () => [
+        {
+          projectPath: '/alpha',
+          projectName: 'Alpha',
+          threadId: 'quiet',
+          threadTitle: 'Quiet title',
+          turnId: 'turn-7',
+          provider: 'codex' as const,
+          createdAt: 1,
+          snippet: [
+            { text: 'the ', highlighted: false },
+            { text: 'migration', highlighted: true },
+          ],
+        },
+      ])
+      const onOpenSearchResult = vi.fn()
+      render(
+        <InboxSidebar
+          {...props([project])}
+          onSearchMessages={onSearchMessages}
+          onOpenSearchResult={onOpenSearchResult}
+        />,
+      )
+
+      const search = screen.getByRole('combobox', { name: 'Search threads' })
+      fireEvent.change(search, { target: { value: 'migration' } })
+      expect(screen.getByText('Searching thread messages…')).toBeTruthy()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
+
+      expect(onSearchMessages).toHaveBeenCalledWith('migration', undefined)
+      expect(screen.getByRole('option', { name: /Quiet title/ })).toBeTruthy()
+      expect(screen.getByText('migration').tagName).toBe('MARK')
+      fireEvent.keyDown(search, { key: 'Enter' })
+      expect(onOpenSearchResult).toHaveBeenCalledWith('quiet', 'turn-7')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('supports command selection and exposes bulk lifecycle actions on right click', () => {
@@ -712,13 +782,115 @@ describe('InboxSidebar', () => {
     for (const item of screen.getAllByRole('menuitem')) {
       expect(item.querySelector('svg')).not.toBeNull()
     }
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 threads' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle (2)' }))
 
     expect(onSettleMany).toHaveBeenCalledWith(['one', 'two'])
     expect(actions.onSettle).not.toHaveBeenCalled()
   })
 
-  it('uses canonical provider and ACP source names in thread metadata', () => {
+  it('undoes a settle from the notice or the keyboard', () => {
+    const project: Project = {
+      path: '/alpha',
+      name: 'Alpha',
+      sessions: [active('one', 'First task', 30), active('two', 'Second task', 20)],
+    }
+    render(<InboxSidebar {...props([project])} />)
+
+    fireEvent.pointerEnter(screen.getByText('First task').closest('.thread-card')!)
+    fireEvent.click(screen.getByRole('button', { name: 'Settle First task' }))
+    expect(actions.onSettle).toHaveBeenCalledWith('one')
+    expect(screen.getByRole('status').textContent).toContain('Settled 1 thread')
+
+    fireEvent.keyDown(window, { key: 'z', metaKey: true, ctrlKey: true })
+    expect(actions.onUnsettle).toHaveBeenCalledWith('one')
+    expect(screen.queryByRole('status')).toBeNull()
+
+    // Typing keeps the editor's own undo.
+    fireEvent.pointerEnter(screen.getByText('Second task').closest('.thread-card')!)
+    fireEvent.click(screen.getByRole('button', { name: 'Settle Second task' }))
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search threads' }), {
+      key: 'z',
+      metaKey: true,
+      ctrlKey: true,
+    })
+    expect(actions.onUnsettle).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: /Undo/ }))
+    expect(actions.onUnsettle).toHaveBeenLastCalledWith('two')
+  })
+
+  it('publishes its visible order and badges the first nine rows while the modifier is held', () => {
+    vi.useFakeTimers()
+    try {
+      const project: Project = {
+        path: '/alpha',
+        name: 'Alpha',
+        sessions: [
+          { ...active('pinned', 'Pinned task', 10), pinned: true },
+          active('newest', 'Newest task', 30),
+          active('older', 'Older task', 20),
+        ],
+      }
+      const onOrderChange = vi.fn()
+      const { container, unmount } = render(
+        <InboxSidebar {...props([project])} onOrderChange={onOrderChange} />,
+      )
+      expect(onOrderChange).toHaveBeenLastCalledWith(['pinned', 'newest', 'older'])
+
+      for (const key of ['Meta', 'Control']) fireEvent.keyDown(window, { key })
+      act(() => vi.advanceTimersByTime(199))
+      expect(container.querySelectorAll('.thread-jump')).toHaveLength(0)
+      act(() => vi.advanceTimersByTime(1))
+      expect(container.querySelectorAll('.thread-jump')).toHaveLength(3)
+
+      fireEvent.keyDown(window, { key: '2', metaKey: true, ctrlKey: true })
+      expect(container.querySelectorAll('.thread-jump')).toHaveLength(3)
+      for (const key of ['Meta', 'Control']) fireEvent.keyUp(window, { key })
+      expect(container.querySelectorAll('.thread-jump')).toHaveLength(0)
+
+      unmount()
+      expect(onOrderChange).toHaveBeenLastCalledWith(undefined)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pins, settles, and wakes threads dropped on another section', () => {
+    const project: Project = {
+      path: '/alpha',
+      name: 'Alpha',
+      sessions: [
+        { ...active('pinned', 'Pinned task', 30), pinned: true },
+        active('plain', 'Plain task', 20),
+        {
+          ...active('snoozed', 'Snoozed task', 10),
+          lifecycle: { state: 'snoozed', snoozedAt: 1, wakeAt: Date.now() + 60_000 },
+        },
+      ],
+    }
+    const onToggleSessionPin = vi.fn()
+    const { container } = render(
+      <InboxSidebar {...props([project])} onToggleSessionPin={onToggleSessionPin} />,
+    )
+    const drag = (title: string, zone: () => Element) => {
+      const dataTransfer = new DataTransfer()
+      fireEvent.dragStart(screen.getByText(title).closest('li')!, { dataTransfer })
+      fireEvent.dragOver(zone(), { dataTransfer })
+      fireEvent.drop(zone(), { dataTransfer })
+    }
+    const pinnedZone = () => screen.getByRole('list', { name: 'Pinned threads' }).parentElement!
+    const activeZone = () => screen.getByRole('list', { name: 'Active threads' }).parentElement!
+
+    drag('Plain task', pinnedZone)
+    expect(onToggleSessionPin).toHaveBeenCalledWith('plain')
+
+    drag('Snoozed task', activeZone)
+    expect(actions.onUnsnooze).toHaveBeenCalledWith('snoozed')
+
+    drag('Plain task', () => container.querySelector('.thread-shelf:last-of-type')!)
+    expect(actions.onSettle).toHaveBeenCalledWith('plain')
+  })
+
+  it('names each thread by its canonical provider and ACP agent', () => {
     const sessions: Session[] = [
       { ...active('claude', 'Claude task', 4), provider: 'claude-code' },
       { ...active('grok', 'Grok task', 3), provider: 'grok' },
@@ -727,11 +899,15 @@ describe('InboxSidebar', () => {
     ]
     render(<InboxSidebar {...props([{ path: '/alpha', sessions }])} />)
 
-    for (const label of ['Claude Code', 'Grok', 'Gemini CLI', 'API connection']) {
-      const identity = screen.getByText(label).closest('.source-identity')
-      expect(identity?.classList.contains('source-identity--compact')).toBe(true)
-      expect(identity?.querySelector('svg')).toBeTruthy()
-      expect(identity?.closest('button')?.getAttribute('aria-label')).toContain(label)
+    for (const [title, label] of [
+      ['Claude task', 'Claude Code'],
+      ['Grok task', 'Grok'],
+      ['Gemini task', 'Gemini CLI'],
+      ['API task', 'API connection'],
+    ] as const) {
+      const row = screen.getByText(title).closest('button')!
+      expect(row.getAttribute('aria-label')).toContain(label)
+      expect(row.querySelector('.thread-card__provider svg')).toBeTruthy()
     }
   })
 })

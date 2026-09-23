@@ -6269,7 +6269,7 @@ describe('inbox lifecycle', () => {
       expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'newest' })
       expect(
         screen.getByRole('button', { name: /^Older chat,/ }).closest('li')?.classList,
-      ).toContain('is-selected')
+      ).toContain('is-current')
     })
     fireEvent.click(screen.getByRole('button', { name: 'Un-settle Newest chat' }))
     expect(transport.request).toHaveBeenCalledWith('thread.unsettle', { threadId: 'newest' })
@@ -6298,14 +6298,14 @@ describe('inbox lifecycle', () => {
     fireEvent.click(newest, { metaKey: true })
     fireEvent.click(middle, { metaKey: true })
     fireEvent.contextMenu(middle)
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle 2 threads' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Settle (2)' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'newest' })
       expect(transport.request).toHaveBeenCalledWith('thread.settle', { threadId: 'middle' })
       expect(
         screen.getByRole('button', { name: /^Oldest chat,/ }).closest('li')?.classList,
-      ).toContain('is-selected')
+      ).toContain('is-current')
     })
   })
 
@@ -6329,9 +6329,9 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('combobox', { name: 'Sidebar project filter' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Beta' }))
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Filter threads by project' }))
+    fireEvent.click(screen.getByRole('option', { name: /Beta/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }))
 
     const picker = await screen.findByRole('dialog', {
       name: 'Choose a project for the new thread',
@@ -6341,6 +6341,56 @@ describe('inbox lifecycle', () => {
         .getAllByRole('option')
         .map((option) => option.textContent),
     ).toEqual(['New thread in Beta/work/beta', 'New thread in Alpha/work/alpha'])
+  })
+
+  it('opens and cycles threads in the V2 sidebar order', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    serverProjects = [
+      {
+        path: '/work/alpha',
+        name: 'Alpha',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'alpha-old', title: 'Alpha old', provider: 'codex', createdAt: 1, running: false },
+        ],
+      },
+      {
+        path: '/work/beta',
+        name: 'Beta',
+        pinned: false,
+        createdAt: 1,
+        sessions: [
+          {
+            id: 'beta-pinned',
+            title: 'Beta pinned',
+            provider: 'codex',
+            createdAt: 0,
+            running: false,
+            pinned: true,
+          },
+          { id: 'beta-new', title: 'Beta new', provider: 'codex', createdAt: 5, running: false },
+        ],
+      },
+    ]
+
+    render(<App />)
+    await screen.findByRole('button', { name: /^Beta pinned,/ })
+    // Pinned first, then active threads newest first, across projects.
+    fireEvent.keyDown(window, { key: '3', metaKey: true })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'alpha-old' }),
+      ),
+    )
+    fireEvent.keyDown(window, { key: 'ArrowUp', metaKey: true, altKey: true })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'beta-new' }),
+      ),
+    )
   })
 
   it('stops emphasizing completed work after it is opened', async () => {
@@ -6367,9 +6417,12 @@ describe('inbox lifecycle', () => {
     ]
 
     render(<App />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Codex, Done' }))
+    // A woken, unread thread reads Woke first, as in the card's status slot.
+    fireEvent.click(await screen.findByRole('button', { name: 'Ready chat, project, Codex, Woke' }))
     await waitFor(() => {
-      expect(screen.queryByRole('button', { name: 'Ready chat, project, Codex, Done' })).toBeNull()
+      expect(
+        screen.queryByRole('button', { name: /^Ready chat, project, Codex, (Woke|Done)/ }),
+      ).toBeNull()
       expect(screen.getByRole('button', { name: /^Ready chat, project,/ })).toBeTruthy()
       expect(screen.queryByText('Woke')).toBeNull()
     })
@@ -7686,7 +7739,7 @@ describe('live sessions', () => {
   it('returns focus to inbox search after the command palette opener unmounts', async () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
-    const inboxSearch = await screen.findByRole('textbox', { name: 'Search threads' })
+    const inboxSearch = await screen.findByRole('combobox', { name: 'Search threads' })
     fireEvent.keyDown(window, { key: 'k', metaKey: true })
     const commandSearch = await screen.findByRole('textbox', { name: 'Search commands' })
     fireEvent.change(commandSearch, { target: { value: 'search all chats' } })
