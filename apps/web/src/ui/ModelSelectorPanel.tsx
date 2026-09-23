@@ -392,7 +392,7 @@ function DitherChoiceRow(props: {
               className={`model-selector__slider-stop${index <= displayIndex ? ' is-active' : ''}`}
               style={
                 {
-                  '--model-selector-stop': index / Math.max(1, props.optionLabels.length - 1),
+                  '--model-selector-stop': progressAt(index),
                 } as CSSProperties
               }
               key={option}

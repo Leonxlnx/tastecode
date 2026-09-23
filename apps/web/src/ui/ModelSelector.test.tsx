@@ -356,6 +356,38 @@ describe('ModelSelector', () => {
     expect(ghost()?.classList.contains('is-visible')).toBe(false)
   })
 
+  it('centers a lone effort stop under the knob', async () => {
+    const single = {
+      ...MODELS[0]!,
+      model: {
+        ...MODELS[0]!.model,
+        reasoningEfforts: ['medium'],
+        defaultReasoningEffort: 'medium',
+      },
+    }
+    renderSelector({ models: [single], modelId: single.key, effort: 'medium' })
+    await openSelector()
+
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    const stop = slider.querySelector<HTMLElement>('.model-selector__slider-stop')
+    expect(slider.style.getPropertyValue('--model-selector-slider-progress')).toBe('0.5')
+    expect(stop?.style.getPropertyValue('--model-selector-stop')).toBe('0.5')
+  })
+
+  it('offers a reset only while effort differs from the model default', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'xhigh' })
+
+    await openSelector()
+    fireEvent.click(screen.getByRole('button', { name: 'Reset effort to Medium' }))
+    expect(onEffortChange).toHaveBeenCalledWith('medium')
+    expect(document.activeElement).toBe(screen.getByRole('slider', { name: 'Reasoning effort' }))
+
+    cleanup()
+    renderSelector({ effort: 'medium' })
+    await openSelector()
+    expect(screen.queryByRole('button', { name: /^Reset effort/ })).toBeNull()
+  })
+
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 
