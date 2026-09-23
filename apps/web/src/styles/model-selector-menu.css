@@ -282,13 +282,12 @@
 .model-selector__effort-value {
   grid-column: 2;
   justify-self: center;
+  display: flex;
+  min-width: 0;
   max-width: 100%;
-  overflow: hidden;
   color: var(--effort-value);
   font-size: var(--t-md);
   font-weight: 550;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   transition: color var(--dur-fast) var(--ease-out);
 }
 
@@ -296,8 +295,11 @@
   color: var(--text-2);
 }
 
+/* The inner name truncates, so the outer box never clips its slide-in. */
 .model-selector__effort-value > span {
-  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .model-selector__effort-value > span[data-direction='up'] {
