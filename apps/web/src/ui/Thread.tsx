@@ -290,7 +290,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(thread.items, thread.turnTiming)
+  const { turns, presentations } = projectThread(
+    thread.items,
+    thread.turnTiming,
+    thread.activeTurn?.id,
+  )
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
   const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)

@@ -720,6 +720,43 @@ describe('completed activity disclosure', () => {
     )
   })
 
+  it('keeps unphased narration between live tool calls until the turn ends', () => {
+    const prompt = turnItem('prompt', 1, { role: 'user', text: 'Build it' })
+    const first = turnItem('command-1', 2, { type: 'command', command: 'ls' })
+    const update = turnItem('update', 3, { role: 'assistant', text: 'Reading the blueprint.' })
+    const second = turnItem('command-2', 4, {
+      type: 'command',
+      status: 'started',
+      command: 'cat blueprint.md',
+    })
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+      items: [prompt, first, update, second],
+    })
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    const visibleRows = () =>
+      [...view.container.querySelectorAll('.thread__row:not(.is-suppressed)')].map((row) =>
+        row.getAttribute('data-index'),
+      )
+    expect(visibleRows()).toEqual(['0', '1', '2', '3'])
+
+    act(() =>
+      store.publish({
+        ...store.getSnapshot(),
+        items: [prompt, first, update, { ...second, status: 'completed' }],
+      }),
+    )
+    expect(visibleRows()).toEqual(['0', '1', '2', '3'])
+
+    act(() => store.publish({ ...store.getSnapshot(), running: false, activeTurn: undefined }))
+    expect(visibleRows()).toEqual(['0', '1', '2'])
+    expect(screen.getByRole('button', { name: /Worked for/ })).toBeTruthy()
+  })
+
   it('re-measures the virtual row in the commit that moves details in or out of flow', () => {
     const { container } = renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),

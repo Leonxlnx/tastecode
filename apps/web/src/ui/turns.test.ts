@@ -130,6 +130,26 @@ describe('turn boundaries', () => {
     expect(presentationsOf(items).get('t1')?.complete).toBe(false)
   })
 
+  it('keeps the active turn in live batches between tool calls', () => {
+    // Unphased narration reads as a legacy final answer once no tool is running.
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Build it.' },
+      { ...item('command-1', 't1'), type: 'command', command: 'ls' },
+      { ...item('update', 't1'), role: 'assistant', text: 'Reading the blueprint.' },
+      { ...item('command-2', 't1'), type: 'command', command: 'cat blueprint.md' },
+    ]
+
+    expect(projectThreadItems(items, {}, 't1').presentations.get('t1')).toMatchObject({
+      activityGroups: [
+        { items: [items[1]], firstIndex: 1, lastIndex: 1 },
+        { items: [items[3]], firstIndex: 3, lastIndex: 3 },
+      ],
+      finalAnswerIndex: 2,
+      complete: false,
+    })
+    expect(presentationsOf(items).get('t1')?.complete).toBe(true)
+  })
+
   it('only compacts repeated settled reasoning when no answer exists', () => {
     const reasoning = (id: string, status: Item['status'] = 'completed'): Item => ({
       ...item(id, 't1'),
@@ -431,5 +451,34 @@ describe('turn boundaries', () => {
     })
     expect(completed).not.toBe(initial)
     expect(completed.presentations.get('active')?.elapsedMs).toBe(30)
+  })
+
+  it('compacts a turn once it is no longer active', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      { ...item('command', 't1'), type: 'command', command: 'pnpm test' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Done.' },
+    ]
+    const timing = { t1: { startedAt: 0 } }
+    const project = createThreadProjector()
+    const running = project(items, timing, 't1')
+    const finished = project(items, timing)
+    const reopened = createThreadProjector()(items, timing)
+
+    expect(running.presentations.get('t1')?.complete).toBe(false)
+    expect(finished).toEqual(projectThreadItems(items, timing))
+    expect(finished.presentations.get('t1')?.complete).toBe(true)
+    expect(reopened.presentations.get('t1')?.complete).toBe(true)
+  })
+
+  it('reuses the layout when the active turn has no items yet', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Answer' },
+    ]
+    const idle = project(items)
+
+    expect(project(items, undefined, 'local-turn:1')).toBe(idle)
   })
 })
