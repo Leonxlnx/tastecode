@@ -44,6 +44,8 @@ const DEFAULT_HIDDEN_MODELS = new Set([
   'gpt-5.4',
   'gpt-5.4-mini',
   'gpt-5.5',
+  'claude-fable-5',
+  'grok-4.7-build-fast',
   'claude-haiku-4-5',
   'haiku',
   'claude-opus-4-5',

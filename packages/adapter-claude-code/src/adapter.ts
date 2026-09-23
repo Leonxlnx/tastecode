@@ -549,7 +549,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     try {
       const models = await withTimeout(
         query.supportedModels(),
-        10_000,
+        30_000,
         'Claude model discovery timed out',
       )
       return models.length > 0 ? mergeClaudeModels(models) : CLAUDE_MODELS
@@ -1314,6 +1314,15 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
   for (const entry of discovered) {
     if (!used.has(entry)) merged.push(entry.model)
   }
+
+  const preferred = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5']
+  const rank = (model: Model): number => {
+    const resolvedId =
+      discovered.find((entry) => entry.model.id === model.id)?.resolvedId ?? model.id
+    const index = preferred.indexOf(claudeModelFamily(resolvedId))
+    return index < 0 ? preferred.length : index
+  }
+  merged.sort((left, right) => rank(left) - rank(right))
 
   let defaultIndex = defaultResolvedId
     ? merged.findIndex(

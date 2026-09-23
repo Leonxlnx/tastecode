@@ -1016,9 +1016,9 @@ describe('Claude Agent SDK session', () => {
       })),
     ).toEqual([
       { id: 'claude-fable-5-1[1m]', displayName: 'Claude Fable 5.1', isDefault: false },
-      { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
       { id: 'opus[1m]', displayName: 'Claude Opus 5', isDefault: true },
       { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },
+      { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
       { id: 'haiku', displayName: 'Claude Haiku 4.5', isDefault: false },
       { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8', isDefault: false },
       { id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7', isDefault: false },
@@ -1030,6 +1030,42 @@ describe('Claude Agent SDK session', () => {
     expect(models.filter((model) => model.displayName.includes('1M context'))).toEqual([])
     expect(models.filter((model) => model.isDefault)).toHaveLength(1)
     expect(fake.inputs[0]!.options.persistSession).toBe(false)
+    adapter.dispose()
+  })
+
+  it('places a newly discovered Opus 5.5 before older Claude models', async () => {
+    const fake = harness([
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Default',
+        description: 'Account default',
+        supportsEffort: true,
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        description: 'Latest Opus',
+        supportsEffort: true,
+      },
+      {
+        value: 'claude-opus-5',
+        resolvedModel: 'claude-opus-5',
+        displayName: 'Opus 5',
+        description: 'Previous Opus',
+        supportsEffort: true,
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+    expect(models.slice(0, 4).map((model) => model.displayName)).toEqual([
+      'Claude Fable 5.1',
+      'Claude Opus 5.5',
+      'Claude Opus 5',
+      'Claude Sonnet 5',
+    ])
+    expect(models.find((model) => model.isDefault)?.id).toBe('opus')
     adapter.dispose()
   })
 })

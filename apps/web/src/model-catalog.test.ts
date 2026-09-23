@@ -162,6 +162,8 @@ describe('model catalog', () => {
 
   it.each([
     ['gpt-6-astra', true],
+    ['gpt-6-sol', true],
+    ['gpt-6-luna', true],
     ['gpt-5.6-sol', true],
     ['gpt-5.6-terra', true],
     ['gpt-5.6-luna', true],
@@ -171,11 +173,12 @@ describe('model catalog', () => {
     ['gpt-5.4', false],
     ['gpt-5.4-mini', false],
     ['fable', true],
-    ['claude-fable-5', true],
+    ['claude-fable-5', false],
     ['claude-fable-5-1', true],
     ['claude-fable-5-1[1m]', true],
     ['opus', true],
     ['claude-opus-5', true],
+    ['claude-opus-5-5', true],
     ['sonnet', true],
     ['claude-sonnet-5', true],
     ['claude-opus-4-8', false],
@@ -188,6 +191,8 @@ describe('model catalog', () => {
     ['claude-sonnet-4-6', false],
     ['grok-4.5', true],
     ['grok-4.6', true],
+    ['grok-4.7', true],
+    ['grok-4.7-build-fast', false],
     ['provider-model-added-tomorrow', true],
   ])('defaults %s visibility to %s', (id, visible) => {
     expect(modelVisibleByDefault({ ...model, id })).toBe(visible)

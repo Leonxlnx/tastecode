@@ -39,6 +39,22 @@ async function listedModels(data = [providerModel]) {
 }
 
 describe('Codex models', () => {
+  it('places newly advertised GPT-6 models first without inventing missing ones', async () => {
+    const models = await listedModels([
+      providerModel,
+      { ...providerModel, id: 'gpt-6-luna', displayName: 'GPT-6 Luna', isDefault: false },
+      { ...providerModel, id: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: false },
+      { ...providerModel, id: 'gpt-6-sol', displayName: 'GPT-6 Sol', isDefault: false },
+    ])
+    expect(models.slice(0, 4).map((model) => model.id)).toEqual([
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol',
+    ])
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.6-sol')
+  })
+
   it('keeps the complete known Codex roster selectable when model/list omits rows', async () => {
     const models = await listedModels()
     expect(models.map((model) => model.id)).toEqual([
