@@ -396,8 +396,9 @@ describe('Sidebar chat actions', () => {
     )
 
     const rendered = render(view)
-    // The utility row loads with the lazy thread sidebar.
-    await screen.findByRole('combobox', { name: 'Search threads' })
+    // The utility row loads with the lazy thread sidebar, which a busy test
+    // worker can take longer than the default second to compile.
+    await screen.findByRole('combobox', { name: 'Search threads' }, { timeout: 5_000 })
     for (const [usedPercent, expected] of [
       [11, undefined],
       [79, undefined],
