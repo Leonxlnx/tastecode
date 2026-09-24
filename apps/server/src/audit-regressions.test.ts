@@ -9,7 +9,7 @@ import { Store } from './store.js'
 import { McpConfigStore } from './mcp-config.js'
 import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
-import { retainCheckpoint, takeSnapshot } from './checkpoint.js'
+import { checkpointRepository, retainCheckpoint, takeSnapshot } from './checkpoint.js'
 import { runHistoryCli } from './history-cli.js'
 
 const roots: string[] = []
@@ -215,6 +215,7 @@ describe('audit integration regressions', () => {
     const isolated = path.join(root, 'isolated')
     const data = path.join(root, 'data')
     git(repo, 'worktree', 'add', '--detach', isolated)
+    expect(await checkpointRepository(repo)).toBe(await checkpointRepository(isolated))
     const store = new Store(path.join(data, 'tastecode.db'))
     let closed = false
     try {
