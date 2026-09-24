@@ -8,6 +8,7 @@ import type {
   PermissionMode,
   PermissionResult,
   SDKMessage,
+  SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import type {
@@ -156,6 +157,35 @@ function claudeModel(
   }
 }
 
+/**
+ * Claude fast mode serves the same model faster and is billed as extra usage,
+ * not from the plan. SDK sessions start with it off (`sdk_opt_in_required`)
+ * until the flag settings opt in.
+ */
+const FAST_TIER = {
+  id: 'fast',
+  name: 'Fast',
+  description: 'Faster output from the same model',
+  billingNote: 'Billed as extra usage',
+} as const
+
+/** Why the CLI kept a fast-mode turn at standard speed, from the result frame. */
+function fastModeUnavailableText(state: string, reason: string | undefined): string {
+  if (state === 'cooldown') {
+    return 'Fast mode is paused after a rate limit. This turn ran at standard speed.'
+  }
+  switch (reason) {
+    case 'extra_usage_disabled':
+      return 'Fast mode needs extra usage, which is off for this Claude account. This turn ran at standard speed.'
+    case 'free':
+      return 'Fast mode is not available on this Claude plan. This turn ran at standard speed.'
+    case 'model_not_allowed':
+      return 'This model cannot use fast mode. This turn ran at standard speed.'
+    default:
+      return 'Fast mode was unavailable, so this turn ran at standard speed.'
+  }
+}
+
 const PERMISSION_MODE = {
   ask: 'default',
   auto: 'acceptEdits',
@@ -173,13 +203,14 @@ export type ClaudeStartOptions = {
   instructions?: string | undefined
   model?: string | undefined
   effort?: string | undefined
+  serviceTier?: string | undefined
   approval?: ApprovalMode | undefined
   ephemeral?: boolean | undefined
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
 }
 
-export type ClaudeTurnOptions = Pick<ClaudeStartOptions, 'model' | 'effort'>
+export type ClaudeTurnOptions = Pick<ClaudeStartOptions, 'model' | 'effort' | 'serviceTier'>
 
 function applyClaudeTurnOptions(
   current: ClaudeStartOptions,
@@ -187,7 +218,7 @@ function applyClaudeTurnOptions(
 ): ClaudeStartOptions {
   if (Object.keys(next).length === 0) return current
   const merged = { ...current }
-  for (const field of ['model', 'effort'] as const) {
+  for (const field of ['model', 'effort', 'serviceTier'] as const) {
     if (!(field in next)) continue
     const value = next[field]
     if (value === undefined) delete merged[field]
@@ -314,6 +345,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #reportedModel: string | undefined
   #sessionId: string | undefined
   #resumeOnRestart = false
+  #fastModeReported = false
   #query: ClaudeQueryRuntime | undefined
   #queryAbort: AbortController | undefined
   #bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
@@ -404,7 +436,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
     const previous = this.#options
     const next = applyClaudeTurnOptions(previous, options)
-    if (previous.effort !== next.effort) {
+    // Fast mode is opted into at session start, the path verified against the
+    // CLI, so a tier change restarts the session the way an effort change does.
+    if (previous.effort !== next.effort || previous.serviceTier !== next.serviceTier) {
       await this.#restartSession(next)
     } else if (previous.model !== next.model) {
       const query = this.#requireQuery()
@@ -635,6 +669,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   async #startQuery(resume?: string, options = this.#options): Promise<void> {
+    this.#fastModeReported = false
     const mcp = prepareClaudeMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {})
     const redactor = new ClaudeMcpRedactor(mcp.secrets)
     this.#redactor = redactor
@@ -663,6 +698,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
                 ...(bootstrap ? { mcpServers: bootstrap.servers } : {}),
                 ...(options.model ? { model: options.model } : {}),
                 ...(effort ? { effort: effort } : {}),
+                ...(options.serviceTier === FAST_TIER.id ? { settings: { fastMode: true } } : {}),
                 systemPrompt: {
                   type: 'preset',
                   preset: 'claude_code',
@@ -741,6 +777,25 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       ),
       ...overrides,
     }
+  }
+
+  /** Says once per session when a requested fast turn ran at standard speed. */
+  #reportUnavailableFastMode(turnId: string, result: SDKResultMessage): void {
+    if (this.#options.serviceTier !== FAST_TIER.id || this.#fastModeReported) return
+    const state = result.fast_mode_state
+    if (state === undefined || state === 'on') return
+    this.#fastModeReported = true
+    this.emit('event', {
+      type: 'item.completed',
+      item: {
+        id: `${turnId}-fast-mode`,
+        turnId,
+        type: 'error',
+        status: 'completed',
+        text: fastModeUnavailableText(state, result.fast_mode_disabled_reason),
+        createdAt: Date.now(),
+      },
+    })
   }
 
   async #restartSession(options: ClaudeStartOptions): Promise<void> {
@@ -851,6 +906,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           },
         })
       }
+      this.#reportUnavailableFastMode(turnId, message)
       if (message.is_error && 'errors' in message && message.errors.length > 0) {
         this.emit('event', {
           type: 'thread.error',
@@ -1354,7 +1410,7 @@ function mapSdkModel(model: ModelInfo, id = model.value): DiscoveredClaudeModel 
       isDefault: false,
       reasoningEfforts,
       ...(reasoningEfforts.length > 0 ? { defaultReasoningEffort: 'high' } : {}),
-      serviceTiers: [],
+      serviceTiers: model.supportsFastMode ? [{ ...FAST_TIER }] : [],
     },
   }
 }

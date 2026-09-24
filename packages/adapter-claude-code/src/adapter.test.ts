@@ -808,6 +808,110 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('offers fast mode with its billing note only where the SDK reports it', async () => {
+    const fake = harness([
+      {
+        value: 'opus[1m]',
+        resolvedModel: 'claude-opus-5-5[1m]',
+        displayName: 'Opus (1M context)',
+        description: 'Opus 5.5 with 1M context',
+        supportsEffort: true,
+        supportsFastMode: true,
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5',
+        displayName: 'Sonnet',
+        description: 'Sonnet 5',
+        supportsEffort: true,
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+
+    expect(models.find((model) => model.id === 'opus[1m]')?.serviceTiers).toEqual([
+      {
+        id: 'fast',
+        name: 'Fast',
+        description: 'Faster output from the same model',
+        billingNote: 'Billed as extra usage',
+      },
+    ])
+    expect(models.find((model) => model.id === 'sonnet')?.serviceTiers).toEqual([])
+    adapter.dispose()
+  })
+
+  it('opts into fast mode at session start and restarts when the tier changes', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const thread = await adapter.startThread('/repo', { serviceTier: 'fast' })
+    expect(fake.inputs[0]!.options.settings).toEqual({ fastMode: true })
+    await adapter.sendTurn(thread.id, 'One')
+    fake.queries[0]!.emitMessage(resultMessage(false))
+    await tick()
+
+    await adapter.sendTurn(thread.id, 'Two', [], { serviceTier: undefined })
+    expect(fake.queries).toHaveLength(2)
+    expect(fake.inputs[1]!.options.resume).toBe('session-1')
+    expect(fake.inputs[1]!.options.settings).toBeUndefined()
+    adapter.dispose()
+  })
+
+  it('says once per session when a fast turn ran at standard speed', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo', { serviceTier: 'fast' })
+    // Captured from Claude Code 2.1.281 on an account with extra usage off.
+    const blocked = {
+      ...resultMessage(false),
+      fast_mode_state: 'off',
+      fast_mode_disabled_reason: 'extra_usage_disabled',
+    } as SDKMessage
+    const notices = () =>
+      events.filter(
+        (event) => event.type === 'item.completed' && event.item.id.endsWith('-fast-mode'),
+      )
+
+    await adapter.sendTurn(thread.id, 'One')
+    fake.queries[0]!.emitMessage(blocked)
+    await tick()
+    await adapter.sendTurn(thread.id, 'Two')
+    fake.queries[0]!.emitMessage(blocked)
+    await tick()
+
+    expect(notices()).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: 'error',
+          text: 'Fast mode needs extra usage, which is off for this Claude account. This turn ran at standard speed.',
+        }),
+      }),
+    ])
+    adapter.dispose()
+  })
+
+  it('stays quiet about fast mode when the standard tier was chosen', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'One')
+    fake.queries[0]!.emitMessage({
+      ...resultMessage(false),
+      fast_mode_state: 'off',
+      fast_mode_disabled_reason: 'sdk_opt_in_required',
+    } as SDKMessage)
+    await tick()
+
+    expect(
+      events.some((event) => event.type === 'item.completed' && event.item.type === 'error'),
+    ).toBe(false)
+    adapter.dispose()
+  })
+
   it('streams assistant text through one started/delta/completed lifecycle', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
