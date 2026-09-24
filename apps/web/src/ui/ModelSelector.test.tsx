@@ -470,15 +470,9 @@ describe('ModelSelector', () => {
     ).toBe('Claude Code')
     expect(screen.queryByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeNull()
 
-    const titles = Array.from(document.querySelectorAll('.model-selector__group-title')).map(
-      (title) => title.textContent,
-    )
-    expect(titles).toEqual(['Codex'])
-    expect(
-      document
-        .querySelector('.model-selector__group-title .source-identity')
-        ?.getAttribute('title'),
-    ).toBe('Codex')
+    // The highlighted logo names the source; the list does not repeat it.
+    expect(document.querySelector('.model-selector__group-title')).toBeNull()
+    expect(screen.getByRole('group', { name: 'Codex models' })).toBeTruthy()
 
     const rail = screen.getByRole('group', { name: 'Providers' })
     expect(rail.style.getPropertyValue('--model-selector-provider-index')).toBe('0')

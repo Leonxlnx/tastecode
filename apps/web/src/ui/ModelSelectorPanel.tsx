@@ -112,12 +112,6 @@ function ProviderModelList(props: {
         </div>
         {visibleGroup ? (
           <section className="model-selector__group">
-            <p className="model-selector__group-title">
-              <SourceIdentity
-                presentation={{ label: visibleGroup.name, mark: visibleGroup.mark }}
-                density="compact"
-              />
-            </p>
             {filteredEntries.length > 0 ? (
               filteredEntries.map((entry) => {
                 const selected = entry.key === props.selectedChoice?.key
