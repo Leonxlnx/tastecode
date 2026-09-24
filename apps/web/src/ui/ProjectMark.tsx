@@ -10,7 +10,10 @@ const PROJECT_HUES = [212, 262, 330, 20, 45, 150, 185, 290, 95, 0, 240, 170]
 type ProjectMarkPresentation = { monogram: string; style: CSSProperties }
 const projectMarks = new Map<string, ProjectMarkPresentation>()
 
-/** Two-letter badge with a hue derived from the name, so a project reads the same everywhere. */
+/**
+ * Two-letter badge with a hue derived from the name, so a project reads the same everywhere.
+ * The monogram and hue rules are adapted from T3 Code (MIT); see THIRD_PARTY_NOTICES.md.
+ */
 export function ProjectMark(props: { project: Project; className?: string }) {
   const name = projectName(props.project)
   let mark = projectMarks.get(name)

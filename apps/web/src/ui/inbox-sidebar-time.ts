@@ -1,4 +1,7 @@
-/** Clock and label helpers for the thread sidebar. Pure, so rows and tests share one rule. */
+/**
+ * Clock and label helpers for the thread sidebar. Pure, so rows and tests share one rule.
+ * Snooze presets and wake countdowns are adapted from T3 Code (MIT); see THIRD_PARTY_NOTICES.md.
+ */
 
 const MINUTE = 60_000
 const HOUR = 60 * MINUTE
