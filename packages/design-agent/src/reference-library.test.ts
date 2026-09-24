@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,7 +20,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 function library() {
-  const root = mkdtempSync(path.join(os.tmpdir(), 'taste-references-'))
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'taste-references-')))
   roots.push(root)
   copyFileSync(
     fileURLToPath(new URL('../references/directions/hero/direction-001.webp', import.meta.url)),

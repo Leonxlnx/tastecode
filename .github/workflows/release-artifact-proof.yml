@@ -39,12 +39,12 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           run_install: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
       - run: pnpm install --frozen-lockfile --ignore-scripts --filter .
       - name: Verify approved source
         run: node tools/scripts/verify-release-input.js
@@ -58,10 +58,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: windows-2025
+          - os: windows-2022
             platform: windows
             label: windows-x64
-          - os: macos-15
+          - os: macos-26
             platform: macos
             label: macos-arm64
     runs-on: ${{ matrix.os }}
@@ -70,18 +70,21 @@ jobs:
         with:
           ref: ${{ inputs.approved_sha }}
           persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           run_install: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: node tools/scripts/verify-release-input.js
       - run: pnpm licenses:verify
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      - run: node --test tools/scripts/release-licenses.test.js tools/scripts/release-tools.test.js
+      - run: pnpm -r --workspace-concurrency=1 test
+        env:
+          VITEST_MAX_WORKERS: '2'
       - run: pnpm build
       - name: Build preload
         run: pnpm --filter @harness/desktop exec node scripts/build-preload.js
@@ -109,12 +112,12 @@ jobs:
         with:
           ref: ${{ inputs.approved_sha }}
           persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           run_install: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
       - run: pnpm install --frozen-lockfile --ignore-scripts --filter .
       - run: node tools/scripts/verify-release-input.js
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0

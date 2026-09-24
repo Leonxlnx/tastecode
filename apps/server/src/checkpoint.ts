@@ -232,9 +232,11 @@ export async function retainCheckpoint(
 
 /** Worktrees share refs and objects even though their writable checkouts are separate. */
 export async function checkpointRepository(repoPath: string): Promise<string> {
+  const checkout = await git(repoPath, ['rev-parse', '--show-toplevel'])
   const common = await git(repoPath, ['rev-parse', '--git-common-dir'])
-  if (common === undefined) throw new Error(`could not locate checkpoint storage for ${repoPath}`)
-  return realpathSync(path.resolve(repoPath, common))
+  if (checkout === undefined || common === undefined)
+    throw new Error(`could not locate checkpoint storage for ${repoPath}`)
+  return realpathSync(path.resolve(checkout, common))
 }
 
 /** Startup migration writes only missing refs, in bounded Git transactions. */
