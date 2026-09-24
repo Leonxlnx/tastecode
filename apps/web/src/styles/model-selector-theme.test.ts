@@ -32,7 +32,7 @@ describe('model selector theme CSS', () => {
       /\.model-selector__provider\.is-active \{\s*color: var\(--text\);\s*\}/,
     )
     expect(modelSelectorCss).toMatch(
-      /\.model-selector__provider-highlight \{[^}]*transform: translateY\(calc\(var\(--model-selector-provider-index\) \* 32px\)\);[^}]*transition: transform var\(--dur-fast\) var\(--ease-out\);/s,
+      /\.model-selector__provider-highlight \{[^}]*transform: translateY\(calc\(var\(--model-selector-provider-index\) \* 34px\)\);[^}]*transition: transform var\(--dur-fast\) var\(--ease-out\);/s,
     )
   })
 

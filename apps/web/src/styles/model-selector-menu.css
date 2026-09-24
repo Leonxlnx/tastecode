@@ -230,7 +230,7 @@
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   overflow-y: auto;
   padding: 6px;
   background: var(--model-picker-bg);
@@ -262,8 +262,19 @@
   color: var(--text);
 }
 
-/* One highlight slides between the 30px buttons (2px apart) instead of each
-   button painting its own, so switching providers moves rather than blinks. */
+/* Sits in the gap under Favorites, so every slot keeps the same 34px step. */
+.model-selector__provider--favorites::after {
+  position: absolute;
+  right: 4px;
+  bottom: -3px;
+  left: 4px;
+  height: 1px;
+  content: '';
+  background: var(--menu-line);
+}
+
+/* One highlight slides between the 30px buttons (4px apart) instead of each
+   button painting its own, so switching slots moves rather than blinks. */
 .model-selector__provider-highlight {
   position: absolute;
   top: 6px;
@@ -274,7 +285,7 @@
   border-radius: var(--r-popup-item);
   box-shadow: var(--model-picker-selected-shadow);
   pointer-events: none;
-  transform: translateY(calc(var(--model-selector-provider-index) * 32px));
+  transform: translateY(calc(var(--model-selector-provider-index) * 34px));
   transition: transform var(--dur-fast) var(--ease-out);
 }
 
@@ -392,6 +403,89 @@
   background: var(--model-picker-hover-bg);
   outline: 1px solid var(--text-2);
   outline-offset: -1px;
+}
+
+/* Rail rows overlay the favorite star on the row's right end, so the row,
+   not the choice button, owns the hover surface. */
+.model-selector__row {
+  position: relative;
+}
+
+.model-selector__row > .model-selector__model {
+  padding-right: 34px;
+}
+
+.model-selector__row:hover > .model-selector__model {
+  background: var(--model-picker-hover-bg);
+}
+
+.model-selector__row .model-selector__model-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-selector__model-source {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.model-selector__favorite {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.model-selector__favorite:focus-visible {
+  outline: 1px solid var(--text-2);
+  outline-offset: -1px;
+}
+
+.model-selector__favorite svg {
+  fill: transparent;
+}
+
+.model-selector__favorite.is-on {
+  color: var(--text-2);
+}
+
+.model-selector__favorite.is-on svg {
+  fill: currentColor;
+}
+
+.model-selector__favorite.is-on,
+.model-selector__row:focus-within .model-selector__favorite {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .model-selector__row:hover .model-selector__favorite {
+    opacity: 1;
+  }
+
+  .model-selector__favorite:hover {
+    color: var(--text);
+  }
+}
+
+/* Touch has no hover to reveal the star, so it stays visible. */
+@media (pointer: coarse) {
+  .model-selector__favorite {
+    opacity: 1;
+  }
 }
 
 .model-selector__model-name {
