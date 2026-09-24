@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DomainEventSchema, ItemSchema } from './domain.js'
+import { DomainEventSchema, ItemSchema, ModelSchema } from './domain.js'
 import {
   channels,
   DiffFileSchema,
@@ -1466,5 +1466,25 @@ describe('protocol envelopes', () => {
         },
       }),
     ).toThrow()
+  })
+})
+
+describe('model service tiers', () => {
+  it('keeps a billing note and still accepts tiers without one', () => {
+    const model = ModelSchema.parse({
+      id: 'opus[1m]',
+      displayName: 'Claude Opus 5.5',
+      isDefault: true,
+      reasoningEfforts: ['low', 'high'],
+      serviceTiers: [
+        { id: 'standard', name: 'Standard', description: '' },
+        { id: 'fast', name: 'Fast', description: '', billingNote: 'Billed as extra usage' },
+      ],
+    })
+
+    expect(model.serviceTiers.map((tier) => tier.billingNote)).toEqual([
+      undefined,
+      'Billed as extra usage',
+    ])
   })
 })
