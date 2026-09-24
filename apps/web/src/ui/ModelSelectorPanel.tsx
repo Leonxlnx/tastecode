@@ -60,10 +60,20 @@ function ProviderModelList(props: {
     ? (filteredGroups.find((group) => group.key === visibleGroup?.key)?.entries ?? [])
     : (visibleGroup?.entries ?? [])
   const focusResult = (edge: 'first' | 'last') => focusModelResult(catalog.current, edge)
+  const activeIndex = Math.max(
+    0,
+    groups.findIndex((group) => group.key === visibleGroup?.key),
+  )
 
   return (
     <div className="model-selector__catalog" ref={catalog}>
-      <div className="model-selector__providers" role="group" aria-label="Providers">
+      <div
+        className="model-selector__providers"
+        role="group"
+        aria-label="Providers"
+        style={{ '--model-selector-provider-index': activeIndex } as CSSProperties}
+      >
+        <span className="model-selector__provider-highlight" aria-hidden />
         {groups.map((group) => {
           const active = group.key === visibleGroup?.key
           return (
@@ -90,23 +100,24 @@ function ProviderModelList(props: {
         role="group"
         aria-label={visibleGroup ? `${visibleGroup.name} models` : 'Models'}
       >
+        <div className="model-selector__search-head">
+          <ModelSearchField
+            className="model-selector__search"
+            value={query}
+            label="Search models"
+            autoFocus
+            onChange={setQuery}
+            onNavigate={focusResult}
+          />
+        </div>
         {visibleGroup ? (
           <section className="model-selector__group">
-            <div className="model-selector__group-head">
-              <p className="model-selector__group-title">
-                <SourceIdentity
-                  presentation={{ label: visibleGroup.name, mark: visibleGroup.mark }}
-                />
-              </p>
-              <ModelSearchField
-                className="model-selector__search"
-                value={query}
-                label="Search models"
-                autoFocus
-                onChange={setQuery}
-                onNavigate={focusResult}
+            <p className="model-selector__group-title">
+              <SourceIdentity
+                presentation={{ label: visibleGroup.name, mark: visibleGroup.mark }}
+                density="compact"
               />
-            </div>
+            </p>
             {filteredEntries.length > 0 ? (
               filteredEntries.map((entry) => {
                 const selected = entry.key === props.selectedChoice?.key

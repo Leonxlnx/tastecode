@@ -213,16 +213,19 @@
   color: var(--effort-value);
 }
 
+/* A fixed height keeps the effort controls in place while providers switch;
+   a content-sized list moved them under the pointer. */
 .model-selector__catalog {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  max-height: min(246px, calc(100vh - 100px));
-  max-height: min(246px, calc(100dvh - 100px));
+  height: min(246px, calc(100vh - 100px));
+  height: min(246px, calc(100dvh - 100px));
   overflow: hidden;
 }
 
 .model-selector__providers {
+  position: relative;
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -236,6 +239,8 @@
 }
 
 .model-selector__provider {
+  position: relative;
+  z-index: 1;
   display: grid;
   width: 30px;
   height: 30px;
@@ -254,9 +259,23 @@
 }
 
 .model-selector__provider.is-active {
-  background: var(--model-picker-selected-bg);
-  box-shadow: var(--model-picker-selected-shadow);
   color: var(--text);
+}
+
+/* One highlight slides between the 30px buttons (2px apart) instead of each
+   button painting its own, so switching providers moves rather than blinks. */
+.model-selector__provider-highlight {
+  position: absolute;
+  top: 6px;
+  left: calc(50% - 15px);
+  width: 30px;
+  height: 30px;
+  background: var(--model-picker-selected-bg);
+  border-radius: var(--r-popup-item);
+  box-shadow: var(--model-picker-selected-shadow);
+  pointer-events: none;
+  transform: translateY(calc(var(--model-selector-provider-index) * 32px));
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .model-selector__provider:focus-visible {
@@ -285,12 +304,13 @@
   max-height: min(246px, 42dvh, calc(100dvh - 100px));
 }
 
-.model-selector__flat-head {
+.model-selector__flat-head,
+.model-selector__search-head {
   position: sticky;
   z-index: 2;
   top: -4px;
   padding: 4px 4px 3px;
-  background: var(--model-picker-bg);
+  background: var(--model-picker-title-bg);
 }
 
 .model-selector__models--flat .model-selector__group + .model-selector__group {
@@ -299,37 +319,19 @@
   padding-top: 4px;
 }
 
-.model-selector__models--flat .model-selector__group-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px 3px;
-}
-
 .model-selector__models--flat .model-selector__model {
   min-height: 28px;
   padding: 4px 8px;
 }
 
-.model-selector__group-head {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(104px, 140px);
+.model-selector__group-title {
+  display: flex;
   align-items: center;
   gap: 6px;
-  margin-inline: -4px;
-  min-height: 30px;
-  padding: 2px 8px 4px 12px;
-  background: var(--model-picker-title-bg);
-}
-
-.model-selector__group-title {
   min-width: 0;
   overflow: hidden;
   margin: 0;
-  padding: 0;
+  padding: 6px 8px 3px;
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 450;

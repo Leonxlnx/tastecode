@@ -470,8 +470,11 @@ describe('ModelSelector', () => {
         ?.getAttribute('title'),
     ).toBe('Codex')
 
+    const rail = screen.getByRole('group', { name: 'Providers' })
+    expect(rail.style.getPropertyValue('--model-selector-provider-index')).toBe('0')
     fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
 
+    expect(rail.style.getPropertyValue('--model-selector-provider-index')).toBe('1')
     expect(
       screen.getByRole('button', { name: 'Show Claude Code models' }).getAttribute('aria-pressed'),
     ).toBe('true')
