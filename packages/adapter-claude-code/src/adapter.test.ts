@@ -834,7 +834,7 @@ describe('Claude Agent SDK session', () => {
         id: 'fast',
         name: 'Fast',
         description: 'Faster output from the same model',
-        billingNote: 'Billed as extra usage',
+        billingNote: 'Fast mode is billed as extra usage',
       },
     ])
     expect(models.find((model) => model.id === 'sonnet')?.serviceTiers).toEqual([])

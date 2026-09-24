@@ -166,7 +166,7 @@ const FAST_TIER = {
   id: 'fast',
   name: 'Fast',
   description: 'Faster output from the same model',
-  billingNote: 'Billed as extra usage',
+  billingNote: 'Fast mode is billed as extra usage',
 } as const
 
 /** Why the CLI kept a fast-mode turn at standard speed, from the result frame. */
