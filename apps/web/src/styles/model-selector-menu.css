@@ -296,8 +296,8 @@
   padding: 4px;
 }
 
-/* Flat layout (the default): one scrolling list, providers as inline
-   headings — the provider-rail catalog is the Settings opt-in. */
+/* Flat layout: one scrolling list with providers as inline headings. The
+   provider rail is the default; Settings switches to this. */
 .model-selector__models--flat {
   height: auto;
   max-height: min(246px, 42vh, calc(100vh - 100px));

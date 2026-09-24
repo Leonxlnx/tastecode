@@ -339,7 +339,16 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
-  it('defaults to the flat list with inline provider headings', async () => {
+  it('defaults to the provider rail', async () => {
+    renderSelector()
+    await openSelector()
+
+    expect(screen.getByRole('group', { name: 'Providers' })).toBeTruthy()
+    expect(document.querySelector('.model-selector__models--flat')).toBeNull()
+  })
+
+  it('shows the flat list with inline provider headings when chosen', async () => {
+    localStorage.setItem('harness.modelPickerLayout', 'list')
     renderSelector()
     await openSelector()
 
@@ -353,6 +362,7 @@ describe('ModelSelector', () => {
   })
 
   it('searches every flat-list source without changing the selected model', async () => {
+    localStorage.setItem('harness.modelPickerLayout', 'list')
     const claude = {
       ...MODELS[0]!,
       key: 'claude-code:sonnet',

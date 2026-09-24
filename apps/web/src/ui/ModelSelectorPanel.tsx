@@ -148,7 +148,7 @@ function ProviderModelList(props: {
 }
 
 /** The original picker layout: one flat scrolling list, providers as inline
- *  section headings. Default; the provider-rail catalog is opt-in in Settings. */
+ *  section headings. Settings can switch to it from the provider rail. */
 function FlatModelList(props: {
   models: ModelChoice[]
   selectedChoice: ModelChoice | undefined

@@ -5059,6 +5059,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /Auto-approve/ }))
 
     fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show Grok models' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Use Grok 4.6 through Grok' }))
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
     await waitFor(() => {
@@ -5071,6 +5072,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /Full access/ }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show Codex models' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
     fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
 
