@@ -265,6 +265,46 @@ describe('ModelSelector', () => {
     expect(getFastModeOffValue(fastDefaultModel.model)).toBeUndefined()
   })
 
+  it('warns while a fast tier that bills outside the plan is on', async () => {
+    const opus: ModelChoice = {
+      key: 'claude-code:opus',
+      provider: 'claude-code',
+      sourceName: 'Claude Code',
+      mark: 'anthropic',
+      model: {
+        ...MODELS[0]!.model,
+        id: 'opus',
+        displayName: 'Claude Opus 5.5',
+        serviceTiers: [
+          {
+            id: 'fast',
+            name: 'Fast',
+            description: '',
+            billingNote: 'Fast mode is billed as extra usage',
+          },
+        ],
+        defaultServiceTier: null,
+      },
+    }
+    renderSelector({ models: [opus], modelId: opus.key, serviceTier: undefined })
+    await openSelector()
+    expect(screen.getByRole('button', { name: 'Enable fast mode' }).getAttribute('title')).toBe(
+      'Fast mode is billed as extra usage',
+    )
+    expect(document.querySelector('.model-selector__billing')).toBeNull()
+
+    cleanup()
+    renderSelector({ models: [opus], modelId: opus.key, serviceTier: 'fast' })
+    await openSelector()
+    expect(screen.getByRole('status').textContent).toBe('Fast mode is billed as extra usage')
+
+    cleanup()
+    renderSelector({ serviceTier: 'priority' })
+    await openSelector()
+    expect(screen.getByRole('button', { name: 'Disable fast mode' })).toBeTruthy()
+    expect(document.querySelector('.model-selector__billing')).toBeNull()
+  })
+
   it('uses pointer capture for the effort slider preview and commits on release', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 

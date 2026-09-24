@@ -81,6 +81,23 @@
   grid-column: 1;
 }
 
+/* Fast tiers billed outside the plan say so while they are on. Orange is the
+   composer's cost-and-risk color, as on the Full access permission. */
+.model-selector__billing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 0;
+  color: var(--composer-danger);
+  font-size: var(--t-xs);
+  font-weight: 450;
+}
+
+.model-selector__billing svg {
+  flex: none;
+}
+
 .model-selector__reset {
   display: inline-flex;
   align-items: center;

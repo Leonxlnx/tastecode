@@ -7,7 +7,12 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import { IconCheck as Check, IconRotate as RotateCcw, IconBolt as Zap } from '@tabler/icons-react'
+import {
+  IconAlertTriangle as AlertTriangle,
+  IconCheck as Check,
+  IconRotate as RotateCcw,
+  IconBolt as Zap,
+} from '@tabler/icons-react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
@@ -445,6 +450,8 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
     effortOptions.length > 1 && selectedEffort !== defaultEffort ? defaultEffort : undefined
   const fastTier = getFastServiceTier(model)
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
+  // The adapter that knows the billing supplies the note; shared UI only shows it.
+  const fastBillingNote = fastEnabled ? fastTier?.billingNote : undefined
   const displayedEffortIndex = previewEffortIndex ?? hoverEffortIndex ?? selectedEffortIndex
   // A drag commits on release, so only a hovered stop reads as a preview.
   const previewingHover =
@@ -492,6 +499,7 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
                 className={`model-selector__fast${fastEnabled ? ' is-on' : ''}`}
                 aria-label={fastEnabled ? 'Disable fast mode' : 'Enable fast mode'}
                 aria-pressed={fastEnabled}
+                title={fastTier.billingNote}
                 onClick={() =>
                   props.onServiceTierChange(fastEnabled ? getFastModeOffValue(model) : fastTier.id)
                 }
@@ -538,6 +546,13 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
               onHoverIndex={setHoverEffortIndex}
               onCommitIndex={commitEffortIndex}
             />
+          ) : null}
+
+          {fastBillingNote ? (
+            <p className="model-selector__billing" role="status">
+              <AlertTriangle size={13} aria-hidden />
+              {fastBillingNote}
+            </p>
           ) : null}
         </div>
       ) : null}

@@ -123,7 +123,7 @@ export function isFastModeEnabled(
 
 export function getFastServiceTier(
   model: ModelChoice['model'] | undefined,
-): { id: string; name: string; description: string } | undefined {
+): ModelChoice['model']['serviceTiers'][number] | undefined {
   return model?.serviceTiers.find((tier) => {
     const id = tier.id.trim().toLowerCase()
     const name = tier.name.trim().toLowerCase()
