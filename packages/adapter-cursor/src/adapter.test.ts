@@ -116,7 +116,7 @@ describe('Cursor adapter', () => {
     expect(adapter.capabilities).toEqual(CURSOR_CAPABILITIES)
   })
 
-  it('lists concrete account models without the automatic route', async () => {
+  it('lists every account model the CLI prints', async () => {
     const adapter = new CursorAdapter({
       run: async (command, args) => {
         expect([command, args]).toEqual(['cursor-agent', ['models']])
@@ -136,6 +136,13 @@ describe('Cursor adapter', () => {
     })
 
     await expect(adapter.listModels()).resolves.toEqual([
+      {
+        id: 'auto',
+        displayName: 'Automatic',
+        isDefault: false,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
       {
         id: 'composer-2.5',
         displayName: 'Composer 2.5 Fast',

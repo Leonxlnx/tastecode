@@ -1,17 +1,14 @@
 import type { Model } from '@harness/contracts'
 
 /**
- * Collapse cursor-agent's per-variant listing into base models.
+ * Map a base id plus effort/tier back onto a concrete `cursor-agent` id.
  *
- * The CLI advertises every effort/fast permutation as its own id
- * (`gpt-5.3-codex-high-fast`), which put forty-odd rows in the picker where
- * the user thinks of a dozen models. Effort belongs on the effort slider and
- * Fast on the service-tier toggle, like every other provider.
- *
- * The suffix grammar is not uniform — `xhigh` vs `extra-high`, `-thinking`
- * before or after the effort — so translation back to a concrete id is a
- * lookup into the listing we actually parsed, never string assembly. See
- * fixtures/cursor-models-2026-08-07.txt for the captured wire output.
+ * The picker lists every row `cursor-agent models` prints. Older selections
+ * stored the collapsed base id and put effort on the slider, and the CLI
+ * still wants the concrete id (`gpt-5.3-codex-high-fast`). The suffix grammar
+ * is not uniform — `xhigh` vs `extra-high`, `-thinking` before or after the
+ * effort — so that translation is a lookup into the listing we parsed, never
+ * string assembly. See fixtures/cursor-models-2026-08-07.txt.
  */
 
 export type RawCursorModel = { id: string; displayName: string; isDefault: boolean }

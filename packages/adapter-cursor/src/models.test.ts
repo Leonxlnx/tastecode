@@ -24,70 +24,79 @@ function rawIds(): Set<string> {
   return ids
 }
 
-describe('cursor model collapse', () => {
-  it('collapses effort and fast variants onto the slider and the tier toggle', () => {
+describe('cursor model catalog', () => {
+  it('lists every model the CLI exposes, including effort and fast variants', () => {
     const models = parseCursorModels(capture)
+    const listed = ['auto', ...rawIds()]
 
-    const codex = models.find((model) => model.id === 'gpt-5.3-codex')
-    expect(codex).toMatchObject({
-      displayName: 'Codex 5.3',
-      reasoningEfforts: ['low', 'default', 'high', 'xhigh'],
-      defaultReasoningEffort: 'default',
-      defaultServiceTier: 'standard',
+    expect(models.map((model) => model.id)).toEqual(listed)
+    expect(models.every((model) => model.reasoningEfforts.length === 0)).toBe(true)
+    expect(models.every((model) => model.serviceTiers.length === 0)).toBe(true)
+    expect(models.find((model) => model.id === 'gpt-5.3-codex-xhigh-fast')).toMatchObject({
+      displayName: 'Codex 5.3 Extra High Fast',
+      isDefault: false,
     })
-    expect(codex?.serviceTiers.map((tier) => tier.id)).toEqual(['standard', 'fast'])
-
-    // No variant row survives: every Fast/effort permutation merged.
-    expect(models.some((model) => model.displayName.includes('Extra High'))).toBe(false)
-    expect(models.some((model) => model.id.endsWith('-fast'))).toBe(false)
+    expect(models.find((model) => model.id === 'auto')).toMatchObject({
+      displayName: 'Auto',
+      isDefault: true,
+    })
   })
 
-  it('normalizes the extra-high spelling and keeps unpaired efforts honest', () => {
+  it('keeps the extra-high row and still resolves a legacy slider selection', () => {
     const models = parseCursorModels(capture)
-    const gpt55 = models.find((model) => model.displayName === 'GPT-5.5 1M')
-    expect(gpt55).toMatchObject({
-      id: 'gpt-5.5-medium',
-      reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'],
-      defaultReasoningEffort: 'medium',
+    expect(models.find((model) => model.id === 'gpt-5.5-extra-high')).toMatchObject({
+      displayName: 'GPT-5.5 1M Extra High',
     })
-    // gpt-5.5-extra-high-fast exists; resolution must find it under 'xhigh'.
+    expect(models.find((model) => model.id === 'gpt-5.5-medium')).toMatchObject({
+      displayName: 'GPT-5.5 1M',
+      reasoningEfforts: [],
+    })
+    // gpt-5.5-extra-high-fast exists; a stored base id plus xhigh/fast must find it.
     expect(resolveCursorModel(getCursorIndex(), 'gpt-5.5-medium', 'xhigh', 'fast')).toBe(
       'gpt-5.5-extra-high-fast',
     )
   })
 
-  it('keeps thinking modes as separate models regardless of suffix position', () => {
+  it('keeps thinking modes as their own rows regardless of suffix position', () => {
     const models = parseCursorModels(capture)
     expect(models.find((model) => model.id === 'claude-4.6-sonnet-medium')).toMatchObject({
       displayName: 'Sonnet 4.6 1M',
+      reasoningEfforts: [],
     })
     expect(models.find((model) => model.id === 'claude-4.6-sonnet-medium-thinking')).toMatchObject({
       displayName: 'Sonnet 4.6 1M Thinking',
     })
     expect(models.find((model) => model.id === 'claude-opus-5-thinking-high')).toMatchObject({
       displayName: 'Opus 5 1M Thinking',
-      reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
-      defaultReasoningEffort: 'high',
+      reasoningEfforts: [],
+    })
+    expect(models.find((model) => model.id === 'claude-opus-5-thinking-xhigh')).toMatchObject({
+      displayName: 'Opus 5 1M Extra High Thinking',
     })
   })
 
-  it('names the base after the variant the vendor leaves unmarked', () => {
+  it('keeps the vendor display name on every variant', () => {
     const models = parseCursorModels(capture)
     expect(models.find((model) => model.id === 'kimi-k3-max')).toMatchObject({
       displayName: 'Kimi K3',
-      reasoningEfforts: ['low', 'high', 'max'],
-      defaultReasoningEffort: 'max',
+      reasoningEfforts: [],
       serviceTiers: [],
+    })
+    expect(models.find((model) => model.id === 'kimi-k3-low')).toMatchObject({
+      displayName: 'Kimi K3 Low',
     })
     expect(models.find((model) => model.id === 'cursor-grok-4.5-high')).toMatchObject({
       displayName: 'Cursor Grok 4.5',
-      defaultReasoningEffort: 'high',
+    })
+    expect(models.find((model) => model.id === 'cursor-grok-4.5-low')).toMatchObject({
+      displayName: 'Cursor Grok 4.5 Low',
     })
   })
 
   it('resolves every offered combination to an id the CLI actually listed', () => {
     const models = parseCursorModels(capture)
     const listed = rawIds()
+    listed.add('auto')
     const index = getCursorIndex()
     for (const model of models) {
       const efforts = model.reasoningEfforts.length ? model.reasoningEfforts : [undefined]
@@ -116,9 +125,12 @@ describe('cursor model collapse', () => {
     expect(resolveCursorModel(getCursorIndex(), 'not-a-model', 'high', 'fast')).toBe('not-a-model')
   })
 
-  it('still drops the automatic route and single models keep their names', () => {
+  it('keeps the automatic route and single models keep their names', () => {
     const models = parseCursorModels(capture)
-    expect(models.some((model) => model.id === 'auto')).toBe(false)
+    expect(models.find((model) => model.id === 'auto')).toMatchObject({
+      displayName: 'Auto',
+      isDefault: true,
+    })
     expect(models.find((model) => model.id === 'kimi-k2.7-code')).toMatchObject({
       displayName: 'Kimi K2.7 Code',
       reasoningEfforts: [],
