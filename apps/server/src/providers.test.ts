@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { codexInstallCommand } from '@harness/adapter-codex/updates'
+import { cursorInstallCommand } from '@harness/adapter-cursor/updates'
 import {
   detectProviders,
   installCommandFor,
@@ -47,7 +48,7 @@ describe('detectProviders', () => {
     const second = detectProviders(sharedSystem)
     expect(first).toBe(second)
     await Promise.resolve()
-    expect(installedChecks).toBe(3)
+    expect(installedChecks).toBe(4)
 
     release()
     await Promise.all([first, second])
@@ -65,11 +66,11 @@ describe('detectProviders', () => {
     const prewarmed = prewarmProviders(sharedSystem)
     expect(prewarmProviders(sharedSystem)).toBe(prewarmed)
     await prewarmed
-    expect(installedChecks).toBe(3)
+    expect(installedChecks).toBe(4)
 
     expect(detectProviders(sharedSystem)).toBe(prewarmed)
     await detectProviders(sharedSystem)
-    expect(installedChecks).toBe(6)
+    expect(installedChecks).toBe(8)
   })
 
   it('refreshes a prewarmed scan that waited too long for its first reader', async () => {
@@ -87,7 +88,7 @@ describe('detectProviders', () => {
     vi.setSystemTime(30_001)
     await detectProviders(sharedSystem)
 
-    expect(installedChecks).toBe(6)
+    expect(installedChecks).toBe(8)
   })
 
   it('reports an installed provider with the version it gave us', async () => {
@@ -126,6 +127,9 @@ describe('detectProviders', () => {
       'https://code.claude.com/docs/en/getting-started',
     )
     expect(find(providers, 'grok').setup?.installUrl).toBe('https://x.ai/cli')
+    expect(find(providers, 'cursor').setup?.installUrl).toBe('https://cursor.com/docs/cli/overview')
+    expect(find(providers, 'cursor').setup?.login).toBe('provider')
+    expect(find(providers, 'cursor').setup?.loginOpensBrowser).toBe(true)
   })
 
   it('omits the version when the binary would not say', async () => {
@@ -155,12 +159,30 @@ describe('detectProviders', () => {
 
     expect(find(providers, 'codex').auth).toBe('authenticated')
     expect(find(providers, 'claude-code').auth).toBe('unknown')
+    expect(find(providers, 'cursor').auth).toBe('unknown')
+  })
+
+  it('reports Cursor login state from cursor-agent status', async () => {
+    const providers = await detectProviders(
+      system({
+        isInstalled: async (command) => command === 'cursor-agent',
+        auth: async (provider) => (provider === 'cursor' ? 'authenticated' : 'unknown'),
+      }),
+    )
+
+    expect(find(providers, 'cursor').installed).toBe(true)
+    expect(find(providers, 'cursor').auth).toBe('authenticated')
   })
 
   it('reports every provider we know about, installed or not', async () => {
     const providers = await detectProviders(system())
 
-    expect(providers.map((entry) => entry.id).sort()).toEqual(['claude-code', 'codex', 'grok'])
+    expect(providers.map((entry) => entry.id).sort()).toEqual([
+      'claude-code',
+      'codex',
+      'cursor',
+      'grok',
+    ])
   })
 })
 
@@ -179,6 +201,7 @@ describe('install command resolution', () => {
     await expect(installCommandFor('claude-code')).resolves.toBe(
       'npm install -g @anthropic-ai/claude-code',
     )
+    await expect(installCommandFor('cursor')).resolves.toBe(cursorInstallCommand())
     await expect(installCommandFor('acp', 'gemini')).resolves.toBe(
       'npm install -g @google/gemini-cli',
     )
@@ -200,6 +223,7 @@ describe('sign-in launch command resolution', () => {
     await expect(launchCommandFor('codex')).resolves.toBe('codex login')
     await expect(launchCommandFor('claude-code')).resolves.toBe('claude auth login')
     await expect(launchCommandFor('grok')).resolves.toBe('grok login')
+    await expect(launchCommandFor('cursor')).resolves.toBe('cursor-agent login')
   })
 
   it('refuses unknown launch targets', async () => {

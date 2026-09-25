@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, readNdjson, runCli, spawnCli } from '@harness/proc'
+import { CURSOR_CAPABILITIES } from './capabilities.js'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
 import {
   collapseCursorModels,
@@ -13,14 +14,7 @@ import {
 
 export const CURSOR_SUPPORTED_VERSION = '2026.07'
 
-export const CURSOR_CAPABILITIES: Capabilities = {
-  steer: false,
-  fork: false,
-  interrupt: true,
-  reasoningItems: false,
-  approvals: false,
-  images: false,
-}
+export { CURSOR_CAPABILITIES }
 
 type Events = { event: [DomainEvent]; log: [string] }
 type StartOptions = {
