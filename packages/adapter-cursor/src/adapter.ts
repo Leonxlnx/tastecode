@@ -262,6 +262,16 @@ export class CursorAdapter extends EventEmitter<Events> {
 const ANSI = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g
 
 /**
+ * PowerShell 5.1 pipes a native command's stdout as UTF-16 LE. Read as UTF-8,
+ * that is ASCII with NUL bytes between letters, and the catalog header never
+ * matches.
+ */
+function decodeCursorModelsOutput(output: string): string {
+  const text = output.replace(/^\uFEFF/, '')
+  return (text.includes('\0') ? text.replace(/\0/g, '') : text).replace(ANSI, '')
+}
+
+/**
  * Every account row printed by `cursor-agent models`.
  *
  * Codex and Grok each put one picker row on every model their signed-in
@@ -273,9 +283,9 @@ const ANSI = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g
 export function parseCursorModels(output: string): Model[] {
   const raw: RawCursorModel[] = []
   let readingModels = false
-  for (const rawLine of output.replace(ANSI, '').split(/\r\n|\n|\r/)) {
+  for (const rawLine of decodeCursorModelsOutput(output).split(/\r\n|\n|\r/)) {
     const line = rawLine.trim()
-    if (line === 'Available models') {
+    if (/^available models:?$/i.test(line)) {
       readingModels = true
       continue
     }

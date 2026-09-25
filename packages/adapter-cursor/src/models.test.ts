@@ -125,6 +125,20 @@ describe('cursor model catalog', () => {
     expect(resolveCursorModel(getCursorIndex(), 'not-a-model', 'high', 'fast')).toBe('not-a-model')
   })
 
+  it('reads a PowerShell UTF-16 catalog as the same rows', () => {
+    const output = 'Available models\n\ncomposer-2.5 - Composer 2.5 (default)\n'
+    const utf16 = [...output].map((char) => `${char}\0`).join('')
+    expect(parseCursorModels(`\uFEFF${utf16}`)).toEqual([
+      {
+        id: 'composer-2.5',
+        displayName: 'Composer 2.5',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    ])
+  })
+
   it('keeps the automatic route and single models keep their names', () => {
     const models = parseCursorModels(capture)
     expect(models.find((model) => model.id === 'auto')).toMatchObject({

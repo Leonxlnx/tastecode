@@ -1483,7 +1483,9 @@ describe('provider settings', () => {
     // Beta scope: agent rows never render, even when the server reports one.
     expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
-    expect(onConnectionsChanged).not.toHaveBeenCalled()
+    // One refresh loads the signed-in provider into the Models tab. The latch
+    // on the row keeps a re-render from asking again.
+    expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
   })
 
   it('closes failed details and lets Settings cancel a new sign-in', async () => {

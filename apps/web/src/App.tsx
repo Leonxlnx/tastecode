@@ -3350,10 +3350,11 @@ export function App() {
       return
     }
     if (!succeeded) return
-    if (completed.operation === 'install') {
-      refreshCatalog()
-      return
-    }
+    // Install and sign-in both change which models the Models tab can list.
+    // Sign-in used to refresh only the account row, so a signed-in Cursor
+    // stayed out of that tab until the next full reload.
+    refreshCatalog()
+    if (completed.operation === 'install') return
     const completedProvider = completed.provider
     if (!completedProvider) return
     setProviderAuthRefreshRevision((revision) => revision + 1)

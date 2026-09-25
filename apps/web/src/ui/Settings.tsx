@@ -679,9 +679,12 @@ export function ProviderSettings(props: {
         ...current,
         [event.provider]: event.success ? undefined : (event.error ?? 'Sign-in was cancelled.'),
       }))
-      if (event.success) void refreshAccount(event.provider, true)
+      if (event.success) {
+        void refreshAccount(event.provider, true)
+        props.onConnectionsChanged()
+      }
     },
-    [refreshAccount, updateOperation],
+    [props.onConnectionsChanged, refreshAccount, updateOperation],
   )
 
   useEffect(() => {
@@ -692,7 +695,10 @@ export function ProviderSettings(props: {
       if (event.agent) return
       const operation = operations.current[event.provider]
       if (!operation) {
-        if (event.success) void refreshAccount(event.provider, true)
+        if (event.success) {
+          void refreshAccount(event.provider, true)
+          props.onConnectionsChanged()
+        }
         return
       }
       if (operation.kind !== 'sign-in' || operation.transport !== props.transport) return
@@ -711,7 +717,14 @@ export function ProviderSettings(props: {
         delete statusRequests.current[provider]
       }
     }
-  }, [props.transport, props.authRefreshRevision, authProviderKey, completeLogin, refreshAccount])
+  }, [
+    props.transport,
+    props.authRefreshRevision,
+    props.onConnectionsChanged,
+    authProviderKey,
+    completeLogin,
+    refreshAccount,
+  ])
 
   useEffect(() => {
     operations.current = {}
@@ -813,7 +826,10 @@ export function ProviderSettings(props: {
           provider={status}
           target={{ provider: status.id }}
           transport={props.transport}
-          onSignedIn={() => void refreshAccount(status.id, true)}
+          onSignedIn={() => {
+            void refreshAccount(status.id, true)
+            props.onConnectionsChanged()
+          }}
           onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
         />
       )
