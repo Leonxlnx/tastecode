@@ -195,7 +195,7 @@ const PROVIDER_IDS = [
   'api',
 ] as const satisfies readonly ProviderId[]
 const PROVIDER_ID_SET = new Set<ProviderId>(PROVIDER_IDS)
-const PUBLIC_BETA_PROVIDER_IDS = new Set<ProviderId>(['codex', 'claude-code', 'grok'])
+const PUBLIC_BETA_PROVIDER_IDS = new Set<ProviderId>(['codex', 'claude-code', 'grok', 'cursor'])
 /** Engines a custom model can be attached to — ACP agents and API
  *  connections carry their own roster concepts and stay out of this list. */
 const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api' && id !== 'pi')
@@ -1706,9 +1706,9 @@ export function App() {
         }),
       )
       const [direct, customSources] = await Promise.all([directPromise, customSourcesPromise])
-      // Public beta scope: the picker holds only the three direct plans the
-      // server lists. Explicit custom harnesses remain eligible because the
-      // user configured those sources directly; parked built-ins stay hidden.
+      // Public beta scope: the picker holds the direct plans the server lists.
+      // Explicit custom harnesses remain eligible because the user configured
+      // those sources directly; parked built-ins stay hidden.
       if (cancelled) return
       const directCatalog = direct.flatMap((entry) => entry.models)
       const publicDiscoveries = direct.filter((entry) =>

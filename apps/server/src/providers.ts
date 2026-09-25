@@ -1,8 +1,11 @@
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
+import { cursorLoginStatus } from '@harness/adapter-cursor/auth'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
+import { CURSOR_CAPABILITIES } from '@harness/adapter-cursor/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import { CODEX_UPDATES, codexInstallCommand } from '@harness/adapter-codex/updates'
+import { cursorInstallCommand } from '@harness/adapter-cursor/updates'
 import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
 import { GROK_UPDATES } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
@@ -15,8 +18,8 @@ import { commandVersion, isInstalled } from '@harness/proc/cli'
  * Detection is by looking for the binary and asking it its version. We never
  * inspect a credential file to decide whether someone is signed in — that is
  * the line in rules/security.md, and it is why `auth` is mostly `unknown` here.
- * The one provider that can tell us is Codex, which answers over its own
- * protocol, and that answer is fetched on demand rather than on every listing.
+ * Codex answers over its own protocol and Cursor answers `cursor-agent status`.
+ * Both report that public status during detection; credential files stay unread.
  *
  * A provider we have not built stays in the list with a `problem` explaining
  * why. Silently omitting it would leave the user unable to tell "not supported"
@@ -80,13 +83,25 @@ const PROBES: Probe[] = [
     // Device flow in the CLI's own terminal, same shape as `kimi login`.
     loginCommand: 'grok login',
   },
+  {
+    id: 'cursor',
+    displayName: 'Cursor',
+    command: 'cursor-agent',
+    capabilities: CURSOR_CAPABILITIES,
+    setup: {
+      installUrl: 'https://cursor.com/docs/cli/overview',
+      installCommand: cursorInstallCommand(),
+      login: 'provider',
+      loginOpensBrowser: true,
+    },
+    loginCommand: 'cursor-agent login',
+  },
 ]
 
 /**
- * The public beta ships exactly three subscription plans: Codex, Claude Code
- * and Grok (Leon's release scope, 2026-08-07). The Cursor, OpenCode,
- * Antigravity and ACP adapters stay in the repo fully working and return to
- * this roster after the beta — docs/dashboard.html tracks that list.
+ * The public beta ships Codex, Claude Code, Grok, and Cursor sign-in.
+ * OpenCode, Antigravity, and ACP stay in the repo and return to this roster
+ * after the beta — docs/dashboard.html tracks that list.
  */
 
 /**
@@ -105,8 +120,11 @@ export type SystemProbe = {
 const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
-  auth: (provider) =>
-    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+  auth: (provider) => {
+    if (provider === 'codex') return codexLoginStatus()
+    if (provider === 'cursor') return cursorLoginStatus()
+    return Promise.resolve<ProviderStatus['auth']>('unknown')
+  },
 }
 
 export function providerUpdateSources() {

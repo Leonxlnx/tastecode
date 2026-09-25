@@ -1,10 +1,26 @@
 import type { Account } from '@harness/contracts'
 import { killTree, runCli, spawnCli } from '@harness/proc'
 
-export async function cursorAccount(): Promise<Account> {
-  const result = await runCli('cursor-agent', ['status'])
+export type CursorAccountOptions = {
+  run?: typeof runCli
+}
+
+export type CursorAuthStatus = 'authenticated' | 'unauthenticated' | 'unknown'
+
+export async function cursorAccount(options: CursorAccountOptions = {}): Promise<Account> {
+  const result = await (options.run ?? runCli)('cursor-agent', ['status'])
   if (result.code !== 0) return { signedIn: false }
   return { signedIn: isCursorSignedIn(result.stdout) }
+}
+
+/** Ask `cursor-agent status`. A missing binary stays unknown; a real answer does not. */
+export async function cursorLoginStatus(run: typeof runCli = runCli): Promise<CursorAuthStatus> {
+  try {
+    const account = await cursorAccount({ run })
+    return account.signedIn ? 'authenticated' : 'unauthenticated'
+  } catch {
+    return 'unknown'
+  }
 }
 
 export function isCursorSignedIn(output: string): boolean {

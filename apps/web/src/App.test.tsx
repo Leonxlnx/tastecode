@@ -1762,7 +1762,7 @@ describe('web client', () => {
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method !== 'models.list') return request(method, params)
       const input = methods['models.list'].params.parse(params)
-      if (!['codex', 'claude-code', 'grok'].includes(input.provider)) {
+      if (!['codex', 'claude-code', 'grok', 'cursor'].includes(input.provider)) {
         return parkedProviderRequest
       }
       return Promise.resolve({
@@ -1788,7 +1788,7 @@ describe('web client', () => {
       const input = methods['models.list'].params.parse(params)
       return input.agent === undefined ? [input.provider] : []
     })
-    expect(directProviders).toEqual(['codex', 'claude-code', 'grok'])
+    expect(directProviders).toEqual(['codex', 'claude-code', 'grok', 'cursor'])
   })
 
   it('publishes the model catalog without waiting for the connection store', async () => {
