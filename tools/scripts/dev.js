@@ -268,10 +268,28 @@ async function shutdown(exitCode = 0) {
   process.exit(exitCode)
 }
 
+async function buildWorkspacePackages() {
+  // Package exports point at dist/, which is gitignored. Vite and the desktop
+  // typecheck resolve those files as soon as they start, before the server's
+  // own tsc -b would have emitted them.
+  console.log('[dev] building workspace packages')
+  const args = ['exec', 'tsc', '-b', 'apps/server']
+  const command = isWin ? 'cmd.exe' : 'pnpm'
+  const commandArgs = isWin ? ['/d', '/s', '/c', 'pnpm', ...args] : args
+  try {
+    await execFileAsync(command, commandArgs, { cwd: root, stdio: 'inherit' })
+  } catch (error) {
+    const status = typeof error?.status === 'number' ? error.status : 1
+    console.error('[dev] workspace build failed')
+    process.exit(status)
+  }
+}
+
 process.on('SIGINT', () => void shutdown(0))
 process.on('SIGTERM', () => void shutdown(0))
 
 await clearDevPorts()
+await buildWorkspacePackages()
 
 run('server', 'apps/server', ['run', 'dev'])
 run('web', 'apps/web', ['run', 'dev'])
