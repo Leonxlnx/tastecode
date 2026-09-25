@@ -53,6 +53,7 @@ The harness is `drive.mjs`. It talks to the Electron page over CDP and clicks by
 
 ```text
 node .cursor/skills/verify-tastecode/scripts/drive.mjs click --name "Begin setup"
+node .cursor/skills/verify-tastecode/scripts/drive.mjs click --name "Install" --row "Cursor"
 node .cursor/skills/verify-tastecode/scripts/drive.mjs fill --label "Your name" --value "Verify Ada"
 node .cursor/skills/verify-tastecode/scripts/drive.mjs wait-text --text "Pick your look"
 node .cursor/skills/verify-tastecode/scripts/drive.mjs snapshot --path "$VERIFY_TASTECODE_EVIDENCE/onboarding/appearance.aria.txt"

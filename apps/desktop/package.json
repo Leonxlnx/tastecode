@@ -3,6 +3,8 @@
   "productName": "Taste Code",
   "description": "A local desktop workspace for coding agents.",
   "author": "Tasteskill Team",
+  "homepage": "https://github.com/Leonxlnx/tastecode",
+  "desktopName": "tastecode.desktop",
   "copyright": "made by @blueemi99 and @lexnlin on X :)",
   "version": "0.1.2",
   "private": true,
@@ -138,6 +140,31 @@
     },
     "dmg": {
       "format": "UDZO"
+    },
+    "rpm": {
+      "packageName": "tastecode"
+    },
+    "linux": {
+      "icon": "assets/tastecode-app-icon.png",
+      "category": "Development",
+      "synopsis": "A local desktop workspace for coding agents.",
+      "maintainer": "Tasteskill Team",
+      "executableName": "tastecode",
+      "syncDesktopName": true,
+      "target": [
+        {
+          "target": "rpm",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "mac": {
       "icon": "assets/tastecode-icon.icon",

@@ -23,7 +23,7 @@ const flags = parseFlags(process.argv.slice(3))
 try {
   if (command === 'launch') await launch()
   else if (command === 'doctor') await doctor()
-  else if (command === 'click') await click(required(flags, 'name'))
+  else if (command === 'click') await click(required(flags, 'name'), flags.row)
   else if (command === 'fill') await fill(required(flags, 'label'), required(flags, 'value'))
   else if (command === 'wait-text') await waitForText(required(flags, 'text'))
   else if (command === 'snapshot') await snapshot(required(flags, 'path'))
@@ -254,15 +254,29 @@ async function evaluate(expression) {
   })
 }
 
-async function click(name) {
+async function click(name, row) {
   const found = await evaluate(`(() => {
     const wanted = ${JSON.stringify(name)}
+    const rowName = ${JSON.stringify(row ?? '')}
     const nodes = [...document.querySelectorAll('button,[role="button"]')]
     const labelOf = (node) =>
       (node.getAttribute('aria-label') || node.innerText || '').replace(/\\s+/g, ' ').trim()
+    const inRow = (node) => {
+      if (!rowName) return true
+      let parent = node.parentElement
+      for (let depth = 0; depth < 8 && parent; depth += 1) {
+        const title = parent.querySelector?.('.settings__row-title')
+        const titleText = (title?.textContent || '').replace(/\\s+/g, ' ').trim()
+        const text = (parent.innerText || '').replace(/\\s+/g, ' ').trim()
+        if (titleText === rowName && text.length < 500) return true
+        parent = parent.parentElement
+      }
+      return false
+    }
     const el = nodes.find((node) => {
       const label = labelOf(node)
-      return label === wanted || label.startsWith(wanted + ' ') || label.startsWith(wanted)
+      const named = label === wanted || label.startsWith(wanted + ' ') || label.startsWith(wanted)
+      return named && inRow(node)
     })
     if (!el) return { ok: false, labels: nodes.map(labelOf).filter(Boolean).slice(0, 40) }
     el.scrollIntoView({ block: 'center', inline: 'center' })

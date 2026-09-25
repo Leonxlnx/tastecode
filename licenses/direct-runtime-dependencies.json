@@ -254,6 +254,14 @@
       "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
     },
     {
+      "name": "@napi-rs/keyring-linux-x64-gnu",
+      "version": "1.3.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/napi-keyring-linux-x64-gnu-1.3.0-MIT.txt",
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
+    },
+    {
       "name": "@electron-internal/extract-zip",
       "version": "1.0.4",
       "license": "BSD-2-Clause",
