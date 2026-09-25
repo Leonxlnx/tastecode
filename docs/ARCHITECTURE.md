@@ -169,8 +169,10 @@ directory, and non-secret environment overrides in
 `~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
 never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
 desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
-adds conventional user locations such as `~/.local/bin`, Homebrew's prefix, and
-`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Codex's adapter
+adds conventional user locations such as `~/.local/bin`, Homebrew's prefix,
+`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin`, and `%LOCALAPPDATA%/cursor-agent`
+rather than sourcing `.zshrc`. The Cursor CLI installer only updates the User
+PATH registry, so a running desktop still has to search that directory itself. Codex's adapter
 owns its official standalone install command, so fresh desktops do not need npm to install
 their first provider. The server allowlists that same command for guided setup. When a mod boots
 from its own directory,

@@ -76,6 +76,8 @@ function extraDirectories(
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'pnpm') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin') : undefined,
+      // cursor.com's Windows installer writes cursor-agent.cmd here and only updates User PATH.
+      env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'cursor-agent') : undefined,
       ...userBins,
       join(home, 'scoop', 'shims'),
       env.ProgramData ? join(env.ProgramData, 'chocolatey', 'bin') : undefined,
