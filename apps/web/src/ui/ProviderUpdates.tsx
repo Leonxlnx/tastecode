@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
-import type { ProviderUpdate } from '@harness/contracts'
+import type { ProviderId, ProviderUpdate } from '@harness/contracts'
 import {
   IconArrowUp as ArrowUp,
   IconArrowUpRight as ArrowUpRight,
@@ -40,6 +40,23 @@ function isBusy(operation: UpdateOperation | undefined) {
   )
 }
 
+/** An update dismissed while it runs keeps running out of sight; only a
+ *  failure needs the user again. Reopening the notice lifts that hold. */
+function isDismissed(
+  operation: UpdateOperation,
+  dismissed: UpdateOperation | undefined,
+  reopened: boolean,
+) {
+  if (!dismissed) return false
+  if (dismissed === operation) return true
+  return (
+    !reopened &&
+    dismissed.run === operation.run &&
+    isBusy(dismissed) &&
+    operation.phase !== 'failed'
+  )
+}
+
 export function ProviderUpdateNotice(props: {
   transport: Transport
   onUpdated: () => void
@@ -47,7 +64,9 @@ export function ProviderUpdateNotice(props: {
 }) {
   const { store, state } = useProviderUpdates(props.transport)
   const [dismissed, setDismissed] = useState(readDismissed)
-  const [dismissedOperations, setDismissedOperations] = useState<UpdateOperation[]>([])
+  const [dismissedOperations, setDismissedOperations] = useState<
+    Partial<Record<ProviderId, UpdateOperation>>
+  >({})
   const [dismissedRevision, setDismissedRevision] = useState(state.noticeRevision)
   const notified = useRef(new WeakSet<UpdateOperation>())
   const { onUpdated } = props
@@ -60,14 +79,14 @@ export function ProviderUpdateNotice(props: {
       }
     }
   }, [state.operations, onUpdated])
+  const reopened = state.noticeRevision !== dismissedRevision
   const entries = state.updates.filter((entry) => {
     const operation = state.operations[entry.provider]
-    if (isBusy(operation)) return true
-    if (operation && !dismissedOperations.includes(operation)) return true
+    if (operation && !isDismissed(operation, dismissedOperations[entry.provider], reopened))
+      return true
     return (
       entry.updateAvailable &&
-      (state.noticeRevision !== dismissedRevision ||
-        (!operation && dismissed[entry.provider] !== entry.latestVersion))
+      (reopened || (!operation && dismissed[entry.provider] !== entry.latestVersion))
     )
   })
   const busy = entries.some((entry) => isBusy(state.operations[entry.provider]))
@@ -75,7 +94,7 @@ export function ProviderUpdateNotice(props: {
     const next = { ...dismissed }
     for (const entry of entries) if (entry.latestVersion) next[entry.provider] = entry.latestVersion
     setDismissed(next)
-    setDismissedOperations(Object.values(state.operations))
+    setDismissedOperations(state.operations)
     setDismissedRevision(state.noticeRevision)
     try {
       localStorage.setItem(DISMISSED_KEY, JSON.stringify(next))
@@ -107,7 +126,6 @@ export function ProviderUpdateNotice(props: {
           className="ghost icon-button"
           type="button"
           aria-label="Dismiss provider updates"
-          disabled={busy}
           onClick={dismiss}
         >
           <X size={14} aria-hidden />

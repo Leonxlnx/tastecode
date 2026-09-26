@@ -47,9 +47,6 @@ describe('provider update toast', () => {
     fireEvent.click(await notice.findByRole('button', { name: 'Update' }))
     expect(await screen.findByText('Updating…')).toBeTruthy()
     expect(
-      screen.getByRole('button', { name: 'Dismiss provider updates' }).hasAttribute('disabled'),
-    ).toBe(true)
-    expect(
       transport.requests.filter((request) => request.method === 'providers.update'),
     ).toHaveLength(1)
     updated = true
@@ -62,6 +59,85 @@ describe('provider update toast', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
     finishNoticeExit(view.container)
     expect(screen.queryByText('Updated to 0.11.0')).toBeNull()
+  })
+
+  it('dismisses an update in progress and lets it finish out of sight', async () => {
+    let updated = false
+    const onUpdated = vi.fn()
+    const transport = new TestTransport((method) =>
+      method === 'providers.update'
+        ? { terminalId: 'update' }
+        : {
+            updates: [
+              {
+                ...available,
+                updateAvailable: !updated,
+                currentVersion: updated ? '0.11.0' : '0.9.0',
+              },
+            ],
+          },
+    )
+    const view = render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
+    await screen.findByText('Updating…')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
+    finishNoticeExit(view.container)
+    expect(view.container.querySelector('.notice')).toBeNull()
+    updated = true
+    act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
+    await waitFor(() => expect(onUpdated).toHaveBeenCalledOnce())
+    expect(view.container.querySelector('.notice')).toBeNull()
+  })
+
+  it('brings a dismissed update back when it fails', async () => {
+    const transport = new TestTransport((method) =>
+      method === 'providers.update' ? { terminalId: 'update' } : { updates: [available] },
+    )
+    const view = render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
+    await screen.findByText('Updating…')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
+    finishNoticeExit(view.container)
+    expect(view.container.querySelector('.notice')).toBeNull()
+    act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 }))
+    expect(await screen.findByRole('alert')).toHaveProperty(
+      'textContent',
+      'Update failed. Open details and try again.',
+    )
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+
+  it('reopens a dismissed update in progress from the Providers footer', async () => {
+    let updated = false
+    const transport = new TestTransport((method) =>
+      method === 'providers.update'
+        ? { terminalId: 'update' }
+        : {
+            updates: [
+              {
+                ...available,
+                updateAvailable: !updated,
+                currentVersion: updated ? '0.11.0' : '0.9.0',
+              },
+            ],
+          },
+    )
+    const view = render(
+      <>
+        <ProviderUpdateCheck transport={transport} />
+        <ProviderUpdateNotice transport={transport} onUpdated={() => {}} />
+      </>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
+    await screen.findByText('Updating…')
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
+    finishNoticeExit(view.container)
+    expect(screen.queryByText('Updating…')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Update in progress' }))
+    expect(await screen.findByText('Updating…')).toBeTruthy()
+    updated = true
+    act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
+    expect(await screen.findByText('Updated to 0.11.0')).toBeTruthy()
   })
 
   it('keeps progress and success when the provider settings panel closes', async () => {
