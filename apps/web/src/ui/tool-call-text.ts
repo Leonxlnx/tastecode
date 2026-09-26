@@ -24,23 +24,40 @@ export function parseToolCall(text: string | undefined): ToolCall {
 
   const inline = firstLine.search(/\s[[{]/)
   if (inline > 0) {
-    const output = `${firstLine.slice(inline + 1)}\n${rest}`.trim()
-    return {
-      name: firstLine.slice(0, inline).trim(),
-      args: undefined,
-      output: readableOutput(output),
-    }
+    return withLazyOutput(firstLine.slice(0, inline).trim(), undefined, () =>
+      readableOutput(`${firstLine.slice(inline + 1)}\n${rest}`.trim()),
+    )
   }
 
-  const trimmed = rest.replace(/^\s+/, '')
+  const start = rest.search(/\S/)
+  const trimmed = start === -1 ? '' : rest.slice(start)
   const json =
     trimmed.startsWith('{') || trimmed.startsWith('[') ? readJsonValue(trimmed) : undefined
   const args = json?.value
-  const output = (json ? trimmed.slice(json.end) : rest).trim()
+  return withLazyOutput(firstLine, isRecord(args) || Array.isArray(args) ? args : undefined, () => {
+    const output = (json ? trimmed.slice(json.end) : rest).trim()
+    return output ? readableOutput(output) : undefined
+  })
+}
+
+/**
+ * Rows read a tool's name and arguments on every render; only an open detail
+ * reads its output. A tool that returned a screenshot as JSON made each name
+ * lookup parse hundreds of kilobytes.
+ */
+function withLazyOutput(
+  name: string,
+  args: ToolCall['args'],
+  readOutput: () => string | undefined,
+): ToolCall {
+  let output: { value: string | undefined } | undefined
   return {
-    name: firstLine,
-    args: isRecord(args) || Array.isArray(args) ? args : undefined,
-    output: output ? readableOutput(output) : undefined,
+    name,
+    args,
+    get output() {
+      output ??= { value: readOutput() }
+      return output.value
+    },
   }
 }
 

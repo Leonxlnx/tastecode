@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   parseToolCall,
   readableToolJson,
@@ -56,6 +56,21 @@ describe('tool call text', () => {
     )
     expect(readableToolJson({ count: 3, ok: true })).toBe('count: 3\nok: true')
     expect(readableToolJson([1, 2, 3])).toBeUndefined()
+  })
+
+  it('reads the name and arguments without parsing the output until it is used', () => {
+    const screenshot = JSON.stringify({ type: 'image', data: 'iVBORw0KGgo'.repeat(50_000) })
+    const call = parseToolCall(`node_repl.js\n{"code":"crop()"}\n${screenshot}`)
+    const parse = vi.spyOn(JSON, 'parse')
+
+    expect(call.name).toBe('node_repl.js')
+    expect(call.args).toEqual({ code: 'crop()' })
+    expect(parse).not.toHaveBeenCalled()
+
+    expect(call.output).toContain('type: image')
+    expect(call.output).toContain('type: image')
+    expect(parse).toHaveBeenCalledTimes(1)
+    parse.mockRestore()
   })
 
   it('picks the argument a reader wants beside the tool name', () => {
