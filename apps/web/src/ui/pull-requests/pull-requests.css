@@ -469,9 +469,24 @@
   color: var(--text);
 }
 
+.pr-list-note .pr-list-note-dismiss {
+  display: grid;
+  place-items: center;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border-radius: var(--r-md);
+  color: inherit;
+}
+
 .pr-list-scroll:has(> .pr-list-message) {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+}
+
+.pr-list-scroll:has(> .pr-list-note.is-error + .pr-list-message) {
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .pr-detail-empty,

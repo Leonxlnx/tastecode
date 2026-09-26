@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { PullRequestListResult } from '@harness/contracts'
 import { resetInstalls } from '../../provider-install.js'
 import { TestTransport } from '../../test-transport.js'
@@ -100,6 +100,20 @@ function pullRequestTransport(): TestTransport {
   })
 }
 
+/** Lists that answer in order: an Error entry rejects, anything else resolves. */
+function scriptedListTransport(...replies: Array<PullRequestListResult | Error>): TestTransport {
+  return new TestTransport(async (method) => {
+    if (method !== 'pullRequests.list') throw new Error(`Unexpected request: ${method}`)
+    const reply = replies.shift() ?? result
+    if (reply instanceof Error) throw reply
+    return reply
+  })
+}
+
+// The detail pane beside the list makes its own requests and has its own
+// alerts; these tests are about the list.
+const listPane = () => within(document.querySelector<HTMLElement>('.pr-list-pane')!)
+
 describe('PullRequestsView', () => {
   it('shows authored and reviewing work, then filters without another request', async () => {
     const transport = pullRequestTransport()
@@ -194,6 +208,87 @@ describe('PullRequestsView', () => {
     expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
       1,
     )
+  })
+
+  it('keeps stale pull requests visible and offers a retry when a refresh fails', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'), result)
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    const alert = await listPane().findByRole('alert')
+    expect(alert.textContent).toContain('GitHub is unreachable')
+    expect(listPane().getByText('Authored change')).toBeTruthy()
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(listPane().queryByRole('alert')).toBeNull())
+    expect(listPane().getByText('Authored change')).toBeTruthy()
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      3,
+    )
+  })
+
+  it('dismisses a failed refresh notice without discarding the stale list', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'))
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Needs my review')).toBeTruthy()
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    fireEvent.click(
+      within(await listPane().findByRole('alert')).getByRole('button', { name: 'Dismiss' }),
+    )
+
+    expect(listPane().queryByRole('alert')).toBeNull()
+    expect(listPane().getByText('Needs my review')).toBeTruthy()
+  })
+
+  it('still surfaces a failed refresh when the current search matches nothing', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'))
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    fireEvent.change(listPane().getByRole('textbox', { name: 'Search pull requests' }), {
+      target: { value: 'no-match' },
+    })
+
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    expect((await listPane().findByRole('alert')).textContent).toContain('GitHub is unreachable')
+    expect(listPane().getByText('No matching pull requests')).toBeTruthy()
+  })
+
+  it('announces the first load, then its failure, and recovers on retry', async () => {
+    let failFirst!: (cause: Error) => void
+    let listRequests = 0
+    const transport = new TestTransport(async (method) => {
+      if (method !== 'pullRequests.list') throw new Error(`Unexpected request: ${method}`)
+      listRequests += 1
+      if (listRequests > 1) return result
+      return new Promise<PullRequestListResult>((_resolve, reject) => {
+        failFirst = reject
+      })
+    })
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(listPane().getByRole('status', { name: 'Loading pull requests' })).toBeTruthy()
+    await waitFor(() => expect(failFirst).toBeDefined())
+    failFirst(new Error('GitHub is unreachable'))
+
+    const alert = await listPane().findByRole('alert')
+    expect(alert.textContent).toContain("Couldn't load pull requests")
+    expect(alert.textContent).toContain('GitHub is unreachable')
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listPane().queryByRole('alert')).toBeNull()
   })
 
   it.each([
