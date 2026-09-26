@@ -138,10 +138,16 @@ describe('provider updates lifecycle', () => {
     )
     const store = new ProviderUpdatesStore(transport)
     await store.start('codex')
+    const first = store.snapshot().operations.codex
     transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 })
-    expect(store.snapshot().operations.codex?.phase).toBe('failed')
+    const failed = store.snapshot().operations.codex
+    expect(failed?.phase).toBe('failed')
+    expect(failed).not.toBe(first)
+    expect(failed?.run).toBe(first?.run)
     await store.start('codex')
-    expect(store.snapshot().operations.codex?.phase).toBe('running')
+    const retry = store.snapshot().operations.codex
+    expect(retry?.phase).toBe('running')
+    expect(retry?.run).not.toBe(first?.run)
     transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 })
   })
 
