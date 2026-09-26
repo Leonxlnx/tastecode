@@ -85,7 +85,7 @@ describe('native Codex history', () => {
     },
   )
 
-  it('keeps inline tool images out of tool text while attaching them', async () => {
+  it('keeps inline tool images out of imported tool calls', async () => {
     const data = 'iVBORw0KGgo'.repeat(5_000)
     const { source } = await store([
       event({ type: 'user_message', message: 'Crop the frames' }),
@@ -105,8 +105,8 @@ describe('native Codex history', () => {
 
     expect(item).toMatchObject({
       text: expect.stringMatching(/^node_repl\.js\n[\s\S]*"code": "crop\(\)"[\s\S]*\n\n\[image]$/),
-      attachments: [`data:image/png;base64,${data}`],
     })
+    expect(item?.attachments).toBeUndefined()
     expect(item?.text).not.toContain(data)
   })
 
@@ -359,9 +359,9 @@ describe('native Codex history', () => {
     ])
     expect(items(events).filter((entry) => entry.type === 'file_change')).toHaveLength(2)
     expect(items(events).find((entry) => entry.id === 'mcp-one')).toMatchObject({
-      attachments: ['data:image/png;base64,YWJj'],
       text: expect.stringContaining('tool result\n'),
     })
+    expect(items(events).find((entry) => entry.id === 'mcp-one')?.attachments).toBeUndefined()
     expect(events.find((entry) => entry.type === 'diff.updated')).toMatchObject({
       diff: expect.stringContaining('-old\n+new\n'),
     })
