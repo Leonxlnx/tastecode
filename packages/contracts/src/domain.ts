@@ -278,6 +278,12 @@ export const ModelSchema = z.object({
         id: z.string(),
         name: z.string(),
         description: z.string(),
+        /**
+         * Set when choosing this tier is billed outside the plan's included
+         * usage, e.g. Claude fast mode drawing on extra usage. Clients show it
+         * as a warning while the tier is selected.
+         */
+        billingNote: z.string().optional(),
       }),
     )
     .default([]),
