@@ -107,6 +107,23 @@ describe('provider history integration', () => {
     expect(lookup).not.toHaveBeenCalled()
   })
 
+  it('refreshes unchanged sessions without a store lookup for each one', async () => {
+    const sessions = Array.from({ length: 60 }, (_, index) => ({
+      ...metadata(`saved-${index}`),
+      workspacePath: index < 20 ? process.cwd() : path.join(path.sep, 'outside', `${index % 2}`),
+    }))
+    const { history } = setup(sessions)
+    await history.refresh()
+    expect(store.threads()).toHaveLength(20)
+    const threads = vi.spyOn(store, 'thread')
+    const projects = vi.spyOn(store, 'project')
+
+    await history.refresh()
+
+    expect(threads).not.toHaveBeenCalled()
+    expect(projects).toHaveBeenCalledTimes(3)
+  })
+
   it('cleans up a helper mirror that a session changing kind left behind', async () => {
     const session = metadata()
     const { history } = setup([session])
