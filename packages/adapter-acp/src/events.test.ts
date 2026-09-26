@@ -229,6 +229,51 @@ describe('Streamer', () => {
 
     expect(next[0]?.type).toBe('item.started')
   })
+
+  it('settles a tool call the agent never finished when the turn ends', () => {
+    const streamer = new Streamer('t1')
+    streamer.translate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'done',
+      status: 'in_progress',
+      title: 'node -v',
+      kind: 'execute',
+    })
+    streamer.translate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'done',
+      status: 'completed',
+    })
+    streamer.translate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'open',
+      status: 'in_progress',
+      title: 'pnpm test',
+      kind: 'execute',
+    })
+
+    // Only the call still running gets a terminal event, and it keeps the
+    // identity it started with instead of turning into an anonymous row.
+    expect(streamer.finish('failed')).toEqual([
+      {
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'open', status: 'failed', command: 'pnpm test' }),
+      },
+    ])
+    expect(streamer.finish('failed')).toEqual([])
+  })
+
+  it('completes a running tool call when the turn itself completed', () => {
+    const streamer = new Streamer('t1')
+    streamer.translate({ sessionUpdate: 'tool_call', toolCallId: 'open', status: 'pending' })
+
+    expect(streamer.finish()).toEqual([
+      {
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'open', status: 'completed' }),
+      },
+    ])
+  })
 })
 
 describe('streamed tool output', () => {

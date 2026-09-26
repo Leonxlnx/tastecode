@@ -241,6 +241,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       })
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((error: unknown) => {
+        // A rejected prompt ends the turn just as a stop reason does; items and
+        // approvals it opened must not outlive it.
+        this.#finishStreamer('failed', streamer)
+        this.#cancelPendingApprovals()
         this.emit('event', {
           type: 'thread.error',
           threadId,
@@ -473,23 +477,12 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
   #finishTurn(threadId: string, turnId: string, result: PromptResult, streamer?: Streamer): void {
     const stopReason = result.stopReason
-    // Finish the streamer this turn owns, never whichever one is current —
-    // a late completion must not close the next turn's open items.
-    const owned = streamer ?? this.#streamer
-    if (owned === this.#streamer) this.#streamer = undefined
-    for (const event of owned?.finish() ?? []) this.emit('event', event)
+    const status =
+      stopReason === 'cancelled' ? 'interrupted' : stopReason === 'refusal' ? 'failed' : 'completed'
+    this.#finishStreamer(status === 'completed' ? 'completed' : 'failed', streamer)
     const usage = acpTurnUsage(result.usage, this.#model)
     if (usage) this.emit('event', { type: 'usage.updated', usage })
-
-    // Anything still waiting is now unanswerable — the turn it belonged to is
-    // over. The agent is still blocked on its request, so it must hear
-    // "cancelled", not silence; the UI must hear "resolved".
-    for (const [id, respond] of [...this.#pendingApprovals]) {
-      respond({ outcome: { outcome: 'cancelled' } })
-      this.emit('event', { type: 'approval.resolved', id })
-    }
-    this.#pendingApprovals.clear()
-    this.#optionsById.clear()
+    this.#cancelPendingApprovals()
 
     // A refused or truncated turn must not look identical to a successful
     // one — the stop reason goes to the user, not into a log nobody reads.
@@ -509,16 +502,27 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       this.emit('log', `turn ended: ${stopReason}`)
     }
 
-    this.emit('event', {
-      type: 'turn.completed',
-      turnId,
-      status:
-        stopReason === 'cancelled'
-          ? 'interrupted'
-          : stopReason === 'refusal'
-            ? 'failed'
-            : 'completed',
-    })
+    this.emit('event', { type: 'turn.completed', turnId, status })
+  }
+
+  #finishStreamer(toolStatus: 'completed' | 'failed', streamer?: Streamer): void {
+    // Finish the streamer this turn owns, never whichever one is current —
+    // a late completion must not close the next turn's open items.
+    const owned = streamer ?? this.#streamer
+    if (owned === this.#streamer) this.#streamer = undefined
+    for (const event of owned?.finish(toolStatus) ?? []) this.emit('event', event)
+  }
+
+  #cancelPendingApprovals(): void {
+    // Anything still waiting is now unanswerable — the turn it belonged to is
+    // over. The agent is still blocked on its request, so it must hear
+    // "cancelled", not silence; the UI must hear "resolved".
+    for (const [id, respond] of [...this.#pendingApprovals]) {
+      respond({ outcome: { outcome: 'cancelled' } })
+      this.emit('event', { type: 'approval.resolved', id })
+    }
+    this.#pendingApprovals.clear()
+    this.#optionsById.clear()
   }
 }
 
