@@ -92,12 +92,23 @@ export class ProviderHistory {
             }
           }
           this.store.batchLifecycleUpdates(() => {
+            // Saved sessions share a few folders, and the store does not cache a
+            // folder that is not a project.
+            const projectFolders = new Map<string, boolean>()
+            const inProject = (folder: string) => {
+              let known = projectFolders.get(folder)
+              if (known === undefined) {
+                known = this.store.project(folder) !== undefined
+                projectFolders.set(folder, known)
+              }
+              return known
+            }
             for (const session of sessions) {
               if (
                 session.internal ||
                 !session.id ||
                 !path.isAbsolute(session.workspacePath) ||
-                !this.store.project(session.workspacePath) ||
+                !inProject(session.workspacePath) ||
                 !Number.isFinite(session.createdAt)
               )
                 continue
@@ -118,8 +129,6 @@ export class ProviderHistory {
                   previous.loadedRevision !== session.revision ||
                   this.store.localHistory(duplicateId).length === 0),
               )
-              // Retain a tombstone when a user deletes the local copy.
-              if (previous && !native && !this.store.thread(previous.threadId)) continue
               if (
                 !repairing &&
                 (!native || native.id === previous?.threadId) &&
@@ -127,6 +136,8 @@ export class ProviderHistory {
                 previous.session.title === session.title
               )
                 continue
+              // Retain a tombstone when a user deletes the local copy.
+              if (previous && !native && !this.store.thread(previous.threadId)) continue
               const existing =
                 native ?? (previous ? this.store.thread(previous.threadId) : undefined)
               if (existing?.ephemeral) continue
