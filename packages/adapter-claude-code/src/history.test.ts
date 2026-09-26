@@ -12,7 +12,10 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { DomainEventSchema, type DomainEvent } from '@harness/contracts'
+import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { createClaudeHistorySource } from './history.js'
+
+const canSymlink = canCreateSymlinks()
 
 const SESSION = '11111111-1111-4111-8111-111111111111'
 const SECOND = '22222222-2222-4222-8222-222222222222'
@@ -359,6 +362,7 @@ describe('Claude Code saved history', () => {
     const outside = path.join(f.configDir, `${SESSION}.jsonl`)
     await writeFile(outside, JSON.stringify(row('outside', 'user', 'Outside')))
     expect(await f.source.read({ ...session, locator: outside })).toEqual([])
+    if (!canSymlink) return
     await rm(f.file)
     await symlink(outside, f.file)
     expect(await f.source.read(session)).toEqual([])

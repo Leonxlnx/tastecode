@@ -23,6 +23,10 @@
     "./updates": {
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
+    },
+    "./symlink.test-support": {
+      "types": "./dist/symlink.test-support.d.ts",
+      "default": "./dist/symlink.test-support.js"
     }
   },
   "main": "./dist/index.js",
