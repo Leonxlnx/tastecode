@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-26 main fc4728e3 · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-26 main bedb353a · 0.1.2 source preparation</span>
       </div>
     </div>
 
@@ -311,6 +311,16 @@
           #1307). Chat titles no longer run under the panel toggles while the workspace panel is
           closed (#1267, PR #1308). The 0.1.2 draft currently targets 9be8346d, which predates both
           fixes.
+        </p>
+        <p>
+          A failed pull-request refresh is now announced as an alert with Try again and Dismiss
+          while the stale list and detail stay visible (#964, PR #1310). A server reply that fails
+          its schema reaches the user as a short protocol error instead of a JSON dump of schema
+          issues (#996, PR #1312). Both also postdate the 0.1.2 draft source. Beta issues already
+          fixed on main were closed after checking the code: preview cleanup failures (#1001),
+          single-writer draft releases with an exact manifest (#954), and raw crash-dump retention
+          (#1011). On nightly, ACP turns whose prompt request rejects now settle their items and
+          approvals in draft PR #1311 (#1008), pending a real Grok+MCP check.
         </p>
         <p>
           The Linux-only Beta 8 proof published after 0.1.1 has been returned to draft, retaining
