@@ -473,11 +473,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
   #finishTurn(threadId: string, turnId: string, result: PromptResult, streamer?: Streamer): void {
     const stopReason = result.stopReason
+    const status =
+      stopReason === 'cancelled' ? 'interrupted' : stopReason === 'refusal' ? 'failed' : 'completed'
     // Finish the streamer this turn owns, never whichever one is current —
     // a late completion must not close the next turn's open items.
     const owned = streamer ?? this.#streamer
     if (owned === this.#streamer) this.#streamer = undefined
-    for (const event of owned?.finish() ?? []) this.emit('event', event)
+    for (const event of owned?.finish(status === 'completed' ? 'completed' : 'failed') ?? []) {
+      this.emit('event', event)
+    }
     const usage = acpTurnUsage(result.usage, this.#model)
     if (usage) this.emit('event', { type: 'usage.updated', usage })
 
@@ -509,16 +513,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       this.emit('log', `turn ended: ${stopReason}`)
     }
 
-    this.emit('event', {
-      type: 'turn.completed',
-      turnId,
-      status:
-        stopReason === 'cancelled'
-          ? 'interrupted'
-          : stopReason === 'refusal'
-            ? 'failed'
-            : 'completed',
-    })
+    this.emit('event', { type: 'turn.completed', turnId, status })
   }
 }
 
