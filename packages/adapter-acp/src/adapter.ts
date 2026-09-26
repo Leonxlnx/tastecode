@@ -241,6 +241,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       })
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((error: unknown) => {
+        // A rejected prompt ends the turn just as a stop reason does; items and
+        // approvals it opened must not outlive it.
+        this.#finishStreamer('failed', streamer)
+        this.#cancelPendingApprovals()
         this.emit('event', {
           type: 'thread.error',
           threadId,
