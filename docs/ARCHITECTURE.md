@@ -424,7 +424,10 @@ The rules that solve it:
    store subscription, no inline lambdas inside the message subtree.
 3. **Two-phase code blocks.** Cheap CSS treatment instantly, Shiki from a worker swapped in
    after, identical layout box so nothing reflows. Only the languages we load; cache by
-   content hash.
+   content hash. Grammar regexes scan one-byte copies of Latin-1 lines: a line cut from a
+   reply or patch with one em dash anywhere is stored two bytes wide, and V8 tokenized it
+   about half as fast in Electron 43. Copying whole blocks was rejected because one wide
+   character inside the block defeats it.
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
 5. **Closed activity owns no detail DOM.** Command and tool details mount when their
    disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
@@ -509,3 +512,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-15 | Added authenticated repository and upload image previews, isolated SVG rendering, lazy loading, and byte-bounded caches for pull-request Markdown.                             |
 | 2026-09-15 | Dropped the Claude Agent SDK's bundled per-platform CLI from the dependency graph and the desktop package; the adapter always spawns the user's `claude`.                      |
 | 2026-09-18 | Added the beta 7 updater bridge and verified EXE/DMG transport, with two public assets from beta 8 and native installers retained.                                             |
+| 2026-09-26 | Scanned one-byte copies of Latin-1 lines in every Shiki grammar pass, including the main-thread diff views.                                                                    |
