@@ -24,6 +24,8 @@ export class ProviderHistory {
   #byThread = new Map<string, Imported>()
   #refreshing: Promise<void> | undefined
   #reading = new Map<string, Promise<boolean>>()
+  /** Internal sessions are never imported, so one absent copy stays absent. */
+  #internalWithoutCopy = new Set<string>()
   #closed = false
 
   constructor(
@@ -73,10 +75,11 @@ export class ProviderHistory {
           for (const session of sessions) {
             if (!session.internal) continue
             const threadId = `external:${provider}:${session.id}`
+            if (this.#internalWithoutCopy.has(threadId)) continue
             const thread = this.store.thread(threadId)
+            if (!thread) this.#internalWithoutCopy.add(threadId)
             // Repair old read-only imports without touching native sessions or local replies.
-            if (
-              thread &&
+            else if (
               !thread.worktreePath &&
               !this.hooks.isBusy(threadId) &&
               !this.store.queuedTurns(threadId).length &&
@@ -84,6 +87,7 @@ export class ProviderHistory {
             ) {
               this.store.deleteThread(threadId)
               this.#byThread.delete(threadId)
+              this.#internalWithoutCopy.add(threadId)
               changed.push(threadId)
             }
           }
@@ -129,6 +133,7 @@ export class ProviderHistory {
               const threadId = existing?.id ?? `external:${provider}:${session.id}`
               if (!existing) {
                 this.store.addProviderThread(threadId, provider, session)
+                this.#internalWithoutCopy.delete(threadId)
               } else if (
                 previous?.threadId === threadId &&
                 existing.title === previous.session.title &&
