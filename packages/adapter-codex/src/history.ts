@@ -10,7 +10,8 @@ import { object, timestamp } from './history-values.js'
 
 type JsonObject = Record<string, unknown>
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
-type IndexedSession = { session: ProviderHistorySession; name?: string }
+/** `internal` is known only when the index records each thread's source. */
+type IndexedSession = { session: ProviderHistorySession; name?: string; internal?: boolean }
 const PREVIEW_LENGTH = 200
 
 export type CodexHistoryOptions = { codexHome?: string }
@@ -40,9 +41,14 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
         files.slice(offset, offset + 32).map(async (saved) => {
           const revision = `${saved.size}:${saved.mtimeMs}`
           const indexed = byFile.get(saved.file)
-          const cached = headers.get(saved.file)
-          const header = cached?.revision === revision ? cached.session : await readHeader(saved)
-          headers.set(saved.file, { revision, session: header })
+          // Opening every rollout at startup read the first chunk of thousands of
+          // transcripts. The index already carries everything the header would add.
+          let header: ProviderHistorySession | null | undefined
+          if (indexed?.internal === undefined) {
+            const cached = headers.get(saved.file)
+            header = cached?.revision === revision ? cached.session : await readHeader(saved)
+            headers.set(saved.file, { revision, session: header })
+          }
           const session = indexed?.session ?? header
           if (!session) return
           const named = names.get(session.id)
@@ -54,7 +60,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
               : (indexed?.name ?? session.title)
           const result = {
             ...session,
-            ...(header?.internal ? { internal: true } : {}),
+            ...((indexed?.internal ?? header?.internal) ? { internal: true } : {}),
             title,
             updatedAt: Math.max(session.updatedAt, named?.updatedAt ?? 0, saved.mtimeMs),
             revision: createHash('sha256')
@@ -181,9 +187,10 @@ async function indexedSessions(home: string): Promise<IndexedSession[]> {
         : 'updated_at * 1000'
       const name = columns.has('name') ? 'name' : 'NULL'
       const preview = columns.has('preview') ? "COALESCE(NULLIF(preview, ''), title)" : 'title'
+      const hasSource = columns.has('source')
       return db
         .prepare(
-          `SELECT id, rollout_path, cwd, ${name} AS name, substr(${preview}, 1, ${PREVIEW_LENGTH}) AS preview, ${created} AS created, ${updated} AS updated FROM threads`,
+          `SELECT id, rollout_path, cwd, ${name} AS name, substr(${preview}, 1, ${PREVIEW_LENGTH}) AS preview, ${created} AS created, ${updated} AS updated, ${hasSource ? 'source' : 'NULL'} AS source FROM threads`,
         )
         .all()
         .flatMap((row) => {
@@ -196,6 +203,7 @@ async function indexedSessions(home: string): Promise<IndexedSession[]> {
           return [
             {
               ...(typeof row.name === 'string' && row.name.trim() ? { name: row.name } : {}),
+              ...(hasSource ? { internal: subagentSource(row.source) } : {}),
               session: {
                 id: row.id,
                 workspacePath: row.cwd,
@@ -262,6 +270,16 @@ async function readHeader(saved: SavedFile): Promise<ProviderHistorySession | nu
     }
   }
   return null
+}
+
+/** The index stores a plain label (`cli`) or the rollout's JSON source object. */
+function subagentSource(value: unknown): boolean {
+  if (typeof value !== 'string' || !value.startsWith('{')) return false
+  try {
+    return 'subagent' in object(JSON.parse(value))
+  } catch {
+    return false
+  }
 }
 
 function previewTitle(value: unknown): string {
