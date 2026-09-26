@@ -17,9 +17,13 @@ type SavedTurn = {
   entries: Entry[]
 }
 
-/** Native lifecycle items take precedence over their wire/event echoes. */
+/**
+ * Native lifecycle items take precedence over their wire/event echoes. Each
+ * record keeps its position among the rollout's records, which items without
+ * a native id use as their stable id.
+ */
 export function parseCodexHistory(
-  records: RecordValue[],
+  records: ReadonlyArray<{ index: number; record: RecordValue }>,
   session: ProviderHistorySession,
 ): DomainEvent[] {
   const turns: SavedTurn[] = []
@@ -46,7 +50,7 @@ export function parseCodexHistory(
     return current
   }
 
-  records.forEach((record, index) => {
+  records.forEach(({ record, index }) => {
     const payload = object(record.payload)
     const createdAt = timestamp(record.timestamp, session.createdAt)
     if (
