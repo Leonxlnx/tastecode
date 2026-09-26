@@ -71,8 +71,9 @@ describe('radius system', () => {
       /\.session-search__panel \{[^}]*width: min\(520px, 100%\);[^}]*border-radius: var\(--r-lg\)/s,
     )
     expect(inboxCss).toMatch(/\.inbox-card \{[^}]*border-radius: var\(--r-lg\)/s)
+    // The palette is a panel, not a menu: its rows sit 8px inside a 16px corner.
     expect(commandPaletteCss).toMatch(
-      /\.command-palette__panel \{[^}]*border-radius: var\(--r-lg\)/s,
+      /\.command-palette__panel \{[^}]*border-radius: var\(--r-panel\)/s,
     )
     expect(appCss).toMatch(/\.composer__box \{[^}]*border-radius: var\(--r-card\)/s)
     expect(appCss).toMatch(
@@ -101,9 +102,9 @@ describe('radius system', () => {
       /\.menu__item \{[^}]*border: 1px solid transparent;[^}]*border-radius: var\(--r-popup-item\);/s,
     )
     expect(commandPaletteCss).toMatch(
-      /\.command-palette__item \{[^}]*border-radius: var\(--r-popup-item\);/s,
+      /\.command-palette__item \{[^}]*border-radius: var\(--r-lg\);/s,
     )
-    expect(commandPaletteCss).toMatch(/\.command-palette__results \{[^}]*padding: 3px;/s)
+    expect(commandPaletteCss).toMatch(/\.command-palette__results \{[^}]*padding: 0 8px 8px;/s)
     expect(sessionSearchCss).toMatch(
       /\.session-search__result \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
