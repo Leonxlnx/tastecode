@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-26 main bedb353a · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-26 main 0fbc0ca3 · 0.1.2 source preparation</span>
       </div>
     </div>
 
@@ -321,6 +321,18 @@
           single-writer draft releases with an exact manifest (#954), and raw crash-dump retention
           (#1011). On nightly, ACP turns whose prompt request rejects now settle their items and
           approvals in draft PR #1311 (#1008), pending a real Grok+MCP check.
+        </p>
+        <p>
+          Startup, refresh and history reads repeat less work (PRs #1314 to #1319, #1322, #1323).
+          Codex sessions are listed from Codex's own index and reused between refreshes: on a
+          6,500-session profile the startup listing fell from 1.0 s to 0.26 s and idle app memory
+          from about 645 MB to 380 MB. Claude transcripts are listed without parsing every row.
+          Sending in a long native Codex task no longer re-parses its whole rollout; one 665 MB
+          rollout read fell from 1.36 s and 1.3 GB to 0.19 s and 171 MB. Tool screenshots no longer
+          travel as base64 in tool text or imported tool calls, so one imported session fell from
+          517 MB of events to 13.7 MB. Code highlighting is about twice as fast after an em dash,
+          and transcript rows parse tool output only when a detail shows it. All postdate the 0.1.2
+          draft source.
         </p>
         <p>
           The Linux-only Beta 8 proof published after 0.1.1 has been returned to draft, retaining
