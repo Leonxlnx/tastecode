@@ -85,6 +85,28 @@ describe('native Codex history', () => {
     },
   )
 
+  it('takes thread sources from the index instead of opening each rollout', async () => {
+    const { root, file, source } = await store([])
+    // Headers that cannot be parsed prove the listing did not depend on them.
+    await writeFile(file, 'not a rollout header\n')
+    const userFile = path.join(path.dirname(file), 'rollout-user-session.jsonl')
+    await writeFile(userFile, 'not a rollout header\n')
+    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'))
+    db.exec(
+      'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, source TEXT, created_at INTEGER, updated_at INTEGER)',
+    )
+    const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)')
+    insert.run('reviewer', file, '/project', 'Review', '{"subagent":{"other":"guardian"}}', 1, 2)
+    insert.run('user-chat', userFile, '/project', 'Fix the build', 'vscode', 1, 3)
+    db.close()
+
+    const listed = new Map((await source.list()).map((session) => [session.id, session]))
+
+    expect(listed.get('reviewer')?.internal).toBe(true)
+    expect(listed.get('user-chat')).toMatchObject({ title: 'Fix the build', locator: userFile })
+    expect(listed.get('user-chat')?.internal).toBeUndefined()
+  })
+
   it('bounds native prompt previews and hashes revisions without truncating chat content', async () => {
     const prompt = 'Full user prompt '.repeat(7000)
     const { root, file, source } = await store([event({ type: 'user_message', message: prompt })])
