@@ -121,6 +121,11 @@
   --effort: #ef706e;
   --error: #e5687a;
   --success: #6fbf8e;
+  --warning: #e0ad61;
+  /* Generated project monograms share one lightness and chroma per theme; a
+     project only picks the hue, so every mark stays equally quiet. */
+  --project-mark-l: 0.74;
+  --project-mark-c: 0.075;
 
   --effort-track: #171719;
   --effort-track-shadow:
@@ -369,6 +374,9 @@
   --effort: #c2413d;
   --error: #be123c;
   --success: #16803c;
+  --warning: #936017;
+  --project-mark-l: 0.5;
+  --project-mark-c: 0.1;
 
   --effort-track: linear-gradient(180deg, #f3f3f5 0%, #ffffff 100%);
   --effort-track-shadow: inset 0 1px 2px rgb(24 24 27 / 7%), inset 0 0 0 1px #dedee2;

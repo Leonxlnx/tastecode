@@ -17,7 +17,10 @@ describe('hover gating', () => {
     ).toBe(1)
     expect((appCss.match(/\.proj__head:hover \.dots/g) ?? []).length).toBe(1)
     expect((appCss.match(/\.menutrigger:hover \.dots/g) ?? []).length).toBe(1)
-    expect((inboxCss.match(/\.inbox-card:hover \.inbox-card__quick/g) ?? []).length).toBe(1)
+    expect(
+      (inboxCss.match(/\.thread-card\.has-actions:hover \.thread-card__actions/g) ?? []).length,
+    ).toBe(1)
+    expect((inboxCss.match(/\.thread-row:hover \.thread-row__action/g) ?? []).length).toBe(1)
     expect((threadCss.match(/\.said:hover > \.said__actions/g) ?? []).length).toBe(1)
     expect(appCss).not.toMatch(
       /\.sessrow:hover \.sess__actions,\s*\.sessrow:focus-within \.sess__actions/s,
@@ -43,10 +46,13 @@ describe('hover gating', () => {
       /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.composer__design:hover > span \{/s,
     )
     expect(inboxCss).toMatch(
-      /\.inbox-card:focus-within \.inbox-card__quick \{[^}]*pointer-events: auto;/s,
+      /\.thread-card\.has-actions:focus-within \.thread-card__actions,[^{]*\{[^}]*pointer-events: auto;/s,
     )
     expect(inboxCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.inbox-card:hover \.inbox-card__quick \{/s,
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.thread-card\.has-actions:hover \.thread-card__actions/s,
+    )
+    expect(inboxCss).toMatch(
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.thread-row:hover \.thread-row__action/s,
     )
     expect(threadCss).toMatch(/\.said:focus-within > \.said__actions \{[^}]*pointer-events: auto;/s)
     expect(threadCss).toMatch(

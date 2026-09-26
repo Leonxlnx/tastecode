@@ -329,7 +329,7 @@ describe('Sidebar chat actions', () => {
     expect(latestNewSession).toHaveBeenCalledWith('/work/harness', undefined)
   })
 
-  it('uses the classic account footer in the inbox sidebar', async () => {
+  it('keeps usage, profile, and settings in the thread sidebar utility row', async () => {
     const onAddProject = vi.fn()
     const onOpenSettings = vi.fn()
     const view = (
@@ -396,6 +396,9 @@ describe('Sidebar chat actions', () => {
     )
 
     const rendered = render(view)
+    // The utility row loads with the lazy thread sidebar, which a busy test
+    // worker can take longer than the default second to compile.
+    await screen.findByRole('combobox', { name: 'Search threads' }, { timeout: 5_000 })
     for (const [usedPercent, expected] of [
       [11, undefined],
       [79, undefined],
@@ -428,28 +431,25 @@ describe('Sidebar chat actions', () => {
     rendered.rerender(view)
 
     expect(screen.queryByRole('button', { name: /Switch to V[12]/ })).toBeNull()
-    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
-    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
-    const accountTrigger = screen.getByRole('button', { name: 'Account' })
-    expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('15%')
-    expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
+    expect(document.querySelector('.account__name')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'New thread' }))
+    expect(onAddProject).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    expect(onOpenSettings).toHaveBeenLastCalledWith()
+
+    const usageTrigger = screen.getByRole('button', { name: 'Usage and profile' })
+    expect(usageTrigger.querySelector('.account__usage')?.textContent).toBe('15%')
+    expect(usageTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
       '15% left · codex · 7 days',
     )
-    expect(accountTrigger.querySelector('.account__chevron')).not.toBeNull()
-    expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
-    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
-    expect(onAddProject).toHaveBeenCalledOnce()
-    fireEvent.click(accountTrigger)
-    expect(accountTrigger.getAttribute('aria-expanded')).toBe('true')
-    const accountDialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
-    expect(accountDialog).toBeTruthy()
+    expect(usageTrigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(usageTrigger)
+    expect(usageTrigger.getAttribute('aria-expanded')).toBe('true')
+    const accountDialog = screen.getByRole('dialog', { name: 'Usage, profile, and settings' })
     expect(accountDialog.classList.contains('menu--compact')).toBe(true)
     expect(accountDialog.classList.contains('menu--settings')).toBe(true)
     const usage = within(accountDialog).getByRole('button', { name: 'Usage, 15% left' })
     expect(usage.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.getByText('15% left')).toBeTruthy()
     expect(screen.queryByText('7 days')).toBeNull()
     expect(document.activeElement).toBe(usage)
 
@@ -459,36 +459,21 @@ describe('Sidebar chat actions', () => {
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
     expect(limitBar.querySelector<HTMLElement>(':scope > *')!.style.width).toBe('15%')
-    expect(document.activeElement).toBe(usage)
 
-    expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
-    const accountActions = screen
-      .getAllByRole('button')
-      .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
-    for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
     expect(accountDialog.firstElementChild?.classList.contains('account-menu__usage')).toBe(true)
-    expect(accountDialog.lastElementChild?.classList.contains('account-menu__actions')).toBe(true)
-    expect(
-      within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
-        name: 'Profile',
-      }),
-    ).toBeTruthy()
-    expect(
-      within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
-        name: 'Settings',
-      }),
-    ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
-    expect(onOpenSettings).toHaveBeenCalledWith('profile')
-    expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
+    const accountActions = accountDialog.lastElementChild as HTMLElement
+    expect(accountActions.classList.contains('account-menu__actions')).toBe(true)
+    fireEvent.click(within(accountActions).getByRole('button', { name: 'Profile' }))
+    expect(onOpenSettings).toHaveBeenLastCalledWith('profile')
+    expect(usageTrigger.getAttribute('aria-expanded')).toBe('false')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    fireEvent.click(usageTrigger)
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Account' }))
+    expect(document.activeElement).toBe(usageTrigger)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
-    expect(onOpenSettings).toHaveBeenCalledTimes(2)
+    fireEvent.click(usageTrigger)
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Settings/ }))
+    expect(onOpenSettings).toHaveBeenCalledTimes(3)
     expect(onOpenSettings).toHaveBeenLastCalledWith()
   })
 

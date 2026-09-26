@@ -1,130 +1,61 @@
 import {
-  createContext,
   memo,
   useCallback,
-  useContext,
+  useId,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
+  type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
-  type RefObject,
 } from 'react'
 import '../styles/inbox-sidebar.css'
+import type { SearchSnippetPart, SessionSearchResult } from '@harness/contracts'
 import {
-  IconBell as Bell,
-  IconChecks as CheckCheck,
-  IconChevronRight as ChevronRight,
-  IconClock as Clock3,
-  IconCopy as Copy,
-  IconDots as Ellipsis,
-  IconFolderPlus as FolderPlus,
-  IconGitBranch as GitBranch,
-  IconGitPullRequest as GitPullRequest,
-  IconPencil as Pencil,
-  IconPinned as Pin,
-  IconPinnedOff as PinOff,
-  IconSearch as Search,
+  IconArrowBackUp as Undo,
   IconEdit as SquarePen,
-  IconTrash as Trash2,
+  IconFolderPlus as FolderPlus,
+  IconPlus as Plus,
+  IconSearch as Search,
   IconX as X,
 } from '@tabler/icons-react'
-import { sessionSourcePresentation } from '../provider-presentation.js'
+import { isMacOS, writeClipboardText } from '../bridge.js'
+import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { findSession, takeProjectSessionChanges } from '../project-store.js'
-import { AppSelect } from './AppSelect.js'
-import { Menu, MenuItem } from './Menu.js'
+import { DEFAULT_KEYBINDINGS, shortcutLabel, type Keybindings } from '../shortcuts.js'
+import { canHide, type Entry } from './inbox-entry.js'
+import { useListMotion } from './inbox-sidebar-motion.js'
+import { InboxClock, useRetainedNumberArray } from './InboxSidebarClock.js'
+import { CustomSnoozeDialog, ProjectScopeMenu, type ThreadCommands } from './InboxSidebarMenus.js'
+import {
+  activityAt,
+  SearchResultRow,
+  searchResultId,
+  ThreadCard,
+  ThreadRow,
+  wakeAt,
+} from './InboxSidebarRows.js'
+import { projectName } from './ProjectMark.js'
 import type { Project, Session } from './Sidebar.js'
-import { SourceIdentity } from './SourceIdentity.js'
 
-type Entry = { project: Project; session: Session }
+export type { Entry } from './inbox-entry.js'
+export { inboxClockDelay } from './inbox-sidebar-time.js'
+
 type InboxEntryGroups = { active: Entry[]; snoozed: Entry[]; settled: Entry[]; ordered: Entry[] }
 const PAGE_SIZE = 25
 const INITIAL_ACTIVE_LIMIT = 12
-const INITIAL_SETTLED_LIMIT = 10
+const INITIAL_SHELF_LIMIT = 10
+const MAX_SEARCH_RESULTS = 100
+const MESSAGE_SEARCH_MIN_LENGTH = 2
+const MESSAGE_SEARCH_DEBOUNCE_MS = 200
+const UNDO_WINDOW_MS = 5_000
+const JUMP_HINT_DELAY_MS = 200
 const ACTIVE_PAGE_IDLE_TIMEOUT_MS = 500
 const ACTIVE_PAGE_FALLBACK_DELAY_MS = 100
 const NARROW_VIEWPORT_QUERY = '(max-width: 700px)'
-const InboxSecondNowContext = createContext(Date.now())
-const InboxMinuteNowContext = createContext(Date.now())
-const InboxDayNowContext = createContext(Date.now())
-
-function useRetainedClockValue(now: number, bucket: number): number {
-  const retained = useRef({ bucket, now })
-  if (retained.current.bucket !== bucket) retained.current = { bucket, now }
-  return retained.current.now
-}
-
-function useRetainedNumberArray(values: number[]): readonly number[] {
-  const retained = useRef<readonly number[]>(values)
-  if (
-    retained.current.length !== values.length ||
-    values.some((value, index) => retained.current[index] !== value)
-  ) {
-    retained.current = values
-  }
-  return retained.current
-}
-
-function scheduleIdle(callback: () => void): () => void {
-  if (globalThis.requestIdleCallback) {
-    const handle = globalThis.requestIdleCallback(callback, {
-      timeout: ACTIVE_PAGE_IDLE_TIMEOUT_MS,
-    })
-    return () => globalThis.cancelIdleCallback?.(handle)
-  }
-  const handle = window.setTimeout(callback, ACTIVE_PAGE_FALLBACK_DELAY_MS)
-  return () => window.clearTimeout(handle)
-}
-
-function InboxClock(props: {
-  hasRunningThread: boolean
-  relativeTimes: readonly number[]
-  hasSnoozedThread: boolean
-  children: ReactNode
-}) {
-  const [now, setNow] = useState(Date.now)
-  const [documentVisible, setDocumentVisible] = useState(
-    () => document.visibilityState !== 'hidden',
-  )
-
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      const visible = document.visibilityState !== 'hidden'
-      setDocumentVisible(visible)
-      if (visible) setNow(Date.now())
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
-  }, [])
-  useEffect(() => {
-    if (!documentVisible) return
-    const delay = inboxClockDelay(
-      props.hasRunningThread,
-      props.relativeTimes,
-      props.hasSnoozedThread,
-      now,
-    )
-    if (delay === undefined) return
-    const timer = window.setTimeout(() => setNow(Date.now()), delay)
-    return () => window.clearTimeout(timer)
-  }, [documentVisible, now, props.hasRunningThread, props.hasSnoozedThread, props.relativeTimes])
-
-  const minuteNow = useRetainedClockValue(now, Math.floor(now / 60_000))
-  const day = new Date(now)
-  day.setHours(0, 0, 0, 0)
-  const dayNow = useRetainedClockValue(now, day.getTime())
-
-  return (
-    <InboxSecondNowContext.Provider value={now}>
-      <InboxMinuteNowContext.Provider value={minuteNow}>
-        <InboxDayNowContext.Provider value={dayNow}>{props.children}</InboxDayNowContext.Provider>
-      </InboxMinuteNowContext.Provider>
-    </InboxSecondNowContext.Provider>
-  )
-}
 
 export type InboxActions = {
   onSettle: (id: string) => void
@@ -138,35 +69,77 @@ export type InboxActions = {
   onKeepActive: (id: string, keepActive: boolean) => void
 }
 
-function InboxSidebarComponent(props: {
+/** Server-side message search. Titles match locally; this adds threads whose text matches. */
+export type InboxMessageSearch = (
+  query: string,
+  projectPath: string | undefined,
+) => Promise<SessionSearchResult[]>
+
+type MessageMatch = { turnId: string; snippet: SearchSnippetPart[] }
+type ThreadSection = 'pinned' | 'active' | 'snoozed' | 'settled'
+type DropSection = 'pinned' | 'active' | 'settled'
+type ThreadDrag = { id: string; from: ThreadSection; hideable: boolean }
+const THREAD_DRAG_TYPE = 'application/x-tastecode-thread'
+type UndoVerb = 'Settled' | 'Snoozed' | 'Unpinned'
+type UndoNotice = { key: number; verb: UndoVerb; ids: string[]; revert: () => void }
+
+type InboxSidebarProps = {
   projects: Project[]
   scope: string
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
   actions: InboxActions
+  keybindings?: Keybindings | undefined
   onScopeChange: (path: string) => void
   onAddProject: () => void
   onNewSession: (preferredPath?: string, chooseProject?: boolean) => void
   onSelectSession: (id: string) => void
   onRenameSession: (id: string, title: string) => void
-  onToggleSessionPin?: (id: string) => void
+  onToggleSessionPin?: ((id: string) => void) | undefined
   onArchiveSession: (id: string) => void
   onArchiveSessions?: ((ids: string[]) => void) | undefined
-  pullRequestsActive?: boolean | undefined
-  onOpenPullRequests?: (() => void) | undefined
-}) {
+  onSearchMessages?: InboxMessageSearch | undefined
+  onOpenSearchResult?: ((threadId: string, turnId: string) => void) | undefined
+  /** Visible thread order for ⌘1–9 and chat cycling; undefined once the list unmounts. */
+  onOrderChange?: ((ids: readonly string[] | undefined) => void) | undefined
+  /** The rail's utility row, rendered here so it loads with this module's styles. */
+  footer?: ReactNode
+}
+
+function scheduleIdle(callback: () => void): () => void {
+  if (globalThis.requestIdleCallback) {
+    const handle = globalThis.requestIdleCallback(callback, {
+      timeout: ACTIVE_PAGE_IDLE_TIMEOUT_MS,
+    })
+    return () => globalThis.cancelIdleCallback?.(handle)
+  }
+  const handle = window.setTimeout(callback, ACTIVE_PAGE_FALLBACK_DELAY_MS)
+  return () => window.clearTimeout(handle)
+}
+
+/**
+ * The thread sidebar: every chat across projects in one list, pinned and
+ * active work as cards, snoozed and settled work as quiet rows below.
+ */
+function InboxSidebarComponent(props: InboxSidebarProps) {
   const [query, setQuery] = useState('')
-  const [snoozedOpen, setSnoozedOpen] = useState(false)
-  const [settledOpen, setSettledOpen] = useState(true)
   const [activeLimit, setActiveLimit] = useState(INITIAL_ACTIVE_LIMIT)
-  const [snoozedLimit, setSnoozedLimit] = useState(PAGE_SIZE)
-  const [settledLimit, setSettledLimit] = useState(INITIAL_SETTLED_LIMIT)
+  const [snoozedLimit, setSnoozedLimit] = useState(INITIAL_SHELF_LIMIT)
+  const [settledLimit, setSettledLimit] = useState(INITIAL_SHELF_LIMIT)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [selectionAnchor, setSelectionAnchor] = useState<string>()
   const [eagerRowActions, setEagerRowActions] = useState(
     () => globalThis.matchMedia?.(NARROW_VIEWPORT_QUERY).matches ?? false,
   )
-  const rowRefs = useRef(new Map<string, HTMLButtonElement>())
+  const [customSnoozeIds, setCustomSnoozeIds] = useState<string[]>()
+  const [undoNotice, setUndoNotice] = useState<UndoNotice>()
+  const [drag, setDrag] = useState<ThreadDrag>()
+  const [dropTarget, setDropTarget] = useState<DropSection>()
+  const rowRefs = useRef(new Map<string, HTMLElement>())
+  const listRef = useRef<HTMLDivElement>(null)
+  const searchInput = useRef<HTMLInputElement>(null)
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
+  const macOS = isMacOS()
 
   useEffect(() => {
     const media = globalThis.matchMedia?.(NARROW_VIEWPORT_QUERY)
@@ -176,1062 +149,813 @@ function InboxSidebarComponent(props: {
     return () => media.removeEventListener('change', onChange)
   }, [])
 
-  const normalizedQuery = query.trim().toLocaleLowerCase()
   // Memoised because the parent still commits during streaming. The lifecycle
   // list only needs to be rebuilt when its actual inputs change.
   const classifyEntries = useMemo(createInboxEntryClassifier, [])
-  const { active, snoozed, settled, ordered } = useMemo(
-    () => classifyEntries(props.projects, props.scope, normalizedQuery),
-    [classifyEntries, props.projects, props.scope, normalizedQuery],
+  const {
+    active: activeEntries,
+    snoozed,
+    settled,
+  } = useMemo(
+    () => classifyEntries(props.projects, props.scope, ''),
+    [classifyEntries, props.projects, props.scope],
   )
+  const { pinned, active } = useMemo(() => splitPinned(activeEntries), [activeEntries])
 
   const selectedEntry = useMemo(() => {
     const selected = findSession(props.projects, props.activeSessionId)
     if (!selected || (props.scope && selected.project.path !== props.scope)) return undefined
-    if (normalizedQuery && !selected.session.title.toLocaleLowerCase().includes(normalizedQuery)) {
-      return undefined
-    }
     return selected
-  }, [normalizedQuery, props.activeSessionId, props.projects, props.scope])
-  const selectedActive =
-    selectedEntry?.session.lifecycle.state === 'active' ? selectedEntry : undefined
-  const selectedSnoozed =
-    selectedEntry?.session.lifecycle.state === 'snoozed' ? selectedEntry : undefined
-  const selectedSettled =
-    selectedEntry?.session.lifecycle.state === 'settled' ? selectedEntry : undefined
-  const visibleActive = withSelected(active.slice(0, activeLimit), selectedActive)
-  const visibleSnoozed = withSelected(snoozed.slice(0, snoozedLimit), selectedSnoozed)
-  const visibleSettled = withSelected(settled.slice(0, settledLimit), selectedSettled)
-  const snoozedExpanded = Boolean(normalizedQuery) || snoozedOpen || selectedSnoozed !== undefined
-  const settledExpanded = Boolean(normalizedQuery) || settledOpen || selectedSettled !== undefined
-  const hasMatches = ordered.length > 0
-  const hasRunningThread = visibleActive.some((entry) =>
-    ['starting', 'working'].includes(entry.session.status),
+  }, [props.activeSessionId, props.projects, props.scope])
+  const selectedState = selectedEntry?.session.lifecycle.state
+  const selectedPinned = selectedEntry?.session.pinned === true
+  const visibleActive = withSelected(
+    active.slice(0, activeLimit),
+    selectedState === 'active' && !selectedPinned ? selectedEntry : undefined,
   )
-  const nextRelativeTimes: number[] = []
-  for (const { session } of visibleActive) {
-    const woke = session.lifecycle.state === 'active' && session.lifecycle.wokeAt !== undefined
-    if (session.status === 'idle' && !woke) {
-      nextRelativeTimes.push(session.statusSince ?? session.createdAt)
-    }
-  }
-  if (settledExpanded) {
-    for (const { session } of visibleSettled) {
-      if (session.lifecycle.state === 'settled') {
-        nextRelativeTimes.push(session.lifecycle.settledAt)
-      }
-      if (session.status === 'idle') {
-        nextRelativeTimes.push(session.statusSince ?? session.createdAt)
-      }
-    }
-  }
-  const relativeTimes = useRetainedNumberArray(nextRelativeTimes)
+  const visibleSnoozed = withSelected(
+    snoozed.slice(0, snoozedLimit),
+    selectedState === 'snoozed' ? selectedEntry : undefined,
+  )
+  const visibleSettled = withSelected(
+    settled.slice(0, settledLimit),
+    selectedState === 'settled' ? selectedEntry : undefined,
+  )
   const activePageDeferred =
     activeLimit === INITIAL_ACTIVE_LIMIT && active.length > INITIAL_ACTIVE_LIMIT
 
   useEffect(() => {
     setActiveLimit(INITIAL_ACTIVE_LIMIT)
-    setSnoozedLimit(PAGE_SIZE)
-    setSettledLimit(INITIAL_SETTLED_LIMIT)
-  }, [normalizedQuery, props.scope])
+    setSnoozedLimit(INITIAL_SHELF_LIMIT)
+    setSettledLimit(INITIAL_SHELF_LIMIT)
+    setSelectedIds((current) => (current.size === 0 ? current : new Set()))
+  }, [props.scope])
   useEffect(() => {
     if (!activePageDeferred) return
     return scheduleIdle(() => setActiveLimit((limit) => Math.max(limit, PAGE_SIZE)))
   }, [activePageDeferred])
   useEffect(() => {
     if (selectedIds.size === 0) return
-    setSelectedIds((current) =>
-      retainInboxSelection(props.projects, current, props.scope, normalizedQuery),
-    )
-  }, [normalizedQuery, props.projects, props.scope, selectedIds.size])
+    setSelectedIds((current) => retainInboxSelection(props.projects, current, props.scope, ''))
+  }, [props.projects, props.scope, selectedIds.size])
+
+  // Rows in the order they render; keyboard, range selection, and ⌘1–9 all walk it.
+  const visibleOrder = useMemo(
+    () => [...pinned, ...visibleActive, ...visibleSnoozed, ...visibleSettled],
+    [pinned, visibleActive, visibleSnoozed, visibleSettled],
+  )
+  const orderKey = useMemo(
+    () =>
+      [pinned, visibleActive, visibleSnoozed, visibleSettled]
+        .map((group) => group.map((entry) => entry.session.id).join(','))
+        .join('|'),
+    [pinned, visibleActive, visibleSnoozed, visibleSettled],
+  )
+  const orderedIds = useMemo(() => orderKey.split(/[,|]/).filter(Boolean), [orderKey])
+  useEffect(() => props.onOrderChange?.(orderedIds), [orderedIds, props.onOrderChange])
+  useEffect(() => {
+    const notify = props.onOrderChange
+    return () => notify?.(undefined)
+  }, [props.onOrderChange])
+  useListMotion(listRef, orderKey)
 
   const selectedEntries = useMemo(
     () =>
       selectedIds.size > 1
-        ? resolveInboxSelection(props.projects, selectedIds, props.scope, normalizedQuery)
+        ? resolveInboxSelection(props.projects, selectedIds, props.scope, '')
         : [],
-    [normalizedQuery, props.projects, props.scope, selectedIds],
+    [props.projects, props.scope, selectedIds],
   )
-  const orderedRef = useRef(ordered)
-  const selectedIdsRef = useRef(selectedIds)
-  const selectionAnchorRef = useRef(selectionAnchor)
-  orderedRef.current = ordered
-  selectedIdsRef.current = selectedIds
-  selectionAnchorRef.current = selectionAnchor
 
-  const registerRow = useCallback((id: string, node: HTMLButtonElement | null) => {
-    if (node) rowRefs.current.set(id, node)
-    else rowRefs.current.delete(id)
-  }, [])
-
-  const focusResult = useCallback((id: string, direction: -1 | 1) => {
-    const ordered = orderedRef.current
-    const index = ordered.findIndex((entry) => entry.session.id === id)
-    if (index < 0 || ordered.length === 0) return
-    for (let offset = 1; offset <= ordered.length; offset += 1) {
-      const next = ordered[(index + direction * offset + ordered.length) % ordered.length]
-      const node = next ? rowRefs.current.get(next.session.id) : undefined
-      if (node) {
-        node.focus()
-        return
-      }
-    }
-  }, [])
-
-  const focusBoundary = useCallback((direction: -1 | 1) => {
-    const ordered = orderedRef.current
-    for (let offset = 0; offset < ordered.length; offset += 1) {
-      const index = direction === 1 ? offset : ordered.length - 1 - offset
-      const entry = ordered[index]
-      const node = entry ? rowRefs.current.get(entry.session.id) : undefined
-      if (node) {
-        node.focus()
-        return
-      }
-    }
-  }, [])
-
-  const chooseEntry = useCallback(
-    (event: ReactMouseEvent, id: string) => {
-      const ordered = orderedRef.current
-      const selectionAnchor = selectionAnchorRef.current
-      if (event.shiftKey && selectionAnchor) {
-        const from = ordered.findIndex((entry) => entry.session.id === selectionAnchor)
-        const to = ordered.findIndex((entry) => entry.session.id === id)
-        if (from >= 0 && to >= 0) {
-          const [start, end] = from < to ? [from, to] : [to, from]
-          setSelectedIds(new Set(ordered.slice(start, end + 1).map((entry) => entry.session.id)))
-          return
+  // --- search -------------------------------------------------------------
+  const deferredQuery = useDeferredValue(query)
+  const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
+  const searching = normalizedQuery.length > 0
+  const messageSearch = useMessageSearch(props.onSearchMessages, normalizedQuery, props.scope)
+  const searchResults = useMemo(() => {
+    if (!searching) return []
+    const results: Entry[] = []
+    for (const group of [pinned, active, snoozed, settled]) {
+      for (const entry of group) {
+        if (results.length >= MAX_SEARCH_RESULTS) return results
+        if (
+          entry.session.title.toLocaleLowerCase().includes(normalizedQuery) ||
+          projectName(entry.project).toLocaleLowerCase().includes(normalizedQuery) ||
+          messageSearch.matches.has(entry.session.id)
+        ) {
+          results.push(entry)
         }
       }
-      if (event.metaKey || event.ctrlKey) {
-        setSelectedIds((current) => {
-          const next = new Set(current)
-          if (next.has(id)) next.delete(id)
-          else next.add(id)
-          return next
-        })
-        setSelectionAnchor(id)
-        return
-      }
-      setSelectedIds(new Set())
-      setSelectionAnchor(id)
-      props.onSelectSession(id)
-    },
-    [props.onSelectSession],
-  )
+    }
+    return results
+  }, [active, messageSearch.matches, normalizedQuery, pinned, searching, settled, snoozed])
+  const [highlight, setHighlight] = useState(0)
+  useEffect(() => setHighlight(0), [normalizedQuery])
+  const highlighted = Math.min(highlight, Math.max(0, searchResults.length - 1))
+  useLayoutEffect(() => {
+    if (!searching) return
+    document.getElementById(searchResultId(highlighted))?.scrollIntoView?.({ block: 'nearest' })
+  }, [highlighted, searching])
 
-  const prepareContextMenu = useCallback((id: string) => {
-    if (selectedIdsRef.current.has(id)) return
-    setSelectedIds(new Set([id]))
-    setSelectionAnchor(id)
+  // --- clock --------------------------------------------------------------
+  const hasRunningThread = [...pinned, ...visibleActive].some(({ session }) =>
+    ['starting', 'working'].includes(session.status),
+  )
+  const nextRelativeTimes: number[] = []
+  for (const { session } of [...pinned, ...visibleActive]) {
+    const woke = session.lifecycle.state === 'active' && session.lifecycle.wokeAt !== undefined
+    if (session.status === 'idle' && !session.unread && !woke) {
+      nextRelativeTimes.push(activityAt(session))
+    }
+  }
+  for (const { session } of visibleSettled) {
+    if (session.lifecycle.state === 'settled') nextRelativeTimes.push(session.lifecycle.settledAt)
+  }
+  if (searching) {
+    for (const { session } of searchResults) nextRelativeTimes.push(activityAt(session))
+  }
+  const relativeTimes = useRetainedNumberArray(nextRelativeTimes)
+  const wakeTimes = useRetainedNumberArray(visibleSnoozed.map(({ session }) => wakeAt(session)))
+
+  // --- commands -----------------------------------------------------------
+  const live = useRef({ props, visibleOrder, selectedIds, selectionAnchor })
+  live.current = { props, visibleOrder, selectedIds, selectionAnchor }
+
+  const recordUndo = useCallback((verb: UndoVerb, ids: string[], revert: () => void) => {
+    setUndoNotice((current) =>
+      current?.verb === verb
+        ? {
+            key: current.key + 1,
+            verb,
+            ids: [...new Set([...current.ids, ...ids])],
+            revert: () => {
+              current.revert()
+              revert()
+            },
+          }
+        : { key: (current?.key ?? 0) + 1, verb, ids, revert },
+    )
   }, [])
 
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), [])
-  const archiveSessions = useCallback(
-    (ids: string[]) => {
-      if (props.onArchiveSessions) props.onArchiveSessions(ids)
-      else ids.forEach(props.onArchiveSession)
-    },
-    [props.onArchiveSession, props.onArchiveSessions],
-  )
-  const unsnooze = useCallback((id: string) => props.actions.onUnsnooze(id), [props.actions])
-  const unsettle = useCallback((id: string) => props.actions.onUnsettle(id), [props.actions])
+  const commands = useMemo<ThreadCommands>(() => {
+    const entryOf = (id: string) => findSession(live.current.props.projects, id)
+    const clearSelection = () => setSelectedIds((current) => (current.size ? new Set() : current))
+    const settleIds = (ids: string[]) => {
+      const { actions } = live.current.props
+      if (ids.length > 1 && actions.onSettleMany) actions.onSettleMany(ids)
+      else ids.forEach((id) => actions.onSettle(id))
+    }
+    const unsettleIds = (ids: string[]) => {
+      const { actions } = live.current.props
+      if (ids.length > 1 && actions.onUnsettleMany) actions.onUnsettleMany(ids)
+      else ids.forEach((id) => actions.onUnsettle(id))
+    }
+    const unsnoozeIds = (ids: string[]) => {
+      const { actions } = live.current.props
+      if (ids.length > 1 && actions.onUnsnoozeMany) actions.onUnsnoozeMany(ids)
+      else ids.forEach((id) => actions.onUnsnooze(id))
+    }
+    const togglePins = (ids: string[]) => {
+      for (const id of ids) live.current.props.onToggleSessionPin?.(id)
+    }
+    return {
+      choose: (event, id) => {
+        const { visibleOrder, selectionAnchor } = live.current
+        if (event.shiftKey && selectionAnchor) {
+          const from = visibleOrder.findIndex((entry) => entry.session.id === selectionAnchor)
+          const to = visibleOrder.findIndex((entry) => entry.session.id === id)
+          if (from >= 0 && to >= 0) {
+            const [start, end] = from < to ? [from, to] : [to, from]
+            setSelectedIds(
+              new Set(visibleOrder.slice(start, end + 1).map((entry) => entry.session.id)),
+            )
+            return
+          }
+        }
+        if (event.metaKey || event.ctrlKey) {
+          setSelectedIds((current) => {
+            const next = new Set(current)
+            if (next.size === 0 && live.current.props.activeSessionId) {
+              next.add(live.current.props.activeSessionId)
+            }
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+          })
+          setSelectionAnchor(id)
+          return
+        }
+        clearSelection()
+        setSelectionAnchor(id)
+        live.current.props.onSelectSession(id)
+      },
+      prepareContextMenu: (id) => {
+        if (live.current.selectedIds.has(id)) return
+        clearSelection()
+        setSelectionAnchor(id)
+      },
+      register: (id, node) => {
+        if (node) rowRefs.current.set(id, node)
+        else rowRefs.current.delete(id)
+      },
+      navigate: (id, direction) => {
+        const { visibleOrder } = live.current
+        const index = visibleOrder.findIndex((entry) => entry.session.id === id)
+        if (index < 0) return
+        for (let offset = 1; offset <= visibleOrder.length; offset += 1) {
+          const next =
+            visibleOrder[(index + direction * offset + visibleOrder.length) % visibleOrder.length]
+          const node = next ? rowRefs.current.get(next.session.id) : undefined
+          if (node) {
+            node.focus()
+            return
+          }
+        }
+      },
+      clearSelection,
+      rename: (id, title) => live.current.props.onRenameSession(id, title),
+      settle: (ids) => {
+        const targets = ids.filter((id) => {
+          const entry = entryOf(id)
+          return entry?.session.lifecycle.state === 'active' && canHide(entry.session)
+        })
+        if (targets.length === 0) return
+        settleIds(targets)
+        recordUndo('Settled', targets, () => unsettleIds(targets))
+        clearSelection()
+      },
+      unsettle: (ids) => {
+        unsettleIds(ids)
+        clearSelection()
+      },
+      snooze: (ids, at) => {
+        const targets = ids.filter((id) => {
+          const entry = entryOf(id)
+          return entry !== undefined && canHide(entry.session)
+        })
+        if (targets.length === 0) return
+        const { actions } = live.current.props
+        if (targets.length > 1 && actions.onSnoozeMany) actions.onSnoozeMany(targets, at)
+        else targets.forEach((id) => actions.onSnooze(id, at))
+        recordUndo('Snoozed', targets, () => unsnoozeIds(targets))
+        clearSelection()
+      },
+      customSnooze: (ids) => setCustomSnoozeIds(ids),
+      wake: (ids) => {
+        unsnoozeIds(ids)
+        clearSelection()
+      },
+      togglePin: (id) => {
+        const pinnedBefore = entryOf(id)?.session.pinned === true
+        togglePins([id])
+        if (pinnedBefore) recordUndo('Unpinned', [id], () => togglePins([id]))
+      },
+      unpin: (ids) => {
+        const targets = ids.filter((id) => entryOf(id)?.session.pinned === true)
+        if (targets.length === 0) return
+        togglePins(targets)
+        recordUndo('Unpinned', targets, () => togglePins(targets))
+        clearSelection()
+      },
+      keepActive: (id, keepActive) => live.current.props.actions.onKeepActive(id, keepActive),
+      archive: (ids) => {
+        const { onArchiveSession, onArchiveSessions } = live.current.props
+        if (ids.length > 1 && onArchiveSessions) onArchiveSessions(ids)
+        else ids.forEach((id) => onArchiveSession(id))
+        clearSelection()
+      },
+      scope: (path) => live.current.props.onScopeChange(path),
+      copy: (text) => void writeClipboardText(text).catch(() => undefined),
+      dragStart: (event, id) => {
+        const entry = entryOf(id)
+        if (!entry || event.target !== event.currentTarget) return
+        prepareAppHaptics()
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData(THREAD_DRAG_TYPE, id)
+        setDrag({ id, from: threadSection(entry.session), hideable: canHide(entry.session) })
+      },
+      dragEnd: () => {
+        setDrag(undefined)
+        setDropTarget(undefined)
+      },
+    }
+  }, [recordUndo])
+
+  /** Dropping on a section does what moving there means: pin, unpin, settle, un-settle, or wake. */
+  const dropOn = (section: DropSection) => {
+    if (!drag || !canDrop(drag, section)) return
+    const { id, from } = drag
+    setDrag(undefined)
+    setDropTarget(undefined)
+    if (section === 'pinned' || (section === 'active' && from === 'pinned')) {
+      commands.togglePin(id)
+    } else if (section === 'settled') commands.settle([id])
+    else if (from === 'snoozed') commands.wake([id])
+    else if (from === 'settled') commands.unsettle([id])
+  }
+  const dropZone = (section: DropSection) =>
+    drag && canDrop(drag, section)
+      ? {
+          onDragOver: (event: DragEvent<HTMLElement>) => {
+            if (!event.dataTransfer.types.includes(THREAD_DRAG_TYPE)) return
+            event.preventDefault()
+            event.dataTransfer.dropEffect = 'move'
+            if (dropTarget !== section) {
+              setDropTarget(section)
+              performAppHaptic('alignment')
+            }
+          },
+          onDragLeave: (event: DragEvent<HTMLElement>) => {
+            const next = event.relatedTarget
+            if (next instanceof Node && event.currentTarget.contains(next)) return
+            setDropTarget((current) => (current === section ? undefined : current))
+          },
+          onDrop: (event: DragEvent<HTMLElement>) => {
+            event.preventDefault()
+            dropOn(section)
+          },
+        }
+      : {}
+  const zoneClass = (section: DropSection) =>
+    drag && canDrop(drag, section)
+      ? ` is-drop-zone${dropTarget === section ? ' is-drop-target' : ''}`
+      : ''
+
+  const undo = useCallback(() => {
+    setUndoNotice((current) => {
+      current?.revert()
+      return undefined
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!undoNotice) return
+    const timer = window.setTimeout(() => setUndoNotice(undefined), UNDO_WINDOW_MS)
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.shiftKey) return
+      if (!(macOS ? event.metaKey : event.ctrlKey) || event.key.toLocaleLowerCase() !== 'z') return
+      if (isTextTarget(event.target)) return
+      event.preventDefault()
+      undo()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [macOS, undo, undoNotice])
+
+  // --- ⌘1–9 hints (the app owns the shortcut and reads onOrderChange) --------
+  const jumpHintsVisible = useJumpHints(macOS)
+  const jumpLabels = useMemo(() => {
+    if (!jumpHintsVisible) return undefined
+    const labels = new Map<string, string>()
+    visibleOrder.slice(0, 9).forEach((entry, index) => {
+      labels.set(entry.session.id, shortcutLabel({ key: String(index + 1), primary: true }, macOS))
+    })
+    return labels
+  }, [jumpHintsVisible, macOS, visibleOrder])
+
+  // --- header -------------------------------------------------------------
   const preferredProject =
     props.scope ||
     props.activeProjectPath ||
     (props.projects.length === 1 ? props.projects[0]?.path : '')
+  const newThread = (inCurrentProject: boolean) => {
+    if (props.projects.length === 0) props.onAddProject()
+    else if (inCurrentProject) props.onNewSession(preferredProject || undefined, false)
+    else props.onNewSession(preferredProject || undefined, props.projects.length > 1)
+  }
+  const newThreadShortcut = keybindings.newChat ? shortcutLabel(keybindings.newChat, macOS) : ''
+  const newThreadTitle = [
+    newThreadShortcut ? `New thread (${newThreadShortcut})` : 'New thread',
+    props.projects.length > 1 ? 'Shift-click: new thread in the current project' : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const clearSearch = () => {
+    setQuery('')
+    searchInput.current?.focus()
+  }
+  const openResult = (index: number) => {
+    const entry = searchResults[index]
+    if (!entry) return
+    const match = messageSearch.matches.get(entry.session.id)
+    setQuery('')
+    if (match && props.onOpenSearchResult) props.onOpenSearchResult(entry.session.id, match.turnId)
+    else props.onSelectSession(entry.session.id)
+  }
+  const onSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape' && query) {
+      event.preventDefault()
+      event.stopPropagation()
+      setQuery('')
+      return
+    }
+    if (!searching) {
+      if (event.key === 'ArrowDown') {
+        const first = visibleOrder[0]
+        const node = first ? rowRefs.current.get(first.session.id) : undefined
+        if (node) {
+          event.preventDefault()
+          node.focus()
+        }
+      }
+      return
+    }
+    if (searchResults.length === 0) return
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      setHighlight((highlighted + step + searchResults.length) % searchResults.length)
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      openResult(highlighted)
+    }
+  }
+
+  const hasThreads = pinned.length + active.length + snoozed.length + settled.length > 0
+  const scopedProject = props.scope
+    ? props.projects.find((project) => project.path === props.scope)
+    : undefined
+  const resultsVisible = searching && searchResults.length > 0
+  const rowProps = (entry: Entry) => {
+    const selected = selectedIds.has(entry.session.id)
+    return {
+      ...entry,
+      current: entry.session.id === props.activeSessionId,
+      selected,
+      eagerActions: eagerRowActions,
+      menuEntries: selected && selectedIds.size > 1 ? selectedEntries : undefined,
+      scope: props.scope,
+      jumpLabel: jumpLabels?.get(entry.session.id),
+      commands,
+    }
+  }
 
   return (
     <InboxClock
       hasRunningThread={hasRunningThread}
       relativeTimes={relativeTimes}
-      hasSnoozedThread={snoozedExpanded && visibleSnoozed.length > 0}
+      wakeTimes={wakeTimes}
     >
-      <div className="inbox-toolbar">
-        <div className="inbox-toolbar__primary">
-          <label className="inbox-search">
-            <Search size={14} aria-hidden />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape' && query) {
-                  event.preventDefault()
-                  setQuery('')
-                  return
-                }
-                if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-                event.preventDefault()
-                focusBoundary(event.key === 'ArrowDown' ? 1 : -1)
-              }}
-              placeholder="Search threads"
-              aria-label="Search threads"
-              spellCheck={false}
-            />
-            {query ? (
-              <button type="button" aria-label="Clear thread search" onClick={() => setQuery('')}>
-                <X size={12} aria-hidden />
-              </button>
-            ) : null}
-          </label>
-          <button
-            className="inbox-toolbar__new"
-            type="button"
-            onClick={() => {
-              if (props.projects.length === 0) props.onAddProject()
-              else props.onNewSession(preferredProject || undefined, props.projects.length > 1)
-            }}
-          >
-            <SquarePen size={16} aria-hidden />
-            <span>New chat</span>
-          </button>
-        </div>
-
-        <div className="inbox-toolbar__projects">
-          <label className="inbox__scope">
-            <span className="visually-hidden">Project filter</span>
-            <AppSelect
-              ariaLabel="Sidebar project filter"
-              value={props.scope}
-              onChange={props.onScopeChange}
-              options={[
-                { value: '', label: 'All projects' },
-                ...props.projects.map((project) => ({
-                  value: project.path,
-                  label: projectName(project),
-                })),
-              ]}
-            />
-          </label>
-          <button className="inbox-toolbar__add" type="button" onClick={props.onAddProject}>
-            <FolderPlus size={13} aria-hidden />
-            <span>Add Project</span>
-          </button>
-        </div>
-        {props.onOpenPullRequests ? (
-          <button
-            type="button"
-            className={`inbox-toolbar__pulls${props.pullRequestsActive ? ' is-active' : ''}`}
-            aria-current={props.pullRequestsActive ? 'page' : undefined}
-            onClick={props.onOpenPullRequests}
-          >
-            <GitPullRequest size={14} aria-hidden />
-            <span>Pull requests</span>
-          </button>
-        ) : null}
-      </div>
-
-      <div className="rail__body inbox__body">
-        <div className="inbox">
-          {selectedIds.size > 1 ? (
-            <p className="inbox__selection-count">{selectedIds.size} threads selected</p>
+      <div className="thread-rail__head">
+        <label className="thread-search">
+          <Search size={15} aria-hidden />
+          <input
+            ref={searchInput}
+            value={query}
+            placeholder="Search"
+            aria-label="Search threads"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={resultsVisible}
+            aria-controls={resultsVisible ? 'thread-search-results' : undefined}
+            aria-activedescendant={resultsVisible ? searchResultId(highlighted) : undefined}
+            spellCheck={false}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            onKeyDown={onSearchKeyDown}
+          />
+          {query ? (
+            <button type="button" aria-label="Clear thread search" onClick={clearSearch}>
+              <X size={12} aria-hidden />
+            </button>
           ) : null}
-
-          {!normalizedQuery || active.length > 0 ? (
+        </label>
+        <div className="thread-rail__tools">
+          {props.projects.length > 0 ? (
             <>
-              <SectionHeading title="Active" count={active.length} />
-              {active.length > 0 ? (
-                <ul className="inbox__list" aria-label="Active threads">
-                  {visibleActive.map((entry) => {
-                    const selected = selectedIds.has(entry.session.id)
-                    return (
-                      <ActiveRow
-                        {...entry}
-                        key={entry.session.id}
-                        current={entry.session.id === props.activeSessionId}
-                        selected={selected}
-                        eagerActions={eagerRowActions}
-                        menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
-                        actions={props.actions}
-                        onChoose={chooseEntry}
-                        onContextMenu={prepareContextMenu}
-                        onRegister={registerRow}
-                        onNavigate={focusResult}
-                        onRename={props.onRenameSession}
-                        onTogglePin={props.onToggleSessionPin}
-                        onArchive={props.onArchiveSession}
-                        onArchiveMany={archiveSessions}
-                        onClearSelection={clearSelection}
-                      />
-                    )
-                  })}
-                  {active.length > activeLimit && !activePageDeferred ? (
-                    <li>
-                      <button
-                        className="inbox__more"
-                        type="button"
-                        onClick={() => setActiveLimit((limit) => limit + PAGE_SIZE)}
-                      >
-                        Show {PAGE_SIZE} more
-                      </button>
-                    </li>
-                  ) : null}
-                </ul>
-              ) : (
-                <p className="inbox__empty">No active threads in this project.</p>
-              )}
+              <ProjectScopeMenu
+                projects={props.projects}
+                scope={props.scope}
+                onScopeChange={props.onScopeChange}
+              />
+              <button
+                type="button"
+                className="thread-rail__icon"
+                aria-label="New project"
+                title="New project"
+                onClick={props.onAddProject}
+              >
+                <FolderPlus size={16} aria-hidden />
+              </button>
             </>
           ) : null}
-
-          <Shelf
-            title="Snoozed"
-            count={snoozed.length}
-            open={snoozedExpanded}
-            onToggle={() => setSnoozedOpen((open) => !open)}
+          <button
+            type="button"
+            className="thread-rail__icon"
+            aria-label="New thread"
+            title={newThreadTitle}
+            onClick={(event) => newThread(event.shiftKey)}
           >
-            {snoozedExpanded ? (
-              <>
-                {visibleSnoozed.map((entry) => {
-                  const selected = selectedIds.has(entry.session.id)
-                  return (
-                    <ShelfRow
-                      {...entry}
-                      key={entry.session.id}
-                      current={entry.session.id === props.activeSessionId}
-                      selected={selected}
-                      eagerActions={eagerRowActions}
-                      menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
-                      action="Wake now"
-                      actionIcon="wake"
-                      actions={props.actions}
-                      onChoose={chooseEntry}
-                      onContextMenu={prepareContextMenu}
-                      onRegister={registerRow}
-                      onNavigate={focusResult}
-                      onRename={props.onRenameSession}
-                      onTogglePin={props.onToggleSessionPin}
-                      onArchive={props.onArchiveSession}
-                      onArchiveMany={archiveSessions}
-                      onAction={unsnooze}
-                      onClearSelection={clearSelection}
-                    />
-                  )
-                })}
-                {snoozed.length > snoozedLimit ? (
-                  <li>
-                    <button
-                      className="inbox__more"
-                      type="button"
-                      onClick={() => setSnoozedLimit((limit) => limit + PAGE_SIZE)}
-                    >
-                      Show {PAGE_SIZE} more
-                    </button>
-                  </li>
-                ) : null}
-              </>
-            ) : null}
-          </Shelf>
-
-          <Shelf
-            title="Settled"
-            count={settled.length}
-            open={settledExpanded}
-            onToggle={() => setSettledOpen((open) => !open)}
-          >
-            {settledExpanded ? (
-              <>
-                {visibleSettled.map((entry) => {
-                  const selected = selectedIds.has(entry.session.id)
-                  return (
-                    <ShelfRow
-                      {...entry}
-                      key={entry.session.id}
-                      current={entry.session.id === props.activeSessionId}
-                      selected={selected}
-                      eagerActions={eagerRowActions}
-                      menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
-                      action="Un-settle"
-                      actionIcon="unsettle"
-                      actions={props.actions}
-                      onChoose={chooseEntry}
-                      onContextMenu={prepareContextMenu}
-                      onRegister={registerRow}
-                      onNavigate={focusResult}
-                      onRename={props.onRenameSession}
-                      onTogglePin={props.onToggleSessionPin}
-                      onArchive={props.onArchiveSession}
-                      onArchiveMany={archiveSessions}
-                      onAction={unsettle}
-                      onClearSelection={clearSelection}
-                    />
-                  )
-                })}
-                {settled.length > settledLimit ? (
-                  <li>
-                    <button
-                      className="inbox__more"
-                      type="button"
-                      onClick={() => setSettledLimit((limit) => limit + PAGE_SIZE)}
-                    >
-                      Show {PAGE_SIZE} more
-                    </button>
-                  </li>
-                ) : null}
-              </>
-            ) : null}
-          </Shelf>
-
-          {normalizedQuery && !hasMatches ? (
-            <p className="inbox__empty inbox__empty--search">No threads match “{query.trim()}”.</p>
-          ) : null}
+            <SquarePen size={16} aria-hidden />
+          </button>
         </div>
       </div>
-    </InboxClock>
-  )
-}
 
-function SectionHeading(props: { title: string; count: number }) {
-  return (
-    <p className="inbox__heading">
-      <span>{props.title}</span>
-      <span>{props.count}</span>
-    </p>
+      <div className="rail__body thread-rail__body">
+        {searching ? (
+          searchResults.length > 0 ? (
+            <ul className="thread-results" id="thread-search-results" role="listbox">
+              {searchResults.map((entry, index) => (
+                <SearchResultRow
+                  key={entry.session.id}
+                  entry={entry}
+                  index={index}
+                  highlighted={index === highlighted}
+                  current={entry.session.id === props.activeSessionId}
+                  snippet={messageSearch.matches.get(entry.session.id)?.snippet}
+                  onHighlight={setHighlight}
+                  onOpen={openResult}
+                />
+              ))}
+            </ul>
+          ) : (
+            <p className="thread-empty" role="status">
+              {messageSearch.pending ? 'Searching thread messages…' : 'No threads found'}
+            </p>
+          )
+        ) : (
+          <div className={`thread-list${drag ? ' is-dragging' : ''}`} ref={listRef}>
+            {pinned.length > 0 || (drag && canDrop(drag, 'pinned')) ? (
+              <div className={`thread-zone${zoneClass('pinned')}`} {...dropZone('pinned')}>
+                {drag ? <p className="thread-zone__label">Pinned</p> : null}
+                {pinned.length > 0 ? (
+                  <ul className="thread-list__group" aria-label="Pinned threads">
+                    {pinned.map((entry) => (
+                      <ThreadCard key={entry.session.id} {...rowProps(entry)} />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="thread-zone__empty">Drop to pin</p>
+                )}
+              </div>
+            ) : null}
+            {visibleActive.length > 0 || (drag && canDrop(drag, 'active')) ? (
+              <div className={`thread-zone${zoneClass('active')}`} {...dropZone('active')}>
+                {drag ? <p className="thread-zone__label">Active</p> : null}
+                {visibleActive.length > 0 ? (
+                  <ul className="thread-list__group" aria-label="Active threads">
+                    {visibleActive.map((entry) => (
+                      <ThreadCard key={entry.session.id} {...rowProps(entry)} />
+                    ))}
+                    {active.length > activeLimit && !activePageDeferred ? (
+                      <ShowMore
+                        count={Math.min(PAGE_SIZE, active.length - activeLimit)}
+                        onClick={() => setActiveLimit((limit) => limit + PAGE_SIZE)}
+                      />
+                    ) : null}
+                  </ul>
+                ) : (
+                  <p className="thread-zone__empty">Drop to make active</p>
+                )}
+              </div>
+            ) : null}
+            {!hasThreads ? (
+              <div className="thread-empty">
+                {props.projects.length === 0 ? (
+                  <>
+                    <p>No projects yet</p>
+                    <button
+                      type="button"
+                      className="thread-empty__action"
+                      onClick={props.onAddProject}
+                    >
+                      <Plus size={14} aria-hidden />
+                      <span>Add project</span>
+                    </button>
+                  </>
+                ) : scopedProject ? (
+                  <p>No threads in {projectName(scopedProject)} yet</p>
+                ) : (
+                  <p>No threads yet</p>
+                )}
+              </div>
+            ) : null}
+            {snoozed.length > 0 ? (
+              <section className="thread-shelf thread-shelf--snoozed" aria-label="Snoozed threads">
+                <h3 className="thread-shelf__head" data-motion-key="snoozed">
+                  <span>Snoozed</span>
+                  <span className="thread-shelf__count">{snoozed.length}</span>
+                  <span className="thread-shelf__rule" aria-hidden />
+                </h3>
+                <ul className="thread-list__group">
+                  {visibleSnoozed.map((entry) => (
+                    <ThreadRow key={entry.session.id} {...rowProps(entry)} />
+                  ))}
+                  {snoozed.length > snoozedLimit ? (
+                    <ShowMore
+                      count={Math.min(PAGE_SIZE, snoozed.length - snoozedLimit)}
+                      onClick={() => setSnoozedLimit((limit) => limit + PAGE_SIZE)}
+                    />
+                  ) : null}
+                </ul>
+              </section>
+            ) : null}
+            {settled.length > 0 || (drag && canDrop(drag, 'settled')) ? (
+              <section
+                className={`thread-shelf thread-zone${zoneClass('settled')}`}
+                aria-label="Settled threads"
+                {...dropZone('settled')}
+              >
+                <h3 className="thread-shelf__head" data-motion-key="settled">
+                  <span>Settled</span>
+                  <span className="thread-shelf__count">{settled.length}</span>
+                  <span className="thread-shelf__rule" aria-hidden />
+                </h3>
+                {settled.length === 0 ? <p className="thread-zone__empty">Drop to settle</p> : null}
+                <ul className="thread-list__group">
+                  {visibleSettled.map((entry) => (
+                    <ThreadRow key={entry.session.id} {...rowProps(entry)} />
+                  ))}
+                  {settled.length > settledLimit ? (
+                    <ShowMore
+                      count={Math.min(PAGE_SIZE, settled.length - settledLimit)}
+                      onClick={() => setSettledLimit((limit) => limit + PAGE_SIZE)}
+                    />
+                  ) : null}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      {undoNotice ? (
+        <div className="thread-undo" role="status" key={undoNotice.key}>
+          <span>
+            {undoNotice.verb} {undoNotice.ids.length}{' '}
+            {undoNotice.ids.length === 1 ? 'thread' : 'threads'}
+          </span>
+          <button type="button" onClick={undo}>
+            <Undo size={13} aria-hidden />
+            <span>Undo</span>
+            <kbd>{shortcutLabel({ key: 'z', primary: true }, macOS)}</kbd>
+          </button>
+        </div>
+      ) : null}
+
+      {props.footer}
+
+      {customSnoozeIds ? (
+        <CustomSnoozeDialog
+          count={customSnoozeIds.length}
+          onClose={() => setCustomSnoozeIds(undefined)}
+          onSnooze={(at) => {
+            commands.snooze(customSnoozeIds, at)
+            setCustomSnoozeIds(undefined)
+          }}
+        />
+      ) : null}
+    </InboxClock>
   )
 }
 
 /** Skip unrelated shell commits when every inbox input keeps its identity. */
 export const InboxSidebar = memo(InboxSidebarComponent)
 
-const ActiveRow = memo(function ActiveRow(
-  props: Entry & {
-    current: boolean
-    selected: boolean
-    eagerActions: boolean
-    menuEntries: Entry[] | undefined
-    actions: InboxActions
-    onChoose: (event: ReactMouseEvent, id: string) => void
-    onContextMenu: (id: string) => void
-    onRegister: (id: string, node: HTMLButtonElement | null) => void
-    onNavigate: (id: string, direction: -1 | 1) => void
-    onRename: (id: string, title: string) => void
-    onTogglePin: ((id: string) => void) | undefined
-    onArchive: (id: string) => void
-    onArchiveMany: (ids: string[]) => void
-    onClearSelection: () => void
-  },
-) {
-  const [renaming, setRenaming] = useState(false)
-  const [actionsRequested, setActionsRequested] = useState(false)
-  const contextMenuTarget = useRef<HTMLButtonElement>(null)
-  const lifecycle =
-    props.session.lifecycle.state === 'active'
-      ? props.session.lifecycle
-      : { state: 'active' as const, keepActive: false }
-  const eligible = canHide(props.session)
-  const actionsReady = props.eagerActions || actionsRequested
-
-  if (renaming) {
-    return (
-      <li className="inbox-card is-renaming">
-        <Rename
-          value={props.session.title}
-          onCancel={() => setRenaming(false)}
-          onCommit={(title) => {
-            props.onRename(props.session.id, title)
-            setRenaming(false)
-          }}
-        />
-      </li>
-    )
-  }
-
-  const setTarget = (node: HTMLButtonElement | null) => {
-    contextMenuTarget.current = node
-    props.onRegister(props.session.id, node)
-  }
-  const initialNow = Date.now()
-
+function ShowMore(props: { count: number; onClick: () => void }) {
   return (
-    <li
-      className={`inbox-card${props.current ? ' is-selected' : ''}${props.selected ? ' is-multi-selected' : ''}`}
-      onPointerEnter={() => setActionsRequested(true)}
-      onFocusCapture={() => setActionsRequested(true)}
-    >
-      <button
-        ref={setTarget}
-        className="inbox-card__main"
-        type="button"
-        onClick={(event) => props.onChoose(event, props.session.id)}
-        onContextMenu={() => props.onContextMenu(props.session.id)}
-        onDoubleClick={() => setRenaming(true)}
-        onKeyDown={(event) =>
-          navigateRows(event, (direction) => props.onNavigate(props.session.id, direction))
-        }
-        aria-label={rowLabel(props.project, props.session, initialNow)}
-        title={threadSummary(props.project, props.session, initialNow)}
-      >
-        <span className="inbox-card__topline">
-          <span className="inbox-card__project">{projectName(props.project)}</span>
-          <span className="inbox-card__state">
-            <ActiveRowClock
-              project={props.project}
-              session={props.session}
-              target={contextMenuTarget}
-              initialNow={initialNow}
-            />
-          </span>
-        </span>
-        <span className="inbox-card__title">{props.session.title}</span>
-        <span className="inbox-card__meta">
-          {props.session.worktreeBranch ? (
-            <span className="inbox-card__branch">
-              <GitBranch size={10} aria-hidden />
-              {props.session.worktreeBranch}
-            </span>
-          ) : (
-            <span>Default checkout</span>
-          )}
-          <span aria-hidden>·</span>
-          <SourceIdentity
-            presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
-            density="compact"
-          />
-          {props.session.pinned ? (
-            <>
-              <span aria-hidden>·</span>
-              <span>Pinned</span>
-            </>
-          ) : null}
-          {lifecycle.wokeAt && props.session.status !== 'idle' ? (
-            <span className="inbox-card__woke">Woke</span>
-          ) : null}
-        </span>
+    <li className="thread-more" data-motion-key={useId()}>
+      <button type="button" onClick={props.onClick}>
+        <Plus size={14} aria-hidden />
+        <span>Show {props.count} more</span>
       </button>
-
-      <span className="inbox-card__quick">
-        {eligible && actionsReady ? (
-          <>
-            <SnoozeMenu
-              label={`Snooze ${props.session.title}`}
-              onSnooze={(wakeAt) => props.actions.onSnooze(props.session.id, wakeAt)}
-            />
-            <button
-              type="button"
-              title="Settle"
-              aria-label={`Settle ${props.session.title}`}
-              onClick={() => props.actions.onSettle(props.session.id)}
-            >
-              <CheckCheck size={13} aria-hidden />
-            </button>
-          </>
-        ) : null}
-        <ThreadMenu
-          entry={{ project: props.project, session: props.session }}
-          entries={props.menuEntries ?? [{ project: props.project, session: props.session }]}
-          actions={props.actions}
-          contextMenuTarget={contextMenuTarget}
-          triggerReady={actionsReady}
-          onRename={() => setRenaming(true)}
-          onTogglePin={() => props.onTogglePin?.(props.session.id)}
-          onArchive={() => props.onArchive(props.session.id)}
-          onArchiveMany={props.onArchiveMany}
-          onClearSelection={props.onClearSelection}
-        />
-      </span>
     </li>
   )
-})
-
-function ActiveRowClock(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-  initialNow: number
-}) {
-  const running = props.session.status === 'starting' || props.session.status === 'working'
-  const woke =
-    props.session.lifecycle.state === 'active' && props.session.lifecycle.wokeAt !== undefined
-  if (running) return <SecondActiveRowClock {...props} />
-  if (props.session.status === 'idle' && !woke) return <MinuteActiveRowClock {...props} />
-  return <Status session={props.session} now={props.initialNow} />
 }
 
-function SecondActiveRowClock(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-}) {
-  const now = useContext(InboxSecondNowContext)
-  return <ClockedActiveRow {...props} now={now} />
-}
+/**
+ * Holding the primary modifier alone for a moment reveals ⌘1–9 badges on the
+ * first nine visible rows. They stay while a digit is pressed with it.
+ */
+function useJumpHints(macOS: boolean): boolean {
+  const [visible, setVisible] = useState(false)
 
-function MinuteActiveRowClock(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-}) {
-  const now = useContext(InboxMinuteNowContext)
-  return <ClockedActiveRow {...props} now={now} />
-}
-
-function ClockedActiveRow(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-  now: number
-}) {
-  useLayoutEffect(() => {
-    const target = props.target.current
-    if (!target) return
-    target.setAttribute('aria-label', rowLabel(props.project, props.session, props.now))
-    target.title = threadSummary(props.project, props.session, props.now)
-  }, [props.now, props.project, props.session, props.target])
-  return <Status session={props.session} now={props.now} />
-}
-
-function Shelf(props: {
-  title: string
-  count: number
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-}) {
-  if (props.count === 0) return null
-  return (
-    <section className="inbox-shelf">
-      <button
-        className="inbox-shelf__toggle"
-        type="button"
-        aria-expanded={props.open}
-        onClick={props.onToggle}
-      >
-        <ChevronRight size={11} aria-hidden />
-        <span>{props.title}</span>
-        <span>{props.count}</span>
-      </button>
-      {props.open ? <ul className="inbox-shelf__list">{props.children}</ul> : null}
-    </section>
-  )
-}
-
-const ShelfRow = memo(function ShelfRow(
-  props: Entry & {
-    current: boolean
-    selected: boolean
-    eagerActions: boolean
-    menuEntries: Entry[] | undefined
-    action: string
-    actionIcon: 'wake' | 'unsettle'
-    actions: InboxActions
-    onChoose: (event: ReactMouseEvent, id: string) => void
-    onContextMenu: (id: string) => void
-    onRegister: (id: string, node: HTMLButtonElement | null) => void
-    onNavigate: (id: string, direction: -1 | 1) => void
-    onRename: (id: string, title: string) => void
-    onTogglePin: ((id: string) => void) | undefined
-    onArchive: (id: string) => void
-    onArchiveMany: (ids: string[]) => void
-    onAction: (id: string) => void
-    onClearSelection: () => void
-  },
-) {
-  const [renaming, setRenaming] = useState(false)
-  const [actionsRequested, setActionsRequested] = useState(false)
-  const contextMenuTarget = useRef<HTMLButtonElement>(null)
-  const setTarget = (node: HTMLButtonElement | null) => {
-    contextMenuTarget.current = node
-    props.onRegister(props.session.id, node)
-  }
-  const initialNow = Date.now()
-  const actionsReady = props.eagerActions || actionsRequested
-
-  return (
-    <li
-      className={`inbox-shelf__row${props.current ? ' is-selected' : ''}${props.selected ? ' is-multi-selected' : ''}`}
-      onPointerEnter={() => setActionsRequested(true)}
-      onFocusCapture={() => setActionsRequested(true)}
-    >
-      {renaming ? (
-        <Rename
-          value={props.session.title}
-          onCancel={() => setRenaming(false)}
-          onCommit={(title) => {
-            props.onRename(props.session.id, title)
-            setRenaming(false)
-          }}
-        />
-      ) : (
-        <button
-          ref={setTarget}
-          className="inbox-shelf__main"
-          type="button"
-          onClick={(event) => props.onChoose(event, props.session.id)}
-          onContextMenu={() => props.onContextMenu(props.session.id)}
-          onDoubleClick={() => setRenaming(true)}
-          onKeyDown={(event) =>
-            navigateRows(event, (direction) => props.onNavigate(props.session.id, direction))
-          }
-          title={threadSummary(props.project, props.session, initialNow)}
-        >
-          <span>{props.session.title}</span>
-          <ShelfRowClock
-            project={props.project}
-            session={props.session}
-            target={contextMenuTarget}
-          />
-        </button>
-      )}
-      <button
-        className="inbox-shelf__action"
-        type="button"
-        aria-label={`${props.action} ${props.session.title}`}
-        onClick={() => props.onAction(props.session.id)}
-      >
-        {props.actionIcon === 'wake' ? (
-          <Bell size={13} aria-hidden />
-        ) : (
-          <CheckCheck size={13} aria-hidden />
-        )}
-      </button>
-      {!renaming ? (
-        <ThreadMenu
-          entry={{ project: props.project, session: props.session }}
-          entries={props.menuEntries ?? [{ project: props.project, session: props.session }]}
-          actions={props.actions}
-          contextMenuTarget={contextMenuTarget}
-          triggerReady={actionsReady}
-          onRename={() => setRenaming(true)}
-          onTogglePin={() => props.onTogglePin?.(props.session.id)}
-          onArchive={() => props.onArchive(props.session.id)}
-          onArchiveMany={props.onArchiveMany}
-          onClearSelection={props.onClearSelection}
-        />
-      ) : null}
-    </li>
-  )
-})
-
-function ShelfRowClock(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-}) {
-  return props.session.lifecycle.state === 'snoozed' ? (
-    <DayShelfRowClock {...props} />
-  ) : (
-    <MinuteShelfRowClock {...props} />
-  )
-}
-
-function DayShelfRowClock(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-}) {
-  const now = useContext(InboxDayNowContext)
-  return <ClockedShelfRow {...props} now={now} />
-}
-
-function MinuteShelfRowClock(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-}) {
-  const now = useContext(InboxMinuteNowContext)
-  return <ClockedShelfRow {...props} now={now} />
-}
-
-function ClockedShelfRow(props: {
-  project: Project
-  session: Session
-  target: RefObject<HTMLButtonElement | null>
-  now: number
-}) {
-  useLayoutEffect(() => {
-    const target = props.target.current
-    if (target) target.title = threadSummary(props.project, props.session, props.now)
-  }, [props.now, props.project, props.session, props.target])
-  const detail =
-    props.session.lifecycle.state === 'snoozed'
-      ? formatWakeTime(wakeAt(props.session), props.now)
-      : `${projectName(props.project)} · ${relativeTime(settledAt(props.session), props.now)}`
-  return <small>{detail}</small>
-}
-
-function ThreadMenu(props: {
-  entry: Entry
-  entries: Entry[]
-  actions: InboxActions
-  contextMenuTarget: RefObject<HTMLButtonElement | null>
-  triggerReady: boolean
-  onRename: () => void
-  onTogglePin: () => void
-  onArchive: (id?: string) => void
-  onArchiveMany: (ids: string[]) => void
-  onClearSelection: () => void
-}) {
-  const multiple = props.entries.length > 1
-  const lifecycle =
-    props.entry.session.lifecycle.state === 'active' ? props.entry.session.lifecycle : undefined
-
-  const finish = (close: () => void, action: () => void) => {
-    action()
-    props.onClearSelection()
-    close()
-  }
-
-  return (
-    <Menu
-      drop="down"
-      align="right"
-      label={`Thread options for ${props.entry.session.title}`}
-      triggerClassName="inbox-card__menu"
-      panelClassName="menu--sidebar"
-      contextMenuTargetRef={props.contextMenuTarget}
-      {...(props.triggerReady
-        ? { trigger: threadMenuTrigger }
-        : { contextMenuOnly: true as const })}
-    >
-      {(close) => {
-        const active: Entry[] = []
-        const snoozed: Entry[] = []
-        const settled: Entry[] = []
-        for (const entry of props.entries) {
-          if (entry.session.lifecycle.state === 'active') {
-            if (canHide(entry.session)) active.push(entry)
-          } else if (entry.session.lifecycle.state === 'snoozed') {
-            snoozed.push(entry)
-          } else {
-            settled.push(entry)
-          }
-        }
-        return (
-          <>
-            {multiple ? (
-              <div className="inbox-menu__selection">{props.entries.length} selected</div>
-            ) : null}
-            {active.length > 0 ? (
-              <>
-                <MenuItem
-                  title={multiple ? `Settle ${threadCount(active.length)}` : 'Settle'}
-                  icon={<CheckCheck size={13} aria-hidden />}
-                  onClick={() =>
-                    finish(close, () => {
-                      const ids = active.map((entry) => entry.session.id)
-                      if (multiple && props.actions.onSettleMany) props.actions.onSettleMany(ids)
-                      else ids.forEach((id) => props.actions.onSettle(id))
-                    })
-                  }
-                />
-                {snoozePresets(Date.now()).map((preset) => (
-                  <MenuItem
-                    key={preset.label}
-                    title={
-                      multiple ? `${preset.label} · ${threadCount(active.length)}` : preset.label
-                    }
-                    icon={<Clock3 size={13} aria-hidden />}
-                    onClick={() =>
-                      finish(close, () => {
-                        const ids = active.map((entry) => entry.session.id)
-                        if (multiple && props.actions.onSnoozeMany) {
-                          props.actions.onSnoozeMany(ids, preset.at)
-                        } else {
-                          ids.forEach((id) => props.actions.onSnooze(id, preset.at))
-                        }
-                      })
-                    }
-                  />
-                ))}
-              </>
-            ) : null}
-            {snoozed.length > 0 ? (
-              <MenuItem
-                title={multiple ? `Wake ${threadCount(snoozed.length)}` : 'Wake now'}
-                icon={<Bell size={13} aria-hidden />}
-                onClick={() =>
-                  finish(close, () => {
-                    const ids = snoozed.map((entry) => entry.session.id)
-                    if (multiple && props.actions.onUnsnoozeMany) props.actions.onUnsnoozeMany(ids)
-                    else ids.forEach((id) => props.actions.onUnsnooze(id))
-                  })
-                }
-              />
-            ) : null}
-            {settled.length > 0 ? (
-              <MenuItem
-                title={multiple ? `Un-settle ${threadCount(settled.length)}` : 'Un-settle'}
-                icon={<CheckCheck size={13} aria-hidden />}
-                onClick={() =>
-                  finish(close, () => {
-                    const ids = settled.map((entry) => entry.session.id)
-                    if (multiple && props.actions.onUnsettleMany) props.actions.onUnsettleMany(ids)
-                    else ids.forEach((id) => props.actions.onUnsettle(id))
-                  })
-                }
-              />
-            ) : null}
-            {!multiple ? (
-              <>
-                {lifecycle && canHide(props.entry.session) ? (
-                  <MenuItem
-                    title={lifecycle.keepActive ? 'Allow auto-settle' : 'Keep active'}
-                    icon={
-                      lifecycle.keepActive ? (
-                        <Clock3 size={13} aria-hidden />
-                      ) : (
-                        <Pin size={13} aria-hidden />
-                      )
-                    }
-                    onClick={() =>
-                      finish(close, () =>
-                        props.actions.onKeepActive(props.entry.session.id, !lifecycle.keepActive),
-                      )
-                    }
-                  />
-                ) : null}
-                <div className="menu__rule" />
-                <MenuItem
-                  title="Rename"
-                  icon={<Pencil size={13} aria-hidden />}
-                  onClick={() => finish(close, props.onRename)}
-                />
-                <MenuItem
-                  title={props.entry.session.pinned ? 'Unpin thread' : 'Pin thread'}
-                  icon={
-                    props.entry.session.pinned ? (
-                      <PinOff size={13} aria-hidden />
-                    ) : (
-                      <Pin size={13} aria-hidden />
-                    )
-                  }
-                  onClick={() => finish(close, props.onTogglePin)}
-                />
-                <MenuItem
-                  title="Copy project path"
-                  icon={<Copy size={13} aria-hidden />}
-                  onClick={() => finish(close, () => void copyText(props.entry.project.path))}
-                />
-                {props.entry.session.worktreeBranch ? (
-                  <MenuItem
-                    title="Copy branch"
-                    icon={<GitBranch size={13} aria-hidden />}
-                    onClick={() =>
-                      finish(close, () => void copyText(props.entry.session.worktreeBranch ?? ''))
-                    }
-                  />
-                ) : null}
-              </>
-            ) : null}
-            <div className="menu__rule" />
-            <MenuItem
-              title={multiple ? `Delete ${props.entries.length} threads` : 'Delete thread'}
-              icon={<Trash2 size={13} aria-hidden />}
-              className="menu__item--danger"
-              onClick={() =>
-                finish(close, () => {
-                  if (multiple) {
-                    props.onArchiveMany(props.entries.map((entry) => entry.session.id))
-                  } else {
-                    props.onArchive()
-                  }
-                })
-              }
-            />
-          </>
-        )
-      }}
-    </Menu>
-  )
-}
-
-const threadMenuTrigger = () => <Ellipsis size={13} aria-hidden />
-
-function SnoozeMenu(props: { label: string; onSnooze: (wakeAt: number) => void }) {
-  return (
-    <Menu
-      drop="down"
-      align="right"
-      label={props.label}
-      panelClassName="menu--sidebar"
-      trigger={() => <Clock3 size={13} aria-hidden />}
-    >
-      {(close) => (
-        <>
-          {snoozePresets(Date.now()).map((preset) => (
-            <MenuItem
-              key={preset.label}
-              title={preset.label}
-              icon={<Clock3 size={13} aria-hidden />}
-              onClick={() => {
-                props.onSnooze(preset.at)
-                close()
-              }}
-            />
-          ))}
-        </>
-      )}
-    </Menu>
-  )
-}
-
-function Rename(props: { value: string; onCommit: (value: string) => void; onCancel: () => void }) {
-  const [value, setValue] = useState(props.value)
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => ref.current?.select(), [])
-  const commit = () => {
-    const next = value.trim()
-    if (next) props.onCommit(next)
-    else props.onCancel()
-  }
-  return (
-    <input
-      ref={ref}
-      className="rename rename--chat"
-      value={value}
-      aria-label={`Rename ${props.value}`}
-      onChange={(event) => setValue(event.currentTarget.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') commit()
-        if (event.key === 'Escape') props.onCancel()
-      }}
-    />
-  )
-}
-
-function Status(props: { session: Session; now: number }) {
-  const status = statusPresentation(props.session, props.now)
-  return <span className={`inbox-status is-${status.tone}`}>{status.label}</span>
-}
-
-type StatusPresentation = {
-  label: string
-  tone: 'quiet' | 'working' | 'attention' | 'failed' | 'done' | 'woke'
-}
-
-function statusPresentation(session: Session, now: number): StatusPresentation {
-  const woke = session.lifecycle.state === 'active' && session.lifecycle.wokeAt !== undefined
-  if (session.status === 'approval') return { label: 'Approval', tone: 'attention' }
-  if (session.status === 'input') return { label: 'Needs input', tone: 'attention' }
-  if (session.status === 'failed') return { label: 'Failed', tone: 'failed' }
-  if (session.status === 'ready') return { label: 'Done', tone: 'done' }
-  if (session.status === 'queued') return { label: 'Queued', tone: 'attention' }
-  if (session.status === 'starting' || session.status === 'working') {
-    return {
-      label: `Working · ${elapsedTime(session.statusSince ?? session.createdAt, now)}`,
-      tone: 'working',
+  useEffect(() => {
+    let timer: number | undefined
+    const hide = () => {
+      if (timer !== undefined) window.clearTimeout(timer)
+      timer = undefined
+      setVisible(false)
     }
-  }
-  if (woke) return { label: 'Woke', tone: 'woke' }
-  return { label: relativeTime(session.statusSince ?? session.createdAt, now), tone: 'quiet' }
+    const primary = macOS ? 'Meta' : 'Control'
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === primary) {
+        if (event.shiftKey || event.altKey || (macOS ? event.ctrlKey : event.metaKey)) return
+        if (timer === undefined) {
+          timer = window.setTimeout(() => setVisible(true), JUMP_HINT_DELAY_MS)
+        }
+        return
+      }
+      const primaryHeld = macOS ? event.metaKey : event.ctrlKey
+      if (primaryHeld && /^[1-9]$/.test(event.key) && !isTerminalTarget(event.target)) return
+      hide()
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === primary) hide()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', hide)
+    return () => {
+      hide()
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', hide)
+    }
+  }, [macOS])
+
+  return visible
 }
 
-function canHide(session: Session): boolean {
-  return !['starting', 'working', 'queued', 'approval', 'input'].includes(session.status)
+/** Title hits come from the list itself; message hits wait for a short pause in typing. */
+function useMessageSearch(
+  search: InboxMessageSearch | undefined,
+  query: string,
+  scope: string,
+): { matches: ReadonlyMap<string, MessageMatch>; pending: boolean } {
+  const [state, setState] = useState<{
+    key: string
+    matches: ReadonlyMap<string, MessageMatch>
+  }>({ key: '', matches: new Map() })
+  const key = `${scope}\n${query}`
+  const enabled = search !== undefined && query.length >= MESSAGE_SEARCH_MIN_LENGTH
+
+  useEffect(() => {
+    if (!enabled) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void search(query, scope || undefined)
+        .then((results) => {
+          if (cancelled) return
+          const matches = new Map<string, MessageMatch>()
+          for (const result of results) {
+            if (!matches.has(result.threadId)) {
+              matches.set(result.threadId, { turnId: result.turnId, snippet: result.snippet })
+            }
+          }
+          setState({ key, matches })
+        })
+        .catch(() => {
+          if (!cancelled) setState({ key, matches: new Map() })
+        })
+    }, MESSAGE_SEARCH_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [enabled, key, query, scope, search])
+
+  return enabled && state.key === key
+    ? { matches: state.matches, pending: false }
+    : { matches: EMPTY_MATCHES, pending: enabled }
 }
 
-function threadCount(count: number): string {
-  return `${count} ${count === 1 ? 'thread' : 'threads'}`
+const EMPTY_MATCHES: ReadonlyMap<string, MessageMatch> = new Map()
+
+function isTextTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    isTerminalTarget(target)
+  )
 }
 
-function navigateRows(
-  event: KeyboardEvent<HTMLButtonElement>,
-  navigate: (direction: -1 | 1) => void,
-) {
-  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-  event.preventDefault()
-  navigate(event.key === 'ArrowDown' ? 1 : -1)
+function isTerminalTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('.xterm') !== null
+}
+
+function threadSection(session: Session): ThreadSection {
+  if (session.lifecycle.state !== 'active') return session.lifecycle.state
+  return session.pinned ? 'pinned' : 'active'
+}
+
+function canDrop(drag: ThreadDrag, section: DropSection): boolean {
+  if (section === 'pinned') return drag.from === 'active'
+  if (section === 'active') return drag.from !== 'active'
+  return (drag.from === 'active' || drag.from === 'pinned') && drag.hideable
+}
+
+function splitPinned(entries: Entry[]) {
+  const pinned: Entry[] = []
+  const active: Entry[] = []
+  for (const entry of entries) (entry.session.pinned ? pinned : active).push(entry)
+  return { pinned, active }
+}
+
+function withSelected(entries: Entry[], selected: Entry | undefined): Entry[] {
+  return selected && !entries.some((entry) => entry.session.id === selected.session.id)
+    ? [...entries, selected]
+    : entries
+}
+
+function settledAt(session: Session): number {
+  return session.lifecycle.state === 'settled' ? session.lifecycle.settledAt : 0
 }
 
 function newestFirst(a: Entry, b: Entry): number {
@@ -1507,193 +1231,4 @@ function compareInboxEntries(
     (sourceOrder.get(left.session.id) ?? Number.MAX_SAFE_INTEGER) -
       (sourceOrder.get(right.session.id) ?? Number.MAX_SAFE_INTEGER)
   )
-}
-
-export function inboxClockDelay(
-  hasRunningThread: boolean,
-  relativeTimes: readonly number[],
-  hasSnoozedThread: boolean,
-  now: number,
-): number | undefined {
-  if (hasRunningThread) return 1_000
-  let nextChangeAt = Number.POSITIVE_INFINITY
-  for (const timestamp of relativeTimes) {
-    if (Number.isFinite(timestamp)) {
-      nextChangeAt = Math.min(nextChangeAt, nextRelativeTimeChangeAt(timestamp, now))
-    }
-  }
-  if (hasSnoozedThread) {
-    const nextDay = new Date(now)
-    nextDay.setHours(24, 0, 0, 0)
-    nextChangeAt = Math.min(nextChangeAt, nextDay.getTime())
-  }
-  return Number.isFinite(nextChangeAt) ? Math.max(1_000, nextChangeAt - now) : undefined
-}
-
-function nextRelativeTimeChangeAt(timestamp: number, now: number): number {
-  const seconds = Math.max(0, Math.round((now - timestamp) / 1_000))
-  if (seconds < 60) return timestamp + 59_500
-
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return timestamp + ((minutes + 1) * 60 - 30) * 1_000 - 500
-
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) {
-    const nextMinutes = (hours + 1) * 60 - 30
-    return timestamp + (nextMinutes * 60 - 30) * 1_000 - 500
-  }
-
-  const days = Math.round(hours / 24)
-  const nextHours = (days + 1) * 24 - 12
-  const nextMinutes = nextHours * 60 - 30
-  return timestamp + (nextMinutes * 60 - 30) * 1_000 - 500
-}
-
-function withSelected(entries: Entry[], selected: Entry | undefined): Entry[] {
-  return selected && !entries.some((entry) => entry.session.id === selected.session.id)
-    ? [...entries, selected]
-    : entries
-}
-
-function wakeAt(session: Session): number {
-  return session.lifecycle.state === 'snoozed' ? session.lifecycle.wakeAt : 0
-}
-
-function settledAt(session: Session): number {
-  return session.lifecycle.state === 'settled' ? session.lifecycle.settledAt : 0
-}
-
-function snoozePresets(now: number): Array<{ label: string; at: number }> {
-  return [
-    { label: 'In one hour', at: now + 60 * 60 * 1_000 },
-    { label: 'This evening', at: thisEvening(now) },
-    { label: 'Tomorrow morning', at: tomorrowMorning(now) },
-    { label: 'Next week', at: nextWeek(now) },
-  ]
-}
-
-function thisEvening(now: number): number {
-  const next = new Date(now)
-  next.setHours(18, 0, 0, 0)
-  if (next.getTime() <= now) next.setDate(next.getDate() + 1)
-  return next.getTime()
-}
-
-function tomorrowMorning(now: number): number {
-  const next = new Date(now)
-  next.setDate(next.getDate() + 1)
-  next.setHours(9, 0, 0, 0)
-  return next.getTime()
-}
-
-function nextWeek(now: number): number {
-  const next = new Date(now)
-  const daysUntilMonday = (8 - next.getDay()) % 7 || 7
-  next.setDate(next.getDate() + daysUntilMonday)
-  next.setHours(9, 0, 0, 0)
-  return next.getTime()
-}
-
-function formatWakeTime(at: number, now: number): string {
-  const target = new Date(at)
-  const today = new Date(now)
-  const tomorrow = new Date(now)
-  tomorrow.setDate(tomorrow.getDate() + 1)
-  const time = target.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  if (sameDay(target, today)) return `Today · ${time}`
-  if (sameDay(target, tomorrow)) return `Tomorrow · ${time}`
-  return target.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })
-}
-
-function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
-}
-
-function elapsedTime(from: number, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - from) / 1_000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
-}
-
-function relativeTime(at: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - at) / 1_000))
-  if (seconds < 60) return 'now'
-  const minutes = Math.round(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.round(hours / 24)}d ago`
-}
-
-function providerName(session: Session): string {
-  return sessionSourcePresentation(session.provider, session.agent).label
-}
-
-function projectName(project: Project): string {
-  return project.name ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.path
-}
-
-type StaticThreadPresentation = {
-  project: Project
-  rowLabelPrefix: string
-  summaryPrefix: string[]
-  created: string
-}
-
-const staticThreadPresentations = new WeakMap<Session, StaticThreadPresentation>()
-
-function staticThreadPresentation(project: Project, session: Session): StaticThreadPresentation {
-  const cached = staticThreadPresentations.get(session)
-  if (cached?.project === project) return cached
-  const projectLabel = projectName(project)
-  const provider = providerName(session)
-  const presentation = {
-    project,
-    rowLabelPrefix: `${session.title}, ${projectLabel}, ${provider}`,
-    summaryPrefix: [
-      session.title,
-      `Project: ${projectLabel}`,
-      `Environment: ${project.path}`,
-      `Branch: ${session.worktreeBranch ?? 'default checkout'}`,
-      `Provider: ${provider}`,
-    ],
-    created: `Created: ${new Date(session.createdAt).toLocaleString()}`,
-  }
-  staticThreadPresentations.set(session, presentation)
-  return presentation
-}
-
-function rowLabel(project: Project, session: Session, now: number): string {
-  const presentation = staticThreadPresentation(project, session)
-  return `${presentation.rowLabelPrefix}, ${statusPresentation(session, now).label}`
-}
-
-function threadSummary(project: Project, session: Session, now: number): string {
-  const lifecycle =
-    session.lifecycle.state === 'active'
-      ? 'Active'
-      : session.lifecycle.state === 'snoozed'
-        ? `Snoozed until ${formatWakeTime(session.lifecycle.wakeAt, now)}`
-        : `Settled ${relativeTime(session.lifecycle.settledAt, now)}`
-  const presentation = staticThreadPresentation(project, session)
-  return [
-    ...presentation.summaryPrefix,
-    `Status: ${statusPresentation(session, now).label}`,
-    `Lifecycle: ${lifecycle}`,
-    presentation.created,
-  ].join('\n')
-}
-
-async function copyText(value: string): Promise<void> {
-  try {
-    await navigator.clipboard?.writeText(value)
-  } catch {
-    // Clipboard permission errors leave the menu action as a no-op.
-  }
 }
