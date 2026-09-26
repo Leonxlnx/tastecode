@@ -20,8 +20,6 @@ function text(value: unknown): string {
 function printable(value: unknown): string {
   const readable = text(value)
   if (readable || value === undefined || value === null) return readable
-  // Output made only of images reads as their placeholders; the images
-  // themselves travel as attachments.
   const placeholders = Array.isArray(value) ? value.map(binaryPlaceholder) : []
   if (placeholders.length && placeholders.every(Boolean)) return placeholders.join('\n')
   return jsonWithoutBinary(value, 2)
@@ -41,6 +39,15 @@ function attachments(content: unknown): string[] {
       return [`data:${part.mimeType};base64,${part.data}`]
     return []
   })
+}
+
+/**
+ * The transcript shows a tool call's text, never its attachments. Inline tool
+ * images only added payload: one imported task carried 504 MB of screenshots
+ * on every open. File and URL references stay.
+ */
+function toolAttachments(content: unknown): string[] {
+  return attachments(content).filter((reference) => !reference.startsWith('data:'))
 }
 
 function message(payload: Value, base: Base, role: 'user' | 'assistant'): HistoryItem[] {
@@ -165,7 +172,7 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
     case 'DynamicToolCall': {
       const result = object(payload.result)
       const content = result.content ?? payload.content_items ?? payload.contentItems
-      const images = attachments(content)
+      const images = toolAttachments(content)
       return [
         {
           item: {
@@ -238,7 +245,7 @@ export function responseItem(payload: Value, base: Base, output?: unknown): Hist
       const command = args.cmd ?? args.command
       const result = typeof output === 'string' ? parseObject(output) : object(output)
       const isCommand = /(?:^|[._])(?:exec_command|shell_command|shell)$/.test(name)
-      const images = attachments(output)
+      const images = toolAttachments(output)
       if (isCommand && (typeof command === 'string' || Array.isArray(command))) {
         return [
           {
@@ -276,24 +283,7 @@ export function responseItem(payload: Value, base: Base, output?: unknown): Hist
         { item: { ...base, type: 'tool_call', text: `Web search\n${printable(payload.action)}` } },
       ]
     case 'image_generation_call':
-      return [
-        {
-          item: {
-            ...base,
-            type: 'tool_call',
-            text: 'Image generated',
-            ...(typeof payload.result === 'string'
-              ? {
-                  attachments: [
-                    payload.result.startsWith('data:')
-                      ? payload.result
-                      : `data:image/png;base64,${payload.result}`,
-                  ],
-                }
-              : {}),
-          },
-        },
-      ]
+      return [{ item: { ...base, type: 'tool_call', text: 'Image generated' } }]
     default:
       return [{ item: { ...base, type: 'unknown', text: printable(payload) } }]
   }
