@@ -85,6 +85,31 @@ describe('native Codex history', () => {
     },
   )
 
+  it('keeps inline tool images out of tool text while attaching them', async () => {
+    const data = 'iVBORw0KGgo'.repeat(5_000)
+    const { source } = await store([
+      event({ type: 'user_message', message: 'Crop the frames' }),
+      rich({
+        type: 'McpToolCall',
+        id: 'mcp-image',
+        server: 'node_repl',
+        tool: 'js',
+        arguments: { code: 'crop()' },
+        result: { content: [{ type: 'image', data, mimeType: 'image/png' }] },
+      }),
+    ])
+
+    const item = items(await source.read((await source.list())[0]!)).find(
+      (entry) => entry.id === 'mcp-image',
+    )
+
+    expect(item).toMatchObject({
+      text: expect.stringMatching(/^node_repl\.js\n[\s\S]*"code": "crop\(\)"[\s\S]*\n\n\[image]$/),
+      attachments: [`data:image/png;base64,${data}`],
+    })
+    expect(item?.text).not.toContain(data)
+  })
+
   it('bounds native prompt previews and hashes revisions without truncating chat content', async () => {
     const prompt = 'Full user prompt '.repeat(7000)
     const { root, file, source } = await store([event({ type: 'user_message', message: prompt })])
