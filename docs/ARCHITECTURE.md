@@ -514,3 +514,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-18 | Added the beta 7 updater bridge and verified EXE/DMG transport, with two public assets from beta 8 and native installers retained.                                             |
 | 2026-09-26 | Scanned one-byte copies of Latin-1 lines in every Shiki grammar pass, including the main-thread diff views.                                                                    |
 | 2026-09-26 | Kept inline tool images out of Codex tool text and imported tool calls; the transcript never shows tool attachments.                                                           |
+| 2026-09-26 | Let provider history reads skip turns already stored locally; the server drops their echoes anyway.                                                                            |
