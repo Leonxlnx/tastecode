@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
   methods,
   type PullRequestDetail,
@@ -99,6 +99,32 @@ function setup(detailValue: PullRequestDetail = detail) {
   return { request, onChanged, container: view.container }
 }
 
+/** Detail replies in order: an Error rejects, anything else resolves; then `detail`. */
+function renderScriptedDetail(
+  ...replies: Array<PullRequestDetail | Promise<PullRequestDetail> | Error>
+) {
+  let count = 0
+  const request = vi.fn<TestRequestResolver>(async (method) => {
+    if (method === 'pullRequests.detail') {
+      count += 1
+      const reply = replies.shift() ?? detail
+      if (reply instanceof Error) throw reply
+      return reply
+    }
+    if (method === 'pullRequests.metadataOptions') return metadataOptions
+    throw new Error(`Unexpected request: ${method}`)
+  })
+  render(
+    <PullRequestDetailPane
+      item={detail}
+      transport={new TestTransport(request)}
+      onOpenChat={vi.fn()}
+      onChanged={vi.fn()}
+    />,
+  )
+  return { detailRequests: () => count }
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (cause: unknown) => void
@@ -144,31 +170,47 @@ describe('PullRequestDetailPane inline editing', () => {
     )
   })
 
-  it('surfaces a failed refresh as a notice without replacing the loaded detail', async () => {
-    let detailRequests = 0
-    const request = vi.fn<TestRequestResolver>(async (method) => {
-      if (method === 'pullRequests.detail') {
-        detailRequests += 1
-        if (detailRequests > 1) throw new Error('GitHub is unreachable')
-        return detail
-      }
-      if (method === 'pullRequests.metadataOptions') return metadataOptions
-      throw new Error(`Unexpected request: ${method}`)
-    })
-    render(
-      <PullRequestDetailPane
-        item={detail}
-        transport={new TestTransport(request)}
-        onOpenChat={vi.fn()}
-        onChanged={vi.fn()}
-      />,
-    )
+  it('surfaces a failed refresh as a retryable alert without replacing the loaded detail', async () => {
+    const { detailRequests } = renderScriptedDetail(detail, new Error('GitHub is unreachable'))
 
     await screen.findByText('Editable pull request')
     fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
 
-    expect((await screen.findByRole('status')).textContent).toContain('GitHub is unreachable')
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('GitHub is unreachable')
     expect(screen.getByText('Editable pull request')).toBeTruthy()
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(detailRequests()).toBe(3)
+    expect(screen.getByText('Editable pull request')).toBeTruthy()
+  })
+
+  it('dismisses a failed refresh alert and keeps the loaded detail', async () => {
+    renderScriptedDetail(detail, new Error('GitHub is unreachable'))
+    await screen.findByText('Editable pull request')
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
+
+    fireEvent.click(
+      within(await screen.findByRole('alert')).getByRole('button', { name: 'Dismiss' }),
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('Editable pull request')).toBeTruthy()
+  })
+
+  it('announces the first load and its failure, then recovers on retry', async () => {
+    const first = deferred<PullRequestDetail>()
+    renderScriptedDetail(first.promise, detail)
+
+    expect(screen.getByRole('status', { name: 'Loading pull request' })).toBeTruthy()
+    first.reject(new Error('GitHub is unreachable'))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain("Couldn't open this pull request")
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('Editable pull request')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('keeps empty label and milestone triggers at their readable width', async () => {
