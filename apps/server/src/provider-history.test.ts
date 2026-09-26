@@ -90,6 +90,23 @@ describe('provider history integration', () => {
     expect(hooks.changed).not.toHaveBeenCalled()
   })
 
+  it('names the turns already stored locally when it reads a saved session', async () => {
+    const session = metadata()
+    const { history, source } = setup([session])
+    await history.refresh()
+    const id = 'external:codex:native'
+    await history.load(id)
+    for (const event of transcript('reply', 'My own reply').slice(1)) store.append(id, event)
+    session.revision = '2'
+    await history.refresh()
+
+    await history.load(id)
+
+    expect(source.read).toHaveBeenLastCalledWith(session, {
+      localTurnIds: new Set(['reply-turn']),
+    })
+  })
+
   it.each([false, true])(
     'cleans up old helper mirrors while retaining local replies (reply: %s)',
     async (reply) => {

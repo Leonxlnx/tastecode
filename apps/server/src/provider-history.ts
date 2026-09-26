@@ -174,7 +174,11 @@ export class ProviderHistory {
       let changed = false
       while (entry && entry.loadedRevision !== entry.session.revision) {
         const current = entry
-        const events = await source.history.read(current.session)
+        const seq = this.store.lastSeq(threadId)
+        let local = this.store.localHistory(threadId).map(({ event }) => event)
+        const events = await source.history.read(current.session, {
+          localTurnIds: startedTurnIds(local),
+        })
         if (
           this.#closed ||
           this.hooks.isBusy(threadId) ||
@@ -189,7 +193,9 @@ export class ProviderHistory {
         )
           return changed
         if (events.length === 0) throw new Error('Saved provider chat is unavailable; try again')
-        const local = this.store.localHistory(threadId).map(({ event }) => event)
+        // A turn that finished during the read is local too; its echo must still be dropped.
+        if (this.store.lastSeq(threadId) !== seq)
+          local = this.store.localHistory(threadId).map(({ event }) => event)
         const entries = importedEvents(events, threadId, local)
         changed =
           this.store.mergeProviderHistory(threadId, current.session.revision, entries) || changed
@@ -229,6 +235,10 @@ export class ProviderHistory {
     await Promise.allSettled([this.#refreshing, ...this.#reading.values()])
     await Promise.allSettled(this.sources.map(({ history }) => history.dispose?.()))
   }
+}
+
+function startedTurnIds(events: DomainEvent[]): Set<string> {
+  return new Set(events.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : [])))
 }
 
 function turnId(event: DomainEvent): string | undefined {
