@@ -10,8 +10,12 @@ import { object, timestamp } from './history-values.js'
 
 type JsonObject = Record<string, unknown>
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
-type IndexedSession = { session: ProviderHistorySession; name?: string }
+/** `internal` is known only when the index records each thread's source. */
+type IndexedSession = { session: ProviderHistorySession; name?: string; internal?: boolean }
+type SessionName = { title: string; updatedAt: number }
+type SessionNames = Map<string, SessionName>
 const PREVIEW_LENGTH = 200
+const SESSION_NAMES_FILE = 'session_index.jsonl'
 
 export type CodexHistoryOptions = { codexHome?: string }
 
@@ -22,16 +26,36 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   )
   const known = new Map<string, ProviderHistorySession>()
   const headers = new Map<string, { revision: string; session: ProviderHistorySession | null }>()
+  // The server lists again on every background refresh. Unchanged stores and rollouts
+  // reuse their previous results instead of re-reading the index and rehashing sessions.
+  let index: { signature: string; byFile: Map<string, IndexedSession> } | undefined
+  let sidecar: { signature: string; names: SessionNames } | undefined
+  const results = new Map<string, { inputs: readonly unknown[]; session: ProviderHistorySession }>()
   let listing: Promise<ProviderHistorySession[]> | undefined
 
   async function list(): Promise<ProviderHistorySession[]> {
-    const rows = await indexedSessions(home)
-    const byFile = new Map(
-      rows.flatMap((entry) =>
-        entry.session.locator ? [[path.resolve(entry.session.locator), entry] as const] : [],
-      ),
+    const databases = await stateFiles(home)
+    // A commit rewrites the database or its write-ahead log.
+    const indexSignature = await filesSignature(
+      home,
+      databases.flatMap((file) => [file, `${file}-wal`]),
     )
-    const names = await sessionNames(home)
+    if (index?.signature !== indexSignature) {
+      const rows = await indexedSessions(home, databases)
+      index = {
+        signature: indexSignature,
+        byFile: new Map(
+          rows.flatMap((entry) =>
+            entry.session.locator ? [[path.resolve(entry.session.locator), entry] as const] : [],
+          ),
+        ),
+      }
+    }
+    const byFile = index.byFile
+    const namesSignature = await filesSignature(home, [SESSION_NAMES_FILE])
+    if (sidecar?.signature !== namesSignature)
+      sidecar = { signature: namesSignature, names: await sessionNames(home) }
+    const names = sidecar.names
     const files = await savedFiles(home)
     const sessions = new Map<string, ProviderHistorySession>()
     // Bound open files; a profile can contain thousands of transcripts.
@@ -40,38 +64,23 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
         files.slice(offset, offset + 32).map(async (saved) => {
           const revision = `${saved.size}:${saved.mtimeMs}`
           const indexed = byFile.get(saved.file)
-          const cached = headers.get(saved.file)
-          const header = cached?.revision === revision ? cached.session : await readHeader(saved)
-          headers.set(saved.file, { revision, session: header })
+          // Opening every rollout at startup read the first chunk of thousands of
+          // transcripts. The index already carries everything the header would add.
+          let header: ProviderHistorySession | null | undefined
+          if (indexed?.internal === undefined) {
+            const cached = headers.get(saved.file)
+            header = cached?.revision === revision ? cached.session : await readHeader(saved)
+            headers.set(saved.file, { revision, session: header })
+          }
           const session = indexed?.session ?? header
           if (!session) return
           const named = names.get(session.id)
-          // `name` is the native user-facing title; `title`/`preview` can contain the full prompt.
-          // A newer sidecar record can precede the matching SQLite rename transaction.
-          const title =
-            named && (!indexed?.name || named.updatedAt > session.updatedAt)
-              ? named.title
-              : (indexed?.name ?? session.title)
-          const result = {
-            ...session,
-            ...(header?.internal ? { internal: true } : {}),
-            title,
-            updatedAt: Math.max(session.updatedAt, named?.updatedAt ?? 0, saved.mtimeMs),
-            revision: createHash('sha256')
-              .update(
-                JSON.stringify([
-                  revision,
-                  session.updatedAt,
-                  named?.updatedAt ?? 0,
-                  title,
-                  session.workspacePath,
-                  saved.archived,
-                ]),
-              )
-              .digest('hex'),
-            archived: saved.archived,
-            locator: saved.file,
-          }
+          const inputs = [revision, saved.archived, indexed, header, named] as const
+          const reused = results.get(saved.file)
+          const result = reused?.inputs.every((input, at) => input === inputs[at])
+            ? reused.session
+            : describeSession(session, saved, revision, indexed, header, named)
+          if (result !== reused?.session) results.set(saved.file, { inputs, session: result })
           const previous = sessions.get(result.id)
           if (!previous || previous.updatedAt < result.updatedAt) sessions.set(result.id, result)
         }),
@@ -81,6 +90,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
     for (const [id, session] of sessions) known.set(id, session)
     const existingFiles = new Set(files.map((file) => file.file))
     for (const file of headers.keys()) if (!existingFiles.has(file)) headers.delete(file)
+    for (const file of results.keys()) if (!existingFiles.has(file)) results.delete(file)
     return [...sessions.values()].sort(
       (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
     )
@@ -105,8 +115,59 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
     dispose() {
       known.clear()
       headers.clear()
+      results.clear()
+      index = undefined
+      sidecar = undefined
     },
   }
+}
+
+function describeSession(
+  session: ProviderHistorySession,
+  saved: SavedFile,
+  revision: string,
+  indexed: IndexedSession | undefined,
+  header: ProviderHistorySession | null | undefined,
+  named: SessionName | undefined,
+): ProviderHistorySession {
+  // `name` is the native user-facing title; `title`/`preview` can contain the full prompt.
+  // A newer sidecar record can precede the matching SQLite rename transaction.
+  const title =
+    named && (!indexed?.name || named.updatedAt > session.updatedAt)
+      ? named.title
+      : (indexed?.name ?? session.title)
+  return {
+    ...session,
+    ...((indexed?.internal ?? header?.internal) ? { internal: true } : {}),
+    title,
+    updatedAt: Math.max(session.updatedAt, named?.updatedAt ?? 0, saved.mtimeMs),
+    revision: createHash('sha256')
+      .update(
+        JSON.stringify([
+          revision,
+          session.updatedAt,
+          named?.updatedAt ?? 0,
+          title,
+          session.workspacePath,
+          saved.archived,
+        ]),
+      )
+      .digest('hex'),
+    archived: saved.archived,
+    locator: saved.file,
+  }
+}
+
+async function filesSignature(home: string, files: string[]): Promise<string> {
+  const parts = await Promise.all(
+    files.map((file) =>
+      stat(path.join(home, file)).then(
+        (info) => `${file}:${info.size}:${info.mtimeMs}`,
+        () => `${file}:-`,
+      ),
+    ),
+  )
+  return parts.join('|')
 }
 
 async function allowedFile(home: string, file: string): Promise<boolean> {
@@ -154,14 +215,17 @@ async function savedFiles(home: string): Promise<SavedFile[]> {
   return result
 }
 
-async function indexedSessions(home: string): Promise<IndexedSession[]> {
-  let files: string[]
+/** Codex's state databases, newest schema first. */
+async function stateFiles(home: string): Promise<string[]> {
   try {
-    files = (await readdir(home)).filter((file) => /^state_\d+\.sqlite$/.test(file))
+    const files = (await readdir(home)).filter((file) => /^state_\d+\.sqlite$/.test(file))
+    return files.sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))
   } catch {
     return []
   }
-  files.sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))
+}
+
+async function indexedSessions(home: string, files: string[]): Promise<IndexedSession[]> {
   for (const file of files) {
     let db: import('node:sqlite').DatabaseSync | undefined
     try {
@@ -181,9 +245,10 @@ async function indexedSessions(home: string): Promise<IndexedSession[]> {
         : 'updated_at * 1000'
       const name = columns.has('name') ? 'name' : 'NULL'
       const preview = columns.has('preview') ? "COALESCE(NULLIF(preview, ''), title)" : 'title'
+      const hasSource = columns.has('source')
       return db
         .prepare(
-          `SELECT id, rollout_path, cwd, ${name} AS name, substr(${preview}, 1, ${PREVIEW_LENGTH}) AS preview, ${created} AS created, ${updated} AS updated FROM threads`,
+          `SELECT id, rollout_path, cwd, ${name} AS name, substr(${preview}, 1, ${PREVIEW_LENGTH}) AS preview, ${created} AS created, ${updated} AS updated, ${hasSource ? 'source' : 'NULL'} AS source FROM threads`,
         )
         .all()
         .flatMap((row) => {
@@ -196,6 +261,7 @@ async function indexedSessions(home: string): Promise<IndexedSession[]> {
           return [
             {
               ...(typeof row.name === 'string' && row.name.trim() ? { name: row.name } : {}),
+              ...(hasSource ? { internal: subagentSource(row.source) } : {}),
               session: {
                 id: row.id,
                 workspacePath: row.cwd,
@@ -217,11 +283,9 @@ async function indexedSessions(home: string): Promise<IndexedSession[]> {
   return []
 }
 
-async function sessionNames(
-  home: string,
-): Promise<Map<string, { title: string; updatedAt: number }>> {
-  const result = new Map<string, { title: string; updatedAt: number }>()
-  for await (const record of jsonLines(path.join(home, 'session_index.jsonl'))) {
+async function sessionNames(home: string): Promise<SessionNames> {
+  const result: SessionNames = new Map()
+  for await (const record of jsonLines(path.join(home, SESSION_NAMES_FILE))) {
     if (
       typeof record.id === 'string' &&
       typeof record.thread_name === 'string' &&
@@ -262,6 +326,16 @@ async function readHeader(saved: SavedFile): Promise<ProviderHistorySession | nu
     }
   }
   return null
+}
+
+/** The index stores a plain label (`cli`) or the rollout's JSON source object. */
+function subagentSource(value: unknown): boolean {
+  if (typeof value !== 'string' || !value.startsWith('{')) return false
+  try {
+    return 'subagent' in object(JSON.parse(value))
+  } catch {
+    return false
+  }
 }
 
 function previewTitle(value: unknown): string {

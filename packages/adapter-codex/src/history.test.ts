@@ -85,6 +85,63 @@ describe('native Codex history', () => {
     },
   )
 
+  it('takes thread sources from the index instead of opening each rollout', async () => {
+    const { root, file, source } = await store([])
+    // Headers that cannot be parsed prove the listing did not depend on them.
+    await writeFile(file, 'not a rollout header\n')
+    const userFile = path.join(path.dirname(file), 'rollout-user-session.jsonl')
+    await writeFile(userFile, 'not a rollout header\n')
+    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'))
+    db.exec(
+      'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, source TEXT, created_at INTEGER, updated_at INTEGER)',
+    )
+    const insert = db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)')
+    insert.run('reviewer', file, '/project', 'Review', '{"subagent":{"other":"guardian"}}', 1, 2)
+    insert.run('user-chat', userFile, '/project', 'Fix the build', 'vscode', 1, 3)
+    db.close()
+
+    const listed = new Map((await source.list()).map((session) => [session.id, session]))
+
+    expect(listed.get('reviewer')?.internal).toBe(true)
+    expect(listed.get('user-chat')).toMatchObject({ title: 'Fix the build', locator: userFile })
+    expect(listed.get('user-chat')?.internal).toBeUndefined()
+  })
+
+  it('reuses unchanged sessions between listings and rebuilds changed ones', async () => {
+    const { root, file, source } = await store([])
+    const database = path.join(root, 'state_5.sqlite')
+    const db = new DatabaseSync(database)
+    db.exec(
+      'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, source TEXT, created_at INTEGER, updated_at INTEGER)',
+    )
+    db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      'native-session',
+      file,
+      '/project',
+      'First title',
+      'cli',
+      1,
+      2,
+    )
+    db.close()
+    const [first] = await source.list()
+
+    expect((await source.list())[0]).toBe(first)
+
+    const update = new DatabaseSync(database)
+    update.prepare('UPDATE threads SET title = ? WHERE id = ?').run('Index title', 'native-session')
+    update.close()
+    const [indexed] = await source.list()
+    expect(indexed).not.toBe(first)
+    expect(indexed?.title).toBe('Index title')
+
+    await writeFile(
+      path.join(root, 'session_index.jsonl'),
+      JSON.stringify({ id: 'native-session', thread_name: 'Renamed', updated_at: at }) + '\n',
+    )
+    expect((await source.list())[0]?.title).toBe('Renamed')
+  })
+
   it('keeps inline tool images out of imported tool calls', async () => {
     const data = 'iVBORw0KGgo'.repeat(5_000)
     const { source } = await store([

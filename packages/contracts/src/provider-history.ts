@@ -20,7 +20,14 @@ export type ProviderHistorySource = {
   list(): Promise<ProviderHistorySession[]>
   /** Resolve older adapter thread IDs to the native saved-session identity. */
   resolveSessionId?(threadId: string): string
-  /** Use session.id as the thread id; the server maps it to its stable local id. */
-  read(session: ProviderHistorySession): Promise<DomainEvent[]>
+  /**
+   * Use session.id as the thread id; the server maps it to its stable local id.
+   * `localTurnIds` names native turns already in the local log. The server drops
+   * their echoes, so a source may leave out their items instead of parsing them.
+   */
+  read(
+    session: ProviderHistorySession,
+    options?: { localTurnIds?: ReadonlySet<string> },
+  ): Promise<DomainEvent[]>
   dispose?(): void | Promise<void>
 }

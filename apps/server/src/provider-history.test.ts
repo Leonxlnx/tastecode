@@ -90,6 +90,55 @@ describe('provider history integration', () => {
     expect(hooks.changed).not.toHaveBeenCalled()
   })
 
+  it('checks each helper chat for an old mirror once, not on every refresh', async () => {
+    const helpers = Array.from({ length: 50 }, (_, index) => ({
+      ...metadata(`helper-${index}`),
+      internal: true,
+    }))
+    const { history } = setup(helpers)
+    const lookup = vi.spyOn(store, 'thread')
+    await history.refresh()
+    const firstRefresh = lookup.mock.calls.length
+    lookup.mockClear()
+
+    await history.refresh()
+
+    expect(firstRefresh).toBeGreaterThanOrEqual(helpers.length)
+    expect(lookup).not.toHaveBeenCalled()
+  })
+
+  it('refreshes unchanged sessions without a store lookup for each one', async () => {
+    const sessions = Array.from({ length: 60 }, (_, index) => ({
+      ...metadata(`saved-${index}`),
+      workspacePath: index < 20 ? process.cwd() : path.join(path.sep, 'outside', `${index % 2}`),
+    }))
+    const { history } = setup(sessions)
+    await history.refresh()
+    expect(store.threads()).toHaveLength(20)
+    const threads = vi.spyOn(store, 'thread')
+    const projects = vi.spyOn(store, 'project')
+
+    await history.refresh()
+
+    expect(threads).not.toHaveBeenCalled()
+    expect(projects).toHaveBeenCalledTimes(3)
+  })
+
+  it('cleans up a helper mirror that a session changing kind left behind', async () => {
+    const session = metadata()
+    const { history } = setup([session])
+    session.internal = true
+    await history.refresh()
+    delete session.internal
+    await history.refresh()
+    expect(store.thread('external:codex:native')).toBeDefined()
+
+    session.internal = true
+    await history.refresh()
+
+    expect(store.thread('external:codex:native')).toBeUndefined()
+  })
+
   it.each([false, true])(
     'cleans up old helper mirrors while retaining local replies (reply: %s)',
     async (reply) => {

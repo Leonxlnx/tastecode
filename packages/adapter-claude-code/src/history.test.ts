@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   appendFile,
   mkdir,
@@ -95,6 +95,47 @@ describe('Claude Code saved history', () => {
     const next = await f.source.list()
     expect(next[0]?.title).toBe('Renamed')
     expect(next[0]?.revision).not.toBe(first[0]?.revision)
+  })
+
+  it('lists a long transcript from its first, last and title rows only', async () => {
+    const at = (second: number) => new Date(AT + second * 1000).toISOString()
+    const moved = path.join(os.tmpdir(), 'claude-moved')
+    const rows: unknown[] = [
+      row('meta', 'user', 'Caveat: local command', null, { isMeta: true, timestamp: at(0) }),
+      row('prompt', 'user', 'Fix the build', 'meta', { timestamp: at(1) }),
+    ]
+    for (let turn = 0; turn < 200; turn++) {
+      rows.push(
+        row(
+          `a${turn}`,
+          'assistant',
+          [{ type: 'text', text: 'Rename "customTitle" later.' }],
+          null,
+          {
+            timestamp: at(turn + 2),
+          },
+        ),
+      )
+      if (turn === 50) rows.push({ type: 'ai-title', sessionId: SESSION, aiTitle: 'Build fix' })
+      if (turn === 80) rows.push({ type: 'relocated', sessionId: SESSION, relocatedCwd: moved })
+    }
+    rows.push(
+      { type: 'custom-title', sessionId: SESSION, customTitle: 'Subagent', isSidechain: true },
+      row('side', 'assistant', 'Subagent reply', null, { isSidechain: true, timestamp: at(900) }),
+    )
+    const f = await fixture(rows)
+    const parse = vi.spyOn(JSON, 'parse')
+
+    const [session] = await f.source.list()
+
+    expect(parse.mock.calls.length).toBeLessThan(10)
+    parse.mockRestore()
+    expect(session).toMatchObject({
+      title: 'Build fix',
+      workspacePath: moved,
+      createdAt: AT + 1000,
+    })
+    expect(session?.updatedAt).toBe(Math.max((await stat(f.file)).mtimeMs, AT + 201_000))
   })
 
   it('preserves Markdown, reasoning, attachments, typed tool output, native times, and distinct turns', async () => {
