@@ -64,7 +64,7 @@ export const PanelToggles = memo(function PanelToggles(props: {
       {props.projectPath ? (
         <button
           type="button"
-          className={`stagehead__action${props.terminalOpen ? ' is-open' : ''}`}
+          className={`stagehead__action panel-toggles__terminal${props.terminalOpen ? ' is-open' : ''}`}
           aria-label={props.terminalOpen ? 'Hide bottom panel' : 'Show bottom panel'}
           aria-pressed={props.terminalOpen}
           aria-keyshortcuts={

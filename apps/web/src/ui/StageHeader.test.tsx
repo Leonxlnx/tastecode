@@ -116,6 +116,7 @@ describe('PanelToggles', () => {
     fireEvent.pointerEnter(terminal)
     expect(panels.onPrepareTerminal).toHaveBeenCalledOnce()
     expect(terminal.querySelector('.tabler-icon-layout-bottombar')).not.toBeNull()
+    expect(terminal.classList).toContain('panel-toggles__terminal')
     expect(workspace.querySelector('.tabler-icon-layout-sidebar-right-expand')).not.toBeNull()
     const workspaceLayers = workspace.querySelectorAll('.icon-morph__layer')
     expect(workspaceLayers).toHaveLength(2)

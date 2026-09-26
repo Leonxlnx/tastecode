@@ -1462,6 +1462,18 @@
   right: 44px;
 }
 
+/* The toggles are fixed siblings, so the header cannot lay out around them.
+   While the workspace panel is closed they float over the header's right
+   edge; reserve their inset, 28px buttons and 8px gaps so a long title
+   truncates before it reaches them. */
+.shell:has(> .panel-toggles:not(.is-workspace-open)) .stagehead {
+  padding-right: 44px;
+}
+
+.shell:has(> .panel-toggles:not(.is-workspace-open) > .panel-toggles__terminal) .stagehead {
+  padding-right: 80px;
+}
+
 .zoom-hud {
   position: fixed;
   z-index: 40;
