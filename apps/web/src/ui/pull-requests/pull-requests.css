@@ -856,6 +856,15 @@
   cursor: pointer;
 }
 
+.pr-notice button.pr-notice-action {
+  width: auto;
+  padding: 0 4px;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
 .pr-detail-body {
   min-width: 0;
   min-height: 0;

@@ -88,7 +88,12 @@ export function PullRequestDetailPane(props: {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string>()
-  const [notice, setNotice] = useState<{ kind: 'success' | 'error'; text: string }>()
+  const [notice, setNotice] = useState<{
+    kind: 'success' | 'error'
+    text: string
+    /** Set for a failed refresh, which Try again can repeat. */
+    retry?: true
+  }>()
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set())
   const [tab, setTab] = useState<DetailTab>('summary')
   const [confirmation, setConfirmation] = useState<Confirmation>()
@@ -105,6 +110,7 @@ export function PullRequestDetailPane(props: {
         if (refresh) setRefreshing(true)
         else setLoading(true)
         setError(undefined)
+        setNotice((current) => (current?.retry ? undefined : current))
       }
       try {
         const next = await props.transport.request('pullRequests.detail', {
@@ -119,7 +125,7 @@ export function PullRequestDetailPane(props: {
         }
       } catch (cause) {
         if (id === request.current && !silent) {
-          if (detailRef.current) setNotice({ kind: 'error', text: messageOf(cause) })
+          if (detailRef.current) setNotice({ kind: 'error', text: messageOf(cause), retry: true })
           else setError(messageOf(cause))
         }
       } finally {
@@ -196,7 +202,7 @@ export function PullRequestDetailPane(props: {
 
   if (error && !detail) {
     return (
-      <div className="pr-detail-error">
+      <div className="pr-detail-error" role="alert">
         <span className="pr-empty-emblem">
           <CircleAlert size={20} aria-hidden />
         </span>
@@ -304,14 +310,27 @@ export function PullRequestDetailPane(props: {
       </header>
 
       {notice ? (
-        <div className={`pr-notice is-${notice.kind}`} role="status">
+        <div
+          className={`pr-notice is-${notice.kind}`}
+          role={notice.kind === 'error' ? 'alert' : 'status'}
+        >
           {notice.kind === 'success' ? (
             <Check size={13} aria-hidden />
           ) : (
             <CircleAlert size={13} aria-hidden />
           )}
           <span>{notice.text}</span>
-          <button type="button" aria-label="Dismiss" onClick={() => setNotice(undefined)}>
+          {notice.retry ? (
+            <button type="button" className="pr-notice-action" onClick={() => void load(true)}>
+              Try again
+            </button>
+          ) : null}
+          <button
+            type="button"
+            aria-label="Dismiss"
+            title="Dismiss"
+            onClick={() => setNotice(undefined)}
+          >
             <X size={12} aria-hidden />
           </button>
         </div>
@@ -2388,6 +2407,7 @@ function PullRequestDetailSkeleton() {
   return (
     <div
       className="pr-detail pr-detail-skeleton skeleton-group"
+      role="status"
       aria-label="Loading pull request"
       aria-busy="true"
     >
