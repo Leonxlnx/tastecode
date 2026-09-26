@@ -107,6 +107,41 @@ describe('native Codex history', () => {
     expect(listed.get('user-chat')?.internal).toBeUndefined()
   })
 
+  it('reuses unchanged sessions between listings and rebuilds changed ones', async () => {
+    const { root, file, source } = await store([])
+    const database = path.join(root, 'state_5.sqlite')
+    const db = new DatabaseSync(database)
+    db.exec(
+      'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, source TEXT, created_at INTEGER, updated_at INTEGER)',
+    )
+    db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      'native-session',
+      file,
+      '/project',
+      'First title',
+      'cli',
+      1,
+      2,
+    )
+    db.close()
+    const [first] = await source.list()
+
+    expect((await source.list())[0]).toBe(first)
+
+    const update = new DatabaseSync(database)
+    update.prepare('UPDATE threads SET title = ? WHERE id = ?').run('Index title', 'native-session')
+    update.close()
+    const [indexed] = await source.list()
+    expect(indexed).not.toBe(first)
+    expect(indexed?.title).toBe('Index title')
+
+    await writeFile(
+      path.join(root, 'session_index.jsonl'),
+      JSON.stringify({ id: 'native-session', thread_name: 'Renamed', updated_at: at }) + '\n',
+    )
+    expect((await source.list())[0]?.title).toBe('Renamed')
+  })
+
   it('bounds native prompt previews and hashes revisions without truncating chat content', async () => {
     const prompt = 'Full user prompt '.repeat(7000)
     const { root, file, source } = await store([event({ type: 'user_message', message: prompt })])

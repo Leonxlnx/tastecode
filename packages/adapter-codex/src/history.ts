@@ -12,7 +12,10 @@ type JsonObject = Record<string, unknown>
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
 /** `internal` is known only when the index records each thread's source. */
 type IndexedSession = { session: ProviderHistorySession; name?: string; internal?: boolean }
+type SessionName = { title: string; updatedAt: number }
+type SessionNames = Map<string, SessionName>
 const PREVIEW_LENGTH = 200
+const SESSION_NAMES_FILE = 'session_index.jsonl'
 
 export type CodexHistoryOptions = { codexHome?: string }
 
@@ -23,16 +26,36 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   )
   const known = new Map<string, ProviderHistorySession>()
   const headers = new Map<string, { revision: string; session: ProviderHistorySession | null }>()
+  // The server lists again on every background refresh. Unchanged stores and rollouts
+  // reuse their previous results instead of re-reading the index and rehashing sessions.
+  let index: { signature: string; byFile: Map<string, IndexedSession> } | undefined
+  let sidecar: { signature: string; names: SessionNames } | undefined
+  const results = new Map<string, { inputs: readonly unknown[]; session: ProviderHistorySession }>()
   let listing: Promise<ProviderHistorySession[]> | undefined
 
   async function list(): Promise<ProviderHistorySession[]> {
-    const rows = await indexedSessions(home, await stateFiles(home))
-    const byFile = new Map(
-      rows.flatMap((entry) =>
-        entry.session.locator ? [[path.resolve(entry.session.locator), entry] as const] : [],
-      ),
+    const databases = await stateFiles(home)
+    // A commit rewrites the database or its write-ahead log.
+    const indexSignature = await filesSignature(
+      home,
+      databases.flatMap((file) => [file, `${file}-wal`]),
     )
-    const names = await sessionNames(home)
+    if (index?.signature !== indexSignature) {
+      const rows = await indexedSessions(home, databases)
+      index = {
+        signature: indexSignature,
+        byFile: new Map(
+          rows.flatMap((entry) =>
+            entry.session.locator ? [[path.resolve(entry.session.locator), entry] as const] : [],
+          ),
+        ),
+      }
+    }
+    const byFile = index.byFile
+    const namesSignature = await filesSignature(home, [SESSION_NAMES_FILE])
+    if (sidecar?.signature !== namesSignature)
+      sidecar = { signature: namesSignature, names: await sessionNames(home) }
+    const names = sidecar.names
     const files = await savedFiles(home)
     const sessions = new Map<string, ProviderHistorySession>()
     // Bound open files; a profile can contain thousands of transcripts.
@@ -52,32 +75,12 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
           const session = indexed?.session ?? header
           if (!session) return
           const named = names.get(session.id)
-          // `name` is the native user-facing title; `title`/`preview` can contain the full prompt.
-          // A newer sidecar record can precede the matching SQLite rename transaction.
-          const title =
-            named && (!indexed?.name || named.updatedAt > session.updatedAt)
-              ? named.title
-              : (indexed?.name ?? session.title)
-          const result = {
-            ...session,
-            ...((indexed?.internal ?? header?.internal) ? { internal: true } : {}),
-            title,
-            updatedAt: Math.max(session.updatedAt, named?.updatedAt ?? 0, saved.mtimeMs),
-            revision: createHash('sha256')
-              .update(
-                JSON.stringify([
-                  revision,
-                  session.updatedAt,
-                  named?.updatedAt ?? 0,
-                  title,
-                  session.workspacePath,
-                  saved.archived,
-                ]),
-              )
-              .digest('hex'),
-            archived: saved.archived,
-            locator: saved.file,
-          }
+          const inputs = [revision, saved.archived, indexed, header, named] as const
+          const reused = results.get(saved.file)
+          const result = reused?.inputs.every((input, at) => input === inputs[at])
+            ? reused.session
+            : describeSession(session, saved, revision, indexed, header, named)
+          if (result !== reused?.session) results.set(saved.file, { inputs, session: result })
           const previous = sessions.get(result.id)
           if (!previous || previous.updatedAt < result.updatedAt) sessions.set(result.id, result)
         }),
@@ -87,6 +90,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
     for (const [id, session] of sessions) known.set(id, session)
     const existingFiles = new Set(files.map((file) => file.file))
     for (const file of headers.keys()) if (!existingFiles.has(file)) headers.delete(file)
+    for (const file of results.keys()) if (!existingFiles.has(file)) results.delete(file)
     return [...sessions.values()].sort(
       (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
     )
@@ -111,8 +115,59 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
     dispose() {
       known.clear()
       headers.clear()
+      results.clear()
+      index = undefined
+      sidecar = undefined
     },
   }
+}
+
+function describeSession(
+  session: ProviderHistorySession,
+  saved: SavedFile,
+  revision: string,
+  indexed: IndexedSession | undefined,
+  header: ProviderHistorySession | null | undefined,
+  named: SessionName | undefined,
+): ProviderHistorySession {
+  // `name` is the native user-facing title; `title`/`preview` can contain the full prompt.
+  // A newer sidecar record can precede the matching SQLite rename transaction.
+  const title =
+    named && (!indexed?.name || named.updatedAt > session.updatedAt)
+      ? named.title
+      : (indexed?.name ?? session.title)
+  return {
+    ...session,
+    ...((indexed?.internal ?? header?.internal) ? { internal: true } : {}),
+    title,
+    updatedAt: Math.max(session.updatedAt, named?.updatedAt ?? 0, saved.mtimeMs),
+    revision: createHash('sha256')
+      .update(
+        JSON.stringify([
+          revision,
+          session.updatedAt,
+          named?.updatedAt ?? 0,
+          title,
+          session.workspacePath,
+          saved.archived,
+        ]),
+      )
+      .digest('hex'),
+    archived: saved.archived,
+    locator: saved.file,
+  }
+}
+
+async function filesSignature(home: string, files: string[]): Promise<string> {
+  const parts = await Promise.all(
+    files.map((file) =>
+      stat(path.join(home, file)).then(
+        (info) => `${file}:${info.size}:${info.mtimeMs}`,
+        () => `${file}:-`,
+      ),
+    ),
+  )
+  return parts.join('|')
 }
 
 async function allowedFile(home: string, file: string): Promise<boolean> {
@@ -228,11 +283,9 @@ async function indexedSessions(home: string, files: string[]): Promise<IndexedSe
   return []
 }
 
-async function sessionNames(
-  home: string,
-): Promise<Map<string, { title: string; updatedAt: number }>> {
-  const result = new Map<string, { title: string; updatedAt: number }>()
-  for await (const record of jsonLines(path.join(home, 'session_index.jsonl'))) {
+async function sessionNames(home: string): Promise<SessionNames> {
+  const result: SessionNames = new Map()
+  for await (const record of jsonLines(path.join(home, SESSION_NAMES_FILE))) {
     if (
       typeof record.id === 'string' &&
       typeof record.thread_name === 'string' &&
