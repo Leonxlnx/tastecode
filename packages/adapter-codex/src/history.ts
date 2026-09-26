@@ -26,7 +26,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   let listing: Promise<ProviderHistorySession[]> | undefined
 
   async function list(): Promise<ProviderHistorySession[]> {
-    const rows = await indexedSessions(home)
+    const rows = await indexedSessions(home, await stateFiles(home))
     const byFile = new Map(
       rows.flatMap((entry) =>
         entry.session.locator ? [[path.resolve(entry.session.locator), entry] as const] : [],
@@ -160,14 +160,17 @@ async function savedFiles(home: string): Promise<SavedFile[]> {
   return result
 }
 
-async function indexedSessions(home: string): Promise<IndexedSession[]> {
-  let files: string[]
+/** Codex's state databases, newest schema first. */
+async function stateFiles(home: string): Promise<string[]> {
   try {
-    files = (await readdir(home)).filter((file) => /^state_\d+\.sqlite$/.test(file))
+    const files = (await readdir(home)).filter((file) => /^state_\d+\.sqlite$/.test(file))
+    return files.sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))
   } catch {
     return []
   }
-  files.sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))
+}
+
+async function indexedSessions(home: string, files: string[]): Promise<IndexedSession[]> {
   for (const file of files) {
     let db: import('node:sqlite').DatabaseSync | undefined
     try {
