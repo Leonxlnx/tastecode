@@ -1,8 +1,9 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, readNdjson, runCli, spawnCli } from '@harness/proc'
+import { killTree, readNdjson, runCli } from '@harness/proc'
 import { CURSOR_CAPABILITIES } from './capabilities.js'
+import { spawnCursorAgent } from './launch.js'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
 import {
   collapseCursorModels,
@@ -25,7 +26,7 @@ type StartOptions = {
   instructions?: string
 }
 export type CursorTurnOptions = Pick<StartOptions, 'model' | 'effort' | 'serviceTier'>
-type Spawn = typeof spawnCli
+type Spawn = typeof spawnCursorAgent
 type Run = typeof runCli
 
 function applyCursorTurnOptions(current: StartOptions, next: CursorTurnOptions): StartOptions {
@@ -56,7 +57,7 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   constructor(options: { spawn?: Spawn; run?: Run } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawnCli
+    this.#spawn = options.spawn ?? spawnCursorAgent
     this.#run = options.run ?? runCli
   }
 
@@ -151,6 +152,12 @@ export class CursorAdapter extends EventEmitter<Events> {
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
         : text
     this.#instructionsPending = false
+    // cursor-agent uses a positional prompt, and reads stdin when that
+    // position is empty and stdin is not a terminal. On Windows the positional
+    // form is `cmd.exe /c`, and cmd treats `<system-instructions>` and
+    // `<user-design-request>` as redirection, so the model sees an empty tag
+    // or a phase preamble with the typed sentence cut off. The body goes to
+    // stdin. Ending stdin is required: the CLI reads until EOF, then trims.
     const args = [
       '--print',
       '--output-format',
@@ -160,9 +167,9 @@ export class CursorAdapter extends EventEmitter<Events> {
         : []),
       ...(effectiveOptions.model ? ['--model', effectiveOptions.model] : []),
       ...(this.#sessionId ? ['--resume', this.#sessionId] : []),
-      prompt,
     ]
     const child = this.#spawn('cursor-agent', args, { cwd: this.#workspacePath })
+    writePrompt(child, prompt)
     this.#child = child
     this.#turnId = turnId
     this.#mapper = new CursorEventMapper(turnId)
@@ -313,6 +320,20 @@ export function parseCursorModels(output: string): Model[] {
     reasoningEfforts: [],
     serviceTiers: [],
   }))
+}
+
+function writePrompt(child: ChildProcessWithoutNullStreams, prompt: string): void {
+  const stdin = child.stdin
+  // Auth can fail before the CLI reads. The close handler reports that turn;
+  // an EPIPE here must not crash the server.
+  stdin.on('error', () => undefined)
+  if (stdin.write(prompt, 'utf8')) {
+    stdin.end()
+    return
+  }
+  stdin.once('drain', () => {
+    stdin.end()
+  })
 }
 
 function validateApproval(approval: ApprovalMode | undefined): void {
