@@ -7,6 +7,7 @@ import { createInterface } from 'node:readline'
 import type { ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { parseCodexHistory } from './history-transcript.js'
 import { object, timestamp } from './history-values.js'
+import { transcriptRecords } from './rollout-records.js'
 
 type JsonObject = Record<string, unknown>
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
@@ -93,14 +94,12 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       })
       return listing
     },
-    async read(session) {
+    async read(session, options) {
       if (!known.has(session.id)) await this.list()
       // Locators from callers never grant access to arbitrary local files.
       const saved = known.get(session.id)
       if (saved?.internal || !saved?.locator || !(await allowedFile(home, saved.locator))) return []
-      const records: JsonObject[] = []
-      for await (const record of jsonLines(saved.locator)) records.push(record)
-      return parseCodexHistory(records, saved)
+      return parseCodexHistory(await transcriptRecords(saved.locator, options?.localTurnIds), saved)
     },
     dispose() {
       known.clear()

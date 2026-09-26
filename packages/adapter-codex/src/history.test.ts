@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DomainEventSchema, type DomainEvent } from '@harness/contracts'
 import { createCodexHistorySource } from './history.js'
 
@@ -84,6 +84,61 @@ describe('native Codex history', () => {
       )
     },
   )
+
+  it('skips turns already stored locally without parsing their payloads', async () => {
+    const screenshot = `data:image/png;base64,${'iVBORw0KGgo'.repeat(20_000)}`
+    const outsideTurn = (events: DomainEvent[]) =>
+      events.filter((entry) =>
+        entry.type === 'turn.started'
+          ? entry.turn.id === 'outside-turn'
+          : entry.type === 'item.completed'
+            ? entry.item.turnId === 'outside-turn'
+            : 'turnId' in entry && entry.turnId === 'outside-turn',
+      )
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'local-turn' }),
+      response({
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'Local prompt' },
+          { type: 'input_image', image_url: screenshot },
+        ],
+      }),
+      response({
+        type: 'custom_tool_call_output',
+        call_id: 'crop',
+        output: [{ type: 'input_image', image_url: screenshot }],
+      }),
+      event({ type: 'user_message', message: 'Local prompt' }),
+      event({ type: 'agent_message', message: 'Local answer' }),
+      event({ type: 'task_complete', turn_id: 'local-turn' }),
+      record('compacted', { message: 'Summary', replacement_history: [screenshot] }),
+      event({ type: 'task_started', turn_id: 'outside-turn' }),
+      response({
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'Outside prompt' }],
+      }),
+      event({ type: 'user_message', message: 'Outside prompt' }),
+      event({ type: 'agent_message', message: 'Outside answer' }),
+      event({ type: 'task_complete', turn_id: 'outside-turn' }),
+    ])
+    const session = (await source.list())[0]!
+    const full = await source.read(session)
+    const parse = vi.spyOn(JSON, 'parse')
+
+    const skipped = await source.read(session, { localTurnIds: new Set(['local-turn']) })
+
+    const longest = Math.max(...parse.mock.calls.map(([text]) => String(text).length))
+    parse.mockRestore()
+    expect(longest).toBeLessThan(screenshot.length)
+    expect(outsideTurn(skipped)).toEqual(outsideTurn(full))
+    expect(items(outsideTurn(skipped)).map((item) => item.text)).toEqual([
+      'Outside prompt',
+      'Outside answer',
+    ])
+  })
 
   it('bounds native prompt previews and hashes revisions without truncating chat content', async () => {
     const prompt = 'Full user prompt '.repeat(7000)
