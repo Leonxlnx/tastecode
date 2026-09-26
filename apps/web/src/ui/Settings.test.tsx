@@ -27,6 +27,8 @@ function renderSettings(
     onReset?: () => void
     transport?: Transport
     showMacOSHaptics?: boolean
+    models?: ModelChoice[]
+    hiddenModels?: Set<string>
     onKeybindingChange?: (action: KeybindingId, shortcut: Shortcut | null) => void
     onKeybindingsReset?: () => void
   } = {},
@@ -44,8 +46,8 @@ function renderSettings(
       providerStatuses={[]}
       acpAgents={[]}
       modelConnections={[]}
-      models={[]}
-      hiddenModels={new Set()}
+      models={options.models ?? []}
+      hiddenModels={options.hiddenModels ?? new Set()}
       onModelVisibilityChange={() => {}}
       onConnectionsChanged={() => {}}
       projectCount={0}
@@ -869,6 +871,72 @@ describe('model settings', () => {
     )
     expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
     expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
+  })
+
+  it('marks a model that cannot answer a turn and keeps it out of the picker', async () => {
+    const models = [
+      {
+        id: 'gpt-5.6-luna',
+        displayName: 'GPT-5.6 Luna',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+      {
+        id: 'whisper',
+        displayName: 'Whisper',
+        isDefault: false,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    ]
+    const transport = new TestTransport(async (method) => {
+      if (method === 'backgroundModel.settings') {
+        return {
+          preference: { mode: 'automatic' as const },
+          sources: [{ id: 'codex', displayName: 'Codex', provider: 'codex' as const, models }],
+          resolved: {
+            provider: 'codex' as const,
+            model: 'gpt-5.6-luna',
+            sourceName: 'Codex',
+            automatic: true,
+          },
+        }
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+
+    renderSettings({
+      initialSection: 'models',
+      transport,
+      models: models.map((model) => ({
+        key: `codex:${model.id}`,
+        provider: 'codex',
+        sourceName: 'Codex',
+        mark: 'openai',
+        model,
+      })),
+      hiddenModels: new Set(['codex:whisper']),
+    })
+
+    const chat = await screen.findByRole('switch', {
+      name: 'Include GPT-5.6 Luna in model picker',
+    })
+    expect(chat.getAttribute('aria-checked')).toBe('true')
+
+    const transcription = screen.getByRole('switch', {
+      name: 'Include Whisper in model picker',
+    })
+    expect(transcription.getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByText('Transcription model — cannot answer a turn')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Background model' }))
+    expect(
+      screen.getByRole('option', { name: 'GPT-5.6 Luna' }).getAttribute('aria-disabled'),
+    ).toBeNull()
+    expect(
+      screen.getByRole('option', { name: 'Whisper (transcription)' }).getAttribute('aria-disabled'),
+    ).toBe('true')
   })
 
   it('omits stored custom-model management from beta settings', () => {
