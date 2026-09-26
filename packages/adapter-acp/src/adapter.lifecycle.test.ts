@@ -18,7 +18,9 @@ const fake = vi.hoisted(() => ({
   instance: undefined as
     | {
         onServerRequest: ServerRequestHandler
+        notify: (method: string, params: unknown) => void
         resolvePrompt: (result: unknown) => void
+        rejectPrompt: (error: Error) => void
       }
     | undefined,
 }))
@@ -28,17 +30,22 @@ vi.mock('@harness/proc', () => ({
   killTree: vi.fn(),
   StdioJsonRpc: class {
     #onServerRequest: ServerRequestHandler = (_m, _p, respond) => respond(null)
+    #onNotification: (method: string, params: unknown) => void = () => {}
 
     constructor() {
       fake.instance = {
         onServerRequest: (method, params, respond) =>
           this.#onServerRequest(method, params, respond),
+        notify: (method, params) => this.#onNotification(method, params),
         resolvePrompt: () => {},
+        rejectPrompt: () => {},
       }
     }
 
     onStderr(): void {}
-    onNotification(): void {}
+    onNotification(handler: (method: string, params: unknown) => void): void {
+      this.#onNotification = handler
+    }
     onServerRequest(handler: ServerRequestHandler): void {
       this.#onServerRequest = handler
     }
@@ -52,8 +59,9 @@ vi.mock('@harness/proc', () => ({
       }
       if (method === 'session/new') return Promise.resolve({ sessionId: 'sess-1' })
       if (method === 'session/prompt') {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
           fake.instance!.resolvePrompt = resolve
+          fake.instance!.rejectPrompt = reject
         })
       }
       return Promise.resolve({})
@@ -121,6 +129,51 @@ describe('ACP approval lifecycle', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'turn.completed', turnId, status: 'completed' }),
     )
+  })
+
+  it('settles text, tool and approval exactly once when the prompt request rejects', async () => {
+    const { events, turnId } = await startedAdapter('ask')
+    const update = (value: unknown) =>
+      fake.instance!.notify('session/update', { sessionId: 'sess-1', update: value })
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial' } })
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' answer' } })
+    update({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-run',
+      status: 'in_progress',
+      title: 'pnpm test',
+      kind: 'execute',
+    })
+    const answered = requestPermission('execute')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const settledFrom = events.length
+
+    fake.instance!.rejectPrompt(new Error('Internal error: MCP server exited'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // A frame that arrives after the turn ended must not reopen it.
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'late' } })
+
+    // The agent, still blocked on its permission request, hears "cancelled".
+    await expect(answered).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(events).toContainEqual({
+      type: 'item.completed',
+      item: expect.objectContaining({ type: 'message', text: 'partial answer' }),
+    })
+    // Every open item and approval is terminal before the turn is, each once,
+    // then the reason, then the turn itself — and nothing after it.
+    expect(events.slice(settledFrom)).toEqual([
+      {
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'tc-run', status: 'failed', command: 'pnpm test' }),
+      },
+      { type: 'approval.resolved', id: expect.any(String) },
+      {
+        type: 'thread.error',
+        threadId: 'acp-gemini-sess-1',
+        message: 'Internal error: MCP server exited',
+      },
+      { type: 'turn.completed', turnId, status: 'failed' },
+    ])
   })
 
   it('auto mode only waves through reads — mutations stay questions', async () => {
