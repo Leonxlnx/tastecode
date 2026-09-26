@@ -203,6 +203,31 @@ describe('Transport', () => {
     }
   })
 
+  it('rejects a schema-invalid reply with a protocol error and keeps serving', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const reply = (result: unknown) => {
+      const { id } = RequestFrameSchema.parse(JSON.parse(userFrames(socket).at(-1)!))
+      socket.onmessage?.({ data: JSON.stringify({ id, result }) })
+    }
+
+    // The first reply arrives before the validators have loaded, the second
+    // after; neither may leave its owner loading forever.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const invalid = transport.request('thread.history', { threadId: 'thread' })
+      reply({ events: 'not-a-list', running: false })
+      await expect(invalid).rejects.toThrow('The server sent an invalid reply to thread.history.')
+    }
+
+    const valid = transport.request('thread.history', { threadId: 'thread' })
+    reply({ events: [], running: false })
+    await expect(valid).resolves.toEqual({ events: [], running: false })
+    expect(transport.state).toBe('open')
+    transport.close()
+  })
+
   it('rejects malformed push envelopes before dispatch', () => {
     expect(parseIncomingFrame('{')).toBeUndefined()
     expect(
