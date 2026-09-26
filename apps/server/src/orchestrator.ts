@@ -37,7 +37,7 @@ import {
   checkpointRepository,
 } from './checkpoint.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
-import { ProviderControls } from './provider-controls.js'
+import { ProviderControls, type ProviderControlsOptions } from './provider-controls.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
@@ -540,6 +540,12 @@ export class Orchestrator {
   #panicStopping = false
   #checkoutAccess = new CheckoutAccess()
   #stoppingSessions = new Map<string, AgentSession>()
+  /**
+   * Live background-model sessions (titles, commit messages). They own no
+   * sidebar thread, so #threads cannot reach them — this set is what
+   * panicStop and disposeAll sweep instead.
+   */
+  #backgroundSessions = new Set<AgentSession>()
   #runtimeStops = new Map<string, Promise<void>>()
   #runtimeGenerations = new Map<string, number>()
   #designProviderStarts = new Map<string, Promise<string>>()
@@ -631,6 +637,11 @@ export class Orchestrator {
       onTerminalOutput?: (terminalId: string, data: string, outputOffset: number) => void
       onTerminalExit?: (terminalId: string, exitCode: number | null) => void
       runtimeFor?: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
+      /**
+       * Test seam for the provider control processes (account reads, model
+       * discovery) that sit beside the session runtimes.
+       */
+      providerControls?: Pick<ProviderControlsOptions, 'createCodex' | 'services'>
       /** Test override for the hardware-scaled warm idle runtime limit. */
       maxIdleThreadRuntimes?: number
       /** Test override for the shared idle runtime expiry window. */
@@ -682,6 +693,7 @@ export class Orchestrator {
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
     this.#controls = new ProviderControls({
+      ...handlers.providerControls,
       listModels: (provider, agent) => this.#runtimeFor(provider, this.#onLog).listModels(agent),
       onLog: (_provider, line) => this.#onLog(line),
       onLogin: this.#onLogin,
@@ -810,7 +822,29 @@ export class Orchestrator {
       settings.resolved.provider === 'api'
         ? this.#apiRuntime(settings.resolved.connectionId)
         : this.#runtimeFor(settings.resolved.provider, this.#onLog)
-    return runBackgroundCompletion({ runtime, selection: settings.resolved, prompt })
+    const generation = this.#disposeGeneration
+    let session: AgentSession | undefined
+    try {
+      return await runBackgroundCompletion({
+        runtime,
+        selection: settings.resolved,
+        prompt,
+        onSession: (started) => {
+          session = started
+          if (this.#disposeGeneration === generation && !this.#panicStopping) {
+            this.#backgroundSessions.add(started)
+          } else {
+            // Shutdown or panic stop already swept the tracked set; this
+            // process arrived too late to be registered, so kill it directly.
+            void this.#disposeSession(started).catch((error: unknown) => {
+              this.#onLog(`[background] session stop failed: ${errorMessage(error)}`)
+            })
+          }
+        },
+      })
+    } finally {
+      if (session) this.#backgroundSessions.delete(session)
+    }
   }
 
   async #backgroundModelSources(): Promise<AvailableBackgroundModelSource[]> {
@@ -2698,6 +2732,7 @@ export class Orchestrator {
 
   async panicStop(): Promise<PanicStopResult> {
     const sessions = [...this.#threads.entries()]
+    const backgroundSessions = [...this.#backgroundSessions]
     this.#panicStopping = true
     this.#panicGeneration += 1
 
@@ -2724,6 +2759,11 @@ export class Orchestrator {
         )
       }
 
+      // Background sessions own no sidebar thread, so they are not in the
+      // result — but their provider processes die with everything else.
+      const backgroundStopped = Promise.allSettled(
+        backgroundSessions.map((session) => this.#disposeSession(session)),
+      )
       const stoppedSessions = await Promise.all(
         sessions.map(async ([threadId, entry]) => {
           let timeout: NodeJS.Timeout | undefined
@@ -2754,6 +2794,7 @@ export class Orchestrator {
           }
         }),
       )
+      await backgroundStopped
       if (queueClearFailed) throw new Error('could not clear every queued prompt during Stop all')
       return { sessions: stoppedSessions }
     } finally {
@@ -2922,7 +2963,14 @@ export class Orchestrator {
     const providerStops = [...this.#stoppingSessions.keys()].map((threadId) =>
       this.#stopThreadProvider(threadId),
     )
-    const stopped = Promise.allSettled([terminalsClosed, controlStopped, ...providerStops])
+    const backgroundSessions = [...this.#backgroundSessions]
+    this.#backgroundSessions.clear()
+    const stopped = Promise.allSettled([
+      terminalsClosed,
+      controlStopped,
+      ...providerStops,
+      ...backgroundSessions.map((session) => this.#disposeSession(session)),
+    ])
     this.#recordedDeltas.flushAll()
     this.#threads.clear()
     this.#runtimeThreadIdsByProject.clear()
@@ -2966,9 +3014,25 @@ export class Orchestrator {
     this.#backgroundSourcesRevision += 1
     await Promise.allSettled([...this.#designPreviewTasks.values(), ...previewsStopped])
     await Promise.allSettled(this.#stoppingDesignPreviews.values())
-    const failures = (await stopped).filter(
+    let failures = (await stopped).filter(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     )
+    if (failures.length) {
+      // A kill that failed still owns a live process — a detached one outlives
+      // this process by design. Give it one more pass before reporting the
+      // leak; killTree clears its in-flight record on failure, so a repeated
+      // dispose re-runs the TERM→KILL escalation rather than returning a
+      // cached rejection.
+      const retried = await Promise.allSettled([
+        this.#terminals.closeAll(),
+        this.#controls.disposeAll(),
+        ...[...this.#stoppingSessions.keys()].map((threadId) => this.#stopThreadProvider(threadId)),
+        ...backgroundSessions.map((session) => this.#disposeSession(session)),
+      ])
+      failures = retried.filter(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      )
+    }
     if (failures.length)
       throw new AggregateError(
         failures.map((result) => result.reason),
