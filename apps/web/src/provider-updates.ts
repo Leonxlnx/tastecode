@@ -10,6 +10,8 @@ import {
 import type { Transport } from './transport.js'
 
 export type UpdateOperation = {
+  /** Shared by every phase of one update attempt; each phase is a new object. */
+  run: number
   phase: 'starting' | 'running' | 'verifying' | 'succeeded' | 'failed'
   error?: string
 }
@@ -28,6 +30,7 @@ export class ProviderUpdatesStore {
   #listeners = new Set<() => void>()
   #request: Promise<void> | undefined
   #checkedAt = 0
+  #runs = 0
 
   constructor(private transport: Transport) {}
 
@@ -110,12 +113,13 @@ export class ProviderUpdatesStore {
   start = async (provider: ProviderId): Promise<void> => {
     const phase = this.#state.operations[provider]?.phase
     if (phase === 'starting' || phase === 'running' || phase === 'verifying') return
-    this.#operation(provider, { phase: 'starting' })
+    const run = ++this.#runs
+    this.#operation(provider, { run, phase: 'starting' })
     const key = updateKey(provider)
     clearInstall(key)
     try {
       await beginUpdate(this.transport, provider)
-      this.#operation(provider, { phase: 'running' })
+      this.#operation(provider, { run, phase: 'running' })
       let handled = false
       let off = () => {}
       const settle = () => {
@@ -125,12 +129,13 @@ export class ProviderUpdatesStore {
         off()
         if (install.phase === 'failed') {
           this.#operation(provider, {
+            run,
             phase: 'failed',
             error: 'Update failed. Open details and try again.',
           })
           return
         }
-        this.#operation(provider, { phase: 'verifying' })
+        this.#operation(provider, { run, phase: 'verifying' })
         // A check started before the installer exited cannot verify its result.
         void (async () => {
           await this.#request
@@ -143,9 +148,10 @@ export class ProviderUpdatesStore {
             !result.error &&
             !result.updateAvailable
           ) {
-            this.#operation(provider, { phase: 'succeeded' })
+            this.#operation(provider, { run, phase: 'succeeded' })
           } else {
             this.#operation(provider, {
+              run,
               phase: 'failed',
               error: 'The new version could not be confirmed. Check details or try again.',
             })
@@ -156,6 +162,7 @@ export class ProviderUpdatesStore {
       settle()
     } catch (error) {
       this.#operation(provider, {
+        run,
         phase: 'failed',
         error: error instanceof Error ? error.message : 'Could not start the update.',
       })
