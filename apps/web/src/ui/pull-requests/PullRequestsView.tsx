@@ -20,6 +20,7 @@ import {
   IconRotate as RotateCcw,
   IconSearch as Search,
   IconUser as UserRound,
+  IconX as X,
   type TablerIcon,
 } from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
@@ -272,10 +273,28 @@ export function PullRequestsView(props: {
         </header>
 
         <div className="pr-list-scroll">
+          {result && error ? (
+            <div className="pr-list-note is-error" role="alert">
+              <span>{error}</span>
+              <button type="button" onClick={() => void load(true)}>
+                Try again
+              </button>
+              <button
+                type="button"
+                className="pr-list-note-dismiss"
+                aria-label="Dismiss"
+                title="Dismiss"
+                onClick={() => setError(undefined)}
+              >
+                <X size={12} aria-hidden />
+              </button>
+            </div>
+          ) : null}
           {loading ? (
             <PullRequestListSkeleton />
           ) : error && !result ? (
             <ListMessage
+              role="alert"
               icon={<CircleAlert size={18} aria-hidden />}
               title="Couldn't load pull requests"
               detail={error}
@@ -321,14 +340,6 @@ export function PullRequestsView(props: {
             />
           ) : (
             <>
-              {error ? (
-                <p className="pr-list-note is-error" role="status">
-                  {error}
-                  <button type="button" onClick={() => void load(true)}>
-                    Try again
-                  </button>
-                </p>
-              ) : null}
               <PullRequestGroup
                 title={filter === 'all' ? undefined : capitalize(filter)}
                 items={visible}
@@ -546,7 +557,12 @@ function PullRequestFilterMenu(props: {
 
 function PullRequestListSkeleton() {
   return (
-    <div className="pr-list-skeleton skeleton-group" aria-label="Loading pull requests">
+    <div
+      className="pr-list-skeleton skeleton-group"
+      role="status"
+      aria-label="Loading pull requests"
+      aria-busy="true"
+    >
       {[0, 1, 2, 3, 4, 5].map((index) => (
         <span className="pr-skeleton-row" key={index}>
           <Skeleton />
@@ -562,13 +578,14 @@ function ListMessage(props: {
   icon: ReactNode
   title: string
   detail: string
+  role?: 'alert'
   action?: string
   href?: string
   onAction?: () => void
   actionDisabled?: boolean
 }) {
   return (
-    <div className="pr-list-message">
+    <div className="pr-list-message" role={props.role}>
       <span className="pr-empty-emblem">{props.icon}</span>
       <strong>{props.title}</strong>
       <p>{props.detail}</p>
