@@ -1,4 +1,5 @@
 import type { Item } from '@harness/contracts'
+import { binaryPlaceholder, jsonWithoutBinary } from './binary-content.js'
 import { object } from './history-values.js'
 
 type Value = Record<string, unknown>
@@ -17,9 +18,13 @@ function text(value: unknown): string {
 }
 
 function printable(value: unknown): string {
-  return (
-    text(value) || (value === undefined || value === null ? '' : JSON.stringify(value, null, 2))
-  )
+  const readable = text(value)
+  if (readable || value === undefined || value === null) return readable
+  // Output made only of images reads as their placeholders; the images
+  // themselves travel as attachments.
+  const placeholders = Array.isArray(value) ? value.map(binaryPlaceholder) : []
+  if (placeholders.length && placeholders.every(Boolean)) return placeholders.join('\n')
+  return jsonWithoutBinary(value, 2)
 }
 
 function attachments(content: unknown): string[] {

@@ -253,6 +253,46 @@ describe('Codex activity items', () => {
     })
   })
 
+  it('writes inline MCP images, audio and file blobs as placeholders', () => {
+    const data = 'iVBORw0KGgo'.repeat(10_000)
+    const raw = CodexThreadItemSchema.parse({
+      type: 'mcpToolCall',
+      id: 'mcp-2',
+      server: 'node_repl',
+      tool: 'js',
+      status: 'completed',
+      arguments: { code: 'await cropImage()' },
+      appContext: null,
+      pluginId: null,
+      result: {
+        content: [
+          { type: 'text', text: 'Cropped' },
+          { type: 'image', data, mimeType: 'image/png' },
+          { type: 'audio', data, mimeType: 'audio/wav' },
+          { type: 'resource', resource: { uri: 'file:///tmp/frame.bin', blob: data } },
+          { type: 'resource_link', uri: 'file:///tmp/notes.md', name: 'notes' },
+        ],
+        structuredContent: null,
+        _meta: null,
+      },
+      error: null,
+      durationMs: 10,
+    })
+
+    expect(mapThreadItem(raw, context)).toMatchObject({
+      type: 'tool_call',
+      text: [
+        'node_repl.js',
+        '{"code":"await cropImage()"}',
+        'Cropped',
+        '[image]',
+        '[audio]',
+        '[file file:///tmp/frame.bin]',
+        '{"type":"resource_link","uri":"file:///tmp/notes.md","name":"notes"}',
+      ].join('\n'),
+    })
+  })
+
   it('carries MCP tool arguments, result text and errors', () => {
     const raw = CodexThreadItemSchema.parse({
       type: 'mcpToolCall',

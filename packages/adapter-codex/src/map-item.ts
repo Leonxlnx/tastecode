@@ -1,6 +1,7 @@
 import path from 'node:path'
 import type { Item, ItemStatus } from '@harness/contracts'
 import { z } from 'zod'
+import { jsonWithoutBinary } from './binary-content.js'
 
 const ItemEnvelopeSchema = z.object({ type: z.string(), id: z.string().optional() })
 const UserMessageSchema = z.object({
@@ -373,12 +374,12 @@ function readable(value: unknown): string | undefined {
               part !== null &&
               typeof (part as { text?: unknown }).text === 'string'
             ? (part as { text: string }).text
-            : JSON.stringify(part),
+            : jsonWithoutBinary(part),
       )
       .filter(Boolean)
     return parts.length ? parts.join('\n') : undefined
   }
-  return JSON.stringify(value, null, 2)
+  return jsonWithoutBinary(value, 2)
 }
 
 /** One file of a Codex patch as the git-style unified diff the transcript renders. */
