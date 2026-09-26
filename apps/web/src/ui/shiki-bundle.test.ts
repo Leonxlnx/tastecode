@@ -1,6 +1,7 @@
 import { disposeHighlighter, getFiletypeFromFileName, getSharedHighlighter } from '@pierre/diffs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createOnigurumaEngine } from 'shiki'
+import { countWideGrammarScans, isOneByteString } from '../test-string-width.js'
 
 /**
  * `@pierre/diffs` imports the `shiki` entry, which the Vite config aliases to
@@ -70,6 +71,24 @@ describe('shiki alias for @pierre/diffs', () => {
       code.split('\n'),
     )
     expect(tokens.every((line) => line.length === 1)).toBe(true)
+  })
+
+  it('scans diff lines one byte wide when the patch contains a wider character', async () => {
+    const highlighter = await getSharedHighlighter({
+      themes: ['github-dark'],
+      langs: ['typescript'],
+      preferredHighlighter: 'shiki-js',
+    })
+    const patch = '+// Retry once — then give up.\n+const answer: number = await load(42)\n'
+    const code = patch.slice(patch.indexOf('\n') + 2)
+    expect(isOneByteString(code)).toBe(false)
+
+    const counts = await countWideGrammarScans(() =>
+      highlighter.codeToTokens(code, { lang: 'typescript', theme: 'github-dark' }),
+    )
+
+    expect(counts.scans).toBeGreaterThan(0)
+    expect(counts.wide).toBe(0)
   })
 
   it('refuses the Oniguruma engine the CSP could never run', () => {
