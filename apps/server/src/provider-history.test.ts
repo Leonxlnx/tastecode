@@ -124,6 +124,23 @@ describe('provider history integration', () => {
     expect(projects).toHaveBeenCalledTimes(3)
   })
 
+  it('names the turns already stored locally when it reads a saved session', async () => {
+    const session = metadata()
+    const { history, source } = setup([session])
+    await history.refresh()
+    const id = 'external:codex:native'
+    await history.load(id)
+    for (const event of transcript('reply', 'My own reply').slice(1)) store.append(id, event)
+    session.revision = '2'
+    await history.refresh()
+
+    await history.load(id)
+
+    expect(source.read).toHaveBeenLastCalledWith(session, {
+      localTurnIds: new Set(['reply-turn']),
+    })
+  })
+
   it('cleans up a helper mirror that a session changing kind left behind', async () => {
     const session = metadata()
     const { history } = setup([session])
