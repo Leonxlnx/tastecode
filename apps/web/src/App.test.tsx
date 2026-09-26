@@ -1516,9 +1516,7 @@ describe('web client', () => {
     expect(
       await screen.findByRole('button', { name: 'Use gpt-5.6-sol through Codex' }),
     ).toBeTruthy()
-    expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-      'Effort: High',
-    )
+    expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe('High')
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('models.list', {
         provider: 'codex',
@@ -5374,9 +5372,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Mini through Codex' }))
 
     await waitFor(() => {
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: High',
-      )
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe('High')
     })
 
     const composer = screen.getByPlaceholderText('Do anything')
@@ -5455,9 +5451,7 @@ describe('new chats', () => {
           expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
             model,
           )
-          expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-            `Effort: ${effort}`,
-          )
+          expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe(effort)
           expect(
             screen.getByRole('button', { name: fast ? 'Disable fast mode' : 'Enable fast mode' }),
           ).toBeTruthy()
@@ -5569,9 +5563,7 @@ describe('new chats', () => {
       expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
         '5.6 Mini',
       )
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: High',
-      )
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe('High')
       expect(screen.getByRole('button', { name: 'Disable fast mode' })).toBeTruthy()
     })
     expect(JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!)).toEqual(
@@ -5631,9 +5623,7 @@ describe('new chats', () => {
     const picker = await screen.findByRole('button', { name: 'Model and reasoning' })
     if (picker.getAttribute('aria-expanded') !== 'true') fireEvent.click(picker)
     await waitFor(() =>
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: High',
-      ),
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe('High'),
     )
     expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe('true')
     await waitFor(() =>
@@ -5715,8 +5705,8 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'End' })
     await waitFor(() => {
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: Extra High',
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe(
+        'Extra High',
       )
     })
 
@@ -5724,15 +5714,11 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
     fireEvent.click(screen.getByRole('button', { name: 'Use Opus 5 through Claude Code' }))
     await waitFor(() => {
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: High',
-      )
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe('High')
     })
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Reasoning effort' }), { key: 'Home' })
     await waitFor(() => {
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: Low',
-      )
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe('Low')
     })
 
     // Returning to Codex restores the remembered Extra High — the old
@@ -5740,8 +5726,8 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show Codex models' }))
     fireEvent.click(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
     await waitFor(() => {
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: Extra High',
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe(
+        'Extra High',
       )
     })
 
@@ -5749,9 +5735,7 @@ describe('new chats', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
     fireEvent.click(screen.getByRole('button', { name: 'Use Opus 5 through Claude Code' }))
     await waitFor(() => {
-      expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-        'Effort: Low',
-      )
+      expect(document.querySelector('.model-selector__effort-value')?.textContent).toBe('Low')
       expect(screen.getByRole('button', { name: 'Enable fast mode' })).toBeTruthy()
     })
     localStorage.removeItem('harness.modelPickerLayout')

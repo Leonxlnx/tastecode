@@ -380,6 +380,18 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Fast mode on models whose SDK info reports it, billed as extra usage
+                <span class="d"
+                  >opted in through flag settings at session start; a tier change restarts the
+                  session; when the account blocks fast mode, the transcript says so once per
+                  session</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Steer, interrupt, streamed text and reasoning, durable session resume
                 <span class="d"
                   >one long-lived prompt stream carries follow-up turns while SDK controls change
@@ -804,13 +816,15 @@
             <label
               ><input type="checkbox" /><span
                 >Compact model picker grouped by stable source identity with provider logos, with a
-                content-sized menu and the compact dither effort slider, with aligned pointer stops
-                and a direction-aware 75% drag threshold; the flat list is the first-run layout,
-                while both layouts share full-catalog search, arrow-key entry into filtered results,
-                and selection preservation; new-chat source changes keep readiness checks silent;
-                default visibility includes Astra, Sol, Terra, Luna, Fable 5.1, Opus 5, Sonnet 5,
-                Fable 5, Grok 4.6, and Grok 4.5; new models start enabled, and saved visibility
-                choices persist after the one-time defaults update</span
+                content-sized menu and the dither effort slider: a knob on the chosen stop, a
+                centered effort name, hover preview of the pointed stop, sliding stop changes, a
+                reset to the model default, aligned pointer stops and a direction-aware 75% drag
+                threshold; the flat list is the first-run layout, while both layouts share
+                full-catalog search, arrow-key entry into filtered results, and selection
+                preservation; new-chat source changes keep readiness checks silent; default
+                visibility includes Astra, Sol, Terra, Luna, Fable 5.1, Opus 5, Sonnet 5, Fable 5,
+                Grok 4.6, and Grok 4.5; new models start enabled, and saved visibility choices
+                persist after the one-time defaults update</span
               ></label
             >
           </li>
@@ -818,7 +832,8 @@
             <label
               ><input type="checkbox" /><span
                 >Per-model effort slider and Fast toggle only when declared by the model;
-                unsupported control regions are omitted</span
+                unsupported control regions are omitted; a fast tier's billing note shows as a
+                warning while it is on</span
               ></label
             >
           </li>
