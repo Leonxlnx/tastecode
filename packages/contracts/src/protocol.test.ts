@@ -388,14 +388,63 @@ describe('protocol envelopes', () => {
         command: '/Applications/Pi forks/deepseek-pi',
         args: ['--openrouter', 'value with spaces'],
         workingDirectory: '~/Developer/pi-deepseek',
-        environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+        environmentUpdates: {
+          set: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+          unset: [],
+        },
       }),
     ).toMatchObject({
       provider: 'pi',
       args: ['--openrouter', 'value with spaces'],
       workingDirectory: '~/Developer/pi-deepseek',
-      environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+      environmentUpdates: {
+        set: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+        unset: [],
+      },
     })
+    expect(() =>
+      methods['harnesses.upsert'].params.parse({
+        id: 'deepseek-pi',
+        displayName: 'DeepSeek Pi',
+        provider: 'pi',
+        command: 'deepseek-pi',
+        args: [],
+        environmentUpdates: { set: { TOKEN: 'write-only-sentinel' }, unset: ['TOKEN'] },
+      }),
+    ).toThrow('environment key cannot be both set and unset')
+    expect(() =>
+      methods['harnesses.upsert'].params.parse({
+        id: 'deepseek-pi',
+        displayName: 'DeepSeek Pi',
+        provider: 'pi',
+        command: 'deepseek-pi',
+        args: [],
+        environment: { TOKEN: 'write-only-sentinel' },
+      }),
+    ).toThrow()
+    const publicHarness = methods['harnesses.list'].result.parse({
+      harnesses: [
+        {
+          id: 'deepseek-pi',
+          displayName: 'DeepSeek Pi',
+          provider: 'pi',
+          command: 'deepseek-pi',
+          args: [],
+          environmentKeys: ['TOKEN'],
+        },
+      ],
+    })
+    expect(JSON.stringify(publicHarness)).not.toContain('write-only-sentinel')
+    expect(() =>
+      methods['harnesses.list'].result.parse({
+        harnesses: [
+          {
+            ...publicHarness.harnesses[0],
+            environment: { TOKEN: 'write-only-sentinel' },
+          },
+        ],
+      }),
+    ).toThrow()
     expect(
       methods['harnesses.verify'].result.parse({
         verification: {
