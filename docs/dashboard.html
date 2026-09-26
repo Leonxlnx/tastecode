@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-23 main 8f1bd6bf · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-26 main fc4728e3 · 0.1.2 source preparation</span>
       </div>
     </div>
 
@@ -304,6 +304,13 @@
         <p>
           Active chat turns now keep their work rows visible between tool calls and collapse only
           after the turn ends. The next installers include this fix with the 0.1.2 source.
+        </p>
+        <p>
+          Provider update notices can be closed while an update runs; the update continues, the
+          footer shows its progress, and the notice returns only if the update fails (#1274, PR
+          #1307). Chat titles no longer run under the panel toggles while the workspace panel is
+          closed (#1267, PR #1308). The 0.1.2 draft currently targets 9be8346d, which predates both
+          fixes.
         </p>
         <p>
           The Linux-only Beta 8 proof published after 0.1.1 has been returned to draft, retaining
