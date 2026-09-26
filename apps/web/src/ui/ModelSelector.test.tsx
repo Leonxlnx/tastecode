@@ -282,18 +282,24 @@ describe('ModelSelector', () => {
       toJSON: () => ({}),
     })
 
+    const value = () => document.querySelector('.model-selector__effort-value > span')
+    expect(value()?.textContent).toBe('Medium')
+    expect(value()?.getAttribute('data-direction')).toBeNull()
+
     fireEvent.pointerEnter(slider)
     fireEvent.pointerDown(slider, { clientX: 110, pointerId: 4 })
+    expect(value()?.textContent).toBe('Low')
+    expect(value()?.getAttribute('data-direction')).toBe('down')
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     fireEvent.pointerMove(slider, { clientX: 350, pointerId: 4 })
     expect(slider.getAttribute('aria-valuetext')).toBe('Extra High')
-    expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
-      'Effort: Extra High',
-    )
+    expect(value()?.textContent).toBe('Extra High')
+    expect(value()?.getAttribute('data-direction')).toBe('up')
     expect(onEffortChange).not.toHaveBeenCalled()
     expect(slider.querySelectorAll('canvas')).toHaveLength(2)
     expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
-    expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    expect(slider.querySelector('.model-selector__slider-knob')).not.toBeNull()
+    expect(slider.style.getPropertyValue('--model-selector-slider-progress')).toBe('1')
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
     expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
@@ -301,6 +307,85 @@ describe('ModelSelector', () => {
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
+  })
+
+  it('previews the hovered stop without choosing it', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 28,
+      right: 380,
+      bottom: 48,
+      toJSON: () => ({}),
+    })
+    const value = () => document.querySelector('.model-selector__effort-value')
+    const ghost = () => slider.querySelector('.model-selector__slider-ghost')
+
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 1, pointerType: 'mouse' })
+    expect(value()?.textContent).toBe('Extra High')
+    expect(value()?.classList.contains('is-preview')).toBe(true)
+    expect(ghost()?.classList.contains('is-visible')).toBe(true)
+    expect(slider.style.getPropertyValue('--model-selector-slider-hover')).toBe('1')
+    expect(slider.getAttribute('aria-valuetext')).toBe('Medium')
+
+    fireEvent.pointerMove(slider, { clientX: 198, pointerId: 1, pointerType: 'mouse' })
+    expect(value()?.textContent).toBe('Medium')
+    expect(value()?.classList.contains('is-preview')).toBe(false)
+    expect(ghost()?.classList.contains('is-visible')).toBe(false)
+
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 1, pointerType: 'mouse' })
+    fireEvent.pointerLeave(slider, { pointerId: 1, pointerType: 'mouse' })
+    expect(value()?.textContent).toBe('Medium')
+    expect(ghost()?.classList.contains('is-visible')).toBe(false)
+
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 2, pointerType: 'touch' })
+    expect(value()?.textContent).toBe('Medium')
+    expect(onEffortChange).not.toHaveBeenCalled()
+
+    fireEvent.pointerMove(slider, { clientX: 350, pointerId: 1, pointerType: 'mouse' })
+    fireEvent.keyDown(slider, { key: 'ArrowLeft' })
+    expect(onEffortChange).toHaveBeenCalledWith('low')
+    expect(value()?.classList.contains('is-preview')).toBe(false)
+    expect(ghost()?.classList.contains('is-visible')).toBe(false)
+  })
+
+  it('centers a lone effort stop under the knob', async () => {
+    const single = {
+      ...MODELS[0]!,
+      model: {
+        ...MODELS[0]!.model,
+        reasoningEfforts: ['medium'],
+        defaultReasoningEffort: 'medium',
+      },
+    }
+    renderSelector({ models: [single], modelId: single.key, effort: 'medium' })
+    await openSelector()
+
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    const stop = slider.querySelector<HTMLElement>('.model-selector__slider-stop')
+    expect(slider.style.getPropertyValue('--model-selector-slider-progress')).toBe('0.5')
+    expect(stop?.style.getPropertyValue('--model-selector-stop')).toBe('0.5')
+  })
+
+  it('offers a reset only while effort differs from the model default', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'xhigh' })
+
+    await openSelector()
+    fireEvent.click(screen.getByRole('button', { name: 'Reset effort to Medium' }))
+    expect(onEffortChange).toHaveBeenCalledWith('medium')
+    expect(document.activeElement).toBe(screen.getByRole('slider', { name: 'Reasoning effort' }))
+
+    cleanup()
+    renderSelector({ effort: 'medium' })
+    await openSelector()
+    expect(screen.queryByRole('button', { name: /^Reset effort/ })).toBeNull()
   })
 
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
@@ -575,11 +660,13 @@ describe('ModelSelector', () => {
   })
 
   it('switches only in the final quarter of a drag in either direction', () => {
+    // 328px leaves 300px of knob travel after the 3px insets and 22px knob,
+    // so one stop is 100px and the first stop sits at 14px.
     const at = (position: number, currentIndex: number) =>
       getEffortIndexFromPointer({
-        clientX: 18 + position * 100,
+        clientX: 14 + position * 100,
         left: 0,
-        width: 336,
+        width: 328,
         stopCount: 4,
         currentIndex,
       })

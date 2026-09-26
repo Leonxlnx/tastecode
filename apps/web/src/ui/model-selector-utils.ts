@@ -1,7 +1,8 @@
 import { resolveReasoningEffort, sourceKey, type ModelChoice } from '../model-catalog.js'
 
-export const SLIDER_DITHER_MIN_WIDTH = 32
-export const SLIDER_DITHER_INSET = 2
+/** The fill never gets narrower than its knob, so this is also the knob diameter. */
+export const SLIDER_DITHER_MIN_WIDTH = 22
+export const SLIDER_DITHER_INSET = 3
 
 export type ModelSelectorProps = {
   models: ModelChoice[]
