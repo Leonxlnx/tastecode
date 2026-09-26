@@ -213,21 +213,24 @@
   color: var(--effort-value);
 }
 
+/* A fixed height keeps the effort controls in place while providers switch;
+   a content-sized list moved them under the pointer. */
 .model-selector__catalog {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  max-height: min(246px, calc(100vh - 100px));
-  max-height: min(246px, calc(100dvh - 100px));
+  height: min(246px, calc(100vh - 100px));
+  height: min(246px, calc(100dvh - 100px));
   overflow: hidden;
 }
 
 .model-selector__providers {
+  position: relative;
   display: flex;
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   overflow-y: auto;
   padding: 6px;
   background: var(--model-picker-bg);
@@ -236,6 +239,8 @@
 }
 
 .model-selector__provider {
+  position: relative;
+  z-index: 1;
   display: grid;
   width: 30px;
   height: 30px;
@@ -254,9 +259,34 @@
 }
 
 .model-selector__provider.is-active {
-  background: var(--model-picker-selected-bg);
-  box-shadow: var(--model-picker-selected-shadow);
   color: var(--text);
+}
+
+/* Sits in the gap under Favorites, so every slot keeps the same 34px step. */
+.model-selector__provider--favorites::after {
+  position: absolute;
+  right: 4px;
+  bottom: -3px;
+  left: 4px;
+  height: 1px;
+  content: '';
+  background: var(--menu-line);
+}
+
+/* One highlight slides between the 30px buttons (4px apart) instead of each
+   button painting its own, so switching slots moves rather than blinks. */
+.model-selector__provider-highlight {
+  position: absolute;
+  top: 6px;
+  left: calc(50% - 15px);
+  width: 30px;
+  height: 30px;
+  background: var(--model-picker-selected-bg);
+  border-radius: var(--r-popup-item);
+  box-shadow: var(--model-picker-selected-shadow);
+  pointer-events: none;
+  transform: translateY(calc(var(--model-selector-provider-index) * 34px));
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .model-selector__provider:focus-visible {
@@ -277,20 +307,21 @@
   padding: 4px;
 }
 
-/* Flat layout (the default): one scrolling list, providers as inline
-   headings — the provider-rail catalog is the Settings opt-in. */
+/* Flat layout: one scrolling list with providers as inline headings. The
+   provider rail is the default; Settings switches to this. */
 .model-selector__models--flat {
   height: auto;
   max-height: min(246px, 42vh, calc(100vh - 100px));
   max-height: min(246px, 42dvh, calc(100dvh - 100px));
 }
 
-.model-selector__flat-head {
+.model-selector__flat-head,
+.model-selector__search-head {
   position: sticky;
   z-index: 2;
   top: -4px;
   padding: 4px 4px 3px;
-  background: var(--model-picker-bg);
+  background: var(--model-picker-title-bg);
 }
 
 .model-selector__models--flat .model-selector__group + .model-selector__group {
@@ -299,37 +330,19 @@
   padding-top: 4px;
 }
 
-.model-selector__models--flat .model-selector__group-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px 3px;
-}
-
 .model-selector__models--flat .model-selector__model {
   min-height: 28px;
   padding: 4px 8px;
 }
 
-.model-selector__group-head {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(104px, 140px);
+.model-selector__group-title {
+  display: flex;
   align-items: center;
   gap: 6px;
-  margin-inline: -4px;
-  min-height: 30px;
-  padding: 2px 8px 4px 12px;
-  background: var(--model-picker-title-bg);
-}
-
-.model-selector__group-title {
   min-width: 0;
   overflow: hidden;
   margin: 0;
-  padding: 0;
+  padding: 6px 8px 3px;
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 450;
@@ -390,6 +403,89 @@
   background: var(--model-picker-hover-bg);
   outline: 1px solid var(--text-2);
   outline-offset: -1px;
+}
+
+/* Rail rows overlay the favorite star on the row's right end, so the row,
+   not the choice button, owns the hover surface. */
+.model-selector__row {
+  position: relative;
+}
+
+.model-selector__row > .model-selector__model {
+  padding-right: 34px;
+}
+
+.model-selector__row:hover > .model-selector__model {
+  background: var(--model-picker-hover-bg);
+}
+
+.model-selector__row .model-selector__model-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.model-selector__model-source {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.model-selector__favorite {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.model-selector__favorite:focus-visible {
+  outline: 1px solid var(--text-2);
+  outline-offset: -1px;
+}
+
+.model-selector__favorite svg {
+  fill: transparent;
+}
+
+.model-selector__favorite.is-on {
+  color: var(--text-2);
+}
+
+.model-selector__favorite.is-on svg {
+  fill: currentColor;
+}
+
+.model-selector__favorite.is-on,
+.model-selector__row:focus-within .model-selector__favorite {
+  opacity: 1;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .model-selector__row:hover .model-selector__favorite {
+    opacity: 1;
+  }
+
+  .model-selector__favorite:hover {
+    color: var(--text);
+  }
+}
+
+/* Touch has no hover to reveal the star, so it stays visible. */
+@media (pointer: coarse) {
+  .model-selector__favorite {
+    opacity: 1;
+  }
 }
 
 .model-selector__model-name {

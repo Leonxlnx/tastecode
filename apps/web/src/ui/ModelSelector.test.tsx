@@ -170,6 +170,7 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   localStorage.removeItem('harness.modelPickerLayout')
+  localStorage.removeItem('harness.favoriteModels')
 })
 
 describe('ModelSelector', () => {
@@ -339,7 +340,16 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
-  it('defaults to the flat list with inline provider headings', async () => {
+  it('defaults to the provider rail', async () => {
+    renderSelector()
+    await openSelector()
+
+    expect(screen.getByRole('group', { name: 'Providers' })).toBeTruthy()
+    expect(document.querySelector('.model-selector__models--flat')).toBeNull()
+  })
+
+  it('shows the flat list with inline provider headings when chosen', async () => {
+    localStorage.setItem('harness.modelPickerLayout', 'list')
     renderSelector()
     await openSelector()
 
@@ -353,6 +363,7 @@ describe('ModelSelector', () => {
   })
 
   it('searches every flat-list source without changing the selected model', async () => {
+    localStorage.setItem('harness.modelPickerLayout', 'list')
     const claude = {
       ...MODELS[0]!,
       key: 'claude-code:sonnet',
@@ -460,24 +471,96 @@ describe('ModelSelector', () => {
     ).toBe('Claude Code')
     expect(screen.queryByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeNull()
 
-    const titles = Array.from(document.querySelectorAll('.model-selector__group-title')).map(
-      (title) => title.textContent,
-    )
-    expect(titles).toEqual(['Codex'])
-    expect(
-      document
-        .querySelector('.model-selector__group-title .source-identity')
-        ?.getAttribute('title'),
-    ).toBe('Codex')
+    // The highlighted logo names the source; the list does not repeat it.
+    expect(document.querySelector('.model-selector__group-title')).toBeNull()
+    expect(screen.getByRole('group', { name: 'Codex models' })).toBeTruthy()
 
+    // Slot 0 is Favorites, so providers start at 1.
+    const rail = screen.getByRole('group', { name: 'Providers' })
+    expect(rail.style.getPropertyValue('--model-selector-provider-index')).toBe('1')
     fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
 
+    expect(rail.style.getPropertyValue('--model-selector-provider-index')).toBe('2')
     expect(
       screen.getByRole('button', { name: 'Show Claude Code models' }).getAttribute('aria-pressed'),
     ).toBe('true')
     expect(screen.queryByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Use Sonnet 5 through Claude Code' })).toBeTruthy()
     expect(onModelChange).not.toHaveBeenCalled()
+  })
+
+  it('stars models into a Favorites slot that spans providers', async () => {
+    const claudeModel: ModelChoice = {
+      key: 'claude-code:sonnet',
+      provider: 'claude-code',
+      sourceName: 'Claude Code',
+      mark: 'anthropic',
+      model: { ...MODELS[0]!.model, id: 'sonnet', displayName: 'Sonnet 5', isDefault: false },
+    }
+    renderSelector({ models: [...MODELS, claudeModel] })
+    await openSelector()
+
+    const rail = screen.getByRole('group', { name: 'Providers' })
+    const favorites = screen.getByRole('button', { name: 'Show favorite models' })
+    expect(rail.firstElementChild?.nextElementSibling).toBe(favorites)
+    fireEvent.click(favorites)
+    expect(screen.getByRole('status').textContent).toBe('Star a model to add it here.')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show Codex models' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add GPT-5.6 Mini to favorites' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show Claude Code models' }))
+    const star = screen.getByRole('button', { name: 'Add Sonnet 5 to favorites' })
+    fireEvent.click(star)
+    expect(star.getAttribute('aria-pressed')).toBe('true')
+    expect(star.getAttribute('aria-label')).toBe('Remove Sonnet 5 from favorites')
+    expect(JSON.parse(localStorage.getItem('harness.favoriteModels') ?? '[]')).toEqual([
+      'codex:gpt-5.6-mini',
+      'claude-code:sonnet',
+    ])
+
+    fireEvent.click(favorites)
+    const list = screen.getByRole('group', { name: 'Favorite models' })
+    expect(
+      Array.from(list.querySelectorAll('.model-selector__model')).map((row) =>
+        row.getAttribute('aria-label'),
+      ),
+    ).toEqual(['Use GPT-5.6 Mini through Codex', 'Use Sonnet 5 through Claude Code'])
+    expect(list.querySelectorAll('.model-selector__model-source')).toHaveLength(2)
+    expect(rail.style.getPropertyValue('--model-selector-provider-index')).toBe('0')
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search models' }), {
+      target: { value: 'sonnet' },
+    })
+    expect(screen.getByRole('group', { name: 'Favorite models' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Use GPT-5.6 Mini through Codex' })).toBeNull()
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search models' }), {
+      target: { value: 'sol' },
+    })
+    expect(screen.getByRole('group', { name: 'Codex models' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Use GPT-5.6 Sol through Codex' })).toBeTruthy()
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search models' }), {
+      target: { value: '' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove GPT-5.6 Mini from favorites' }))
+    expect(screen.queryByRole('button', { name: 'Use GPT-5.6 Mini through Codex' })).toBeNull()
+  })
+
+  it('opens on Favorites only when the current model is starred', async () => {
+    localStorage.setItem('harness.favoriteModels', JSON.stringify(['codex:gpt-5.6-sol']))
+    renderSelector()
+    await openSelector()
+    expect(
+      screen.getByRole('button', { name: 'Show favorite models' }).getAttribute('aria-pressed'),
+    ).toBe('true')
+
+    cleanup()
+    localStorage.setItem('harness.favoriteModels', JSON.stringify(['codex:gpt-5.6-mini']))
+    renderSelector()
+    await openSelector()
+    expect(
+      screen.getByRole('button', { name: 'Show Codex models' }).getAttribute('aria-pressed'),
+    ).toBe('true')
   })
 
   it('keeps ACP sources distinct by stable agent identity', async () => {

@@ -7,9 +7,14 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import { IconCheck as Check, IconBolt as Zap } from '@tabler/icons-react'
+import { IconCheck as Check, IconStar as Star, IconBolt as Zap } from '@tabler/icons-react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
+import {
+  readModelFavorites,
+  subscribeModelFavorites,
+  toggleModelFavorite,
+} from '../model-favorites.js'
 import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
 import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { ModelSearchField } from './ModelSearchField.js'
@@ -31,39 +36,87 @@ import {
 } from './model-selector-utils.js'
 import '../styles/model-selector-menu.css'
 
+/** Rail slot for starred models. Source keys come from provider ids, so this
+ *  cannot collide with a provider's slot. */
+const FAVORITES = 'favorites'
+
 function ProviderModelList(props: {
   models: ModelChoice[]
   selectedChoice: ModelChoice | undefined
   onModelSelect: (choice: ModelChoice) => void
 }) {
   const catalog = useRef<HTMLDivElement>(null)
+  const favoriteKeys = useSyncExternalStore(subscribeModelFavorites, readModelFavorites)
   const groups = groupModelsBySource(props.models)
+  const favoriteEntries = props.models.filter((entry) => favoriteKeys.includes(entry.key))
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const selectedGroupKey = props.selectedChoice
     ? modelSourceKey(props.selectedChoice)
     : groups[0]?.key
-  const [activeGroupKey, setActiveGroupKey] = useState(selectedGroupKey)
+  // Open where the current model is listed: Favorites when it is starred.
+  const [activeGroupKey, setActiveGroupKey] = useState(() =>
+    props.selectedChoice && favoriteKeys.includes(props.selectedChoice.key)
+      ? FAVORITES
+      : selectedGroupKey,
+  )
   const activeGroup =
     groups.find((group) => group.key === activeGroupKey) ??
     groups.find((group) => group.key === selectedGroupKey) ??
     groups[0]
   const searching = deferredQuery.trim().length > 0
+  const matchingFavorites = searching
+    ? filterModelChoicesByQuery(favoriteEntries, deferredQuery)
+    : favoriteEntries
+  // A search with no starred match falls through to the providers, like a
+  // provider slot with no match does.
+  const showingFavorites =
+    activeGroupKey === FAVORITES && (!searching || matchingFavorites.length > 0)
   const filteredGroups = searching
     ? groupModelsBySource(filterModelChoicesByQuery(props.models, deferredQuery))
     : groups
-  const visibleGroup =
-    filteredGroups.find((group) => group.key === activeGroup?.key) ??
-    filteredGroups[0] ??
-    activeGroup
-  const filteredEntries = searching
-    ? (filteredGroups.find((group) => group.key === visibleGroup?.key)?.entries ?? [])
-    : (visibleGroup?.entries ?? [])
+  const visibleGroup = showingFavorites
+    ? undefined
+    : (filteredGroups.find((group) => group.key === activeGroup?.key) ??
+      filteredGroups[0] ??
+      activeGroup)
+  const entries = showingFavorites
+    ? matchingFavorites
+    : searching
+      ? (filteredGroups.find((group) => group.key === visibleGroup?.key)?.entries ?? [])
+      : (visibleGroup?.entries ?? [])
   const focusResult = (edge: 'first' | 'last') => focusModelResult(catalog.current, edge)
+  const activeSlot = showingFavorites
+    ? 0
+    : 1 +
+      Math.max(
+        0,
+        groups.findIndex((group) => group.key === visibleGroup?.key),
+      )
+  const showSlot = (key: string) => {
+    setActiveGroupKey(key)
+    setQuery('')
+  }
 
   return (
     <div className="model-selector__catalog" ref={catalog}>
-      <div className="model-selector__providers" role="group" aria-label="Providers">
+      <div
+        className="model-selector__providers"
+        role="group"
+        aria-label="Providers"
+        style={{ '--model-selector-provider-index': activeSlot } as CSSProperties}
+      >
+        <span className="model-selector__provider-highlight" aria-hidden />
+        <button
+          type="button"
+          className={`model-selector__provider model-selector__provider--favorites${showingFavorites ? ' is-active' : ''}`}
+          aria-label="Show favorite models"
+          aria-pressed={showingFavorites}
+          title="Favorites"
+          onClick={() => showSlot(FAVORITES)}
+        >
+          <Star size={18} />
+        </button>
         {groups.map((group) => {
           const active = group.key === visibleGroup?.key
           return (
@@ -74,10 +127,7 @@ function ProviderModelList(props: {
               aria-label={`Show ${group.name} models`}
               aria-pressed={active}
               title={group.name}
-              onClick={() => {
-                setActiveGroupKey(group.key)
-                setQuery('')
-              }}
+              onClick={() => showSlot(group.key)}
             >
               <ProviderIcon mark={group.mark} size={18} />
             </button>
@@ -88,56 +138,89 @@ function ProviderModelList(props: {
       <div
         className="model-selector__models"
         role="group"
-        aria-label={visibleGroup ? `${visibleGroup.name} models` : 'Models'}
+        aria-label={
+          showingFavorites
+            ? 'Favorite models'
+            : visibleGroup
+              ? `${visibleGroup.name} models`
+              : 'Models'
+        }
       >
-        {visibleGroup ? (
-          <section className="model-selector__group">
-            <div className="model-selector__group-head">
-              <p className="model-selector__group-title">
-                <SourceIdentity
-                  presentation={{ label: visibleGroup.name, mark: visibleGroup.mark }}
-                />
-              </p>
-              <ModelSearchField
-                className="model-selector__search"
-                value={query}
-                label="Search models"
-                autoFocus
-                onChange={setQuery}
-                onNavigate={focusResult}
+        <div className="model-selector__search-head">
+          <ModelSearchField
+            className="model-selector__search"
+            value={query}
+            label="Search models"
+            autoFocus
+            onChange={setQuery}
+            onNavigate={focusResult}
+          />
+        </div>
+        <section className="model-selector__group">
+          {entries.length > 0 ? (
+            entries.map((entry) => (
+              <RailModelRow
+                key={entry.key}
+                entry={entry}
+                selected={entry.key === props.selectedChoice?.key}
+                favorite={favoriteKeys.includes(entry.key)}
+                showSource={showingFavorites}
+                onSelect={props.onModelSelect}
               />
-            </div>
-            {filteredEntries.length > 0 ? (
-              filteredEntries.map((entry) => {
-                const selected = entry.key === props.selectedChoice?.key
-                return (
-                  <button
-                    key={entry.key}
-                    type="button"
-                    className={`model-selector__model${selected ? ' is-selected' : ''}`}
-                    aria-pressed={selected}
-                    aria-label={`Use ${entry.model.displayName} through ${entry.sourceName}`}
-                    onClick={() => props.onModelSelect(entry)}
-                  >
-                    <span className="model-selector__model-name">{entry.model.displayName}</span>
-                    {selected ? <Check size={14} aria-hidden /> : null}
-                  </button>
-                )
-              })
-            ) : (
-              <p className="model-selector__empty" role="status">
-                No matching models.
-              </p>
-            )}
-          </section>
-        ) : null}
+            ))
+          ) : (
+            <p className="model-selector__empty" role="status">
+              {showingFavorites ? 'Star a model to add it here.' : 'No matching models.'}
+            </p>
+          )}
+        </section>
       </div>
     </div>
   )
 }
 
+/** A rail row: the model choice plus its favorite star. The star is a sibling
+ *  rather than a child because buttons cannot nest. */
+function RailModelRow(props: {
+  entry: ModelChoice
+  selected: boolean
+  favorite: boolean
+  showSource: boolean
+  onSelect: (choice: ModelChoice) => void
+}) {
+  const name = props.entry.model.displayName
+  return (
+    <div className="model-selector__row">
+      <button
+        type="button"
+        className={`model-selector__model${props.selected ? ' is-selected' : ''}`}
+        aria-pressed={props.selected}
+        aria-label={`Use ${name} through ${props.entry.sourceName}`}
+        onClick={() => props.onSelect(props.entry)}
+      >
+        {props.showSource ? (
+          <span className="model-selector__model-source" aria-hidden>
+            <ProviderIcon mark={props.entry.mark} size={13} />
+          </span>
+        ) : null}
+        <span className="model-selector__model-name">{name}</span>
+        {props.selected ? <Check size={14} aria-hidden /> : null}
+      </button>
+      <button
+        type="button"
+        className={`model-selector__favorite${props.favorite ? ' is-on' : ''}`}
+        aria-label={props.favorite ? `Remove ${name} from favorites` : `Add ${name} to favorites`}
+        aria-pressed={props.favorite}
+        onClick={() => toggleModelFavorite(props.entry.key)}
+      >
+        <Star size={14} aria-hidden />
+      </button>
+    </div>
+  )
+}
+
 /** The original picker layout: one flat scrolling list, providers as inline
- *  section headings. Default; the provider-rail catalog is opt-in in Settings. */
+ *  section headings. Settings can switch to it from the provider rail. */
 function FlatModelList(props: {
   models: ModelChoice[]
   selectedChoice: ModelChoice | undefined
