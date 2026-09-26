@@ -26,6 +26,14 @@ export type ClaudeHistoryOptions = {
 }
 
 const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i
+const LINE_FEED = 0x0a
+// Rows that set a title or working directory from anywhere in a transcript. A quoted
+// token matches a key or an exact value, never text inside a string: there the quotes
+// are escaped.
+const METADATA_TOKEN = /"(?:customTitle|aiTitle|relocated)"/g
+// Token scans run on Latin-1 windows, where offsets are byte offsets. Windows keep
+// every string far below V8's maximum length.
+const TOKEN_WINDOW_BYTES = 8 * 1024 * 1024
 
 function timestamp(value: unknown): number | undefined {
   const at = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN
@@ -59,6 +67,75 @@ function visible(row: SavedRecord): boolean {
     !row.isMeta &&
     object(row.origin).kind !== 'task-notification'
   )
+}
+
+function visibleMessage(row: SavedRecord | undefined): row is SavedRecord {
+  return row !== undefined && visible(row) && (row.type === 'user' || row.type === 'assistant')
+}
+
+function parseRecord(line: string): SavedRecord | undefined {
+  try {
+    const row = object(JSON.parse(line))
+    return typeof row.type === 'string' ? row : undefined
+  } catch {
+    // Concurrent writes can leave the final record incomplete.
+    return undefined
+  }
+}
+
+/**
+ * The rows `metadata` reads, in file order: every row through the first message with a
+ * working directory and the first prompt, the last visible message, and every row that
+ * can set a title or relocate the session. Parsing every row made each launch cost grow
+ * with the user's whole Claude history.
+ */
+async function metadataRecords(file: string): Promise<SavedRecord[]> {
+  const data = await readFile(file)
+  const parsed = new Map<number, SavedRecord | undefined>()
+  const lineEnd = (offset: number) => {
+    const newline = data.indexOf(LINE_FEED, offset)
+    return newline === -1 ? data.length : newline
+  }
+  const parse = (start: number, end: number) => {
+    if (!parsed.has(start)) parsed.set(start, parseRecord(data.toString('utf8', start, end)))
+    return parsed.get(start)
+  }
+
+  let headEnd = 0
+  let message = false
+  let cwd = false
+  let prompt = false
+  while (headEnd < data.length && !(message && cwd && prompt)) {
+    const end = lineEnd(headEnd)
+    const row = parse(headEnd, end)
+    if (visibleMessage(row)) {
+      message = true
+      cwd ||= typeof row.cwd === 'string'
+      prompt ||= isPrompt(row)
+    }
+    headEnd = end + 1
+  }
+
+  let end = data.length
+  while (end > headEnd) {
+    const newline = data.lastIndexOf(LINE_FEED, end - 1)
+    if (newline + 1 < end && visibleMessage(parse(newline + 1, end))) break
+    end = newline
+  }
+
+  for (let windowStart = headEnd; windowStart < data.length;) {
+    const windowEnd = lineEnd(Math.min(windowStart + TOKEN_WINDOW_BYTES, data.length))
+    const text = data.toString('latin1', windowStart, windowEnd)
+    for (const match of text.matchAll(METADATA_TOKEN)) {
+      const hit = windowStart + match.index
+      parse(data.lastIndexOf(LINE_FEED, hit) + 1, lineEnd(hit))
+    }
+    windowStart = windowEnd + 1
+  }
+
+  return [...parsed]
+    .sort(([left], [right]) => left - right)
+    .flatMap(([, row]) => (row ? [row] : []))
 }
 
 function sdkRecord(row: SavedRecord): SavedRecord & { type: string } {
@@ -299,7 +376,7 @@ export function createClaudeHistorySource(
               cached = {
                 revision,
                 session: metadata(
-                  await records(locator),
+                  await metadataRecords(locator),
                   id,
                   locator,
                   revision,
