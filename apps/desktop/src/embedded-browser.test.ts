@@ -49,6 +49,7 @@ describe('embedded browser guest', () => {
     const event = { preventDefault: vi.fn() }
     const preferences = {
       allowRunningInsecureContent: true,
+      backgroundThrottling: false,
       nodeIntegration: true,
       preload: '/tmp/untrusted.cjs',
       sandbox: false,
@@ -60,6 +61,7 @@ describe('embedded browser guest', () => {
     expect(event.preventDefault).toHaveBeenCalledOnce()
     expect(preferences).toMatchObject({
       allowRunningInsecureContent: false,
+      backgroundThrottling: true,
       contextIsolation: true,
       nodeIntegration: false,
       partition: 'persist:harness-browser',

@@ -27,7 +27,11 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
   owner.on('will-attach-webview', (event, webPreferences, params) => {
     delete webPreferences.preload
     webPreferences.allowRunningInsecureContent = false
-    webPreferences.backgroundThrottling = false
+    // Guest pages are arbitrary sites and dev servers. Like a background tab,
+    // they should not run timers and animation frames at full rate while the
+    // app window is hidden or minimized. Hidden preview captures use their own
+    // unthrottled window.
+    webPreferences.backgroundThrottling = true
     webPreferences.contextIsolation = true
     webPreferences.navigateOnDragDrop = false
     webPreferences.nodeIntegration = false
