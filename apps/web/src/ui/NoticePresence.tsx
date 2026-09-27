@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { reportStartupMilestone } from '../bridge.js'
 
 type NoticePresenceProps = {
   visible: boolean
@@ -27,6 +28,11 @@ export function NoticePresence(props: NoticePresenceProps) {
   useLayoutEffect(() => {
     onDismiss.current = props.onDismiss
   })
+  useLayoutEffect(() => {
+    if (!mounted) return
+    reportStartupMilestone('notice-open')
+    return () => reportStartupMilestone('notice-closed')
+  }, [mounted])
   const canDismiss = Boolean(props.onDismiss)
   useEffect(() => {
     if (!props.visible || !canDismiss || props.autoDismissPaused || hovered || focused) return
@@ -64,9 +70,29 @@ export function NoticePresence(props: NoticePresenceProps) {
       setMounted(false)
     }
 
+    const finishHiddenExit = () => {
+      if (!props.visible && phase === 'closing' && document.visibilityState === 'hidden') {
+        setMounted(false)
+      }
+    }
+    document.addEventListener('visibilitychange', finishHiddenExit)
+    finishHiddenExit()
     element.addEventListener('transitionend', handleTransitionEnd)
-    return () => element.removeEventListener('transitionend', handleTransitionEnd)
-  }, [phase, props.visible])
+    let disposed = false
+    if (!props.visible && phase === 'closing' && typeof element.getAnimations === 'function') {
+      // An occluded window can finish/cancel its transition without delivering
+      // transitionend. Do not retain the invisible notice in that case.
+      const transitions = element.getAnimations()
+      void Promise.allSettled(transitions.map((animation) => animation.finished)).then(() => {
+        if (!disposed) setMounted(false)
+      })
+    }
+    return () => {
+      disposed = true
+      element.removeEventListener('transitionend', handleTransitionEnd)
+      document.removeEventListener('visibilitychange', finishHiddenExit)
+    }
+  }, [mounted, phase, props.visible])
 
   if (!mounted) return null
 

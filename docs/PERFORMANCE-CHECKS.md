@@ -23,7 +23,7 @@ Other platforms use working-set bytes. A missing footprint falls back to the lar
 working-set accounting for that process; missing or zero data fails the gate.
 
 The cold-start clock still measures the first usable screen. Idle memory starts only
-once its startup RPCs (including model loading and update checks) have completed and
+once its startup RPCs (including model loading and update checks) have completed, temporary startup notices have finished their exits, and
 the two-second quiet delay has elapsed. New requests restart that delay; a request
 during capture fails the sample. The outer process timeout includes the existing
 15-second startup allowance, the quiet delay, and the separate ten-second memory

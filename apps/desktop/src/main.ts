@@ -250,13 +250,18 @@ if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
       name !== 'projects-ready' &&
       name !== 'catalog-ready' &&
       name !== 'requests-busy' &&
-      name !== 'requests-idle'
+      name !== 'requests-idle' &&
+      name !== 'notice-open' &&
+      name !== 'notice-closed'
     ) {
       return
     }
     logStartupMilestone(name)
     if (name === 'requests-busy' || name === 'requests-idle') {
       startupIdleGate.setIdle(name === 'requests-idle')
+    }
+    if (name === 'notice-open' || name === 'notice-closed') {
+      startupIdleGate.setNoticeVisible(name === 'notice-open')
     }
     if (name === 'first-frame') {
       startupRendererReady = true

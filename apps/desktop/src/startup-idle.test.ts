@@ -46,6 +46,26 @@ describe('startup idle memory capture', () => {
     expect(capture).toHaveBeenCalledOnce()
   })
 
+  it('waits for every startup notice to finish its exit', async () => {
+    vi.useFakeTimers()
+    const capture = vi.fn()
+    const gate = new StartupIdleGate(2_000, capture)
+    gate.ready()
+    gate.setIdle(true)
+    gate.setNoticeVisible(true)
+    gate.setNoticeVisible(true)
+    gate.setNoticeVisible(false)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(capture).not.toHaveBeenCalled()
+    gate.setNoticeVisible(false)
+    await vi.advanceTimersByTimeAsync(1_999)
+    expect(capture).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(capture).toHaveBeenCalledOnce()
+    gate.setNoticeVisible(true)
+    expect(gate.interrupted).toBe(true)
+  })
+
   it('invalidates capture if work resumes, without retrying until a pass', async () => {
     vi.useFakeTimers()
     const capture = vi.fn()
