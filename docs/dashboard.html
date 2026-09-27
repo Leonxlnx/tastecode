@@ -290,12 +290,16 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-27 main 3ea8072b · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-27 main ff6c8038 · 0.1.2 source preparation</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          Only the 64 most recently written replay snapshots stay on disk. Closing a thread removes
+          its snapshot.
+        </p>
         <p>
           Search indexes the first 12K and last 4K characters of tool output while retaining full
           messages. Existing indexes are rebuilt.

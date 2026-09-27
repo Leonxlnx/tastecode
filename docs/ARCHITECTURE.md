@@ -374,7 +374,13 @@ share one delegated listener set instead of installing listeners on every visibl
 **Long-thread replay snapshots extend from their durable tail.** An exact snapshot is returned
 without parsing the event log. When a few newer events exist, the server reads only those events,
 folds them over the prior compact replay, and replaces the snapshot. History rewrites delete the
-snapshot first, so a stale branch can never survive a restore.
+snapshot first, so a stale branch can never survive a restore. Snapshots duplicate the log, so
+disk keeps only the 64 most recently written ones, and closing a thread deletes its snapshot. An
+older or closed thread rebuilds its replay from the log when it is opened again.
+
+**Streamed turn diffs are stored only when they change.** Providers can resend the same
+working-tree diff many times during one turn. The orchestrator skips an identical repeat for the
+running turn; the latest stored diff is unchanged.
 
 |             | Windows                     | macOS                                      |
 | ----------- | --------------------------- | ------------------------------------------ |
