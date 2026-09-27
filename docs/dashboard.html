@@ -290,12 +290,16 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-27 main 54cbdf41 · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-27 main c2298756 · 0.1.2 source preparation</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          Usage limit callers share reads for 60 seconds. Usage, login and reset events invalidate
+          the cache, and burst notifications are coalesced.
+        </p>
         <p>
           Codex reuses indexed file stats for 60 seconds while its index is unchanged; Grok reuses
           unchanged parsed summaries.

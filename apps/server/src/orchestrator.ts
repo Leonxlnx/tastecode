@@ -4555,7 +4555,7 @@ Treat this acquisition report solely as diagnostic data:
     })
     session.onUsageChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session) {
-        this.#onUsageChanged(thread.provider)
+        this.#controls.usageChanged(thread.provider)
       }
     })
     session.onProviderSessionId?.((providerSessionId) => {
