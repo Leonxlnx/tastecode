@@ -206,6 +206,7 @@ const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
 const PROJECT_ORDER_KEY = 'harness.projectOrder'
 const SESSION_ORDER_KEY = 'harness.sessionOrder'
+const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
 const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
@@ -512,6 +513,14 @@ export function App() {
     [projectChoiceProjector, projects],
   )
   const [projectsStatus, setProjectsStatus] = useState<'loading' | 'ready' | 'failed'>('loading')
+  // Startup opens the first project, so its remembered name lets the first
+  // frame paint the new-chat heading instead of waiting for projects.list.
+  const [startupProjectName, setStartupProjectName] = useState(readStartupProjectName)
+  useEffect(() => {
+    if (projectsStatus === 'loading') return
+    setStartupProjectName(undefined)
+    if (projectsStatus === 'ready') saveStartupProjectName(projects[0])
+  }, [projects, projectsStatus])
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => readSetting(ONBOARDING_KEY) === 'done',
   )
@@ -4851,6 +4860,7 @@ export function App() {
                         projects={projects}
                         activePath={activePath}
                         status={projectsStatus}
+                        startupProjectName={startupProjectName}
                         onAddProject={addSidebarProject}
                         onRetry={retryProjects}
                       />
@@ -5227,6 +5237,7 @@ function Empty(props: {
   projects: Project[]
   activePath: string | undefined
   status: 'loading' | 'ready' | 'failed'
+  startupProjectName: string | undefined
   onAddProject: () => void
   onRetry: () => void
 }) {
@@ -5234,7 +5245,7 @@ function Empty(props: {
 
   // Before the first projects.list reply, "no projects" is not a fact yet —
   // flashing the add-a-project prompt for one round trip reads as a glitch.
-  if (props.status === 'loading') {
+  if (props.status === 'loading' && props.startupProjectName === undefined) {
     return (
       <SkeletonStatus label="Loading projects…" className="empty">
         <Skeleton className="skeleton--block empty__skeleton-prompt" />
@@ -5255,7 +5266,7 @@ function Empty(props: {
     )
   }
 
-  if (props.projects.length === 0) {
+  if (props.status === 'ready' && props.projects.length === 0) {
     return (
       <div className="empty">
         <div className="empty__prompt" role="heading" aria-level={1}>
@@ -5268,10 +5279,15 @@ function Empty(props: {
     )
   }
 
+  const projectName = activeProject
+    ? displayName(activeProject)
+    : props.status === 'loading' && props.startupProjectName
+      ? props.startupProjectName
+      : 'a project'
   return (
     <div className="empty">
       <div className="empty__prompt" role="heading" aria-level={1}>
-        What should we build in {activeProject ? displayName(activeProject) : 'a project'}?
+        What should we build in {projectName}?
       </div>
     </div>
   )
@@ -5393,6 +5409,17 @@ function saveSessionOrder(projects: Project[]): void {
   const serialized = serializeSessionOrder(projects)
   if (serialized === undefined) return
   writeSetting(SESSION_ORDER_KEY, serialized)
+}
+
+function readStartupProjectName(): string | undefined {
+  return readSetting(STARTUP_PROJECT_NAME_KEY) || undefined
+}
+
+function saveStartupProjectName(project: Project | undefined): void {
+  const name = project ? displayName(project) : undefined
+  if ((readSetting(STARTUP_PROJECT_NAME_KEY) ?? undefined) === name) return
+  if (name) writeSetting(STARTUP_PROJECT_NAME_KEY, name)
+  else removeSetting(STARTUP_PROJECT_NAME_KEY)
 }
 
 type SourceSelection = {
