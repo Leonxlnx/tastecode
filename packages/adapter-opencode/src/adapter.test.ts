@@ -1,9 +1,11 @@
-import { once } from 'node:events'
+import { EventEmitter, once } from 'node:events'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
+import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
+import type { spawnCli } from '@harness/proc'
 import type { Event } from '@opencode-ai/sdk'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   OpenCodeAdapter,
   OPENCODE_CAPABILITIES,
@@ -425,7 +427,62 @@ describe('OpenCode adapter', () => {
       }),
     ).rejects.toThrow('automatic approval review')
   })
+
+  it('shares one server launch between concurrent starts', async () => {
+    const mock = await serveOpenCodeV2()
+    const serve = fakeOpenCodeServe()
+    const adapter = new OpenCodeAdapter({ spawn: serve.spawn })
+    try {
+      const starts = Promise.all([adapter.start(), adapter.listModels()])
+      expect(serve.children).toHaveLength(1)
+      serve.children[0]!.stdout.write(`opencode server listening on ${mock.baseUrl}\n`)
+      await starts
+      await adapter.start()
+      expect(serve.children).toHaveLength(1)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('stops a server that finishes launching after dispose', async () => {
+    const serve = fakeOpenCodeServe()
+    const adapter = new OpenCodeAdapter({ spawn: serve.spawn })
+    const starting = adapter.start()
+    await adapter.dispose()
+    serve.children[0]!.stdout.write('opencode server listening on http://127.0.0.1:9\n')
+
+    await expect(starting).rejects.toThrow('stopped while it was starting')
+    expect(serve.children[0]!.kill).toHaveBeenCalled()
+  })
 })
+
+function fakeOpenCodeServe() {
+  const children: ReturnType<typeof fakeChild>[] = []
+  const spawn = () => {
+    const child = fakeChild()
+    children.push(child)
+    return child
+  }
+  // SAFETY: The adapter only reads stdout, stderr, lifecycle events and the
+  // kill surface that killTree needs; the double implements each of them.
+  return { children, spawn: spawn as unknown as typeof spawnCli }
+}
+
+function fakeChild() {
+  const child = Object.assign(new EventEmitter(), {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    pid: undefined,
+    exitCode: null as number | null,
+    signalCode: null,
+    kill: vi.fn(() => {
+      child.exitCode = 0
+      child.emit('close', 0)
+      return true
+    }),
+  })
+  return child
+}
 
 type RequestRecord = { method: string; url: string; body: unknown }
 
