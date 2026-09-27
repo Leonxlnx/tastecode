@@ -724,14 +724,14 @@
   border-left: 1px solid var(--line);
 }
 
-.activity__item {
-  min-width: 0;
+.activity__body .aux__row {
+  min-height: 26px;
   padding-block: 0;
+  color: var(--text-2);
 }
 
-.activity__body .aux__row {
-  min-height: 24px;
-  padding-block: 0;
+.activity__body .aux__row:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .activity__message {
@@ -744,61 +744,30 @@
   margin-bottom: 0;
 }
 
-.activity__file-change {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 24px;
-  color: var(--text-2);
-  font-family: var(--font-ui);
-  font-size: var(--t-md);
-  letter-spacing: -0.012em;
-}
-
-.activity__file-change svg {
-  flex: none;
-  width: 13px;
-  height: 13px;
-  color: var(--text-3);
-  stroke-width: 1.6;
-}
-
-.activity__item[data-failed='true'] .activity__file-change svg {
-  color: var(--error);
-}
-
-.activity__file-change :is(.aux__code, .aux__time) {
-  flex: none;
-}
-
-.activity__file-change .aux__time {
-  margin-left: auto;
-}
-
-.activity__item-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.activity__detail {
-  max-height: 180px;
-  overflow: auto;
-  margin: 5px 0 0 21px;
+/* Inside a batch the output reads as a card under its own row, indented to
+   the label so the icon column stays clean. */
+.activity__body .aux__out {
+  max-height: 220px;
+  margin: 3px 0 6px 21px;
   padding: 8px 10px;
   background: color-mix(in srgb, var(--surface) 45%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
   border-radius: var(--r-md);
   color: var(--text-2);
-  font-family: var(--font-mono);
   font-size: var(--t-sm);
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   tab-size: 2;
   user-select: text;
+}
+
+/* "· 1 failed" sits inside the summary; only a failure earns the accent. */
+.activity__outcome {
+  color: var(--text-3);
+}
+
+.activity__outcome.is-failed {
+  color: color-mix(in srgb, var(--error) 80%, var(--text-2));
 }
 
 .viewed-image-preview {
@@ -870,8 +839,45 @@
   transition: color var(--dur-fast) var(--ease-out);
 }
 
-.aux__row:hover {
+.aux__row:hover:not(:disabled) {
   color: var(--text-2);
+}
+
+/* A lone tool call carries the same weight as the batch summaries beside it;
+   thoughts and design phases stay quieter. */
+.thread__row > .aux:not(.aux--phase, .aux--reasoning) > .aux__row {
+  color: var(--text-2);
+}
+
+.thread__row > .aux:not(.aux--phase, .aux--reasoning) > .aux__row:hover:not(:disabled) {
+  color: var(--text);
+}
+
+/* Rows without output have nothing to open; they read as plain lines. */
+.aux__row:disabled {
+  cursor: default;
+}
+
+/* The chevron only shows where there is something to open, and stays out of
+   the way until the row is pointed at or open. */
+.aux__chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  opacity: 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.aux__row:is(:hover, :focus-visible) > .aux__chevron,
+.aux[data-expanded='true'] > .aux__row > .aux__chevron {
+  opacity: 1;
+}
+
+.aux[data-expanded='true'] > .aux__row > .aux__chevron {
+  transform: rotate(90deg);
 }
 
 .aux__glyph {
@@ -886,8 +892,12 @@
   height: 15px;
 }
 
+.aux[data-failed='true'] > .aux__row > .aux__glyph {
+  color: var(--error);
+}
+
 .aux__label {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-width: 0;
   font-family: var(--font-ui);
   font-size: var(--t-md);
