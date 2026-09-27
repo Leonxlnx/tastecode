@@ -12,14 +12,22 @@ import {
   workLabel,
 } from './Thread.js'
 
-const { resizeItem, previewViewedImage, revealPath, writeClipboardText } = vi.hoisted(() => ({
-  resizeItem: vi.fn((_index: number, _size: number): void => undefined),
-  previewViewedImage: vi.fn(async (): Promise<unknown> => undefined),
-  revealPath: vi.fn(async () => undefined),
-  writeClipboardText: vi.fn(async () => undefined),
-}))
+const { resizeItem, knownViewedImagePreview, previewViewedImage, revealPath, writeClipboardText } =
+  vi.hoisted(() => ({
+    resizeItem: vi.fn((_index: number, _size: number): void => undefined),
+    knownViewedImagePreview: vi.fn((_reference: string): unknown => undefined),
+    previewViewedImage: vi.fn(async (): Promise<unknown> => undefined),
+    revealPath: vi.fn(async () => undefined),
+    writeClipboardText: vi.fn(async () => undefined),
+  }))
 
-vi.mock('../bridge.js', () => ({ previewViewedImage, revealPath, writeClipboardText }))
+vi.mock('../bridge.js', () => ({
+  canPreviewViewedImages: true,
+  knownViewedImagePreview,
+  previewViewedImage,
+  revealPath,
+  writeClipboardText,
+}))
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -42,6 +50,7 @@ vi.mock('@tanstack/react-virtual', () => ({
 afterEach(() => {
   cleanup()
   resizeItem.mockClear()
+  knownViewedImagePreview.mockReset()
   previewViewedImage.mockReset()
   previewViewedImage.mockResolvedValue(undefined)
   revealPath.mockReset()
@@ -1357,6 +1366,68 @@ describe('completed activity disclosure', () => {
     )
     expect(previewViewedImage).toHaveBeenCalledWith('uuid-layout.png')
     expect(screen.getByRole('button', { name: 'Open preview of uuid-layout.png' })).toBeTruthy()
+  })
+
+  const layoutPreview = {
+    path: '/tmp/TasteCode/pasted-files/uuid-layout.png',
+    name: 'uuid-layout.png',
+    mediaType: 'image',
+    previewUrl: 'tastecode-attachment://preview/full',
+  }
+
+  function revealImageView() {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Review it' }),
+      turnItem('image-1', 2, { type: 'tool_call', text: 'image view\nuuid-layout.png' }),
+      turnItem('answer-1', 3, { role: 'assistant', text: 'Reviewed.' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Viewed image' }))
+    return container
+  }
+
+  it('reveals a loading image in the frame the image will fill', async () => {
+    // The reveal is measured in the commit that opens it. A short text box
+    // swapped for the image a frame later resized it mid-wipe.
+    let resolvePreview!: (preview: unknown) => void
+    previewViewedImage.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePreview = resolve
+      }),
+    )
+    const container = revealImageView()
+
+    const loading = screen.getByRole('status', { name: 'Loading preview of uuid-layout.png' })
+    expect(loading.classList.contains('viewed-image-preview')).toBe(true)
+    expect(loading.querySelector('.viewed-image-preview__placeholder')).toBeTruthy()
+    expect(loading.querySelector('.viewed-image-preview__name')?.textContent).toBe(
+      'uuid-layout.png',
+    )
+    expect(container.querySelector('.aux__reveal .aux__out')).toBeNull()
+
+    await act(async () => resolvePreview(layoutPreview))
+
+    expect(screen.getByRole('img', { name: 'Preview of uuid-layout.png' })).toBeTruthy()
+  })
+
+  it('keeps the image frame when a revealed preview is unavailable', async () => {
+    const container = revealImageView()
+
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for uuid-layout.png' }),
+    ).toBeTruthy()
+    expect(screen.getByText('Preview unavailable')).toBeTruthy()
+    expect(container.querySelector('.aux__reveal .aux__out')).toBeNull()
+  })
+
+  it('shows an image previewed earlier in the first frame of its reveal', () => {
+    knownViewedImagePreview.mockReturnValue(layoutPreview)
+    previewViewedImage.mockReturnValue(new Promise(() => undefined))
+
+    revealImageView()
+
+    expect(screen.getByRole('img', { name: 'Preview of uuid-layout.png' })).toBeTruthy()
+    expect(screen.queryByRole('status', { name: /uuid-layout\.png/ })).toBeNull()
   })
 
   it('does not claim an interrupted image inspection completed', () => {

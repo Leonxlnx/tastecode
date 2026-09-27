@@ -44,6 +44,33 @@ describe('attachment preview bridge', () => {
       bridge.previewViewedImage('data:image/svg+xml;base64,PHN2Zz4='),
     ).resolves.toBeUndefined()
   })
+
+  it('knows a preview without a round trip only once one exists', async () => {
+    const preview = {
+      path: '/work/layout.png',
+      name: 'layout.png',
+      mediaType: 'image' as const,
+      previewUrl: 'tastecode-attachment://preview/layout',
+    }
+    const previewViewedImage = vi.fn().mockResolvedValue(preview)
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, previewViewedImage }
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canPreviewViewedImages).toBe(true)
+    expect(bridge.knownViewedImagePreview('data:image/png;base64,iVBORw0KGgo=')).toMatchObject({
+      name: 'Attached image',
+    })
+    expect(bridge.knownViewedImagePreview(preview.path)).toBeUndefined()
+    await bridge.previewViewedImage(preview.path)
+    expect(bridge.knownViewedImagePreview(preview.path)).toEqual(preview)
+  })
+
+  it('cannot preview a file reference without the desktop bridge', async () => {
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canPreviewViewedImages).toBe(false)
+    expect(bridge.knownViewedImagePreview('/work/layout.png')).toBeUndefined()
+  })
   it('reuses the signed preview returned by the file picker', async () => {
     const picked = {
       path: '/work/reference.png',

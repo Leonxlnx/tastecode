@@ -132,6 +132,7 @@ export const isStartupBenchmark = bridge?.reportStartupMilestone !== undefined
 export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 export const canDropProjectFolders = bridge?.droppedFolderPaths !== undefined
+export const canPreviewViewedImages = bridge?.previewViewedImage !== undefined
 
 export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)
@@ -214,14 +215,22 @@ export function revealProjectFile(path: string, projectPath: string): Promise<vo
   return bridge?.revealProjectFile?.(path, projectPath) ?? Promise.resolve()
 }
 
-export async function previewViewedImage(reference: string): Promise<PickedAttachment | undefined> {
+/**
+ * The preview an image already has without a native round trip: inline image
+ * data, or a preview resolved earlier in this session.
+ */
+export function knownViewedImagePreview(reference: string): PickedAttachment | undefined {
   if (/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[a-zA-Z0-9+/=\s]+$/.test(reference)) {
     return { path: reference, name: 'Attached image', mediaType: 'image', previewUrl: reference }
   }
-  const cached = attachmentPreviews.get(reference)
-  if (cached) {
-    rememberAttachmentPreview(reference, cached)
-    return cached
+  return attachmentPreviews.get(reference)
+}
+
+export async function previewViewedImage(reference: string): Promise<PickedAttachment | undefined> {
+  const known = knownViewedImagePreview(reference)
+  if (known) {
+    if (attachmentPreviews.has(reference)) rememberAttachmentPreview(reference, known)
+    return known
   }
   try {
     const direct = await bridge?.previewViewedImage?.(reference)
