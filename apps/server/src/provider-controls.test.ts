@@ -547,6 +547,101 @@ describe('fresh usage controls', () => {
   })
 })
 
+describe('cached usage limits', () => {
+  it('answers repeated and concurrent reads from one fresh process until the cache expires', async () => {
+    const { codex, createCodex } = setup({ limitCacheMs: 1_000 })
+    await Promise.all([codex.usageLimitSource(), codex.usageLimitSource()])
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledTimes(2)
+  })
+
+  it('rereads after a change signal and does not cache a read that predates it', async () => {
+    const limits = deferred<{ status: 'ready'; limits: ProviderLimit[] }>()
+    const first = new FakeCodex()
+    first.rateLimitSource.mockReturnValueOnce(limits.promise)
+    const second = new FakeCodex()
+    second.rateLimitSource.mockResolvedValue({
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 40 }],
+    })
+    const createCodex = vi.fn().mockReturnValueOnce(first).mockReturnValue(second)
+    const { registry, codex } = setup({ createCodex })
+    const stale = codex.usageLimitSource()
+    await flush()
+    registry.usageChanged('codex')
+    limits.resolve({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 10 }] })
+    await expect(stale).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await expect(codex.usageLimitSource()).resolves.toMatchObject({
+      limits: [{ usedPercent: 40 }],
+    })
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not cache a failed read', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    const { registry } = setup({
+      services: { grok: { usageLimitSource, signOut: async () => {} } },
+    })
+    await expect(registry.forProvider('grok').usageLimitSource()).rejects.toThrow(
+      'fixture-limits-failed',
+    )
+    await expect(registry.forProvider('grok').usageLimitSource()).resolves.toMatchObject({
+      status: 'ready',
+    })
+    await registry.forProvider('grok').usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('rereads after sign-out', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'ready' as const, limits: [] }))
+    const signOut = vi.fn(async () => {})
+    const { registry, hooks } = setup({
+      services: { grok: { account: async () => ({ signedIn: true }), usageLimitSource, signOut } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await grok.signOut()
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    expect(signOut).toHaveBeenCalledOnce()
+    expect(hooks.onAuthChanged).toHaveBeenCalledWith('grok')
+  })
+
+  it('forwards the first change at once and collapses a burst into one trailing signal', async () => {
+    const { registry, hooks } = setup({ limitChangeIntervalMs: 1_000 })
+    registry.usageChanged('codex')
+    expect(hooks.onUsageChanged).toHaveBeenCalledExactlyOnceWith('codex')
+    registry.usageChanged('codex')
+    registry.usageChanged('codex')
+    registry.usageChanged('claude-code')
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(3)
+    expect(hooks.onUsageChanged).toHaveBeenLastCalledWith('codex')
+  })
+
+  it('forwards a redeemed reset at once and drops a pending trailing signal on reset', async () => {
+    const { registry, codex, hooks } = setup({ limitChangeIntervalMs: 1_000 })
+    registry.usageChanged('codex')
+    registry.usageChanged('codex')
+    await codex.consumeRateLimitReset!('fixture-idempotency-key')
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+    registry.usageChanged('codex')
+    await registry.disposeAll()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('login ownership', () => {
   it('pins the process until the matching login completes and ignores stale completion IDs', async () => {
     const { codex, adapters, hooks } = setup()
