@@ -546,6 +546,8 @@ export class Orchestrator {
   #disposeGeneration = 0
   #store: Store
   #recordedDeltas: RecordedDeltaBuffer
+  /** The latest patch recorded for each running turn. */
+  #recordedTurnDiffs = new Map<string, { turnId: string; diff: string }>()
   #worktreeRoot: string
   #onEvent: RecordedEventHandler
   #onSideEvent: RecordedEventHandler
@@ -1784,6 +1786,12 @@ export class Orchestrator {
       this.#recordedDeltas.push(threadId, event)
       return
     }
+    if (event.type === 'diff.updated') {
+      // Codex repeats the whole unchanged turn patch after most items. Each
+      // copy would be another full patch in the log that replay then discards.
+      const recorded = this.#recordedTurnDiffs.get(threadId)
+      if (recorded?.turnId === event.turnId && recorded.diff === event.diff) return
+    }
     this.#recordedDeltas.flush(threadId)
     this.#commitRecord(threadId, event)
   }
@@ -1867,9 +1875,13 @@ export class Orchestrator {
       this.#activeTurnIds.delete(threadId)
       if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
       this.#suppressedUserItems.delete(threadId)
+      this.#recordedTurnDiffs.delete(threadId)
       this.#releaseCheckoutIfIdle(threadId)
     }
     const { seq, serializedEvent } = this.#store.appendWithSerializedEvent(threadId, event)
+    if (event.type === 'diff.updated' && this.#activeTurnIds.get(threadId) === event.turnId) {
+      this.#recordedTurnDiffs.set(threadId, { turnId: event.turnId, diff: event.diff })
+    }
     const affectsInbox = affectsInboxProjection(event)
     if (
       affectsInbox &&
@@ -2833,6 +2845,7 @@ export class Orchestrator {
     this.#activeTurnIds.delete(threadId)
     if (activeTurnId) this.#serverOwnedUserTurns.delete(userTurnKey(threadId, activeTurnId))
     this.#suppressedUserItems.delete(threadId)
+    this.#recordedTurnDiffs.delete(threadId)
     this.#inFlightSubmissionIds.delete(threadId)
     this.#deleteSidebarStatus(this.#startingTurns, threadId)
     this.#turnStartBarriers.get(threadId)?.release()

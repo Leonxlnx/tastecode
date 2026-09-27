@@ -1503,6 +1503,36 @@ describe('history replay', () => {
   })
 })
 
+describe('turn diff recording', () => {
+  it('records each changed turn patch and skips unchanged repeats', async () => {
+    const { orchestrator, sessions, store, received } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+    for (const diff of ['patch-a', 'patch-a', 'patch-b', 'patch-b', 'patch-a']) {
+      sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-1', diff })
+    }
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-2'))
+    sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-2', diff: 'patch-a' })
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-2', status: 'completed' })
+    sessions[0]!.emit({ type: 'diff.updated', turnId: 'turn-2', diff: 'patch-a' })
+
+    const diffs = (events: DomainEvent[]) =>
+      events.flatMap((event) =>
+        event.type === 'diff.updated' ? [`${event.turnId}:${event.diff}`] : [],
+      )
+    const recorded = [
+      'turn-1:patch-a',
+      'turn-1:patch-b',
+      'turn-1:patch-a',
+      'turn-2:patch-a',
+      'turn-2:patch-a',
+    ]
+    expect(diffs(store.history(thread.id).map(({ event }) => event))).toEqual(recorded)
+    expect(diffs(received.map(({ event }) => event))).toEqual(recorded)
+    expect(store.turnDiff(thread.id, 'turn-1')).toBe('patch-a')
+  })
+})
+
 describe('streamed delta batching', () => {
   it('persists concurrent threads in one shared ordered transaction', async () => {
     vi.useFakeTimers()
