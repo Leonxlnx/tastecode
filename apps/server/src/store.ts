@@ -2049,6 +2049,67 @@ export class Store {
     return ids.length
   }
 
+  /**
+   * Explicit maintenance: remove streamed text fragments that a later
+   * completed event of the same item already contains in full. Replay reads
+   * the completed text, so the transcript is unchanged. Delta-first recovery
+   * sequences and imported provider records stay exact.
+   */
+  foldCompletedItemDeltas(): number {
+    let removed = 0
+    // No derived table references a stream fragment, but every deleted event
+    // would still scan the child tables whose event columns have no index.
+    // The setting cannot change inside a transaction, so it wraps this one.
+    this.#db.exec('PRAGMA foreign_keys = OFF')
+    try {
+      this.#transaction(() => {
+        this.#db.exec(`
+          CREATE TEMP TABLE fold_item_events AS
+          SELECT seq, thread_id,
+                 json_extract(payload, '$.type') AS type,
+                 COALESCE(json_extract(payload, '$.item.id'), json_extract(payload, '$.itemId'))
+                   AS item_id,
+                 COALESCE(json_extract(payload, '$.item.text'), '') <> '' AS has_text
+          FROM (
+            SELECT seq, thread_id, CASE WHEN json_valid(payload) THEN payload END AS payload
+            FROM events
+          )
+          WHERE json_extract(payload, '$.type') IN ('item.started', 'item.completed', 'item.delta');
+          CREATE TEMP TABLE fold_item_bounds AS
+          SELECT thread_id, item_id,
+                 MIN(CASE WHEN type = 'item.started' THEN seq END) AS started_seq,
+                 MIN(CASE WHEN type = 'item.delta' THEN seq END) AS first_delta_seq,
+                 MAX(CASE WHEN type = 'item.completed' AND has_text THEN seq END) AS completed_seq
+          FROM fold_item_events
+          GROUP BY thread_id, item_id;
+          CREATE INDEX temp.fold_item_bounds_item ON fold_item_bounds (thread_id, item_id);
+        `)
+        const result = this.#db
+          .prepare(
+            `DELETE FROM events WHERE seq IN (
+               SELECT fragment.seq
+               FROM fold_item_events AS fragment
+               JOIN fold_item_bounds AS bounds
+                 ON bounds.thread_id = fragment.thread_id AND bounds.item_id = fragment.item_id
+               WHERE fragment.type = 'item.delta'
+                 AND bounds.started_seq < bounds.first_delta_seq
+                 AND fragment.seq < bounds.completed_seq
+                 AND NOT EXISTS (
+                   SELECT 1 FROM provider_history_events AS provider
+                   WHERE provider.event_seq = fragment.seq
+                 )
+             )`,
+          )
+          .run()
+        removed = Number(result.changes)
+        this.#db.exec('DROP TABLE temp.fold_item_events; DROP TABLE temp.fold_item_bounds')
+      })
+    } finally {
+      this.#db.exec('PRAGMA foreign_keys = ON')
+    }
+    return removed
+  }
+
   reclaimHistorySpace(): void {
     // Explicit maintenance only; VACUUM is never on the streaming path.
     this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')

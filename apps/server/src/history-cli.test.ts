@@ -2,6 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { DomainEvent } from '@harness/contracts'
+import { emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
 import { Store } from './store.js'
 import { runHistoryCli } from './history-cli.js'
 
@@ -53,6 +55,61 @@ describe('history maintenance', () => {
     const output: string[] = []
     await runHistoryCli(['stats'], { HARNESS_DATA_DIR: root }, (line) => output.push(line))
     expect(JSON.parse(output[0]!)).toMatchObject({ threads: 2, events: 2 })
+  })
+  it('compacts streamed fragments that completed items already contain', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-history-fold-'))
+    roots.push(root)
+    const store = new Store(path.join(root, 'tastecode.db'))
+    store.addProject(root)
+    store.addThread({ id: 't', projectPath: root, provider: 'codex', title: 't' })
+    const item = (id: string, text: string, status: 'started' | 'completed') => ({
+      id,
+      turnId: 'turn-1',
+      type: 'message' as const,
+      role: 'assistant' as const,
+      status,
+      text,
+      createdAt: 1,
+    })
+    const delta = (itemId: string, textDelta: string): DomainEvent => ({
+      type: 'item.delta',
+      turnId: 'turn-1',
+      itemId,
+      textDelta,
+    })
+    const events: DomainEvent[] = [
+      {
+        type: 'turn.started',
+        turn: { id: 'turn-1', threadId: 't', status: 'running', createdAt: 1 },
+      },
+      { type: 'item.started', item: item('done', '', 'started') },
+      delta('done', 'Hello '),
+      delta('done', 'world'),
+      { type: 'item.completed', item: item('done', 'Hello world', 'completed') },
+      { type: 'item.started', item: item('blank', '', 'started') },
+      delta('blank', 'kept because completion has no text'),
+      { type: 'item.completed', item: item('blank', '', 'completed') },
+      delta('recovered', 'delta-first '),
+      { type: 'item.started', item: item('recovered', '', 'started') },
+      delta('recovered', 'stays'),
+      { type: 'item.completed', item: item('recovered', 'delta-first stays', 'completed') },
+      { type: 'item.started', item: item('running', '', 'started') },
+      delta('running', 'still streaming'),
+      { type: 'turn.completed', turnId: 'turn-1', status: 'completed', completedAt: 2 },
+    ]
+    for (const event of events) store.append('t', event)
+    const before = reduceEventLog(emptyThread, store.history('t'))
+    store.close()
+
+    const output: string[] = []
+    await runHistoryCli(['compact'], { HARNESS_DATA_DIR: root }, (line) => output.push(line))
+    expect(JSON.parse(output[0]!)).toMatchObject({ foldedDeltaEvents: 2 })
+
+    const reopened = new Store(path.join(root, 'tastecode.db'))
+    const history = reopened.history('t')
+    reopened.close()
+    expect(history).toHaveLength(events.length - 2)
+    expect(reduceEventLog(emptyThread, history)).toEqual(before)
   })
   it('cannot delete history when its archive would overwrite an existing file', () => {
     const { store, root } = setup()

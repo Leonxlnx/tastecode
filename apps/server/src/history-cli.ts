@@ -16,7 +16,8 @@ Prune previews eligible closed tasks by default. Applying it first saves their
 history to a new archive. Active tasks and tasks with private checkouts stay.
 Close TasteCode and its core server before using history commands.
 Archives contain conversation records, not a backup of workspace files.
-Compact reclaims free database pages. HARNESS_DATA_DIR selects the data folder.
+Compact removes streamed text fragments that completed messages already contain,
+then reclaims free database pages. HARNESS_DATA_DIR selects the data folder.
 `
 
 export async function runHistoryCli(
@@ -75,8 +76,9 @@ export async function runHistoryCli(
       return
     }
     if (command === 'compact') {
+      const foldedDeltaEvents = store.foldCompletedItemDeltas()
       store.reclaimHistorySpace()
-      output(JSON.stringify(store.historyStorage(), null, 2))
+      output(JSON.stringify({ foldedDeltaEvents, ...store.historyStorage() }, null, 2))
       return
     }
     const date = flags.get('--before')
