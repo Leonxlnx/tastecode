@@ -396,7 +396,10 @@ Config is human-readable and hand-editable on purpose. It is never where secrets
 History retention is user controlled. The local `history` command reports storage size,
 exports records, previews eligible closed tasks, and archives them before explicit cleanup.
 Cleanup retains active tasks and private checkouts, then reclaims unused database pages.
-There is no automatic history expiry. See [History maintenance](./HISTORY.md).
+There is no automatic history expiry. Explicit compaction also removes streamed text fragments
+that a later completed event of the same item already holds in full; replay reads the completed
+text, so transcripts stay identical. This maintenance command is the only path that removes
+event rows without removing their task. See [History maintenance](./HISTORY.md).
 
 Checkpoint and undo commits have database-scoped Git refs. Worktree cleanup combines all
 retained commits by Git common directory before removing unused refs. Restore and branch

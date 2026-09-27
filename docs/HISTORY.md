@@ -53,6 +53,12 @@ Prune also reclaims unused database pages. To reclaim pages without deleting con
 node apps/server/dist/cli.js history compact
 ```
 
+Compact first removes the streamed text fragments of messages and tool output whose completed
+record already contains the full text. Conversations read the same afterwards; the output
+reports how many fragments it removed as `foldedDeltaEvents`. Records imported from a
+provider's own history files stay exact. Run `history export` first if you want to keep the
+raw stream records.
+
 `HARNESS_DATA_DIR` selects a different data folder. Default locations are listed in
 [Architecture](./ARCHITECTURE.md). The `tastecode.db.owner.sqlite` file is a stable lock
 file, not a second history database. Leave it in place; a process exit releases its lock.
