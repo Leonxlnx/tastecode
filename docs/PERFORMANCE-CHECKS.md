@@ -22,6 +22,13 @@ measurement uses the OS physical footprint for every process and retains summed 
 Other platforms use working-set bytes. A missing footprint falls back to the larger
 working-set accounting for that process; missing or zero data fails the gate.
 
+The cold-start clock still measures the first usable screen. Idle memory starts only
+once its startup RPCs (including model loading and update checks) have completed and
+the two-second quiet delay has elapsed. New requests restart that delay; a request
+during capture fails the sample. The outer process timeout includes the existing
+15-second startup allowance, the quiet delay, and the separate ten-second memory
+capture deadline. It does not retry a failed capture.
+
 GPU resources can retire several seconds after the final paint. Idle measurement waits
 for four samples whose capture starts are at least one second apart with the same process identities and at most
 2% variation across the whole window. Every sample in that window must be below
