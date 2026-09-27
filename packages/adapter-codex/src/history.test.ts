@@ -142,6 +142,43 @@ describe('native Codex history', () => {
     expect((await source.list())[0]?.title).toBe('Renamed')
   })
 
+  it('checks indexed rollouts again when the index changes or a minute has passed', async () => {
+    const { root, file, source } = await store([])
+    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'))
+    db.exec(
+      'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, source TEXT, created_at INTEGER, updated_at INTEGER)',
+    )
+    db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      'native-session',
+      file,
+      '/project',
+      'Title',
+      'cli',
+      1,
+      2,
+    )
+    const append = async (message: string) =>
+      writeFile(
+        file,
+        `${await readFile(file, 'utf8')}${JSON.stringify(event({ type: 'agent_message', message }))}\n`,
+      )
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    try {
+      const first = (await source.list())[0]!
+      await append('Two')
+      expect((await source.list())[0]).toBe(first)
+      now.mockReturnValue(1_060_000)
+      const second = (await source.list())[0]!
+      expect(second.revision).not.toBe(first.revision)
+      await append('Three')
+      db.prepare('UPDATE threads SET updated_at = 3').run()
+      expect((await source.list())[0]!.revision).not.toBe(second.revision)
+    } finally {
+      now.mockRestore()
+      db.close()
+    }
+  })
+
   it('skips turns already stored locally without parsing their payloads', async () => {
     const screenshot = `data:image/png;base64,${'iVBORw0KGgo'.repeat(20_000)}`
     const outsideTurn = (events: DomainEvent[]) =>

@@ -17,6 +17,9 @@ type SessionName = { title: string; updatedAt: number }
 type SessionNames = Map<string, SessionName>
 const PREVIEW_LENGTH = 200
 const SESSION_NAMES_FILE = 'session_index.jsonl'
+// Codex commits to its state index whenever a session changes. While the index
+// is unchanged, indexed rollouts reuse their last file stats for this long.
+const INDEXED_STAT_REUSE_MS = 60_000
 
 export type CodexHistoryOptions = { codexHome?: string }
 
@@ -32,6 +35,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   let index: { signature: string; byFile: Map<string, IndexedSession> } | undefined
   let sidecar: { signature: string; names: SessionNames } | undefined
   const results = new Map<string, { inputs: readonly unknown[]; session: ProviderHistorySession }>()
+  let stats: { at: number; files: Map<string, SavedFile> } | undefined
   let listing: Promise<ProviderHistorySession[]> | undefined
 
   async function list(): Promise<ProviderHistorySession[]> {
@@ -41,7 +45,9 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       home,
       databases.flatMap((file) => [file, `${file}-wal`]),
     )
+    let indexChanged = false
     if (index?.signature !== indexSignature) {
+      indexChanged = true
       const rows = await indexedSessions(home, databases)
       index = {
         signature: indexSignature,
@@ -57,7 +63,16 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
     if (sidecar?.signature !== namesSignature)
       sidecar = { signature: namesSignature, names: await sessionNames(home) }
     const names = sidecar.names
-    const files = await savedFiles(home)
+    const now = Date.now()
+    const reusable =
+      !indexChanged && databases.length > 0 && stats && now - stats.at < INDEXED_STAT_REUSE_MS
+        ? stats.files
+        : undefined
+    const files = await savedFiles(home, (file) =>
+      reusable && byFile.has(file) ? reusable.get(file) : undefined,
+    )
+    if (!reusable) stats = { at: now, files: new Map() }
+    for (const saved of files) stats!.files.set(saved.file, saved)
     const sessions = new Map<string, ProviderHistorySession>()
     // Bound open files; a profile can contain thousands of transcripts.
     for (let offset = 0; offset < files.length; offset += 32) {
@@ -117,6 +132,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       results.clear()
       index = undefined
       sidecar = undefined
+      stats = undefined
     },
   }
 }
@@ -184,7 +200,10 @@ async function allowedFile(home: string, file: string): Promise<boolean> {
   }
 }
 
-async function savedFiles(home: string): Promise<SavedFile[]> {
+async function savedFiles(
+  home: string,
+  known: (file: string) => SavedFile | undefined,
+): Promise<SavedFile[]> {
   const result: SavedFile[] = []
   async function walk(directory: string, archived: boolean): Promise<void> {
     let entries
@@ -197,6 +216,11 @@ async function savedFiles(home: string): Promise<SavedFile[]> {
       const file = path.join(directory, entry.name)
       if (entry.isDirectory()) await walk(file, archived)
       else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        const reused = known(file)
+        if (reused?.archived === archived) {
+          result.push(reused)
+          continue
+        }
         try {
           const info = await stat(file)
           result.push({ file, archived, size: info.size, mtimeMs: info.mtimeMs })
