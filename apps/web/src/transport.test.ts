@@ -87,7 +87,6 @@ describe('Transport', () => {
     transport.connect()
     const socket = FakeSocket.instances.at(-1)!
     socket.open()
-    milestone.mockClear()
     const first = transport.request('projects.list', {})
     const second = transport.request('projects.list', {})
     const frames = userFrames(socket).map((frame) => RequestFrameSchema.parse(JSON.parse(frame)))
@@ -97,7 +96,10 @@ describe('Transport', () => {
     expect(milestone).not.toHaveBeenCalledWith('requests-idle')
     socket.onmessage?.({ data: JSON.stringify({ id: frames[1]!.id, result: { projects: [] } }) })
     await second
-    expect(milestone).toHaveBeenLastCalledWith('requests-idle')
+    expect(milestone).not.toHaveBeenCalledWith('requests-idle')
+    const handshake = RequestFrameSchema.parse(JSON.parse(socket.sent[0]!))
+    socket.onmessage?.({ data: JSON.stringify({ id: handshake.id, result: {} }) })
+    await vi.waitFor(() => expect(milestone).toHaveBeenLastCalledWith('requests-idle'))
     const followup = transport.request('projects.list', {}).catch(() => undefined)
     expect(milestone).toHaveBeenLastCalledWith('requests-busy')
     transport.close()
