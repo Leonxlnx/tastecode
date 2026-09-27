@@ -63,6 +63,10 @@ export type RendererStartupMilestone =
   | 'projects-reconciled'
   | 'projects-ready'
   | 'catalog-ready'
+  | 'requests-busy'
+  | 'requests-idle'
+  | 'notice-open'
+  | 'notice-closed'
 
 declare global {
   interface Window {

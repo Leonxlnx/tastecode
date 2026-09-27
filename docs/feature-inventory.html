@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-22 main 3ee7948d · 0.1.1 update feed restored</span>
+        <span class="meta">2026-09-27 main baa34282 · local delivery checked</span>
       </div>
     </div>
 
@@ -657,7 +657,8 @@
                   and handles progress, verified completion, retry, terminal details, and managed
                   install guides. Idle toasts close after 5 seconds, pausing on hover or focus and
                   during updates. Closing the toast mid-update leaves the update running; the toast
-                  returns only if it fails. Dismissal is remembered per release</span
+                  returns only if it fails. Hidden or cancelled exits release the notice, while
+                  reopening keeps it visible. Dismissal is remembered per release</span
                 ></span
               ></label
             >
@@ -1085,11 +1086,13 @@
                   >each completed model reply folds thoughts, work notes, and tool activity into one
                   closed disclosure while the final answer stays visible; the summary can be opened
                   and closed again; repeated settled reasoning-only histories with no answer do the
-                  same; commands group consecutive runs under Ran commands inside the work
-                  disclosure, with failures marked on the group and each exact command and output
-                  inside the compact reveal; an arrow beside the label opens aligned steps with
-                  quiet output surfaces, elapsed times, and visible failure marks in both
-                  themes</span
+                  same; every run of tool calls between two thoughts or messages folds into one
+                  batch with a counted summary such as Ran 3 commands, read 2 files and edited 1
+                  file, with failures marked on the batch; each call inside opens on its own to show
+                  its exact command, arguments and output; a lone call is its own row; Design turns
+                  keep their phases and notes in view with the same batches between them; an arrow
+                  beside the label opens aligned steps with quiet output surfaces, elapsed times,
+                  and visible failure marks in both themes</span
                 ></span
               ></label
             >

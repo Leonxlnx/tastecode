@@ -14,7 +14,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual'
+import { useVirtualizer, type Range, type Virtualizer } from '@tanstack/react-virtual'
 import type { ApprovalDecision, Item } from '@harness/contracts'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
@@ -34,6 +34,7 @@ import {
   IconPencil as Pencil,
   IconRotate as RotateCcw,
   IconSearch as Search,
+  IconStack2 as Layers,
   IconTerminal2 as SquareTerminal,
   IconTool as Wrench,
   IconWorldSearch as WorldSearch,
@@ -195,21 +196,34 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
   const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
   const getItemKey = useVirtualItemKey(thread.items, props.threadId)
+  /** Filled in once this render has projected the thread; read lazily by the virtualizer. */
+  const estimateRow = useRef<(index: number) => number>(() => DEFAULT_ROW_ESTIMATE)
+  const estimateSize = useCallback((index: number) => estimateRow.current(index), [])
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | undefined>(undefined)
+  const rangeExtractor = useCallback(
+    (range: Range) =>
+      overscanVisibleRows(range, (index) => virtualizerRef.current?.measurementsCache[index]?.size),
+    [],
+  )
 
   const virtualizer = useVirtualizer({
     count: thread.items.length,
     getScrollElement: () => scroller.current,
-    // Roughly one paragraph. Wrong estimates only cost a correction on measure.
-    estimateSize: () => 72,
+    // A wrong estimate costs a scroll correction when the row is first
+    // measured. Hidden tool rows are most rows in a working session, so they
+    // must estimate as nothing rather than a paragraph each.
+    estimateSize,
     // Stable identity per item, never the index — index keys make every
     // insertion look like a change to every row after it.
     getItemKey,
     overscan: 8,
+    rangeExtractor,
     // Assume a viewport for the very first render, before measurement has run.
     // Without it the first frame contains no rows at all, which reads as a
     // blank thread for one frame when switching sessions.
     initialRect: { width: 720, height: 800 },
   })
+  virtualizerRef.current = virtualizer
 
   // A turn starting is the one moment the reading position should change.
   // Watch its first item rather than the running boolean: a queued turn can
@@ -297,6 +311,12 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
   const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
+  estimateRow.current = (index) => {
+    const item = thread.items[index]
+    return item
+      ? estimateThreadRowSize(item, index, presentations.get(item.turnId))
+      : DEFAULT_ROW_ESTIMATE
+  }
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
@@ -437,10 +457,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                 const item = threadItemAt(thread.items, liveItems, row.index)
                 if (!item) return null
                 const presentation = presentations.get(item.turnId)
-                const activityGroup =
-                  presentation && presentation.design !== true
-                    ? activityGroupAt(presentation.activityGroups, row.index)
-                    : undefined
+                const activityGroup = presentation
+                  ? activityGroupAt(presentation.activityGroups, row.index)
+                  : undefined
                 return (
                   <ThreadFrameRow
                     key={row.key}
@@ -781,13 +800,8 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   if (!item) return null
 
   const live = running && activeTurnId === item.turnId
-  const compactedActivity =
-    activityGroup !== undefined &&
-    (isStackedActivity(item) ||
-      (presentation?.complete === true &&
-        isWorkDisclosureItem(item) &&
-        index !== presentation.finalAnswerIndex))
-  const activityLead = compactedActivity && activityGroup.firstIndex === index
+  const compactedActivity = isCompactedActivity(item, index, presentation, activityGroup)
+  const activityLead = compactedActivity && activityGroup?.firstIndex === index
   const itemAfterActivity = activityGroup
     ? threadItemAt(items, liveItems, activityGroup.lastIndex + 1)
     : undefined
@@ -824,7 +838,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
           group: activityGroup,
           items,
           liveItems,
-          complete: presentation?.complete === true && !live,
+          complete: presentation?.complete === true && !live && presentation.design !== true,
         }
       : undefined
   const liveItemUpdate = liveItems.get(index)
@@ -858,6 +872,74 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     </div>
   )
 })
+
+/** Roughly one paragraph, for rows whose height depends on their text. */
+const DEFAULT_ROW_ESTIMATE = 72
+/** A collapsed one-line work summary: its 30px line, 8px margin and the row gap. */
+const COLLAPSED_ACTIVITY_ESTIMATE = 46
+
+/** Whether this row belongs to a work disclosure that another row renders. */
+function isCompactedActivity(
+  item: Item,
+  index: number,
+  presentation: TurnPresentation | undefined,
+  activityGroup: TurnActivityGroup | undefined,
+): boolean {
+  return (
+    activityGroup !== undefined &&
+    (isStackedActivity(item) ||
+      (presentation?.complete === true &&
+        isWorkDisclosureItem(item) &&
+        index !== presentation.finalAnswerIndex))
+  )
+}
+
+/**
+ * The height a row is expected to measure before it has rendered. Only the
+ * lead row of a work disclosure renders, so every other row in it measures 0.
+ */
+export function estimateThreadRowSize(
+  item: Item,
+  index: number,
+  presentation: TurnPresentation | undefined,
+): number {
+  if (isBlankReasoning(item)) return 0
+  const activityGroup = presentation
+    ? activityGroupAt(presentation.activityGroups, index)
+    : undefined
+  if (isCompactedActivity(item, index, presentation, activityGroup)) {
+    return activityGroup?.firstIndex === index ? COLLAPSED_ACTIVITY_ESTIMATE : 0
+  }
+  if (isActivity(item)) return COLLAPSED_ACTIVITY_ESTIMATE
+  return DEFAULT_ROW_ESTIMATE
+}
+
+/** Bounds the walk past hidden rows so a huge collapsed batch stays cheap. */
+const MAX_OVERSCAN_WALK = 256
+
+/**
+ * The rows to mount: the visible range plus `overscan` rows on each side that
+ * actually take up space. Most rows inside a work disclosure measure 0, and
+ * counting them would leave no real margin: a disclosure just above the
+ * viewport could unmount for one frame while it collapses, losing its state.
+ */
+export function overscanVisibleRows(
+  range: Range,
+  sizeOf: (index: number) => number | undefined,
+): number[] {
+  const step = (from: number, direction: 1 | -1, last: number) => {
+    let index = from
+    for (let seen = 0, walked = 0; index !== last && seen < range.overscan; walked++) {
+      if (walked >= MAX_OVERSCAN_WALK) break
+      index += direction
+      if ((sizeOf(index) ?? 1) > 0) seen++
+    }
+    return index
+  }
+  const start = step(range.startIndex, -1, 0)
+  const end = step(range.endIndex, 1, Math.max(0, range.count - 1))
+  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset)
+}
 
 /**
  * Only animate items appended while this thread is open. Historical rows can
@@ -996,6 +1078,9 @@ const Row = memo(function Row({
   }
 
   if (activity) {
+    // A batch of one would only repeat its call; the call is the row.
+    const lone = !activityLive && !activity.complete ? loneToolCall(activity) : undefined
+    if (lone) return <AuxDisclosure key={lone.id} item={lone} live={false} />
     return (
       <ActivityStack
         key={activity.complete ? 'complete' : 'working'}
@@ -1106,6 +1191,17 @@ const Row = memo(function Row({
   return <AuxDisclosure item={item} live={live} />
 })
 
+function loneToolCall(activity: ActivityRenderSource): Item | undefined {
+  const items = activityItemsForRender(activity.group, activity.items, activity.liveItems)
+  let lone: Item | undefined
+  for (const item of items) {
+    if (!isWorkDisclosureItem(item)) continue
+    if (lone || !isStackedActivity(item)) return undefined
+    lone = item
+  }
+  return lone
+}
+
 function activityItemsForRender(
   group: TurnActivityGroup,
   items: readonly Item[],
@@ -1168,30 +1264,28 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         ? undefined
         : (imageViewDetail(item) ?? item.text)
 
+  const phase = item.type === 'tool_call' && designPhaseLabel(toolText(item)) !== undefined
+  const expandable = Boolean(detail) && !phase
+  const label = live ? summariseLive(item) : activityItemLabel(item)
+
   return (
     <div
-      className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`}
+      className={`aux aux--${item.type}${phase ? ' aux--phase' : ''}${live ? ' aux--live' : ''}`}
       data-expanded={disclosure.expanded}
+      data-failed={isFailedActivity(item)}
     >
       <button
         type="button"
         className="aux__row"
-        aria-expanded={disclosure.expanded}
+        aria-expanded={expandable ? disclosure.expanded : undefined}
+        disabled={!expandable}
+        title={label}
         onClick={disclosure.toggle}
       >
         <span className="aux__glyph" aria-hidden>
           {glyph(item)}
         </span>
-        <span className="aux__label">
-          {activityLabelParts(
-            item,
-            live
-              ? summariseLive(item)
-              : item.type === 'command' || item.type === 'file_change'
-                ? activityItemLabel(item)
-                : summarise(item),
-          )}
-        </span>
+        <span className="aux__label">{activityLabelParts(item, label)}</span>
         {item.type === 'file_change' ? <ItemChangeStats item={item} /> : null}
         {item.exitCode !== undefined && item.exitCode !== 0 ? (
           <span className="aux__code">exit {item.exitCode}</span>
@@ -1203,9 +1297,12 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         {!live && item.status === 'started' && !isImageView(item) ? (
           <LoaderCircle className="spinner" aria-hidden />
         ) : null}
+        {expandable ? (
+          <ChevronRight className="aux__chevron" size={14} strokeWidth={1.8} aria-hidden />
+        ) : null}
       </button>
       {/* Design markers have no output worth expanding — their text is the slug. */}
-      {detail && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
+      {detail && expandable ? (
         <div
           ref={disclosure.revealRef}
           className="aux__reveal"
@@ -1535,19 +1632,21 @@ function useDisclosure() {
   } as const
 }
 
-function groupCommandRuns(items: Item[]): (Item | Item[])[] {
-  if (items.every((item) => item.type === 'command')) return items
+/**
+ * Every run of tool calls between two thoughts or messages folds into one
+ * batch. A lone call stays a row of its own, and a list that is nothing but
+ * tool calls is already the batch its summary names.
+ */
+function groupToolRuns(items: Item[]): (Item | Item[])[] {
+  if (items.every(isStackedActivity)) return items
   const rows: (Item | Item[])[] = []
   for (const item of items) {
     const previous = rows.at(-1)
-    if (item.type === 'command' && Array.isArray(previous)) {
+    if (isStackedActivity(item) && Array.isArray(previous)) {
       previous.push(item)
-    } else if (
-      item.type === 'command' &&
-      !Array.isArray(previous) &&
-      previous?.type === 'command'
-    ) {
-      rows[rows.length - 1] = [previous, item]
+    } else if (isStackedActivity(item) && previous && !Array.isArray(previous)) {
+      if (isStackedActivity(previous)) rows[rows.length - 1] = [previous, item]
+      else rows.push(item)
     } else {
       rows.push(item)
     }
@@ -1555,16 +1654,12 @@ function groupCommandRuns(items: Item[]): (Item | Item[])[] {
   return rows
 }
 
-function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
+function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
   const disclosure = useDisclosure()
-  const failed = items.filter(
-    (item) => item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0),
-  ).length
-  const pending = items.some((item) => item.status === 'started')
-  const label = `${live && pending ? 'Running commands' : 'Ran commands'}${failed ? ` (${failed} failed)` : ''}${!live && pending ? ' (interrupted)' : ''}`
+  const tally = toolTally(items, live)
 
   return (
-    <div className="activity" data-expanded={disclosure.expanded}>
+    <div className="activity activity--batch" data-expanded={disclosure.expanded}>
       <button
         type="button"
         className="activity__summary"
@@ -1572,9 +1667,9 @@ function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
         onClick={disclosure.toggle}
       >
         <span className="activity__glyph" aria-hidden>
-          {glyph(items[0]!)}
+          {toolBatchGlyph(items)}
         </span>
-        <span className="activity__label">{label}</span>
+        <ToolTallyLabel tally={tally} />
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
@@ -1622,12 +1717,18 @@ function ActivityStack({
   const hasWorkNotes = completedActivity.some(
     (item) => item.type === 'reasoning' || (item.type === 'message' && item.role === 'assistant'),
   )
+  const tally =
+    live && current
+      ? undefined
+      : activity.complete || hasWorkNotes
+        ? undefined
+        : toolTally(operationalActivity, false)
   const label =
     live && current
       ? liveActivityLabel(current)
-      : activity.complete || hasWorkNotes
-        ? `Worked for ${workedFor(activity.group.elapsedMs)}`
-        : activityStackLabel(operationalActivity)
+      : tally
+        ? toolTallyText(tally)
+        : `Worked for ${workedFor(activity.group.elapsedMs)}`
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
   const summaryRef = useRef<HTMLButtonElement>(null)
   const summaryId = summaryItem?.id
@@ -1674,14 +1775,18 @@ function ActivityStack({
         title={label}
         onClick={disclosure.toggle}
       >
-        {live || (!activity.complete && !hasWorkNotes) ? (
+        {live || tally ? (
           <span className="activity__glyph" aria-hidden>
-            {glyph(summaryItem)}
+            {tally ? toolBatchGlyph(operationalActivity) : glyph(summaryItem)}
           </span>
         ) : null}
-        <span className="activity__label" aria-live="polite" aria-atomic="true">
-          {live && current ? activityLabelParts(current, label) : label}
-        </span>
+        {tally ? (
+          <ToolTallyLabel tally={tally} announce />
+        ) : (
+          <span className="activity__label" aria-live="polite" aria-atomic="true">
+            {live && current ? activityLabelParts(current, label) : label}
+          </span>
+        )}
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
@@ -1698,9 +1803,9 @@ function ActivityStack({
         {disclosure.contentMounted ? (
           <div className="activity__reveal-clip">
             <div className="activity__body">
-              {(visibleActivity ? groupCommandRuns(visibleActivity) : []).map((item) => {
+              {(visibleActivity ? groupToolRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
-                  return <CommandRun key={item[0]!.id} items={item} live={live} />
+                  return <ToolBatch key={item[0]!.id} items={item} live={live} />
                 }
                 if (item.type === 'reasoning') {
                   return (
@@ -1715,9 +1820,6 @@ function ActivityStack({
                     />
                   )
                 }
-                if (item.type === 'command' || item.type === 'file_change') {
-                  return <AuxDisclosure key={item.id} item={item} live={false} />
-                }
                 if (item.type === 'message') {
                   return (
                     <div className="activity__message" key={item.id}>
@@ -1725,41 +1827,12 @@ function ActivityStack({
                     </div>
                   )
                 }
-                const detail = activityDetail(item)
-                const itemLabel = activityItemLabel(item)
                 return (
-                  <div
-                    className="activity__item"
-                    data-failed={
-                      item.status === 'failed' ||
-                      (item.exitCode !== undefined && item.exitCode !== 0)
-                    }
+                  <AuxDisclosure
                     key={item.id}
-                  >
-                    <div className="activity__file-change">
-                      {glyph(item)}
-                      <span className="activity__item-label" title={itemLabel}>
-                        {activityLabelParts(item, itemLabel)}
-                      </span>
-                      {item.exitCode !== undefined && item.exitCode !== 0 ? (
-                        <span className="aux__code">exit {item.exitCode}</span>
-                      ) : null}
-                      {item.durationMs !== undefined && item.durationMs >= 1000 ? (
-                        <span className="aux__time">{duration(item.durationMs)}</span>
-                      ) : null}
-                    </div>
-                    {detail ? (
-                      isImageView(item) && item.status === 'completed' ? (
-                        <ViewedImagePreview
-                          reference={detail}
-                          active={disclosure.expanded}
-                          fallbackClassName="activity__detail"
-                        />
-                      ) : (
-                        <ActivityDetail item={item} detail={detail} className="activity__detail" />
-                      )
-                    ) : null}
-                  </div>
+                    item={item}
+                    live={live && item.status === 'started'}
+                  />
                 )
               })}
             </div>
@@ -1989,47 +2062,150 @@ function attachmentName(reference: string): string {
   return reference.split(/[\\/]/).filter(Boolean).at(-1) ?? reference
 }
 
-function activityStackLabel(items: Item[]): string {
-  const onlyItem = items.length === 1 ? items[0] : undefined
-  if (
-    onlyItem &&
-    (onlyItem.status !== 'completed' ||
-      (onlyItem.exitCode !== undefined && onlyItem.exitCode !== 0))
-  ) {
-    return activityItemLabel(onlyItem)
-  }
+type ToolKind =
+  | 'command'
+  | 'edit'
+  | 'read'
+  | 'search'
+  | 'web'
+  | 'image'
+  | 'generated-image'
+  | 'plan'
+  | 'compaction'
+  | 'tool'
 
-  const categories = items.reduce<string[]>((labels, item) => {
-    const label = activityCategoryLabel(item)
-    if (!labels.includes(label)) labels.push(label)
-    return labels
-  }, [])
-
-  return categories
-    .map((label, index) => (index === 0 ? label : `${label[0]?.toLowerCase()}${label.slice(1)}`))
-    .join(', ')
-}
-
-function activityCategoryLabel(item: Item): string {
+function toolKind(item: Item): ToolKind {
   switch (item.type) {
     case 'command':
-      return 'Ran commands'
+      return 'command'
     case 'file_change':
-      return 'Edited files'
+      return 'edit'
     case 'plan':
-      return 'Updated plan'
+      return 'plan'
     case 'tool_call': {
       const text = toolText(item)
-      if (isContextCompaction(item)) return 'Compacted context window'
-      if (isImageView(item) || text.includes('image')) return 'Viewed images'
-      if (isWebSearch(item)) return 'Searched the web'
-      if (isSearchTool(text)) return 'Searched'
-      if (text.match(/read|open|file|list/)) return 'Read files'
-      return 'Used tools'
+      if (isContextCompaction(item)) return 'compaction'
+      if (toolNameKey(item) === 'imagegeneration') return 'generated-image'
+      if (isImageView(item) || text.includes('image')) return 'image'
+      if (isWebSearch(item)) return 'web'
+      if (isSearchTool(text)) return 'search'
+      if (text.match(/read|open|file|list/)) return 'read'
+      return 'tool'
     }
     default:
-      return 'Used tools'
+      return 'tool'
   }
+}
+
+function isFailedActivity(item: Item): boolean {
+  return item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)
+}
+
+type ToolTally = {
+  /** "Ran 3 commands", "read 2 files" — in the order the work happened. */
+  phrases: string[]
+  failed: number
+  interrupted: number
+}
+
+/** What a batch of tool calls did, counted per kind of work. */
+function toolTally(items: readonly Item[], live: boolean): ToolTally {
+  const counts = new Map<ToolKind, number>()
+  const editedFiles = new Set<string>()
+  let failed = 0
+  let interrupted = 0
+  for (const item of items) {
+    const kind = toolKind(item)
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+    if (kind === 'edit') {
+      const files = fileChangeDiff(item)?.fileEntries
+      if (files?.length) for (const file of files) editedFiles.add(file.path)
+      else editedFiles.add(item.path ?? item.id)
+    }
+    if (isFailedActivity(item)) failed += 1
+    else if (!live && item.status === 'started') interrupted += 1
+  }
+  const phrases = [...counts].map(([kind, count]) =>
+    toolPhrase(kind, kind === 'edit' ? editedFiles.size : count),
+  )
+  return { phrases, failed, interrupted }
+}
+
+function toolPhrase(kind: ToolKind, count: number): string {
+  const counted = (one: string, many: string) => `${count} ${count === 1 ? one : many}`
+  switch (kind) {
+    case 'command':
+      return `Ran ${counted('command', 'commands')}`
+    case 'edit':
+      return `Edited ${counted('file', 'files')}`
+    case 'read':
+      return `Read ${counted('file', 'files')}`
+    case 'search':
+      return count === 1 ? 'Searched once' : `Searched ${count} times`
+    case 'web':
+      return count === 1 ? 'Searched the web' : `Searched the web ${count} times`
+    case 'image':
+      return `Viewed ${counted('image', 'images')}`
+    case 'generated-image':
+      return `Generated ${counted('image', 'images')}`
+    case 'plan':
+      return 'Updated the plan'
+    case 'compaction':
+      return 'Compacted context'
+    case 'tool':
+      return `Used ${counted('tool', 'tools')}`
+  }
+}
+
+/** "Ran 3 commands, read 2 files and edited 1 file". */
+function toolTallySummary(tally: ToolTally): string {
+  const phrases = tally.phrases.map((phrase, index) =>
+    index === 0 ? phrase : `${phrase[0]?.toLowerCase()}${phrase.slice(1)}`,
+  )
+  const last = phrases.pop()
+  if (last === undefined) return 'Used tools'
+  return phrases.length === 0 ? last : `${phrases.join(', ')} and ${last}`
+}
+
+function toolTallyOutcomes(tally: ToolTally): string[] {
+  return [
+    ...(tally.failed > 0 ? [`${tally.failed} failed`] : []),
+    ...(tally.interrupted > 0 ? [`${tally.interrupted} interrupted`] : []),
+  ]
+}
+
+function toolTallyText(tally: ToolTally): string {
+  return [toolTallySummary(tally), ...toolTallyOutcomes(tally)].join(' · ')
+}
+
+function ToolTallyLabel({ tally, announce }: { tally: ToolTally; announce?: boolean }) {
+  const outcomes = toolTallyOutcomes(tally)
+  return (
+    <span
+      className="activity__label"
+      title={toolTallyText(tally)}
+      aria-live={announce ? 'polite' : undefined}
+      aria-atomic={announce ? true : undefined}
+    >
+      {toolTallySummary(tally)}
+      {outcomes.map((outcome) => (
+        <span
+          key={outcome}
+          className={`activity__outcome${outcome.endsWith('failed') ? ' is-failed' : ''}`}
+        >
+          {` · ${outcome}`}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/** One kind of work keeps its own icon; a mix reads as a stack. */
+function toolBatchGlyph(items: readonly Item[]) {
+  const first = items[0]
+  if (!first) return <Layers size={14} />
+  const kind = toolKind(first)
+  return items.every((item) => toolKind(item) === kind) ? glyph(first) : <Layers size={14} />
 }
 
 function liveActivityLabel(item: Item): string {
@@ -2037,7 +2213,7 @@ function liveActivityLabel(item: Item): string {
 
   switch (item.type) {
     case 'command': {
-      const command = inlineActivityText(item.command)
+      const command = commandLabel(item.command)
       if (item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)) {
         return command ? `Command failed: ${command}` : 'Command failed'
       }
@@ -2082,7 +2258,7 @@ function liveActivityLabel(item: Item): string {
 
 function activityItemLabel(item: Item): string {
   if (item.type === 'command') {
-    const command = inlineActivityText(item.command)
+    const command = commandLabel(item.command)
     if (item.status === 'started')
       return command ? `Command interrupted: ${command}` : 'Command interrupted'
     if (item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)) {
@@ -2120,6 +2296,16 @@ function webSearchQuery(item: Item): string | undefined {
   const { args } = parseToolCall(item.text)
   const query = args && !Array.isArray(args) ? args['query'] : undefined
   return typeof query === 'string' && query.trim() ? inlineActivityText(query) : undefined
+}
+
+/**
+ * Codex runs every command through a login shell, so the label would start
+ * with the same `/bin/zsh -lc` on every row. The command inside is what ran.
+ */
+function commandLabel(command: string | undefined): string {
+  const text = inlineActivityText(command)
+  const wrapped = /^(?:\S*[\\/])?(?:ba|z)?sh(?:\.exe)? -l?c (['"])([\s\S]*)\1$/.exec(text)
+  return wrapped?.[2]?.trim() || text
 }
 
 function inlineActivityText(text: string | undefined): string {
@@ -2542,12 +2728,17 @@ function summarise(item: Item): string {
   }
 }
 
-function supportedActivitySummary(item: Item, ongoing: boolean): string | undefined {
-  if (item.type !== 'tool_call' && item.type !== 'unknown') return undefined
-  const name = (item.text ?? '')
+/** The tool's name on the first line, lowercased with punctuation removed. */
+function toolNameKey(item: Item): string | undefined {
+  return (item.text ?? '')
     .split('\n', 1)[0]
     ?.replaceAll(/[^a-z0-9]/gi, '')
     .toLowerCase()
+}
+
+function supportedActivitySummary(item: Item, ongoing: boolean): string | undefined {
+  if (item.type !== 'tool_call' && item.type !== 'unknown') return undefined
+  const name = toolNameKey(item)
   const failed = item.status === 'failed'
   const interrupted = item.status === 'started' && !ongoing
 
