@@ -514,7 +514,7 @@ describe('completed activity disclosure', () => {
     if (reveal) {
       fireEvent(
         reveal,
-        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
       )
     }
     expect(reveal?.getAttribute('data-open')).toBe('false')
@@ -607,7 +607,7 @@ describe('completed activity disclosure', () => {
     if (reveal) {
       fireEvent(
         reveal,
-        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
       )
     }
 
@@ -623,7 +623,7 @@ describe('completed activity disclosure', () => {
     if (reveal) {
       fireEvent(
         reveal,
-        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
       )
     }
 
@@ -845,7 +845,7 @@ describe('completed activity disclosure', () => {
     if (reveal) {
       fireEvent(
         reveal,
-        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'clip-path' }),
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
       )
     }
     // Settling into the open state changes nothing the virtualizer must know.

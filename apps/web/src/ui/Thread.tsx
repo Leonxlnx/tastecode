@@ -157,7 +157,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const scroller = useRef<HTMLDivElement>(null)
   const runwayRef = useRef<HTMLDivElement>(null)
   /** Scroll to apply once the runway has committed a disclosure's new height. */
-  const pendingEndAnchor = useRef<{ target: number; delta: number } | undefined>(undefined)
+  const pendingEndAnchor = useRef<EndAnchor | undefined>(undefined)
+  /** Settled scroll height in reveal-hold; growth past it is new content. */
+  const heldHeight = useRef(0)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
   const completedSearchJump = useRef(0)
@@ -354,17 +356,24 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       // resizeItem's rerender is flushed after this layout effect, so the
       // runway has not changed yet; the cache says by how much it will.
       const delta = size - (virtualizer.measurementsCache[index]?.size ?? size)
+      // Read before resizeItem: the virtualizer may correct the scroll for a
+      // row it thinks is above the fold, and adding the shift below on top
+      // of that would move the viewport twice.
+      const from = el?.scrollTop ?? 0
       virtualizer.resizeItem(index, size)
       if (!el || delta === 0) return
+      // Another toggle is not new content, even when the scroll cannot follow it.
+      if (modeRef.current === 'reveal-hold') heldHeight.current += delta
+      if (header) slideFollowingInRow(row, header, delta)
       // The text after the disclosure is what the user is reading, so it must
-      // not move: the summary travels instead. Scroll by the row's growth in
-      // the same step that commits the runway height, then slide the runway
-      // back from the old offset on the compositor over the same curve as the
-      // rows, so both share one clock. When the scroll cannot follow (a thread
-      // shorter than its viewport, closing at the very top) the runway height
-      // glides instead and the rows below move, which is the only honest
-      // option left.
-      const nextMax = Math.max(0, el.scrollHeight + delta - el.clientHeight)
+      // not move: the details open upward and the summary travels instead.
+      // Scroll by the row's growth in the same step that commits the runway
+      // height, then slide the runway back from the old offset on the
+      // compositor over the same curve as the rows, so both share one clock.
+      // When the scroll cannot follow (a thread shorter than its viewport,
+      // closing at the very top) the rows below slide instead, which is the
+      // only honest option left.
+      const nextMax = Math.max(0, settledScrollHeight(el) + delta - el.clientHeight)
       // The summary the user just clicked must stay on screen: it may rise to
       // the top edge or sink to the bottom edge, no further. Past that the
       // details push the text below instead, so a long reveal never scrolls
@@ -375,12 +384,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       const roomAbove = Math.max(0, headerTop - HEADER_MARGIN)
       const roomBelow = Math.max(0, viewport.height - headerTop - headerBox.height - HEADER_MARGIN)
       const shift = delta > 0 ? Math.min(delta, roomAbove) : Math.max(delta, -roomBelow)
-      const target = Math.min(Math.max(el.scrollTop + shift, 0), nextMax)
-      if (Math.abs(target - el.scrollTop) < 1) return
-      // Commit the height in one step; the follower applies the scroll before
-      // paint and lifts the attribute again.
-      el.dataset['anchoringEnd'] = ''
-      pendingEndAnchor.current = { target, delta }
+      // The runway commits its height in this same render; the follower
+      // applies the scroll before paint and starts everything that moved
+      // from where it was.
+      pendingEndAnchor.current = {
+        from,
+        target: Math.min(Math.max(from + shift, 0), nextMax),
+        delta,
+      }
     },
     [virtualizer],
   )
@@ -538,6 +549,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           modeRef={modeRef}
           anchorIndex={anchorIndex}
           pendingEndAnchor={pendingEndAnchor}
+          heldHeight={heldHeight}
           runway={runwayRef}
           virtualizer={virtualizer}
           writeScrollTop={writeScrollTop}
@@ -584,6 +596,7 @@ function FrameScrollFollower({
   modeRef,
   anchorIndex,
   pendingEndAnchor,
+  heldHeight,
   runway,
   virtualizer,
   writeScrollTop,
@@ -596,7 +609,8 @@ function FrameScrollFollower({
   scroller: { current: HTMLDivElement | null }
   modeRef: { current: ScrollMode }
   anchorIndex: { current: number }
-  pendingEndAnchor: { current: { target: number; delta: number } | undefined }
+  pendingEndAnchor: { current: EndAnchor | undefined }
+  heldHeight: { current: number }
   runway: { current: HTMLDivElement | null }
   virtualizer: Virtualizer<HTMLDivElement, Element>
   writeScrollTop: (element: HTMLElement, top: number) => void
@@ -613,8 +627,10 @@ function FrameScrollFollower({
     const content = element?.firstElementChild
     if (!element || !content) return
     const observer = new ResizeObserver(() => {
+      // Settled, not scrollHeight: this fires right after a disclosure
+      // commits, while its reveal and the runway are still mid-slide.
       if (modeRef.current === 'follow-end') {
-        writeScrollTop(element, element.scrollHeight - element.clientHeight)
+        writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
       }
     })
     observer.observe(element)
@@ -628,31 +644,35 @@ function FrameScrollFollower({
     const element = scroller.current
     if (!element) return
 
-    // A disclosure just committed its row's new height: keep the text after
-    // it where it was (see measureRow), whatever the mode.
+    // A disclosure just committed its row's new height: apply its scroll
+    // (see measureRow), whatever the mode.
     const anchor = pendingEndAnchor.current
     if (anchor) {
       pendingEndAnchor.current = undefined
-      const before = element.scrollTop
       writeScrollTop(element, anchor.target)
-      delete element.dataset['anchoringEnd']
-      const shift = element.scrollTop - before
-      if (
-        shift !== 0 &&
-        runway.current &&
-        !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      ) {
-        slideRunwayBack(runway.current, shift, anchor.delta > 0)
-      }
+      // Not the scroll position read here: a shrinking runway has already
+      // clamped it by the time this effect runs, which would hide the shift.
+      const shift = element.scrollTop - anchor.from
+      const settled = settledScrollHeight(element)
+      const atEnd = settled - element.scrollTop - element.clientHeight <= 1
       // Opening something taller than the space above it leaves the viewport
       // short of the end. That was the user's choice; following the end now
-      // would drag the summary they just clicked out of view.
-      if (
-        modeRef.current !== 'free' &&
-        element.scrollHeight - element.scrollTop - element.clientHeight > 1
-      ) {
-        modeRef.current = 'free'
-        setMode('free')
+      // would drag the summary they just clicked out of view. They did not
+      // scroll away either, so hold without offering a jump.
+      const next: ScrollMode | undefined = atEnd
+        ? modeRef.current === 'free' || modeRef.current === 'reveal-hold'
+          ? 'follow-end'
+          : undefined
+        : modeRef.current === 'free'
+          ? undefined
+          : 'reveal-hold'
+      if (next === 'reveal-hold') heldHeight.current = settled
+      if (next && next !== modeRef.current) {
+        modeRef.current = next
+        setMode(next)
+      }
+      if (runway.current && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        slideTranscript(runway.current, shift, anchor.delta)
       }
       return
     }
@@ -662,12 +682,26 @@ function FrameScrollFollower({
       completedRevealRequest.current = revealRequest
       modeRef.current = 'follow-end'
       setMode('follow-end')
-      writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
       return
     }
 
     if (modeRef.current === 'follow-end') {
-      writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      // Settled, not scrollHeight: any render during a disclosure's slide (a
+      // streamed delta, the virtualizer's range update) lands here while the
+      // runway or a closing reveal still extends the scrollable overflow.
+      // Following that put the viewport past the end for one frame, until
+      // the ResizeObserver pulled it back — a jump on every toggle.
+      writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
+      return
+    }
+
+    if (modeRef.current === 'reveal-hold') {
+      // Something new arrived below the details: now there is a latest to jump to.
+      if (settledScrollHeight(element) > heldHeight.current + 1) {
+        modeRef.current = 'free'
+        setMode('free')
+      }
       return
     }
 
@@ -686,20 +720,75 @@ function FrameScrollFollower({
   return null
 }
 
+/** A disclosure's row height change, waiting for the runway to commit it. */
+type EndAnchor = {
+  /** The scroll position before the commit. */
+  from: number
+  target: number
+  delta: number
+}
+
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
 
 /**
- * The scroll just moved by `shift` in one step; start the runway that far
- * off and let it settle over the reveal's own curve, so the rows above the
- * disclosure travel while the text below holds still. A reversal mid-flight
- * keeps whatever offset the previous slide had left to unwind.
+ * The scroll height once the running reveal and slide animations settle.
+ * scrollHeight also counts boxes that are mid-animation — a closing reveal
+ * still hanging below its summary, the runway starting its slide below its
+ * place — so during a toggle it puts the end further away than it will be.
+ * The column's own box is in-flow layout only and never transformed.
  */
-function slideRunwayBack(runway: HTMLElement, shift: number, opening: boolean) {
-  const running = runway.getAnimations()[0]
-  const current = running ? new DOMMatrix(getComputedStyle(runway).transform).m42 : 0
+function settledScrollHeight(element: HTMLElement): number {
+  const height = element.firstElementChild?.getBoundingClientRect().height ?? 0
+  // No layout box yet: nothing is animating either.
+  if (height === 0) return element.scrollHeight
+  const style = getComputedStyle(element)
+  const padding =
+    (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0)
+  return Math.min(element.scrollHeight, Math.round(height + padding))
+}
+
+/**
+ * The scroll just moved by `shift` and the runway's height by `delta`, both
+ * in one step. Start everything that jumped where it was on screen and let it
+ * settle over the reveal's own curve: the runway carries the rows above the
+ * disclosure, and whatever follows the transcript (plan, approvals, diff)
+ * travels with the rows below it. A reversal mid-flight keeps whatever offset
+ * the previous slide had left to unwind.
+ */
+function slideTranscript(runway: HTMLElement, shift: number, delta: number) {
+  const opening = delta > 0
+  if (shift !== 0) slideFrom(runway, shift, opening)
+  if (Math.abs(shift - delta) < 1) return
+  for (let next = runway.nextElementSibling; next; next = next.nextElementSibling) {
+    if (next instanceof HTMLElement) slideFrom(next, shift - delta, opening)
+  }
+}
+
+/**
+ * Rows after a disclosure glide on their own transform, but content later in
+ * the same row moves with layout in one step. Start that content where it was
+ * and let it travel over the reveal's curve, so everything below the summary
+ * moves as one piece whether or not the scroll could follow.
+ */
+function slideFollowingInRow(row: Element, header: Element, delta: number) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  for (let node = header.parentElement; node && node !== row; node = node.parentElement) {
+    for (let next = node.nextElementSibling; next; next = next.nextElementSibling) {
+      if (next instanceof HTMLElement) slideFrom(next, -delta, delta > 0)
+    }
+  }
+}
+
+const REVEAL_SLIDE = 'reveal-slide'
+
+/** A reversal mid-flight keeps whatever offset the previous slide had left. */
+function slideFrom(element: HTMLElement, offset: number, opening: boolean) {
+  const running = element.getAnimations().find((animation) => animation.id === REVEAL_SLIDE)
+  const current = running ? new DOMMatrix(getComputedStyle(element).transform).m42 : 0
   running?.cancel()
-  runway.animate([{ transform: `translateY(${current + shift}px)` }, { transform: 'none' }], {
+  element.animate([{ transform: `translateY(${current + offset}px)` }, { transform: 'none' }], {
+    id: REVEAL_SLIDE,
     duration: opening ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS,
     easing: REVEAL_EASING,
   })
@@ -1229,7 +1318,7 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
           aria-hidden={!disclosure.expanded}
           inert={!disclosure.expanded}
           onTransitionEnd={(event) => {
-            if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+            if (event.target === event.currentTarget && event.propertyName === 'transform')
               disclosure.finishTransition()
           }}
         >
@@ -1440,7 +1529,7 @@ function ReasoningDisclosure({
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+          if (event.target === event.currentTarget && event.propertyName === 'transform')
             disclosure.finishTransition()
         }}
       >
@@ -1486,10 +1575,10 @@ function thoughtDuration(ms: number): string {
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
 }
 
-/** Must match the reveal transitions in thread.css. */
+/** Mirror --dur-fast, --dur-press and --ease-out: the reveal transitions in thread.css. */
 const REVEAL_OPEN_MS = 180
-const REVEAL_CLOSE_MS = 120
-const REVEAL_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
+const REVEAL_CLOSE_MS = 140
+const REVEAL_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
 
 function settledPhase(phase: DisclosurePhase): DisclosurePhase {
   return phase === 'opening' ? 'open' : phase === 'closing' ? 'closed' : phase
@@ -1598,7 +1687,7 @@ function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+          if (event.target === event.currentTarget && event.propertyName === 'transform')
             disclosure.finishTransition()
         }}
       >
@@ -1715,7 +1804,7 @@ function ActivityStack({
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
+          if (event.target === event.currentTarget && event.propertyName === 'transform')
             disclosure.finishTransition()
         }}
       >

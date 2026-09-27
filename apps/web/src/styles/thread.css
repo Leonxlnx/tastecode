@@ -504,27 +504,60 @@
 }
 
 /* Commit the expanded height in one layout pass. Animating the grid track made
-   ResizeObserver remeasure the virtual row throughout the transition. */
+   ResizeObserver remeasure the virtual row throughout the transition.
+
+   The wipe is two transforms, not a clip-path: the box glides with the rows
+   below and clips, while the details inside glide the other way and so stay
+   under their summary. Both run on the compositor, on the same clock as the
+   rows and the runway. clip-path ran on the main thread, and whenever that
+   thread was late — the scroll event after a toggle re-renders the whole
+   transcript — the box was a frame behind the slide and covered the first
+   lines of the text below.
+
+   The details are not a picture being uncovered: they fade in on the same
+   clock and settle the last 4px down out of the summary (the inner layer
+   travels 4px less than the box), so the open edge carries them rather than
+   slicing through lines of text at full contrast. The 4px sit inside the
+   body's own top margin, so nothing ever overlaps the summary. Closing is the
+   same path backwards, faster, with the fade finishing before the edge. */
 .activity__reveal {
   display: none;
-  clip-path: inset(0 0 100%);
-  transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .activity__reveal[data-open='opening'] {
   display: block;
-  clip-path: inset(0);
+  overflow: clip;
+  /* The box starts a full height above its place, over the summary. */
+  pointer-events: none;
+  transform: none;
+  transition: transform var(--dur-fast) var(--ease-out);
 
   @starting-style {
-    clip-path: inset(0 0 100%);
+    transform: translateY(-100%);
+  }
+}
+
+.activity__reveal[data-open='opening'] > .activity__reveal-clip {
+  pointer-events: auto;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(calc(100% - 4px));
   }
 }
 
 .activity__reveal[data-open='true'] {
   display: block;
-  clip-path: inset(0);
 }
 
+/* Out of flow, so the row takes its closed height at once. No background: the
+   summary travels down into the box's top half while the details fade and
+   retract. */
 .activity__reveal[data-open='closing'] {
   position: absolute;
   z-index: 1;
@@ -532,52 +565,48 @@
   right: 0;
   left: 0;
   display: block;
-  background: var(--bg);
+  overflow: clip;
   pointer-events: none;
-  transition-duration: 120ms;
+  transform: translateY(-100%);
+  transition: transform var(--dur-press) var(--ease-out);
 }
 
+.activity__reveal[data-open='closing'] > .activity__reveal-clip {
+  opacity: 0;
+  transform: translateY(calc(100% - 4px));
+  transition:
+    opacity 100ms var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+/* While a disclosure inside closes, the content after it slides up from where
+   it was, below this box's new bottom edge, so vertical overflow must stay
+   visible or those lines vanish for the first frames. flow-root keeps the
+   body's margins inside, as the old overflow: hidden did. The open reveal
+   itself does not clip either, for the same reason. */
 .activity__reveal-clip {
+  display: flow-root;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: clip;
 }
 
 /* Details enter or leave flow once, and the row is re-measured in that same
    commit. The rows below (and the working rail, which sits at the runway's
    end) then glide on the compositor over the same curve as the wipe, so the
-   wipe edge and the next row's top move together. */
+   wipe edge and the next row's top move together.
+
+   The runway takes its new height in one step. Whatever the scroll or the
+   clamp moved, and whatever follows the transcript, starts where it was and
+   slides on the same clock from Thread.tsx (slideTranscript), so nothing
+   relayouts per frame and the settled scroll height is exact at once. */
 .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='opening'])
   :is(.thread__row, .thread__rail) {
-  transition: transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 
 .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing'])
   :is(.thread__row, .thread__rail) {
-  transition: transform 120ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-/* The runway follows the rows over the same curve. Its height is the scroll
-   height: committing it in one step made the scroll end pin (or clamp) by the
-   full reveal height at once, which read as the whole transcript jumping when
-   the last turn was toggled. Growing it per frame lets the follower and the
-   browser clamp move the viewport smoothly instead, and carries anything
-   after the transcript with the rows. Only the runway box relayouts; the rows
-   are absolutely positioned and keep their measured heights. */
-.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='opening']) .thread__runway {
-  transition: height 180ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing']) .thread__runway {
-  transition: height 120ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-/* Whenever the scroll can follow, it takes the new height in one step and the
-   runway slides back on the compositor instead, so the text below the
-   disclosure holds still (see measureRow in Thread.tsx). The height glide
-   above is only the fallback for a scroll that cannot move. The doubled class
-   outranks the :has() rules. */
-.thread[data-anchoring-end] .thread__runway.thread__runway {
-  transition: none;
+  transition: transform var(--dur-press) var(--ease-out);
 }
 
 .thread__row:has(> :is(.activity, .aux) [data-open='closing']) {
@@ -708,9 +737,9 @@
   }
 
   .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='opening'])
-    :is(.thread__row, .thread__rail, .thread__runway),
+    :is(.thread__row, .thread__rail),
   .thread:has(:is(.activity__reveal, .aux__reveal)[data-open='closing'])
-    :is(.thread__row, .thread__rail, .thread__runway) {
+    :is(.thread__row, .thread__rail) {
     transition: none;
   }
 }
@@ -950,25 +979,40 @@
   margin-bottom: 0;
 }
 
-/* Match the completion rail: one virtual-row resize, then compositor-only motion. */
+/* Match the completion rail: one virtual-row resize, then compositor-only
+   motion. Same two-transform wipe as .activity__reveal. */
 .aux__reveal {
   display: none;
-  clip-path: inset(0 0 100%);
-  transition: clip-path 180ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .aux__reveal[data-open='opening'] {
   display: block;
-  clip-path: inset(0);
+  overflow: clip;
+  pointer-events: none;
+  transform: none;
+  transition: transform var(--dur-fast) var(--ease-out);
 
   @starting-style {
-    clip-path: inset(0 0 100%);
+    transform: translateY(-100%);
+  }
+}
+
+.aux__reveal[data-open='opening'] > .aux__reveal-clip {
+  pointer-events: auto;
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(calc(100% - 4px));
   }
 }
 
 .aux__reveal[data-open='true'] {
   display: block;
-  clip-path: inset(0);
 }
 
 .aux__reveal[data-open='closing'] {
@@ -978,9 +1022,18 @@
   right: 0;
   left: 0;
   display: block;
-  background: var(--bg);
+  overflow: clip;
   pointer-events: none;
-  transition-duration: 120ms;
+  transform: translateY(-100%);
+  transition: transform var(--dur-press) var(--ease-out);
+}
+
+.aux__reveal[data-open='closing'] > .aux__reveal-clip {
+  opacity: 0;
+  transform: translateY(calc(100% - 4px));
+  transition:
+    opacity 100ms var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
 }
 
 .aux__reveal-clip {
@@ -990,8 +1043,21 @@
 
 @media (prefers-reduced-motion: reduce) {
   .activity__reveal,
-  .aux__reveal {
+  .aux__reveal,
+  .activity__reveal > .activity__reveal-clip,
+  .aux__reveal > .aux__reveal-clip {
     transition: none;
+  }
+
+  /* No travel, but the details still fade in rather than appear in one frame.
+     Opacity only, so it may override the global still-by-default fallback. */
+  .activity__reveal[data-open='true'] > .activity__reveal-clip,
+  .aux__reveal[data-open='true'] > .aux__reveal-clip {
+    transition: opacity var(--dur-fast) var(--ease-out) !important;
+
+    @starting-style {
+      opacity: 0;
+    }
   }
 }
 
