@@ -960,6 +960,49 @@ describe('web client', () => {
     expect(attempts).toBe(2)
   })
 
+  it('paints the new-chat heading from the last run before projects load', async () => {
+    const firstRun = render(<App />)
+    await screen.findByRole('heading', { name: 'What should we build in project?' })
+    expect(localStorage.getItem('harness.startupProjectName')).toBe('project')
+    firstRun.unmount()
+
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let listProjects: (() => void) | undefined
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'projects.list'
+        ? new Promise((resolve) => {
+            listProjects = () => resolve(request(method, params))
+          })
+        : request(method, params),
+    )
+    serverProjects = [serverProject('/work/project', 'Renamed project')]
+
+    render(<App />)
+
+    expect(screen.getByRole('heading').textContent).toBe('What should we build in project?')
+    expect(screen.queryByText('Loading projects…')).toBeNull()
+
+    await waitFor(() => expect(listProjects).toBeDefined())
+    act(() => listProjects?.())
+
+    await screen.findByRole('heading', { name: 'What should we build in Renamed project?' })
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.startupProjectName')).toBe('Renamed project'),
+    )
+  })
+
+  it('forgets the remembered project when the server has none', async () => {
+    localStorage.setItem('harness.startupProjectName', 'Removed project')
+    serverProjects = []
+
+    render(<App />)
+
+    expect(screen.getByRole('heading').textContent).toBe('What should we build in Removed project?')
+    await screen.findByRole('heading', { name: 'Add a project to start building.' })
+    expect(localStorage.getItem('harness.startupProjectName')).toBeNull()
+  })
+
   it('adds the first project from the empty state', async () => {
     serverProjects = []
     pickFolder.mockResolvedValue('/work/new-project')
