@@ -307,7 +307,7 @@ describe('streamed thread renders', () => {
     )
 
     expect(rendered.container.querySelector('.activity')).toBe(stack)
-    expect(rendered.getByRole('button', { name: 'Ran commands' })).toBeTruthy()
+    expect(rendered.getByRole('button', { name: 'Ran 2 commands' })).toBeTruthy()
     const thinking = rendered.getByRole('button', { name: 'Thinking' })
     expect(thinking.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
       'true',
