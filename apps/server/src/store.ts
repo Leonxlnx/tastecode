@@ -215,6 +215,7 @@ const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
 const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v1'
+const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
 const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
 // The renderer owns one active search. Keep a few recently used cursors for
@@ -660,6 +661,9 @@ const THREAD_CACHE_LIMIT = 128
 // Count and bytes are separate: many short threads should not evict one another,
 // while the character budget still bounds the parsed replay payloads.
 const REPLAY_SNAPSHOT_CACHE_LIMIT = 64
+// Disk snapshots duplicate a thread's compacted replay. Recently written threads
+// keep one; an older or closed thread rebuilds its replay from the log when reopened.
+const REPLAY_SNAPSHOT_DISK_LIMIT = REPLAY_SNAPSHOT_CACHE_LIMIT
 const REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT = 16 * 1024 * 1024
 
 const StoredEventRowsSchema = z.array(
@@ -750,6 +754,7 @@ export class Store {
   #readReplaySnapshotBase: StatementSync
   #readTailReplaySnapshot: StatementSync
   #writeReplaySnapshot: StatementSync
+  #pruneReplaySnapshots: StatementSync
   #deleteReplaySnapshot: StatementSync
   #lastSequence: StatementSync
   #selectSearchSnapshot = new Map<number, StatementSync>()
@@ -1131,9 +1136,15 @@ export class Store {
            0
          )`,
     )
+    // REPLACE assigns a new rowid, so rowid order is write recency.
     this.#writeReplaySnapshot = this.#db.prepare(
-      `INSERT INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)
-       ON CONFLICT (thread_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload`,
+      `INSERT OR REPLACE INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)`,
+    )
+    this.#pruneReplaySnapshots = this.#db.prepare(
+      `DELETE FROM thread_replay_snapshots
+       WHERE rowid <= (
+         SELECT rowid FROM thread_replay_snapshots ORDER BY rowid DESC LIMIT 1 OFFSET ?
+       )`,
     )
     this.#deleteReplaySnapshot = this.#db.prepare(
       `DELETE FROM thread_replay_snapshots WHERE thread_id = ?`,
@@ -1155,6 +1166,18 @@ export class Store {
       recovery: !completedMigrations.has(RECOVERY_STATE_VERSION),
     }
     if (Object.values(rebuild).some(Boolean)) this.#rebuildDerivedIndexes(rebuild)
+    if (!completedMigrations.has(BOUNDED_REPLAY_SNAPSHOTS_VERSION)) {
+      this.#transaction(() => {
+        this.#db.exec(
+          `DELETE FROM thread_replay_snapshots
+           WHERE thread_id IN (SELECT id FROM threads WHERE closed_at IS NOT NULL)`,
+        )
+        this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
+        this.#db
+          .prepare(`INSERT OR REPLACE INTO schema_migrations (name) VALUES (?)`)
+          .run(BOUNDED_REPLAY_SNAPSHOTS_VERSION)
+      })
+    }
   }
 
   /** Bring a database written by an older build up to the current shape. */
@@ -1928,7 +1951,9 @@ export class Store {
     this.#transaction(() => {
       this.#clearQueuedTurns(id)
       this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(closedAt, id)
+      this.#deleteReplaySnapshot.run(id)
     })
+    this.#deleteCachedReplaySnapshot(id)
     this.#updateCachedThread(id, (thread) => ({ ...thread, closedAt }))
     this.#updateSidebarThread(id, (thread) => ({ ...thread, closedAt }))
   }
@@ -2646,6 +2671,7 @@ export class Store {
   ): string {
     const payload = JSON.stringify(entries)
     this.#writeReplaySnapshot.run(threadId, seq, payload)
+    this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
     this.#rememberReplaySnapshot(threadId, seq, entries as ReplayEntry[], payload.length)
     return payload
   }

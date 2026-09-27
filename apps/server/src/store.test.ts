@@ -1405,6 +1405,39 @@ describe('events', () => {
     expect(store.replaySnapshotBase('t1')).toBeUndefined()
   })
 
+  it('drops the saved replay of a closed thread and keeps only recent replays on disk', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-bound-'))
+    const file = path.join(dir, 'replay.db')
+    const seeded = new Store(file)
+    const save = (threadId: string) => {
+      const seq = seeded.append(threadId, message(`thread-${threadId}`))
+      seeded.saveReplaySnapshot(threadId, seq, [{ seq, event: message(`snapshot-${threadId}`) }])
+    }
+    seeded.addProject('/repo', 'Repo')
+    for (let index = 0; index <= 65; index += 1) {
+      seeded.addThread({ id: `r${index}`, projectPath: '/repo', provider: 'codex', title: 'R' })
+      save(`r${index}`)
+    }
+    seeded.closeThread('r65')
+    expect(seeded.replaySnapshotBase('r65')).toBeUndefined()
+    save('r0')
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    const saved = raw
+      .prepare(`SELECT thread_id FROM thread_replay_snapshots ORDER BY rowid`)
+      .all() as Array<{ thread_id: string }>
+    raw.close()
+    try {
+      expect(saved).toHaveLength(64)
+      expect(saved.at(-1)?.thread_id).toBe('r0')
+      expect(saved.map(({ thread_id }) => thread_id)).not.toContain('r1')
+      expect(saved.map(({ thread_id }) => thread_id)).not.toContain('r65')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('bounds parsed replay snapshots and retains the most recently used threads', () => {
     const snapshots = new Map<string, Array<{ seq: number; event: DomainEvent }>>()
     for (let index = 1; index <= 64; index += 1) {
