@@ -55,6 +55,7 @@
     ],
     "files": [
       "dist/{main.js,preload.cjs,native-binding-proof.js}",
+      "dist/chunks/*.js",
       "assets/tastecode-app-icon.png",
       "package.json",
       "!node_modules/@harness/*/src{,/**/*}",
