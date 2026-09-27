@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import * as bridge from './bridge.js'
 import {
   IndeterminateRequestError,
   parseIncomingFrame,
@@ -61,6 +62,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })
@@ -79,6 +81,32 @@ const completedThreadEvent = (turnId: string) => ({
 })
 
 describe('Transport', () => {
+  it('reports idle only after all startup responses finish validation', async () => {
+    const milestone = vi.spyOn(bridge, 'reportStartupMilestone')
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const first = transport.request('projects.list', {})
+    const second = transport.request('projects.list', {})
+    const frames = userFrames(socket).map((frame) => RequestFrameSchema.parse(JSON.parse(frame)))
+    expect(milestone).toHaveBeenCalledWith('requests-busy')
+    socket.onmessage?.({ data: JSON.stringify({ id: frames[0]!.id, result: { projects: [] } }) })
+    await first
+    expect(milestone).not.toHaveBeenCalledWith('requests-idle')
+    socket.onmessage?.({ data: JSON.stringify({ id: frames[1]!.id, result: { projects: [] } }) })
+    await second
+    expect(milestone).not.toHaveBeenCalledWith('requests-idle')
+    const handshake = RequestFrameSchema.parse(JSON.parse(socket.sent[0]!))
+    socket.onmessage?.({ data: JSON.stringify({ id: handshake.id, result: {} }) })
+    await vi.waitFor(() => expect(milestone).toHaveBeenLastCalledWith('requests-idle'))
+    const followup = transport.request('projects.list', {}).catch(() => undefined)
+    expect(milestone).toHaveBeenLastCalledWith('requests-busy')
+    transport.close()
+    await followup
+    expect(milestone).toHaveBeenLastCalledWith('requests-busy')
+  })
+
   it('bounds disconnected requests and expires them without sending on reconnect', async () => {
     const transport = new Transport('ws://127.0.0.1:4311')
     transport.connect()

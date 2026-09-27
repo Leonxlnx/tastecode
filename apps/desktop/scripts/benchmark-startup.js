@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const DEFAULT_RUNS = 7
 const STARTUP_TIMEOUT_MS = 15_000
+const MEMORY_TIMEOUT_MS = 10_000
 const PRELOAD_PATTERN = /\[startup\] preload-ready (\d+)ms/
 const MODULE_PATTERN = /\[startup\] module-loaded (\d+)ms/
 const COMMIT_PATTERN = /\[startup\] react-commit (\d+)ms/
@@ -137,6 +138,9 @@ export async function measure(executable, index, environment = {}, arguments_ = 
   const settleMs = parseSettleMs(
     environment.HARNESS_STARTUP_SETTLE_MS ?? process.env['HARNESS_STARTUP_SETTLE_MS'],
   )
+  // Memory has its own fixed ten-second capture deadline after startup and
+  // the quiet delay. Keep that time separate from the startup timeout.
+  const timeoutMs = STARTUP_TIMEOUT_MS + (settleMs === undefined ? 0 : settleMs + MEMORY_TIMEOUT_MS)
   const threadCount = parseFixtureCount(
     environment.HARNESS_STARTUP_THREAD_COUNT ?? process.env['HARNESS_STARTUP_THREAD_COUNT'],
     'HARNESS_STARTUP_THREAD_COUNT',
@@ -184,16 +188,9 @@ export async function measure(executable, index, environment = {}, arguments_ = 
     const result = await Promise.race([
       closed,
       new Promise((_, reject) => {
-        timeout = setTimeout(
-          () => {
-            reject(
-              new Error(
-                `startup timed out after ${STARTUP_TIMEOUT_MS + (settleMs ?? 0)}ms\n${output.slice(-4000)}`,
-              ),
-            )
-          },
-          STARTUP_TIMEOUT_MS + (settleMs ?? 0),
-        )
+        timeout = setTimeout(() => {
+          reject(new Error(`startup timed out after ${timeoutMs}ms\n${output.slice(-4000)}`))
+        }, timeoutMs)
       }),
     ])
     clearTimeout(timeout)
