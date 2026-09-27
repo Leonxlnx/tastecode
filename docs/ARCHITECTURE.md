@@ -344,6 +344,9 @@ replaced native branches without moving local event positions or checkpoints. Re
 imported turns by their original time and replaces stale partial client histories when needed.
 Provider files stay read-only. Local names, pins, archives, project removal, and deletion remain
 local choices. Cloud-only chats and missing native transcript files are outside this local reader.
+Background rescans stay cheap: Codex reuses indexed transcript file stats for up to 60 seconds
+while its state index is unchanged, and Grok keeps a parsed session summary until the file's
+size or modification time changes.
 
 **Checkpoints are git**, captured on turn start and completion. Correct, inspectable with
 tools users already trust, identical across every engine. Non-git directories fall back to a

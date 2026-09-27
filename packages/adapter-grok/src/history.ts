@@ -10,9 +10,13 @@ export type GrokHistoryOptions = { root?: string }
 export function createGrokHistorySource(options: GrokHistoryOptions = {}): ProviderHistorySource {
   const root = path.resolve(options.root ?? process.env.GROK_HOME ?? path.join(homedir(), '.grok'))
   const sessionsRoot = path.join(root, 'sessions')
+  // Background refreshes list every session again. An unchanged summary file
+  // keeps its parsed contents instead of being resolved, read and parsed again.
+  const summaries = new Map<string, { revision: string; summary: Record<string, unknown> }>()
   return {
     async list() {
       const sessions: ProviderHistorySession[] = []
+      const listed = new Set<string>()
       for (const workspace of await directories(sessionsRoot)) {
         const folder = path.join(sessionsRoot, workspace)
         const names = await directories(folder)
@@ -21,14 +25,27 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
           const batch = await Promise.all(
             names.slice(offset, offset + 16).map(async (id) => {
               const directory = path.join(folder, id)
-              const [summaryText, summaryStat, updatesStat, chatStat] = await Promise.all([
-                readSessionFile(directory, 'summary.json'),
+              const [summaryStat, updatesStat, chatStat] = await Promise.all([
                 stat(path.join(directory, 'summary.json')).catch(() => undefined),
                 stat(path.join(directory, 'updates.jsonl')).catch(() => undefined),
                 stat(path.join(directory, 'chat_history.jsonl')).catch(() => undefined),
               ])
               if (!updatesStat && !chatStat) return undefined
-              const summary = parseRecord(summaryText)
+              listed.add(directory)
+              const summaryRevision = summaryStat
+                ? `${summaryStat.size}:${summaryStat.mtimeMs}`
+                : '-'
+              let cached = summaries.get(directory)
+              if (cached?.revision !== summaryRevision) {
+                cached = {
+                  revision: summaryRevision,
+                  summary: summaryStat
+                    ? parseRecord(await readSessionFile(directory, 'summary.json'))
+                    : {},
+                }
+                summaries.set(directory, cached)
+              }
+              const summary = cached.summary
               const info = record(summary.info)
               let decoded = ''
               try {
@@ -67,6 +84,9 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
           )
           for (const session of batch) if (session) sessions.push(session)
         }
+      }
+      for (const directory of summaries.keys()) {
+        if (!listed.has(directory)) summaries.delete(directory)
       }
       return sessions.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
     },

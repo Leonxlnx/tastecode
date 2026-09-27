@@ -106,6 +106,19 @@ describe('Grok native history', () => {
     )
   })
 
+  it('reads a session summary again only after it changes', async () => {
+    const { source, directory } = await fixture()
+    await save(directory, 'updates.jsonl', [
+      update('user_message_chunk', { content: { type: 'text', text: 'hello' } }),
+    ])
+    expect((await source.list())[0]?.title).toBe('Native Grok chat')
+    const summary = path.join(directory, 'summary.json')
+    await writeFile(summary, JSON.stringify({ generated_title: 'Renamed Grok chat' }))
+    expect((await source.list())[0]?.title).toBe('Renamed Grok chat')
+    await rm(summary)
+    expect((await source.list())[0]?.title).toBe('Grok chat')
+  })
+
   it('replays exact Markdown, thought text, tools, command output, diffs, images and turns', async () => {
     const { source, directory, workspace } = await fixture()
     const markdown = '  # Heading\n\n```ts\nconst n = 1\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n'
