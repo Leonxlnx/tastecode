@@ -88,7 +88,7 @@ describe('thread reply spacing', () => {
     expect(aux).toContain('padding: 0 2px 4px')
     expect(aux).toContain('font-size: var(--t-md)')
     expect(auxGlyph).toContain('width: 18px')
-    expect(auxLabel).toContain('flex: 1 1 0')
+    expect(auxLabel).toContain('flex: 0 1 auto')
     expect(auxLabel).toContain('font-family: var(--font-ui)')
     expect(auxLabel).toContain('font-size: var(--t-md)')
   })

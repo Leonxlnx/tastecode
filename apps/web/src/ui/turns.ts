@@ -293,7 +293,8 @@ function presentTurnsRange(
 
     draft.earliest = Math.min(draft.earliest, item.createdAt)
     draft.latest = Math.max(draft.latest, item.createdAt)
-    draft.design ||= item.type === 'tool_call' && item.text?.startsWith('design:') === true
+    const designMarker = item.type === 'tool_call' && item.text?.startsWith('design:') === true
+    draft.design ||= designMarker
 
     if ((item.type !== 'message' || item.role !== 'user') && !isBlankReasoning(item)) {
       draft.firstResponseIndex ??= index
@@ -305,7 +306,12 @@ function presentTurnsRange(
       draft.hasRunningActivity ||= item.status === 'started'
     }
 
-    if (isStackedActivity(item)) {
+    if (designMarker) {
+      // A design phase is a heading of its own: the provider work on either
+      // side of it forms separate batches.
+      const openGroup = draft.activityGroups.at(-1)
+      if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
+    } else if (isStackedActivity(item)) {
       draft.workEntries.push({ item, index })
       const lastGroup = draft.activityGroups.at(-1)
       if (lastGroup?.lastIndex === index - 1) {
@@ -369,8 +375,10 @@ function presentTurnsRange(
       }),
     )
     const completedWork = draft.workEntries.filter(({ index }) => index !== finalAnswer?.index)
+    // A design turn keeps its phases and notes in view, so its work stays in
+    // chronological batches instead of folding into one summary.
     const activityGroups =
-      complete && completedWork.length > 0
+      complete && !draft.design && completedWork.length > 0
         ? [
             {
               items: completedWork.map(({ item }) => item),

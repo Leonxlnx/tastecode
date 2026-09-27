@@ -318,6 +318,34 @@ describe('design activity rows', () => {
     expect(workLabel(items, 'turn-m1', false)).toBe('Building the website')
   })
 
+  it('batches provider work between Design notes and phases', () => {
+    const work = (id: string, createdAt: number, fields: Partial<Item>): Item =>
+      ({ id, turnId: 'turn-m1', status: 'completed', createdAt, ...fields }) as Item
+    renderCompleted([
+      marker('m1', 'design:repair'),
+      work('cmd-1', 2, { type: 'command', command: 'cat src/motion.js' }),
+      work('cmd-2', 3, { type: 'command', command: 'pnpm test', exitCode: 1 }),
+      work('tool-1', 4, { type: 'tool_call', text: 'read_file src/app.js' }),
+      work('note-1', 5, { type: 'message', role: 'assistant', text: 'One check failed.' }),
+      work('cmd-3', 6, { type: 'command', command: 'pnpm test' }),
+      work('cmd-4', 7, { type: 'command', command: 'pnpm build' }),
+      { ...marker('m2', 'design:review'), turnId: 'turn-m1', createdAt: 8 },
+      work('cmd-5', 9, { type: 'command', command: 'pnpm preview' }),
+    ])
+
+    expect(screen.getByText('Refining the website')).toBeTruthy()
+    expect(screen.getByText('One check failed.')).toBeTruthy()
+    expect(screen.getByText('Reviewing the design')).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Ran 2 commands and read 1 file · 1 failed' }),
+    ).toBeTruthy()
+    const second = screen.getByRole('button', { name: 'Ran 2 commands' })
+    expect(screen.getByRole('button', { name: 'Ran pnpm preview' })).toBeTruthy()
+    expect(screen.queryByText('Ran pnpm build')).toBeNull()
+    fireEvent.click(second)
+    expect(screen.getByText('Ran pnpm build')).toBeTruthy()
+  })
+
   it('collapses a repeated phase while keeping provider activity visible', () => {
     renderCompleted([
       marker('m1', 'design:page'),
@@ -455,8 +483,8 @@ describe('completed activity disclosure', () => {
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
     expect(screen.getByText('Checking files.')).toBeTruthy()
     expect(screen.getByText('Now test.')).toBeTruthy()
-    const commands = screen.getByRole('button', { name: 'Ran commands' })
-    expect(screen.getByRole('button', { name: 'Ran commands (1 failed)' })).toBeTruthy()
+    const commands = screen.getByRole('button', { name: 'Ran 8 commands' })
+    expect(screen.getByRole('button', { name: 'Ran 2 commands · 1 failed' })).toBeTruthy()
     expect(container.querySelectorAll('.aux--command')).toHaveLength(0)
     fireEvent.click(commands)
     expect(container.querySelectorAll('.aux--command')).toHaveLength(8)
@@ -615,7 +643,7 @@ describe('completed activity disclosure', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
     // Labels wrap the tool name in <code>, so match on each row's whole text.
-    const labels = [...container.querySelectorAll('.activity__item-label')].map(
+    const labels = [...container.querySelectorAll('.activity__body .aux__label')].map(
       (node) => node.textContent,
     )
     expect(labels).toEqual([
@@ -624,6 +652,9 @@ describe('completed activity disclosure', () => {
       'Failed github.search_issues · is:open',
     ])
     expect(container.querySelector('code.activity__tool')?.textContent).toBe('cua_repl.js')
+    // Each call keeps its arguments and output behind its own reveal.
+    expect(container.querySelector('.tool-detail__args')).toBeNull()
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.activity__body .aux__row')!)
 
     const args = container.querySelector('.tool-detail__args')
     expect(args?.textContent).toBe("codeawait page.screenshot({ path: 'home.png' })")
@@ -666,6 +697,32 @@ describe('completed activity disclosure', () => {
     expect(container.querySelectorAll('.dline--add')).toHaveLength(3)
     expect(container.querySelectorAll('.dline--del')).toHaveLength(1)
     expect(container.querySelector('.dline--meta')).toBeNull()
+  })
+
+  it('names a command without the login shell that wrapped it', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Look' }),
+      turnItem('command-1', 2, { type: 'command', command: "/bin/zsh -lc 'cat src/motion.js'" }),
+      turnItem('command-2', 3, { type: 'command', command: 'bash -c "pnpm test"', exitCode: 1 }),
+      turnItem('answer-1', 4, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByText('Ran cat src/motion.js')).toBeTruthy()
+    expect(screen.getByText('Command failed: pnpm test')).toBeTruthy()
+  })
+
+  it('counts generated images as generated, not viewed', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Make photos' }),
+      turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Making them.' }),
+      turnItem('image-1', 3, { type: 'tool_call', text: 'imageGeneration' }),
+      turnItem('image-2', 4, { type: 'tool_call', text: 'imageGeneration' }),
+      turnItem('answer-1', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByRole('button', { name: 'Generated 2 images' })).toBeTruthy()
   })
 
   it('keeps every line of a command output, including the first', () => {
@@ -802,7 +859,7 @@ describe('completed activity disclosure', () => {
         turnItem('answer', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
       ])
       fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
-      const group = screen.getByRole('button', { name: 'Ran commands' })
+      const group = screen.getByRole('button', { name: 'Ran 2 commands' })
       fireEvent.click(group)
       fireEvent.click(group)
       fireEvent.click(group)
@@ -1014,6 +1071,7 @@ describe('completed activity disclosure', () => {
       'false',
     )
     expect(screen.getByText('Inspecting state')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command and searched once' }))
     expect(screen.getByText('Ran pnpm test')).toBeTruthy()
     expect(screen.getByText('Searched 4 files')).toBeTruthy()
   })
@@ -1044,7 +1102,7 @@ describe('completed activity disclosure', () => {
 
     fireEvent.click(thought)
     expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Ran commands' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Read 1 file and ran 2 commands' }))
     const firstCommand = screen.getByText('Ran git status --short')
     expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('false')
     expect(screen.getByText('Ran pnpm test')).toBeTruthy()
@@ -1071,6 +1129,9 @@ describe('completed activity disclosure', () => {
     const stack = screen.getByRole('button', { name: 'Worked for 1s' })
     expect(stack.textContent).not.toMatch(/"type": "content"/)
     fireEvent.click(stack)
+    for (const row of document.querySelectorAll<HTMLButtonElement>('.activity__body .aux__row')) {
+      if (!row.disabled) fireEvent.click(row)
+    }
     expect(screen.queryByText(/"type": "content"/)).toBeNull()
     expect(screen.queryByText(/"type": "GrepSearch"/)).toBeNull()
     expect(screen.getByText('found 29 matches')).toBeTruthy()
@@ -1141,11 +1202,17 @@ describe('completed activity disclosure', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
     expect(screen.getAllByText('Viewed image')).toHaveLength(2)
     expect(screen.getByText('Could not view image')).toBeTruthy()
+    expect(screen.queryByText('desktop.png')).toBeNull()
+    for (const row of container.querySelectorAll<HTMLButtonElement>('.activity__body .aux__row')) {
+      fireEvent.click(row)
+    }
     expect(screen.getByText('desktop.png')).toBeTruthy()
     expect(screen.getByText('mobile.png')).toBeTruthy()
     expect(screen.getByText('broken.png')).toBeTruthy()
     expect(screen.queryByText('[imageView]')).toBeNull()
-    expect(container.querySelectorAll('.activity__body .tabler-icon-library-photo')).toHaveLength(3)
+    expect(
+      container.querySelectorAll('.activity__body .aux__glyph .tabler-icon-library-photo'),
+    ).toHaveLength(3)
   })
 
   it('shows sent image attachments above the user message', async () => {
@@ -1283,6 +1350,7 @@ describe('completed activity disclosure', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Viewed image' }))
 
     await waitFor(() =>
       expect(screen.getByRole('img', { name: 'Preview of uuid-layout.png' })).toBeTruthy(),
@@ -1394,7 +1462,10 @@ describe('completed activity disclosure', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
     expect(screen.getByText('Edited src/chat.ts')).toBeTruthy()
-    expect(document.querySelector('.activity__detail')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Edited src/chat.ts' })).toHaveProperty(
+      'disabled',
+      true,
+    )
   })
 
   it('shows response actions only on the explicit final answer', () => {
@@ -1574,26 +1645,20 @@ describe('collapsed row disclosure', () => {
       />,
     )
 
-    const disclosure = screen.getByRole('button', { name: 'Ran commands' })
-    const reveal = container.querySelector('.activity__reveal')
-    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
-    expect(reveal?.getAttribute('data-open')).toBe('false')
-    expect(reveal?.getAttribute('aria-hidden')).toBe('true')
-    expect(reveal?.hasAttribute('inert')).toBe(true)
-    expect(container.querySelector('.activity__item-label')).toBeNull()
-    expect(container.querySelector('.activity__detail')).toBeNull()
-
-    fireEvent.click(disclosure)
-
-    expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-    expect(reveal?.getAttribute('data-open')).toBe('opening')
-    expect(reveal?.getAttribute('aria-hidden')).toBe('false')
-    expect(reveal?.hasAttribute('inert')).toBe(false)
+    // A lone call is its own row rather than a batch of one.
     const command = screen.getByRole('button', { name: 'Ran pnpm test' })
+    const reveal = container.querySelector('.aux__reveal')
+    expect(container.querySelector('.activity__reveal')).toBeNull()
     expect(command.getAttribute('aria-expanded')).toBe('false')
+    expect(reveal?.getAttribute('data-open')).toBe('false')
+    expect(reveal?.hasAttribute('inert')).toBe(true)
     expect(screen.queryByText('1 failed, 12 passed')).toBeNull()
+
     fireEvent.click(command)
+
     expect(command.getAttribute('aria-expanded')).toBe('true')
+    expect(reveal?.getAttribute('data-open')).toBe('opening')
+    expect(reveal?.hasAttribute('inert')).toBe(false)
     expect(screen.getByText('1 failed, 12 passed')).toBeTruthy()
   })
 })
