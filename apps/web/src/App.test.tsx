@@ -2014,7 +2014,7 @@ describe('web client', () => {
 
   it('checks voice only for the fallback provider when connections win startup', async () => {
     desktopShell.enabled = true
-    localStorage.setItem('harness.provider', 'cursor')
+    localStorage.setItem('harness.provider', 'opencode')
     let resolveProviders!: (value: { providers: ServerProvider[] }) => void
     const providers = new Promise<{ providers: ServerProvider[] }>((resolve) => {
       resolveProviders = resolve
@@ -2037,7 +2037,7 @@ describe('web client', () => {
       ).toHaveLength(1)
       expect(transport.request).toHaveBeenCalledWith('voice.status', { provider: 'codex' })
     })
-    expect(transport.request).not.toHaveBeenCalledWith('voice.status', { provider: 'cursor' })
+    expect(transport.request).not.toHaveBeenCalledWith('voice.status', { provider: 'opencode' })
   })
 })
 describe('new chats', () => {
@@ -2649,16 +2649,17 @@ describe('new chats', () => {
   )
 
   it('preserves a parked custom model without blocking a catalogless beta source', async () => {
-    const parked = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
-    localStorage.setItem('harness.provider', 'cursor')
-    localStorage.setItem('harness.model', 'custom:cursor:cursor-large')
+    const parked =
+      '[{"provider":"opencode","modelId":"opencode-large","displayName":"OpenCode Large"}]'
+    localStorage.setItem('harness.provider', 'opencode')
+    localStorage.setItem('harness.model', 'custom:opencode:opencode-large')
     localStorage.setItem('harness.customModels.v1', parked)
     render(<App />)
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
     fireEvent.change(composer, { target: { value: 'Use the provider default' } })
     await waitFor(() => expect(sendButton.disabled).toBe(false))
-    expect(screen.queryByText('Cursor Large')).toBeNull()
+    expect(screen.queryByText('OpenCode Large')).toBeNull()
     expect(localStorage.getItem('harness.customModels.v1')).toBe(parked)
     fireEvent.keyDown(composer, { key: 'Enter' })
     await waitFor(() =>
