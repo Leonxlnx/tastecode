@@ -290,51 +290,26 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-27 main b9b0253d · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-27 main baa34282 · 0.1.2 source preparation</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
-          Embedded browser guests retain background throttling while separate hidden capture windows
-          keep their existing behavior.
+          Desktop startup loads the updater only when needed. Browser guests throttle in the
+          background, and macOS one-time-code AutoFill requires an explicit field type (PRs #1327,
+          #1336, #1337).
         </p>
         <p>
-          macOS one-time-code AutoFill requires an explicit text content type in both development
-          and packaged app metadata.
+          Provider history refreshes reuse unchanged metadata, usage-limit callers share cached
+          reads, duplicate Codex notices are ignored, and repeated turn patches are skipped (PRs
+          #1328, #1330, #1331, #1332).
         </p>
         <p>
-          Explicit history compaction removes stream fragments already represented by completed
-          text, preserving imported records.
-        </p>
-        <p>
-          Only the 64 most recently written replay snapshots stay on disk. Closing a thread removes
-          its snapshot.
-        </p>
-        <p>
-          Search indexes the first 12K and last 4K characters of tool output while retaining full
-          messages. Existing indexes are rebuilt.
-        </p>
-        <p>
-          Repeated identical patches in a running turn no longer duplicate the patch in the event
-          log.
-        </p>
-        <p>
-          Usage limit callers share reads for 60 seconds. Usage, login and reset events invalidate
-          the cache, and burst notifications are coalesced.
-        </p>
-        <p>
-          Codex reuses indexed file stats for 60 seconds while its index is unchanged; Grok reuses
-          unchanged parsed summaries.
-        </p>
-        <p>
-          Known account updates and config warnings no longer produce duplicate unknown-event
-          warnings.
-        </p>
-        <p>
-          The desktop updater loads only when needed. Its code is kept in a separate build chunk so
-          it does not slow the first window.
+          Tool search indexes bounded output, disk keeps 64 recent replay snapshots, and explicit
+          history compaction folds completed stream fragments (PRs #1333, #1334, #1335). OpenCode
+          shares concurrent server starts on nightly (PR #1329).
         </p>
         <p>
           Model discovery keeps provider-reported IDs current. Preferred OpenAI and Claude rows now

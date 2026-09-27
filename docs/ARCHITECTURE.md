@@ -357,7 +357,7 @@ content-addressed snapshot of touched files only.
 **Search is FTS5** over message and tool-output text. Instant search across every session
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well. Messages are indexed in
-full. Command and tool output indexes its first 12 KB and last 4 KB, which keeps long logs from
+full. Command and tool output indexes its first 12K and last 4K characters, which keeps long logs from
 being duplicated into the index. A search-index version change drops and recreates the table
 before the rebuild; deleting every row first would tokenize the old index again.
 
@@ -537,4 +537,5 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-26 | Scanned one-byte copies of Latin-1 lines in every Shiki grammar pass, including the main-thread diff views.                                                                    |
 | 2026-09-26 | Kept inline tool images out of Codex tool text and imported tool calls; the transcript never shows tool attachments.                                                           |
 | 2026-09-26 | Let provider history reads skip turns already stored locally; the server drops their echoes anyway.                                                                            |
-| 2026-09-27 | Loaded the desktop release updater as a lazy chunk, with chunks included in desktop packages.                                                                                  |
+| 2026-09-26 | Cached usage-limit reads, skipped repeated turn diffs, bounded search-indexed tool output and disk replay snapshots, and folded completed deltas during compaction.            |
+| 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
