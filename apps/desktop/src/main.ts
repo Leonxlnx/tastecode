@@ -492,7 +492,12 @@ function createWindow(): void {
     logStartupMilestone('ready-to-show')
     startupWindowReady = true
     if (process.env['HARNESS_STARTUP_EXIT_AFTER_READY'] === '1') {
-      if (startupSettledMetricsDelayMs !== undefined) window.showInactive()
+      // Like the renderer fixture, keep the measured window in front so native
+      // occlusion cannot suspend its startup notice exit transitions.
+      if (startupSettledMetricsDelayMs !== undefined) {
+        window.show()
+        window.webContents.sendInputEvent({ type: 'mouseMove', x: 0, y: 0 })
+      }
       finishStartupBenchmarkIfReady()
       return
     }
