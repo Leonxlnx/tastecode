@@ -58,6 +58,7 @@ import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
+import { StartupIdleGate } from './startup-idle.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
@@ -142,6 +143,22 @@ let startupRendererReady = false
 let startupHydratedReady = false
 let startupCatalogReady = false
 let startupExitScheduled = false
+const startupIdleGate = new StartupIdleGate(startupSettledMetricsDelayMs ?? 0, () => {
+  const metrics = app.getAppMetrics()
+  void import('./performance-memory.js')
+    .then(async ({ collectSettledBenchmarkMemory }) => {
+      const memory = await collectSettledBenchmarkMemory(() => app.getAppMetrics())
+      if (startupIdleGate.interrupted) memory.stable = false
+      console.log(
+        '[startup] settled ' + JSON.stringify({ ...summarizeAppMetrics(metrics), memory }),
+      )
+      app.quit()
+    })
+    .catch((error: unknown) => {
+      console.error('[startup] memory measurement failed', error)
+      app.exit(1)
+    })
+})
 
 function finishStartupBenchmarkIfReady(): void {
   if (
@@ -164,21 +181,7 @@ function finishStartupBenchmarkIfReady(): void {
   // The first read establishes the CPU and wakeup interval. Electron reports
   // both values since the previous read; memory is sampled at the end.
   app.getAppMetrics()
-  setTimeout(() => {
-    const metrics = app.getAppMetrics()
-    void import('./performance-memory.js')
-      .then(async ({ collectSettledBenchmarkMemory }) => {
-        const memory = await collectSettledBenchmarkMemory(() => app.getAppMetrics())
-        console.log(
-          '[startup] settled ' + JSON.stringify({ ...summarizeAppMetrics(metrics), memory }),
-        )
-        app.quit()
-      })
-      .catch((error: unknown) => {
-        console.error('[startup] memory measurement failed', error)
-        app.exit(1)
-      })
-  }, startupSettledMetricsDelayMs)
+  startupIdleGate.ready()
 }
 
 const attachmentPreviewSecret = randomBytes(32)
@@ -245,11 +248,16 @@ if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
       name !== 'projects-received' &&
       name !== 'projects-reconciled' &&
       name !== 'projects-ready' &&
-      name !== 'catalog-ready'
+      name !== 'catalog-ready' &&
+      name !== 'requests-busy' &&
+      name !== 'requests-idle'
     ) {
       return
     }
     logStartupMilestone(name)
+    if (name === 'requests-busy' || name === 'requests-idle') {
+      startupIdleGate.setIdle(name === 'requests-idle')
+    }
     if (name === 'first-frame') {
       startupRendererReady = true
       finishStartupBenchmarkIfReady()
