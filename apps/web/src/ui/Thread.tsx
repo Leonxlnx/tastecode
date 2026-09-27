@@ -14,7 +14,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual'
+import { useVirtualizer, type Range, type Virtualizer } from '@tanstack/react-virtual'
 import type { ApprovalDecision, Item } from '@harness/contracts'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
@@ -196,21 +196,34 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
   const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
   const getItemKey = useVirtualItemKey(thread.items, props.threadId)
+  /** Filled in once this render has projected the thread; read lazily by the virtualizer. */
+  const estimateRow = useRef<(index: number) => number>(() => DEFAULT_ROW_ESTIMATE)
+  const estimateSize = useCallback((index: number) => estimateRow.current(index), [])
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | undefined>(undefined)
+  const rangeExtractor = useCallback(
+    (range: Range) =>
+      overscanVisibleRows(range, (index) => virtualizerRef.current?.measurementsCache[index]?.size),
+    [],
+  )
 
   const virtualizer = useVirtualizer({
     count: thread.items.length,
     getScrollElement: () => scroller.current,
-    // Roughly one paragraph. Wrong estimates only cost a correction on measure.
-    estimateSize: () => 72,
+    // A wrong estimate costs a scroll correction when the row is first
+    // measured. Hidden tool rows are most rows in a working session, so they
+    // must estimate as nothing rather than a paragraph each.
+    estimateSize,
     // Stable identity per item, never the index — index keys make every
     // insertion look like a change to every row after it.
     getItemKey,
     overscan: 8,
+    rangeExtractor,
     // Assume a viewport for the very first render, before measurement has run.
     // Without it the first frame contains no rows at all, which reads as a
     // blank thread for one frame when switching sessions.
     initialRect: { width: 720, height: 800 },
   })
+  virtualizerRef.current = virtualizer
 
   // A turn starting is the one moment the reading position should change.
   // Watch its first item rather than the running boolean: a queued turn can
@@ -298,6 +311,12 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
   const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
+  estimateRow.current = (index) => {
+    const item = thread.items[index]
+    return item
+      ? estimateThreadRowSize(item, index, presentations.get(item.turnId))
+      : DEFAULT_ROW_ESTIMATE
+  }
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
@@ -781,13 +800,8 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   if (!item) return null
 
   const live = running && activeTurnId === item.turnId
-  const compactedActivity =
-    activityGroup !== undefined &&
-    (isStackedActivity(item) ||
-      (presentation?.complete === true &&
-        isWorkDisclosureItem(item) &&
-        index !== presentation.finalAnswerIndex))
-  const activityLead = compactedActivity && activityGroup.firstIndex === index
+  const compactedActivity = isCompactedActivity(item, index, presentation, activityGroup)
+  const activityLead = compactedActivity && activityGroup?.firstIndex === index
   const itemAfterActivity = activityGroup
     ? threadItemAt(items, liveItems, activityGroup.lastIndex + 1)
     : undefined
@@ -858,6 +872,74 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     </div>
   )
 })
+
+/** Roughly one paragraph, for rows whose height depends on their text. */
+const DEFAULT_ROW_ESTIMATE = 72
+/** A collapsed one-line work summary: its 30px line, 8px margin and the row gap. */
+const COLLAPSED_ACTIVITY_ESTIMATE = 46
+
+/** Whether this row belongs to a work disclosure that another row renders. */
+function isCompactedActivity(
+  item: Item,
+  index: number,
+  presentation: TurnPresentation | undefined,
+  activityGroup: TurnActivityGroup | undefined,
+): boolean {
+  return (
+    activityGroup !== undefined &&
+    (isStackedActivity(item) ||
+      (presentation?.complete === true &&
+        isWorkDisclosureItem(item) &&
+        index !== presentation.finalAnswerIndex))
+  )
+}
+
+/**
+ * The height a row is expected to measure before it has rendered. Only the
+ * lead row of a work disclosure renders, so every other row in it measures 0.
+ */
+export function estimateThreadRowSize(
+  item: Item,
+  index: number,
+  presentation: TurnPresentation | undefined,
+): number {
+  if (isBlankReasoning(item)) return 0
+  const activityGroup = presentation
+    ? activityGroupAt(presentation.activityGroups, index)
+    : undefined
+  if (isCompactedActivity(item, index, presentation, activityGroup)) {
+    return activityGroup?.firstIndex === index ? COLLAPSED_ACTIVITY_ESTIMATE : 0
+  }
+  if (isActivity(item)) return COLLAPSED_ACTIVITY_ESTIMATE
+  return DEFAULT_ROW_ESTIMATE
+}
+
+/** Bounds the walk past hidden rows so a huge collapsed batch stays cheap. */
+const MAX_OVERSCAN_WALK = 256
+
+/**
+ * The rows to mount: the visible range plus `overscan` rows on each side that
+ * actually take up space. Most rows inside a work disclosure measure 0, and
+ * counting them would leave no real margin: a disclosure just above the
+ * viewport could unmount for one frame while it collapses, losing its state.
+ */
+export function overscanVisibleRows(
+  range: Range,
+  sizeOf: (index: number) => number | undefined,
+): number[] {
+  const step = (from: number, direction: 1 | -1, last: number) => {
+    let index = from
+    for (let seen = 0, walked = 0; index !== last && seen < range.overscan; walked++) {
+      if (walked >= MAX_OVERSCAN_WALK) break
+      index += direction
+      if ((sizeOf(index) ?? 1) > 0) seen++
+    }
+    return index
+  }
+  const start = step(range.startIndex, -1, 0)
+  const end = step(range.endIndex, 1, Math.max(0, range.count - 1))
+  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset)
+}
 
 /**
  * Only animate items appended while this thread is open. Historical rows can
