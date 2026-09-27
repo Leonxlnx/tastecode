@@ -40,10 +40,11 @@ import {
   IconWorldSearch as WorldSearch,
 } from '@tabler/icons-react'
 import {
+  canPreviewViewedImages,
+  knownViewedImagePreview,
   previewViewedImage,
   revealPath,
   writeClipboardText,
-  type PickedAttachment,
 } from '../bridge.js'
 import { isEditableTarget, matchesShortcut } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
@@ -1865,8 +1866,13 @@ function ViewedImagePreview({
   fallbackClassName?: string
   variant?: 'detail' | 'message'
 }) {
-  const [preview, setPreview] = useState<PickedAttachment>()
-  const [previewSettled, setPreviewSettled] = useState(false)
+  // A disclosure measures its row in the commit that opens it. A preview that
+  // arrives a frame later would resize the reveal mid-wipe, so anything
+  // already known renders in the first frame.
+  const [preview, setPreview] = useState(() => knownViewedImagePreview(reference))
+  const [previewSettled, setPreviewSettled] = useState(
+    () => preview !== undefined || !canPreviewViewedImages,
+  )
   const [viewerOpen, setViewerOpen] = useState(false)
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
@@ -1874,8 +1880,9 @@ function ViewedImagePreview({
   useEffect(() => {
     if (!active) return
     let cancelled = false
-    setPreview(undefined)
-    setPreviewSettled(false)
+    const known = knownViewedImagePreview(reference)
+    setPreview(known)
+    setPreviewSettled(known !== undefined || !canPreviewViewedImages)
     setThumbnailFailed(false)
     setImageFailed(false)
     void previewViewedImage(reference)
@@ -1896,18 +1903,36 @@ function ViewedImagePreview({
   const inlineSource =
     preview?.thumbnailUrl && !thumbnailFailed ? preview.thumbnailUrl : preview?.previewUrl
   if (!preview || !inlineSource || !preview.previewUrl || imageFailed) {
-    if (variant === 'detail' && fallbackClassName) {
+    // Without a bridge nothing will ever load, so the plain reference is final.
+    if (variant === 'detail' && fallbackClassName && !canPreviewViewedImages) {
       return <pre className={fallbackClassName}>{reference}</pre>
+    }
+    const status = previewSettled ? 'is-unavailable' : 'is-loading'
+    const label = previewSettled
+      ? `Preview unavailable for ${attachmentName(reference)}`
+      : `Loading preview of ${attachmentName(reference)}`
+    if (variant === 'detail') {
+      // The image's own frame and name line, so the reveal around it keeps
+      // its height when the preview settles.
+      return (
+        <div className={`viewed-image-preview ${status}`} role="status" aria-label={label}>
+          <span className="viewed-image-preview__placeholder" aria-hidden>
+            <Images />
+            {previewSettled ? (
+              <span className="viewed-image-preview__unavailable-copy">Preview unavailable</span>
+            ) : null}
+          </span>
+          <span className="viewed-image-preview__name" title={reference}>
+            {reference}
+          </span>
+        </div>
+      )
     }
     return (
       <span
-        className={`viewed-image-preview viewed-image-preview--message ${previewSettled ? 'is-unavailable' : 'is-loading'}`}
+        className={`viewed-image-preview viewed-image-preview--message ${status}`}
         role="status"
-        aria-label={
-          previewSettled
-            ? `Preview unavailable for ${attachmentName(reference)}`
-            : `Loading preview of ${attachmentName(reference)}`
-        }
+        aria-label={label}
       >
         <span className="viewed-image-preview__placeholder" aria-hidden>
           <Images />

@@ -771,6 +771,7 @@
 }
 
 .viewed-image-preview {
+  --viewed-image-frame-h: 180px;
   width: min(320px, calc(100% - 21px));
   margin: 7px 0 2px 21px;
 }
@@ -779,7 +780,7 @@
   display: grid;
   place-items: center;
   width: 100%;
-  height: 180px;
+  height: var(--viewed-image-frame-h);
   padding: 0;
   overflow: hidden;
   background: var(--chrome-recessed);
@@ -799,6 +800,18 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+
+/* A reveal is measured once, as it opens. A loading or missing preview holds
+   the image frame's height, so the preview settling later cannot resize the
+   reveal mid-wipe and throw the rows below out of step with it. */
+.viewed-image-preview:not(.viewed-image-preview--message) > .viewed-image-preview__placeholder {
+  height: var(--viewed-image-frame-h);
+}
+
+.viewed-image-preview.is-loading:not(.viewed-image-preview--message)
+  > .viewed-image-preview__placeholder {
+  opacity: 0.68;
 }
 
 .viewed-image-preview__name {
