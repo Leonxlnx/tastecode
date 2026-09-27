@@ -324,6 +324,7 @@ class WebSocketTransport implements Transport {
         reject: fail,
       })
     })
+    if (this.#pending.size === 1) reportStartupMilestone('requests-busy')
     try {
       this.#send(JSON.stringify({ id, method, params }), id)
     } catch (error) {
@@ -341,6 +342,9 @@ class WebSocketTransport implements Transport {
     this.#responses.delete(id)
     this.#pending.delete(id)
     this.#inFlight.delete(id)
+    if (pending && this.#pending.size === 0 && this.#state === 'open') {
+      reportStartupMilestone('requests-idle')
+    }
     const index = this.#queue.findIndex((entry) => entry.id === id)
     if (index >= 0) {
       const [entry] = this.#queue.splice(index, 1)
@@ -630,6 +634,7 @@ class WebSocketTransport implements Transport {
   #setState(state: ConnectionState): void {
     if (this.#state === state) return
     this.#state = state
+    if (state !== 'open') reportStartupMilestone('requests-busy')
     for (const listener of this.#stateListeners) listener(state)
   }
 }
