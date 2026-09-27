@@ -103,9 +103,20 @@ const CONTROL_READ_TIMEOUT_MS = 10_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
 
+const IGNORABLE_NOTIFICATIONS = new Set([
+  'remoteControl/status/changed',
+  'thread/status/changed',
+  // Account state is read on demand through account/read, and sign-in results
+  // already arrive as account/login/completed.
+  'account/updated',
+  // The app-server writes the same warning to stderr, which is already
+  // forwarded to the log; mapping this too would print every warning twice.
+  'configWarning',
+])
+
 /** Provider state TasteCode either does not expose or already derives from shared events. */
 export function isIgnorableCodexNotification(method: string): boolean {
-  return method === 'remoteControl/status/changed' || method === 'thread/status/changed'
+  return IGNORABLE_NOTIFICATIONS.has(method)
 }
 
 export function formatCodexWarning(notification: WarningNotification): string {

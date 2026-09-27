@@ -290,12 +290,16 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-27 main 55f56b6d · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-27 main 1b343c80 · 0.1.2 source preparation</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          Known account updates and config warnings no longer produce duplicate unknown-event
+          warnings.
+        </p>
         <p>
           The desktop updater loads only when needed. Its code is kept in a separate build chunk so
           it does not slow the first window.
