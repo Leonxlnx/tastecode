@@ -47,6 +47,72 @@ describe('NoticePresence', () => {
     expect(milestone).toHaveBeenCalledTimes(2)
   })
 
+  it.each(['finished', 'cancelled'] as const)(
+    'removes an occluded notice when its transition is %s without an end event',
+    async (outcome) => {
+      let finish!: () => void
+      let cancel!: () => void
+      const finished = new Promise<void>((resolve, reject) => {
+        finish = resolve
+        cancel = () => reject(new Error('Transition cancelled'))
+      })
+      const view = render(
+        <NoticePresence className="notice" role="status" visible>
+          Update
+        </NoticePresence>,
+      )
+      Object.defineProperty(screen.getByRole('status'), 'getAnimations', {
+        value: () => [{ finished }],
+      })
+      view.rerender(
+        <NoticePresence className="notice" role="status" visible={false}>
+          Update
+        </NoticePresence>,
+      )
+      expect(screen.getByRole('status').getAttribute('data-state')).toBe('closing')
+      await act(async () => {
+        if (outcome === 'finished') finish()
+        else cancel()
+      })
+      expect(screen.queryByRole('status')).toBeNull()
+    },
+  )
+
+  it('finishes an exit when the page becomes hidden', () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const notice = (visible: boolean) => (
+      <NoticePresence className="notice" role="status" visible={visible}>
+        Update
+      </NoticePresence>
+    )
+    const view = render(notice(true))
+    view.rerender(notice(false))
+    expect(screen.getByRole('status').getAttribute('data-state')).toBe('closing')
+    visibility.mockReturnValue('hidden')
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('does not remove a reopened notice when its old transition finishes', async () => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const notice = (visible: boolean) => (
+      <NoticePresence className="notice" role="status" visible={visible}>
+        Update
+      </NoticePresence>
+    )
+    const view = render(notice(true))
+    Object.defineProperty(screen.getByRole('status'), 'getAnimations', {
+      value: () => [{ finished }],
+    })
+    view.rerender(notice(false))
+    view.rerender(notice(true))
+    await act(async () => finish())
+    expect(screen.getByRole('status').getAttribute('data-state')).toBe('open')
+  })
+
   it('uses the latest callback without restarting the timeout on renders', () => {
     vi.useFakeTimers()
     const first = vi.fn()
