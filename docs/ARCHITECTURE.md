@@ -82,7 +82,9 @@ loopback, where dev previews bind 127.0.0.1. Programmatic navigation is checked 
 session request API; stopping inside `did-start-navigation` can crash Chromium. This policy
 is not a general subresource or network firewall. The guest denies permissions, keeps
 attempted new windows in the same preview, and exposes an explicit validated system-browser
-handoff.
+handoff. Guests keep Chromium's background throttling, so a hidden or minimized window does not
+run a page's timers and animation frames at full rate. Hidden full-page captures use their own
+unthrottled offscreen window instead.
 
 The guest remains a normal DOM element, so it follows the animated workspace without a native
 overlay or bounds IPC. A renderer `ResizeObserver` fits fluid, desktop, tablet, and mobile modes;
