@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { reportStartupMilestone } from '../bridge.js'
 
 type NoticePresenceProps = {
   visible: boolean
@@ -27,6 +28,11 @@ export function NoticePresence(props: NoticePresenceProps) {
   useLayoutEffect(() => {
     onDismiss.current = props.onDismiss
   })
+  useLayoutEffect(() => {
+    if (!mounted) return
+    reportStartupMilestone('notice-open')
+    return () => reportStartupMilestone('notice-closed')
+  }, [mounted])
   const canDismiss = Boolean(props.onDismiss)
   useEffect(() => {
     if (!props.visible || !canDismiss || props.autoDismissPaused || hovered || focused) return

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as bridge from '../bridge.js'
 import { NoticePresence } from './NoticePresence.js'
 
 const rootCssPath = resolve(process.cwd(), 'apps/web/src/styles/app.css')
@@ -14,6 +15,7 @@ const css = readFileSync(
 
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.useRealTimers()
 })
 
@@ -24,6 +26,27 @@ function dispatchTransitionEnd(element: Element, propertyName: string) {
 }
 
 describe('NoticePresence', () => {
+  it('reports startup activity until the exit transition actually completes', () => {
+    const milestone = vi.spyOn(bridge, 'reportStartupMilestone')
+    const view = render(
+      <NoticePresence className="notice" role="status" visible>
+        Update
+      </NoticePresence>,
+    )
+    expect(milestone).toHaveBeenCalledExactlyOnceWith('notice-open')
+    view.rerender(
+      <NoticePresence className="notice" role="status" visible={false}>
+        Update
+      </NoticePresence>,
+    )
+    expect(milestone).not.toHaveBeenCalledWith('notice-closed')
+    act(() => dispatchTransitionEnd(screen.getByRole('status'), 'opacity'))
+    expect(milestone).toHaveBeenLastCalledWith('notice-closed')
+    expect(milestone).toHaveBeenCalledTimes(2)
+    view.unmount()
+    expect(milestone).toHaveBeenCalledTimes(2)
+  })
+
   it('uses the latest callback without restarting the timeout on renders', () => {
     vi.useFakeTimers()
     const first = vi.fn()
