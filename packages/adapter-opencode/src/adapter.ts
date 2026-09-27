@@ -143,6 +143,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   readonly #mcpCredentials: Record<string, string>
   #baseUrl: string | undefined
   #server: { close(): void } | undefined
+  #starting: Promise<void> | undefined
+  #generation = 0
   #protocol: OpenCodeProtocol | undefined
   #authorization: string | undefined
   #client: OpencodeClient | undefined
@@ -182,26 +184,49 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return OPENCODE_CAPABILITIES
   }
 
+  /**
+   * Model listing and thread start can race on a fresh instance. They share one
+   * launch so the losing call cannot orphan a second `opencode serve` process.
+   */
   async start(): Promise<void> {
     if (this.#baseUrl && this.#protocol) return
+    if (!this.#starting) {
+      const starting = this.#launch().finally(() => {
+        if (this.#starting === starting) this.#starting = undefined
+      })
+      this.#starting = starting
+    }
+    return this.#starting
+  }
+
+  async #launch(): Promise<void> {
     if (this.#configuredBaseUrl) {
       this.#baseUrl = this.#configuredBaseUrl
       this.#protocol = await this.#detectProtocol()
       return
     }
+    const generation = this.#generation
+    let server: Awaited<ReturnType<typeof launchOpenCodeServer>>
     try {
       const config =
         this.#mcpServers.length > 0
           ? { mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) }
           : {}
-      const server = await launchOpenCodeServer(config, this.#spawn)
-      this.#server = server
-      this.#baseUrl = server.url
-      this.#authorization = server.authorization
-      this.#protocol = await this.#detectProtocol()
+      server = await launchOpenCodeServer(config, this.#spawn)
     } catch {
       throw new Error('OpenCode is unavailable. Install it and run `opencode` once to sign in.')
     }
+    // dispose() cannot reach a server that was still launching.
+    if (generation !== this.#generation) {
+      await server.close()
+      throw new Error('OpenCode stopped while it was starting.')
+    }
+    this.#server = server
+    this.#baseUrl = server.url
+    this.#authorization = server.authorization
+    const protocol = await this.#detectProtocol()
+    if (generation !== this.#generation) throw new Error('OpenCode stopped while it was starting.')
+    this.#protocol = protocol
   }
 
   async startThread(workspacePath: string, options: OpenCodeStartOptions = {}): Promise<Thread> {
@@ -439,6 +464,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   dispose(): void {
     this.#eventController?.abort()
     this.#server?.close()
+    this.#generation += 1
+    this.#starting = undefined
     this.#eventController = undefined
     this.#server = undefined
     // Without this a disposed instance stays pointed at the closed port and a
