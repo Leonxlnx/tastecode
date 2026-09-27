@@ -1856,7 +1856,7 @@ describe('cross-session search', () => {
     seeded.close()
 
     const raw = new DatabaseSync(file)
-    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v1')
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v2')
     raw.close()
 
     const rebuilt = new Store(file)
@@ -1864,6 +1864,70 @@ describe('cross-session search', () => {
       const after = rebuilt.searchSessions({ query: 'identity' }).results[0]?.resultId
       expect(before).toBeDefined()
       expect(after).toBe(before)
+    } finally {
+      rebuilt.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('indexes the start and end of long tool output and shrinks rows from older builds', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-search-bound-'))
+    const file = path.join(dir, 'bound.db')
+    const output = [
+      'openingmarker',
+      'filler '.repeat(4_000),
+      'middlemarker',
+      'filler '.repeat(4_000),
+      'closingmarker',
+    ].join('\n')
+    const command = (id: string): DomainEvent => ({
+      type: 'item.completed',
+      item: {
+        id,
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'pnpm test',
+        text: output,
+        createdAt: 1,
+      },
+    })
+    const seeded = new Store(file)
+    seeded.addProject('/repo', 'Repo')
+    seeded.addThread({ id: 't-long', projectPath: '/repo', provider: 'codex', title: 'Long' })
+    seeded.append('t-long', command('fresh'))
+    seeded.append('t-long', message(`longmessage ${'words '.repeat(4_000)} messageend`))
+    expect(seeded.searchSessions({ query: 'openingmarker' }).results).toHaveLength(1)
+    expect(seeded.searchSessions({ query: 'closingmarker' }).results).toHaveLength(1)
+    expect(seeded.searchSessions({ query: 'middlemarker' }).results).toEqual([])
+    expect(seeded.searchSessions({ query: 'messageend' }).results).toHaveLength(1)
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    const legacySeq = Number(
+      raw
+        .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+        .run('t-long', 1, JSON.stringify(command('legacy'))).lastInsertRowid,
+    )
+    raw
+      .prepare(
+        `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(legacySeq, 't-long', legacySeq, 'turn-1', 1, `pnpm test\n${output}`)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v2')
+    raw.close()
+
+    const rebuilt = new Store(file)
+    try {
+      expect(rebuilt.searchSessions({ query: 'middlemarker' }).results).toEqual([])
+      expect(rebuilt.searchSessions({ query: 'closingmarker' }).results).toHaveLength(2)
+      const check = new DatabaseSync(file)
+      const longest = check
+        .prepare(`SELECT MAX(length(text)) AS length FROM session_search WHERE text LIKE 'pnpm%'`)
+        .get() as { length: number }
+      check.close()
+      expect(longest.length).toBeLessThan(17 * 1024)
     } finally {
       rebuilt.close()
       rmSync(dir, { recursive: true, force: true })

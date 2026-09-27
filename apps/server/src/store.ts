@@ -204,7 +204,12 @@ type InterruptedThreadState = {
 const RESTART_INTERRUPTION_MESSAGE =
   'Turn interrupted: TasteCode restarted. Send a new message to continue.'
 
-const SEARCH_INDEX_VERSION = 'session_search_v1'
+// v2 bounds indexed tool output; the rebuild shrinks rows written before the bound.
+const SEARCH_INDEX_VERSION = 'session_search_v2'
+// A long command or tool result is found by its command, its opening output or
+// its final lines. Indexing a whole log duplicates it into the full-text index.
+const SEARCH_OUTPUT_HEAD_CHARACTERS = 12 * 1024
+const SEARCH_OUTPUT_TAIL_CHARACTERS = 4 * 1024
 const USAGE_INDEX_VERSION = 'usage_events_v1'
 const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
@@ -254,6 +259,16 @@ CREATE INDEX IF NOT EXISTS threads_inactive
   ON threads (last_active_at)
   WHERE closed_at IS NULL AND lifecycle_state = 'active' AND ephemeral = 0 AND keep_active = 0;
 `
+
+const SESSION_SEARCH_TABLE = `
+CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
+  thread_id UNINDEXED,
+  event_seq UNINDEXED,
+  turn_id UNINDEXED,
+  created_at UNINDEXED,
+  text,
+  tokenize = 'unicode61'
+);`
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
@@ -427,14 +442,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   name TEXT PRIMARY KEY
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
-  thread_id UNINDEXED,
-  event_seq UNINDEXED,
-  turn_id UNINDEXED,
-  created_at UNINDEXED,
-  text,
-  tokenize = 'unicode61'
-);
+${SESSION_SEARCH_TABLE}
 
 CREATE TABLE IF NOT EXISTS diff_decisions (
   thread_id TEXT NOT NULL,
@@ -2947,7 +2955,9 @@ export class Store {
     )
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      if (rebuild.search) this.#db.exec(`DELETE FROM session_search`)
+      // Deleting every full-text row first tokenizes all of them again to
+      // record deletions. A new table starts with an empty index.
+      if (rebuild.search) this.#db.exec(`DROP TABLE session_search; ${SESSION_SEARCH_TABLE}`)
       if (rebuild.usage) this.#db.exec(`DELETE FROM usage_events`)
       if (rebuild.inbox) this.#db.exec(`DELETE FROM inbox_events`)
       if (rebuild.userSubmission) this.#db.exec(`DELETE FROM user_submission_items`)
@@ -2992,7 +3002,10 @@ export class Store {
         cursor = Number(rows.at(-1)?.seq ?? cursor)
       }
 
-      if (rebuild.search) saveMigration.run(SEARCH_INDEX_VERSION)
+      if (rebuild.search) {
+        this.#db.exec(`INSERT INTO session_search (session_search) VALUES ('optimize')`)
+        saveMigration.run(SEARCH_INDEX_VERSION)
+      }
       if (rebuild.usage) saveMigration.run(USAGE_INDEX_VERSION)
       if (rebuild.inbox) saveMigration.run(INBOX_INDEX_VERSION)
       if (rebuild.userSubmission) saveMigration.run(USER_SUBMISSION_INDEX_VERSION)
@@ -3402,7 +3415,24 @@ function searchableEntry(event: DomainEvent): SearchableEntry | undefined {
           ? item.text
           : undefined
   if (!text?.trim()) return undefined
-  return { turnId: item.turnId, createdAt: item.createdAt, text }
+  return {
+    turnId: item.turnId,
+    createdAt: item.createdAt,
+    text: item.type === 'message' ? text : boundedSearchText(text),
+  }
+}
+
+function boundedSearchText(text: string): string {
+  if (text.length <= SEARCH_OUTPUT_HEAD_CHARACTERS + SEARCH_OUTPUT_TAIL_CHARACTERS) return text
+  let headEnd = SEARCH_OUTPUT_HEAD_CHARACTERS
+  if (isHighSurrogate(text.charCodeAt(headEnd - 1))) headEnd -= 1
+  let tailStart = text.length - SEARCH_OUTPUT_TAIL_CHARACTERS
+  if (isHighSurrogate(text.charCodeAt(tailStart - 1))) tailStart += 1
+  return `${text.slice(0, headEnd)}\n…\n${text.slice(tailStart)}`
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
 }
 
 function userSubmissionItemId(event: DomainEvent): string | undefined {

@@ -354,7 +354,10 @@ content-addressed snapshot of touched files only.
 
 **Search is FTS5** over message and tool-output text. Instant search across every session
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
-other project?" is a real question nobody in this category answers well.
+other project?" is a real question nobody in this category answers well. Messages are indexed in
+full. Command and tool output indexes its first 12 KB and last 4 KB, which keeps long logs from
+being duplicated into the index. A search-index version change drops and recreates the table
+before the rebuild; deleting every row first would tokenize the old index again.
 
 **Many-thread sidebar state stays sparse and incremental.** The SQLite inbox index materializes
 only current failures and pending requests; successful historic turns do not add startup work.
