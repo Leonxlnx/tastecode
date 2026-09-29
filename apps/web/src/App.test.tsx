@@ -6441,7 +6441,7 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(window, debugShortcut)
     fireEvent.click(await screen.findByRole('button', { name: 'Force onboarding' }))
     await screen.findByRole('heading', { name: 'Welcome to TasteCode' })
-    fireEvent.click(screen.getByRole('button', { name: /^Begin setup/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Get started/ }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Your name' }), {
       target: { value: 'Blue Emi' },
     })
@@ -6452,7 +6452,7 @@ describe('global shortcuts', () => {
     expect(localStorage.getItem('harness.theme')).toBe('dark')
     expect(document.documentElement.dataset['theme']).toBe('dark')
     fireEvent.click(screen.getByRole('button', { name: 'Skip setup' }))
-    expect(screen.queryByRole('dialog', { name: 'Pick your look' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Choose your look' })).toBeNull()
     expect(localStorage.getItem('harness.onboarding.v1')).toBe('done')
   })
 
