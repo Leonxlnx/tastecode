@@ -55,7 +55,10 @@ scrolling and restored scroll, not only still screenshots. See the
 Fresh checkouts and desktop packages use `packages/design-agent/references/library` automatically:
 172 composition groups, 24 heroes, and 316 raster files including 144 mobile pairs. The files are
 ordinary Git assets, so another developer can pull and run without a separate library installation.
-The bundled catalog retains source URLs, review status, pairing evidence and original file hashes.
+The images are lossy WebP (cwebp quality 90, sharp YUV) at the original pixel dimensions; the PNG
+captures took 413 MB, the WebP selection takes 35 MB, and the difference is not visible at layout
+scale. Originals stay in the external collection. The bundled catalog retains source URLs, review
+status, pairing evidence and the SHA-256 hashes of the bundled files.
 Desktop packages unpack this library beside `app.asar`, allowing the same real-file identity and
 size checks used for custom libraries. The release verifier checks every catalog and raster byte.
 
