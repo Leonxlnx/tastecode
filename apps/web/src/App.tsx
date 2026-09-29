@@ -354,12 +354,12 @@ function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
 }
 
-function resolveSendAvailability(input: {
+export function resolveSendAvailability(input: {
   catalog: CatalogAvailability
   serverBoundSession: boolean
   activeProvider?: ProviderId | undefined
   selectedChoice?: ModelChoice | undefined
-  connectionAvailable?: boolean | undefined
+  connections: ModelConnection[]
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
@@ -372,8 +372,10 @@ function resolveSendAvailability(input: {
   // is disabled, keyless, or absent from the list is something the user can fix
   // in Settings, so it reports setup-required: reporting it unavailable showed a
   // dead end whose button could not change the outcome.
-  if (input.selectedChoice?.connectionId) {
-    return input.connectionAvailable ? 'ready' : 'setup-required'
+  const connectionId = input.selectedChoice?.connectionId
+  if (connectionId) {
+    const connection = input.connections.find((entry) => entry.id === connectionId)
+    return connection?.enabled && connection.credentialConfigured ? 'ready' : 'setup-required'
   }
 
   const provider = input.activeProvider ?? input.selectedChoice?.provider
@@ -940,9 +942,6 @@ export function App() {
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels[0] ??
     selectableImplicitChoice
-  const selectedConnection = selectedModelChoice?.connectionId
-    ? modelConnections.find((connection) => connection.id === selectedModelChoice.connectionId)
-    : undefined
   const sendAvailability = resolveSendAvailability({
     catalog: catalogAvailability,
     serverBoundSession: Boolean(
@@ -950,9 +949,7 @@ export function App() {
     ),
     activeProvider: activeSession?.provider,
     selectedChoice: selectedModelChoice,
-    connectionAvailable: selectedConnection
-      ? selectedConnection.enabled && selectedConnection.credentialConfigured
-      : undefined,
+    connections: modelConnections,
     providerStatuses,
     accountCheck,
   })
