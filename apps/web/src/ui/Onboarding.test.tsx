@@ -222,6 +222,14 @@ describe('first-run onboarding', () => {
     expect(incoming()).toBe('open')
   })
 
+  it('plays its way out once setup is finished elsewhere', () => {
+    const props = onboardingProps()
+    const view = render(<Onboarding {...props} />)
+    expect(props.onDismiss).not.toHaveBeenCalled()
+    view.rerender(<Onboarding {...props} finished />)
+    expect(props.onDismiss).toHaveBeenCalledOnce()
+  })
+
   it('keeps its page while hidden behind Settings', () => {
     const props = onboardingProps()
     const view = render(<Onboarding {...props} />)

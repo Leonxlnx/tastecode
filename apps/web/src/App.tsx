@@ -534,6 +534,14 @@ export function App() {
     writeSetting(ONBOARDING_KEY, 'done')
     setOnboardingDismissed(true)
   }, [projects, projectsStatus, onboardingDismissed])
+  const onboardingWanted =
+    onboardingPreview ||
+    (isDesktop && projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed)
+  // Setup stays mounted a moment after it stops being wanted — a project
+  // arrived, or the preview was closed — so it can open up into the app
+  // instead of vanishing. It unmounts itself through onDismiss.
+  const [onboardingMounted, setOnboardingMounted] = useState(onboardingWanted)
+  if (onboardingWanted && !onboardingMounted) setOnboardingMounted(true)
   const [offline, setOffline] = useState(false)
   const [threadController] = useState(() => new ThreadController(transport))
   const [activeId, setActiveIdState] = useState<string | undefined>()
@@ -5075,11 +5083,11 @@ export function App() {
         </Suspense>
       ) : null}
 
-      {onboardingPreview ||
-      (isDesktop && projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed) ? (
+      {onboardingMounted ? (
         <Suspense fallback={null}>
           <Onboarding
             hidden={settingsOpen}
+            finished={!onboardingWanted}
             displayName={profileIdentity.displayName}
             onDisplayNameChange={(displayName) => updateProfileIdentity({ displayName })}
             themePreference={themePreference}
@@ -5091,6 +5099,7 @@ export function App() {
             }}
             onOpenProviders={() => openSettings('providers')}
             onDismiss={() => {
+              setOnboardingMounted(false)
               if (onboardingPreview) {
                 setOnboardingPreview(false)
                 return

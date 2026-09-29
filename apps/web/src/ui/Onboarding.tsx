@@ -117,6 +117,8 @@ export function Onboarding(props: {
   onDismiss: () => void
   /** Kept mounted but hidden while Settings sits on top, so the page survives the round trip. */
   hidden?: boolean | undefined
+  /** Setup is no longer needed — a project arrived — so the page plays its way out. */
+  finished?: boolean | undefined
 }) {
   const [index, setIndex] = useState(0)
   // The furthest page visited: the progress dots let the user jump back to
@@ -182,6 +184,10 @@ export function Onboarding(props: {
   useEffect(() => {
     focusTarget.current?.focus({ preventScroll: true })
   }, [step])
+
+  useEffect(() => {
+    if (props.finished) setClosing(true)
+  }, [props.finished])
 
   const settle = (next: number) => {
     setIndex(next)
