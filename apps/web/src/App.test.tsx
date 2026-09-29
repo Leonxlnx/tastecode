@@ -4,13 +4,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import {
   methods,
   type DomainEvent,
+  type ModelConnection,
   type ParamsOf,
   type QueuedTurn,
   type ResultOf,
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { App } from './App.js'
+import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -613,6 +614,36 @@ function cachedCodexChoice(): ModelChoice {
       defaultReasoningEffort: 'low',
       serviceTiers: [],
     },
+  }
+}
+
+function connectionChoice(connectionId: string): ModelChoice {
+  return {
+    key: `api:${connectionId}:deepseek-v4-flash`,
+    provider: 'api',
+    sourceName: 'NaN',
+    mark: 'custom',
+    connectionId,
+    model: {
+      id: 'deepseek-v4-flash',
+      displayName: 'deepseek-v4-flash',
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    },
+  }
+}
+
+function modelConnection(overrides: Partial<ModelConnection> = {}): ModelConnection {
+  return {
+    id: 'nan-1',
+    displayName: 'NaN',
+    preset: 'custom',
+    transport: 'openai-compatible',
+    baseUrl: 'https://api.example.com/v1',
+    enabled: true,
+    credentialConfigured: true,
+    ...overrides,
   }
 }
 
@@ -8886,5 +8917,36 @@ describe('reopening a session', () => {
     expect(text).toContain('Live during reconnect')
     expect(text).not.toContain('Older history')
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+  })
+})
+
+describe('send availability for a connection-backed model', () => {
+  // An API connection has no vendor CLI, so no provider status describes it.
+  // Each state the user can fix in Settings must say setup-required rather than
+  // unavailable, whose only action cannot change the outcome.
+  const resolve = (connections: ModelConnection[]) =>
+    resolveSendAvailability({
+      catalog: 'ready',
+      serverBoundSession: false,
+      selectedChoice: connectionChoice('nan-1'),
+      connections,
+      providerStatuses: [],
+      accountCheck: { provider: 'codex', state: 'ready' },
+    })
+
+  it('is ready when its connection is enabled and has a credential', () => {
+    expect(resolve([modelConnection()])).toBe('ready')
+  })
+
+  it('needs setup when its connection is disabled', () => {
+    expect(resolve([modelConnection({ enabled: false })])).toBe('setup-required')
+  })
+
+  it('needs setup when its connection has no credential', () => {
+    expect(resolve([modelConnection({ credentialConfigured: false })])).toBe('setup-required')
+  })
+
+  it('needs setup when its connection is no longer listed', () => {
+    expect(resolve([modelConnection({ id: 'other-1' })])).toBe('setup-required')
   })
 })
