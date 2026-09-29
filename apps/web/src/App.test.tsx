@@ -1955,6 +1955,33 @@ describe('web client', () => {
     expect(screen.queryByText(/Could not load API connections/)).toBeNull()
   })
 
+  it('drops a cached connection model once the connection list settles without it', async () => {
+    // The cache still holds a model paid for by a connection the user has since
+    // removed. Once the list settles, the rebuilt catalog must not keep offering
+    // it — a lingering entry is a picker choice that can never answer a turn.
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice(), connectionChoice('gone-1')]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') return Promise.resolve({ connections: [] })
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      const cached = localStorage.getItem('harness.modelCatalog.v1') ?? ''
+      expect(cached).toContain('gpt-5.6-sol')
+      expect(cached).not.toContain('api:gone-1')
+    })
+    expect(screen.queryByText(/Could not load API connections/)).toBeNull()
+  })
+
   it('defers ACP agent detection until Settings opens', async () => {
     render(<App />)
 
