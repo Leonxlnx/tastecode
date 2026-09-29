@@ -691,7 +691,7 @@ function ServerEditor(props: {
           />
           <small>
             Use stdio or HTTP transport fields. Reference secrets as
-            {' { "source": "credential", "credentialRef": "…" }'}.
+            {' { "source": "credential", "credentialRef": "mcp/…" }'}.
           </small>
         </label>
       ) : null}

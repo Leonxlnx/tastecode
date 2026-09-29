@@ -41,6 +41,35 @@ const StoredConfigSchema = z.object({
   projects: JsonObjectSchema,
 })
 
+/**
+ * Client-supplied credential references must live in the `mcp/` namespace.
+ * The OS credential store is shared across features — `model-connections/`
+ * holds API keys, `custom-environment/` holds harness secrets — so an
+ * unconstrained reference would let a request aim those secrets at any MCP
+ * URL or command. References already persisted are grandfathered: a stored
+ * server may be re-saved with them, but newly supplied ones must be
+ * namespaced. Reads stay permissive so old configs keep resolving.
+ */
+const MCP_CREDENTIAL_REF = /^mcp\/.+/
+
+function credentialRefsOf(server: McpServerConfig): string[] {
+  if (!server.enabled) return []
+  const values =
+    server.transport.type === 'stdio'
+      ? Object.values(server.transport.environment ?? {})
+      : Object.values(server.transport.headers ?? {})
+  return values.flatMap((value) => (value.source === 'credential' ? [value.credentialRef] : []))
+}
+
+function assertCredentialRefs(server: McpServerConfig, grandfathered: ReadonlySet<string>): void {
+  for (const ref of credentialRefsOf(server)) {
+    if (grandfathered.has(ref) || MCP_CREDENTIAL_REF.test(ref)) continue
+    throw new Error(
+      `credential reference "${ref}" is outside the "mcp/" namespace; MCP servers cannot point at another feature's credentials`,
+    )
+  }
+}
+
 function defaultLocation(): string {
   return configFile('mcp.json')
 }
@@ -126,6 +155,7 @@ export class McpConfigStore {
   }
 
   add(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
+    assertCredentialRefs(server, new Set())
     const file = structuredClone(this.#read(true))
     const servers = this.#servers(file, provider, projectPath)
     if (servers[server.id]) throw new Error(`project MCP server "${server.id}" already exists`)
@@ -136,7 +166,9 @@ export class McpConfigStore {
   update(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     const file = structuredClone(this.#read(true))
     const servers = this.#servers(file, provider, projectPath)
-    if (!servers[server.id]) throw new Error(`project MCP server "${server.id}" does not exist`)
+    const stored = servers[server.id]
+    if (!stored) throw new Error(`project MCP server "${server.id}" does not exist`)
+    assertCredentialRefs(server, new Set(credentialRefsOf(stored)))
     servers[server.id] = structuredClone(server)
     this.#write(file)
   }

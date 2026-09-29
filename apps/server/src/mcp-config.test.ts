@@ -1,4 +1,11 @@
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -98,5 +105,143 @@ describe('project MCP config', () => {
     store.add('codex', project, { id: 'fresh', enabled: false })
 
     expect(store.list('codex', project).map(({ id }) => id)).toEqual(['docs', 'external', 'fresh'])
+  })
+
+  it('accepts credential references in the mcp/ namespace', () => {
+    const { project, store } = setup()
+
+    store.add('codex', project, {
+      id: 'docs',
+      enabled: true,
+      transport: {
+        type: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' } },
+      },
+    })
+    store.add('codex', project, {
+      id: 'tools',
+      enabled: true,
+      transport: {
+        type: 'stdio',
+        command: 'node',
+        environment: { API_KEY: { source: 'credential', credentialRef: 'mcp/tools/key' } },
+      },
+    })
+
+    expect(store.list('codex', project).map(({ id }) => id)).toEqual(['docs', 'tools'])
+  })
+
+  it('rejects credential references outside the mcp/ namespace', () => {
+    const { project, store } = setup()
+
+    expect(() =>
+      store.add('codex', project, {
+        id: 'docs',
+        enabled: true,
+        transport: {
+          type: 'http',
+          url: 'https://example.com/mcp',
+          headers: {
+            Authorization: {
+              source: 'credential',
+              credentialRef: 'model-connections/3f4a2c10-9b87-4c1d-8f3e-2a1b0c9d8e7f',
+            },
+          },
+        },
+      }),
+    ).toThrow('"mcp/" namespace')
+    expect(() =>
+      store.add('codex', project, {
+        id: 'tools',
+        enabled: true,
+        transport: {
+          type: 'stdio',
+          command: 'node',
+          environment: {
+            API_KEY: {
+              source: 'credential',
+              credentialRef: 'custom-environment/3f4a2c10-9b87-4c1d-8f3e-2a1b0c9d8e7f',
+            },
+          },
+        },
+      }),
+    ).toThrow('"mcp/" namespace')
+
+    expect(store.list('codex', project)).toEqual([])
+  })
+
+  it('grandfathers stored references but validates newly supplied ones', () => {
+    const { project, location, store } = setup()
+    // Seed a config that predates the namespace policy — the file is
+    // hand-editable and old free-form references must keep working.
+    const legacy = {
+      id: 'docs',
+      enabled: true as const,
+      displayName: 'Docs',
+      transport: {
+        type: 'stdio' as const,
+        command: 'node',
+        environment: { TOKEN: { source: 'credential' as const, credentialRef: 'legacy/token' } },
+      },
+    }
+    mkdirSync(path.dirname(location))
+    const projectKey =
+      process.platform === 'win32'
+        ? realpathSync.native(project).toLowerCase()
+        : realpathSync.native(project)
+    writeFileSync(
+      location,
+      JSON.stringify({ version: 1, projects: { [projectKey]: { codex: { docs: legacy } } } }),
+    )
+
+    // Re-saving the stored reference stays allowed…
+    store.update('codex', project, { ...legacy, displayName: 'Docs 2' })
+    expect(store.list('codex', project)[0]?.displayName).toBe('Docs 2')
+
+    // …a new out-of-namespace reference on that same server does not…
+    expect(() =>
+      store.update('codex', project, {
+        ...legacy,
+        transport: {
+          type: 'stdio',
+          command: 'node',
+          environment: {
+            TOKEN: { source: 'credential', credentialRef: 'legacy/other-token' },
+          },
+        },
+      }),
+    ).toThrow('"mcp/" namespace')
+
+    // …and the stored one cannot seed another server.
+    expect(() =>
+      store.add('codex', project, {
+        id: 'other',
+        enabled: true,
+        transport: {
+          type: 'stdio',
+          command: 'node',
+          environment: {
+            TOKEN: { source: 'credential', credentialRef: 'legacy/token' },
+          },
+        },
+      }),
+    ).toThrow('"mcp/" namespace')
+
+    // A new mcp/-namespaced reference alongside the grandfathered one works.
+    store.update('codex', project, {
+      ...legacy,
+      transport: {
+        type: 'stdio',
+        command: 'node',
+        environment: {
+          TOKEN: { source: 'credential', credentialRef: 'legacy/token' },
+          EXTRA: { source: 'credential', credentialRef: 'mcp/docs/extra' },
+        },
+      },
+    })
+    expect(store.list('codex', project)[0]?.transport).toMatchObject({
+      environment: { EXTRA: { credentialRef: 'mcp/docs/extra' } },
+    })
   })
 })
