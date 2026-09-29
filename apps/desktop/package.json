@@ -140,6 +140,7 @@
     "dmg": {
       "format": "UDZO"
     },
+    "artifactBuildCompleted": "./scripts/compress-dmg.js",
     "mac": {
       "icon": "assets/tastecode-icon.icon",
       "target": [

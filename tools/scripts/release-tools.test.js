@@ -975,6 +975,7 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
   assert.ok(
     desktop.build.asarUnpack.includes('node_modules/@harness/design-agent/references/library/**/*'),
   )
+  assert.equal(desktop.build.artifactBuildCompleted, './scripts/compress-dmg.js')
   for (const name of [
     'LICENSE',
     'NOTICE',

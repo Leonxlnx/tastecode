@@ -78,8 +78,12 @@ node apps/desktop/scripts/run-native-binding-proof.js <app-or-exe>
 Keep the platform's terminal prebuilds: pruning by architecture also changes the inputs
 to universal Mac packaging. Keep Electron's GPU fallback, media, locale data and startup
 files. Installer compression changes download size, not installed size.
-ZIP files use maximum compression; DMGs keep the existing UDZO format so the size setting
-does not switch disk-image opening to bzip2 decompression.
+ZIP files use maximum compression. The DMG is built as UDZO so the size setting does not
+switch it to bzip2, then `apps/desktop/scripts/compress-dmg.js` recompresses it as ULMO
+(LZMA) before signing metadata is recorded. On the 0.1.2 app that took the DMG from 155 MB
+to 126 MB; bzip2 reached only 145 MB. LZMA costs about 2 s more to verify and about 6 s
+more to copy the app out of the mounted image on Apple silicon. Updates use the ZIP, so
+only first installs pay it.
 
 ## Pull-request image previews
 
