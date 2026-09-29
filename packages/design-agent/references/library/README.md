@@ -1,11 +1,13 @@
 # Bundled Design reference library
 
 This is the portable runtime selection from the generated reference collection: 172
-composition groups, including 24 heroes, with 316 original raster files and 144 paired
-mobile views. A normal clone and desktop package include these files; no separate download,
-external drive, Git LFS, or local configuration is required.
+composition groups, including 24 heroes, with 316 raster files and 144 paired mobile views.
+The images are WebP re-encodes (quality 90) of the original PNG captures, which stay in the
+external collection. A normal clone and desktop package include these files; no separate
+download, external drive, Git LFS, or local configuration is required.
 
-`catalog.json` preserves source URLs, review status, pairing evidence and SHA-256 hashes.
+`catalog.json` preserves source URLs, review status, pairing evidence and the SHA-256 hashes
+of the bundled files.
 Candidate entries still require inspection during the Design run. Rejected sections,
 incomplete fragments and superseded revisions are excluded from the runtime pool.
 
