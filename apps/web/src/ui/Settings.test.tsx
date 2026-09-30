@@ -215,11 +215,11 @@ describe('model picker layout setting', () => {
     renderSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     const toggle = screen.getByRole('switch', { name: 'Provider rail layout' })
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
-
-    act(() => writeModelPickerLayout('rail'))
-
     expect(toggle.getAttribute('aria-checked')).toBe('true')
+
+    act(() => writeModelPickerLayout('list'))
+
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
   })
 })
 

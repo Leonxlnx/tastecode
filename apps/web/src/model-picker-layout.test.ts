@@ -14,8 +14,12 @@ afterEach(() => {
 })
 
 describe('model picker layout preference', () => {
-  it('uses the flat list when no preference has been saved', () => {
+  it('uses the provider rail unless the flat list was chosen', () => {
+    expect(readModelPickerLayout()).toBe('rail')
+    localStorage.setItem(MODEL_PICKER_LAYOUT_KEY, 'list')
     expect(readModelPickerLayout()).toBe('list')
+    localStorage.setItem(MODEL_PICKER_LAYOUT_KEY, 'rail')
+    expect(readModelPickerLayout()).toBe('rail')
   })
 
   it('keeps the new session value when persistent storage rejects the write', () => {

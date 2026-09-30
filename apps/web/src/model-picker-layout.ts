@@ -1,7 +1,8 @@
-/** The model picker ships two layouts: the original flat list (default) and
- *  the provider-rail catalog. The choice is an appearance preference so it
+/** The model picker ships two layouts: the provider-rail catalog (default)
+ *  and the original flat list. The choice is an appearance preference so it
  *  lives next to theme/font in localStorage, with a window event so an open
- *  picker re-renders when Settings flips it. */
+ *  picker re-renders when Settings flips it. Only an explicit 'list' keeps
+ *  the flat list. */
 
 export type ModelPickerLayout = 'list' | 'rail'
 
@@ -12,9 +13,9 @@ let sessionLayout: ModelPickerLayout | undefined
 export function readModelPickerLayout(): ModelPickerLayout {
   if (sessionLayout) return sessionLayout
   try {
-    return localStorage.getItem(MODEL_PICKER_LAYOUT_KEY) === 'rail' ? 'rail' : 'list'
+    return localStorage.getItem(MODEL_PICKER_LAYOUT_KEY) === 'list' ? 'list' : 'rail'
   } catch {
-    return 'list'
+    return 'rail'
   }
 }
 

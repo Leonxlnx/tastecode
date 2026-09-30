@@ -17,13 +17,22 @@ describe('model selector theme CSS', () => {
       /:root\[data-theme='light'\] \{[^}]*--model-picker-title-bg: var\(--model-picker-bg\);/s,
     )
     expect(modelSelectorCss).toMatch(
-      /\.model-selector__group-head \{[^}]*position: sticky;[^}]*background: var\(--model-picker-title-bg\);/s,
+      /\.model-selector__search-head \{[^}]*position: sticky;[^}]*background: var\(--model-picker-title-bg\);/s,
     )
   })
 
-  it('pins the rail header at its resting inset while models scroll', () => {
+  it('pins the search above the list edge in both layouts while models scroll', () => {
     expect(modelSelectorCss).toMatch(
-      /\.model-selector__group-head \{[^}]*top: 0;[^}]*margin-inline: -4px;[^}]*padding: 2px 8px 4px 12px;/s,
+      /\.model-selector__flat-head,\n\.model-selector__search-head \{[^}]*top: -4px;[^}]*padding: 4px 4px 3px;/s,
+    )
+  })
+
+  it('slides one provider highlight instead of painting each rail button', () => {
+    expect(modelSelectorCss).toMatch(
+      /\.model-selector__provider\.is-active \{\s*color: var\(--text\);\s*\}/,
+    )
+    expect(modelSelectorCss).toMatch(
+      /\.model-selector__provider-highlight \{[^}]*transform: translateY\(calc\(var\(--model-selector-provider-index\) \* 34px\)\);[^}]*transition: transform var\(--dur-fast\) var\(--ease-out\);/s,
     )
   })
 
