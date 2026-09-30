@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, spawnOwned, readNdjson } from '@harness/proc'
+import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
 import {
   collapseAntigravityModels,
@@ -364,38 +365,16 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
    * through helpers that keep it open.
    */
   async listModels(): Promise<Model[]> {
-    return new Promise((resolve, reject) => {
-      const child = this.#spawn(antigravityCommand(), ['models'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      })
-      let stdout = ''
-      let settled = false
-      const finish = (result: Model[] | Error) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        void killTree(child).then(() => {
-          if (result instanceof Error) reject(result)
-          else resolve(result)
-        }, reject)
-      }
-      const timer = setTimeout(() => {
-        finish(new Error('Antigravity model discovery timed out'))
-      }, 15000)
-      child.stdout.setEncoding('utf8')
-      child.stdout.on('data', (chunk: string) => (stdout += chunk))
-      child.on('error', (error) => finish(error))
-      child.on('close', (code) =>
-        finish(
-          code === 0
-            ? parseAntigravityModels(stdout)
-            : new Error('Antigravity model discovery failed'),
-        ),
-      )
-      child.stdin.on('error', () => undefined)
-      child.stdin.end()
+    const child = this.#spawn(antigravityCommand(), ['models'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     })
+    const captured = captureCli(child, 15_000)
+    child.stdin.on('error', () => undefined)
+    child.stdin.end()
+    const result = await captured
+    if (result.code !== 0) throw new Error('Antigravity model discovery failed')
+    return parseAntigravityModels(result.stdout)
   }
 
   dispose(): Promise<void> {

@@ -1,6 +1,7 @@
 import type { DiffDecision, DiffFile, DiffHunk, DiffLine, SessionDiff } from '@harness/contracts'
 import { createHash } from 'node:crypto'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { captureCli, spawnCli } from '@harness/proc/cli'
 import { realpathSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import path from 'node:path'
@@ -279,26 +280,17 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
     })
     .join('\n')
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      'git',
-      ['apply', '--reverse', '--binary', '--recount', '--whitespace=nowarn', '-'],
-      { cwd: repoPath, windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
-    )
-    let stderr = ''
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => (stderr += chunk))
-    child.once('error', reject)
-    // stdin is a Socket; an unhandled EPIPE/ENOENT on it is an uncaught
-    // exception that takes the whole server down. The child's error/close
-    // path already reports the failure.
-    child.stdin.on('error', () => {})
-    child.once('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(stderr.trim() || 'could not apply diff decision'))
-    })
-    child.stdin.end(relative)
-  })
+  const child = spawnCli(
+    'git',
+    ['apply', '--reverse', '--binary', '--recount', '--whitespace=nowarn', '-'],
+    { cwd: repoPath },
+  )
+  const captured = captureCli(child, 30_000)
+  child.stdin.on('error', () => undefined)
+  child.stdin.end(relative)
+  const result = await captured
+  if (result.code !== 0)
+    throw new Error('Could not apply diff decision. Check the working tree and retry.')
 }
 
 function gitPath(value: string): string {
