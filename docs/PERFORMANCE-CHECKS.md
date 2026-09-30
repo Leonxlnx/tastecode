@@ -41,6 +41,24 @@ Keep the machine otherwise quiet during measurement. A failure is a failed check
 the full report before drawing a conclusion. Run this on each release OS. Unit tests
 cover the accounting and thresholds; they do not replace real Electron measurements.
 
+The same command first renders two identical 700-line TypeScript fences through the
+production `CompletedMarkdown` component and native syntax worker. It requires one
+highlight request, colored tokens, no additional request on remount or light/dark changes,
+and distinct computed token colors in both themes. The fixture observes the native
+worker's `postMessage` calls; it does not replace worker execution or synthesize tokens.
+It reloads the page before the existing thread gate to avoid warming that gate's caches.
+
+Each `renderer-N.json` includes highlighting frame samples and observed long-task durations;
+both must stay below the existing 32 ms frame budget. Chromium's long-task observer only
+reports tasks of at least 50 ms, so frame samples alone do not prove every shorter task's
+duration. Inspect the accompanying `renderer-N.json.highlighting-trace.json` in Chromium's
+trace viewer to verify renderer/worker attribution and tasks around the
+`highlight-cold-*` and `highlight-remount-*` marks. Traces are captured with Electron's
+[contentTracing API](https://www.electronjs.org/docs/latest/api/content-tracing).
+Record the tested commit, OS, architecture and all three reports with acceptance evidence.
+Compilation and threshold unit tests are not a passing production trace. Do not disable
+the browser sandbox to run this gate.
+
 To verify trusted preview height limits, capture cancellation, and storage cleanup using
 real Electron windows and the real preload bridge:
 

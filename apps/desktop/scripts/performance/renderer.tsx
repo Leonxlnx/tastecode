@@ -239,4 +239,8 @@ async function run() {
 }
 
 createRoot(document.getElementById('root')!).render(<Fixture />)
-Object.assign(window, { runPerformanceFixture: run })
+Object.assign(window, {
+  runPerformanceFixture: run,
+  runHighlightingFixture: () =>
+    import('./highlighting.js').then(({ runHighlightingFixture }) => runHighlightingFixture()),
+})
