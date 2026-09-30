@@ -72,24 +72,29 @@ export async function runHighlightingFixture() {
     const blocks = [...host.querySelectorAll<HTMLElement>('pre code')]
     if (blocks.length !== 2) throw new Error('Both full code fences must remain mounted')
     for (const block of blocks) {
+      // Streamdown's container uses content-visibility:auto. Exercise each fence
+      // in the viewport before asserting descendant layout, including the second.
+      block.scrollIntoView({ block: 'start' })
+      await frame()
+      await frame()
       // Chromium can return empty innerText for inline code containing block lines.
       // Verify every source line and its layout instead of depending on that getter.
       const chunks = block.querySelectorAll<HTMLElement>('.md-code-line')
       const lines = [
         ...(chunks.length ? chunks : block.querySelectorAll<HTMLElement>(':scope > span')),
       ]
-      if (
-        lines.length !== 700 ||
-        lines.map((line) => line.textContent).join('\n') !== code ||
-        lines.some((line) => line.getBoundingClientRect().height === 0)
-      )
+      const rendered = lines.map((line) => line.textContent).join('\n')
+      const zeroHeightLines = lines.filter(
+        (line) => line.getBoundingClientRect().height === 0,
+      ).length
+      if (lines.length !== 700 || rendered !== code || zeroHeightLines)
         throw new Error(
           `Highlighted code changed the full representative source or line layout: ${JSON.stringify(
             {
               lines: lines.length,
-              characters: lines.map((line) => line.textContent).join('\n').length,
-              zeroHeightLines: lines.filter((line) => line.getBoundingClientRect().height === 0)
-                .length,
+              characters: rendered.length,
+              sourceMatches: rendered === code,
+              zeroHeightLines,
               colored: highlightedTokens(block).length,
             },
           )}`,

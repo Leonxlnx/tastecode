@@ -14,26 +14,30 @@ const timeout = setTimeout(() => {
 app
   .whenReady()
   .then(async () => {
-    window = new BrowserWindow({
-      width: 1180,
-      height: 820,
-      show: true,
-      webPreferences: {
-        contextIsolation: true,
-        sandbox: true,
-        nodeIntegration: false,
-        backgroundThrottling: false,
-      },
-    })
-    window.webContents.on('render-process-gone', (_event, details) => {
-      console.error('Renderer exited:', details.reason)
-      app.exit(1)
-    })
     const errors = []
-    window.webContents.on('console-message', (details) => {
-      if (details.level === 'error') errors.push(details.message)
-      if (details.message.startsWith('[performance]')) console.log(details.message)
-    })
+    const createWindow = () => {
+      const created = new BrowserWindow({
+        width: 1180,
+        height: 820,
+        show: true,
+        webPreferences: {
+          contextIsolation: true,
+          sandbox: true,
+          nodeIntegration: false,
+          backgroundThrottling: false,
+        },
+      })
+      created.webContents.on('render-process-gone', (_event, details) => {
+        console.error('Renderer exited:', details.reason)
+        app.exit(1)
+      })
+      created.webContents.on('console-message', (details) => {
+        if (details.level === 'error') errors.push(details.message)
+        if (details.message.startsWith('[performance]')) console.log(details.message)
+      })
+      return created
+    }
+    window = createWindow()
     await window.loadFile(process.env.HARNESS_PERF_RENDERER)
     await contentTracing.startRecording({
       included_categories: ['devtools.timeline', 'blink.user_timing', 'toplevel', 'v8.execute'],
@@ -47,9 +51,13 @@ app
       )
     }
     console.log('[performance] highlighting and trace complete')
-    // Keep highlighting's warmed module/worker caches out of the existing thread gate.
+    // A fresh window keeps module/worker caches out of the thread gate and avoids
+    // intermittent missing animation frames after reloading the traced renderer.
+    const highlightedWindow = window
+    window = createWindow()
+    highlightedWindow.destroy()
     await window.loadFile(process.env.HARNESS_PERF_RENDERER)
-    console.log('[performance] thread page reload complete')
+    console.log('[performance] fresh thread page loaded')
     const sample = await window.webContents.executeJavaScript('window.runPerformanceFixture()')
     console.log('[performance] thread fixture complete')
     sample.highlighting = highlighting

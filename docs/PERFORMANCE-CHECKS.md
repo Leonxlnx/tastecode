@@ -45,11 +45,13 @@ The same command first renders two identical 700-line TypeScript fences through 
 production `CompletedMarkdown` component and native syntax worker. It requires one
 highlight request, colored tokens, no additional request on remount or light/dark changes,
 and distinct computed token colors in both themes. It waits for every token batch and verifies
-both complete 700-line sources and nonzero line layout. Foreground inheritance can reduce
+both complete 700-line sources and nonzero line layout after bringing each fence into view.
+Foreground inheritance can reduce
 the number of colored DOM spans without dropping source tokens or changing their colors.
 The fixture observes the native
 worker's `postMessage` calls; it does not replace worker execution or synthesize tokens.
-It reloads the page before the existing thread gate to avoid warming that gate's caches.
+It opens a fresh sandboxed window before the existing thread gate to avoid warming that
+gate's caches and avoid intermittent animation-frame stalls after reloading the traced page.
 
 Each `renderer-N.json` includes highlighting frame samples and observed long-task durations;
 both must stay below the existing 32 ms frame budget. Chromium's long-task observer only

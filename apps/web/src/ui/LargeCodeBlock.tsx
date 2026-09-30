@@ -213,7 +213,11 @@ function LargeCodeBlock({ code, language }: { code: string; language: string }) 
   const showDownload =
     codeControls !== false && (codeControls === true || codeControls?.download !== false)
   return (
-    <CodeBlockContainer language={language} isIncomplete={incomplete}>
+    <CodeBlockContainer
+      language={language}
+      isIncomplete={incomplete}
+      style={{ contentVisibility: 'visible' }}
+    >
       <CodeBlockHeader language={language} />
       {showCopy || showDownload ? (
         <div>
