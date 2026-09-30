@@ -8,6 +8,7 @@ import {
   useState,
   type ComponentPropsWithoutRef,
   type CSSProperties,
+  type ReactNode,
 } from 'react'
 import {
   Block,
@@ -101,29 +102,38 @@ const CodeChunk = memo(function CodeChunk({
   lines: string[]
   tokens?: HighlightResult['tokens'] | undefined
 }) {
+  // Mount the complete plain text with one layout box per chunk. Reserving every
+  // line also keeps trailing blank lines at their final height before colors arrive.
+  if (!tokens)
+    return (
+      <span className="md-code-chunk" style={{ minHeight: `${lines.length}lh` }}>
+        {lines.join('\n')}
+      </span>
+    )
   return (
     <span className="md-code-chunk">
       {lines.map((line, index) => {
         const foreground = inheritedForeground(tokens?.[index])
+        const content: ReactNode[] = []
+        for (const [tokenIndex, token] of (tokens[index] ?? []).entries()) {
+          if (foreground && foregroundKey(token) === foreground) {
+            const previous = content.at(-1)
+            if (typeof previous === 'string') content[content.length - 1] = previous + token.content
+            else content.push(token.content)
+          } else
+            content.push(
+              <span key={tokenIndex} style={tokenStyle(token)} {...token.htmlAttrs}>
+                {token.content}
+              </span>,
+            )
+        }
         return (
           <span
             className="md-code-line"
             key={index}
             style={foreground ? JSON.parse(foreground) : undefined}
           >
-            {line === ''
-              ? '\n'
-              : tokens?.[index]
-                ? tokens[index].map((token, tokenIndex) =>
-                    foreground && foregroundKey(token) === foreground ? (
-                      token.content
-                    ) : (
-                      <span key={tokenIndex} style={tokenStyle(token)} {...token.htmlAttrs}>
-                        {token.content}
-                      </span>
-                    ),
-                  )
-                : line}
+            {line === '' ? '\n' : tokens[index] ? content : line}
           </span>
         )
       })}

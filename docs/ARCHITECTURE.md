@@ -466,6 +466,8 @@ The rules that solve it:
    is applied in 12-line animation-frame batches. Repeated foreground colors inherit from
    their line; tokens with attributes or other styles retain their elements. Simple complete
    fences skip Markdown/HTML AST construction; complex fences retain Streamdown parsing.
+   Plain chunks reserve their full line height in one layout box, and adjacent inherited
+   text shares a text node to avoid unnecessary initial layout and removal work.
    Whole-block token commits exceeded the frame budget. CSS layout containment was rejected
    because it increased theme compositing cost; clipping or dropping source was rejected
    because selection, copy, horizontal scrolling and accessibility must remain intact.
