@@ -10,7 +10,7 @@ import type {
   Model,
   SessionDiff,
 } from '@harness/contracts'
-import type { ProviderRuntime, TurnOptions } from './adapters.js'
+import type { AgentSession, ProviderRuntime, TurnOptions } from './adapters.js'
 
 const BACKGROUND_TIMEOUT_MS = 45_000
 const MAX_COMMIT_DIFF_CHARS = 80_000
@@ -182,6 +182,12 @@ export async function runBackgroundCompletion(input: {
   selection: BackgroundModelSelection
   prompt: string
   timeoutMs?: number | undefined
+  /**
+   * Called the moment the ephemeral provider session exists. These sessions
+   * live outside the orchestrator's thread map, so the owner uses this to hold
+   * a reference it can kill on shutdown or panic stop.
+   */
+  onSession?: ((session: AgentSession) => void) | undefined
 }): Promise<string> {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'tastecode-background-'))
   let session: Awaited<ReturnType<ProviderRuntime['start']>>['session'] | undefined
@@ -201,6 +207,7 @@ export async function runBackgroundCompletion(input: {
       instructions: BACKGROUND_INSTRUCTIONS,
     })
     session = started.session
+    input.onSession?.(session)
 
     const messages = new Map<string, Array<{ text: string; phase?: AssistantPhase }>>()
     const completions = new Map<string, 'completed' | 'interrupted' | 'failed'>()
