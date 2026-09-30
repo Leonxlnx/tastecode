@@ -13,6 +13,7 @@ import type {
   Thread,
 } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, spawnOwned, readNdjson } from '@harness/proc'
+import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
 import { GROK_CAPABILITIES } from './capabilities.js'
 
@@ -712,35 +713,17 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   }
 }
 
-function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawnFn(grokCommand(), args, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    let stdout = ''
-    let settled = false
-    const finish = (result: string | Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      void killTree(child).then(() => {
-        if (result instanceof Error) reject(result)
-        else resolve(result)
-      }, reject)
-    }
-    const timer = setTimeout(() => {
-      finish(new Error('grok did not answer in time'))
-    }, timeoutMs)
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => (stdout += chunk))
-    child.on('error', (error) => finish(error))
-    child.on('close', (code) =>
-      finish(code === 0 ? stdout : new Error(`grok exited with code ${code ?? 'unknown'}`)),
-    )
-    child.stdin.on('error', () => undefined)
-    child.stdin.end()
+async function captureGrok(spawnFn: SpawnFn, args: string[], timeoutMs = 15000): Promise<string> {
+  const child = spawnFn(grokCommand(), args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
   })
+  const captured = captureCli(child, timeoutMs)
+  child.stdin.on('error', () => undefined)
+  child.stdin.end()
+  const result = await captured
+  if (result.code !== 0) throw new Error(`grok exited with code ${result.code ?? 'unknown'}`)
+  return result.stdout
 }
 
 export function grokToolLabel(

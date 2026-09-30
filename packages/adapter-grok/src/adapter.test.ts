@@ -867,3 +867,25 @@ describe('Grok adapter', () => {
     expect(GROK_CAPABILITIES).toMatchObject({ steer: false, interrupt: true, reasoningItems: true })
   })
 })
+
+describe('bounded model discovery capture', () => {
+  it.each(['stdout', 'stderr'] as const)(
+    'rejects a %s flood before parsing output',
+    async (stream) => {
+      const child = new FakeChild()
+      let killed = 0
+      child.kill = () => {
+        killed++
+        return true
+      }
+      const adapter = new GrokAdapter({ spawn: () => child })
+      const discovery = adapter.listModels()
+      const rejected = expect(discovery).rejects.toThrow('CLI output exceeded the size limit')
+      child[stream].write('harmless-fixture'.repeat(100_000))
+      await rejected
+      child[stream].write('late output')
+      child.emit('close', 0)
+      expect(killed).toBe(1)
+    },
+  )
+})
