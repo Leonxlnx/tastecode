@@ -462,6 +462,13 @@ The rules that solve it:
    reply or patch with one em dash anywhere is stored two bytes wide, and V8 tokenized it
    about half as fast in Electron 43. Copying whole blocks was rejected because one wide
    character inside the block defeats it.
+   Completed fences above 32 KiB keep all source lines mounted while decorative token DOM
+   is applied in 12-line animation-frame batches. Repeated foreground colors inherit from
+   their line; tokens with attributes or other styles retain their elements. Simple complete
+   fences skip Markdown/HTML AST construction; complex fences retain Streamdown parsing.
+   Whole-block token commits exceeded the frame budget. CSS layout containment was rejected
+   because it increased theme compositing cost; clipping or dropping source was rejected
+   because selection, copy, horizontal scrolling and accessibility must remain intact.
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
 5. **Closed activity owns no detail DOM.** Command and tool details mount when their
    disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
@@ -515,6 +522,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
 | 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |
 | 2026-07-28 | Initial decisions.                                                                                                                                                             |
 | 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                                                                                                         |

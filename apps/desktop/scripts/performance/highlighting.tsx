@@ -52,8 +52,9 @@ export async function runHighlightingFixture() {
   const colored = () => highlightedTokens(host).length
   const waitForColor = async () => {
     const deadline = performance.now() + 15_000
-    while (colored() === 0 && performance.now() < deadline) await frame()
-    if (colored() === 0) throw new Error('Real worker did not paint highlighted code')
+    const pending = () => host.querySelector('[data-highlight-pending="true"]') || colored() === 0
+    while (pending() && performance.now() < deadline) await frame()
+    if (pending()) throw new Error('Real worker did not paint all highlighted code')
     await frame()
     await frame()
   }
@@ -68,6 +69,22 @@ export async function runHighlightingFixture() {
       ),
     )
     await waitForColor()
+    const blocks = [...host.querySelectorAll<HTMLElement>('pre code')]
+    if (blocks.length !== 2) throw new Error('Both full code fences must remain mounted')
+    for (const block of blocks) {
+      // Chromium can return empty innerText for inline code containing block lines.
+      // Verify every source line and its layout instead of depending on that getter.
+      const chunks = block.querySelectorAll<HTMLElement>('.md-code-line')
+      const lines = [
+        ...(chunks.length ? chunks : block.querySelectorAll<HTMLElement>(':scope > span')),
+      ]
+      if (
+        lines.length !== 700 ||
+        lines.map((line) => line.textContent).join('\n') !== code ||
+        lines.some((line) => line.getBoundingClientRect().height === 0)
+      )
+        throw new Error('Highlighted code changed the full representative source or line layout')
+    }
     const coldRequests = requests
     const coloredTokens = colored()
     performance.mark('highlight-cold-end')

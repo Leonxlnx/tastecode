@@ -62,6 +62,13 @@ export function performanceFailures(samples, startups, budgets = PERFORMANCE_BUD
         Math.max(0, ...highlighting.longTasks),
         budgets.frameMs,
       )
+      below(
+        `${label} worst highlighting trace task ms`,
+        highlighting.trace?.maxMainTaskMs,
+        budgets.frameMs,
+      )
+      if (!(highlighting.trace?.mainTaskCount > 0 && highlighting.trace?.workerThreads > 0))
+        failures.push(`${label}: missing renderer/worker trace coverage`)
     }
     if (sample.initiallyVisible < 1 || sample.scroll.seenMessages !== 500 || sample.sessions !== 5)
       failures.push(`${label}: missing rendered fixture coverage`)

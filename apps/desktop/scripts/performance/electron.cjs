@@ -45,9 +45,11 @@ app
         `${process.env.HARNESS_PERF_RESULT}.highlighting-trace.json`,
       )
     }
+    console.log('[performance] highlighting and trace complete')
     // Keep highlighting's warmed module/worker caches out of the existing thread gate.
     await window.loadFile(process.env.HARNESS_PERF_RENDERER)
     const sample = await window.webContents.executeJavaScript('window.runPerformanceFixture()')
+    console.log('[performance] thread fixture complete')
     sample.highlighting = highlighting
     if (errors.length > 0) throw new Error(errors.join('\n'))
     const metrics = app.getAppMetrics()
@@ -55,6 +57,7 @@ app
       pathToFileURL(process.env.HARNESS_PERF_MEMORY_MODULE).href
     )
     sample.memory = await collectSettledBenchmarkMemory(() => app.getAppMetrics())
+    console.log('[performance] settled memory captured')
     sample.memoryBytes = sample.memory.bytes
     sample.rssBytes = sample.memory.rssBytes
     sample.processes = metrics.length
