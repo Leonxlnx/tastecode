@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { CompletedMarkdown } from '../../../web/src/ui/CompletedMarkdown.js'
+import { highlightedTokens } from './highlighting-dom.js'
 
 const code = Array.from(
   { length: 700 },
@@ -48,7 +49,7 @@ export async function runHighlightingFixture() {
     frameId = requestAnimationFrame(sampleFrame)
   }
   frameId = requestAnimationFrame(sampleFrame)
-  const colored = () => host.querySelectorAll('code span[style*="--sdm-c"]').length
+  const colored = () => highlightedTokens(host).length
   const waitForColor = async () => {
     const deadline = performance.now() + 15_000
     while (colored() === 0 && performance.now() < deadline) await frame()
@@ -82,7 +83,8 @@ export async function runHighlightingFixture() {
       document.documentElement.classList.toggle('dark', nextTheme === 'dark')
       await frame()
       await frame()
-      const token = host.querySelector('code span[style*="--sdm-c"]')!
+      const token = highlightedTokens(host)[0]
+      if (!token) throw new Error(`Highlighted tokens disappeared in ${nextTheme} mode`)
       colors.push(getComputedStyle(token).color)
     }
     performance.mark('highlight-remount-end')
