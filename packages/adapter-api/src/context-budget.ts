@@ -14,7 +14,7 @@ export function boundedContext(
   model: string,
   budget = contextBudgetBytes(model),
   instructions?: string,
-): { messages: ApiMessage[]; removedTurns: number } {
+) {
   if (!Number.isSafeInteger(budget) || budget < 1024) throw new Error('Invalid API context budget')
   // User boundaries keep every assistant/tool-call/result group together, including
   // opaque transport state. Never truncate structured tool arguments or results.
