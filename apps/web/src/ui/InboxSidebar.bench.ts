@@ -117,7 +117,7 @@ function countAdaptiveIdleWakeups(): number {
   let now = idleDayStart
   let wakeups = 0
   while (now < idleDayStart + IDLE_DAY_MS) {
-    const delay = inboxClockDelay(false, idleRelativeTimes, false, now)
+    const delay = inboxClockDelay(false, idleRelativeTimes, [], now)
     if (delay === undefined) break
     now += delay
     refreshIdleLabels(now)

@@ -27,6 +27,7 @@ import type {
 } from '@harness/contracts'
 import {
   IconArchive as Archive,
+  IconChartBar as ChartBar,
   IconChevronUp as ChevronUp,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -67,7 +68,7 @@ import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
-import type { InboxActions } from './InboxSidebar.js'
+import type { InboxActions, InboxMessageSearch } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
@@ -231,6 +232,9 @@ function SidebarComponent(props: {
     position: DropPosition,
   ) => void
   onOpenSearch: (projectPath?: string) => void
+  onSearchMessages?: InboxMessageSearch | undefined
+  onOpenSearchResult?: ((threadId: string, turnId: string) => void) | undefined
+  onInboxOrderChange?: ((ids: readonly string[] | undefined) => void) | undefined
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile') => void
@@ -471,6 +475,14 @@ function SidebarComponent(props: {
     closeOnNarrowViewport()
   }, [closeOnNarrowViewport])
 
+  const openSearchResult = useCallback(
+    (threadId: string, turnId: string) => {
+      actionsRef.current.onOpenSearchResult?.(threadId, turnId)
+      closeOnNarrowViewport()
+    },
+    [closeOnNarrowViewport],
+  )
+
   const renameProject = useCallback(
     (path: string, name: string) => actionsRef.current.onRenameProject(path, name),
     [],
@@ -666,6 +678,121 @@ function SidebarComponent(props: {
     })
   }
 
+  const lowUsage =
+    usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
+      <span
+        className="account__usage"
+        title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
+        aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
+      >
+        {Math.round(usageRemaining)}%
+      </span>
+    ) : null
+
+  const accountMenu = (close: () => void) => {
+    const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
+    return (
+      <>
+        {props.usageStates ? (
+          <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
+            <RenderedAccountLimits
+              states={props.usageStates}
+              onRetry={props.onRetryUsage ?? noop}
+              onConsumeReset={props.onConsumeReset}
+            />
+          </Suspense>
+        ) : null}
+        <div className="account-menu__actions">
+          <button
+            type="button"
+            className="menu__item"
+            onClick={() => {
+              actionsRef.current.onOpenSettings('profile')
+              closeOnNarrowViewport()
+              close()
+            }}
+          >
+            <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+          </button>
+          <button
+            type="button"
+            className="menu__item"
+            aria-keyshortcuts={shortcutAria(keybindings.settings)}
+            onClick={() => {
+              actionsRef.current.onOpenSettings()
+              closeOnNarrowViewport()
+              close()
+            }}
+          >
+            <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+          </button>
+        </div>
+      </>
+    )
+  }
+
+  // Rendered by the lazy thread sidebar so its styles load with it. Memoised on
+  // what it shows, so the thread list keeps skipping unrelated shell commits.
+  const utilities = useMemo(
+    () =>
+      inbox ? (
+        <div className="rail__foot rail__foot--utilities">
+          <button
+            type="button"
+            className="rail__utility"
+            aria-label="Settings"
+            title="Settings"
+            aria-keyshortcuts={shortcutAria(keybindings.settings)}
+            onClick={() => {
+              actionsRef.current.onOpenSettings()
+              closeOnNarrowViewport()
+            }}
+          >
+            <Settings size={16} aria-hidden />
+          </button>
+          {props.onOpenPullRequests ? (
+            <button
+              type="button"
+              className={`rail__utility${props.pullRequestsActive ? ' is-active' : ''}`}
+              aria-label="Pull requests"
+              title="Pull requests"
+              aria-current={props.pullRequestsActive ? 'page' : undefined}
+              aria-keyshortcuts={shortcutAria(keybindings.openPullRequests)}
+              onClick={openPullRequests}
+            >
+              <GitPullRequest size={16} aria-hidden />
+            </button>
+          ) : null}
+          <Menu
+            drop="up"
+            gap={10}
+            label="Usage and profile"
+            triggerClassName="rail__utility"
+            panelClassName="menu--compact menu--settings"
+            panelRole="dialog"
+            panelLabel="Usage, profile, and settings"
+            trigger={() => (
+              <span className="rail__utility-glyph" title="Usage">
+                <ChartBar size={16} aria-hidden />
+                {lowUsage}
+              </span>
+            )}
+          >
+            {accountMenu}
+          </Menu>
+          {isDesktop ? <AppUpdateNotice /> : null}
+        </div>
+      ) : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- callbacks read actionsRef
+    [
+      inbox,
+      keybindings,
+      props.usageStates,
+      props.pullRequestsActive,
+      props.onOpenPullRequests !== undefined,
+    ],
+  )
+
   return (
     <div
       ref={slotRef}
@@ -722,6 +849,7 @@ function SidebarComponent(props: {
               activeProjectPath={props.activeProjectPath}
               activeSessionId={props.activeSessionId}
               actions={props.inbox!}
+              keybindings={props.keybindings}
               onScopeChange={setScope}
               onAddProject={addProject}
               onNewSession={newSession}
@@ -730,8 +858,10 @@ function SidebarComponent(props: {
               onToggleSessionPin={toggleSessionPin}
               onArchiveSession={deleteSession}
               onArchiveSessions={archiveProject}
-              pullRequestsActive={props.pullRequestsActive}
-              onOpenPullRequests={props.onOpenPullRequests ? openPullRequests : undefined}
+              onSearchMessages={props.onSearchMessages}
+              onOpenSearchResult={props.onOpenSearchResult ? openSearchResult : undefined}
+              onOrderChange={props.onInboxOrderChange}
+              footer={utilities}
             />
           </Suspense>
         ) : (
@@ -877,81 +1007,35 @@ function SidebarComponent(props: {
           </>
         )}
 
-        <div className="rail__foot">
-          <Menu
-            drop="up"
-            gap={14}
-            label="Account"
-            panelClassName="menu--compact menu--settings"
-            panelRole="dialog"
-            panelLabel="Account and plan limits"
-            trigger={() => (
-              <span className="account">
-                <span className="account__avatar">
-                  {props.profileIdentity?.avatarDataUrl ? (
-                    <img src={props.profileIdentity.avatarDataUrl} alt="" />
-                  ) : (
-                    <GeneratedAvatar name={profileDisplayName} />
-                  )}
-                </span>
-                <span className="account__name">{profileDisplayName}</span>
-                {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
-                  <span
-                    className="account__usage"
-                    title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
-                    aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
-                  >
-                    {Math.round(usageRemaining)}%
+        {inbox ? null : (
+          <div className="rail__foot">
+            <Menu
+              drop="up"
+              gap={14}
+              label="Account"
+              panelClassName="menu--compact menu--settings"
+              panelRole="dialog"
+              panelLabel="Account and plan limits"
+              trigger={() => (
+                <span className="account">
+                  <span className="account__avatar">
+                    {props.profileIdentity?.avatarDataUrl ? (
+                      <img src={props.profileIdentity.avatarDataUrl} alt="" />
+                    ) : (
+                      <GeneratedAvatar name={profileDisplayName} />
+                    )}
                   </span>
-                ) : null}
-                <ChevronUp className="account__chevron" size={13} aria-hidden />
-              </span>
-            )}
-          >
-            {(close) => {
-              const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
-              return (
-                <>
-                  {props.usageStates ? (
-                    <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
-                      <RenderedAccountLimits
-                        states={props.usageStates}
-                        onRetry={props.onRetryUsage ?? noop}
-                        onConsumeReset={props.onConsumeReset}
-                      />
-                    </Suspense>
-                  ) : null}
-                  <div className="account-menu__actions">
-                    <button
-                      type="button"
-                      className="menu__item"
-                      onClick={() => {
-                        props.onOpenSettings('profile')
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
-                    </button>
-                    <button
-                      type="button"
-                      className="menu__item"
-                      aria-keyshortcuts={shortcutAria(keybindings.settings)}
-                      onClick={() => {
-                        props.onOpenSettings()
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
-                    </button>
-                  </div>
-                </>
-              )
-            }}
-          </Menu>
-          {isDesktop ? <AppUpdateNotice /> : null}
-        </div>
+                  <span className="account__name">{profileDisplayName}</span>
+                  {lowUsage}
+                  <ChevronUp className="account__chevron" size={13} aria-hidden />
+                </span>
+              )}
+            >
+              {accountMenu}
+            </Menu>
+            {isDesktop ? <AppUpdateNotice /> : null}
+          </div>
+        )}
       </nav>
       <RailResizeHandle
         buttonRef={resizeHandleRef}
