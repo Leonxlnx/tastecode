@@ -1,3 +1,4 @@
+import { serializeContextRequest } from './context-budget.js'
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
 import {
   jsonArray as array,
@@ -45,21 +46,24 @@ export function createOpenAiCompatibleTransport(options: OpenAiCompatibleOptions
   const endpoint = endpointFor(config.baseUrl, 'chat/completions')
   const apiKey = requiredKey(options.apiKey)
 
-  return async function* ({ model, messages, tools, signal }) {
+  return async function* ({ model, messages, tools, signal, contextBudgetBytes }) {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${apiKey}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        messages: messages.map(toMessage),
-        tools: tools.map(toTool),
-        stream: true,
-        ...(config.streamUsage ? { stream_options: { include_usage: true } } : {}),
-        ...(config.toolStream ? { tool_stream: true } : {}),
-      }),
+      body: serializeContextRequest(
+        {
+          model,
+          messages: messages.map(toMessage),
+          tools: tools.map(toTool),
+          stream: true,
+          ...(config.streamUsage ? { stream_options: { include_usage: true } } : {}),
+          ...(config.toolStream ? { tool_stream: true } : {}),
+        },
+        contextBudgetBytes,
+      ),
       signal,
     })
     if (!response.ok) throw new Error(await httpError('OpenAI-compatible', response, [apiKey]))

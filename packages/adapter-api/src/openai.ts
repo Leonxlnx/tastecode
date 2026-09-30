@@ -1,3 +1,4 @@
+import { serializeContextRequest } from './context-budget.js'
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
 import {
   type JsonObject,
@@ -18,21 +19,24 @@ export function createOpenAiResponsesTransport(options: OpenAiOptions): ApiTrans
   const endpoint = endpointFor(options.baseUrl, 'responses')
   const apiKey = requiredKey(options.apiKey)
 
-  return async function* ({ model, messages, tools, signal }) {
+  return async function* ({ model, messages, tools, signal, contextBudgetBytes }) {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${apiKey}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        input: toInput(messages),
-        tools: tools.map(toTool),
-        stream: true,
-        store: false,
-        include: ['reasoning.encrypted_content'],
-      }),
+      body: serializeContextRequest(
+        {
+          model,
+          input: toInput(messages),
+          tools: tools.map(toTool),
+          stream: true,
+          store: false,
+          include: ['reasoning.encrypted_content'],
+        },
+        contextBudgetBytes,
+      ),
       signal,
     })
     if (!response.ok) throw new Error(await httpError('OpenAI', response, [apiKey]))

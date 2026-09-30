@@ -1,3 +1,4 @@
+import { serializeContextRequest } from './context-budget.js'
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
 import {
   type JsonObject,
@@ -21,17 +22,20 @@ export function createAnthropicMessagesTransport(options: AnthropicOptions): Api
   const maxTokens = options.maxTokens ?? 8192
   if (!Number.isInteger(maxTokens) || maxTokens < 1) throw new Error('maxTokens must be positive')
 
-  return async function* ({ model, messages, tools, signal }) {
+  return async function* ({ model, messages, tools, signal, contextBudgetBytes }) {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: headers(apiKey, true),
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        messages: toMessages(messages),
-        tools: tools.map(toTool),
-        stream: true,
-      }),
+      body: serializeContextRequest(
+        {
+          model,
+          max_tokens: maxTokens,
+          messages: toMessages(messages),
+          tools: tools.map(toTool),
+          stream: true,
+        },
+        contextBudgetBytes,
+      ),
       signal,
     })
     if (!response.ok) throw new Error(await httpError('Anthropic', response, [apiKey]))
