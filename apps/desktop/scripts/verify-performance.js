@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:net'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -15,6 +15,14 @@ const require = createRequire(import.meta.url)
 const webRequire = createRequire(path.join(webRoot, 'package.json'))
 const runs = parseRuns(process.argv[2] ?? '3')
 if (runs < 3) throw new Error('The performance gate requires at least three runs')
+// Adversarial mode stresses the same fixtures with much larger histories and
+// activity bursts. It measures instead of gate-keeping: structural coverage
+// still applies, but budget ceilings are relaxed to Infinity.
+const adversarial = process.env['HARNESS_PERF_ADVERSARIAL'] === '1'
+const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], {
+  cwd: path.resolve(here, '../..'),
+  encoding: 'utf8',
+}).trim()
 const reportDirectory = path.resolve(
   process.argv[3] ?? path.join(desktopRoot, 'performance-results'),
 )
@@ -122,6 +130,7 @@ try {
       HARNESS_PERF_RENDERER: path.join(rendererDirectory, 'index.html'),
       HARNESS_PERF_RESULT: resultPath,
       HARNESS_PERF_MEMORY_MODULE: memoryModule,
+      HARNESS_PERF_QUERY: adversarial ? 'messages=2000&sessions=8&batches=240' : undefined,
     })
     const sample = JSON.parse(await readFile(resultPath, 'utf8'))
     samples.push(sample)
@@ -138,8 +147,8 @@ try {
         ELECTRON_RUN_AS_NODE: undefined,
         HARNESS_STARTUP_RENDERER: path.join(startupDirectory, 'index.html'),
         HARNESS_STARTUP_SETTLE_MS: '2000',
-        HARNESS_STARTUP_THREAD_COUNT: '5',
-        HARNESS_STARTUP_PROJECT_COUNT: '1',
+        HARNESS_STARTUP_THREAD_COUNT: adversarial ? '1000' : '5',
+        HARNESS_STARTUP_PROJECT_COUNT: adversarial ? '50' : '1',
       },
       [desktopRoot],
     )
@@ -150,12 +159,29 @@ try {
     )
     console.log(`[performance] cold start ${index}/${runs}: interactive ${startup.interactive} ms`)
   }
-  const failures = performanceFailures(samples, startups)
+  const failures = performanceFailures(
+    samples,
+    startups,
+    adversarial
+      ? {
+          ...PERFORMANCE_BUDGETS,
+          firstPaintMs: Infinity,
+          frameMs: Infinity,
+          medianScrollFrameMs: Infinity,
+          streamBatchMs: Infinity,
+          startupInteractiveMs: Infinity,
+          switchMs: Infinity,
+          memoryBytes: Infinity,
+        }
+      : PERFORMANCE_BUDGETS,
+  )
   await writeFile(
     path.join(reportDirectory, 'report.json'),
     JSON.stringify(
       {
         createdAt: new Date().toISOString(),
+        commit: sourceCommit,
+        mode: adversarial ? 'adversarial' : 'budget',
         platform: process.platform,
         arch: process.arch,
         budgets: PERFORMANCE_BUDGETS,

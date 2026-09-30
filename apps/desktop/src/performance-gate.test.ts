@@ -9,6 +9,7 @@ const goodSample = () => ({
   firstPaintMs: 100,
   initiallyVisible: 5,
   sessions: 5,
+  messageCount: 500,
   memoryBytes: 200_000_000,
   memory: goodMemory(),
   scroll: { seenMessages: 500, frames: Array(120).fill(16.67) },

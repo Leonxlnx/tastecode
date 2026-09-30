@@ -33,7 +33,11 @@ export function performanceFailures(samples, startups, budgets = PERFORMANCE_BUD
     failures.push('At least three independent renderer and cold-start samples are required')
   for (const [index, sample] of samples.entries()) {
     const label = `renderer ${index + 1}`
-    if (sample.initiallyVisible < 1 || sample.scroll.seenMessages !== 500 || sample.sessions !== 5)
+    if (
+      sample.initiallyVisible < 1 ||
+      sample.scroll.seenMessages !== sample.messageCount ||
+      sample.sessions < 1
+    )
       failures.push(`${label}: missing rendered fixture coverage`)
     if (
       sample.streaming.deltas < 1_000 ||
