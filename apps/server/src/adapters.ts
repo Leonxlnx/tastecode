@@ -1,3 +1,4 @@
+import type { CompatibleProvider } from '@harness/adapter-api'
 import type { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
 import type { GrokAdapter } from '@harness/adapter-grok'
 import type {
@@ -72,6 +73,18 @@ export type StartOptions = {
   providerSessionId?: string | undefined
 }
 
+/**
+ * A connection names a reviewed provider, or it points at its own endpoint.
+ *
+ * The preset schema is wider than the transport's provider list: `openai` and
+ * `anthropic` never reach the OpenAI-compatible transport, and a preset with no
+ * reviewed capabilities is served as `custom` so it gets the generic defaults
+ * instead of borrowing another vendor's.
+ */
+export function compatibleProviderFor(preset: StoredModelConnection['preset']): CompatibleProvider {
+  return preset === 'openrouter' || preset === 'kimi' || preset === 'zai' ? preset : 'custom'
+}
+
 export function apiRuntime(
   connection: StoredModelConnection,
   apiKey: string,
@@ -92,12 +105,7 @@ export function apiRuntime(
             ? createAnthropicMessagesTransport({ apiKey, baseUrl: connection.baseUrl })
             : createOpenAiCompatibleTransport({
                 apiKey,
-                provider:
-                  connection.preset === 'openrouter' ||
-                  connection.preset === 'kimi' ||
-                  connection.preset === 'zai'
-                    ? connection.preset
-                    : 'custom',
+                provider: compatibleProviderFor(connection.preset),
                 baseUrl: connection.baseUrl,
               })
       const model = options.model ?? connection.defaultModel
@@ -134,12 +142,7 @@ export function apiRuntime(
       if (connection.transport === 'anthropic-messages') return listAnthropicModels(options)
       return listOpenAiCompatibleModels({
         ...options,
-        provider:
-          connection.preset === 'openrouter' ||
-          connection.preset === 'kimi' ||
-          connection.preset === 'zai'
-            ? connection.preset
-            : 'custom',
+        provider: compatibleProviderFor(connection.preset),
       })
     },
   }
