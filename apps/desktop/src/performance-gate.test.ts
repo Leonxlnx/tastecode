@@ -23,6 +23,7 @@ const goodSample = () => ({
     colors: ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'],
     frames: Array(12).fill(16.67),
     longTasks: [] as number[],
+    trace: { maxMainTaskMs: 16, mainTaskCount: 10, workerThreads: 1 },
   },
 })
 const startups = () =>
@@ -96,6 +97,14 @@ describe('real Electron performance gates', () => {
     expect(performanceFailures(samples, startups())).toEqual([
       'renderer 1 worst highlighting frame ms: 33 (must be < 32)',
       'renderer 1 worst highlighting long task ms: 60 (must be < 32)',
+    ])
+  })
+
+  it('fails a 32 ms trace task even when frame samples and the 50 ms observer pass', () => {
+    const samples = Array.from({ length: 3 }, goodSample)
+    samples[0]!.highlighting.trace.maxMainTaskMs = 32
+    expect(performanceFailures(samples, startups())).toEqual([
+      'renderer 1 worst highlighting trace task ms: 32 (must be < 32)',
     ])
   })
 })
