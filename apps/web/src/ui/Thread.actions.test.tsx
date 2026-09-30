@@ -631,6 +631,58 @@ describe('completed activity disclosure', () => {
     expect(container.querySelector('.activity__body')).toBeNull()
   })
 
+  it('keeps 300 large tool outputs out of the collapsed DOM and releases opened details', () => {
+    const items: Item[] = [turnItem('prompt', 1, { role: 'user', text: 'Inspect the fixture' })]
+    for (let index = 0; index < 300; index++) {
+      items.push(
+        turnItem(`large-tool-${index}`, index + 2, {
+          type: 'tool_call',
+          text: `fixture.tool\n{"index":${index}}\nlarge-output-${index}:` + 'x'.repeat(128 * 1024),
+        }),
+      )
+    }
+    items.push(
+      turnItem('answer', 1000, {
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Fixture complete.',
+      }),
+    )
+    const { container } = renderCompleted(items)
+    // Count the activity itself: this file's virtualizer mock intentionally
+    // mounts one wrapper for every transcript index, including grouped items.
+    const activity = container.querySelector('.activity')!
+    const collapsedNodes = activity.querySelectorAll('*').length
+    expect(collapsedNodes).toBeLessThan(200)
+    expect(container.textContent!.length).toBeLessThan(2000)
+    expect(container.querySelector('.activity__body')).toBeNull()
+    expect(previewViewedImage).not.toHaveBeenCalled()
+
+    const disclosure = screen.getByRole('button', { name: /Worked for/ })
+    disclosure.focus()
+    fireEvent.click(disclosure)
+    const reveal = container.querySelector('.activity__reveal')!
+    expect(container.querySelectorAll('.tool-detail__output')).toHaveLength(0)
+    const rows = container.querySelectorAll<HTMLButtonElement>('.activity__body .aux__row')
+    expect(rows).toHaveLength(300)
+    fireEvent.click(rows[0]!)
+    expect(container.querySelectorAll('.tool-detail__output')).toHaveLength(1)
+    expect(container.querySelector('.tool-detail__output')?.textContent).toContain(
+      'large-output-0:',
+    )
+    fireEvent.click(disclosure)
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
+    expect(reveal.getAttribute('aria-hidden')).toBe('true')
+    fireEvent(
+      reveal,
+      Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
+    )
+    expect(container.querySelector('.activity__body')).toBeNull()
+    expect(activity.querySelectorAll('*').length).toBeLessThanOrEqual(collapsedNodes)
+    expect(container.textContent!.length).toBeLessThan(2000)
+    expect(document.activeElement).toBe(disclosure)
+  })
+
   it('names the tool and what it acted on, and opens arguments and output apart', () => {
     const { container } = renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Check the page' }),
