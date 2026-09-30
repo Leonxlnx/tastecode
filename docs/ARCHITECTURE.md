@@ -426,6 +426,18 @@ most disposable process) · whole-DB encryption (the DB holds no credentials by 
 
 ---
 
+### Direct API request retention
+
+Direct API sessions keep a bounded request context independently of the durable transcript.
+Known GPT-4/GPT-5 and Claude families use a conservative 64 KiB serialized request cap;
+unknown model ids use 8 KiB. These are application safety budgets, not tokenizer estimates
+or advertised vendor context windows. Each transport checks its final JSON body too.
+Older turns are removed as complete user/assistant/tool groups; current-turn data and
+shared instructions are retained. A visible transcript notice identifies omission. If the
+current turn or tool definitions alone exceed the cap, the turn fails with an actionable
+message before network I/O. Provider errors can still impose a smaller model-specific limit.
+No transcript events are deleted by this policy.
+
 ## Long threads must feel instant
 
 Threads exceed 200 messages of streamed markdown, code, diffs and tool output. This is the
