@@ -3,7 +3,7 @@ import type { ApiMessage, ApiTool } from './runtime.js'
 /** Conservative serialized-byte budgets, not a claim about a vendor's tokenizer. */
 export function contextBudgetBytes(model: string): number {
   // These families support larger windows; unknown/custom endpoints stay conservative.
-  return /^(?:gpt-4[.o-]|gpt-5(?:[.-]|$)|claude-(?:sonnet|opus|haiku|3))/i.test(model)
+  return /^(?:gpt-4(?:\.1|o)(?:-|$)|gpt-5(?:[.-]|$)|claude-(?:sonnet|opus|haiku|3))/i.test(model)
     ? 64 * 1024
     : 8 * 1024
 }
