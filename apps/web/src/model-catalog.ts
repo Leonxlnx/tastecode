@@ -39,20 +39,26 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
 }
 
 const DEFAULT_HIDDEN_MODELS = new Set([
-  'gpt-5.2',
-  'gpt-5.3-codex-spark',
+  'gpt-6-sol',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.5',
   'gpt-5.4',
   'gpt-5.4-mini',
-  'gpt-5.5',
+  'gpt-5.3-codex-spark',
+  'gpt-5.2',
+  'claude-opus-5',
+  'claude-sonnet-5',
   'claude-fable-5',
-  'grok-4.7-build-fast',
   'claude-haiku-4-5',
   'haiku',
-  'claude-opus-4-5',
-  'claude-opus-4-6',
-  'claude-opus-4-7',
   'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-opus-4-5',
   'claude-sonnet-4-6',
+  'grok-4.7-build-fast',
 ])
 
 /** Hide known older models while letting newly discovered models start enabled. */

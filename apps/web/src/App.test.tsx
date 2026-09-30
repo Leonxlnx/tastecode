@@ -602,12 +602,12 @@ function openSettings() {
 
 function cachedCodexChoice(): ModelChoice {
   return {
-    key: 'codex:gpt-5.6-sol',
+    key: 'codex:gpt-6.1-sol',
     provider: 'codex',
     sourceName: 'Codex',
     mark: 'openai',
     model: {
-      id: 'gpt-5.6-sol',
+      id: 'gpt-6.1-sol',
       displayName: 'GPT-5.6 Sol',
       isDefault: true,
       reasoningEfforts: ['low', 'high'],
@@ -768,7 +768,7 @@ describe('web client', () => {
         { ...cachedCodexChoice().model, id: 'gpt-6-astra', displayName: 'GPT-6 Astra' },
         { ...cachedCodexChoice().model, id: 'new-model', displayName: 'New model' },
         {
-          id: 'gpt-5.6-sol',
+          id: 'gpt-6.1-sol',
           displayName: 'GPT-5.6 Sol',
           isDefault: true,
           reasoningEfforts: [],
@@ -867,7 +867,7 @@ describe('web client', () => {
     )
 
     await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]'),
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]'),
     )
     releaseModels({
       models: [
@@ -883,11 +883,11 @@ describe('web client', () => {
     })
 
     await waitFor(() => expect(screen.getByText('GPT-5.5')).toBeTruthy())
-    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]')
+    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]')
   })
 
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
-    const saved = '["codex:gpt-5.6-sol"]'
+    const saved = '["codex:gpt-6.1-sol"]'
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', saved)
     const request = transport.request.getMockImplementation()
@@ -897,7 +897,7 @@ describe('web client', () => {
         ? Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6 Sol',
                 isDefault: true,
                 reasoningEfforts: [],
@@ -1575,12 +1575,12 @@ describe('web client', () => {
       return request(method, params)
     })
     // Older builds persisted a bare model id rather than the source-qualified key.
-    localStorage.setItem('harness.model', 'gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'high')
     localStorage.setItem('harness.serviceTier', 'priority')
     localStorage.setItem(
       'harness.modelBySource',
-      JSON.stringify({ codex: { modelKey: 'codex:gpt-5.6-sol', serviceTier: 'priority' } }),
+      JSON.stringify({ codex: { modelKey: 'codex:gpt-6.1-sol', serviceTier: 'priority' } }),
     )
 
     render(<App />)
@@ -1588,7 +1588,7 @@ describe('web client', () => {
     expect(screen.queryByText('Loading models…')).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
     expect(
-      await screen.findByRole('button', { name: 'Use gpt-5.6-sol through Codex' }),
+      await screen.findByRole('button', { name: 'Use gpt-6.1-sol through Codex' }),
     ).toBeTruthy()
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',
@@ -1654,7 +1654,7 @@ describe('web client', () => {
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()], { validatedAt: 0 }),
     )
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
 
     render(<App />)
 
@@ -1681,7 +1681,7 @@ describe('web client', () => {
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()]),
     )
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
 
     render(<App />)
 
@@ -1693,7 +1693,7 @@ describe('web client', () => {
       await failedDiscovery.catch(() => undefined)
     })
     await waitFor(() => {
-      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-6.1-sol')
       expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
         '5.6 Sol',
       )
@@ -1746,7 +1746,7 @@ describe('web client', () => {
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()]),
     )
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'ultra')
     localStorage.setItem('harness.serviceTier', 'priority')
 
@@ -1779,14 +1779,14 @@ describe('web client', () => {
         workspacePath: '/work/project',
         baseRef: 'main',
         approval: 'auto-review',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'high',
       })
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use what the UI shows',
         clientSubmissionId: expect.stringMatching(/^local:/),
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'high',
       })
     })
@@ -1882,7 +1882,7 @@ describe('web client', () => {
       expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
     })
     await waitFor(() => {
-      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-6.1-sol')
     })
   })
 
@@ -2106,7 +2106,7 @@ describe('web client', () => {
         return Promise.resolve({
           models: [
             {
-              id: provider === 'codex' ? 'gpt-5.6-sol' : 'sonnet',
+              id: provider === 'codex' ? 'gpt-6.1-sol' : 'sonnet',
               displayName: provider === 'codex' ? 'GPT-5.6 Sol' : 'Sonnet 5',
               isDefault: true,
               reasoningEfforts: [],
@@ -5420,7 +5420,7 @@ describe('new chats', () => {
           return Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6-Sol',
                 isDefault: true,
                 reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
@@ -5475,7 +5475,7 @@ describe('new chats', () => {
         workspacePath: '/work/project',
         baseRef: 'main',
         approval: 'auto-review',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
       })
@@ -5483,7 +5483,7 @@ describe('new chats', () => {
         threadId: 'thread-1',
         text: 'Use the fast lane',
         clientSubmissionId: expect.stringMatching(/^local:/),
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
       })
@@ -5501,7 +5501,7 @@ describe('new chats', () => {
           return Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6 Sol',
                 isDefault: true,
                 reasoningEfforts: ['low', 'medium', 'high', 'max', 'ultra'],
@@ -5663,7 +5663,7 @@ describe('new chats', () => {
           text: 'Use this chat setup',
           clientSubmissionId: expect.stringMatching(/^local:/),
           threadId: 'chat-a',
-          model: 'gpt-5.6-sol',
+          model: 'gpt-6.1-sol',
           effort: 'low',
         }),
       )
@@ -5701,7 +5701,7 @@ describe('new chats', () => {
   it('restores a chat setup after late discovery instead of the provider setup', async () => {
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'low')
     const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
     localStorage.setItem('harness.modelByThread:untouched-thread', JSON.stringify(saved))
@@ -5785,7 +5785,7 @@ describe('new chats', () => {
     await act(async () => finishStart())
     await waitFor(() =>
       expect(JSON.parse(localStorage.getItem('harness.modelByThread:thread-1') ?? 'null')).toEqual({
-        modelKey: 'codex:gpt-5.6-sol',
+        modelKey: 'codex:gpt-6.1-sol',
         effort: 'high',
         designMode: true,
       }),
@@ -5841,7 +5841,7 @@ describe('new chats', () => {
           return Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6 Sol',
                 isDefault: true,
                 reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
@@ -6059,7 +6059,7 @@ describe('new chats', () => {
             methods['models.list'].params.parse(params).provider === 'codex'
               ? [
                   {
-                    id: 'gpt-5.6-sol',
+                    id: 'gpt-6.1-sol',
                     displayName: 'GPT-5.6 Sol',
                     isDefault: true,
                     reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
@@ -6085,7 +6085,7 @@ describe('new chats', () => {
       }
       return request(method, params)
     })
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'xhigh')
     localStorage.setItem('harness.serviceTier', 'priority')
 
@@ -6140,7 +6140,7 @@ describe('new chats', () => {
         return Promise.resolve({
           models: [
             {
-              id: 'gpt-5.6-sol',
+              id: 'gpt-6.1-sol',
               displayName: 'GPT-5.6 Sol',
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
@@ -6152,7 +6152,7 @@ describe('new chats', () => {
       }
       return request(method, params)
     })
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'high')
     localStorage.setItem('harness.serviceTier', 'priority')
 
@@ -8270,7 +8270,7 @@ describe('reopening a session', () => {
         return Promise.resolve({
           models: [
             {
-              id: 'gpt-5.6-sol',
+              id: 'gpt-6.1-sol',
               displayName: 'GPT-5.6 Sol',
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
@@ -8324,7 +8324,7 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
         text: 'Keep this model',
         clientSubmissionId: expect.stringMatching(/^local:/),
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'low',
       })
     })
@@ -8447,7 +8447,7 @@ describe('reopening a session', () => {
         return Promise.resolve({
           models: [
             {
-              id: claude ? 'opus' : 'gpt-5.6-sol',
+              id: claude ? 'opus' : 'gpt-6.1-sol',
               displayName: claude ? 'Opus 5' : 'GPT-5.6 Sol',
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
@@ -8459,7 +8459,7 @@ describe('reopening a session', () => {
       }
       return request(method, params)
     })
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
 
     render(<App />)
 
