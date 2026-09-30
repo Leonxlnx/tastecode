@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, contentTracing } = require('electron')
 const { writeFile } = require('node:fs/promises')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
@@ -34,7 +34,21 @@ app
       if (details.level === 'error') errors.push(details.message)
     })
     await window.loadFile(process.env.HARNESS_PERF_RENDERER)
+    await contentTracing.startRecording({
+      included_categories: ['devtools.timeline', 'blink.user_timing', 'toplevel', 'v8.execute'],
+    })
+    let highlighting
+    try {
+      highlighting = await window.webContents.executeJavaScript('window.runHighlightingFixture()')
+    } finally {
+      await contentTracing.stopRecording(
+        `${process.env.HARNESS_PERF_RESULT}.highlighting-trace.json`,
+      )
+    }
+    // Keep highlighting's warmed module/worker caches out of the existing thread gate.
+    await window.loadFile(process.env.HARNESS_PERF_RENDERER)
     const sample = await window.webContents.executeJavaScript('window.runPerformanceFixture()')
+    sample.highlighting = highlighting
     if (errors.length > 0) throw new Error(errors.join('\n'))
     const metrics = app.getAppMetrics()
     const { collectSettledBenchmarkMemory } = await import(

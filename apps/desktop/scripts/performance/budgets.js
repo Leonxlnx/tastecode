@@ -33,6 +33,36 @@ export function performanceFailures(samples, startups, budgets = PERFORMANCE_BUD
     failures.push('At least three independent renderer and cold-start samples are required')
   for (const [index, sample] of samples.entries()) {
     const label = `renderer ${index + 1}`
+    const highlighting = sample.highlighting
+    if (
+      !highlighting ||
+      !Number.isFinite(highlighting.codeCharacters) ||
+      highlighting.codeCharacters < 32 * 1024 ||
+      highlighting.coldRequests !== 1 ||
+      highlighting.remountRequests !== 0 ||
+      highlighting.themeRequests !== 0 ||
+      !Number.isFinite(highlighting.coloredTokens) ||
+      highlighting.coloredTokens < 1 ||
+      !Array.isArray(highlighting.colors) ||
+      highlighting.colors.length !== 2 ||
+      highlighting.colors[0] === highlighting.colors[1] ||
+      !Array.isArray(highlighting.frames) ||
+      highlighting.frames.length < 6 ||
+      !Array.isArray(highlighting.longTasks)
+    ) {
+      failures.push(`${label}: missing real-worker highlighting or cache/theme coverage`)
+    } else {
+      below(
+        `${label} worst highlighting frame ms`,
+        Math.max(...highlighting.frames),
+        budgets.frameMs,
+      )
+      below(
+        `${label} worst highlighting long task ms`,
+        Math.max(0, ...highlighting.longTasks),
+        budgets.frameMs,
+      )
+    }
     if (sample.initiallyVisible < 1 || sample.scroll.seenMessages !== 500 || sample.sessions !== 5)
       failures.push(`${label}: missing rendered fixture coverage`)
     if (
