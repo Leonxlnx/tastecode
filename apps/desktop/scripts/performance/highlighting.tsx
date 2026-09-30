@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { CompletedMarkdown } from '../../../web/src/ui/CompletedMarkdown.js'
-import { highlightedTokens } from './highlighting-dom.js'
+import { highlightedTokens, highlightingReady } from './highlighting-dom.js'
 
 const code = Array.from(
   { length: 700 },
@@ -50,9 +50,9 @@ export async function runHighlightingFixture() {
   }
   frameId = requestAnimationFrame(sampleFrame)
   const colored = () => highlightedTokens(host).length
-  const waitForColor = async () => {
+  const waitForColor = async (blockCount: number) => {
     const deadline = performance.now() + 15_000
-    const pending = () => host.querySelector('[data-highlight-pending="true"]') || colored() === 0
+    const pending = () => !highlightingReady(host, blockCount)
     while (pending() && performance.now() < deadline) await frame()
     if (pending()) throw new Error('Real worker did not paint all highlighted code')
     await frame()
@@ -68,7 +68,7 @@ export async function runHighlightingFixture() {
         </>,
       ),
     )
-    await waitForColor()
+    await waitForColor(2)
     const blocks = [...host.querySelectorAll<HTMLElement>('pre code')]
     if (blocks.length !== 2) throw new Error('Both full code fences must remain mounted')
     for (const block of blocks) {
@@ -83,7 +83,17 @@ export async function runHighlightingFixture() {
         lines.map((line) => line.textContent).join('\n') !== code ||
         lines.some((line) => line.getBoundingClientRect().height === 0)
       )
-        throw new Error('Highlighted code changed the full representative source or line layout')
+        throw new Error(
+          `Highlighted code changed the full representative source or line layout: ${JSON.stringify(
+            {
+              lines: lines.length,
+              characters: lines.map((line) => line.textContent).join('\n').length,
+              zeroHeightLines: lines.filter((line) => line.getBoundingClientRect().height === 0)
+                .length,
+              colored: highlightedTokens(block).length,
+            },
+          )}`,
+        )
     }
     const coldRequests = requests
     const coloredTokens = colored()
@@ -92,7 +102,7 @@ export async function runHighlightingFixture() {
     await frame()
     performance.mark('highlight-remount-start')
     flushSync(() => root.render(<CompletedMarkdown text={markdown} />))
-    await waitForColor()
+    await waitForColor(1)
     const remountRequests = requests - coldRequests
     const colors = []
     for (const nextTheme of ['light', 'dark']) {
