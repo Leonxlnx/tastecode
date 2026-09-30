@@ -429,7 +429,7 @@ most disposable process) · whole-DB encryption (the DB holds no credentials by 
 ### Direct API request retention
 
 Direct API sessions keep a bounded request context independently of the durable transcript.
-Known GPT-4/GPT-5 and Claude families use a conservative 64 KiB serialized request cap;
+Known GPT-4.1/GPT-4o/GPT-5 and Claude families use a conservative 64 KiB serialized request cap;
 unknown model ids use 8 KiB. These are application safety budgets, not tokenizer estimates
 or advertised vendor context windows. Each transport checks its final JSON body too.
 Older turns are removed as complete user/assistant/tool groups; current-turn data and

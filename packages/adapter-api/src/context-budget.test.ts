@@ -5,6 +5,8 @@ import { ApiAgentSession, type ApiMessage } from './runtime.js'
 describe('API context budget', () => {
   it('selects conservative defaults for unknown models', () => {
     expect(contextBudgetBytes('custom-small-model')).toBe(8192)
+    expect(contextBudgetBytes('gpt-4-0613')).toBe(8192)
+    expect(contextBudgetBytes('gpt-4o')).toBe(65536)
     expect(contextBudgetBytes('gpt-5')).toBe(65536)
     expect(contextBudgetBytes('claude-sonnet-4-6')).toBe(65536)
   })
