@@ -1950,7 +1950,7 @@ describe('web client', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-6.1-sol')
     })
     expect(screen.queryByText(/Could not load API connections/)).toBeNull()
   })
@@ -1976,7 +1976,7 @@ describe('web client', () => {
 
     await waitFor(() => {
       const cached = localStorage.getItem('harness.modelCatalog.v1') ?? ''
-      expect(cached).toContain('gpt-5.6-sol')
+      expect(cached).toContain('gpt-6.1-sol')
       expect(cached).not.toContain('api:gone-1')
     })
     expect(screen.queryByText(/Could not load API connections/)).toBeNull()
