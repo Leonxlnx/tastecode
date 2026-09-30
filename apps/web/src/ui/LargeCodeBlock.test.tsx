@@ -42,7 +42,12 @@ it('keeps all code selectable and copyable while worker colors paint in bounded 
   const copied = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
   const view = render(<CompletedMarkdown text={`\`\`\`typescript\n${code}\n\`\`\``} />)
   const renderedCode = () =>
-    [...view.container.querySelectorAll('.md-code-line')].map((line) => line.textContent).join('\n')
+    [...view.container.querySelectorAll('.md-code-chunk')]
+      .map((chunk) => {
+        const lines = [...chunk.querySelectorAll('.md-code-line')]
+        return lines.length ? lines.map((line) => line.textContent).join('\n') : chunk.textContent
+      })
+      .join('\n')
   expect(renderedCode()).toBe(code)
   fireEvent.click(screen.getByRole('button', { name: /copy/i }))
   expect(copied).toHaveBeenCalledWith(`${code}\n`)
@@ -89,10 +94,12 @@ it.each(['```typescript extra', '~~~typescript', '```typescript'])(
     const closing = opening.startsWith('~~~') ? '~~~' : '```'
     const view = render(<CompletedMarkdown text={`${opening}\n${code}${closing}`} />)
     expect(view.container.querySelector('pre b')).toBeNull()
-    expect(view.container.querySelectorAll('.md-code-line')).toHaveLength(1399)
-    expect(view.container.querySelector('.md-code-line')?.textContent).toBe(
-      '\tconst value = "<b>雪</b>"; // padding padding padding',
-    )
+    const rendered = [...view.container.querySelectorAll('.md-code-chunk')]
+      .map((chunk) => chunk.textContent)
+      .join('\n')
+    expect(rendered).toBe(code.replace(/\n+$/u, ''))
+    expect(rendered.split('\n')).toHaveLength(1399)
+    expect(rendered.split('\n')[0]).toBe('\tconst value = "<b>雪</b>"; // padding padding padding')
     fireEvent.click(screen.getByRole('button', { name: /copy/i }))
     expect(copied).toHaveBeenCalledWith(code)
     expect(view.container.querySelector('[data-highlight-pending="true"]')).toBeNull()
@@ -111,7 +118,7 @@ it('ignores a late worker reply after a different completed fence replaces the b
   const view = render(<CompletedMarkdown text={fence(oldCode)} />)
   view.rerender(<CompletedMarkdown text={fence(newCode)} />)
   act(() => callbacks[0]!({ tokens: [[{ content: 'stale result', color: '#cf222e' }]] }))
-  expect(view.container.querySelector('.md-code-line')?.textContent).toContain('newValue')
+  expect(view.container.querySelector('.md-code-chunk')?.textContent).toContain('newValue')
   expect(view.container.textContent).not.toContain('stale result')
 })
 
@@ -137,6 +144,7 @@ it('inherits repeated foregrounds without dropping distinct styles or token attr
   expect(first.style.getPropertyValue('--sdm-c')).toBe('#1f2328')
   expect(first.style.getPropertyValue('--shiki-dark')).toBe('#e6edf3')
   expect(first.children).toHaveLength(2)
+  expect(first.childNodes).toHaveLength(3)
   expect(first.querySelector('[data-marked="kept"]')?.textContent).toBe('marked; ')
   expect(
     first.querySelector<HTMLElement>('span:last-child')?.style.getPropertyValue('--sdm-tbg'),

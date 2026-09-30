@@ -30,8 +30,9 @@ app
       app.exit(1)
     })
     const errors = []
-    window.webContents.on('console-message', (_event, details) => {
+    window.webContents.on('console-message', (details) => {
       if (details.level === 'error') errors.push(details.message)
+      if (details.message.startsWith('[performance]')) console.log(details.message)
     })
     await window.loadFile(process.env.HARNESS_PERF_RENDERER)
     await contentTracing.startRecording({
@@ -48,6 +49,7 @@ app
     console.log('[performance] highlighting and trace complete')
     // Keep highlighting's warmed module/worker caches out of the existing thread gate.
     await window.loadFile(process.env.HARNESS_PERF_RENDERER)
+    console.log('[performance] thread page reload complete')
     const sample = await window.webContents.executeJavaScript('window.runPerformanceFixture()')
     console.log('[performance] thread fixture complete')
     sample.highlighting = highlighting
