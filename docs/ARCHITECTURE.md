@@ -426,6 +426,18 @@ most disposable process) · whole-DB encryption (the DB holds no credentials by 
 
 ---
 
+### Direct API request retention
+
+Direct API sessions keep a bounded request context independently of the durable transcript.
+Known GPT-4.1/GPT-4o/GPT-5 and Claude families use a conservative 64 KiB serialized request cap;
+unknown model ids use 8 KiB. These are application safety budgets, not tokenizer estimates
+or advertised vendor context windows. Each transport checks its final JSON body too.
+Older turns are removed as complete user/assistant/tool groups; current-turn data and
+shared instructions are retained. A visible transcript notice identifies omission. If the
+current turn or tool definitions alone exceed the cap, the turn fails with an actionable
+message before network I/O. Provider errors can still impose a smaller model-specific limit.
+No transcript events are deleted by this policy.
+
 ## Long threads must feel instant
 
 Threads exceed 200 messages of streamed markdown, code, diffs and tool output. This is the
@@ -450,6 +462,17 @@ The rules that solve it:
    reply or patch with one em dash anywhere is stored two bytes wide, and V8 tokenized it
    about half as fast in Electron 43. Copying whole blocks was rejected because one wide
    character inside the block defeats it.
+   Completed fences above 32 KiB keep all source lines mounted while decorative token DOM
+   is applied in 12-line animation-frame batches. Repeated foreground colors inherit from
+   their line; tokens with attributes or other styles retain their elements. Simple complete
+   fences skip Markdown/HTML AST construction; complex fences retain Streamdown parsing.
+   Plain chunks reserve their full line height in one layout box, and adjacent inherited
+   text shares a text node to avoid unnecessary initial layout and removal work.
+   Large code containers override Streamdown's block-level content visibility so
+   offscreen token batches also lay out incrementally rather than all at first scroll.
+   Whole-block token commits exceeded the frame budget. CSS layout containment was rejected
+   because it increased theme compositing cost; clipping or dropping source was rejected
+   because selection, copy, horizontal scrolling and accessibility must remain intact.
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
 5. **Closed activity owns no detail DOM.** Command and tool details mount when their
    disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
@@ -503,6 +526,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
 | 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |
 | 2026-07-28 | Initial decisions.                                                                                                                                                             |
 | 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                                                                                                         |

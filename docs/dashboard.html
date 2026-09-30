@@ -290,7 +290,7 @@
           <a href="#parked">Parked</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-29 main 492daab3 · 0.1.2 source preparation</span>
+        <span class="meta">2026-09-30 main dd32f251 · 0.1.2 source preparation</span>
       </div>
     </div>
 
@@ -359,7 +359,10 @@
           fixed on main were closed after checking the code: preview cleanup failures (#1001),
           single-writer draft releases with an exact manifest (#954), and raw crash-dump retention
           (#1011). On nightly, ACP turns whose prompt request rejects now settle their items and
-          approvals in draft PR #1311 (#1008), pending a real Grok+MCP check.
+          approvals (#1008, PR #1311), checked against a real Grok+MCP turn. A refused
+          API-connection list now reaches the composer with its reason and Retry instead of silently
+          dropping the models it paid for, and a connection-backed model needs setup rather than
+          dead-ending as unavailable (#1275, PRs #1277 and #1357).
         </p>
         <p>
           Startup, refresh and history reads repeat less work (PRs #1314 to #1319, #1322, #1323).

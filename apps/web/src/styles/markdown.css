@@ -385,6 +385,16 @@
   min-height: 1lh;
 }
 
+/* Block chunks keep late token layout local while retaining normal selection and overflow. */
+.md pre code > .md-code-chunk {
+  display: block;
+}
+
+.md .md-code-line {
+  display: block;
+  min-height: 1lh;
+}
+
 .md pre span[style*='--sdm-c'] {
   color: var(--sdm-c);
 }

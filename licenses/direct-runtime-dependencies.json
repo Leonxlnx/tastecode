@@ -243,7 +243,7 @@
       "license": "MIT",
       "metadataLicenses": ["MIT"],
       "bundledLicense": "licenses/npm/napi-keyring-darwin-arm64-1.3.0-MIT.txt",
-      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/e46be75c3ba8d5fde6b88a17c6153b87ffe4b946/LICENSE"
     },
     {
       "name": "@napi-rs/keyring-win32-x64-msvc",
@@ -251,7 +251,7 @@
       "license": "MIT",
       "metadataLicenses": ["MIT"],
       "bundledLicense": "licenses/npm/napi-keyring-win32-x64-msvc-1.3.0-MIT.txt",
-      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/875e452d75c7f1f2579e25ef10a598109852fa75/LICENSE"
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/e46be75c3ba8d5fde6b88a17c6153b87ffe4b946/LICENSE"
     },
     {
       "name": "@electron-internal/extract-zip",
@@ -290,6 +290,14 @@
       "metadataLicenses": ["MIT"],
       "bundledLicense": "licenses/npm/standardwebhooks-1.0.0-MIT.txt",
       "licenseSource": "https://github.com/standard-webhooks/standard-webhooks/blob/b03a68fe8b1904de92ba1df669dc8bd9c8226df3/libraries/LICENSE"
+    },
+    {
+      "name": "@napi-rs/keyring-linux-x64-gnu",
+      "version": "1.3.0",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "bundledLicense": "licenses/npm/napi-keyring-linux-x64-gnu-1.3.0-MIT.txt",
+      "licenseSource": "https://github.com/Brooooooklyn/keyring-node/blob/e46be75c3ba8d5fde6b88a17c6153b87ffe4b946/LICENSE"
     }
   ]
 }

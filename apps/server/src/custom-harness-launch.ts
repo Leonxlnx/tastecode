@@ -3,9 +3,8 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
-import { spawnCli } from '@harness/proc/cli'
+import { captureCli, spawnCli } from '@harness/proc/cli'
 import { desktopPath } from '@harness/proc/desktop-path'
-import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
@@ -74,44 +73,13 @@ export function runCustomHarness(
       reject(error)
       return
     }
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (result: { code: number | null; stdout: string } | Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      void killTree(child).then(() => {
-        if (result instanceof Error) reject(result)
-        else resolve(result)
-      }, reject)
-    }
-    const timer = setTimeout(() => {
-      finish(new Error(`${harness.displayName} did not answer within ${timeoutMs / 1_000}s`))
-    }, timeoutMs)
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      if (stdout.length < 1_000_000) stdout += chunk
-    })
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => {
-      if (stderr.length < 16_000) stderr += chunk
-    })
-    child.on('error', (error) => finish(actionableLaunchError(harness, error)))
-    // `exit` can fire before inherited stdout/stderr pipes have drained. Waiting
-    // for `close` preserves the final protocol bytes emitted during shutdown.
-    child.on('close', (code) => {
-      if (code === 0 || code === null) {
-        finish({ code, stdout })
-        return
-      }
-      const detail = stderr.trim() || stdout.trim()
-      finish(
-        new Error(
-          `${harness.displayName} exited with code ${code}${detail ? `: ${detail.slice(0, 500)}` : ''}`,
-        ),
-      )
-    })
+    void captureCli(child, timeoutMs).then((result) => {
+      if (result.code === 0 || result.code === null) resolve(result)
+      else
+        reject(
+          new Error(`Custom harness exited with code ${result.code}. Check its configuration.`),
+        )
+    }, reject)
     child.stdin.on('error', () => undefined)
     child.stdin.end()
   })

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { boundedContext, contextBudgetBytes } from './context-budget.js'
 import { realpathSync } from 'node:fs'
 import path from 'node:path'
 import type {
@@ -39,6 +40,7 @@ export type ApiTransport = (request: {
   messages: readonly ApiMessage[]
   tools: readonly ApiTool[]
   signal: AbortSignal
+  contextBudgetBytes?: number
 }) => AsyncIterable<ApiStreamEvent>
 
 export type ApiSessionState = { thread: Thread; messages: ApiMessage[]; turnCounter: number }
@@ -76,6 +78,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
   readonly #reviewTool: (call: ApiToolCall) => Omit<ApprovalRequest, 'id' | 'createdAt'> | undefined
   readonly #onSetApproval: ((approval: ApprovalMode) => void) | undefined
   readonly #maxToolCalls: number
+  readonly #contextBudgetBytes: number | undefined
   readonly #secrets: readonly string[]
   readonly #instructions: string | undefined
   #instructionsPending = false
@@ -96,6 +99,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     /** Live access-level change; the owner swaps the review policy behind it. */
     setApproval?: (approval: ApprovalMode) => void
     maxToolCalls?: number
+    contextBudgetBytes?: number
     secrets?: readonly string[]
     instructions?: string
   }) {
@@ -109,6 +113,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     this.#reviewTool = options.reviewTool ?? (() => undefined)
     this.#onSetApproval = options.setApproval
     this.#maxToolCalls = options.maxToolCalls ?? 32
+    this.#contextBudgetBytes = options.contextBudgetBytes
     if (!Number.isInteger(this.#maxToolCalls) || this.#maxToolCalls < 1) {
       throw new Error('maxToolCalls must be a positive integer')
     }
@@ -300,10 +305,34 @@ export class ApiAgentSession extends EventEmitter<Events> {
       const safe = Math.max(0, redacted.length - holdback)
       return { chunk: redacted.slice(0, safe), pending: redacted.slice(safe) }
     }
+    const bounded = boundedContext(
+      this.#messages,
+      this.#tools,
+      this.#model,
+      this.#contextBudgetBytes,
+      this.#instructions,
+    )
+    if (bounded.removedTurns > 0) {
+      this.#messages = bounded.messages
+      this.emit(
+        'log',
+        `API context omitted ${bounded.removedTurns} older turn(s) to stay within its budget.`,
+      )
+      this.#completeItem({
+        id: `${turnId}-context-${itemId}`,
+        turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: `Context limit: ${bounded.removedTurns} older turn(s) were omitted from this request. The transcript is unchanged.`,
+        createdAt: Date.now(),
+      })
+    }
     for await (const event of this.#transport({
       model: this.#model,
       messages: this.#messages,
       tools: this.#tools,
+      contextBudgetBytes: this.#contextBudgetBytes ?? contextBudgetBytes(this.#model),
       signal,
     })) {
       if (event.type === 'text') {

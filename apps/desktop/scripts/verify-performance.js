@@ -7,6 +7,7 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { measure, parseRuns } from './benchmark-startup.js'
 import { performanceFailures, PERFORMANCE_BUDGETS } from './performance/budgets.js'
+import { inspectHighlightingTrace } from './performance/highlighting-trace.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(here, '..')
@@ -124,6 +125,10 @@ try {
       HARNESS_PERF_MEMORY_MODULE: memoryModule,
     })
     const sample = JSON.parse(await readFile(resultPath, 'utf8'))
+    sample.highlighting.trace = inspectHighlightingTrace(
+      JSON.parse(await readFile(`${resultPath}.highlighting-trace.json`, 'utf8')),
+    )
+    await writeFile(resultPath, JSON.stringify(sample, null, 2))
     samples.push(sample)
     console.log(
       `[performance] renderer ${index}/${runs}: ${sample.scroll.seenMessages} messages visible, first paint ${sample.firstPaintMs.toFixed(1)} ms, worst frame ${Math.max(...sample.scroll.frames).toFixed(1)} ms, batch ${Math.max(...sample.streaming.batches).toFixed(1)} ms`,

@@ -14,6 +14,7 @@ import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
 import { MarkdownImage, MarkdownImageContext } from './MarkdownImage.js'
+import { MarkdownBlock, MarkdownPre } from './LargeCodeBlock.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
@@ -121,6 +122,7 @@ function localFileReferencePath(href: string): string | undefined {
 const STREAMDOWN_COMPONENTS = {
   a: MarkdownLink,
   inlineCode: InlineCode,
+  pre: MarkdownPre,
 } satisfies Components
 const IMAGE_COMPONENTS = { ...STREAMDOWN_COMPONENTS, img: MarkdownImage } satisfies Components
 
@@ -177,6 +179,7 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
   return (
     <ProjectPathContext.Provider value={projectPath}>
       <Streamdown
+        BlockComponent={MarkdownBlock}
         className="md"
         mode="streaming"
         isAnimating={false}

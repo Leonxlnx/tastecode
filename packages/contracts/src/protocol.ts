@@ -1178,7 +1178,21 @@ export const methods = {
    * which is what a client that fell behind needs.
    */
   'thread.history': {
-    params: z.object({ threadId: z.string(), afterSeq: z.number().optional() }),
+    params: z
+      .object({
+        threadId: z.string(),
+        afterSeq: z.number().optional(),
+        /** Opt in to complete-turn pages. Omit before for the newest page. */
+        page: z
+          .object({
+            before: z.string().min(1).max(512).optional(),
+            turnLimit: z.number().int().min(1).max(100).optional(),
+          })
+          .optional(),
+      })
+      .refine((value) => value.page === undefined || value.afterSeq === undefined, {
+        message: 'Backward history pages cannot be combined with forward replay',
+      }),
     result: z.object({
       events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
       running: z.boolean(),
@@ -1186,6 +1200,18 @@ export const methods = {
       reset: z.boolean().optional(),
       /** Effective access mode used when this task resumes. */
       approval: ApprovalModeSchema.optional(),
+      /** Absent on servers without paging. Cursors are opaque and thread-scoped.
+       * Pages contain whole turn lifecycles and assistant/tool pairs; a single
+       * oversized turn may exceed the normal page size. A rewrite invalidates
+       * cursors and returns reset instead of silently mixing history revisions.
+       */
+      page: z
+        .object({
+          olderCursor: z.string().min(1).max(512).nullable(),
+          /** Stable upper bound used to reconcile live events during paging. */
+          snapshotSeq: z.number().int().nonnegative(),
+        })
+        .optional(),
     }),
   },
   'thread.diff': {

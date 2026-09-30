@@ -4,13 +4,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import {
   methods,
   type DomainEvent,
+  type ModelConnection,
   type ParamsOf,
   type QueuedTurn,
   type ResultOf,
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { App } from './App.js'
+import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -613,6 +614,36 @@ function cachedCodexChoice(): ModelChoice {
       defaultReasoningEffort: 'low',
       serviceTiers: [],
     },
+  }
+}
+
+function connectionChoice(connectionId: string): ModelChoice {
+  return {
+    key: `api:${connectionId}:deepseek-v4-flash`,
+    provider: 'api',
+    sourceName: 'NaN',
+    mark: 'custom',
+    connectionId,
+    model: {
+      id: 'deepseek-v4-flash',
+      displayName: 'deepseek-v4-flash',
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    },
+  }
+}
+
+function modelConnection(overrides: Partial<ModelConnection> = {}): ModelConnection {
+  return {
+    id: 'nan-1',
+    displayName: 'NaN',
+    preset: 'custom',
+    transport: 'openai-compatible',
+    baseUrl: 'https://api.example.com/v1',
+    enabled: true,
+    credentialConfigured: true,
+    ...overrides,
   }
 }
 
@@ -1853,6 +1884,102 @@ describe('web client', () => {
     await waitFor(() => {
       expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-6.1-sol')
     })
+  })
+
+  it('reports a refused connection list instead of silently dropping its models', async () => {
+    // A build with the connection surface cached this choice. The server then
+    // refuses the stored config — the failure an installed build produced when it
+    // met a preset its schema did not know.
+    const connectionChoice: ModelChoice = {
+      key: 'api:nan-1:deepseek-v4-flash',
+      provider: 'api',
+      sourceName: 'NaN',
+      mark: 'custom',
+      connectionId: 'nan-1',
+      model: {
+        id: 'deepseek-v4-flash',
+        displayName: 'deepseek-v4-flash',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice(), connectionChoice]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') {
+        return Promise.reject(
+          new Error('invalid provider config: expected a version 1 connection list'),
+        )
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    // Silence here left the connection's models on screen with no way to tell why
+    // they stopped working, so the failure has to reach the composer, with the
+    // reason and a way to try again.
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('Could not load API connections.')
+    expect(notice.textContent).toContain('expected a version 1 connection list')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+
+  it('stays quiet when a connection list fails and no connection model was ever offered', async () => {
+    // A server too old to know the method refuses it the same way a broken
+    // connection list does. Nobody who never had a connection model needs to
+    // hear about it, so the composer stays clear.
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') {
+        return Promise.reject(new Error('Method not found'))
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+    })
+    expect(screen.queryByText(/Could not load API connections/)).toBeNull()
+  })
+
+  it('drops a cached connection model once the connection list settles without it', async () => {
+    // The cache still holds a model paid for by a connection the user has since
+    // removed. Once the list settles, the rebuilt catalog must not keep offering
+    // it — a lingering entry is a picker choice that can never answer a turn.
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice(), connectionChoice('gone-1')]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') return Promise.resolve({ connections: [] })
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      const cached = localStorage.getItem('harness.modelCatalog.v1') ?? ''
+      expect(cached).toContain('gpt-5.6-sol')
+      expect(cached).not.toContain('api:gone-1')
+    })
+    expect(screen.queryByText(/Could not load API connections/)).toBeNull()
   })
 
   it('defers ACP agent detection until Settings opens', async () => {
@@ -8817,5 +8944,36 @@ describe('reopening a session', () => {
     expect(text).toContain('Live during reconnect')
     expect(text).not.toContain('Older history')
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+  })
+})
+
+describe('send availability for a connection-backed model', () => {
+  // An API connection has no vendor CLI, so no provider status describes it.
+  // Each state the user can fix in Settings must say setup-required rather than
+  // unavailable, whose only action cannot change the outcome.
+  const resolve = (connections: ModelConnection[]) =>
+    resolveSendAvailability({
+      catalog: 'ready',
+      serverBoundSession: false,
+      selectedChoice: connectionChoice('nan-1'),
+      connections,
+      providerStatuses: [],
+      accountCheck: { provider: 'codex', state: 'ready' },
+    })
+
+  it('is ready when its connection is enabled and has a credential', () => {
+    expect(resolve([modelConnection()])).toBe('ready')
+  })
+
+  it('needs setup when its connection is disabled', () => {
+    expect(resolve([modelConnection({ enabled: false })])).toBe('setup-required')
+  })
+
+  it('needs setup when its connection has no credential', () => {
+    expect(resolve([modelConnection({ credentialConfigured: false })])).toBe('setup-required')
+  })
+
+  it('needs setup when its connection is no longer listed', () => {
+    expect(resolve([modelConnection({ id: 'other-1' })])).toBe('setup-required')
   })
 })

@@ -354,17 +354,29 @@ function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
 }
 
-function resolveSendAvailability(input: {
+export function resolveSendAvailability(input: {
   catalog: CatalogAvailability
   serverBoundSession: boolean
   activeProvider?: ProviderId | undefined
   selectedChoice?: ModelChoice | undefined
+  connections: ModelConnection[]
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
   if (input.serverBoundSession) return 'ready'
   if (input.catalog === 'loading') return 'loading'
   if (input.catalog === 'failed') return 'unavailable'
+
+  // An API connection has no vendor CLI behind it, so no provider status
+  // describes it. Its own credential is the readiness signal. A connection that
+  // is disabled, keyless, or absent from the list is something the user can fix
+  // in Settings, so it reports setup-required: reporting it unavailable showed a
+  // dead end whose button could not change the outcome.
+  const connectionId = input.selectedChoice?.connectionId
+  if (connectionId) {
+    const connection = input.connections.find((entry) => entry.id === connectionId)
+    return connection?.enabled && connection.credentialConfigured ? 'ready' : 'setup-required'
+  }
 
   const provider = input.activeProvider ?? input.selectedChoice?.provider
   if (!provider) {
@@ -859,6 +871,10 @@ export function App() {
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
+  /** Latched: the user has, or had, models that a connection pays for. Used to
+   *  decide whether a failed connection list is worth reporting, so a server
+   *  that has no connections at all stays quiet. */
+  const hadConnectionModelsRef = useRef(false)
   const modelsRef = useRef(models)
   modelsRef.current = models
   const visibleModels = useMemo(
@@ -933,6 +949,7 @@ export function App() {
     ),
     activeProvider: activeSession?.provider,
     selectedChoice: selectedModelChoice,
+    connections: modelConnections,
     providerStatuses,
     accountCheck,
   })
@@ -1615,11 +1632,20 @@ export function App() {
     let cancelled = false
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
+    // Latched before the rebuild below drops any choice whose connection is no
+    // longer resolvable. A failed list is only worth reporting to someone who
+    // has such a model; a build with no connections stays quiet, which is what
+    // keeps this safe against a server too old to know the method.
+    if (catalogModelsRef.current.some((choice) => choice.connectionId !== undefined)) {
+      hadConnectionModelsRef.current = true
+    }
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
-      const connectionsCatalog = transport
-        .request('connections.list', {})
-        .catch(() => ({ connections: [] }))
+      let connectionsError: unknown
+      const connectionsCatalog = transport.request('connections.list', {}).catch((cause) => {
+        connectionsError = cause
+        return { connections: [] }
+      })
       void connectionsCatalog.then((result) => {
         if (cancelled) return
         setModelConnections(result?.connections ?? [])
@@ -1739,6 +1765,17 @@ export function App() {
         publicDiscoveries.length > 0 && publicDiscoveries.every((entry) => entry.discovered)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
+      // A failed connections.list is otherwise invisible: the models it paid for
+      // simply stop being offered, and none of them can answer a turn, so
+      // silence reads as a working connection.
+      if (connectionsError !== undefined && hadConnectionModelsRef.current) {
+        setCatalogError({
+          id: `connections:${catalogRequest}`,
+          message: `Could not load API connections. ${
+            connectionsError instanceof Error ? connectionsError.message : String(connectionsError)
+          }`,
+        })
+      }
       // A synthetic cache-miss entry has no tier metadata. Do not persist it
       // as an authoritative snapshot after a transient discovery failure.
       if (unknownKeys.size === 0 && direct.every((entry) => entry.discovered)) {
