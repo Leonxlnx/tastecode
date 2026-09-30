@@ -101,34 +101,21 @@ export async function commandVersion(
   return spawnCommandVersion(command, timeoutMs)
 }
 
-function spawnCommandVersion(command: string, timeoutMs: number): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    const child = spawnCli(command, ['--version'])
-    let output = ''
-    let settled = false
-
-    const finish = (value: string | undefined) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      void killTree(child).then(
-        () => resolve(value),
-        () => resolve(undefined),
-      )
-    }
-
-    const timer = setTimeout(() => finish(undefined), timeoutMs)
-
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      output += chunk
-    })
-    child.on('error', () => finish(undefined))
-    child.on('close', () => {
-      const line = output.split('\n').find((entry) => /\d+\.\d+/.test(entry))
-      finish(line?.trim() || undefined)
-    })
-  })
+async function spawnCommandVersion(
+  command: string,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  try {
+    const { stdout } = await captureCli(spawnCli(command, ['--version']), timeoutMs, 64 * 1024)
+    return (
+      stdout
+        .split('\n')
+        .find((entry) => /\d+\.\d+/.test(entry))
+        ?.trim() || undefined
+    )
+  } catch {
+    return undefined
+  }
 }
 
 function resolveExecutable(
@@ -158,34 +145,54 @@ export function runCli(
   args: string[],
   timeoutMs = 5000,
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
+  return captureCli(spawnCli(command, args), timeoutMs)
+}
+
+/** Bound combined stdout/stderr before retaining bytes; settle only after owned cleanup. */
+export function captureCli(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs = 5000,
+  maxBytes = 1024 * 1024,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawnCli(command, args)
     let stdout = ''
     let stderr = ''
+    let bytes = 0
     let settled = false
-    const finish = (
-      result: { code: number | null; stdout: string; stderr?: string | undefined } | Error,
-    ) => {
+    const finish = (result: { code: number | null; stdout: string; stderr: string } | Error) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      // Handlers keep draining pipes but cannot retain more output after failure.
+      stdout = ''
+      stderr = ''
       void killTree(child).then(() => {
         if (result instanceof Error) reject(result)
         else resolve(result)
       }, reject)
     }
     const timer = setTimeout(() => {
-      finish(new Error(`${command} did not respond`))
+      finish(new Error('CLI did not respond within the time limit'))
     }, timeoutMs)
+    const append = (chunk: string, stream: 'stdout' | 'stderr') => {
+      if (settled) return
+      const size = Buffer.byteLength(chunk)
+      if (size > maxBytes - bytes) {
+        finish(new Error('CLI output exceeded the size limit. Reduce command output and retry.'))
+        return
+      }
+      bytes += size
+      if (stream === 'stdout') stdout += chunk
+      else stderr += chunk
+    }
     child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk
-    })
+    child.stdout.on('data', (chunk: string) => append(chunk, 'stdout'))
     child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => {
-      stderr += chunk
-    })
-    child.on('error', finish)
+    child.stderr.on('data', (chunk: string) => append(chunk, 'stderr'))
+    child.on('error', () =>
+      finish(new Error('CLI could not start. Check the executable and permissions.')),
+    )
+    // Exit can precede the final bytes in inherited pipes.
     child.on('close', (code) => finish({ code, stdout, stderr }))
   })
 }
