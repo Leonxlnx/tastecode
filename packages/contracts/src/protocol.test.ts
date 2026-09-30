@@ -1468,3 +1468,35 @@ describe('protocol envelopes', () => {
     ).toThrow()
   })
 })
+
+describe('backward history page contract', () => {
+  const params = methods['thread.history'].params
+  it('keeps legacy replay compatible and supports bounded whole-turn page requests', () => {
+    expect(params.parse({ threadId: 'fixture' })).toEqual({ threadId: 'fixture' })
+    expect(params.parse({ threadId: 'fixture', afterSeq: 12 })).toMatchObject({ afterSeq: 12 })
+    expect(
+      params.parse({ threadId: 'fixture', page: { before: 'opaque-cursor', turnLimit: 50 } }),
+    ).toMatchObject({ page: { before: 'opaque-cursor', turnLimit: 50 } })
+  })
+  it.each([
+    { page: { turnLimit: 0 } },
+    { page: { turnLimit: 101 } },
+    { page: { turnLimit: 1.5 } },
+    { page: { before: '' } },
+    { page: { before: 'x'.repeat(513) } },
+    { page: {}, afterSeq: 0 },
+  ])('rejects ambiguous or unbounded page parameters: %j', (request) => {
+    expect(() => params.parse({ threadId: 'fixture', ...request })).toThrow()
+  })
+  it('distinguishes an exhausted page from a legacy response', () => {
+    const schema = methods['thread.history'].result
+    expect(schema.parse({ events: [], running: false }).page).toBeUndefined()
+    expect(
+      schema.parse({ events: [], running: false, page: { olderCursor: null, snapshotSeq: 42 } })
+        .page,
+    ).toEqual({ olderCursor: null, snapshotSeq: 42 })
+    expect(() =>
+      schema.parse({ events: [], running: false, page: { olderCursor: null, snapshotSeq: -1 } }),
+    ).toThrow()
+  })
+})
