@@ -1,6 +1,6 @@
 import { runCli } from '@harness/proc'
 import { describe, expect, it, vi } from 'vitest'
-import { claudeAccount, parseClaudeAccount } from './auth.js'
+import { claudeAccount, claudePlanLabel, parseClaudeAccount } from './auth.js'
 
 describe('Claude Code authentication', () => {
   it.each([
@@ -12,11 +12,33 @@ describe('Claude Code authentication', () => {
       code: 0,
       stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', ...metadata }),
     })
-    await expect(claudeAccount({ run })).resolves.toEqual({
-      signedIn: true,
-      ...(metadata.email ? { email: metadata.email } : {}),
-      ...(metadata.subscriptionType ? { plan: metadata.subscriptionType } : {}),
+    await expect(claudeAccount({ run, readRateLimitTier: async () => undefined })).resolves.toEqual(
+      {
+        signedIn: true,
+        ...(metadata.email ? { email: metadata.email } : {}),
+        ...(metadata.subscriptionType ? { plan: 'Pro' } : {}),
+      },
+    )
+  })
+
+  it.each([
+    ['default_claude_max_5x', 'Max x5'],
+    ['default_claude_max_20x', 'Max x20'],
+    [undefined, 'Max'],
+  ])('labels the Max plan with its rate-limit tier %s', async (tier, plan) => {
+    const run = vi.fn<typeof runCli>().mockResolvedValue({
+      code: 0,
+      stdout: '{"loggedIn":true,"subscriptionType":"max"}',
     })
+    await expect(claudeAccount({ run, readRateLimitTier: async () => tier })).resolves.toEqual({
+      signedIn: true,
+      plan,
+    })
+  })
+
+  it('keeps an unknown plan id instead of hiding it', () => {
+    expect(claudePlanLabel('something_new')).toBe('something_new')
+    expect(claudePlanLabel('pro', 'default_claude_ai')).toBe('Pro')
   })
 
   it('does not collapse a failed status command into signed out', async () => {
