@@ -13,6 +13,7 @@ interface Disposable {
 }
 
 interface PtyProcess {
+  write(data: string): void
   onData(listener: (data: string) => void): Disposable
   onExit(listener: (event: { exitCode: number; signal?: number }) => void): Disposable
   resize(columns: number, rows: number): void
@@ -181,8 +182,8 @@ async function loadPackagedNativeModules(): Promise<PackagedNativeModules> {
 
 export async function provePtyBinding(pty: PtyModule, platform = process.platform): Promise<void> {
   const shell = platform === 'win32' ? (process.env.ComSpec ?? 'cmd.exe') : '/bin/sh'
-  const args =
-    platform === 'win32' ? ['/d', '/s', '/c', `echo ${PTY_MARKER}`] : ['-c', `printf ${PTY_MARKER}`]
+  // Require an input round trip; a spawn-only echo misses broken PTY writes.
+  const args = platform === 'win32' ? ['/d', '/q'] : []
   const child = pty.spawn(shell, args, {
     name: 'xterm-256color',
     cols: 80,
@@ -207,6 +208,13 @@ export async function provePtyBinding(pty: PtyModule, platform = process.platfor
       }, 10_000)
     })
     child.resize(100, 30)
+    const newline = platform === 'win32' ? '\r' : '\n'
+    // Never send the complete marker: terminal input echo must not pass the proof.
+    const command =
+      platform === 'win32'
+        ? `set TASTECODE_PROOF=OK${newline}echo TASTECODE_NATIVE_PTY_%TASTECODE_PROOF%`
+        : 'printf "TASTECODE_NATIVE_PTY_%s\\n" OK'
+    child.write(`${command}${newline}exit${newline}`)
     const result = await exit
     if (result.exitCode !== 0) throw new Error(`packaged PTY exited with code ${result.exitCode}`)
     if (!output.includes(PTY_MARKER))

@@ -28,19 +28,23 @@ function referenceFixture() {
   }
 }
 
-function fakePty() {
+function fakePty(echoOnly = false) {
   const resize = vi.fn()
   const kill = vi.fn()
+  const write = vi.fn()
   return {
     resize,
     kill,
+    write,
     module: {
       spawn: vi.fn((_file: string, _args: string[]) => {
         let onData: (data: string) => void = () => {}
         let onExit: (event: { exitCode: number }) => void = () => {}
-        queueMicrotask(() => {
-          onData('TASTECODE_NATIVE_PTY_OK')
-          onExit({ exitCode: 0 })
+        write.mockImplementation((input: string) => {
+          queueMicrotask(() => {
+            onData(echoOnly ? input : 'TASTECODE_NATIVE_PTY_OK')
+            onExit({ exitCode: 0 })
+          })
         })
         return {
           onData(listener: (data: string) => void) {
@@ -53,6 +57,7 @@ function fakePty() {
           },
           resize,
           kill,
+          write,
         }
       }),
     },
@@ -90,13 +95,30 @@ describe('packaged native binding proof', () => {
     ).not.toThrow()
   })
 
-  it('spawns, resizes, and observes a clean PTY exit', async () => {
-    const pty = fakePty()
-    await expect(provePtyBinding(pty.module, 'win32')).resolves.toBeUndefined()
-    expect(pty.module.spawn).toHaveBeenCalledOnce()
-    expect(pty.resize).toHaveBeenCalledWith(100, 30)
-    expect(pty.kill).toHaveBeenCalledOnce()
-  })
+  it.each(['win32', 'darwin'] as const)(
+    'writes input, resizes, and observes PTY exit on %s',
+    async (platform) => {
+      const pty = fakePty()
+      await expect(provePtyBinding(pty.module, platform)).resolves.toBeUndefined()
+      expect(pty.module.spawn).toHaveBeenCalledOnce()
+      expect(pty.resize).toHaveBeenCalledWith(100, 30)
+      expect(pty.write).toHaveBeenCalledOnce()
+      expect(pty.write.mock.calls[0]?.[0]).toContain('exit')
+      expect(pty.write.mock.calls[0]?.[0]).not.toContain('TASTECODE_NATIVE_PTY_OK')
+      expect(pty.kill).toHaveBeenCalledOnce()
+    },
+  )
+
+  it.each(['win32', 'darwin'] as const)(
+    'rejects input echo without execution on %s',
+    async (platform) => {
+      const pty = fakePty(true)
+      await expect(provePtyBinding(pty.module, platform)).rejects.toThrow(
+        'did not return its proof marker',
+      )
+      expect(pty.kill).toHaveBeenCalledOnce()
+    },
+  )
 
   it('writes, reads, deletes, and verifies an isolated credential', () => {
     const credentials = new Map<string, string>()
