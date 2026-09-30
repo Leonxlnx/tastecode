@@ -1,6 +1,7 @@
 import { StrictMode, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.js'
+import { RendererErrorBoundary } from './RendererErrorBoundary.js'
 import {
   isDesktop,
   isStartupBenchmark,
@@ -52,7 +53,9 @@ function StartupProbe() {
 
 createRoot(root).render(
   <StrictMode>
-    <App />
-    {isStartupBenchmark ? <StartupProbe /> : null}
+    <RendererErrorBoundary>
+      <App />
+      {isStartupBenchmark ? <StartupProbe /> : null}
+    </RendererErrorBoundary>
   </StrictMode>,
 )
