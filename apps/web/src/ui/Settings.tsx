@@ -679,9 +679,12 @@ export function ProviderSettings(props: {
         ...current,
         [event.provider]: event.success ? undefined : (event.error ?? 'Sign-in was cancelled.'),
       }))
-      if (event.success) void refreshAccount(event.provider, true)
+      if (event.success) {
+        void refreshAccount(event.provider, true)
+        props.onConnectionsChanged()
+      }
     },
-    [refreshAccount, updateOperation],
+    [props.onConnectionsChanged, refreshAccount, updateOperation],
   )
 
   useEffect(() => {
@@ -692,7 +695,10 @@ export function ProviderSettings(props: {
       if (event.agent) return
       const operation = operations.current[event.provider]
       if (!operation) {
-        if (event.success) void refreshAccount(event.provider, true)
+        if (event.success) {
+          void refreshAccount(event.provider, true)
+          props.onConnectionsChanged()
+        }
         return
       }
       if (operation.kind !== 'sign-in' || operation.transport !== props.transport) return
@@ -711,7 +717,14 @@ export function ProviderSettings(props: {
         delete statusRequests.current[provider]
       }
     }
-  }, [props.transport, props.authRefreshRevision, authProviderKey, completeLogin, refreshAccount])
+  }, [
+    props.transport,
+    props.authRefreshRevision,
+    props.onConnectionsChanged,
+    authProviderKey,
+    completeLogin,
+    refreshAccount,
+  ])
 
   useEffect(() => {
     operations.current = {}
@@ -813,7 +826,10 @@ export function ProviderSettings(props: {
           provider={status}
           target={{ provider: status.id }}
           transport={props.transport}
-          onSignedIn={() => void refreshAccount(status.id, true)}
+          onSignedIn={() => {
+            void refreshAccount(status.id, true)
+            props.onConnectionsChanged()
+          }}
           onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
         />
       )
@@ -870,9 +886,8 @@ export function ProviderSettings(props: {
     )
   }
 
-  // Public beta scope: exactly the three subscription plans the server lists
-  // (Codex, Claude Code, Grok). The ACP agents, Cursor, OpenCode, Antigravity
-  // and API-connection surfaces are parked, not deleted — see AGENTS.md.
+  // Public beta accounts: Codex, Claude Code, Grok, and Cursor. ACP agents,
+  // OpenCode, Antigravity, and API-connection surfaces stay parked — see AGENTS.md.
   const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
   const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
   const renderProviderRow = (status: ProviderStatus) => (
@@ -889,8 +904,9 @@ export function ProviderSettings(props: {
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
+      {byId('cursor').map(renderProviderRow)}
       {direct
-        .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
+        .filter((status) => !['codex', 'claude-code', 'grok', 'cursor'].includes(status.id))
         .map(renderProviderRow)}
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>

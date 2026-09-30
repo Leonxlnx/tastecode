@@ -1009,6 +1009,33 @@ describe('provider settings', () => {
     )
   })
 
+  it('signs in to Cursor through its own CLI', async () => {
+    renderProviders(
+      [
+        {
+          ...installedProvider('cursor', 'Cursor'),
+          auth: 'unauthenticated',
+          setup: {
+            installUrl: 'https://cursor.com/docs/cli/overview',
+            login: 'provider',
+            loginOpensBrowser: true,
+          },
+        },
+      ],
+      (method) => {
+        if (method === 'auth.status') return { signedIn: false }
+        throw new Error(`unexpected ${method}`)
+      },
+    )
+
+    await waitFor(() =>
+      expect(providerRow('Cursor').querySelector('.provider-row__status')?.textContent).toBe(
+        'Not signed in',
+      ),
+    )
+    expect(within(providerRow('Cursor')).getByRole('button', { name: 'Sign in' })).toBeTruthy()
+  })
+
   it('shows an honest signed-in fallback instead of asking for an email', async () => {
     renderProviders([installedProvider('grok', 'Grok')], (method) => {
       if (method === 'auth.status') return { signedIn: true }
@@ -1456,7 +1483,9 @@ describe('provider settings', () => {
     // Beta scope: agent rows never render, even when the server reports one.
     expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
-    expect(onConnectionsChanged).not.toHaveBeenCalled()
+    // One refresh loads the signed-in provider into the Models tab. The latch
+    // on the row keeps a re-render from asking again.
+    expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
   })
 
   it('closes failed details and lets Settings cancel a new sign-in', async () => {
