@@ -950,6 +950,7 @@ function claudeRuntime(
         adapter.startThread(workspacePath, {
           model: options.model,
           effort: options.effort,
+          serviceTier: options.serviceTier,
           approval: options.approval,
           instructions: options.instructions,
           ephemeral: options.ephemeral,
@@ -966,6 +967,7 @@ function claudeRuntime(
           adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
             model: options.model,
             effort: options.effort,
+            serviceTier: options.serviceTier,
             approval: options.approval,
             instructions: options.instructions,
             mcpServers: options.mcpServers,
