@@ -55,7 +55,12 @@ import {
   IconRotate as RotateCcw,
   IconUser as UserRound,
 } from '@tabler/icons-react'
-import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
+import {
+  isCustomModelChoice,
+  modelCapabilityLabel,
+  modelCapabilityNote,
+  type ModelChoice,
+} from '../model-catalog.js'
 import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-fonts.js'
 import {
   appUpdateState,
@@ -995,10 +1000,20 @@ function BackgroundModelSettings(props: { transport: Transport }) {
       ? [{ value: 'unavailable', label: `${manual.model} (unavailable)`, disabled: true }]
       : []),
     ...(state?.sources ?? []).flatMap((source) =>
-      source.models.map((model) => ({
-        value: backgroundModelValue(source.id, model.id),
-        label: model.displayName,
-      })),
+      source.models.map((model) => {
+        // A relay lists its embedding, rerank and speech models beside the chat
+        // models it can answer with. Background writing needs a chat model, so
+        // those stay visible but unselectable, labelled with the capability
+        // that rules them out.
+        const capability = modelCapabilityLabel(model)
+        return {
+          value: backgroundModelValue(source.id, model.id),
+          label: capability
+            ? `${model.displayName} (${capability.toLowerCase()})`
+            : model.displayName,
+          disabled: capability !== undefined,
+        }
+      }),
     ),
   ]
   const effortOptions =
@@ -1209,6 +1224,7 @@ function ModelVisibilityGroup(props: {
                 className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
                 key={choice.key}
                 title={choice.model.displayName}
+                note={modelCapabilityNote(choice.model)}
               >
                 <button
                   className={`switch${visible ? ' is-on' : ''}`}
