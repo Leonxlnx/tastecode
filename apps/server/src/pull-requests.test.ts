@@ -3,6 +3,7 @@ import type { GhRunner } from './pull-requests.js'
 import {
   githubRepositoryFromRemote,
   githubSetupCommand,
+  linuxDistribution,
   PullRequestService,
 } from './pull-requests.js'
 
@@ -37,8 +38,18 @@ describe('GitHub CLI setup commands', () => {
   it('uses the official platform install command and fixed login command', () => {
     expect(githubSetupCommand('install', 'darwin')).toBe('brew install gh')
     expect(githubSetupCommand('install', 'win32')).toBe('winget install --id GitHub.cli')
-    expect(githubSetupCommand('login', 'linux')).toBe('gh auth login')
-    expect(() => githubSetupCommand('install', 'linux')).toThrow(/not scripted/)
+    expect(githubSetupCommand('login', 'linux', 'other')).toBe('gh auth login')
+    expect(githubSetupCommand('login', 'linux', 'fedora')).toBe('gh auth login')
+    expect(githubSetupCommand('install', 'linux', 'fedora')).toBe('sudo dnf install -y gh')
+    expect(() => githubSetupCommand('install', 'linux', 'other')).toThrow(/not scripted/)
+  })
+
+  it('recognizes Fedora from os-release ID and ID_LIKE', () => {
+    expect(linuxDistribution('ID=fedora\nVERSION_ID=42\n')).toBe('fedora')
+    expect(linuxDistribution('ID="fedora"\n')).toBe('fedora')
+    expect(linuxDistribution('ID=nobara\nID_LIKE="fedora"\n')).toBe('fedora')
+    expect(linuxDistribution('ID=ubuntu\nID_LIKE=debian\n')).toBe('other')
+    expect(linuxDistribution('PRETTY_NAME="Fedora"\n')).toBe('other')
   })
 })
 
