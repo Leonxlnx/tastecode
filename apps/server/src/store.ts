@@ -15,6 +15,7 @@ import {
   BackgroundModelPreferenceSchema,
   DiffDecisionSchema,
   DomainEventSchema,
+  ProviderContextSettingsMapSchema,
   ProviderIdSchema,
   SidebarSettingsSchema,
 } from '@harness/contracts'
@@ -24,6 +25,7 @@ import type {
   DiffDecision,
   DomainEvent,
   JsonValue,
+  ProviderContextSettingsMap,
   ProviderId,
   ProviderHistorySession,
   SidebarSettings,
@@ -44,6 +46,7 @@ import {
 } from './inbox-projection.js'
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
+const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
 })
@@ -780,6 +783,7 @@ export class Store {
   #pendingSidebarThreads: StoredSidebarThread[] | undefined
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
+  #providerContextSettingsCache: ProviderContextSettingsMap | undefined
   #replaySnapshotCache = new Map<
     string,
     { seq: number; entries: ReplayEntry[]; characters: number }
@@ -1905,6 +1909,34 @@ export class Store {
     this.#writeAppSetting.run(BACKGROUND_MODEL_SETTING, JSON.stringify(preference))
     this.#backgroundModelPreferenceCache = freezeBackgroundModelPreference(preference)
     return this.#backgroundModelPreferenceCache
+  }
+
+  providerContextSettings(): ProviderContextSettingsMap {
+    if (this.#providerContextSettingsCache) return this.#providerContextSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_CONTEXT_SETTING)
+    let settings: ProviderContextSettingsMap = {}
+    if (row) {
+      try {
+        settings = ProviderContextSettingsMapSchema.parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every engine on its own defaults.
+        console.warn('[store] unreadable provider context settings, using engine defaults')
+      }
+    }
+    this.#providerContextSettingsCache = Object.freeze(settings)
+    return this.#providerContextSettingsCache
+  }
+
+  updateProviderContextSettings(
+    provider: ProviderId,
+    settings: NonNullable<ProviderContextSettingsMap[ProviderId]>,
+  ): ProviderContextSettingsMap {
+    const next: ProviderContextSettingsMap = { ...this.providerContextSettings() }
+    if (settings.window === undefined && settings.compactAt === undefined) delete next[provider]
+    else next[provider] = Object.freeze({ ...settings })
+    this.#writeAppSetting.run(PROVIDER_CONTEXT_SETTING, JSON.stringify(next))
+    this.#providerContextSettingsCache = Object.freeze(next)
+    return this.#providerContextSettingsCache
   }
 
   #updateThread(
