@@ -14,6 +14,13 @@ describe('preview capture settling', () => {
     const pendingListeners = new Map<string, () => void>()
     const frame = vi.fn((resolve: () => void) => resolve())
     const scrollTo = vi.fn()
+    const pending = {
+      complete: false,
+      removeEventListener: vi.fn(),
+      addEventListener: (name: string, listener: () => void) => {
+        pendingListeners.set(name, listener)
+      },
+    }
 
     // SAFETY: PREVIEW_SETTLE_SCRIPT ends with an async IIFE and returns Promise<void>.
     const settled = vm.runInNewContext(PREVIEW_SETTLE_SCRIPT, {
@@ -24,20 +31,12 @@ describe('preview capture settling', () => {
         documentElement: { scrollHeight: 1800 },
         fonts: { ready: Promise.resolve() },
         getAnimations: () => [],
-        images: [
-          { complete: true, decode },
-          {
-            complete: false,
-            removeEventListener: vi.fn(),
-            addEventListener: (name: string, listener: () => void) => {
-              pendingListeners.set(name, listener)
-            },
-          },
-        ],
+        images: [{ complete: true, decode }, pending],
       },
       requestAnimationFrame: frame,
       cancelAnimationFrame: vi.fn(),
       clearTimeout,
+      performance,
       innerHeight: 844,
       scrollTo,
       scrollX: 0,
@@ -46,10 +45,12 @@ describe('preview capture settling', () => {
     }) as Promise<void>
 
     await vi.waitFor(() => expect(pendingListeners.get('load')).toBeDefined())
+    pending.complete = true
     pendingListeners.get('load')?.()
     await settled
 
-    expect(decode).toHaveBeenCalledOnce()
+    // Once in the first image pass and once in the pass for late images.
+    expect(decode).toHaveBeenCalledTimes(2)
     expect(frame).toHaveBeenCalledTimes(6)
     expect(scrollTo).toHaveBeenLastCalledWith({ left: 0, top: 120, behavior: 'instant' })
   })
@@ -92,17 +93,99 @@ describe('preview capture settling', () => {
       cancelAnimationFrame: (id: number) => callbacks.delete(id),
       setTimeout,
       clearTimeout,
+      performance,
       innerHeight: 800,
       scrollX: 0,
       scrollY: 140,
       scrollTo,
     }) as Promise<void>
-    await vi.advanceTimersByTimeAsync(3000)
+    await vi.advanceTimersByTimeAsync(4000)
     await result
     expect(scrollTo).toHaveBeenLastCalledWith({ left: 0, top: 140, behavior: 'instant' })
     expect(listeners.size).toBe(0)
     expect(callbacks.size).toBe(0)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  function scrollingPage(options: {
+    innerHeight: number
+    height: number
+    onScroll?: (top: number, page: { height: number; images: unknown[] }) => void
+  }) {
+    const page = { height: options.height, images: [] as unknown[] }
+    const tops: number[] = []
+    const settled = vm.runInNewContext(PREVIEW_SETTLE_SCRIPT, {
+      document: {
+        get body() {
+          return { scrollHeight: page.height }
+        },
+        get documentElement() {
+          return { scrollHeight: page.height }
+        },
+        fonts: { ready: Promise.resolve() },
+        getAnimations: () => [],
+        get images() {
+          return page.images
+        },
+      },
+      requestAnimationFrame: (resolve: () => void) => resolve(),
+      cancelAnimationFrame: vi.fn(),
+      setTimeout,
+      clearTimeout,
+      performance,
+      innerHeight: options.innerHeight,
+      scrollX: 0,
+      scrollY: 0,
+      scrollTo: ({ top }: { top: number }) => {
+        tops.push(top)
+        options.onScroll?.(top, page)
+      },
+    }) as Promise<void>
+    return { settled, tops }
+  }
+
+  it('reaches the bottom of the capped capture on a short viewport', async () => {
+    const { settled, tops } = scrollingPage({ innerHeight: 240, height: 20_000 })
+    await settled
+    expect(Math.max(...tops) + 240).toBeGreaterThanOrEqual(12_000)
+  })
+
+  it('follows a page that grows while it is scrolled', async () => {
+    const { settled, tops } = scrollingPage({
+      innerHeight: 800,
+      height: 1800,
+      onScroll: (top, page) => {
+        if (top > 0 && page.height < 5000) page.height = 5000
+      },
+    })
+    await settled
+    expect(Math.max(...tops) + 800).toBeGreaterThanOrEqual(5000)
+  })
+
+  it('waits for images that scrolling inserted', async () => {
+    let loaded = false
+    const { settled } = scrollingPage({
+      innerHeight: 800,
+      height: 1800,
+      onScroll: (top, page) => {
+        if (top === 0 || page.images.length) return
+        const image = {
+          complete: false,
+          removeEventListener: vi.fn(),
+          addEventListener: (name: string, listener: () => void) => {
+            if (name === 'load')
+              setTimeout(() => {
+                loaded = true
+                image.complete = true
+                listener()
+              }, 50)
+          },
+        }
+        page.images.push(image)
+      },
+    })
+    await settled
+    expect(loaded).toBe(true)
   })
 
   it('ignores hostile page Math and bounds valid raw measurements', () => {
