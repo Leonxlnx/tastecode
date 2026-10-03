@@ -9,6 +9,7 @@ import type {
 } from '@harness/contracts'
 import { Store } from './store.js'
 import { projectHistoryItems } from './side-chat.js'
+import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 type Source = { provider: ProviderId; history: ProviderHistorySource }
 type Imported = {
@@ -377,6 +378,7 @@ export function importedEvents(
 
 function sameUserMessage(left: Item, right: Item): boolean {
   let text = right.text
+  if (text?.startsWith(RESTORE_CONTEXT_NOTICE)) text = text.slice(RESTORE_CONTEXT_NOTICE.length)
   // Native logs contain our Design follow-up envelope; local history keeps only
   // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
   if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {

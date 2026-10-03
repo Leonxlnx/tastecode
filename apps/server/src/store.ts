@@ -301,7 +301,8 @@ CREATE TABLE IF NOT EXISTS threads (
   unread           INTEGER NOT NULL DEFAULT 0,
   last_active_at   INTEGER NOT NULL,
   ephemeral        INTEGER NOT NULL DEFAULT 0,
-  parent_thread_id TEXT
+  parent_thread_id TEXT,
+  restore_context_pending INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sidebar_settings (
@@ -510,6 +511,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
+  { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
 ]
 
@@ -672,6 +674,8 @@ const StoredEventRowsSchema = z.array(
     thread_id: z.string(),
     at: z.number().safe().int(),
     payload: z.string(),
+    event_key: z.string().nullish(),
+    active: z.union([z.literal(0), z.literal(1)]).nullish(),
   }),
 )
 const StoredCheckpointRowsSchema = z.array(
@@ -3375,11 +3379,29 @@ export class Store {
     this.#rebuildThreadRecoveryState(threadId)
   }
 
+  threadNeedsRestoreContext(threadId: string): boolean {
+    return (
+      this.#db
+        .prepare('SELECT 1 FROM threads WHERE id = ? AND restore_context_pending = 1')
+        .get(threadId) !== undefined
+    )
+  }
+
+  clearThreadRestoreContext(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET restore_context_pending = 0 WHERE id = ?').run(threadId)
+  }
+
   /** Save and remove the conversation tail so a restore remains reversible. */
   saveRestoreUndo(threadId: string, seq: number, commit: string): string {
     const token = randomUUID()
-    const events = sqliteRows<EventRow>(
-      this.#db.prepare(`SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`),
+    const events = sqliteRows<
+      EventRow & { event_key: string | null; active: SqliteInteger | null }
+    >(
+      this.#db.prepare(
+        `SELECT e.*, p.event_key, p.active FROM events e
+         LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+         WHERE e.thread_id = ? AND e.seq > ? ORDER BY e.seq`,
+      ),
       threadId,
       seq,
     )
@@ -3400,6 +3422,7 @@ export class Store {
         )
         .run(token, threadId, seq, commit, JSON.stringify(events), JSON.stringify(checkpoints))
       this.#truncateAfter(threadId, seq)
+      this.#db.prepare('UPDATE threads SET restore_context_pending = 1 WHERE id = ?').run(threadId)
       this.#db.exec('COMMIT')
       return token
     } catch (error) {
@@ -3442,8 +3465,16 @@ export class Store {
       const insertEvent = this.#db.prepare(
         `INSERT INTO events (seq, thread_id, at, payload) VALUES (?, ?, ?, ?)`,
       )
+      const insertProviderEvent = this.#db.prepare(
+        `INSERT INTO provider_history_events (thread_id, event_key, event_seq, active)
+         VALUES (?, ?, ?, ?)`,
+      )
       for (const event of events) {
         insertEvent.run(event.seq, event.thread_id, event.at, event.payload)
+        if (event.event_key != null) {
+          insertProviderEvent.run(event.thread_id, event.event_key, event.seq, event.active ?? 1)
+          if (event.active === 0) continue
+        }
         // The row is restored verbatim even when this build cannot read it —
         // the transcript is the user's; only derived indexing is skipped.
         const parsed = parseDomainEvent(
@@ -3485,6 +3516,7 @@ export class Store {
         )
       }
       this.#db.prepare(`DELETE FROM restore_undos WHERE token = ?`).run(token)
+      this.#db.prepare('UPDATE threads SET restore_context_pending = 1 WHERE id = ?').run(threadId)
       this.#db.exec('COMMIT')
     } catch (error) {
       this.#db.exec('ROLLBACK')

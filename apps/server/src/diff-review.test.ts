@@ -86,6 +86,26 @@ describe('structured diff review', () => {
     })
   })
 
+  it('shows every file as added before the first commit', async () => {
+    const fresh = mkdtempSync(path.join(os.tmpdir(), 'harness-diff-unborn-'))
+    try {
+      execFileSync('git', ['init', '-b', 'main', fresh], { windowsHide: true })
+      writeFileSync(path.join(fresh, 'first.txt'), 'hello\n')
+
+      const diff = await readWorkspaceDiff(fresh)
+
+      expect(diff.files).toHaveLength(1)
+      expect(diff.files[0]).toMatchObject({ path: 'first.txt', status: 'added' })
+      expect(diff.files[0]?.hunks[0]?.lines).toContainEqual({
+        kind: 'addition',
+        newLine: 1,
+        text: 'hello',
+      })
+    } finally {
+      rmSync(fresh, { recursive: true, force: true })
+    }
+  })
+
   it('parses separate hunks and remembers accepted work', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'accepted change', 18: 'later change' }))
 
@@ -313,6 +333,22 @@ describe('structured diff review', () => {
     expect(readFileSync(path.join(repo, 'unrelated.txt'), 'utf8')).toBe('keep this\n')
   })
 
+  it.each(['space name.txt', 'quoted 文档.txt'])(
+    'normalizes absolute patch paths while preserving %s',
+    async (name) => {
+      writeFileSync(path.join(repo, name), 'before\n')
+      git('add', '--', name)
+      git('commit', '-m', 'named file')
+      writeFileSync(path.join(repo, name), 'after\n')
+      const root = repo.replaceAll('\\', '/')
+      const patch = git('diff', '--binary', '--no-color', '--', name)
+        .replaceAll('a/', `a/${root}/`)
+        .replaceAll('b/', `b/${root}/`)
+      await reverseUnifiedDiff(repo, patch)
+      expect(readFileSync(path.join(repo, name), 'utf8')).toBe('before\n')
+    },
+  )
+
   it('does not partially reverse a patch after one of its files changed again', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
     writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
@@ -323,5 +359,50 @@ describe('structured diff review', () => {
 
     expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toContain('newer user change')
     expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('agent change\n')
+  })
+
+  it.each(['file', 'hunk'])(
+    'rejects a stale %s review after HEAD changes without changing files',
+    async (scope) => {
+      const base = git('rev-parse', 'HEAD').trim()
+      writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'new base' }))
+      git('add', 'file.txt')
+      git('commit', '-m', 'new base')
+      writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'working edit' }))
+      const diff = await readSessionDiff(repo, 'thread-1', store)
+      const file = diff.files[0]!
+      git('update-ref', 'HEAD', base)
+      const review =
+        scope === 'file'
+          ? reviewDiffFile(repo, 'thread-1', diff.version, file.path, 'reject', store)
+          : reviewDiffHunk(
+              repo,
+              'thread-1',
+              diff.version,
+              file.path,
+              file.hunks[0]!.id,
+              'reject',
+              store,
+            )
+      await expect(review).rejects.toBeInstanceOf(StaleDiffSnapshotError)
+      expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(lines({ 2: 'working edit' }))
+    },
+  )
+
+  it('does not strip repository-root text embedded inside a relative patch path', async () => {
+    const rootText = repo.replaceAll('\\', '/').replace(/^[A-Za-z]:/, '')
+    const relative = `x${rootText}/victim.txt`
+    const target = path.join(repo, relative)
+    mkdirSync(path.dirname(target), { recursive: true })
+    writeFileSync(target, 'before\n')
+    writeFileSync(path.join(repo, 'xvictim.txt'), 'before\n')
+    git('add', '.')
+    git('commit', '-m', 'matching relative path')
+    writeFileSync(target, 'after\n')
+    writeFileSync(path.join(repo, 'xvictim.txt'), 'after\n')
+    const patch = git('diff', '--binary', '--no-color', '--', relative)
+    await reverseUnifiedDiff(repo, patch)
+    expect(readFileSync(target, 'utf8')).toBe('before\n')
+    expect(readFileSync(path.join(repo, 'xvictim.txt'), 'utf8')).toBe('after\n')
   })
 })
