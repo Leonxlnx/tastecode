@@ -15,6 +15,7 @@ import {
 import { isDesktop, openExternalUrl } from '../../bridge.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
+import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import { browserUrl } from './browser-url.js'
 import {
@@ -100,10 +101,11 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [guestReadyRevision, setGuestReadyRevision] = useState(0)
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
+  const [hasRenderedPage, setHasRenderedPage] = useState(false)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
   const [error, setError] = useState<string>()
 
-  const syncGuestState = useCallback(() => {
+  const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
     if (!view) return
     try {
@@ -116,6 +118,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         canGoForward: view.canGoForward(),
       })
       if (currentUrl) setAddress(currentUrl)
+      if (currentUrl && pageReady) setHasRenderedPage(true)
     } catch {
       // The guest can detach between an event and this state read. Its next
       // lifecycle event, or a remount, supplies the authoritative state.
@@ -141,13 +144,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       if (guest.current !== view) return
       readyGuest.current = view
       setGuestReadyRevision((revision) => revision + 1)
-      syncGuestState()
+      syncGuestState(true)
     }
     const onStart = () => {
       setError(undefined)
       setState((current) => ({ ...current, loading: true }))
     }
-    const onStop = () => syncGuestState()
+    const onStop = () => syncGuestState(true)
     const onNavigate = (event: Event) => {
       const navigation = NavigationEventSchema.safeParse(event)
       const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
@@ -299,6 +302,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
   }
 
+  const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !error
+
   return (
     <div className="workspace-browser">
       <div className="workspace-browser__toolbar">
@@ -378,13 +383,33 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         </div>
       </div>
 
-      <div ref={canvas} className="workspace-browser__canvas" data-viewport={viewport}>
+      <div
+        ref={canvas}
+        className="workspace-browser__canvas"
+        data-viewport={viewport}
+        aria-busy={state.loading && !error}
+      >
         <div
           ref={host}
           className="workspace-browser__guest-host"
           data-visible={Boolean(state.url)}
           aria-hidden={!active}
-        />
+        >
+          {loadingFirstPage ? (
+            <SkeletonStatus label="Loading page…" className="workspace-browser__skeleton">
+              <div className="workspace-browser__skeleton-header">
+                <Skeleton width={72} height={11} />
+                <Skeleton width="26%" height={9} />
+              </div>
+              <div className="workspace-browser__skeleton-body">
+                <Skeleton width="58%" height={18} />
+                <SkeletonLines lines={3} widths={['94%', '88%', '64%']} />
+                <Skeleton className="skeleton--block workspace-browser__skeleton-media" />
+                <SkeletonLines lines={2} widths={['90%', '72%']} />
+              </div>
+            </SkeletonStatus>
+          ) : null}
+        </div>
         {!state.url ? (
           <div className="workspace-browser__placeholder">
             <WorkspaceEmptyState

@@ -6,7 +6,14 @@ import { TestTransport } from '../test-transport.js'
 import { resetInstalls } from '../provider-install.js'
 import { ProviderUpdateCheck, ProviderUpdateNotice } from './ProviderUpdates.js'
 
-vi.mock('./InstallTerminal.js', () => ({ InstallTerminal: () => <div>Update output</div> }))
+const terminalLoading = vi.hoisted(() => ({ pending: undefined as Promise<void> | undefined }))
+
+vi.mock('./InstallTerminal.js', () => ({
+  InstallTerminal: () => {
+    if (terminalLoading.pending) throw terminalLoading.pending
+    return <div>Update output</div>
+  },
+}))
 
 const available: ProviderUpdate = {
   provider: 'codex',
@@ -21,6 +28,7 @@ afterEach(() => {
   cleanup()
   resetInstalls()
   localStorage.clear()
+  terminalLoading.pending = undefined
 })
 
 function finishNoticeExit(container: HTMLElement) {
@@ -31,6 +39,33 @@ function finishNoticeExit(container: HTMLElement) {
 }
 
 describe('provider update toast', () => {
+  it('fills lazy update details with terminal lines until output is ready', async () => {
+    let finish!: () => void
+    terminalLoading.pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const transport = new TestTransport((method) =>
+      method === 'providers.update' ? { terminalId: 'loading-update' } : { updates: [available] },
+    )
+    render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    const loading = (await screen.findByText('Opening details…')).closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.closest('.provider-toast__terminal')).toBeTruthy()
+    expect(loading.classList.contains('install-terminal')).toBe(true)
+    expect(loading.querySelectorAll('.skeleton-code__line')).toHaveLength(5)
+    expect(loading.querySelector('.skeleton-code__gutter')).toBeNull()
+    expect(screen.queryByText('Update output')).toBeNull()
+
+    await act(async () => {
+      terminalLoading.pending = undefined
+      finish()
+    })
+    expect(await screen.findByText('Update output')).toBeTruthy()
+    expect(screen.queryByText('Opening details…')).toBeNull()
+  })
+
   it('starts, tracks and verifies an update entirely within the toast', async () => {
     let updated = false
     const onUpdated = vi.fn()
