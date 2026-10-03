@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AppUpdater } from 'electron-updater'
 import type { ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
 import {
+  deferredUntil,
   feedTags,
   GitHubReleaseProvider,
   newerTags,
   releaseUpdateInfo,
   selectLatestRelease,
+  UpdateCheckDeferredError,
   type ReleaseFetch,
 } from './github-release-provider.js'
 
@@ -179,7 +181,30 @@ describe('GitHub asset releases', () => {
     expect(() => provider.resolveFiles()).toThrow(/verified/)
   })
 
-  it('reports GitHub failures', async () => {
+  it('defers a rate-limited lookup until GitHub resets the limit', async () => {
+    const reset = Math.floor(Date.now() / 1000) + 25 * 60
+    const fetch = feedFetch(feed('v0.1.2', 'v0.1.1'), {
+      'v0.1.2': new Response('{"message":"API rate limit exceeded"}', {
+        status: 403,
+        headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) },
+      }),
+    })
+    const lookup = providerWith(fetch, '0.1.1').getLatestVersion()
+    await expect(lookup).rejects.toBeInstanceOf(UpdateCheckDeferredError)
+    await expect(lookup).rejects.toMatchObject({ retryAt: reset * 1000 })
+    await expect(lookup).rejects.toThrow(/about 25 minutes/)
+  })
+
+  it.each([
+    [429, { 'retry-after': '120' }, 120_000],
+    [403, { 'retry-after': '30' }, 30_000],
+    [429, {}, 60_000],
+  ])('reads when a %i answer may be retried from %j', (status, headers, delay) => {
+    const now = Date.parse('2026-10-03T10:00:00Z')
+    expect(deferredUntil(new Response(null, { status, headers }), now)).toBe(now + delay)
+  })
+
+  it('reports other GitHub failures without treating them as a rate limit', async () => {
     const forbidden = vi.fn<ReleaseFetch>().mockResolvedValue(new Response('', { status: 403 }))
     await expect(providerWith(forbidden).getLatestVersion()).rejects.toThrow(/HTTP 403/)
     const offline = vi.fn<ReleaseFetch>().mockRejectedValue(new TypeError('fetch failed'))
