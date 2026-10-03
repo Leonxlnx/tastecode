@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
+import { createReadStream, readFileSync } from 'node:fs'
 import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
@@ -54,6 +54,7 @@ import {
 } from './menu-contract.js'
 import { allowsPreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
+import { ownedServerEnvironment } from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
@@ -303,8 +304,22 @@ if (!ownsSingleInstance) {
  * isolated without paying for a second full app executable launch. The legacy
  * Node-mode child remains available as a field fallback.
  */
-function startOwnedServer(): void {
-  if (devServer || serverSupervisor) return
+function startOwnedServer(): boolean {
+  if (devServer || serverSupervisor) return true
+  let serverEnv: NodeJS.ProcessEnv
+  try {
+    serverEnv = ownedServerEnvironment(
+      process.env,
+      app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+    )
+  } catch (error) {
+    dialog.showErrorBox(nativeAppName, error instanceof Error ? error.message : String(error))
+    app.quit()
+    return false
+  }
+  if (process.env['HARNESS_PORT'] && process.env['HARNESS_PORT'] !== serverEnv['HARNESS_PORT']) {
+    console.warn('[desktop] ignoring HARNESS_PORT; using the packaged renderer endpoint')
+  }
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
@@ -335,7 +350,7 @@ function startOwnedServer(): void {
           args: [serverEntry],
           cwd: productDataPath,
           env: {
-            ...process.env,
+            ...serverEnv,
             PWD: productDataPath,
             ELECTRON_RUN_AS_NODE: '1',
             PATH: desktopPath(),
@@ -343,19 +358,23 @@ function startOwnedServer(): void {
           ...supervisorCallbacks,
         })
       : new ServerSupervisor({
-          launch: () => launchUtilityServer(serverEntry),
+          launch: () => launchUtilityServer(serverEntry, serverEnv),
           ...supervisorCallbacks,
         })
   serverSupervisor.start()
   logStartupMilestone('server-spawned')
+  return true
 }
 
-function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
+function launchUtilityServer(
+  serverEntry: string,
+  serverEnv: NodeJS.ProcessEnv,
+): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
     // Finder/terminal launches may inherit a DMG or external-drive directory.
     // Background provider probes must start in app storage, not that directory.
     cwd: productDataPath,
-    env: { ...process.env, PWD: productDataPath },
+    env: { ...serverEnv, PWD: productDataPath },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
@@ -951,7 +970,7 @@ if (ownsSingleInstance) {
     })
     appUpdater.start()
     powerMonitor.on('resume', () => appUpdater?.resume())
-    startOwnedServer()
+    if (!startOwnedServer()) return
     configureAttachmentPreviews()
     configureRendererPermissions()
     void sweepStaleCaptures()

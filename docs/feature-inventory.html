@@ -1990,7 +1990,14 @@
           </li>
           <li>
             <label
-              ><input type="checkbox" /><span>Loopback origin gate on every connection</span></label
+              ><input type="checkbox" /><span
+                >Exact origin gate on every connection
+                <span class="d"
+                  >accepts no Origin, the packaged <code>file://</code> renderer, and one renderer
+                  origin (<code>http://127.0.0.1:5183</code> or
+                  <code>HARNESS_RENDERER_ORIGIN</code>); other loopback ports are refused</span
+                ></span
+              ></label
             >
           </li>
           <li>

@@ -83,6 +83,7 @@ class FakeAcpRpc implements AcpRpc {
           toolCall: { toolCallId: 'tc-1', title: 'do something', kind },
           options: [
             { optionId: 'allow', kind: 'allow_once', name: 'Allow' },
+            { optionId: 'always', kind: 'allow_always', name: 'Always' },
             { optionId: 'deny', kind: 'reject_once', name: 'Deny' },
           ],
         },
@@ -115,7 +116,7 @@ function activeRpc(): FakeAcpRpc {
   return rpc
 }
 
-async function startedAdapter(approval: 'ask' | 'auto') {
+async function startedAdapter(approval: 'ask' | 'auto' | 'full') {
   const current = adapter()
   const events: DomainEvent[] = []
   current.on('event', (event) => events.push(event))
@@ -126,6 +127,19 @@ async function startedAdapter(approval: 'ask' | 'auto') {
 }
 
 describe('ACP approval lifecycle', () => {
+  it('does not leave a lasting grant when changing full access to ask', async () => {
+    const { adapter, events } = await startedAdapter('full')
+    await expect(activeRpc().requestPermission('execute')).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow' },
+    })
+    adapter.setApproval('ask')
+    const pending = activeRpc().requestPermission('execute')
+    expect(events).toContainEqual(expect.objectContaining({ type: 'approval.requested' }))
+    adapter.respondToApproval('tc-1', 'deny')
+    await expect(pending).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+    await adapter.dispose()
+  })
+
   it('does not start a turn when attachment preparation fails', async () => {
     const current = adapter()
     const events: DomainEvent[] = []

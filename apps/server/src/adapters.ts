@@ -363,6 +363,7 @@ function grokRuntime(
     // Print mode decides permissions from the launch switches; there is no
     // mid-turn callback to answer.
     respondToApproval: () => {},
+    setApproval: (approval) => adapter.setApproval(approval),
     onProviderSessionId: (listener) => {
       adapter.on('providerSessionId', listener)
       // The UUID is chosen at startThread, before this listener exists.
