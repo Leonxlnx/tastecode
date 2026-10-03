@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAnthropicMessagesTransport, listAnthropicModels } from './anthropic.js'
-import { jsonObject, parseJsonValue, type JsonObject, type JsonValue } from './json.js'
+import type { JsonObject, JsonValue } from './json.js'
 import { ApiAgentSession, type ApiStreamEvent } from './runtime.js'
-import { testServerBaseUrl, writeJsonResponse } from './test-server.js'
+import { readJsonPost, testServerBaseUrl, writeJsonResponse } from './test-server.js'
 
 const TEXT = readFileSync(new URL('./fixtures/anthropic-text.sse', import.meta.url), 'utf8')
 const TOOL = readFileSync(new URL('./fixtures/anthropic-tool.sse', import.meta.url), 'utf8')
@@ -161,7 +161,9 @@ async function serve(
     if (request.url?.startsWith('/v1/models')) {
       return onModels ? onModels(request, response) : writeJsonResponse(response, models)
     }
-    requests.push(jsonObject(parseJsonValue(await body(request))))
+    const json = await readJsonPost(request, response, '/v1/messages')
+    if (!json) return
+    requests.push(json)
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.end(streams[stream++])
   })
@@ -169,10 +171,4 @@ async function serve(
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   return { baseUrl: testServerBaseUrl(server), requests }
-}
-
-async function body(request: IncomingMessage): Promise<string> {
-  let value = ''
-  for await (const chunk of request) value += chunk
-  return value
 }
