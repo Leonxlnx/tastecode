@@ -1,8 +1,4 @@
-import type { AppUpdateState, UpdateChannel } from './app-updater.js'
-
-export function isUpdateChannel(value: unknown): value is UpdateChannel {
-  return value === 'stable' || value === 'beta'
-}
+import type { AppUpdateState } from './app-updater.js'
 
 function isUpdateStatus(value: unknown): value is AppUpdateState['status'] {
   switch (value) {
@@ -29,7 +25,6 @@ export function isAppUpdateState(value: unknown): value is AppUpdateState {
   return (
     isUpdateStatus(state['status']) &&
     typeof state['currentVersion'] === 'string' &&
-    isUpdateChannel(state['channel']) &&
     (state['version'] === undefined || typeof state['version'] === 'string') &&
     (state['progress'] === undefined || isFiniteNumber(state['progress'])) &&
     (state['error'] === undefined || typeof state['error'] === 'string')

@@ -104,11 +104,10 @@ feed holds the ten newest tags; when none of them is the installed version or ol
 client lists every release through the API instead. Either way the highest semantic
 version wins regardless of publication order, and downgrades stay disabled.
 
-A release marked as a pre-release on GitHub reaches only installs on the beta channel
-(**Settings → About → Beta updates**, saved as `update-channel.json` in the profile);
-normal releases reach both channels. Beta 7 through 0.1.1 ignore that flag and select by
-publication date; those installed clients still require the newest public release to
-contain both desktop installers. The client requires the matching EXE or DMG and verifies
+GitHub's pre-release flag does not matter: during the alpha every release is published as
+a pre-release, and every published release reaches every install. Drafts stay invisible.
+Beta 7 through 0.1.1 select by publication date; those installed clients still require the
+newest public release to contain both desktop installers. The client requires the matching EXE or DMG and verifies
 its size and SHA-256 against GitHub's asset metadata.
 
 Downloads survive failures and restarts. The installer is stored in the machine's cache
@@ -141,6 +140,9 @@ current version and fail asset validation before the downgrade check runs.
 Conditional API requests with ETags do not save the anonymous limit. electron-updater's
 YAML feeds and blockmaps would add files to every release and give up the two-asset
 release that installed clients rely on, so differential downloads are not offered either.
+Stable and beta channels keyed on the pre-release flag were built and removed the same day:
+with every alpha release published as a pre-release, a stable default would have blocked all
+updates. Channels need a real stable line first, at v1 at the earliest.
 
 ---
 
@@ -551,7 +553,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-10-03 | Find desktop updates through the release feed, add stable and beta channels by GitHub's pre-release flag, resume interrupted downloads, and keep background failures quiet.    |
+| 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |
 | 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
 | 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |
 | 2026-07-28 | Initial decisions.                                                                                                                                                             |

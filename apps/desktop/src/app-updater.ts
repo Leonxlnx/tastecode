@@ -12,13 +12,9 @@ export type UpdateClient = Pick<
   | 'quitAndInstall'
 > & { dispose?: () => void | Promise<void> }
 
-/** Stable follows normal releases; beta also takes releases GitHub marks as pre-releases. */
-export type UpdateChannel = 'stable' | 'beta'
-
 export type AppUpdateState = {
   status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
-  channel: UpdateChannel
   version?: string
   progress?: number
   error?: string
@@ -45,8 +41,6 @@ export function createAppUpdateController(
   options: {
     currentVersion: string
     enabled: boolean
-    channel?: UpdateChannel
-    onChannelChange?: (channel: UpdateChannel) => void
     /** Receives every failure, including the background ones the UI never shows. */
     onError?: (cause: unknown) => void
     setTimeoutFn?: typeof setTimeout
@@ -66,11 +60,9 @@ export function createAppUpdateController(
   let loading: Promise<UpdateClient> | undefined
   let updater = options.updater
   let updaterConfigured = false
-  let channel = options.channel ?? 'stable'
   let state: AppUpdateState = {
     status: options.enabled ? 'idle' : 'unsupported',
     currentVersion: options.currentVersion,
-    channel,
   }
   // One attempt is a check plus the download it starts. electron-updater reports
   // a failure twice (an `error` event and a rejected promise); count it once.
@@ -94,11 +86,11 @@ export function createAppUpdateController(
     timer.unref?.()
   }
 
-  const publish = (next: Omit<AppUpdateState, 'channel'>) => {
-    state = { ...next, channel }
+  const publish = (next: AppUpdateState) => {
+    state = next
     for (const listener of listeners) listener(state)
   }
-  const versioned = (status: AppUpdateState['status'], info: UpdateInfo) => ({
+  const versioned = (status: AppUpdateState['status'], info: UpdateInfo): AppUpdateState => ({
     status,
     currentVersion: options.currentVersion,
     version: info.version,
@@ -123,7 +115,7 @@ export function createAppUpdateController(
       error: cause instanceof Error ? cause.message : String(cause),
     })
   }
-  const succeed = (next: Omit<AppUpdateState, 'channel'>) => {
+  const succeed = (next: AppUpdateState) => {
     failures = 0
     publish(next)
   }
@@ -203,14 +195,6 @@ export function createAppUpdateController(
       if (state.status !== 'ready' || !updater) return false
       updater.quitAndInstall(false, true)
       return true
-    },
-    setChannel: (next: UpdateChannel): Promise<AppUpdateState> => {
-      if (next === channel) return Promise.resolve(state)
-      channel = next
-      options.onChannelChange?.(next)
-      publish(state)
-      // Joining beta should not wait an hour for the newest pre-release.
-      return check()
     },
     subscribe: (listener: (next: AppUpdateState) => void) => {
       listeners.add(listener)

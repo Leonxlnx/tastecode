@@ -10,7 +10,6 @@ import {
   GitHubReleaseProvider,
   type ReleaseFetch,
 } from './github-release-provider.js'
-import type { UpdateChannel } from './app-updater.js'
 import { prepareDmgUpdate } from './dmg-update.js'
 import { servePreparedUpdate, withUpdateDirectory } from './prepared-update.js'
 import { downloadVerified } from './update-download.js'
@@ -133,7 +132,6 @@ class ExeUpdater extends electronUpdater.NsisUpdater {
 
 export function createReleaseUpdater(release: {
   fetch: ReleaseFetch
-  channel: () => UpdateChannel
 }): AppUpdater & { dispose: () => Promise<void> } {
   // Installers are about 500 MB. An interrupted download waits in the machine's
   // cache (Library/Caches, or local AppData on Windows, never roaming AppData).
@@ -145,7 +143,6 @@ export function createReleaseUpdater(release: {
     provider: 'custom' as const,
     updateProvider: GitHubReleaseProvider,
     fetch: release.fetch,
-    channel: release.channel,
   }
   const updater =
     process.platform === 'darwin'

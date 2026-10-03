@@ -11,26 +11,16 @@ update also installs on normal quit. A ready download is retained until installa
 an interrupted download continues where it stopped. From beta 7, the app reads the GitHub
 release list. Beta 7 through 0.1.1 choose the newest publication, including prereleases,
 regardless of the GitHub "Latest" badge. The next desktop build selects the highest semantic
-version instead, finds it through the release feed, and honors the pre-release flag (see
-below). Downgrades remain disabled. A missing matching installer or SHA-256 digest is an
+version instead and finds it through the release feed. A release published as a pre-release
+reaches every install like any other; only drafts stay hidden. Downgrades remain disabled. A missing matching installer or SHA-256 digest is an
 error; the app does not silently fall back to an older release.
 
-## Update channels
+## How installs find a release
 
-Builds after 0.1.1 have two channels. **Stable**, the default, takes normal releases.
-**Beta** (**Settings → About → Beta updates**) also takes releases published with
-**Set as a pre-release**. Publish a release candidate or test build as a pre-release to
-reach only beta installs.
-
-Installed beta 7 through 0.1.1 do not know the flag. They take the most recently published
-release, pre-release or not, and need both installers in it. Until those installs have
-updated, every public release reaches them; keep test builds in draft until that is
-acceptable.
-
-A stable install remembers a skipped pre-release for six hours, so promoting it to a normal
-release reaches stable installs within about six hours. A pushed tag without a published
+The app reads the public release feed, which lists the ten newest tags, and spends a GitHub
+API request only on a tag newer than the installed version. A pushed tag without a published
 release is harmless. More than ten new tags after the newest release push installs onto the
-slower full release list, which spends GitHub API quota, so avoid bursts of non-release tags.
+slower full release list, which spends API quota, so avoid bursts of non-release tags.
 
 ## 0.1.2 source preparation
 
