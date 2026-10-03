@@ -5804,6 +5804,117 @@ describe('new chats', () => {
     })
   })
 
+  describe('provider defaults', () => {
+    beforeEach(() => {
+      localStorage.setItem('harness.modelVisibilityVersion', '4')
+      localStorage.setItem('harness.hiddenModels', '[]')
+      localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'models.list') return request(method, params)
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-6.1-sol',
+              displayName: 'GPT-6.1 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'medium', 'high'],
+              defaultReasoningEffort: 'medium',
+              serviceTiers: [],
+            },
+            {
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+              reasoningEfforts: ['low', 'medium', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      })
+    })
+
+    async function waitForCatalog() {
+      fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+      await screen.findByRole('button', { name: 'Use GPT-5.6 Mini through Codex' })
+      fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    }
+
+    function send(text: string) {
+      const composer = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+    }
+
+    it('starts a new chat on the model and reasoning pinned for its provider', async () => {
+      localStorage.setItem(
+        'harness.providerDefaults',
+        JSON.stringify({ codex: { model: 'gpt-5.6-mini', effort: 'high' } }),
+      )
+      render(<App />)
+      await waitForCatalog()
+
+      const actions = document.querySelector<HTMLElement>('.rail__actions')!
+      fireEvent.click(within(actions).getByRole('button', { name: 'New chat' }))
+      send('Use the pinned model')
+
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.start',
+          expect.objectContaining({ provider: 'codex', model: 'gpt-5.6-mini', effort: 'high' }),
+        ),
+      )
+    })
+
+    it('applies defaults set in Settings to the new chat that is already open', async () => {
+      render(<App />)
+      await waitForCatalog()
+      const actions = document.querySelector<HTMLElement>('.rail__actions')!
+      fireEvent.click(within(actions).getByRole('button', { name: 'New chat' }))
+
+      openSettings()
+      const defaults = await within(
+        await screen.findByRole('dialog', { name: 'Settings' }),
+      ).findByRole('group', { name: 'Codex defaults' })
+      const model = within(defaults).getByRole('button', { name: /^Codex default model: / })
+      fireEvent.click(model)
+      fireEvent.click(
+        within(screen.getByRole('dialog', { name: 'Codex default model' })).getByRole('button', {
+          name: 'GPT-5.6 Mini',
+        }),
+      )
+      // A model with effort levels keeps its panel open for them.
+      fireEvent.click(model)
+      fireEvent.click(within(defaults).getByRole('button', { name: /^Codex default access: / }))
+      fireEvent.click(
+        within(screen.getByRole('menu', { name: 'Codex default access' })).getByRole(
+          'menuitemradio',
+          { name: /^Ask first/ },
+        ),
+      )
+      expect(JSON.parse(localStorage.getItem('harness.providerDefaults') ?? '{}')).toEqual({
+        codex: { model: 'gpt-5.6-mini' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+
+      send('Use the new defaults')
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.start',
+          expect.objectContaining({
+            provider: 'codex',
+            approval: 'ask',
+            model: 'gpt-5.6-mini',
+            effort: 'low',
+          }),
+        ),
+      )
+    })
+  })
+
   it('keeps highest reasoning effort at the highest stop when switching models', async () => {
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
