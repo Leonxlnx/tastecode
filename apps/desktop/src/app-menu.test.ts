@@ -40,6 +40,8 @@ describe('application menu', () => {
       'Window',
       'help',
     ])
+    expect(findLabel(template, 'Delete Current Chat…')).toBeDefined()
+    expect(findLabel(template, 'Archive Current Chat…')).toBeUndefined()
   })
 
   it('uses current custom shortcuts and leaves unassigned actions free', () => {

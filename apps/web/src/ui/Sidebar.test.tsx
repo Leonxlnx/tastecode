@@ -539,7 +539,7 @@ describe('Sidebar chat actions', () => {
     expect(chat.getAttribute('aria-label')).toBe('Polish the sidebar, Codex')
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
-    const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
+    const archive = screen.getByRole('button', { name: 'Delete Polish the sidebar' })
     expect(rename.querySelector('svg')).not.toBeNull()
     expect(archive.querySelector('svg')).not.toBeNull()
 
@@ -552,7 +552,7 @@ describe('Sidebar chat actions', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Archive Polish the sidebar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Polish the sidebar' }))
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
   })
 
@@ -597,7 +597,7 @@ describe('Sidebar chat actions', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: 'TasteCode' }))
     const pinItem = screen.getByRole('menuitem', { name: 'Pin to top' })
     const editItem = screen.getByRole('menuitem', { name: 'Edit name' })
-    const archiveItem = screen.getByRole('menuitem', { name: 'Archive chats' })
+    const archiveItem = screen.getByRole('menuitem', { name: 'Delete chats' })
     const removeItem = screen.getByRole('menuitem', { name: 'Remove from sidebar' })
     for (const item of [pinItem, editItem, archiveItem, removeItem]) {
       expect(item.querySelector('svg')).not.toBeNull()
@@ -605,7 +605,7 @@ describe('Sidebar chat actions', () => {
     expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
 
     fireEvent.click(archiveItem)
-    fireEvent.click(screen.getByRole('button', { name: 'Archive chats' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete chats' }))
     expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
