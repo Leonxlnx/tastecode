@@ -709,6 +709,12 @@ function composerProps() {
   >
 }
 
+function sidebarProps() {
+  return shellRenders.sidebar.mock.lastCall![0] as ComponentProps<
+    typeof import('./ui/Sidebar.js').Sidebar
+  >
+}
+
 async function openCheckpointHistory() {
   const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
     typeof import('./ui/StageHeader.js').StageHeader
@@ -817,6 +823,68 @@ describe('web client', () => {
     await act(async () => reject(new Error('inspection failed')))
     expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
     expect(rpcCount('thread.restore')).toBe(0)
+  })
+
+  it.each(['select', 'send'] as const)('cancels a pending deletion on %s', async (activity) => {
+    await openNewSession()
+    const oldSend = composerProps().onSend
+    act(() => sidebarProps().onDeleteSession('untouched-thread'))
+    await screen.findByText('Chat deleted')
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull()
+    act(() => {
+      if (activity === 'select') sidebarProps().onSelectSession('untouched-thread')
+      else oldSend('Keep this chat', [])
+    })
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
+      threadId: 'untouched-thread',
+    })
+  })
+
+  it('cancels a deletion safety check when the chat is selected again', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: (work: typeof serverUnsavedWork) => void
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.unsavedWork'
+        ? new Promise((resolve) => {
+            release = resolve
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('untouched-thread'))
+    act(() => sidebarProps().onSelectSession('untouched-thread'))
+    await act(async () => release({ isolated: false, uncommitted: false }))
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(rpcCount('thread.delete')).toBe(0)
+    expect(screen.queryByText('Chat deleted')).toBeNull()
+  })
+
+  it('keeps populated histories and drafts even when titled New session', async () => {
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.history'
+        ? Promise.resolve({
+            events: [completedHistoryEvent(1, 'saved-message', 'Saved history')],
+            running: false,
+            approval: 'ask',
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    await waitFor(() => expect(screen.getByTestId('thread').textContent).toContain('Saved history'))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Saved draft' },
+    })
+    act(() => composerProps().onAttachmentsChange?.(['/work/saved.png']))
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(rpcCount('thread.delete')).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    expect(screen.getByTestId('thread').textContent).toContain('Saved history')
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Saved draft',
+    )
+    expect(composerProps().draftRequest?.attachments).toEqual(['/work/saved.png'])
   })
 
   it('does not ask the code highlighter before a code block needs it', () => {
@@ -3559,13 +3627,13 @@ describe('new chats', () => {
 
     await openNewSession()
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
-    expect(await screen.findByText('Archived chat')).toBeTruthy()
-    expect(screen.getByText('Archived chat').closest('.notice--archive')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Archive New session' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    expect(await screen.findByText('Chat deleted')).toBeTruthy()
+    expect(screen.getByText('Chat deleted').closest('.notice--archive')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Delete New session' })).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(await screen.findByRole('button', { name: 'Archive New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
     await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
   })
@@ -3582,7 +3650,7 @@ describe('new chats', () => {
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.delete', {
         threadId: 'untouched-thread',
@@ -4060,9 +4128,12 @@ describe('new chats', () => {
       emitQueue('untouched-thread', [queued])
       transport.request.mockClear()
       completeTurn('untouched-thread', 'active')
-      if (scenario === 'new chat cleanup')
+      if (scenario === 'new chat cleanup') {
         fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
-      else emitQueue('untouched-thread', [])
+        expect(rpcCount('thread.delete')).toBe(0)
+        expect(rpcCount('workspace.info')).toBe(0)
+      }
+      emitQueue('untouched-thread', [])
       return waitForWorkspace(1)
     }
     submitTurn('Reviewed queue')
@@ -4158,11 +4229,11 @@ describe('new chats', () => {
     serverUnsavedWork = { isolated: true, uncommitted: true }
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Archive Parallel work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Parallel work' }))
     expect(await screen.findByRole('dialog', { name: 'Discard isolated checkout' })).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('thread.discardWorktree', expect.anything())
 
-    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and archive' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.close', {
         threadId: 'isolated-thread',
@@ -5250,7 +5321,7 @@ describe('new chats', () => {
     expect(screen.getByRole('heading').textContent).toBe('What should we build in TasteCode?')
   })
 
-  it('keeps an untouched session out of the sidebar until the first prompt', async () => {
+  it('keeps saved chats and only creates a new chat on the first prompt', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
 
@@ -5259,12 +5330,8 @@ describe('new chats', () => {
     fireEvent.click(within(actions!).getByRole('button', { name: 'New chat' }))
 
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
-    // Deleted rather than closed: a session nobody typed into is bookkeeping,
-    // not history, and closing would leave it in the rail forever.
-    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
-      threadId: 'untouched-thread',
-    })
-    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(0))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+    expect(document.querySelectorAll('.sessrow')).toHaveLength(1)
 
     const composer = document.querySelector('textarea')
     expect(composer).not.toBeNull()
@@ -6698,9 +6765,8 @@ describe('global shortcuts', () => {
     })
 
     fireEvent.keyDown(window, { key: 'g', metaKey: true })
-    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
-      threadId: 'untouched-thread',
-    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+    expect(composerProps().newSession).toBe(true)
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {

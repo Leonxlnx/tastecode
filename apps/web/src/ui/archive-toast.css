@@ -24,7 +24,6 @@
   white-space: nowrap;
 }
 
-.archive-toast__view,
 .archive-toast__undo,
 .archive-toast__close {
   display: inline-flex;
@@ -38,11 +37,6 @@
   font: inherit;
   font-weight: 500;
   cursor: pointer;
-}
-
-.archive-toast__view {
-  background: var(--surface-2);
-  color: var(--text);
 }
 
 .archive-toast__undo {
@@ -61,7 +55,6 @@
   color: var(--text-2);
 }
 
-.archive-toast__view:hover,
 .archive-toast__close:hover {
   background: var(--menu-hover);
   color: var(--text);
