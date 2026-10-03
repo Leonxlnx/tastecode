@@ -17,7 +17,11 @@ import { createProjectListProjector, type ProjectListState } from './project-lis
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
-import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
+import {
+  listWorkspaceDirectory,
+  readWorkspaceTextFile,
+  searchWorkspaceFiles,
+} from './workspace-files.js'
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
@@ -568,6 +572,11 @@ export function startServer(
       case 'workspace.listDirectory': {
         const p = parseParams(method, params)
         return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
+      }
+
+      case 'workspace.searchFiles': {
+        const p = parseParams(method, params)
+        return searchWorkspaceFiles(workspaceForRequest(store, p), p.query, p.limit)
       }
 
       case 'workspace.readFile': {
