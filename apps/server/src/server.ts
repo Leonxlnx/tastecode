@@ -402,6 +402,14 @@ export function startServer(
       case 'providers.list':
         return { providers: await (await providerService).detectProviders() }
 
+      case 'providers.contextSettings':
+        return orchestrator.contextSettings()
+
+      case 'providers.updateContextSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateContextSettings(p.provider, p.settings)
+      }
+
       case 'providers.updates':
         return {
           updates: await (await providerUpdates()).list(parseParams(method, params).refresh),
