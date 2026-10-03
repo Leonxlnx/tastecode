@@ -1,5 +1,6 @@
 import type { DomainEvent, Item } from '@harness/contracts'
 import { projectHistoryItems } from './side-chat.js'
+import { orderProviderHistory } from './provider-history-order.js'
 
 type HistoryEntry = { seq: number; event: DomainEvent }
 
@@ -16,6 +17,7 @@ const replayStateEvents = new Set<DomainEvent['type']>([
  */
 export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryEntry[] {
   if (entries.length === 0) return []
+  entries = orderProviderHistory(entries.slice())
   if (!needsHistoryCompaction(entries)) return entries.slice()
 
   const finalItems = new Map(projectHistoryItems(entries).map((item) => [item.id, item]))

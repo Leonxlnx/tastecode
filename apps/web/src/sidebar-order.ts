@@ -58,7 +58,12 @@ export function applyProjectOrder<T extends { path: string }>(
   return [...byPath.values(), ...known]
 }
 
-export function applySessionOrder<T extends { id: string }>(
+/**
+ * Chats missing from the saved order arrive newest first from the server. Each
+ * goes ahead of the first saved chat it is not older than, so history imported
+ * after the order was saved lands by date instead of above every saved chat.
+ */
+export function applySessionOrder<T extends { id: string; createdAt?: number }>(
   projectPath: string,
   sessions: T[],
   savedOrder: SessionOrder,
@@ -73,7 +78,25 @@ export function applySessionOrder<T extends { id: string }>(
     known.push(session)
     byId.delete(id)
   }
-  return [...byId.values(), ...known]
+  const unknown = [...byId.values()]
+  const result: T[] = []
+  let next = 0
+  for (const session of known) {
+    while (next < unknown.length && !olderThan(unknown[next]!, session))
+      result.push(unknown[next++]!)
+    result.push(session)
+  }
+  while (next < unknown.length) result.push(unknown[next++]!)
+  return result
+}
+
+/** Without both dates a new chat stays ahead of the saved ones. */
+function olderThan(session: { createdAt?: number }, saved: { createdAt?: number }): boolean {
+  return (
+    session.createdAt !== undefined &&
+    saved.createdAt !== undefined &&
+    session.createdAt < saved.createdAt
+  )
 }
 
 function sameIds<T>(
