@@ -48,8 +48,14 @@ export function ThreadSearch(props: {
   const searchIndex = projectSearchIndex(items)
   const hits = useMemo(
     () => (term ? findThreadSearchHits(searchIndex, liveItems, term) : []),
-    [liveItems, searchIndex, term],
+    [items, liveItems, searchIndex, term],
   )
+  const currentCursor = Math.min(cursor, Math.max(0, hits.length - 1))
+
+  useEffect(() => {
+    setCursor((current) => Math.min(current, Math.max(0, hits.length - 1)))
+    if (hits.length === 0) jumped.current = false
+  }, [hits.length])
 
   const go = (next: number) => {
     if (hits.length === 0) return
@@ -69,7 +75,7 @@ export function ThreadSearch(props: {
       go(back ? hits.length - 1 : 0)
       return
     }
-    go(back ? cursor - 1 : cursor + 1)
+    go(back ? currentCursor - 1 : currentCursor + 1)
   }
 
   return (
@@ -91,7 +97,7 @@ export function ThreadSearch(props: {
         }}
       />
       <span className="find__count">
-        {term === '' ? '' : hits.length === 0 ? 'None' : `${cursor + 1}/${hits.length}`}
+        {term === '' ? '' : hits.length === 0 ? 'None' : `${currentCursor + 1}/${hits.length}`}
       </span>
       <button
         className="icon-btn icon-btn--always"

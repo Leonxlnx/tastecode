@@ -2,10 +2,29 @@
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
+import { CompletedMarkdown } from './CompletedMarkdown.js'
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+})
+
+describe('inline code file references', () => {
+  it('renders prototype property names as text rather than inherited icon kinds', () => {
+    const names = [
+      'constructor',
+      '__proto__',
+      'Foo.constructor',
+      'toString',
+      'x.hasOwnProperty',
+      'valueOf.js',
+    ]
+    const view = render(<CompletedMarkdown text={names.map((name) => `\`${name}\``).join(' ')} />)
+
+    for (const name of names) expect(view.getByText(name)).toBeTruthy()
+    expect(view.container.querySelectorAll('.md-file-ref')).toHaveLength(1)
+    expect(view.container.querySelector('[data-file-icon="javascript"]')).toBeTruthy()
+  })
 })
 
 describe('Streamdown copy icon morph', () => {

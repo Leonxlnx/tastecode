@@ -60,6 +60,31 @@ function props(projects: Project[]) {
 }
 
 describe('InboxSidebar', () => {
+  it('retains only project metadata in incremental entries', () => {
+    const classify = createInboxEntryClassifier()
+    let projects: Project[] = [
+      {
+        path: '/alpha',
+        name: 'Alpha',
+        sessions: [active('a', 'A', 2), active('b', 'B', 1)],
+      },
+    ]
+    const initial = classify(projects, '', '')
+    const retained = initial.active[1]
+    for (let index = 0; index < 10; index += 1) {
+      projects = updateSession(projects, 'a', (session) => ({
+        ...session,
+        status: index % 2 ? 'idle' : 'working',
+      }))
+      const next = classify(projects, '', '')
+      expect(next.active[1]).toBe(retained)
+      for (const entry of next.ordered) {
+        expect(entry.project).toEqual({ path: '/alpha', name: 'Alpha' })
+        expect(entry.project).not.toHaveProperty('sessions')
+      }
+    }
+  })
+
   it('range-selects only mounted rows across collapsed and paginated sections', () => {
     vi.stubGlobal(
       'requestIdleCallback',
