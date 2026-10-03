@@ -1,0 +1,650 @@
+/* A provider's defaults hang off its mark as a small schematic: one trunk
+   drops from the mark and each setting branches off it, so every value reads
+   as wired to the provider it belongs to. Like a table of contents, each
+   branch is a name, a dotted leader and exactly one value; the controls that
+   change a value open from it, so the page stays as quiet as a list. */
+@property --tune-leader {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+.provider-tune {
+  --tune-wire: var(--line-strong);
+  --tune-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+  /* The trunk starts under the centre of the 18px provider mark. */
+  margin: -9px 0 16px 8px;
+}
+
+.provider-tune__rows {
+  position: relative;
+}
+
+.provider-tune__row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(24px, 1fr) minmax(0, max-content);
+  grid-template-areas: 'label leader value';
+  align-items: center;
+  min-height: 32px;
+  padding-left: 26px;
+  transition: --tune-leader var(--dur-fast) var(--ease-out);
+  animation: provider-tune-row 340ms var(--ease-out) both;
+}
+
+.provider-tune__row:nth-child(2) {
+  animation-delay: 40ms;
+}
+
+.provider-tune__row:nth-child(3) {
+  animation-delay: 80ms;
+}
+
+.provider-tune__row:hover {
+  --tune-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+/* Trunk through the row, and the branch out to its name. */
+.provider-tune__row::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-left: 1px solid var(--tune-wire);
+  content: '';
+}
+
+.provider-tune__row::after {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 17px;
+  border-top: 1px solid var(--tune-wire);
+  content: '';
+}
+
+/* The last branch turns the trunk's corner instead of crossing it. */
+.provider-tune__row:last-child::before {
+  bottom: calc(50% - 1px);
+  width: 17px;
+  border-bottom: 1px solid var(--tune-wire);
+  border-bottom-left-radius: var(--r-md);
+}
+
+.provider-tune__row:last-child::after {
+  display: none;
+}
+
+@keyframes provider-tune-row {
+  from {
+    opacity: 0;
+    clip-path: inset(0 0 100% 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .provider-tune__row {
+    animation: none;
+  }
+}
+
+.provider-tune__label {
+  grid-area: label;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.provider-tune__row:hover .provider-tune__label {
+  color: var(--text-2);
+}
+
+.provider-tune__leader {
+  grid-area: leader;
+  height: 5px;
+  margin-inline: 4px 10px;
+  background: radial-gradient(circle, var(--tune-leader) 0.75px, transparent 1.15px) left center /
+    5px 100% repeat-x;
+}
+
+/* The trigger's right padding bleeds out, so its chevron lands on the same
+   edge as the account row's action. The bleed sits here: on the trigger it
+   would come out of the intrinsic width and clip the value. */
+.provider-tune__value {
+  grid-area: value;
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  margin-right: -5px;
+}
+
+.menutrigger.provider-tune__trigger {
+  height: 26px;
+  padding: 0 5px 0 7px;
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+.menutrigger.provider-tune__trigger[aria-expanded='true'] {
+  background: var(--control-hover);
+}
+
+.menutrigger.provider-tune__trigger:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: 0;
+}
+
+.tune-value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.tune-value__text {
+  min-width: 0;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+}
+
+/* Nothing chosen: the value is what happens anyway, so it steps back. */
+.tune-value[data-quiet] .tune-value__text {
+  color: var(--text-2);
+}
+
+.tune-value__icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+.tune-value[data-tone='auto-review'] :is(.tune-value__icon, .tune-value__text) {
+  color: var(--composer-review);
+}
+
+.tune-value[data-tone='full'] :is(.tune-value__icon, .tune-value__text) {
+  color: var(--composer-danger);
+}
+
+.tune-value__chevron {
+  flex: none;
+  margin-left: -2px;
+  color: var(--text-3);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.provider-tune__trigger:hover .tune-value__chevron,
+.tune-value[data-open] .tune-value__chevron {
+  color: var(--text-2);
+}
+
+.tune-value[data-open] .tune-value__chevron {
+  transform: rotate(180deg);
+}
+
+/* A value that is not known yet. It ends where the real chevron will, and
+   fades in late so a quick answer never flashes a placeholder. */
+.tune-skeleton {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  margin-right: 5px;
+  animation: skeleton-appear var(--dur-fast) var(--ease-out) 160ms both;
+}
+
+.tune-skeleton > .skeleton {
+  height: 9px;
+}
+
+/* The real value fills in where its placeholder stood. */
+.provider-tune__value > .menuwrap {
+  animation: fade-in var(--dur-fast) var(--ease-out);
+}
+
+.provider-tune__unavailable {
+  color: var(--text-3);
+  cursor: default;
+  font-size: var(--t-sm);
+}
+
+.provider-tune__error {
+  margin: 4px 0 0 26px;
+  color: var(--error);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+}
+
+/* ---------- pictures inside a closed value ---------- */
+
+/* The panel's effort ladder in miniature. */
+.effort-glyph {
+  display: flex;
+  align-items: flex-end;
+  gap: 1.5px;
+  height: 10px;
+}
+
+.effort-glyph > span {
+  width: 2px;
+  height: calc(3px + var(--step, 1) * 7px);
+  /* Unlit steps still have to read on the trigger's hover surface. */
+  background: color-mix(in srgb, var(--text-3) 50%, transparent);
+  border-radius: var(--r-xs);
+}
+
+.effort-glyph > span[data-lit] {
+  background: var(--text-2);
+}
+
+.effort-glyph[data-pinned] > span[data-lit] {
+  background: var(--text);
+}
+
+/* The composer's context ring, filled to the compaction point. */
+.ctx-glyph {
+  flex: none;
+  overflow: visible;
+  color: var(--text-2);
+  transform: rotate(-90deg);
+}
+
+.ctx-glyph circle {
+  fill: none;
+  stroke-width: 1.75;
+}
+
+.ctx-glyph__track {
+  stroke: var(--line-strong);
+}
+
+.ctx-glyph__fill {
+  stroke: currentColor;
+  stroke-dasharray: var(--at) 100;
+  transition: stroke-dasharray var(--dur-slow) var(--ease-out);
+}
+
+/* ---------- panels ---------- */
+
+.menu.provider-tune__menu {
+  --tune-wire: var(--line-strong);
+  --tune-leader: color-mix(in srgb, var(--text-3) 60%, transparent);
+  min-width: 0;
+  width: min(248px, calc(100vw - 16px));
+  max-height: min(460px, calc(100vh - 16px));
+}
+
+.menu.provider-tune__menu--context {
+  width: min(280px, calc(100vw - 16px));
+}
+
+.tune-panel {
+  display: grid;
+  gap: 14px;
+  padding: 7px 8px 8px;
+}
+
+.tune-panel__section {
+  display: grid;
+  gap: 4px;
+}
+
+.tune-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 26px;
+}
+
+.tune-panel__title {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.tune-panel__readout {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tune-panel__quiet {
+  color: var(--text-3);
+}
+
+.tune-panel__switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.tune-panel .switch {
+  width: 30px;
+  height: 18px;
+}
+
+.tune-panel .switch__thumb {
+  width: 12px;
+  height: 12px;
+}
+
+.tune-panel .switch.is-on .switch__thumb {
+  transform: translateX(12px);
+}
+
+.tune-panel .switch:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: 2px;
+}
+
+.tune-panel__reset {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  gap: 5px;
+  height: 24px;
+  margin: -4px 0 -2px -6px;
+  padding: 0 6px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  animation: fade-in var(--dur-fast) var(--ease-out);
+}
+
+.tune-panel__reset:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.tune-panel__reset:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: 0;
+}
+
+/* The same switcher as the sidebar setting. */
+.tune-segmented {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+}
+
+.tune-segmented__option {
+  min-height: 20px;
+  padding: 1px 7px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  white-space: nowrap;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.tune-segmented__option:hover {
+  color: var(--text);
+}
+
+.tune-segmented__option[aria-checked='true'] {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+.tune-segmented__option:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: -1px;
+}
+
+/* ---------- reasoning: a rising ladder ---------- */
+
+.effort-ladder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 2px 4px 2px 8px;
+}
+
+.effort-ladder .tune-panel__readout {
+  margin-left: auto;
+  color: var(--text-2);
+}
+
+.effort-ladder[data-pinned] .tune-panel__readout {
+  color: var(--text);
+}
+
+.effort-ladder__steps {
+  display: flex;
+  align-items: stretch;
+  height: 26px;
+}
+
+.effort-ladder__step {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 11px;
+  padding: 0 0 5px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.effort-ladder__step::before {
+  width: 4px;
+  height: calc(4px + var(--step, 1) * 11px);
+  background: color-mix(in srgb, var(--text-3) 50%, transparent);
+  border-radius: var(--r-xs);
+  content: '';
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.effort-ladder__step[data-lit]::before {
+  background: var(--text-2);
+}
+
+.effort-ladder[data-pinned] .effort-ladder__step[data-lit]::before {
+  background: var(--text);
+}
+
+.effort-ladder[data-previewing] .effort-ladder__step[data-lit]::before {
+  background: color-mix(in srgb, var(--text) 70%, transparent);
+}
+
+.effort-ladder__step:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: -1px;
+}
+
+/* ---------- context: the window drawn as a ruler ---------- */
+
+.ctx-ruler__track {
+  position: relative;
+  height: 28px;
+  margin-inline: 2px;
+  color: var(--text-3);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ctx-ruler:is([data-state='custom'], [data-state='off']) .ctx-ruler__track {
+  color: var(--text-2);
+}
+
+.ctx-ruler[data-disabled] .ctx-ruler__track {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* Terminals at both ends, as on the provider wire. */
+.ctx-ruler__track::before,
+.ctx-ruler__track::after {
+  position: absolute;
+  top: calc(50% - 2px);
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: var(--r-circle);
+  content: '';
+}
+
+.ctx-ruler__track::before {
+  left: -2px;
+}
+
+.ctx-ruler__track::after {
+  right: -2px;
+  background: var(--tune-leader);
+}
+
+.ctx-ruler[data-state='off'] .ctx-ruler__track::after {
+  background: currentColor;
+}
+
+.ctx-ruler__fill {
+  position: absolute;
+  top: calc(50% - 0.5px);
+  left: 0;
+  width: var(--at);
+  height: 1px;
+  background: currentColor;
+  transition: width var(--dur-slow) var(--ease-out);
+}
+
+/* Dotted headroom. Clipped rather than moved, so the dots stay put while
+   the notch slides over them. */
+.ctx-ruler__rest {
+  position: absolute;
+  top: calc(50% - 2.5px);
+  right: 0;
+  left: 0;
+  height: 5px;
+  background: radial-gradient(circle, var(--tune-leader) 0.75px, transparent 1.15px) left center /
+    5px 100% repeat-x;
+  clip-path: inset(0 0 0 var(--at));
+  transition: clip-path var(--dur-slow) var(--ease-out);
+}
+
+.ctx-ruler__tick {
+  position: absolute;
+  top: calc(50% + 5px);
+  width: 1px;
+  height: 3px;
+  background: var(--tune-wire);
+}
+
+/* Where the engine compacts on its own, once the notch has left it. */
+.ctx-ruler__default {
+  position: absolute;
+  top: calc(50% - 5px);
+  left: var(--default-at);
+  width: 1px;
+  height: 10px;
+  background: color-mix(in srgb, var(--text-3) 70%, transparent);
+  animation: fade-in var(--dur-fast) var(--ease-out);
+}
+
+.ctx-ruler__thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--at);
+  display: grid;
+  width: 14px;
+  height: 24px;
+  place-items: center;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  cursor: grab;
+  outline: none;
+  transform: translate(-50%, -50%);
+  transition: left var(--dur-slow) var(--ease-out);
+}
+
+.ctx-ruler__thumb::before {
+  width: 2px;
+  height: 13px;
+  background: currentColor;
+  border-radius: var(--r-xs);
+  /* Cuts the line, so the notch reads as a break in the window. */
+  box-shadow: 0 0 0 2px var(--menu-bg);
+  content: '';
+  transition: height var(--dur-fast) var(--ease-out);
+}
+
+.ctx-ruler[data-state='default'] .ctx-ruler__thumb {
+  color: var(--text-2);
+}
+
+/* With compaction off nothing is held back, so the line runs solid to the end. */
+.ctx-ruler[data-state='off'] .ctx-ruler__thumb::before {
+  height: 0;
+  box-shadow: none;
+}
+
+.ctx-ruler__track:hover .ctx-ruler__thumb::before,
+.ctx-ruler__thumb:focus-visible::before,
+.ctx-ruler[data-dragging] .ctx-ruler__thumb::before {
+  height: 17px;
+}
+
+.ctx-ruler__thumb:focus-visible {
+  outline: 1px solid var(--text-3);
+  outline-offset: -1px;
+}
+
+.ctx-ruler[data-dragging] .ctx-ruler__thumb {
+  cursor: grabbing;
+}
+
+.ctx-ruler[data-dragging] :is(.ctx-ruler__thumb, .ctx-ruler__fill, .ctx-ruler__rest) {
+  transition: none;
+}
+
+.ctx-ruler[data-disabled] .ctx-ruler__thumb {
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :is(
+    .ctx-ruler__thumb,
+    .ctx-ruler__fill,
+    .ctx-ruler__rest,
+    .ctx-glyph__fill,
+    .tune-value__chevron
+  ) {
+    transition: none;
+  }
+}
+
+@container (max-width: 420px) {
+  .provider-tune__row {
+    grid-template-columns: 56px minmax(12px, 1fr) minmax(0, max-content);
+  }
+
+  .provider-tune__leader {
+    margin-inline: 2px 6px;
+  }
+}
