@@ -203,6 +203,20 @@ describe('Composer docking motion', () => {
 })
 
 describe('Composer media attachments', () => {
+  it('attaches native drops larger than 25 MiB without copying them', () => {
+    const onSend = vi.fn()
+    const nativeLookup = vi.fn(() => '/work/large.zip')
+    vi.stubGlobal('harness', { droppedFilePath: nativeLookup })
+    renderComposer(onSend)
+    const file = new File(['native file'], 'large.zip')
+    Object.defineProperty(file, 'size', { value: 26 * 1024 * 1024 })
+    fireEvent.drop(document.querySelector('.composer__box')!, { dataTransfer: { files: [file] } })
+    expect(nativeLookup).toHaveBeenCalledWith(file)
+    expect(bridge.savePastedFile).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('', ['/work/large.zip'])
+  })
+
   it('previews a pasted image and sends its materialized path', async () => {
     const onSend = vi.fn()
     renderComposer(onSend)
