@@ -667,6 +667,25 @@ describe('login ownership', () => {
     expect(adapters[0]!.dispose).toHaveBeenCalledOnce()
   })
 
+  it('fails a browser sign-in at once when its helper process exits', async () => {
+    const { codex, adapters, hooks } = setup()
+    await codex.startLogin!()
+    adapters[0]!.emit('disconnected')
+    expect(hooks.onLogin).toHaveBeenCalledExactlyOnceWith('codex', {
+      loginId: 'login-1',
+      success: false,
+      error: 'Codex sign-in stopped because its helper process exited.',
+    })
+    expect(adapters[0]!.cancelLogin).not.toHaveBeenCalled()
+    // The released login no longer pins the helper or blocks a retry.
+    await vi.advanceTimersByTimeAsync(10)
+    expect(adapters[0]!.dispose).toHaveBeenCalledOnce()
+    adapters[0]!.emit('disconnected')
+    expect(hooks.onLogin).toHaveBeenCalledOnce()
+    await expect(codex.startLogin!()).resolves.toMatchObject({ loginId: 'login-1' })
+    expect(adapters).toHaveLength(2)
+  })
+
   it('handles completion that arrives before the start response', async () => {
     const adapter = new FakeCodex()
     adapter.startLogin.mockImplementationOnce(async () => {
@@ -736,6 +755,29 @@ describe('login ownership', () => {
     expect(adapters[0]!.dispose).toHaveBeenCalledOnce()
   })
 
+  it('reports an expired login even when cleanup fails and retains ownership for retry', async () => {
+    const { codex, adapters, hooks } = setup()
+    await codex.startLogin!()
+    const adapter = adapters[0]!
+    adapter.cancelLogin.mockRejectedValue(new Error('fixture-cancel-failed'))
+    await vi.advanceTimersByTimeAsync(200)
+    expect(hooks.onLogin).toHaveBeenCalledExactlyOnceWith('codex', {
+      loginId: 'login-1',
+      success: false,
+      error: 'Provider sign-in timed out.',
+    })
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(adapter.cancelLogin).toHaveBeenCalledOnce()
+    expect(adapter.dispose).not.toHaveBeenCalled()
+    await expect(codex.startLogin!()).rejects.toThrow('fixture-cancel-failed')
+    expect(adapter.startLogin).toHaveBeenCalledOnce()
+    adapter.cancelLogin.mockResolvedValue()
+    await codex.cancelLogin!('login-1')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(adapter.dispose).toHaveBeenCalledOnce()
+    expect(hooks.onLogin).toHaveBeenCalledOnce()
+  })
+
   it('cancels a login before an API-key sign-in or sign-out', async () => {
     const { codex, adapters, hooks } = setup()
     await codex.startLogin!()
@@ -784,6 +826,26 @@ describe('login ownership', () => {
       expect(createCodex).not.toHaveBeenCalled()
     },
   )
+
+  it('releases sign-in work behind a start that never answers and cancels its late handle', async () => {
+    const pending = deferred<{ loginId: string; cancel: () => Promise<void> }>()
+    const lateCancel = vi.fn(async () => {})
+    const signOut = vi.fn(async () => {})
+    const { registry } = setup({
+      loginStartTimeoutMs: 50,
+      services: { 'claude-code': { startLogin: () => pending.promise, signOut } },
+    })
+    const control = registry.forProvider('claude-code')
+    const starting = expect(control.startLogin!()).rejects.toThrow('did not start in time')
+    await vi.advanceTimersByTimeAsync(50)
+    await starting
+    await control.signOut()
+    expect(signOut).toHaveBeenCalledOnce()
+
+    pending.resolve({ loginId: 'late', cancel: lateCancel })
+    await flush()
+    expect(lateCancel).toHaveBeenCalledOnce()
+  })
 
   it('awaits external login cancellation during reset and can retry a failed cancellation', async () => {
     const login = externalLogin()

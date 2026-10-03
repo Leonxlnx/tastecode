@@ -52,7 +52,7 @@ export type CodexControlAdapter = Pick<
 > & {
   on(event: 'log', listener: (line: string) => void): void
   on(event: 'login', listener: (result: ProviderLoginResult) => void): void
-  on(event: 'skillsChanged' | 'mcpChanged', listener: () => void): void
+  on(event: 'skillsChanged' | 'mcpChanged' | 'disconnected', listener: () => void): void
 }
 
 /** Injectable readers keep auth tests independent of installed CLIs and credentials. */
@@ -104,6 +104,8 @@ export type ProviderControlsOptions = {
   controlIdleMs?: number
   watchTtlMs?: number
   loginTtlMs?: number
+  /** How long a sign-in may take to return its URL before later auth work proceeds. */
+  loginStartTimeoutMs?: number
   /** How long a successful limit read answers later reads without a change signal. */
   limitCacheMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
@@ -162,11 +164,14 @@ export class ProviderControls {
   readonly #controls = new Map<ProviderId, ProviderControl>()
   readonly #owned = new Set<ProcessEntry>()
   readonly #logins = new Map<ProviderId, LoginEntry>()
+  /** Starts that missed their deadline; their handle is canceled on arrival. */
+  readonly #lateLogins = new Map<LoginEntry, ProviderId>()
   readonly #authQueues = new Map<ProviderId, Promise<void>>()
   readonly #skills: WatchLeases
   readonly #mcp: WatchLeases
   readonly #idleMs: number
   readonly #loginTtlMs: number
+  readonly #loginStartTimeoutMs: number
   readonly #limitCacheMs: number
   readonly #limitChangeIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
@@ -182,6 +187,7 @@ export class ProviderControls {
     this.#options = options
     this.#idleMs = duration(options.controlIdleMs, 5_000, 0)
     this.#loginTtlMs = duration(options.loginTtlMs, 10 * 60_000, 1)
+    this.#loginStartTimeoutMs = duration(options.loginStartTimeoutMs, 60_000, 1)
     // Codex reports a limit change after nearly every model request, and each
     // read starts a vendor process, so reads are cached and signals spaced.
     this.#limitCacheMs = duration(options.limitCacheMs, 60_000, 0)
@@ -260,9 +266,14 @@ export class ProviderControls {
       await Promise.all(this.#authQueues.values())
       // A login loader may have returned its handle during the reset. Its
       // canceled start owns cleanup; failed cleanup remains available here.
-      const late = await Promise.allSettled(
-        [...this.#logins].map(([provider, login]) => this.#cancelOwnedLogin(provider, login)),
-      )
+      const late = await Promise.allSettled([
+        ...[...this.#logins].map(([provider, login]) => this.#cancelOwnedLogin(provider, login)),
+        ...[...this.#lateLogins].map(([login, provider]) =>
+          this.#cancelOwnedLogin(provider, login).then(() => {
+            if (login.cancel) this.#lateLogins.delete(login)
+          }),
+        ),
+      ])
       const errors = [...results, ...late].flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : [],
       )
@@ -524,6 +535,20 @@ export class ProviderControls {
       if (login) this.#loginResult('codex', login, result)
       else if (result.loginId === null) this.#emitLogin('codex', result)
     })
+    adapter.on('disconnected', () => {
+      if (!current()) return
+      const login = this.#logins.get('codex')
+      // A start still in flight rejects with the dead process on its own.
+      if (!login || login.loginId === undefined || login.expired) return
+      // The callback listener died with the process, so nothing is left to cancel.
+      login.expired = true
+      this.#releaseLogin('codex', login)
+      this.#emitLogin('codex', {
+        loginId: login.loginId,
+        success: false,
+        error: 'Codex sign-in stopped because its helper process exited.',
+      })
+    })
     adapter.on('skillsChanged', () => {
       if (!current()) return
       for (const projectPath of this.#skills) this.#options.onSkillsChanged?.('codex', projectPath)
@@ -691,30 +716,67 @@ export class ProviderControls {
             provider,
             'Provider sign-in could not stop; cleanup can be retried.',
           )
+          this.#options.onLogin?.(provider, {
+            loginId: login.loginId ?? null,
+            success: false,
+            error: 'Provider sign-in timed out.',
+          })
         },
       )
     }, this.#loginTtlMs)
     login.timer.unref?.()
-    try {
-      const handle = await start((result) => this.#loginResult(provider, login, result))
-      login.loginId = handle.loginId
-      login.cancel = handle.cancel
-      if (
-        this.#closed ||
-        generation !== this.#generation ||
-        login.expired ||
-        this.#logins.get(provider) !== login
-      ) {
-        await this.#cancelOwnedLogin(provider, login)
-        throw new Error('Provider sign-in was canceled')
+    const starting = (async () => {
+      try {
+        const handle = await start((result) => this.#loginResult(provider, login, result))
+        login.loginId = handle.loginId
+        login.cancel = handle.cancel
+        if (
+          this.#closed ||
+          generation !== this.#generation ||
+          login.expired ||
+          this.#logins.get(provider) !== login
+        ) {
+          await this.#cancelOwnedLogin(provider, login)
+          throw new Error('Provider sign-in was canceled')
+        }
+        for (const result of login.earlyResults) this.#loginResult(provider, login, result)
+        login.earlyResults = []
+        return { loginId: handle.loginId, ...(handle.authUrl ? { authUrl: handle.authUrl } : {}) }
+      } catch (error) {
+        // Retain a handle whose cancellation failed for a later cleanup attempt.
+        if (!login.cancel) this.#releaseLogin(provider, login)
+        throw error
       }
-      for (const result of login.earlyResults) this.#loginResult(provider, login, result)
-      login.earlyResults = []
-      return { loginId: handle.loginId, ...(handle.authUrl ? { authUrl: handle.authUrl } : {}) }
+    })()
+    let startTimer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const deadline = new Promise<never>((_resolve, reject) => {
+      startTimer = setTimeout(() => {
+        timedOut = true
+        reject(new Error('Provider sign-in did not start in time.'))
+      }, this.#loginStartTimeoutMs)
+      startTimer.unref?.()
+    })
+    try {
+      return await Promise.race([starting, deadline])
     } catch (error) {
-      // Retain a handle whose cancellation failed for a later cleanup attempt.
-      if (!login.cancel) this.#releaseLogin(provider, login)
+      if (timedOut) {
+        // A start that never answered would hold every later sign-in, sign-out
+        // and shutdown behind it. Release the queue, but keep the late handle
+        // owned so it is canceled when it finally arrives.
+        login.expired = true
+        this.#releaseLogin(provider, login)
+        this.#lateLogins.set(login, provider)
+        void starting.then(
+          () => this.#lateLogins.delete(login),
+          () => {
+            if (!login.cancel || login.canceled) this.#lateLogins.delete(login)
+          },
+        )
+      }
       throw error
+    } finally {
+      clearTimeout(startTimer)
     }
   }
 

@@ -633,6 +633,7 @@ export function App() {
   )
   const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
   const pendingThreadApprovals = useRef(new Map<string, ApprovalMode>())
+  const approvalChanges = useRef(new Map<string, Promise<void>>())
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
   )
@@ -3441,14 +3442,23 @@ export function App() {
       )
       const threadId = activeIdRef.current
       if (!threadId) return
-      setActiveThreadApproval(mode)
       if (threadId.startsWith('pending:')) {
+        setActiveThreadApproval(mode)
         pendingThreadApprovals.current.set(threadId, mode)
         return
       }
-      void transport
-        .request('thread.setApproval', { threadId, approval: mode })
+      const request = () => transport.request('thread.setApproval', { threadId, approval: mode })
+      const previous = approvalChanges.current.get(threadId)
+      const change = (previous ? previous.then(request) : request())
+        .then(() => {
+          if (activeIdRef.current === threadId) setActiveThreadApproval(mode)
+        })
         .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
+        .finally(() => {
+          if (approvalChanges.current.get(threadId) === change)
+            approvalChanges.current.delete(threadId)
+        })
+      approvalChanges.current.set(threadId, change)
     },
     [provider, transport],
   )
@@ -3459,8 +3469,15 @@ export function App() {
       return transport
         .request('thread.respondToUserInput', { threadId, requestId, answers })
         .then(() => undefined)
+        .catch((error: unknown) => {
+          if (error instanceof IndeterminateRequestError) {
+            threadController.invalidateHistory(threadId)
+            void loadHistory(threadId).catch(() => undefined)
+          }
+          throw error
+        })
     },
-    [transport],
+    [transport, threadController, loadHistory],
   )
   const editMessage = useCallback((text: string) => {
     threadController.editDraft(threadController.draftOwner, { text })

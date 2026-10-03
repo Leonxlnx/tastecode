@@ -25,6 +25,11 @@ export type Worktree = {
   branch: string
   /** The repository it belongs to. */
   repoPath: string
+  /**
+   * The selected project folder inside the checkout. Differs from `path` when
+   * the project is a subfolder of its repository.
+   */
+  workPath?: string
 }
 
 export class NotARepository extends Error {
@@ -85,7 +90,12 @@ export async function createWorktree(
   ])
   if (result instanceof Error) throw result
 
-  return { path: target, branch, repoPath }
+  // A project opened at a repository subfolder keeps that scope in its
+  // checkout. A folder the commit does not contain falls back to the root.
+  const prefix = (await git(repoPath, ['rev-parse', '--show-prefix'])) ?? ''
+  const nested = prefix ? path.join(target, ...prefix.split('/').filter(Boolean)) : target
+  const workPath = existsSync(nested) ? nested : target
+  return { path: target, branch, repoPath, workPath }
 }
 
 /**
