@@ -1,11 +1,11 @@
-import { createServer, type IncomingMessage } from 'node:http'
+import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { once } from 'node:events'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ApiAgentSession, type ApiStreamEvent } from './runtime.js'
 import { createOpenAiResponsesTransport, listOpenAiModels } from './openai.js'
-import { jsonObject, parseJsonValue, type JsonObject, type JsonValue } from './json.js'
-import { testServerBaseUrl, writeJsonResponse } from './test-server.js'
+import type { JsonObject, JsonValue } from './json.js'
+import { readJsonPost, testServerBaseUrl, writeJsonResponse } from './test-server.js'
 
 const TEXT = readFileSync(new URL('./fixtures/openai-text.sse', import.meta.url), 'utf8')
 const TOOL = readFileSync(new URL('./fixtures/openai-tool.sse', import.meta.url), 'utf8')
@@ -135,7 +135,9 @@ async function serve(
   let stream = 0
   const server = createServer(async (request, response) => {
     if (request.url === '/v1/models') return writeJsonResponse(response, models)
-    requests.push(jsonObject(parseJsonValue(await body(request))))
+    const json = await readJsonPost(request, response, '/v1/responses')
+    if (!json) return
+    requests.push(json)
     response.writeHead(200, { 'content-type': 'text/event-stream' })
     response.end(streams[stream++])
   })
@@ -143,10 +145,4 @@ async function serve(
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   return { baseUrl: testServerBaseUrl(server), requests }
-}
-
-async function body(request: IncomingMessage): Promise<string> {
-  let value = ''
-  for await (const chunk of request) value += chunk
-  return value
 }
