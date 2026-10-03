@@ -8,6 +8,7 @@ import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
+import { assertReviewViewports } from './preview.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
 export type ReviewSeverity = (typeof SEVERITIES)[number]
@@ -26,9 +27,25 @@ export interface ReviewScreenshot {
           label: string
           width: number
           height: number
+          partiallyClipped?: boolean | undefined
         }>
+        coverage?: 'complete' | 'partial' | undefined
       }
     | undefined
+  documentHeight?: number | undefined
+  capturedHeight?: number | undefined
+}
+
+/** Viewports (`WxH`) whose screenshot stopped before the end of the document. */
+export function croppedReviewScreenshots(screenshots: readonly ReviewScreenshot[]): string[] {
+  return screenshots
+    .filter(
+      ({ documentHeight, capturedHeight }) =>
+        documentHeight !== undefined &&
+        capturedHeight !== undefined &&
+        capturedHeight < documentHeight,
+    )
+    .map(({ width, height }) => `${width}x${height}`)
 }
 
 export interface VisualReview {
@@ -60,7 +77,9 @@ export function designReviewPrompt(
   screenshots: ReviewScreenshot[],
   suppliedReferences: readonly string[] = [],
   referenceDeck?: readonly ReferenceDirection[],
+  expectedViewports?: readonly { width: number; height: number }[],
 ): string {
+  validateReviewScreenshots(screenshots, expectedViewports)
   const internalReferences = Array.isArray(page.sections)
     ? referenceDirectionsForPage(page, referenceDeck)
     : []
@@ -70,7 +89,7 @@ export function designReviewPrompt(
   }))
   return `You are running the visual Review phase of TasteCode Design Mode.
 
-Inspect every supplied screenshot and reference image with image-viewing tools. Screenshot paths are listed in <screenshots>; user mockups and internal direction images are listed separately below. Compare visible evidence against the primary reference for each section as well as the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective TasteCode evidence: include repairs for their failures and never dismiss them from visual judgment.
+Inspect every supplied screenshot and reference image with image-viewing tools. Screenshot paths are listed in <screenshots>; user mockups and internal direction images are listed separately below. Compare visible evidence against the primary reference for each section as well as the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective TasteCode evidence: include repairs for their failures and never dismiss them from visual judgment. A screenshot whose capturedHeight is smaller than its documentHeight ends before the page does; judge only what it shows and never describe the omitted part as passing.
 
 For every visible section, compare its screenshot geometry first against referenceDirectionId, then its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. The reference must remain recognizably present in macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and intended movement. Only identity content, brand hues, the approved font family and image subjects should change. Compare normalized heading/media boxes, section height, line count, whitespace, radii, borders and overlaps against the reference; require repair when these drift without a concrete content, accessibility or responsive reason. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, loses the reference at a breakpoint, or adds a signature motif absent from the reference.
 
@@ -79,7 +98,7 @@ Review each section's recorded motion decision against the rendered result when 
 Apply the following pass blockers to every screenshot:
 - Heading size, width, line count or placement differs materially from the reference without a content or accessibility reason. Preserve intentional monumental typography and multi-line composition.
 - Invented labels, uppercase monospace micro-headings or decorative numbering absent from the reference, or a missing/failed approved font load. Do not flag reference typography merely because it is unusual.
-- Any visible internal note or unfinished copy such as awaiting approval, still needed, not connected, before launch, live data required, or to be supplied. Preserve concise identification of concept work or an illustrative catalog; these are meaningful content, not unfinished copy.
+- Any visible unfinished authoring placeholder such as lorem ipsum, TODO, or your text here. Preserve legitimate interface states and controls such as Not connected, Test data, Local preview, or Awaiting approval; they are not evidence of unfinished implementation. Preserve concise identification of concept work or an illustrative catalog; these are meaningful content, not unfinished copy.
 - A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
 - Invented grids, separator rules, card-edge rails or square-panel templates replace the reference geometry. Preserve those details when they are actually visible in the selected image.
 - Grouping loses the reference composition: open editorial content becomes boxed, distinct media layouts become equal-column templates, or related controls and cards use inconsistent spacing and states.
@@ -165,9 +184,15 @@ const AUDIT_FINDING_IDS = new Set([
 export function enforceDomAuditFindings(
   review: VisualReview,
   screenshots: ReviewScreenshot[],
+  expectedViewports?: readonly { width: number; height: number }[],
 ): VisualReview {
+  validateReviewScreenshots(screenshots, expectedViewports)
+  // A partial walk can miss the only h1 (closed shadow roots, the element bound),
+  // so zero found is not evidence of zero present. More than one still is.
   const h1Failures = screenshots.filter(
-    (screenshot) => screenshot.domAudit && screenshot.domAudit.h1Count !== 1,
+    ({ domAudit }) =>
+      domAudit &&
+      (domAudit.h1Count > 1 || (domAudit.h1Count === 0 && domAudit.coverage !== 'partial')),
   )
   const targetFailures = screenshots.filter(
     (screenshot) => screenshot.domAudit?.interactiveTargetViolations.length,
@@ -197,8 +222,10 @@ export function enforceDomAuditFindings(
     const examples = targetFailures
       .flatMap(({ width, domAudit }) =>
         domAudit!.interactiveTargetViolations.map(
-          ({ selector, label, width: targetWidth, height }) =>
-            `${width}px ${selector}${label ? ` (${label})` : ''}: ${targetWidth}x${height}`,
+          ({ selector, label, width: targetWidth, height, partiallyClipped }) =>
+            `${width}px ${selector}${label ? ` (${label})` : ''}: ${targetWidth}x${height}${
+              partiallyClipped ? ', partly clipped by an ancestor' : ''
+            }`,
         ),
       )
       .slice(0, 5)
@@ -220,6 +247,33 @@ export function enforceDomAuditFindings(
     verdict: 'repair',
     summary: `${review.summary} TasteCode DOM audit found ${h1Failures.length + targetFailures.length} blocking accessibility group${h1Failures.length + targetFailures.length === 1 ? '' : 's'}.`,
     findings,
+  }
+}
+
+export function validateReviewScreenshots(
+  screenshots: readonly ReviewScreenshot[],
+  expectedViewports?: readonly { width: number; height: number }[],
+): void {
+  if (
+    screenshots.some(
+      ({ path, width, height }) =>
+        !path.trim() ||
+        !Number.isSafeInteger(width) ||
+        !Number.isSafeInteger(height) ||
+        width <= 0 ||
+        height <= 0,
+    )
+  )
+    throw new Error('Visual review screenshots must have a path and valid viewport dimensions')
+  assertReviewViewports(screenshots)
+  const missing = expectedViewports?.filter(
+    ({ width, height }) =>
+      !screenshots.some((screenshot) => screenshot.width === width && screenshot.height === height),
+  )
+  if (missing?.length) {
+    throw new Error(
+      `Visual review is missing screenshots for planned viewports: ${missing.map(({ width, height }) => `${width}x${height}`).join(', ')}; capture every planned viewport before reviewing`,
+    )
   }
 }
 
@@ -274,9 +328,14 @@ export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
   if (value.status !== 'complete' && value.status !== 'failed') {
     throw new Error('repair status must be complete or failed')
   }
+  // A failed repair that follows the Build failed shape still names its blocker.
+  const summary =
+    value.status === 'failed' && value.summary === undefined && typeof value.error === 'string'
+      ? value.error
+      : value.summary
   return {
     status: value.status,
-    summary: string(value.summary, 'repair summary'),
+    summary: string(summary, 'repair summary'),
     files: strings(value.files, 'repair files'),
     checks: strings(value.checks, 'repair checks'),
   }

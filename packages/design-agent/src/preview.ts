@@ -45,7 +45,22 @@ ${PREVIEW_PROTOCOL}`
 
 export function parsePreviewPhaseOutput(text: string): PreviewPlan {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
-  return parsePreviewPlan(JSON.parse(fenced?.[1] ?? text))
+  const plan = parsePreviewPlan(JSON.parse(fenced?.[1] ?? text))
+  assertReviewViewports(plan.viewports)
+  return plan
+}
+
+export function assertReviewViewports(
+  viewports: readonly { width: number; height: number }[],
+): void {
+  if (
+    !viewports.some(({ width }) => width >= 1_024) ||
+    !viewports.some(({ width }) => width >= 320 && width <= 600)
+  ) {
+    throw new Error(
+      'Design visual review requires both a desktop viewport (at least 1024px) and a mobile viewport (320–600px)',
+    )
+  }
 }
 
 export function parsePreviewPlan(value: unknown): PreviewPlan {
