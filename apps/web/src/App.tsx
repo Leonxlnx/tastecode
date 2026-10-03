@@ -98,6 +98,11 @@ import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchH
 import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
+import {
+  PullRequestsSkeleton,
+  SettingsSkeleton,
+  WorkspacePanelSkeleton,
+} from './ui/SurfaceSkeletons.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
 import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
 import { surfaceLoadFailed } from './surface-load-error.js'
@@ -679,6 +684,7 @@ export function App() {
   const [railWidth, setRailWidth] = useState(readRailWidth)
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [branches, setBranches] = useState<string[]>([])
+  const [branchesPath, setBranchesPath] = useState<string>()
   const projectBranches = useRef(new Map<string, string>())
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
@@ -694,6 +700,7 @@ export function App() {
   const accountRequestRevision = useRef(0)
   const [authStatusRequest, setAuthStatusRequest] = useState(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
+  const [voiceStatusLoading, setVoiceStatusLoading] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
@@ -986,7 +993,21 @@ export function App() {
   const defaultApproval =
     approvalByProvider[provider] ?? (autoReviewSupported ? 'auto-review' : 'full')
   const approval = activeId ? (activeThreadApproval ?? 'ask') : defaultApproval
-  const approvalLoading = Boolean(activeId && activeThreadApproval === undefined)
+  // Auto-review support arrives with the provider list. Until then a saved
+  // auto-review choice, or the default, would show as full access and flip.
+  const approvalWaitsForProvider =
+    catalogAvailability === 'loading' &&
+    !providerStatuses.some((entry) => entry.id === provider) &&
+    (approval === 'auto-review' || (!activeId && approvalByProvider[provider] === undefined))
+  const approvalLoading =
+    Boolean(activeId && activeThreadApproval === undefined) || approvalWaitsForProvider
+  // While waiting, the mode only sizes the placeholder; auto-review is what it
+  // resolves to whenever the provider supports it.
+  const displayedApproval: ApprovalMode = approvalWaitsForProvider
+    ? 'auto-review'
+    : approval === 'auto-review' && !autoReviewSupported
+      ? 'full'
+      : approval
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -1970,6 +1991,7 @@ export function App() {
   useEffect(() => {
     if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
       setVoiceAvailable(false)
+      setVoiceStatusLoading(false)
       return
     }
     // Wait until the same catalog revision has resolved the provider fallback,
@@ -1988,6 +2010,9 @@ export function App() {
       })
       .catch(() => {
         if (!cancelled) setVoiceAvailable(false)
+      })
+      .finally(() => {
+        if (!cancelled) setVoiceStatusLoading(false)
       })
     return () => {
       cancelled = true
@@ -2009,6 +2034,7 @@ export function App() {
       if (cancelled) return
       setWorkspace(info)
       setBranches(result?.branches ?? (info?.branch ? [info.branch] : []))
+      setBranchesPath(activePath)
       const available = result?.branches ?? (info?.branch ? [info.branch] : [])
       const remembered =
         projectBranches.current.get(activePath) ?? readSetting(`harness.branch:${activePath}`)
@@ -4939,6 +4965,7 @@ export function App() {
       <div className="shell__body">
         <Sidebar
           projects={archiveProjects}
+          projectsLoading={projectsStatus === 'loading'}
           activeProjectPath={activePath}
           activeSessionId={surface === 'chat' ? activeId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
@@ -4979,7 +5006,7 @@ export function App() {
         >
           <main className="stage">
             {surface === 'pull-requests' ? (
-              <Suspense fallback={null}>
+              <Suspense fallback={<PullRequestsSkeleton />}>
                 <PullRequestsView
                   transport={transport}
                   onOpenChat={openPullRequestChat}
@@ -5046,6 +5073,7 @@ export function App() {
                       projects={projectChoices}
                       projectPath={activePath}
                       projectName={activeProject ? displayName(activeProject) : undefined}
+                      projectsLoading={projectsStatus === 'loading'}
                       branch={
                         (!activeId && activePath
                           ? projectBranches.current.get(activePath)
@@ -5055,19 +5083,20 @@ export function App() {
                         branches[0]
                       }
                       branches={branches}
+                      branchesLoading={Boolean(activePath) && branchesPath !== activePath}
                       models={selectableModels}
                       modelsLoaded={modelsLoaded}
                       modelId={selectedModelChoice?.key}
                       effort={selectedEffort}
                       serviceTier={selectedServiceTier}
                       usage={thread.usage}
-                      approval={
-                        approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
-                      }
+                      approval={displayedApproval}
                       approvalLoading={approvalLoading}
                       autoReviewSupported={autoReviewSupported}
                       attachmentsSupported={attachmentsSupported}
+                      attachmentsLoading={catalogAvailability === 'loading'}
                       voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
+                      voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
                       disabled={stopping}
                       sendAvailability={sendAvailability}
                       errors={composerErrors}
@@ -5125,7 +5154,9 @@ export function App() {
                       }
                       onTransitionEnd={finishBottomTerminalMotion}
                     >
-                      <Suspense fallback={null}>
+                      <Suspense
+                        fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
+                      >
                         <RenderedWorkspacePanel
                           placement="bottom"
                           open={terminalOpen}
@@ -5161,7 +5192,9 @@ export function App() {
           </main>
 
           {workspacePanelHasMounted ? (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={<WorkspacePanelSkeleton placement="right" open={workspacePanelOpen} />}
+            >
               <RenderedWorkspacePanel
                 open={workspacePanelOpen}
                 expanded={workspacePanelExpanded}
@@ -5202,51 +5235,63 @@ export function App() {
       </div>
 
       {settingsOpen ? (
-        <SurfaceErrorBoundary name="Settings" onClose={closeSettings}>
-          <Settings
-            initialSection={settingsSection}
-            showDebug={debugSettingsVisible}
-            provider={provider}
-            providerName={providerName(provider, sourceAgentName)}
-            transport={transport}
-            projectPath={activePath}
-            projectName={activeProject ? displayName(activeProject) : undefined}
-            account={account}
-            profileIdentity={profileIdentity}
-            onProfileIdentityChange={updateProfileIdentity}
-            providerStatuses={providerStatuses}
-            models={models}
-            hiddenModels={hiddenModels}
-            onModelVisibilityChange={changeModelVisibility}
-            providerDefaults={providerDefaultsControls}
-            onConnectionsChanged={refreshCatalog}
-            projectCount={projects.length}
-            sidebarSettings={sidebarSettings}
-            onSidebarSettingsChange={updateSidebarSettings}
-            themePreference={themePreference}
-            themeColorScheme={themeColorScheme}
-            onThemePreferenceChange={setThemePreference}
-            appearancePreferences={appearancePreferences}
-            onAppearancePreferenceChange={updateAppearancePreference}
-            showMacOSFontSmoothing={macOS}
-            macOSFontSmoothing={macOSFontSmoothing}
-            onMacOSFontSmoothingChange={setMacOSFontSmoothing}
-            macOS={macOS}
-            keybindings={keybindings}
-            onKeybindingChange={changeKeybinding}
-            onKeybindingsReset={resetKeybindings}
-            showMacOSHaptics={isDesktop && macOS}
-            onAccountChange={handleAccountChange}
-            authRefreshRevision={providerAuthRefreshRevision}
-            onProviderLoginTerminalOpen={openProviderLoginTerminal}
-            onReset={resetSettings}
-            onForceOnboarding={() => {
-              setSettingsOpen(false)
-              setOnboardingPreview(true)
-            }}
+        <div className="surface-enter">
+          <SurfaceErrorBoundary
+            name="Settings"
             onClose={closeSettings}
-          />
-        </SurfaceErrorBoundary>
+            fallback={<SettingsSkeleton section={settingsSection} />}
+          >
+            <Settings
+              initialSection={settingsSection}
+              showDebug={debugSettingsVisible}
+              provider={provider}
+              providerName={providerName(provider, sourceAgentName)}
+              transport={transport}
+              projectPath={activePath}
+              projectName={activeProject ? displayName(activeProject) : undefined}
+              account={account}
+              accountLoading={
+                accountCheck.provider !== provider || accountCheck.state === 'loading'
+              }
+              profileIdentity={profileIdentity}
+              onProfileIdentityChange={updateProfileIdentity}
+              providerStatuses={providerStatuses}
+              providersLoading={catalogAvailability === 'loading'}
+              models={models}
+              modelsLoading={catalogAvailability === 'loading'}
+              hiddenModels={hiddenModels}
+              onModelVisibilityChange={changeModelVisibility}
+              providerDefaults={providerDefaultsControls}
+              onConnectionsChanged={refreshCatalog}
+              projectCount={projects.length}
+              projectsLoading={projectsStatus === 'loading'}
+              sidebarSettings={sidebarSettings}
+              onSidebarSettingsChange={updateSidebarSettings}
+              themePreference={themePreference}
+              themeColorScheme={themeColorScheme}
+              onThemePreferenceChange={setThemePreference}
+              appearancePreferences={appearancePreferences}
+              onAppearancePreferenceChange={updateAppearancePreference}
+              showMacOSFontSmoothing={macOS}
+              macOSFontSmoothing={macOSFontSmoothing}
+              onMacOSFontSmoothingChange={setMacOSFontSmoothing}
+              macOS={macOS}
+              keybindings={keybindings}
+              onKeybindingChange={changeKeybinding}
+              onKeybindingsReset={resetKeybindings}
+              showMacOSHaptics={isDesktop && macOS}
+              onAccountChange={handleAccountChange}
+              authRefreshRevision={providerAuthRefreshRevision}
+              onProviderLoginTerminalOpen={openProviderLoginTerminal}
+              onReset={resetSettings}
+              onForceOnboarding={() => {
+                setSettingsOpen(false)
+                setOnboardingPreview(true)
+              }}
+              onClose={closeSettings}
+            />
+          </SurfaceErrorBoundary>
+        </div>
       ) : null}
 
       {onboardingMounted ? (

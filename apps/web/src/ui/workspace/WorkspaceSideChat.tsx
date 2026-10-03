@@ -25,6 +25,7 @@ import {
 import { ThreadFrameStore } from '../../thread-frame-store.js'
 import { IndeterminateRequestError, type Transport } from '../../transport.js'
 import { IconMorph } from '../IconMorph.js'
+import { SkeletonStatus, ThreadSkeleton } from '../Skeleton.js'
 import { Thread } from '../Thread.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 
@@ -489,10 +490,15 @@ export function WorkspaceSideChat(props: {
   }
 
   const hasConversation = thread.items.length > 0 || thread.running
+  const loadingConversation = !hasConversation && starting && !error
 
   return (
     <div className="workspace-side-chat">
-      <div className="workspace-side-chat__conversation" aria-live="polite">
+      <div
+        className="workspace-side-chat__conversation"
+        aria-live="polite"
+        aria-busy={loadingConversation}
+      >
         {error ? (
           <div className="workspace-side-chat__error" role="alert">
             <CircleAlert size={13} aria-hidden />
@@ -525,6 +531,15 @@ export function WorkspaceSideChat(props: {
             onAnswerUserInput={answer}
             inlineUserInput
           />
+        ) : loadingConversation ? (
+          <SkeletonStatus
+            label="Starting temporary chat…"
+            className="workspace-side-chat__skeleton"
+          >
+            <div aria-hidden>
+              <ThreadSkeleton />
+            </div>
+          </SkeletonStatus>
         ) : !hasConversation && !starting ? (
           <WorkspaceEmptyState
             kind="chat"

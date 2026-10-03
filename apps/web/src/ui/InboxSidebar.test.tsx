@@ -126,6 +126,18 @@ describe('InboxSidebar', () => {
     ])
   })
 
+  it('shows placeholder threads until the project list arrives', () => {
+    const view = render(<InboxSidebar {...props([])} loading />)
+
+    expect(screen.getByRole('status').textContent).toBe('Loading threads…')
+    expect(screen.queryByText('No active threads in this project.')).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+
+    view.rerender(<InboxSidebar {...props([])} loading={false} />)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByText('No active threads in this project.')).toBeTruthy()
+  })
+
   it('moves only changed rows in retained many-thread groups', () => {
     const projects: Project[] = Array.from({ length: 10 }, (_, projectIndex) => ({
       path: `/project-${projectIndex}`,
