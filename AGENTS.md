@@ -130,7 +130,10 @@ Each of these cost someone hours. They are not preferences.
   as its own PR before anyone builds against it. Approval from the human responsible for
   the work is sufficient; review by the other human is optional.
 - **Windows CLI shims are `.cmd` files.** `spawn('claude')` fails with EINVAL; use
-  `spawnCli` from `@harness/proc`, which routes through `cmd.exe`.
+  `spawnCli` from `@harness/proc`. It resolves PATH and PATHEXT, starts native `.exe` files
+  directly, and routes `.cmd`/`.bat` shims through `cmd.exe` with every argument escaped
+  for cmd (a shim's `%*` is parsed twice). Never hand-build a `cmd.exe /c` line; `&` in an
+  unquoted URL splits it into two commands. Multiline text goes through stdin.
 - **Adapters are written against captured output**, not against published schemas. When a
   protocol and its documentation disagree, the wire wins — capture frames from the real
   binary before writing types.

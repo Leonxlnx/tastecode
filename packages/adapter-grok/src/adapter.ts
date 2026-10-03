@@ -668,6 +668,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     if (this.#child) await this.#stop(this.#child, 'interrupt')
   }
 
+  /** Print mode starts a new process per turn; an active child keeps its policy. */
+  setApproval(approval: ApprovalMode): void {
+    if (approval === 'auto-review') {
+      throw new Error('Grok does not support automatic approval review')
+    }
+    this.#options = { ...this.#options, approval }
+  }
+
   /** `grok models` prints a default line plus an "Available models:" list. */
   async listModels(): Promise<Model[]> {
     return parseGrokModels(await this.#capture(['models']))

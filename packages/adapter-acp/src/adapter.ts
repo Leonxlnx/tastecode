@@ -532,7 +532,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
    * ones that do not run a command, and `ask` answers none.
    */
   #autoDecision(kind: string | undefined): PermissionOptionKind | undefined {
-    if (this.#approval === 'full') return 'allow_always'
+    if (this.#approval === 'full') return 'allow_once'
     // `auto` has no sandbox under ACP, so it may only wave through actions
     // that cannot mutate anything. Deletes, moves, edits and fetches stay
     // questions for the user.
