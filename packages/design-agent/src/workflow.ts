@@ -1,4 +1,5 @@
 import { type BoundaryRecord, list, record, string } from './parse.js'
+import { parseDesignBrief } from './brief.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
 export { DESIGN_BRIEF_ATTACHMENT, isDesignBriefAttachment } from './attachment.js'
 
@@ -129,7 +130,7 @@ export function parseBriefingOutput(text: string): BriefingOutput {
       status: 'complete',
       message: string(value.message, 'message'),
       questions: [],
-      brief,
+      brief: { ...parseDesignBrief(brief) },
     }
   }
   if (

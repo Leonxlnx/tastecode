@@ -4,6 +4,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   DesignSourceQualityError,
+  designBuildCorrectionPrompt,
   designBuildPrompt,
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
@@ -188,6 +189,20 @@ describe('build phase', () => {
     expect(prompt).toContain('Remove every newly introduced prohibited source pattern')
     expect(prompt).toContain('raw or standalone SVG substitutes')
     expect(prompt).not.toContain('Do not repeat tool work')
+  })
+
+  it('asks a Repair correction for the failure shape the Repair parser reads', () => {
+    for (const prompt of [
+      designBuildCorrectionPrompt('unexpected files: helper.js', 'repair'),
+      designSourceQualityCorrectionPrompt('src/Card.css contains a rail', 'repair'),
+    ]) {
+      expect(prompt).toContain('{"status":"failed","summary":"specific recoverable blocker"')
+      expect(prompt).not.toContain('"error"')
+    }
+    expect(designBuildCorrectionPrompt('unexpected files: helper.js')).toContain(
+      '{"status":"failed","error":"specific recoverable blocker"',
+    )
+    expect(designSourceQualityCorrectionPrompt('rail')).toContain('Verify before publishing:')
   })
 
   it('rejects only source-quality violations introduced after the Build baseline', () => {

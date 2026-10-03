@@ -5,6 +5,92 @@ const socket = {}
 const viewports = [{ width: 1_440, height: 900 }]
 
 describe('preview capture coordinator', () => {
+  it('rejects an already-aborted capture without dispatching it', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
+    const controller = new AbortController()
+    controller.abort()
+    coordinator.setCapability(socket, true)
+
+    await expect(
+      coordinator.capture('http://127.0.0.1:5183/', viewports, controller.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('drops an aborted queued capture without dispatching it', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
+    const controller = new AbortController()
+    coordinator.setCapability(socket, true)
+
+    const first = coordinator.capture('http://127.0.0.1:5183/', viewports)
+    const queued = coordinator.capture('http://127.0.0.1:5184/', viewports, controller.signal)
+    controller.abort()
+
+    await expect(queued).rejects.toMatchObject({ name: 'AbortError' })
+    const firstRequest = send.mock.calls[0]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: firstRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\first.png', ...viewports[0]! }],
+    })
+    await expect(first).resolves.toHaveLength(1)
+    expect(send).toHaveBeenCalledOnce()
+  })
+
+  it('cancels an aborted in-flight capture and dispatches the next one', async () => {
+    const send = vi.fn()
+    const cancel = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send, 35_000, cancel)
+    const controller = new AbortController()
+    coordinator.setCapability(socket, true)
+
+    const first = coordinator.capture('http://127.0.0.1:5183/', viewports, controller.signal)
+    const firstRequest = send.mock.calls[0]![1]
+    const next = coordinator.capture('http://127.0.0.1:5184/', viewports)
+    controller.abort()
+
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    expect(cancel).toHaveBeenCalledWith(socket, firstRequest.requestId)
+    expect(send).toHaveBeenCalledTimes(2)
+    const nextRequest = send.mock.calls[1]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: nextRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\next.png', ...viewports[0]! }],
+    })
+    await expect(next).resolves.toHaveLength(1)
+  })
+
+  it('refuses a late native reply for an aborted capture without disturbing the next one', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send, 35_000, vi.fn())
+    const controller = new AbortController()
+    coordinator.setCapability(socket, true)
+
+    const first = coordinator.capture('http://127.0.0.1:5183/', viewports, controller.signal)
+    const firstRequest = send.mock.calls[0]![1]
+    const next = coordinator.capture('http://127.0.0.1:5184/', viewports)
+    controller.abort()
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(() =>
+      coordinator.complete(socket, {
+        status: 'failed',
+        requestId: firstRequest.requestId,
+        error: 'late result',
+      }),
+    ).toThrow('Unknown preview capture request')
+    const nextRequest = send.mock.calls[1]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: nextRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\next.png', ...viewports[0]! }],
+    })
+    await expect(next).resolves.toHaveLength(1)
+  })
+
   it('cancels timed-out desktop work before sending the next queued capture', async () => {
     vi.useFakeTimers()
     try {

@@ -52,7 +52,7 @@ import {
   type NativeMenuAction,
   type NativeMenuShortcuts,
 } from './menu-contract.js'
-import { allowsPreviewNavigation } from './preview-navigation.js'
+import { configurePreviewNavigation } from './preview-navigation.js'
 import { pastedFile } from './pasted-file.js'
 import { ownedServerEnvironment } from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
@@ -791,28 +791,32 @@ function createPreviewWindow(request: PreviewCaptureRequest): BrowserWindow {
   previewSession.setPermissionCheckHandler(() => false)
   previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  const restrictNavigation = (event: ElectronEvent, url: string) => {
-    if (!allowsPreviewNavigation(request.url, url)) event.preventDefault()
-  }
-  preview.webContents.on('will-navigate', restrictNavigation)
-  preview.webContents.on('will-redirect', restrictNavigation)
+  configurePreviewNavigation(preview.webContents, request.url)
 
   return preview
 }
 
-/** Screenshot directories older than a day have no consumer left — the design
- *  flow reads them within seconds of the capture. */
+const CAPTURE_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+/** Screenshot directories older than a day have no live consumer: the design
+ *  flow reads them within minutes, and a restored run recaptures missing ones. */
 async function sweepStaleCaptures(): Promise<void> {
   const root = path.join(app.getPath('temp'), 'TasteCode', 'preview-captures')
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000
+  let entries: string[]
   try {
-    for (const entry of await readdir(root)) {
-      const target = path.join(root, entry)
+    entries = await readdir(root)
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const target = path.join(root, entry)
+    try {
       const info = await stat(target)
       if (info.mtimeMs < dayAgo) await rm(target, { recursive: true, force: true })
+    } catch {
+      // A file in use stays for the next sweep; the others still go.
     }
-  } catch {
-    // Missing directory or a file in use — nothing worth failing startup over.
   }
 }
 
@@ -974,6 +978,7 @@ if (ownsSingleInstance) {
     configureAttachmentPreviews()
     configureRendererPermissions()
     void sweepStaleCaptures()
+    setInterval(() => void sweepStaleCaptures(), CAPTURE_SWEEP_INTERVAL_MS).unref()
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()

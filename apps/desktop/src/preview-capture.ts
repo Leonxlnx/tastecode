@@ -13,7 +13,7 @@ import { allowsPreviewNavigation } from './preview-navigation.js'
 import {
   PREVIEW_PAGE_HEIGHT_SCRIPT,
   PREVIEW_SETTLE_SCRIPT,
-  previewCaptureHeight,
+  previewPageHeights,
 } from './preview-settle.js'
 
 const CAPTURE_TIMEOUT_MS = 30_000
@@ -278,7 +278,7 @@ export class PreviewCaptureOwner {
         await evaluate(PREVIEW_SETTLE_SCRIPT)
         const audit = await evaluate(PREVIEW_DOM_AUDIT_SCRIPT)
         const domAudit = await whileActive(() => this.dependencies.parseAudit(audit), signal)
-        const height = previewCaptureHeight(
+        const { documentHeight, capturedHeight: height } = previewPageHeights(
           await evaluate(PREVIEW_PAGE_HEIGHT_SCRIPT),
           viewport.height,
         )
@@ -303,7 +303,13 @@ export class PreviewCaptureOwner {
             }),
           signal,
         )
-        const screenshot = { path: destination, ...viewport, domAudit }
+        const screenshot = {
+          path: destination,
+          ...viewport,
+          domAudit,
+          documentHeight,
+          capturedHeight: height,
+        }
         screenshots.push(screenshot)
         captured.set(key, screenshot)
       }

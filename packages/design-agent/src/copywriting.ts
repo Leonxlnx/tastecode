@@ -86,10 +86,11 @@ const SATURATED_NAMES = new Set([
 ])
 
 const PLACEHOLDER_PATTERNS = [
-  /\b(?:to be supplied|awaiting approval|none supplied|live data required|property data required|operating dates required)\b/iu,
-  /\b(?:sample data|test data|model data|simulated data|not a live sensor|not connected)\b/iu,
-  /\b(?:local preview|nothing leaves this page|do not publish|before launch|still needed)\b/iu,
-  /\bthis prototype\b/iu,
+  /\blorem ipsum\b/iu,
+  /\b(?:TODO|TBD|FIXME)\b/u,
+  /\b(?:your|insert|add|replace with)\s+(?:text|copy|content|headline|heading|title|description|image)\s+here\b/iu,
+  /(?:^|[.!?]\s*)(?:to be supplied|none supplied|live data required|property data required|operating dates required)(?=[.!?]|\s*$)/iu,
+  /\[(?:insert|add|replace|placeholder)\b[^\]]*\]/iu,
 ]
 
 const MAX_HEADING_WORDS = 12
