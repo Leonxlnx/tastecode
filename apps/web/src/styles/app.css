@@ -1649,7 +1649,7 @@
   min-width: 0;
   max-width: var(--chat-w);
   margin: 0 auto;
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   /* Archiving replaces the thread in the same commit as this FLIP. Keep the
      bounded visual box promoted so that work cannot delay layer creation. */
   will-change: transform;
@@ -1660,7 +1660,7 @@
   z-index: 1;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }
@@ -1689,16 +1689,16 @@
   margin: 0;
   padding: 1px 10px;
   background: var(--bg-shelf);
-  border-radius: var(--r-card) var(--r-card) 0 0;
+  border-radius: var(--r-composer) var(--r-composer) 0 0;
   box-shadow: inset 0 -1px color-mix(in srgb, var(--line) 70%, transparent);
 }
 
 .composer__shelf::after {
   position: absolute;
   right: 0;
-  bottom: -18px;
+  bottom: calc(-1 * var(--r-composer));
   left: 0;
-  height: 20px;
+  height: calc(var(--r-composer) + 2px);
   background: var(--bg-shelf);
   content: '';
   pointer-events: none;
@@ -1730,7 +1730,7 @@
   background: var(--bg-queue);
   border: 1px solid var(--queue-line);
   border-bottom: 0;
-  border-radius: var(--r-card) var(--r-card) 0 0;
+  border-radius: var(--r-composer) var(--r-composer) 0 0;
   animation: composer-queue-panel-in var(--dur-slow) var(--ease-rail) both;
 }
 
@@ -1991,7 +1991,7 @@
   padding: 3px 5px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -2202,7 +2202,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: calc(var(--r-lg) - 1px);
+  border-radius: calc(var(--r-card) - 1px);
 }
 
 .attachment-preview img[hidden] {
@@ -2220,7 +2220,7 @@
   overflow: hidden;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-card);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   cursor: pointer;
@@ -2489,7 +2489,7 @@
 .composer__design-beam {
   display: block;
   width: 100%;
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   --beam-stroke-opacity: var(--composer-design-beam-stroke-strength);
   --beam-inner-opacity: var(--composer-design-beam-inner-strength);
   --beam-bloom-opacity: var(--composer-design-beam-bloom-strength);
@@ -2509,7 +2509,7 @@
 .composer__design-button-beam {
   display: flex;
   flex: none;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 /* Scoped like the hover rule below: the later generic .menutrigger
@@ -2553,13 +2553,13 @@
   height: 32px;
   justify-content: center;
   padding: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 .tools :is(.composer__permission, .composer__design) {
   min-height: 32px;
   padding: 4px 11px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 .tools .composer__permission .tool,
@@ -2570,7 +2570,7 @@
 .tools .menutrigger--model-selector {
   min-height: 32px;
   padding: 4px 12px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 .composer-voice-button {
