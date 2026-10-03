@@ -54,6 +54,25 @@ const MODELS_OUTPUT = [
 ].join('\n')
 
 describe('Grok adapter', () => {
+  it('applies an access change to the next print-mode launch', async () => {
+    const args: string[][] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, value) => {
+        args.push(value)
+        return new FakeChild()
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', { approval: 'full' })
+    await adapter.sendTurn(thread.id, 'one')
+    adapter.setApproval('ask')
+    await adapter.interrupt()
+    await adapter.sendTurn(thread.id, 'two')
+    expect(args[0]).toContain('bypassPermissions')
+    expect(args[1]).not.toContain('--permission-mode')
+    expect(() => adapter.setApproval('auto-review')).toThrow('does not support')
+    await adapter.dispose()
+  })
+
   it('encodes images and files as ACP prompt content blocks', () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-grok-attachment-'))
     try {
