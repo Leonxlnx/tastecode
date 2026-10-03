@@ -435,4 +435,61 @@ describe('app update controller', () => {
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
     expect(controller.state()).toMatchObject({ status: 'unsupported' })
   })
+
+  it('prepares after the last byte and ignores the native updater local copy', async () => {
+    const updater = fakeUpdater()
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', { version: '0.1.3' })
+    })
+    updater.downloadUpdate.mockReturnValue(new Promise(() => {}))
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+    const states: string[] = []
+    controller.subscribe((state) =>
+      states.push(`${state.status}${state.progress === undefined ? '' : ` ${state.progress}`}`),
+    )
+
+    await controller.check()
+    updater.emit('download-progress', { percent: 41.2 })
+    updater.emit('download-progress', { percent: 100 })
+    // electron-updater copies the prepared file and reports it from zero again.
+    updater.emit('download-progress', { percent: 3 })
+    updater.emit('download-progress', { percent: 100 })
+    expect(controller.state()).toEqual({
+      status: 'preparing',
+      currentVersion: '0.1.2',
+      version: '0.1.3',
+    })
+    await expect(controller.check()).resolves.toMatchObject({ status: 'preparing' })
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    updater.emit('update-downloaded', { version: '0.1.3' })
+    expect(states).toEqual(['downloading', 'downloading 41', 'preparing', 'ready'])
+  })
+
+  it('keeps a background preparation failure out of view', async () => {
+    const updater = fakeUpdater()
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-not-available', { version: '0.1.2' })
+    })
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+    await controller.check('background')
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', { version: '0.1.3' })
+    })
+    let fail!: (error: Error) => void
+    updater.downloadUpdate.mockReturnValue(new Promise((_resolve, reject) => (fail = reject)))
+
+    await controller.check('background')
+    updater.emit('download-progress', { percent: 100 })
+    expect(controller.state()).toMatchObject({ status: 'preparing' })
+    fail(new Error('The DMG app version does not match the release.'))
+    await vi.waitFor(() => expect(controller.state()).toMatchObject({ status: 'current' }))
+  })
 })

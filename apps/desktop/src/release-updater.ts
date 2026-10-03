@@ -57,6 +57,15 @@ export async function downloadRelease(
     }).catch((error: unknown) => {
       throw abort.signal.aborted ? cancelled() : error
     })
+    // Every byte is here and verified, including when an earlier attempt had
+    // already fetched them all. What follows is preparation, not download.
+    updater.emit('download-progress', {
+      total: asset.size,
+      delta: 0,
+      transferred: asset.size,
+      percent: 100,
+      bytesPerSecond: 0,
+    })
     let handedOver = false
     try {
       const file = asset.name.endsWith('.dmg')
