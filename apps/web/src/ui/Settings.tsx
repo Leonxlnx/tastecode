@@ -64,7 +64,12 @@ import {
   type ProviderDefault,
   type ProviderDefaults,
 } from '../provider-defaults.js'
-import { ProviderTuning, useProviderContextSettings } from './ProviderTuning.js'
+import {
+  ProviderTuning,
+  ProviderTuningSkeleton,
+  useProviderContextSettings,
+} from './ProviderTuning.js'
+import { Skeleton, SkeletonCode, SkeletonStatus } from './Skeleton.js'
 import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-fonts.js'
 import {
   appUpdateState,
@@ -132,7 +137,7 @@ import { AppSelect } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
-import { ProviderRow, type ProviderAction } from './ProviderRow.js'
+import { ProviderRow, ProviderRowSkeleton, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
@@ -264,15 +269,20 @@ function SettingsComponent(props: {
   projectPath: string | undefined
   projectName: string | undefined
   account: Account | undefined
+  accountLoading?: boolean | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
+  /** The provider list has not arrived yet. */
+  providersLoading?: boolean | undefined
   models: ModelChoice[]
+  modelsLoading?: boolean | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
   providerDefaults?: ProviderDefaultsControls | undefined
   onConnectionsChanged: () => void
   projectCount: number
+  projectsLoading?: boolean | undefined
   sidebarSettings: SidebarSettings
   onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
   themePreference: ThemePreference
@@ -445,6 +455,7 @@ function SettingsComponent(props: {
           {section === 'profile' ? (
             <ProfileSettings
               account={props.account}
+              accountLoading={props.accountLoading}
               providerName={props.providerName}
               identity={props.profileIdentity}
               onIdentityChange={props.onProfileIdentityChange}
@@ -643,6 +654,7 @@ export function ProviderSettings(props: {
   provider: ProviderId
   account: Account | undefined
   providerStatuses: ProviderStatus[]
+  providersLoading?: boolean | undefined
   projectPath?: string | undefined
   transport: Transport
   models?: ModelChoice[] | undefined
@@ -924,6 +936,7 @@ export function ProviderSettings(props: {
         key={status.id}
         provider={status}
         status={operationStatus}
+        link={account?.signedIn ? 'connected' : 'open'}
         live={operation !== undefined}
         issue={
           authError
@@ -1004,11 +1017,22 @@ export function ProviderSettings(props: {
   )
 
   return (
-    <SettingsPanel title="Providers" groupClassName="settings__group--providers">
-      <header className="provider-settings__header">
-        <h2>Accounts</h2>
-      </header>
-      {PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)}
+    <SettingsPanel
+      title="Providers"
+      groupClassName="settings__group--plain settings__group--providers"
+    >
+      {props.providersLoading && props.providerStatuses.length === 0 ? (
+        <SkeletonStatus label="Loading providers…">
+          {PROVIDER_ROSTER.map((id, index) => (
+            <div className="provider-settings__entry" key={id}>
+              <ProviderRowSkeleton index={index} />
+              {providerDefaults ? <ProviderTuningSkeleton /> : null}
+            </div>
+          ))}
+        </SkeletonStatus>
+      ) : (
+        PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
+      )}
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>
   )
@@ -1017,6 +1041,7 @@ export function ProviderSettings(props: {
 function ModelSettings(props: {
   transport: Transport
   models: ModelChoice[]
+  modelsLoading?: boolean | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
@@ -1040,6 +1065,8 @@ function ModelSettings(props: {
             />
           ))}
         </div>
+      ) : props.modelsLoading ? (
+        <ModelSourcesSkeleton />
       ) : (
         <div className="model-settings__empty">
           <Boxes size={18} aria-hidden />
@@ -1047,6 +1074,56 @@ function ModelSettings(props: {
         </div>
       )}
     </SettingsPanel>
+  )
+}
+
+const MODEL_SKELETON_WIDTHS = [132, 176, 108, 152] as const
+
+function ModelSourcesSkeleton() {
+  return (
+    <SkeletonStatus label="Loading models…" className="model-settings__sources">
+      {[4, 3].map((rows, index) => (
+        <section className="model-visibility" key={index} aria-hidden>
+          <header className="model-visibility__source">
+            <h3>
+              <span className="source-identity source-identity--regular">
+                <span className="source-identity__mark">
+                  <Skeleton className="skeleton--icon" width={15} height={15} />
+                </span>
+                <Skeleton width={index === 0 ? 64 : 92} height={9} />
+              </span>
+            </h3>
+            <div className="model-visibility__bulk-actions">
+              <button type="button" disabled>
+                All
+              </button>
+              <button type="button" disabled>
+                None
+              </button>
+            </div>
+          </header>
+          <div className="model-visibility__models">
+            <div>
+              {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
+                <SettingsRow
+                  key={row}
+                  className="model-visibility__model"
+                  title={
+                    <span className="settings-value-skeleton">
+                      <Skeleton width={width} height={9} />
+                    </span>
+                  }
+                >
+                  <span className="settings__switch-skeleton">
+                    <Skeleton width={36} height={22} />
+                  </span>
+                </SettingsRow>
+              ))}
+            </div>
+          </div>
+        </section>
+      ))}
+    </SkeletonStatus>
   )
 }
 
@@ -1125,6 +1202,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const selectedSpeed = isFastModeEnabled(selected?.model, manual?.serviceTier)
     ? 'fast'
     : 'standard'
+  const loading = state === undefined && !error
 
   return (
     <section className="background-model-settings" aria-label="Background work">
@@ -1137,46 +1215,66 @@ function BackgroundModelSettings(props: { transport: Transport }) {
         </p>
       </header>
       <div className="settings__group">
-        <SettingsRow title="Model" note={automaticNote}>
-          <AppSelect
-            className="settings__select settings__select--model"
-            ariaLabel="Background model"
-            align="right"
-            value={selectedValue}
-            options={modelOptions}
-            disabled={!state || busy}
-            onChange={(value) => {
-              if (value === 'automatic') {
-                void update({ mode: 'automatic' })
-                return
-              }
-              const choice = backgroundModelFromValue(state?.sources ?? [], value)
-              if (!choice) return
-              const serviceTier = getNextServiceTierForModel({
-                nextModel: choice.model,
-                currentModel: selected?.model,
-                currentServiceTier: manual?.serviceTier,
-              })
-              void update({
-                mode: 'manual',
-                target: {
-                  provider: choice.source.provider,
-                  ...(choice.source.agent
-                    ? {
-                        agent: choice.source.agent,
-                      }
-                    : {}),
-                  model: choice.model.id,
-                  ...(serviceTier ? { serviceTier } : {}),
-                  ...(choice.model.reasoningEfforts[0]
-                    ? {
-                        effort: choice.model.reasoningEfforts[0],
-                      }
-                    : {}),
-                },
-              })
-            }}
-          />
+        <SettingsRow
+          title="Model"
+          note={
+            loading ? (
+              <SettingsValueSkeleton label="Loading background model details…" width={240} />
+            ) : state ? (
+              automaticNote
+            ) : undefined
+          }
+        >
+          {loading ? (
+            <SkeletonStatus
+              label="Loading background model…"
+              className="settings__select settings__select--model"
+            >
+              <Skeleton className="skeleton--block" width="100%" height={28} />
+            </SkeletonStatus>
+          ) : !state ? (
+            <SettingsMeta>Unavailable</SettingsMeta>
+          ) : (
+            <AppSelect
+              className="settings__select settings__select--model"
+              ariaLabel="Background model"
+              align="right"
+              value={selectedValue}
+              options={modelOptions}
+              disabled={!state || busy}
+              onChange={(value) => {
+                if (value === 'automatic') {
+                  void update({ mode: 'automatic' })
+                  return
+                }
+                const choice = backgroundModelFromValue(state?.sources ?? [], value)
+                if (!choice) return
+                const serviceTier = getNextServiceTierForModel({
+                  nextModel: choice.model,
+                  currentModel: selected?.model,
+                  currentServiceTier: manual?.serviceTier,
+                })
+                void update({
+                  mode: 'manual',
+                  target: {
+                    provider: choice.source.provider,
+                    ...(choice.source.agent
+                      ? {
+                          agent: choice.source.agent,
+                        }
+                      : {}),
+                    model: choice.model.id,
+                    ...(serviceTier ? { serviceTier } : {}),
+                    ...(choice.model.reasoningEfforts[0]
+                      ? {
+                          effort: choice.model.reasoningEfforts[0],
+                        }
+                      : {}),
+                  },
+                })
+              }}
+            />
+          )}
         </SettingsRow>
         {manual && selected && effortOptions.length > 0 ? (
           <SettingsRow
@@ -1707,14 +1805,30 @@ function ThemePicker(props: {
   )
 }
 
-function DataSettings(props: { projectCount: number; onReset: () => void }) {
+function DataSettings(props: {
+  projectCount: number
+  projectsLoading?: boolean | undefined
+  onReset: () => void
+}) {
   const [confirming, setConfirming] = useState(false)
-  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false)
+  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState<boolean>()
   const [diagnosticsError, setDiagnosticsError] = useState<string>()
   const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
 
   useEffect(() => {
-    void localDiagnosticsEnabled().then(setDiagnosticsEnabled)
+    let cancelled = false
+    void localDiagnosticsEnabled()
+      .then((enabled) => {
+        if (!cancelled) setDiagnosticsEnabled(enabled)
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setDiagnosticsError(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const toggleDiagnostics = async () => {
@@ -1744,20 +1858,37 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
               Open folder
             </button>
           ) : null}
-          <button
-            className={`switch${diagnosticsEnabled ? ' is-on' : ''}`}
-            type="button"
-            role="switch"
-            aria-label="Local diagnostics"
-            aria-checked={diagnosticsEnabled}
-            onClick={() => void toggleDiagnostics()}
-          >
-            <span className="switch__thumb" />
-          </button>
+          {diagnosticsEnabled === undefined ? (
+            diagnosticsError ? null : (
+              <SkeletonStatus
+                label="Loading local diagnostics…"
+                className="settings__switch-skeleton"
+              >
+                <Skeleton width={36} height={22} />
+              </SkeletonStatus>
+            )
+          ) : (
+            <button
+              className={`switch${diagnosticsEnabled ? ' is-on' : ''}`}
+              type="button"
+              role="switch"
+              aria-label="Local diagnostics"
+              aria-checked={diagnosticsEnabled}
+              onClick={() => void toggleDiagnostics()}
+            >
+              <span className="switch__thumb" />
+            </button>
+          )}
         </SettingsRow>
       ) : null}
       <SettingsRow
-        title={projectLabel}
+        title={
+          props.projectsLoading ? (
+            <SettingsValueSkeleton label="Loading project count…" width={176} />
+          ) : (
+            projectLabel
+          )
+        }
         note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
         className="settings__row--roomy"
       >
@@ -1939,7 +2070,11 @@ function AboutSettings(props: { transport: Transport }) {
     <SettingsPanel title="About">
       <SettingsRow title="TasteCode">
         <SettingsMeta>
-          {`${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate && nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
+          {nativeUpdate === undefined ? (
+            <SettingsValueSkeleton label="Loading app version…" width={132} />
+          ) : (
+            `${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`
+          )}
         </SettingsMeta>
       </SettingsRow>
       <SettingsRow title="Updates">
@@ -1952,6 +2087,11 @@ function AboutSettings(props: { transport: Transport }) {
           <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
         ) : null}
         {checking || nativeChecking ? <StateLabel state="checking" live /> : null}
+        {!checking && nativeUpdate === undefined ? (
+          <SettingsMeta>
+            <SettingsValueSkeleton label="Loading update status…" width={112} />
+          </SettingsMeta>
+        ) : null}
         {!checking && !nativeChecking && nativeStatus ? (
           <StateLabel {...nativeStatus} live />
         ) : null}
@@ -2120,6 +2260,7 @@ function InstallableRow(props: {
       <ProviderRow
         provider={props.provider}
         status={status}
+        link="none"
         live={install?.phase === 'running' || install?.phase === 'succeeded'}
         issue={issue}
         primary={primary}
@@ -2332,7 +2473,13 @@ function CliSignInRow(props: {
 
 function ProviderTerminal(props: { transport: Transport; installKey: string }) {
   return (
-    <Suspense fallback={<div className="install-terminal" aria-label="Install terminal" />}>
+    <Suspense
+      fallback={
+        <SkeletonStatus label="Opening terminal…" className="install-terminal">
+          <SkeletonCode lines={9} />
+        </SkeletonStatus>
+      }
+    >
       <InstallTerminal transport={props.transport} installKey={props.installKey} />
     </Suspense>
   )
@@ -2406,9 +2553,18 @@ function AccountEmail(props: { email: string }) {
   )
 }
 
+function SettingsValueSkeleton(props: { label: string; width: number }) {
+  return (
+    <span className="settings-value-skeleton skeleton-group" role="status" aria-busy="true">
+      <span className="visually-hidden">{props.label}</span>
+      <Skeleton width={props.width} height={9} />
+    </span>
+  )
+}
+
 function SettingsRow(props: {
-  title: string
-  note?: string | undefined
+  title: ReactNode
+  note?: ReactNode
   className?: string
   children?: ReactNode
 }) {

@@ -626,15 +626,20 @@
                 >One fixed setup and account row grammar
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
-                  stable slots across loading, ready, setup, busy, and failure states; empty action
-                  slots stay hidden, with account details below the provider name in compact rows;
-                  primary and secondary actions share the right edge on desktop and narrow layouts;
-                  CLI versions live in the provider-mark tooltip instead of widening account rows;
-                  account labels use the same email-or-signed-in grammar; error tooltips escape
-                  clipped cards, stay inside the viewport, and support keyboard dismissal;
-                  <a href="./screenshots/provider-density-after.png">compact evidence</a>,
-                  <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
-                  <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
+                  stable slots across loading, ready, setup, busy, and failure states; the roster is
+                  open type instead of a card, and a wire between the provider name and its account
+                  carries the state: solid between two terminals once an account is attached, a
+                  dotted leader while the provider waits for one, absent when the provider is not
+                  installed, flowing dashes while work is in flight, and the error colour after an
+                  announced failure; connected providers read in full ink and the rest are dimmed;
+                  hovering a row lights its wire; empty action slots stay hidden; in narrow rosters
+                  the wire steps aside and account details sit below the provider name between
+                  hairlines; primary and secondary actions share the right edge on desktop and
+                  narrow layouts; CLI versions live in the provider-mark tooltip instead of widening
+                  account rows; account labels use the same email-or-signed-in grammar; error
+                  tooltips stay inside the viewport and support keyboard dismissal;
+                  <a href="./screenshots/provider-roster-wired.png">desktop</a> and
+                  <a href="./screenshots/provider-roster-wired-390.png">390 px</a> evidence</span
                 ></span
               ></label
             >
