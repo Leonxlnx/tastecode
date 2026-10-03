@@ -1365,6 +1365,55 @@ describe('threads', () => {
     expect(Object.isFrozen(manual)).toBe(true)
     expect(manual.mode === 'manual' && Object.isFrozen(manual.target)).toBe(true)
   })
+
+  it('keeps provider context settings across a restart and forgets a cleared provider', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
+    const file = path.join(dir, 'context.db')
+    const persistent = new Store(file)
+    expect(persistent.providerContextSettings()).toEqual({})
+    persistent.updateProviderContextSettings('claude-code', { window: 1_000_000, compactAt: 'off' })
+    const saved = persistent.updateProviderContextSettings('grok', { compactAt: 70 })
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.providerContextSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerContextSettings()).toEqual({
+        'claude-code': { window: 1_000_000, compactAt: 'off' },
+        grok: { compactAt: 70 },
+      })
+      expect(reopened.updateProviderContextSettings('grok', {})).toEqual({
+        'claude-code': { window: 1_000_000, compactAt: 'off' },
+      })
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to engine defaults when stored context settings are unreadable', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
+    const file = path.join(dir, 'context.db')
+    new Store(file).close()
+    const db = new DatabaseSync(file)
+    db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?)`).run(
+      'provider-context',
+      JSON.stringify({ codex: { compactAt: 4 } }),
+    )
+    db.close()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerContextSettings()).toEqual({})
+      expect(warn).toHaveBeenCalledOnce()
+    } finally {
+      reopened.close()
+      warn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('events', () => {
