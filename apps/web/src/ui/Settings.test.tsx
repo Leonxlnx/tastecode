@@ -1570,3 +1570,164 @@ describe('provider settings', () => {
     expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })
+
+describe('provider defaults', () => {
+  const codex: ProviderStatus = {
+    id: 'codex',
+    displayName: 'Codex',
+    installed: true,
+    auth: 'unknown',
+    capabilities: {
+      steer: true,
+      fork: true,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: true,
+      images: true,
+      autoReview: true,
+      context: {
+        windows: [272_000, 872_000],
+        compaction: true,
+        compactionOff: false,
+        defaultCompactAt: 90,
+        latestCompactAt: 90,
+      },
+    },
+  }
+  const codexModels = [
+    { id: 'gpt-6', displayName: 'GPT-6' },
+    { id: 'gpt-5.5', displayName: 'GPT-5.5' },
+    { id: 'gpt-5.4', displayName: 'GPT-5.4' },
+  ].map((model): ModelChoice => ({
+    key: `codex:${model.id}`,
+    provider: 'codex',
+    sourceName: 'Codex',
+    mark: 'openai',
+    model: { ...model, isDefault: false, reasoningEfforts: [], serviceTiers: [] },
+  }))
+
+  it('hangs new-chat defaults off signed-in providers and reports changes per provider', async () => {
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status') {
+        return { signedIn: (params as { provider: ProviderId }).provider === 'codex' }
+      }
+      if (method === 'providers.contextSettings') return { codex: { compactAt: 70 } }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onPinChange = vi.fn()
+    const onAccessChange = vi.fn()
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[codex, installedProvider('grok', 'Grok')]}
+        transport={transport}
+        models={codexModels}
+        hiddenModels={new Set(['codex:gpt-5.4'])}
+        providerDefaults={{
+          pins: { codex: { model: 'gpt-6' } },
+          onPinChange,
+          access: { codex: 'auto' },
+          onAccessChange,
+        }}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />,
+    )
+
+    const defaults = await screen.findByRole('group', { name: 'Codex defaults' })
+    expect(screen.queryByRole('group', { name: 'Grok defaults' })).toBeNull()
+    await waitFor(() =>
+      expect(within(defaults).getByRole('button', { name: /^Codex context: / }).textContent).toBe(
+        'Compacts at 70%',
+      ),
+    )
+
+    const model = within(defaults).getByRole('button', { name: /^Codex default model: / })
+    expect(model.textContent).toBe('GPT-6')
+    fireEvent.click(model)
+    const models = screen.getByRole('dialog', { name: 'Codex default model' })
+    expect(
+      within(models)
+        .getAllByRole('button')
+        .map((choice) => choice.getAttribute('aria-label')),
+    ).toEqual(['Last used', 'GPT-6', 'GPT-5.5'])
+    fireEvent.click(within(models).getByRole('button', { name: 'Last used' }))
+    expect(onPinChange).toHaveBeenCalledWith('codex', undefined)
+
+    const access = within(defaults).getByRole('button', { name: /^Codex default access: / })
+    expect(access.textContent).toBe('Auto')
+    fireEvent.click(access)
+    const modes = screen.getByRole('menu', { name: 'Codex default access' })
+    expect(
+      within(modes)
+        .getByRole('menuitemradio', { name: /^Auto-approve/ })
+        .getAttribute('aria-checked'),
+    ).toBe('true')
+    fireEvent.click(within(modes).getByRole('menuitemradio', { name: /^Ask first/ }))
+    expect(onAccessChange).toHaveBeenCalledWith('codex', 'ask')
+  })
+
+  function renderRoster(
+    props: { providerStatuses: ProviderStatus[]; providersLoading?: boolean },
+    readAccount: (provider: ProviderId) => Account | Promise<Account> = () => ({
+      signedIn: true,
+    }),
+  ) {
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status')
+        return readAccount((params as { provider: ProviderId }).provider)
+      if (method === 'providers.contextSettings') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    const view = (next: typeof props) => (
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        {...next}
+        transport={transport}
+        models={codexModels}
+        providerDefaults={{ pins: {}, onPinChange: vi.fn(), access: {}, onAccessChange: vi.fn() }}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />
+    )
+    const rendered = render(view(props))
+    return { rerender: (next: typeof props) => rendered.rerender(view(next)) }
+  }
+
+  it('holds the defaults in place while an account is checked, but not for a signed-out one', async () => {
+    const account = deferred<Account>()
+    renderRoster(
+      {
+        providerStatuses: [
+          codex,
+          { ...installedProvider('grok', 'Grok'), auth: 'unauthenticated' as const },
+        ],
+      },
+      (provider) => (provider === 'codex' ? account.promise : new Promise<Account>(() => {})),
+    )
+
+    const defaults = screen.getByRole('group', { name: 'Codex defaults' })
+    expect(defaults.getAttribute('aria-busy')).toBe('true')
+    expect(within(defaults).queryByRole('button')).toBeNull()
+    expect(defaults.querySelectorAll('.tune-skeleton')).toHaveLength(3)
+    expect(screen.queryByRole('group', { name: 'Grok defaults' })).toBeNull()
+
+    await act(async () => account.resolve({ signedIn: true }))
+    // The same rows fill in rather than being replaced.
+    expect(screen.getByRole('group', { name: 'Codex defaults' })).toBe(defaults)
+    expect(
+      within(defaults).getByRole('button', { name: /^Codex default model: / }).textContent,
+    ).toBe('Last used')
+    expect(defaults.querySelector('.tune-skeleton')).toBeNull()
+    expect(defaults.hasAttribute('aria-busy')).toBe(false)
+  })
+
+  it('drops the held defaults when the account turns out signed out', async () => {
+    renderRoster({ providerStatuses: [codex] }, () => ({ signedIn: false }))
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Codex defaults' })).toBeNull())
+    expect(action(providerRow('Codex'), 'Sign in')).toBeTruthy()
+  })
+})

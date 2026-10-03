@@ -19,6 +19,7 @@ import type {
   Item,
   McpServerConfig,
   Model,
+  ProviderContextSettings,
   Thread,
   UserInputQuestion,
 } from '@harness/contracts'
@@ -179,6 +180,27 @@ export type ClaudeStartOptions = {
   ephemeral?: boolean | undefined
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
+  context?: ProviderContextSettings | undefined
+}
+
+/**
+ * Claude Code reads both settings from its environment: the window as a token
+ * budget it clamps to the model's own, the compaction point as a percent that
+ * can only bring compaction earlier. `DISABLE_AUTO_COMPACT` keeps a manual
+ * /compact working, unlike `DISABLE_COMPACT`.
+ */
+export function claudeContextEnvironment(context: ProviderContextSettings | undefined) {
+  if (!context) return {}
+  return {
+    ...(context.window !== undefined
+      ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(context.window) }
+      : {}),
+    ...(context.compactAt === 'off'
+      ? { DISABLE_AUTO_COMPACT: '1' }
+      : context.compactAt !== undefined
+        ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(context.compactAt) }
+        : {}),
+  }
 }
 
 export type ClaudeTurnOptions = Pick<ClaudeStartOptions, 'model' | 'effort'>
@@ -670,6 +692,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
               {
                 cwd: this.#workspacePath,
                 abortController: abort,
+                env: { ...this.#environment, ...claudeContextEnvironment(options.context) },
                 ...(bootstrap ? { mcpServers: bootstrap.servers } : {}),
                 ...(options.model ? { model: options.model } : {}),
                 ...(effort ? { effort: effort } : {}),

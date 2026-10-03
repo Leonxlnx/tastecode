@@ -9,4 +9,14 @@ export const CODEX_CAPABILITIES: Capabilities = {
   userInput: true,
   autoReview: true,
   images: true,
+  // Codex's catalog gives current models a 272K window, stretching to 872K on
+  // the models that allow it. It compacts at 90% of the window unless told a
+  // token count, clamps a later count back to 90%, and has no off switch.
+  context: {
+    windows: [272_000, 872_000],
+    compaction: true,
+    compactionOff: false,
+    defaultCompactAt: 90,
+    latestCompactAt: 90,
+  },
 }
