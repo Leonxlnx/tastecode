@@ -135,8 +135,10 @@ describe('asset manifest', () => {
     })
     try {
       mkdirSync(path.join(workspace, 'fonts/bodoni'), { recursive: true })
-      writeFileSync(path.join(workspace, 'fonts/bodoni/regular.ttf'), 'regular font')
-      writeFileSync(path.join(workspace, 'fonts/bodoni/italic.ttf'), 'italic font')
+      const fontHeader = Buffer.alloc(12)
+      fontHeader.writeUInt32BE(0x00010000)
+      writeFileSync(path.join(workspace, 'fonts/bodoni/regular.ttf'), fontHeader)
+      writeFileSync(path.join(workspace, 'fonts/bodoni/italic.ttf'), fontHeader)
       writeFileSync(path.join(workspace, 'fonts/bodoni/OFL.txt'), 'font license')
       const resolved = validateAssetManifestForPage(assets, page, workspace)
       expect(resolved.assets).toHaveLength(2)

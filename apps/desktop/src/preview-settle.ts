@@ -1,3 +1,8 @@
+export const MAX_PREVIEW_HEIGHT = 12_000
+const MAX_PREVIEW_HEIGHT_SOURCE = String(MAX_PREVIEW_HEIGHT)
+export const PREVIEW_SETTLE_BUDGET_MS = 5_500
+const PREVIEW_SETTLE_BUDGET_SOURCE = String(PREVIEW_SETTLE_BUDGET_MS)
+
 export const PREVIEW_SETTLE_SCRIPT = `(async () => {
   const timers = new Set()
   const frames = new Set()
@@ -24,32 +29,48 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
     id = requestAnimationFrame(finish)
     if (!finished) frames.add(id)
   })
-  try {
-    const images = Promise.allSettled(Array.from(document.images).map(image => {
-      if (image.complete) {
-        return typeof image.decode === 'function' ? image.decode().catch(() => undefined) : undefined
-      }
-      return new Promise(resolve => {
-        image.addEventListener('load', resolve, { once: true })
-        image.addEventListener('error', resolve, { once: true })
-        listeners.push(() => {
-          image.removeEventListener('load', resolve)
-          image.removeEventListener('error', resolve)
-        })
+  // Images are collected after scrolling: lazy loaders swap sources and add
+  // new images while the page moves.
+  const imagesSettled = () => Promise.allSettled(Array.from(document.images).map(image => {
+    if (image.complete) {
+      return typeof image.decode === 'function' ? image.decode().catch(() => undefined) : undefined
+    }
+    return new Promise(resolve => {
+      image.addEventListener('load', resolve, { once: true })
+      image.addEventListener('error', resolve, { once: true })
+      listeners.push(() => {
+        image.removeEventListener('load', resolve)
+        image.removeEventListener('error', resolve)
       })
-    }))
+    })
+  }))
+  const pageHeight = () => Math.min(
+    ${MAX_PREVIEW_HEIGHT_SOURCE},
+    Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0),
+  )
+  // One budget per viewport: four viewports must still fit the capture timeout.
+  const budgetEnd = performance.now() + ${PREVIEW_SETTLE_BUDGET_SOURCE}
+  const remaining = delay => Math.max(0, Math.min(delay, budgetEnd - performance.now()))
+  try {
     await frame()
-    const pageHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
+    // Visit everything the bitmap can hold, remeasuring as lazy content grows.
+    // The step count follows from the capped height, bounded by a deadline.
     const step = Math.max(1, innerHeight * 0.8)
-    for (let y = 0, count = 0; y < pageHeight && count < 40; y += step, count += 1) {
+    const maxSteps = Math.ceil(${MAX_PREVIEW_HEIGHT_SOURCE} / step) + 1
+    const scrollEnd = performance.now() + 3000
+    for (let y = 0, count = 0; count < maxSteps && performance.now() < scrollEnd; count += 1) {
       scrollTo({ left: 0, top: y, behavior: 'instant' })
       await frame()
+      if (y + innerHeight >= pageHeight()) break
+      y += step
     }
     await Promise.all([
-      bounded(Promise.allSettled(document.getAnimations().map(animation => animation.finished)), 1000),
-      bounded(document.fonts?.ready, 2000),
-      bounded(images, 2000),
+      bounded(Promise.allSettled(document.getAnimations().map(animation => animation.finished)), remaining(1000)),
+      bounded(document.fonts?.ready, remaining(2000)),
+      bounded(imagesSettled(), remaining(2000)),
     ])
+    // A second pass catches images inserted or swapped while the first ones loaded.
+    await bounded(imagesSettled(), remaining(1000))
     scrollTo({ left: start.x, top: start.y, behavior: 'instant' })
     await frame()
     await frame()
@@ -66,10 +87,13 @@ export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => ({
   body: document.body?.scrollHeight ?? 0,
 }))()`
 
-export const MAX_PREVIEW_HEIGHT = 12_000
-
 /** Validate raw DOM measurements before they reach native bitmap allocation. */
 export function previewCaptureHeight(value: unknown, viewportHeight: number): number {
+  return previewPageHeights(value, viewportHeight).capturedHeight
+}
+
+/** The capture is cut at MAX_PREVIEW_HEIGHT; the document height says how much was left out. */
+export function previewPageHeights(value: unknown, viewportHeight: number) {
   if (
     typeof value !== 'object' ||
     value === null ||
@@ -82,7 +106,8 @@ export function previewCaptureHeight(value: unknown, viewportHeight: number): nu
   ) {
     throw new Error('Invalid preview page height')
   }
-  return Math.min(MAX_PREVIEW_HEIGHT, Math.max(viewportHeight, value.documentElement, value.body))
+  const documentHeight = Math.max(viewportHeight, value.documentElement, value.body)
+  return { documentHeight, capturedHeight: Math.min(MAX_PREVIEW_HEIGHT, documentHeight) }
 }
 
 function validHeight(value: unknown): value is number {

@@ -2,6 +2,7 @@
 export function installReferenceReveals(root = document) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   const animations = new Map()
+  let active = true
   const elements = [...root.querySelectorAll('[data-reveal]')]
   const finish = (element) => {
     element.dataset.revealPlayed = 'true'
@@ -12,6 +13,7 @@ export function installReferenceReveals(root = document) {
     typeof IntersectionObserver === 'function'
       ? new IntersectionObserver(
           (entries) => {
+            if (!active) return
             for (const entry of entries) {
               if (!entry.isIntersecting) continue
               const element = entry.target
@@ -70,7 +72,13 @@ export function installReferenceReveals(root = document) {
     observer.observe(element)
   }
   return () => {
-    stop()
+    active = false
+    observer?.disconnect()
+    for (const animation of animations.values()) {
+      animation.onfinish = null
+      animation.cancel()
+    }
+    animations.clear()
     reduced.removeEventListener('change', onPreference)
   }
 }
