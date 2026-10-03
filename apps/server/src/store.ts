@@ -2869,13 +2869,21 @@ export class Store {
       }
     }
 
-    const position = cursor?.position ?? 0
-    const pageRowIds = searchRowIdPage(snapshot.rowIds, position, position + limit + 1)
-    const rows = sqliteRows<SearchResultRow>(
-      this.#readSearchResults,
-      position,
-      JSON.stringify(pageRowIds),
-    )
+    let position = cursor?.position ?? 0
+    const rows: SearchResultRow[] = []
+    // A retained ranking may outlive a project, thread, or indexed event.
+    // Advance through its positions until there is a full visible page plus lookahead.
+    while (rows.length <= limit && position < snapshot.rowIds.length) {
+      const pageRowIds = searchRowIdPage(snapshot.rowIds, position, position + limit + 1)
+      rows.push(
+        ...sqliteRows<SearchResultRow>(
+          this.#readSearchResults,
+          position,
+          JSON.stringify(pageRowIds),
+        ).filter((row) => toProviderId(row.provider) !== undefined),
+      )
+      position += pageRowIds.length
+    }
 
     const page = rows.slice(0, limit)
     const comparableTerms = terms.map(comparableSearchToken)

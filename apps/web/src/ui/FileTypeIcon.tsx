@@ -170,10 +170,12 @@ function iconKind(path: string): IconKind | undefined {
   const filename = withoutPosition.slice(separator + 1).toLowerCase()
   if (!filename) return undefined
 
-  const namedKind: IconKind | undefined =
-    KIND_BY_FILENAME[filename as keyof typeof KIND_BY_FILENAME]
-  if (namedKind) return namedKind
+  if (Object.hasOwn(KIND_BY_FILENAME, filename)) {
+    return KIND_BY_FILENAME[filename as keyof typeof KIND_BY_FILENAME]
+  }
 
   const extension = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : ''
-  return KIND_BY_EXTENSION[extension as keyof typeof KIND_BY_EXTENSION]
+  return Object.hasOwn(KIND_BY_EXTENSION, extension)
+    ? KIND_BY_EXTENSION[extension as keyof typeof KIND_BY_EXTENSION]
+    : undefined
 }
