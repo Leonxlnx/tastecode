@@ -1645,14 +1645,14 @@ describe('completed activity disclosure', () => {
 
   it('puts the turn revert beside the completed response', () => {
     const onRevertCheckpoint = vi.fn()
-    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 0 }
+    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 1 }
     render(
       <Thread
         frameStore={
           new ThreadFrameStore({
             ...emptyThread,
             items: [
-              turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+              turnItem('local:prompt-1', 1, { role: 'user', text: 'Fix it' }),
               turnItem('answer-1', 2, {
                 role: 'assistant',
                 phase: 'final_answer',
@@ -1673,11 +1673,11 @@ describe('completed activity disclosure', () => {
   })
 
   it('hides work when stopping and keeps checkpoints hidden until the turn ends', () => {
-    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 0 }
+    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 1 }
     const store = new ThreadFrameStore({
       ...emptyThread,
       items: [
-        turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+        turnItem('local:prompt-1', 1, { role: 'user', text: 'Fix it' }),
         turnItem('answer-1', 2, { role: 'assistant', text: 'Fixed.' }),
       ],
       running: true,
@@ -1937,7 +1937,7 @@ describe('thread message actions', () => {
       id: 7,
       seq: 1,
       label: 'Undo this turn',
-      createdAt: 50,
+      createdAt: 150,
     }
     render(
       <Thread
@@ -1946,7 +1946,7 @@ describe('thread message actions', () => {
             ...emptyThread,
             items: [
               {
-                id: 'prompt-1',
+                id: 'local:prompt-1',
                 turnId: 'turn-1',
                 type: 'message',
                 role: 'user',
@@ -1975,7 +1975,7 @@ describe('thread message actions', () => {
       id: 8,
       seq: 2,
       label: prompt.trim().slice(0, 60),
-      createdAt: 50,
+      createdAt: 150,
     }
     render(
       <Thread
@@ -1984,7 +1984,7 @@ describe('thread message actions', () => {
             ...emptyThread,
             items: [
               {
-                id: 'prompt-2',
+                id: 'local:prompt-2',
                 turnId: 'turn-2',
                 type: 'message',
                 role: 'user',

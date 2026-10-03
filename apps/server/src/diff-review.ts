@@ -7,7 +7,7 @@ import { realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import { z } from 'zod'
-import { takeSnapshot } from './checkpoint.js'
+import { snapshotBase, takeSnapshot } from './checkpoint.js'
 import { canonicalCheckoutRoot } from './checkout-access.js'
 import type { Store } from './store.js'
 
@@ -94,10 +94,14 @@ async function parseDiff(
 ): Promise<ParsedDiff> {
   const root = canonicalCheckoutRoot(repoPath)
   const scope = path.relative(root, realpathSync(repoPath)) || '.'
+  // Before the first commit, changes are shown against the empty tree.
+  const snapshotFrom = await snapshotBase(root)
+  const base = snapshotFrom.head ?? snapshotFrom.tree
   const snapshot = await takeSnapshot(repoPath)
   repoPath = root
-  const version = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
-  const files = await changedFiles(repoPath, snapshot.commit, scope)
+  const tree = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
+  const version = digest(`${base}\0${tree}`)
+  const files = await changedFiles(repoPath, base, snapshot.commit, scope)
   // Bounded fan-out: a formatter sweep can touch thousands of files, and one
   // git process per file all at once hits Windows process-creation limits.
   const parsed: ParsedFile[] = []
@@ -120,7 +124,7 @@ async function parseDiff(
       '--dst-prefix=b/',
       '--find-renames',
       '--unified=3',
-      'HEAD',
+      base,
       snapshot.commit,
       '--',
       ...paths.map((file) => `:(top,literal)${file}`),
@@ -150,6 +154,7 @@ async function parseDiff(
 
 async function changedFiles(
   repoPath: string,
+  base: string,
   commit: string,
   scope = '.',
 ): Promise<
@@ -165,7 +170,7 @@ async function changedFiles(
       '--name-status',
       '-z',
       '--find-renames',
-      'HEAD',
+      base,
       commit,
       '--',
       ...(scope === '.' ? [] : [`:(top,literal)${scope}`]),
@@ -299,11 +304,48 @@ function gitPath(value: string): string {
 }
 
 function relativePatchPath(line: string, roots: ReadonlySet<string>): string {
-  for (const root of roots) {
-    if (root === '/' || /^[A-Za-z]:$/.test(root)) continue
-    line = line.replaceAll(`${root}/`, '')
+  const relative = (value: string): string => {
+    const quoted = value.startsWith('"')
+    const start = quoted ? '"' : ''
+    for (const root of roots) {
+      if (root === '/' || /^[A-Za-z]:$/.test(root)) continue
+      const spellings = quoted
+        ? [quoteGitPathContent(root), quoteGitPathContent(root, false)]
+        : [root]
+      for (const spelling of spellings) {
+        for (const prefix of ['a/', 'b/', '']) {
+          const absolute = `${start}${prefix}${spelling}/`
+          if (value.startsWith(absolute)) return `${start}${prefix}${value.slice(absolute.length)}`
+        }
+      }
+    }
+    return value
   }
+  const diff = /^diff --git ("(?:\\.|[^"\\])*"|a\/.*?) ("(?:\\.|[^"\\])*"|b\/.*)$/.exec(line)
+  if (diff) return `diff --git ${relative(diff[1]!)} ${relative(diff[2]!)}`
+  const binary = /^Binary files (.+) and (.+) differ$/.exec(line)
+  if (binary) return `Binary files ${relative(binary[1]!)} and ${relative(binary[2]!)} differ`
+  const header = /^(--- |\+\+\+ |rename from |rename to |copy from |copy to )(.*)$/.exec(line)
+  if (header) return `${header[1]}${relative(header[2]!)}`
   return line
+}
+
+function quoteGitPathContent(value: string, quoteUnicode = true): string {
+  const codes = new Map([
+    ['\\', '\\\\'],
+    ['"', '\\"'],
+    ['\t', '\\t'],
+    ['\n', '\\n'],
+    ['\r', '\\r'],
+    ['\b', '\\b'],
+    ['\f', '\\f'],
+    ['\v', '\\v'],
+  ])
+  const escaped = value.replace(/[\\"\t\n\r\b\f\v]/g, (character) => codes.get(character)!)
+  if (!quoteUnicode) return escaped
+  return escaped.replace(/[^\x20-\x7e]/gu, (character) =>
+    [...Buffer.from(character)].map((byte) => `\\${byte.toString(8).padStart(3, '0')}`).join(''),
+  )
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
