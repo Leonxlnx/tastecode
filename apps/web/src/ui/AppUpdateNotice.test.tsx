@@ -48,6 +48,11 @@ it('shows download progress, keeps live readiness, and installs only on click', 
       .hasAttribute('disabled'),
   ).toBe(true)
   expect(screen.getByText('42%')).toBeTruthy()
+  act(() => bridge.listener?.({ ...ready, status: 'preparing' }))
+  expect(
+    screen.getByRole('button', { name: 'Preparing TasteCode update' }).hasAttribute('disabled'),
+  ).toBe(true)
+  expect(screen.queryByText('100%')).toBeNull()
   expect(bridge.install).not.toHaveBeenCalled()
   act(() => bridge.listener?.(ready))
   await act(async () => finish({ status: 'idle', currentVersion: ready.currentVersion }))

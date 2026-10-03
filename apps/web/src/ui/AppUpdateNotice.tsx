@@ -12,7 +12,7 @@ export function AppUpdateNotice() {
   const [state, setState] = useState<AppUpdateState>()
   const [pending, setPending] = useState(false)
   const [failed, setFailed] = useState(false)
-  const visible = !!state && ['downloading', 'ready', 'error'].includes(state.status)
+  const visible = !!state && ['downloading', 'preparing', 'ready', 'error'].includes(state.status)
   useEffect(() => {
     if (visible) void import('../styles/app-update.css')
   }, [visible])
@@ -34,12 +34,17 @@ export function AppUpdateNotice() {
   }, [])
   if (!state || !visible) return null
   const downloading = state.status === 'downloading'
+  // Verifying the installer and preparing it for the system updater follows the
+  // last byte; on macOS it takes about 20 seconds.
+  const preparing = state.status === 'preparing'
   const retry = state.status === 'error' || failed
   const label = retry
     ? 'Retry TasteCode update'
     : downloading
       ? `Downloading TasteCode update${state.progress === undefined ? '' : ` (${state.progress}%)`}`
-      : `Restart to update TasteCode${state.version ? ` to ${state.version}` : ''}`
+      : preparing
+        ? 'Preparing TasteCode update'
+        : `Restart to update TasteCode${state.version ? ` to ${state.version}` : ''}`
   const act = async () => {
     setPending(true)
     setFailed(false)
@@ -58,14 +63,14 @@ export function AppUpdateNotice() {
       className="account-update"
       data-state={retry ? 'error' : state.status}
       aria-label={label}
-      aria-busy={downloading || pending}
+      aria-busy={downloading || preparing || pending}
       title={
         retry ? `${state.error ?? 'The update could not be completed.'} Click to retry.` : label
       }
-      disabled={downloading || pending}
+      disabled={downloading || preparing || pending}
       onClick={() => void act()}
     >
-      {downloading || pending ? (
+      {downloading || preparing || pending ? (
         <IconLoader2 size={16} className="spinner" aria-hidden />
       ) : retry ? (
         <IconRefresh size={16} aria-hidden />
