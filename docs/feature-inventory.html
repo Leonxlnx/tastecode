@@ -397,7 +397,9 @@
               ><input type="checkbox" /><span
                 >SDK permissions and structured questions use TasteCode-native cards
                 <span class="d"
-                  >ask, accept edits, automatic review, bypass, and AskUserQuestion</span
+                  >ask, accept edits, automatic review, bypass, and AskUserQuestion, including
+                  multi-select questions; MCP and other tool cards name the tool and show its
+                  arguments</span
                 ></span
               ></label
             >
@@ -528,11 +530,15 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Signed-in detection through the CLI itself, sign out runs grok logout
+                >Signed-in detection through the CLI itself, redacted account email and plan, sign
+                out runs grok logout
                 <span class="d"
-                  >successful login retains the exact provider-confirmed email as soon as the CLI
-                  reports it; Settings otherwise reports only Signed in, uses a fixed-width privacy
-                  blur, and never asks the user to type an address</span
+                  >grok models decides sign-in; Grok's own ACP auth extension then supplies the
+                  email and its subscription tier as the plan, such as X Premium, without reading
+                  Grok's credential file; successful login retains the exact provider-confirmed
+                  email as soon as the CLI reports it; when neither is available Settings reports
+                  only Signed in, uses a fixed-width privacy blur, and never asks the user to type
+                  an address</span
                 ></span
               ></label
             >

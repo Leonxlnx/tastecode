@@ -220,13 +220,13 @@ export function captureCli(
   child: ChildProcessWithoutNullStreams,
   timeoutMs = 5000,
   maxBytes = 1024 * 1024,
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
+): Promise<CapturedCli> {
   return new Promise((resolve, reject) => {
     let stdout = ''
     let stderr = ''
     let bytes = 0
     let settled = false
-    const finish = (result: { code: number | null; stdout: string; stderr: string } | Error) => {
+    const finish = (result: CapturedCli | Error) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -260,6 +260,13 @@ export function captureCli(
       finish(new Error('CLI could not start. Check the executable and permissions.')),
     )
     // Exit can precede the final bytes in inherited pipes.
-    child.on('close', (code) => finish({ code, stdout, stderr }))
+    child.on('close', (code, signal) => finish({ code, signal, stdout, stderr }))
   })
+}
+
+export type CapturedCli = {
+  code: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
 }
