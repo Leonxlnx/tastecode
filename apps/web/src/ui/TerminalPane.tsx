@@ -11,6 +11,7 @@ import type { Transport, ConnectionState } from '../transport.js'
 import { errorMessage } from '../boundary.js'
 import { beginPanelResize } from './panel-resize.js'
 import { acquireTerminalLease } from './terminal-ownership.js'
+import { Skeleton, SkeletonLines, SkeletonStatus } from './Skeleton.js'
 import '../styles/terminal-pane.css'
 
 const MIN_HEIGHT = 160
@@ -451,7 +452,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
           onPointerDown={beginResize}
         />
       ) : null}
-      {workspace ? (
+      {workspace && status.state !== 'error' ? (
         <span className="visually-hidden" aria-live="polite">
           {statusText(status)}
         </span>
@@ -492,7 +493,21 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
           </div>
         </header>
       )}
-      <div ref={host} className="terminal-pane__viewport" />
+      <div
+        ref={host}
+        className="terminal-pane__viewport"
+        aria-busy={workspace ? status.state === 'connecting' : undefined}
+      >
+        {workspace && status.state === 'connecting' ? (
+          <SkeletonStatus label="Connecting terminal…" className="terminal-pane__skeleton">
+            <div className="terminal-pane__skeleton-prompt">
+              <Skeleton width={8} height={9} />
+              <Skeleton width="24%" height={9} />
+            </div>
+            <SkeletonLines lines={3} widths={['44%', '28%', '36%']} />
+          </SkeletonStatus>
+        ) : null}
+      </div>
     </section>
   )
 })

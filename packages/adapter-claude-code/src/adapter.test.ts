@@ -1147,16 +1147,16 @@ describe('Claude Agent SDK session', () => {
         isDefault: model.isDefault,
       })),
     ).toEqual([
-      { id: 'claude-fable-5-1[1m]', displayName: 'Claude Fable 5.1', isDefault: false },
-      { id: 'opus[1m]', displayName: 'Claude Opus 5', isDefault: true },
-      { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },
-      { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
-      { id: 'haiku', displayName: 'Claude Haiku 4.5', isDefault: false },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8', isDefault: false },
-      { id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7', isDefault: false },
-      { id: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', isDefault: false },
-      { id: 'claude-opus-4-5', displayName: 'Claude Opus 4.5', isDefault: false },
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', isDefault: false },
+      { id: 'claude-fable-5-1[1m]', displayName: 'Fable 5.1', isDefault: false },
+      { id: 'opus[1m]', displayName: 'Opus 5', isDefault: true },
+      { id: 'sonnet', displayName: 'Sonnet 5', isDefault: false },
+      { id: 'claude-fable-5[1m]', displayName: 'Fable 5', isDefault: false },
+      { id: 'haiku', displayName: 'Haiku 4.5', isDefault: false },
+      { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
+      { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
+      { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
+      { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
     expect(models.filter((model) => model.displayName.includes('1M context'))).toEqual([])
@@ -1192,10 +1192,10 @@ describe('Claude Agent SDK session', () => {
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
     const models = await adapter.listModels()
     expect(models.slice(0, 4).map((model) => model.displayName)).toEqual([
-      'Claude Fable 5.1',
-      'Claude Opus 5.5',
-      'Claude Opus 5',
-      'Claude Sonnet 5',
+      'Fable 5.1',
+      'Opus 5.5',
+      'Opus 5',
+      'Sonnet 5',
     ])
     expect(models.find((model) => model.isDefault)?.id).toBe('opus')
     adapter.dispose()

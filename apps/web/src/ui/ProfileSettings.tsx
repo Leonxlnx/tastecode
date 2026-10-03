@@ -7,9 +7,11 @@ import {
   type ProfileIdentityPreferences,
 } from '../profile-preferences.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
+import { Skeleton, SkeletonStatus } from './Skeleton.js'
 
 export function ProfileSettings(props: {
   account: Account | undefined
+  accountLoading?: boolean | undefined
   providerName: string
   identity?: ProfileIdentityPreferences | undefined
   onIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
@@ -72,6 +74,10 @@ export function ProfileSettings(props: {
           <div className="profile-identity__meta">
             <span>{props.account.plan}</span>
           </div>
+        ) : props.accountLoading && !props.account ? (
+          <SkeletonStatus label="Loading account plan…" className="profile-identity__meta">
+            <Skeleton width={64} height={9} />
+          </SkeletonStatus>
         ) : null}
         <div className="profile-identity__editor">
           <label className="profile-identity__field">
