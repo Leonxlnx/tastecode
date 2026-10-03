@@ -1,12 +1,17 @@
 import type { MenuItemConstructorOptions } from 'electron'
-import type { NativeMenuAction, NativeMenuShortcut, NativeMenuShortcuts } from './menu-contract.js'
+import type {
+  NativeMenuAction,
+  NativeMenuActionSource,
+  NativeMenuShortcut,
+  NativeMenuShortcuts,
+} from './menu-contract.js'
 
 type AppMenuOptions = {
   appName: string
   isMacOS: boolean
   isDevelopment: boolean
   shortcuts: NativeMenuShortcuts
-  onAction: (action: NativeMenuAction) => void
+  onAction: (action: NativeMenuAction, source: NativeMenuActionSource) => void
   onZoom: (action: 'in' | 'out' | 'reset') => void
   onOpenDiagnostics: () => void
 }
@@ -19,7 +24,8 @@ export function createApplicationMenuTemplate(options: AppMenuOptions): MenuItem
     return {
       label,
       ...(accelerator ? { accelerator } : {}),
-      click: () => options.onAction(id),
+      click: (_item, _window, event) =>
+        options.onAction(id, event.triggeredByAccelerator ? 'accelerator' : 'menu'),
     }
   }
   const separator: MenuItem = { type: 'separator' }

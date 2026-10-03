@@ -11,6 +11,7 @@ import {
   readKeybindings,
   shortcutFromKeyboardEvent,
   shortcutLabel,
+  shortcutRoute,
   WORKSPACE_TOOL_SHORTCUTS,
   writeKeybindings,
   type Shortcut,
@@ -23,6 +24,16 @@ afterEach(() => {
 })
 
 describe('shortcuts', () => {
+  it('lets an open sheet or dialog own app shortcuts', () => {
+    const closed = { settingsOpen: false, onboardingPreview: false, modalOpen: false }
+    expect(shortcutRoute('commandPalette', closed)).toBe('run')
+    expect(shortcutRoute('settings', { ...closed, settingsOpen: true })).toBe('closeSettings')
+    expect(shortcutRoute('keybindings', { ...closed, settingsOpen: true })).toBe('showKeybinds')
+    expect(shortcutRoute('commandPalette', { ...closed, settingsOpen: true })).toBe('ignore')
+    expect(shortcutRoute('newChat', { ...closed, modalOpen: true })).toBe('ignore')
+    expect(shortcutRoute('newChat', { ...closed, onboardingPreview: true })).toBe('ignore')
+  })
+
   it('offers broad action coverage without duplicate default bindings', () => {
     const keybindings = createDefaultKeybindings()
     const assigned = KEYBINDING_DEFINITIONS.flatMap((definition) => {

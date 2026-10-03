@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   IconArrowBarToRight as TabKey,
   IconArrowBigUpLine as ShiftKey,
@@ -16,6 +16,7 @@ import {
   IconX as X,
 } from '@tabler/icons-react'
 import '../styles/keybinds.css'
+import { suspendNativeMenuShortcuts } from '../bridge.js'
 import {
   findKeybindingConflict,
   KEYBINDING_DEFINITIONS,
@@ -113,6 +114,14 @@ export function KeybindSettings(props: {
   const [query, setQuery] = useState('')
   const [recording, setRecording] = useState<KeybindingId>()
   const [message, setMessage] = useState<{ action: KeybindingId; text: string }>()
+  const recordingShortcut = recording !== undefined
+  useEffect(() => {
+    if (!recordingShortcut) return
+    // Menu accelerators fire before the page sees the key, so a recorded
+    // combination would run its old action instead of reaching the recorder.
+    suspendNativeMenuShortcuts(true)
+    return () => suspendNativeMenuShortcuts(false)
+  }, [recordingShortcut])
   const filtered = useMemo(() => {
     const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
     if (terms.length === 0) return KEYBINDING_DEFINITIONS
