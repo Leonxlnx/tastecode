@@ -12,6 +12,7 @@ import {
   GitHubReleaseProvider,
   type ReleaseFetch,
 } from './github-release-provider.js'
+import type { UpdateChannel } from './app-updater.js'
 import { prepareDmgUpdate } from './dmg-update.js'
 import { servePreparedUpdate, updateFileHashes, withUpdateDirectory } from './prepared-update.js'
 
@@ -87,11 +88,13 @@ class ExeUpdater extends electronUpdater.NsisUpdater {
 
 export function createReleaseUpdater(release: {
   fetch: ReleaseFetch
+  channel: () => UpdateChannel
 }): AppUpdater & { dispose: () => Promise<void> } {
   const options = {
     provider: 'custom' as const,
     updateProvider: GitHubReleaseProvider,
     fetch: release.fetch,
+    channel: release.channel,
   }
   const updater =
     process.platform === 'darwin'

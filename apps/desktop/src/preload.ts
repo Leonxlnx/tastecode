@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
-import type { AppUpdateState } from './app-updater.js'
+import type { AppUpdateState, UpdateChannel } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuAction } from './menu-contract.js'
 import { isAppUpdateState, isFiniteNumber } from './preload-validation.js'
@@ -76,6 +76,8 @@ const api = {
   getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:getUpdateState'),
   checkForUpdates: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:checkForUpdates'),
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
+  setUpdateChannel: (channel: UpdateChannel): Promise<AppUpdateState> =>
+    ipcRenderer.invoke('harness:setUpdateChannel', channel),
   setMenuShortcuts: (shortcuts: unknown): void =>
     ipcRenderer.send('harness:setMenuShortcuts', shortcuts),
   onMenuAction: (listener: (action: string) => void): (() => void) => {

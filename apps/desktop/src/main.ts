@@ -38,6 +38,8 @@ import {
   type AppUpdateController,
   type AppUpdateState,
 } from './app-updater.js'
+import { isUpdateChannel } from './preload-validation.js'
+import { loadUpdateChannel, saveUpdateChannel } from './update-channel.js'
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
@@ -99,6 +101,7 @@ const productDataPath = process.env['HARNESS_DESKTOP_DATA_DIR']
   ? path.resolve(process.env['HARNESS_DESKTOP_DATA_DIR'])
   : path.join(app.getPath('appData'), 'TasteCode')
 const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
+const updateChannelPath = path.join(productDataPath, 'update-channel.json')
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -659,6 +662,7 @@ ipcMain.handle('harness:getUpdateState', (event): AppUpdateState => {
     appUpdater?.state() ?? {
       status: 'unsupported',
       currentVersion: app.getVersion(),
+      channel: 'stable',
     }
   )
 })
@@ -671,6 +675,12 @@ ipcMain.handle('harness:checkForUpdates', (event) => {
 ipcMain.handle('harness:installUpdate', (event) => {
   requireOwnRenderer(event.sender)
   return appUpdater?.install() ?? false
+})
+
+ipcMain.handle('harness:setUpdateChannel', (event, channel: unknown) => {
+  requireOwnRenderer(event.sender)
+  if (!isUpdateChannel(channel)) throw new Error('Unknown update channel')
+  return appUpdater?.setChannel(channel)
 })
 
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
@@ -922,9 +932,19 @@ if (ownsSingleInstance) {
           // no browsing cookies ride along to GitHub.
           fetch: (url, init) =>
             session.fromPartition('electron-updater', { cache: false }).fetch(url, init),
+          channel: () => appUpdater?.state().channel ?? 'stable',
         }),
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
+      channel: loadUpdateChannel(updateChannelPath),
+      onChannelChange: (channel) => {
+        try {
+          saveUpdateChannel(updateChannelPath, channel)
+        } catch (error) {
+          // The choice still applies until the app quits.
+          void diagnostics?.record('updater', error)
+        }
+      },
       onError: (cause) => void diagnostics?.record('updater', cause),
     })
     appUpdater.subscribe((state) => {
