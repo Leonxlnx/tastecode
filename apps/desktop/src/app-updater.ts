@@ -79,6 +79,7 @@ export function createAppUpdateController(
   let failures = 0
   let quiet = false
   let settled = state
+  let lastCheckAt = 0
 
   const reschedule = (delay: number) => {
     if (!started) return
@@ -179,6 +180,7 @@ export function createAppUpdateController(
     attempt += 1
     quiet = origin === 'background'
     settled = state
+    lastCheckAt = Date.now()
     checking = loadUpdater()
       .then((client) => client.checkForUpdates())
       .then(
@@ -217,7 +219,13 @@ export function createAppUpdateController(
     start: () => {
       if (!options.enabled || started) return
       started = true
+      lastCheckAt = Date.now()
       reschedule(FIRST_CHECK_DELAY)
+    },
+    // Timers stand still while the machine sleeps, so a check that came due
+    // overnight would otherwise wait another hour of waking time.
+    resume: () => {
+      if (started && Date.now() - lastCheckAt >= CHECK_INTERVAL) reschedule(FIRST_CHECK_DELAY)
     },
     dispose: () => {
       started = false

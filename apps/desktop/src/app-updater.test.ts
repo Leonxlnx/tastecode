@@ -378,4 +378,28 @@ describe('app update controller', () => {
     })
     expect(updater.checkForUpdates).not.toHaveBeenCalled()
   })
+
+  it('checks soon after waking when the hourly check came due during sleep', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    controller.resume()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+
+    // Wall-clock time moves on while the hourly timer stands still.
+    vi.setSystemTime(Date.now() + 8 * 60 * 60 * 1000)
+    controller.resume()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
 })
