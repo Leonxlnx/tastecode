@@ -11,6 +11,7 @@ import type {
   McpServerConfig,
   McpStartupStatus,
   Model,
+  ProviderContextSettings,
   Skill,
   SkillDiscoveryError,
   Thread,
@@ -189,6 +190,22 @@ export type StartOptions = {
   effort?: string | undefined
   approval?: ApprovalMode | undefined
   ephemeral?: boolean | undefined
+  context?: ProviderContextSettings | undefined
+}
+
+/**
+ * Codex takes both settings as config overrides, and counts the compaction
+ * point in tokens rather than as a share of the window.
+ */
+export function codexContextConfig(context: ProviderContextSettings | undefined) {
+  if (!context) return {}
+  const window = context.window ?? CODEX_CAPABILITIES.context!.windows[0]!
+  return {
+    ...(context.window !== undefined ? { model_context_window: context.window } : {}),
+    ...(typeof context.compactAt === 'number'
+      ? { model_auto_compact_token_limit: Math.round((window * context.compactAt) / 100) }
+      : {}),
+  }
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
@@ -951,6 +968,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async startThread(workspacePath: string, options: StartOptions = {}): Promise<Thread> {
     const approval = options.approval ? CODEX_APPROVAL[options.approval] : undefined
     const config = {
+      ...codexContextConfig(options.context),
       ...(options.effort
         ? {
             model_reasoning_effort: options.effort,
@@ -999,9 +1017,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   async resumeThread(
     threadId: string,
     workspacePath: string,
-    options: Pick<StartOptions, 'instructions' | 'approval'> = {},
+    options: Pick<StartOptions, 'instructions' | 'approval' | 'context'> = {},
   ): Promise<Thread> {
     const approval = options.approval ? CODEX_APPROVAL[options.approval] : undefined
+    const config = {
+      ...codexContextConfig(options.context),
+      ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
+    }
     const response = await this.#callParsed(
       'thread/resume',
       {
@@ -1015,11 +1037,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             }
           : {}),
         ...approval,
-        ...(Object.keys(this.#mcpServers).length
-          ? {
-              config: { mcp_servers: this.#mcpServers },
-            }
-          : {}),
+        ...(Object.keys(config).length ? { config } : {}),
       },
       ThreadResumeResponseSchema,
     )
