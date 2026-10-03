@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -161,6 +161,19 @@ describe('resumable update downloads', () => {
     await writeFile(path.join(directory, `${'0'.repeat(64)}.dmg`), 'older release')
     await downloadVerified(options())
     expect(await readdir(directory)).toEqual([`${sha256}.dmg`])
+  })
+
+  it('downloads even when a leftover from an older release cannot be removed yet', async () => {
+    // A read-only folder stands in for a Windows virus scanner's file lock.
+    const locked = path.join(directory, 'locked')
+    await mkdir(locked)
+    await writeFile(path.join(locked, 'older.dmg'), 'older release')
+    await chmod(locked, 0o500)
+    try {
+      expect(await readFile(await downloadVerified(options()))).toEqual(bytes)
+    } finally {
+      await chmod(locked, 0o700)
+    }
   })
 
   it('rejects a body larger than GitHub announced', async () => {

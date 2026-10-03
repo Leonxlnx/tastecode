@@ -27,6 +27,12 @@ export type VerifiedDownload = {
   stallTimeout?: number
 }
 
+// Windows virus scanners briefly lock a fresh installer. A file that cannot be
+// removed yet is harmless: the next download or check removes it.
+async function discard(target: string): Promise<void> {
+  await rm(target, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => {})
+}
+
 async function sizeOf(file: string): Promise<number> {
   return stat(file).then(
     (info) => info.size,
@@ -49,24 +55,23 @@ export async function downloadVerified(download: VerifiedDownload): Promise<stri
   await mkdir(download.directory, { recursive: true, mode: 0o700 })
   // Only one release is ever worth resuming: the one being downloaded now.
   for (const name of await readdir(download.directory))
-    if (name !== path.basename(file))
-      await rm(path.join(download.directory, name), { recursive: true, force: true })
+    if (name !== path.basename(file)) await discard(path.join(download.directory, name))
 
   let offset = await sizeOf(file)
   if (offset > download.size) {
-    await rm(file, { force: true })
+    await discard(file)
     offset = 0
   }
   if (offset < download.size && (await fetchRemainder(download, file, offset)) === 'restart') {
     // The stored bytes no longer fit this asset; start over once.
-    await rm(file, { force: true })
+    await discard(file)
     await fetchRemainder(download, file, 0)
   }
   const size = await sizeOf(file)
   // Bytes that arrived stay for the next attempt to continue from.
   if (size < download.size) throw new Error('The update download stopped before it finished.')
   if (size !== download.size || (await sha256Of(file)) !== download.sha256) {
-    await rm(file, { force: true })
+    await discard(file)
     throw new Error('The downloaded update does not match the GitHub file hash or size.')
   }
   return file
@@ -109,7 +114,7 @@ async function fetchRemainder(
       const range = /^bytes (\d+)-\d+\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
       if (Number(range?.[1]) !== offset || Number(range?.[2]) !== download.size) {
         await response.body.cancel()
-        await rm(file, { force: true })
+        await discard(file)
         throw new Error('GitHub resumed the update download at the wrong position.')
       }
     }
