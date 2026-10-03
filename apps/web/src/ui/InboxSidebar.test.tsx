@@ -718,16 +718,15 @@ describe('InboxSidebar', () => {
     expect(actions.onSettle).not.toHaveBeenCalled()
   })
 
-  it('uses canonical provider and ACP source names in thread metadata', () => {
+  it('uses canonical provider names in thread metadata', () => {
     const sessions: Session[] = [
-      { ...active('claude', 'Claude task', 4), provider: 'claude-code' },
-      { ...active('grok', 'Grok task', 3), provider: 'grok' },
-      { ...active('gemini', 'Gemini task', 2), provider: 'acp', agent: 'gemini' },
-      { ...active('api', 'API task', 1), provider: 'api' },
+      { ...active('claude', 'Claude task', 3), provider: 'claude-code' },
+      { ...active('grok', 'Grok task', 2), provider: 'grok' },
+      { ...active('codex', 'Codex task', 1), provider: 'codex', agent: 'work-codex' },
     ]
     render(<InboxSidebar {...props([{ path: '/alpha', sessions }])} />)
 
-    for (const label of ['Claude Code', 'Grok', 'Gemini CLI', 'API connection']) {
+    for (const label of ['Claude Code', 'Grok', 'Codex']) {
       const identity = screen.getByText(label).closest('.source-identity')
       expect(identity?.classList.contains('source-identity--compact')).toBe(true)
       expect(identity?.querySelector('svg')).toBeTruthy()

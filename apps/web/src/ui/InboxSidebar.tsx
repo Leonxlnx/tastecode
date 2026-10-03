@@ -32,7 +32,7 @@ import {
   IconTrash as Trash2,
   IconX as X,
 } from '@tabler/icons-react'
-import { sessionSourcePresentation } from '../provider-presentation.js'
+import { providerPresentation } from '../provider-presentation.js'
 import { findSession, takeProjectSessionChanges } from '../project-store.js'
 import { AppSelect } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -684,7 +684,7 @@ const ActiveRow = memo(function ActiveRow(
           )}
           <span aria-hidden>·</span>
           <SourceIdentity
-            presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
+            presentation={providerPresentation(props.session.provider)}
             density="compact"
           />
           {props.session.pinned ? (
@@ -1632,7 +1632,7 @@ function relativeTime(at: number, now: number): string {
 }
 
 function providerName(session: Session): string {
-  return sessionSourcePresentation(session.provider, session.agent).label
+  return providerPresentation(session.provider).label
 }
 
 function projectName(project: Project): string {

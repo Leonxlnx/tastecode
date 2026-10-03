@@ -24,7 +24,7 @@ export type InstallState = {
   exitCode: number | null
 }
 
-export type InstallTarget = { provider: ProviderId; agent?: string }
+export type InstallTarget = { provider: ProviderId }
 
 export type ProviderLoginTerminalTarget = {
   provider?: ProviderId
@@ -35,7 +35,7 @@ export type ProviderLoginTerminalTarget = {
 }
 
 export function installKey(target: InstallTarget): string {
-  return target.agent ? `${target.provider}:${target.agent}` : target.provider
+  return target.provider
 }
 
 /**
@@ -145,7 +145,6 @@ export async function beginInstall(transport: Transport, target: InstallTarget):
   return begin(transport, installKey(target), () =>
     transport.request('providers.install', {
       provider: target.provider,
-      ...(target.agent ? { agent: target.agent } : {}),
       columns: 100,
       rows: 30,
     }),
@@ -169,7 +168,6 @@ export async function beginLogin(
     () =>
       transport.request('providers.launch', {
         provider: target.provider,
-        ...(target.agent ? { agent: target.agent } : {}),
         columns: LOGIN_COLUMNS,
         rows: 30,
       }),

@@ -73,7 +73,7 @@ describe('beginInstall', () => {
 
   it('tracks one run per target and does not start a second while one is going', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'acp' as const, agent: 'gemini' }
+    const target = { provider: 'codex' as const }
     await beginInstall(transport, target)
     await beginInstall(transport, target)
     expect(
@@ -84,7 +84,7 @@ describe('beginInstall', () => {
 
   it('keeps the log and marks failure with the exit code when the command dies', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'opencode' as const }
+    const target = { provider: 'claude-code' as const }
     await beginInstall(transport, target)
 
     transport.emit('terminal.output', { terminalId: 'term-1', data: 'npm ERR! EACCES\r\n' })
@@ -99,7 +99,7 @@ describe('beginInstall', () => {
 
   it('marks success on a clean exit so the UI can refresh the provider list', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'opencode' as const }
+    const target = { provider: 'claude-code' as const }
     await beginInstall(transport, target)
 
     transport.emit('terminal.exit', { terminalId: 'term-1', exitCode: 0 })
@@ -119,16 +119,16 @@ describe('beginLogin', () => {
 
   it('asks the server to launch the sign-in CLI, never naming a command', async () => {
     const transport = fakeTransport()
-    await beginLogin(transport, { provider: 'acp', agent: 'gemini' })
+    await beginLogin(transport, { provider: 'grok' })
     expect(transport.requests).toContainEqual({
       method: 'providers.launch',
-      params: { provider: 'acp', agent: 'gemini', columns: 320, rows: 30 },
+      params: { provider: 'grok', columns: 320, rows: 30 },
     })
   })
 
   it('keeps a login and an install for the same target apart in the store', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'opencode' as const }
+    const target = { provider: 'claude-code' as const }
     await beginInstall(transport, target)
     await beginLogin(transport, target)
     expect(loginKey(target)).not.toBe(installKey(target))
@@ -141,7 +141,7 @@ describe('beginLogin', () => {
 
   it('reattaches instead of launching twice while a login is running', async () => {
     const transport = fakeTransport()
-    const target = { provider: 'acp' as const, agent: 'kimi' }
+    const target = { provider: 'grok' as const }
     await beginLogin(transport, target, () => {})
     await beginLogin(transport, target, () => {})
     expect(
@@ -156,7 +156,7 @@ describe('beginLogin', () => {
     })
     const opened: string[] = []
 
-    await beginLogin(transport, { provider: 'acp', agent: 'gemini' }, (url) => opened.push(url))
+    await beginLogin(transport, { provider: 'claude-code' }, (url) => opened.push(url))
     transport.emit('terminal.output', {
       terminalId: 'term-login-2',
       data: 'Starting sign-in...\r\n',
@@ -171,7 +171,7 @@ describe('beginLogin', () => {
     })
 
     expect(opened).toEqual(['https://accounts.example.test/auth?code=abc'])
-    expect(installState(loginKey({ provider: 'acp', agent: 'gemini' }))?.openedAuthUrl).toBe(
+    expect(installState(loginKey({ provider: 'claude-code' }))?.openedAuthUrl).toBe(
       'https://accounts.example.test/auth?code=abc',
     )
   })
