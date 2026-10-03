@@ -7,7 +7,11 @@ import electronUpdater, {
 import type { DownloadUpdateOptions } from 'electron-updater/out/AppUpdater.js'
 import { ElectronHttpExecutor } from 'electron-updater/out/electronHttpExecutor.js'
 import { GenericProvider } from 'electron-updater/out/providers/GenericProvider.js'
-import { assetFromUpdateInfo, GitHubReleaseProvider } from './github-release-provider.js'
+import {
+  assetFromUpdateInfo,
+  GitHubReleaseProvider,
+  type ReleaseFetch,
+} from './github-release-provider.js'
 import { prepareDmgUpdate } from './dmg-update.js'
 import { servePreparedUpdate, updateFileHashes, withUpdateDirectory } from './prepared-update.js'
 
@@ -81,8 +85,14 @@ class ExeUpdater extends electronUpdater.NsisUpdater {
   }
 }
 
-export function createReleaseUpdater(): AppUpdater & { dispose: () => Promise<void> } {
-  const options = { provider: 'custom' as const, updateProvider: GitHubReleaseProvider }
+export function createReleaseUpdater(release: {
+  fetch: ReleaseFetch
+}): AppUpdater & { dispose: () => Promise<void> } {
+  const options = {
+    provider: 'custom' as const,
+    updateProvider: GitHubReleaseProvider,
+    fetch: release.fetch,
+  }
   const updater =
     process.platform === 'darwin'
       ? new DmgUpdater(options)

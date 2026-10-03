@@ -1,9 +1,12 @@
 import type { AppUpdater, ResolvedUpdateFileInfo, UpdateInfo } from 'electron-updater'
 import { Provider, type ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
-import { rcompare, valid } from 'semver'
+import { gt, lte, rcompare, valid } from 'semver'
 import { z } from 'zod'
 
 export const releaseRepository = 'Leonxlnx/tastecode'
+const releasePage = `https://github.com/${releaseRepository}/releases`
+const releaseApi = `https://api.github.com/repos/${releaseRepository}/releases`
+const tagLink = new RegExp(`href="${releasePage.replaceAll('.', '\\.')}/tag/([^"?#]+)"`, 'g')
 const assetSchema = z.object({
   name: z.string(),
   state: z.literal('uploaded'),
@@ -24,10 +27,36 @@ const releaseSchema = z.object({
 type Release = z.infer<typeof releaseSchema>
 export type ReleaseAsset = z.infer<typeof assetSchema>
 export type AssetUpdateInfo = UpdateInfo & { asset: ReleaseAsset }
+export type ReleaseFetch = (url: string, init?: RequestInit) => Promise<Response>
+export type ReleaseProviderOptions = { provider: 'custom'; fetch?: ReleaseFetch }
+type InstalledVersion = Pick<AppUpdater, 'currentVersion'>
 
 function versionFromTag(tag: string): string | undefined {
   const version = tag.replace(/^v/, '')
   return valid(version) ? version : undefined
+}
+
+/** Tags in GitHub's release feed: published releases and bare tags, newest ten first. */
+export function feedTags(feed: string): string[] {
+  const tags: string[] = []
+  for (const [, encoded] of feed.matchAll(tagLink)) {
+    try {
+      tags.push(decodeURIComponent(encoded!))
+    } catch {
+      // A malformed escape cannot name a tag TasteCode released.
+    }
+  }
+  return tags
+}
+
+/** Tags of versions above `current`, highest version first. */
+export function newerTags(tags: string[], current: string): string[] {
+  const newer = new Map<string, string>()
+  for (const tag of tags) {
+    const version = versionFromTag(tag)
+    if (version && gt(version, current) && !newer.has(version)) newer.set(version, tag)
+  }
+  return [...newer.keys()].sort(rcompare).map((version) => newer.get(version)!)
 }
 
 export function selectLatestRelease(rows: unknown[]): Release {
@@ -70,29 +99,85 @@ export function assetFromUpdateInfo(info: UpdateInfo): ReleaseAsset {
   return assetSchema.parse(info.asset)
 }
 
-export class GitHubReleaseProvider extends Provider<AssetUpdateInfo> {
+export class GitHubReleaseProvider extends Provider<UpdateInfo> {
   private readonly platform: string
+  private readonly fetch: ReleaseFetch
 
-  constructor(_options: unknown, _updater: AppUpdater, runtime: ProviderRuntimeOptions) {
+  constructor(
+    options: ReleaseProviderOptions,
+    private readonly installed: InstalledVersion,
+    runtime: ProviderRuntimeOptions,
+  ) {
     super({ ...runtime, isUseMultipleRangeRequest: false })
     this.platform = runtime.platform
+    this.fetch = options.fetch ?? fetch
   }
 
-  async getLatestVersion(): Promise<AssetUpdateInfo> {
+  /** The response, or undefined for a 404. */
+  private async request(url: string, accept: string): Promise<Response | undefined> {
+    let response: Response
+    try {
+      response = await this.fetch(url, {
+        headers: { Accept: accept, 'X-GitHub-Api-Version': '2022-11-28' },
+        signal: AbortSignal.timeout(20_000),
+      })
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : String(cause)
+      throw new Error(`GitHub could not be reached to check for updates (${detail}).`, { cause })
+    }
+    if (response.status === 404 || !response.ok) {
+      await response.body?.cancel()
+      if (response.status === 404) return undefined
+      throw new Error(`GitHub answered the update check with HTTP ${response.status}.`)
+    }
+    return response
+  }
+
+  async getLatestVersion(): Promise<UpdateInfo> {
+    const current = this.installed.currentVersion.version
+    // Installs behind one office or VPN address share GitHub's unauthenticated
+    // API limit of 60 requests an hour, and a 304 still counts. The release
+    // feed is not part of that limit, so a check that finds nothing newer
+    // spends none of it.
+    const feed = await this.request(`${releasePage}.atom`, 'application/atom+xml')
+    if (!feed) throw new Error('GitHub could not find the TasteCode release feed.')
+    const tags = feedTags(await feed.text())
+    const coversInstalled = tags.some((tag) => {
+      const version = versionFromTag(tag)
+      return version !== undefined && lte(version, current)
+    })
+    // Newer bare tags can push every release out of the feed's ten entries.
+    if (!coversInstalled) return this.latestFromReleaseList()
+    for (const tag of newerTags(tags, current).slice(0, 5)) {
+      const row = await this.request(
+        `${releaseApi}/tags/${encodeURIComponent(tag)}`,
+        'application/vnd.github+json',
+      )
+      // A pushed tag whose release is still a draft is invisible here.
+      if (!row) continue
+      const release = releaseSchema.parse(await row.json())
+      if (release.draft || !release.published_at) continue
+      return releaseUpdateInfo(release, this.platform, process.arch)
+    }
+    return {
+      version: current,
+      files: [],
+      path: '',
+      sha512: '',
+      releaseDate: new Date().toISOString(),
+    }
+  }
+
+  private async latestFromReleaseList(): Promise<UpdateInfo> {
     const releases: unknown[] = []
     // Scan pages rather than trusting GitHub's "Latest" badge or excluding beta
     // releases. Version order decides; publishing an old proof must not hide an update.
     for (let page = 1; page <= 10; page++) {
-      const raw = await this.executor.request({
-        ...this.createRequestOptions(
-          new URL(
-            `https://api.github.com/repos/${releaseRepository}/releases?per_page=100&page=${page}`,
-          ),
-          { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
-        ),
-        timeout: 20_000,
-      })
-      const rows: unknown = JSON.parse(raw ?? 'null')
+      const response = await this.request(
+        `${releaseApi}?per_page=100&page=${page}`,
+        'application/vnd.github+json',
+      )
+      const rows: unknown = await response?.json()
       if (!Array.isArray(rows)) throw new Error('GitHub returned an invalid release list.')
       releases.push(...rows)
       if (rows.length < 100)
