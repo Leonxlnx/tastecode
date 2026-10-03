@@ -1,0 +1,405 @@
+{
+  "date": "2026-10-03",
+  "findings": [
+    {
+      "id": "E01",
+      "area": "server",
+      "severity": "P1",
+      "title": "Malformed WebSocket target crashes token-protected server",
+      "file": "apps/server/src/server.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E02",
+      "area": "server",
+      "severity": "P1",
+      "title": "Rejected WebSocket emits an unhandled protocol error",
+      "file": "apps/server/src/server.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E03",
+      "area": "server",
+      "severity": "P2",
+      "title": "Broken child stdin leaves RPC calls pending",
+      "file": "packages/proc/src/jsonrpc.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E04",
+      "area": "transport",
+      "severity": "P2",
+      "title": "Invalid success reply treats a sent mutation as safe to retry",
+      "file": "apps/web/src/transport.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E05",
+      "area": "transport",
+      "severity": "P3",
+      "title": "Stalled CONNECTING handshake waits for native browser timeout",
+      "file": "apps/web/src/transport.ts",
+      "status": "limited"
+    },
+    {
+      "id": "E06",
+      "area": "session",
+      "severity": "P2",
+      "title": "Early queued completion leaves the next prompt stuck",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E07",
+      "area": "session",
+      "severity": "P2",
+      "title": "Stop during cold resume still sends the prompt",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E08",
+      "area": "codex",
+      "severity": "P1",
+      "title": "Accepted turn stays running after app-server crash",
+      "file": "packages/adapter-codex/src/adapter.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E09",
+      "area": "codex",
+      "severity": "P2",
+      "title": "Provider-resolved approval and question cards remain pending",
+      "file": "packages/adapter-codex/src/adapter.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E10",
+      "area": "claude",
+      "severity": "P1",
+      "title": "Approval Abort rejection can crash the server",
+      "file": "packages/adapter-claude-code/src/adapter.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E11",
+      "area": "claude",
+      "severity": "P2",
+      "title": "Closed SDK stream makes subsequent sends fail until runtime reset",
+      "file": "packages/adapter-claude-code/src/adapter.ts",
+      "status": "open"
+    },
+    {
+      "id": "E12",
+      "area": "terminal",
+      "severity": "P2",
+      "title": "Reconnect drops output printed while offline",
+      "file": "apps/web/src/ui/TerminalPane.tsx",
+      "status": "fixed"
+    },
+    {
+      "id": "E13",
+      "area": "terminal",
+      "severity": "P2",
+      "title": "Closing a terminal offline leaves its shell running",
+      "file": "apps/web/src/ui/terminal-ownership.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E14",
+      "area": "terminal",
+      "severity": "P2",
+      "title": "Changing chat with one terminal tab leaks the old shell",
+      "file": "apps/web/src/ui/terminal-ownership.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E15",
+      "area": "account",
+      "severity": "P2",
+      "title": "Failed login-timeout cleanup leaves sign-in stuck",
+      "file": "apps/server/src/provider-controls.ts",
+      "status": "open"
+    },
+    {
+      "id": "E16",
+      "area": "account",
+      "severity": "P2",
+      "title": "Account read started during sign-out restores stale signed-in state",
+      "file": "apps/web/src/ui/Settings.tsx",
+      "status": "open"
+    },
+    {
+      "id": "E17",
+      "area": "account",
+      "severity": "P2",
+      "title": "Reopened Providers row retains signed-in state after sign-out completes",
+      "file": "apps/web/src/ui/Settings.tsx",
+      "status": "open"
+    },
+    {
+      "id": "E18",
+      "area": "mcp",
+      "severity": "P1",
+      "title": "Project MCP reload updates only one live session",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E19",
+      "area": "mcp",
+      "severity": "P2",
+      "title": "Live session MCP discovery event never reaches UI",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E20",
+      "area": "mcp",
+      "severity": "P2",
+      "title": "Old MCP list reply overwrites cache after reload",
+      "file": "packages/adapter-codex/src/adapter.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E21",
+      "area": "attachments",
+      "severity": "P2",
+      "title": "Chat switch loses an attachment still being saved",
+      "file": "apps/web/src/ui/Composer.tsx",
+      "status": "open"
+    },
+    {
+      "id": "E22",
+      "area": "attachments",
+      "severity": "P2",
+      "title": "Desktop drops read removed File.path and reject large files",
+      "file": "apps/web/src/ui/Composer.tsx",
+      "status": "open"
+    },
+    {
+      "id": "E23",
+      "area": "attachments",
+      "severity": "P2",
+      "title": "Picked image preview disappears after cache loss or reload",
+      "file": "apps/web/src/bridge.ts",
+      "status": "open"
+    },
+    {
+      "id": "E24",
+      "area": "state",
+      "severity": "P2",
+      "title": "Overlapping recovery advances cursor past a missing event",
+      "file": "apps/web/src/thread-controller.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E25",
+      "area": "state",
+      "severity": "P2",
+      "title": "Cached background chat skips events after a connection gap",
+      "file": "apps/web/src/thread-controller.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E26",
+      "area": "state",
+      "severity": "P2",
+      "title": "Partial background cache bypasses transcript memory limits",
+      "file": "apps/web/src/thread-state-cache.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E27",
+      "area": "updates",
+      "severity": "P2",
+      "title": "Second Quit bypasses pending update cleanup",
+      "file": "apps/desktop/src/main.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E28",
+      "area": "updates",
+      "severity": "P2",
+      "title": "Transient native-copy failure deletes verified installer bytes",
+      "file": "apps/desktop/src/release-updater.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E29",
+      "area": "desktop",
+      "severity": "P2",
+      "title": "Packaged Windows window cannot recover a crashed renderer",
+      "file": "apps/desktop/src/main.ts",
+      "status": "open"
+    },
+    {
+      "id": "E30",
+      "area": "desktop",
+      "severity": "P2",
+      "title": "Inherited HARNESS_PORT differs from packaged renderer endpoint",
+      "file": "apps/desktop/src/main.ts",
+      "status": "open"
+    },
+    {
+      "id": "E31",
+      "area": "workspace",
+      "severity": "P1",
+      "title": "Missing isolated checkout falls back to the main project folder",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E32",
+      "area": "workspace",
+      "severity": "P2",
+      "title": "Checkpoint restore leaves renamed file behind",
+      "file": "apps/server/src/checkpoint.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E33",
+      "area": "workspace",
+      "severity": "P2",
+      "title": "Pending session start recreates a removed project",
+      "file": "apps/server/src/server.ts",
+      "status": "open"
+    },
+    {
+      "id": "E34",
+      "area": "workspace",
+      "severity": "P2",
+      "title": "Changing project during file read leaves Opening file stuck",
+      "file": "apps/web/src/ui/workspace/WorkspaceFiles.tsx",
+      "status": "fixed"
+    },
+    {
+      "id": "E35",
+      "area": "other_adapters",
+      "severity": "P2",
+      "title": "Failed ACP prompt leaves actionable old approvals",
+      "file": "packages/adapter-acp/src/adapter.ts",
+      "status": "open"
+    },
+    {
+      "id": "E36",
+      "area": "other_adapters",
+      "severity": "P2",
+      "title": "Failed first Grok spawn makes retry resume a nonexistent session",
+      "file": "packages/adapter-grok/src/adapter.ts",
+      "status": "open"
+    },
+    {
+      "id": "E37",
+      "area": "input",
+      "severity": "P2",
+      "title": "Uncertain input reply stays locked after successful suffix recovery",
+      "file": "apps/web/src/thread-controller.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E38",
+      "area": "input",
+      "severity": "P2",
+      "title": "Failed approval reply has no visible error",
+      "file": "apps/web/src/App.tsx",
+      "status": "fixed"
+    },
+    {
+      "id": "E39",
+      "area": "input",
+      "severity": "P2",
+      "title": "Custom text equal to an option removes its input field",
+      "file": "apps/web/src/design-agent/UserInput.tsx",
+      "status": "fixed"
+    },
+    {
+      "id": "E40",
+      "area": "queue",
+      "severity": "P2",
+      "title": "Late steer result restores work cleared by Stop all",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E41",
+      "area": "queue",
+      "severity": "P2",
+      "title": "Queue-cache eviction loses newer prompts on failed dispatch or steer",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E42",
+      "area": "queue",
+      "severity": "P2",
+      "title": "Scheduled database exception escapes timer and crashes server",
+      "file": "apps/server/src/lifecycle-scheduler.ts",
+      "status": "fixed"
+    },
+    {
+      "id": "E43",
+      "area": "discovery",
+      "severity": "P2",
+      "title": "Account check is never retried after reconnect",
+      "file": "apps/web/src/App.tsx",
+      "status": "fixed"
+    },
+    {
+      "id": "E44",
+      "area": "discovery",
+      "severity": "P2",
+      "title": "Slow provider blocks healthy providers' initial model list",
+      "file": "apps/web/src/App.tsx",
+      "status": "open"
+    },
+    {
+      "id": "E45",
+      "area": "storage",
+      "severity": "P2",
+      "title": "Checkpoint undo loses provider branch-membership links",
+      "file": "apps/server/src/store.ts",
+      "status": "open"
+    },
+    {
+      "id": "E46",
+      "area": "storage",
+      "severity": "P2",
+      "title": "Late import of older turns replaces latest diff and usage",
+      "file": "apps/server/src/history-replay.ts",
+      "status": "open"
+    },
+    {
+      "id": "E47",
+      "area": "preview",
+      "severity": "P2",
+      "title": "Renderer reload leaves native capture occupying retry slot",
+      "file": "apps/desktop/src/main.ts",
+      "status": "open"
+    },
+    {
+      "id": "E48",
+      "area": "preview",
+      "severity": "P2",
+      "title": "Capture origin gate rejects valid subframe redirect",
+      "file": "apps/desktop/src/main.ts",
+      "status": "open"
+    },
+    {
+      "id": "E49",
+      "area": "preview",
+      "severity": "P2",
+      "title": "New-window form redirect loses POST body",
+      "file": "apps/desktop/src/embedded-browser.ts",
+      "status": "open"
+    },
+    {
+      "id": "E50",
+      "area": "verification",
+      "severity": "P2",
+      "title": "Late old dispatch clears a new runtime's queue lock",
+      "file": "apps/server/src/orchestrator.ts",
+      "status": "fixed"
+    }
+  ]
+}
