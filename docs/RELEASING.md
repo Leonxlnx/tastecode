@@ -222,6 +222,12 @@ works without a GitHub login and can be used on the landing page.
    normally be present before publication. For beta 7, the release owner explicitly approved
    macOS first and Windows later on the same tag. Beta 7 still needs each available platform's
    compatibility files. Public publication is the point at which apps see it.
+9. Right before publishing, with `GH_TOKEN` set in the release process environment (for
+   example from `gh auth token`), run `pnpm release:check-updates --draft <tag>`. It shows
+   which release beta 7 to 0.1.1 installs (most recently published) and later builds
+   (highest version) would take if the draft were published now, and fails if either would
+   miss an installer or its digest. Run `pnpm release:check-updates` without a token again
+   after publishing. Both generations must report `ok`.
 
 For the beta 7 bridge, GitHub metadata is named **`latest.yml`** for Windows and
 **`latest-mac.yml`** for macOS. Beta 6's updater selects the beta tag and falls back to those
