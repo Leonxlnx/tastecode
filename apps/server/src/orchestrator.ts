@@ -39,6 +39,11 @@ import {
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import { ProviderControls } from './provider-controls.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import {
+  contextForLaunch,
+  providerContextControl,
+  validateContextSettings,
+} from './provider-context.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { RESTORE_CONTEXT_NOTICE, StartupCleanupError } from './provider-session.js'
@@ -69,6 +74,8 @@ import type {
   Item,
   PanicStopResult,
   ParamsOf,
+  ProviderContextSettings,
+  ProviderContextSettingsMap,
   ProviderId,
   ProviderLimitSource,
   QueuedTurn,
@@ -764,6 +771,28 @@ export class Orchestrator {
     this.#invalidateBackgroundSources()
   }
 
+  contextSettings(): ProviderContextSettingsMap {
+    return this.#store.providerContextSettings()
+  }
+
+  updateContextSettings(
+    provider: ProviderId,
+    settings: ProviderContextSettings,
+  ): ProviderContextSettingsMap {
+    validateContextSettings(providerContextControl(provider), settings)
+    return this.#store.updateProviderContextSettings(provider, settings)
+  }
+
+  /** Custom harnesses configure their own engine, so only the provider's own CLI is tuned. */
+  #contextRuntimeOptions(provider: ProviderId, agent: string | undefined): StartOptions {
+    if (agent) return {}
+    const context = contextForLaunch(
+      providerContextControl(provider),
+      this.#store.providerContextSettings()[provider],
+    )
+    return context ? { context } : {}
+  }
+
   async backgroundModelSettings(): Promise<BackgroundModelSettings> {
     const preference = this.#store.backgroundModelPreference()
     const available = await this.#backgroundModelSources()
@@ -1303,6 +1332,13 @@ export class Orchestrator {
     // agent — it is the directory the agent will be spawned in.
     const threadId = `${provider}-${crypto.randomUUID()}`
     const resolvedWorkspacePath = resolveWorkspacePath(workspacePath)
+    const runtime = this.#runtimeFor(provider, this.#onLog)
+    const runtimeOptions = {
+      ...options,
+      instructions: composeInstructions(options.instructions),
+      ...this.#mcpRuntimeOptions(provider, workspacePath),
+      ...this.#contextRuntimeOptions(provider, options.agent),
+    }
     const worktree = options.isolate
       ? await createWorktree(resolvedWorkspacePath, threadId, this.#worktreeRoot, options.baseRef)
       : undefined
@@ -1312,12 +1348,6 @@ export class Orchestrator {
       throw new Error('task start cancelled by shutdown or panic stop')
     }
 
-    const runtime = this.#runtimeFor(provider, this.#onLog)
-    const runtimeOptions = {
-      ...options,
-      instructions: composeInstructions(options.instructions),
-      ...this.#mcpRuntimeOptions(provider, workspacePath),
-    }
     let started
     try {
       started = await runtime.start(directory, runtimeOptions)
@@ -1457,6 +1487,7 @@ export class Orchestrator {
       ...(storedParent.agent ? { agent: storedParent.agent } : {}),
       instructions: composeInstructions(sideChatInstructionsFromReplay(parentHistory)),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
+      ...this.#contextRuntimeOptions(provider, storedParent.agent),
     }
 
     let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
@@ -3323,6 +3354,7 @@ export class Orchestrator {
       ...(approval ? { approval } : {}),
       instructions: REPLY_STYLE_INSTRUCTIONS,
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+      ...this.#contextRuntimeOptions(stored.provider, stored.agent),
     })
     if (result.thread.id !== threadId) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
