@@ -17,6 +17,10 @@ type PendingCapture<Client extends object> = {
 
 type QueuedCapture<Client extends object> = Omit<PendingCapture<Client>, 'socket' | 'timer'>
 
+function captureAborted(): Error {
+  return Object.assign(new Error('Preview capture cancelled'), { name: 'AbortError' })
+}
+
 export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
   #clients = new Set<Client>()
   #pending = new Map<string, PendingCapture<Client>>()
@@ -54,13 +58,31 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
     this.#dispatchNext()
   }
 
-  capture(url: string, viewports: PreviewViewport[]): Promise<PreviewScreenshot[]> {
+  capture(
+    url: string,
+    viewports: PreviewViewport[],
+    signal?: AbortSignal,
+  ): Promise<PreviewScreenshot[]> {
+    if (signal?.aborted) return Promise.reject(captureAborted())
     if (!this.available) return Promise.reject(new Error('Preview capture is unavailable'))
     if (this.#queue.length >= 16) return Promise.reject(new Error('Preview capture queue is full'))
 
     const request = { requestId: randomUUID(), url, viewports }
     return new Promise((resolve, reject) => {
-      this.#queue.push({ request, resolve, reject })
+      const onAbort = () => this.#abort(queued.resolve)
+      const queued: QueuedCapture<Client> = {
+        request,
+        resolve: (screenshots) => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve(screenshots)
+        },
+        reject: (error) => {
+          signal?.removeEventListener('abort', onAbort)
+          reject(error)
+        },
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.#queue.push(queued)
       this.#dispatchNext()
     })
   }
@@ -131,6 +153,25 @@ export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
       this.send(socket, queued.request)
     } catch {
       this.remove(socket)
+    }
+  }
+
+  // A pending entry is a copy of its queued entry and a reconnect can renew
+  // its request ID, so the settle callback is the only stable identity.
+  #abort(resolve: QueuedCapture<Client>['resolve']): void {
+    const index = this.#queue.findIndex((queued) => queued.resolve === resolve)
+    if (index >= 0) {
+      this.#queue.splice(index, 1)[0]!.reject(captureAborted())
+      return
+    }
+    for (const [requestId, pending] of this.#pending) {
+      if (pending.resolve !== resolve) continue
+      clearTimeout(pending.timer)
+      this.#pending.delete(requestId)
+      if (pending.socket) this.#cancel(pending.socket, requestId)
+      pending.reject(captureAborted())
+      this.#dispatchNext()
+      return
     }
   }
 
