@@ -1483,12 +1483,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Undo recently archived chats
+                >Undo recently deleted chats
                 <span class="d"
-                  >sidebar archive actions show a top toast with a white Undo button. The toast
+                  >sidebar delete actions show a top toast with a white Undo button. The toast
                   closes after 5 seconds, pausing on hover or focus within the 10-second undo
-                  window, and fade and slide visible rows before removal. Reduced motion skips these
-                  effects</span
+                  window, and fade and slide visible rows before removal. Deletion is permanent once
+                  the window ends; selecting or sending in a pending chat cancels it. Shift-click
+                  range selection covers only visible rows. Reduced motion skips these effects</span
                 ></span
               ></label
             >
@@ -1544,8 +1545,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Archive a whole project's sessions; project removal uses a centered confirmation
-                and never deletes its folder or chats</span
+                >Delete all of a project's chats after a centered confirmation; project removal uses
+                its own confirmation and never deletes its folder or chats</span
               ></label
             >
           </li>
