@@ -1,6 +1,8 @@
 import { once } from 'node:events'
-import { rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
+import os from 'node:os'
+import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
 import { startServer } from './server.js'
@@ -235,5 +237,89 @@ describe('rejected websocket connections', () => {
     } finally {
       healthy.terminate()
     }
+  })
+})
+
+describe('workspace search requests', () => {
+  async function fixture() {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-search-rpc-'))
+    temporary.push(root)
+    const projectPath = path.join(root, 'project')
+    const worktreePath = path.join(root, 'isolated')
+    await mkdir(path.join(projectPath, 'nested'), { recursive: true })
+    await mkdir(path.join(worktreePath, 'nested'), { recursive: true })
+    await writeFile(path.join(projectPath, 'nested', 'project-match.txt'), 'project')
+    await writeFile(path.join(worktreePath, 'nested', 'isolated-match.txt'), 'isolated')
+    state.projects.push({ path: projectPath })
+    state.threads.set('isolated-thread', { projectPath, worktreePath })
+    return { projectPath, worktreePath }
+  }
+
+  async function search(port: number, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'search', method: 'workspace.searchFiles', params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('searches unopened folders in a registered project', async () => {
+    const { projectPath } = await fixture()
+    const { port } = await listen()
+    expect(await search(port, { projectPath, query: ' MATCH ' })).toMatchObject({
+      id: 'search',
+      result: {
+        entries: [{ name: 'project-match.txt', path: 'nested/project-match.txt' }],
+        truncated: false,
+      },
+    })
+  })
+
+  it('uses the session checkout instead of the project root', async () => {
+    const { projectPath } = await fixture()
+    const { port } = await listen()
+    expect(
+      await search(port, { projectPath, threadId: 'isolated-thread', query: 'match' }),
+    ).toMatchObject({
+      result: {
+        entries: [{ name: 'isolated-match.txt', path: 'nested/isolated-match.txt' }],
+        truncated: false,
+      },
+    })
+  })
+
+  it('applies the listing registration and session ownership gates', async () => {
+    const { projectPath, worktreePath } = await fixture()
+    const { port } = await listen()
+    expect(await search(port, { projectPath: worktreePath, query: 'match' })).toMatchObject({
+      error: { message: 'project is not registered' },
+    })
+    expect(await search(port, { projectPath, threadId: 'missing', query: 'match' })).toMatchObject({
+      error: { message: 'thread is not in this project' },
+    })
+    state.threads.set('foreign-thread', { projectPath: worktreePath })
+    expect(
+      await search(port, { projectPath, threadId: 'foreign-thread', query: 'match' }),
+    ).toMatchObject({
+      error: { message: 'thread is not in this project' },
+    })
+  })
+
+  it.each([
+    { query: '  ' },
+    { query: 'x'.repeat(257) },
+    { query: 'match', limit: 0 },
+    { query: 'match', limit: 501 },
+  ])('validates the search contract before walking: %j', async (params) => {
+    const { projectPath } = await fixture()
+    const { port } = await listen()
+    expect(await search(port, { projectPath, ...params })).toMatchObject({
+      error: { message: 'invalid params for workspace.searchFiles' },
+    })
   })
 })
