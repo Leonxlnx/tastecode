@@ -150,9 +150,9 @@ export function startServer(
       push.broadcast('terminal.output', { terminalId, data, outputOffset }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
-    capturePreview: (url, viewports) =>
+    capturePreview: (url, viewports, signal) =>
       previewCapture.available
-        ? previewCapture.capture(url, viewports)
+        ? previewCapture.capture(url, viewports, signal)
         : Promise.resolve(undefined),
   })
   reportStartupMilestone('server-orchestrator-ready')

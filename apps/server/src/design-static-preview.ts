@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
+import { createReadStream, statSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
@@ -12,9 +12,11 @@ const MAX_MARKUP_NODES = 50_000
 const MAX_MARKUP_RESOURCES = 4_096
 
 const CONTENT_TYPES = new Map([
+  ['.aac', 'audio/aac'],
   ['.avif', 'image/avif'],
   ['.css', 'text/css; charset=utf-8'],
   ['.gif', 'image/gif'],
+  ['.flac', 'audio/flac'],
   ['.html', 'text/html; charset=utf-8'],
   ['.ico', 'image/x-icon'],
   ['.jpeg', 'image/jpeg'],
@@ -22,8 +24,20 @@ const CONTENT_TYPES = new Map([
   ['.js', 'text/javascript; charset=utf-8'],
   ['.json', 'application/json; charset=utf-8'],
   ['.mjs', 'text/javascript; charset=utf-8'],
+  ['.mp4', 'video/mp4'],
+  ['.m4v', 'video/mp4'],
+  ['.webm', 'video/webm'],
+  ['.mov', 'video/quicktime'],
+  ['.ogv', 'video/ogg'],
+  ['.mp3', 'audio/mpeg'],
+  ['.m4a', 'audio/mp4'],
+  ['.ogg', 'audio/ogg'],
+  ['.oga', 'audio/ogg'],
+  ['.opus', 'audio/ogg'],
+  ['.wav', 'audio/wav'],
   ['.otf', 'font/otf'],
   ['.png', 'image/png'],
+  ['.pdf', 'application/pdf'],
   ['.svg', 'image/svg+xml'],
   ['.ttf', 'font/ttf'],
   ['.webp', 'image/webp'],
@@ -31,11 +45,18 @@ const CONTENT_TYPES = new Map([
   ['.woff2', 'font/woff2'],
 ])
 
-export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
+export const STATIC_PREVIEW_HEADER = 'x-harness-preview-id'
+
+/** `reservedPorts` are claimed by command previews that have not bound them yet. */
+export async function startStaticDesignPreview(
+  root: string,
+  plan: StaticPlan,
+  reservedPorts: ReadonlySet<number> = new Set(),
+) {
   const previewUrl = new URL(plan.url)
   const previewId = randomUUID()
   const server = createServer((request, response) => {
-    response.setHeader('x-harness-preview-id', previewId)
+    response.setHeader(STATIC_PREVIEW_HEADER, previewId)
     response.setHeader('cache-control', 'no-store')
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.statusCode = 405
@@ -43,35 +64,61 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
     }
     try {
       const file = requestFile(root, plan.entry, previewUrl.pathname, request.url)
-      if (path.extname(file).toLowerCase() === '.html' && statSync(file).size > MAX_MARKUP_BYTES) {
+      const size = statSync(file).size
+      if (path.extname(file).toLowerCase() === '.html' && size > MAX_MARKUP_BYTES) {
         response.statusCode = 413
         return response.end('Static preview HTML exceeds the 2 MiB limit')
       }
       response.setHeader('content-type', CONTENT_TYPES.get(path.extname(file).toLowerCase())!)
       response.setHeader('x-content-type-options', 'nosniff')
-      response.end(request.method === 'HEAD' ? undefined : readFileSync(file))
+      response.setHeader('accept-ranges', 'bytes')
+      const range =
+        request.method === 'GET' && request.headers.range
+          ? byteRange(request.headers.range, size)
+          : undefined
+      if (range === null) {
+        response.statusCode = 416
+        response.setHeader('content-range', `bytes */${size}`)
+        return response.end()
+      }
+      const start = range?.start ?? 0
+      const end = range?.end ?? size - 1
+      response.setHeader('content-length', Math.max(0, end - start + 1))
+      if (range) {
+        response.statusCode = 206
+        response.setHeader('content-range', `bytes ${start}-${end}/${size}`)
+      }
+      if (request.method === 'HEAD' || size === 0) return response.end()
+      const stream = createReadStream(file, { start, end })
+      stream.on('error', () => response.destroy())
+      response.on('close', () => stream.destroy())
+      stream.pipe(response)
     } catch {
       response.statusCode = 404
       response.end('Not found')
     }
   })
+  const requestedPort = Number(previewUrl.port)
   try {
-    await listen(server, Number(previewUrl.port))
+    await listen(server, reservedPorts.has(requestedPort) ? 0 : requestedPort)
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'EADDRINUSE') throw error
     // The OS assigns an unused port atomically when concurrent sites choose the same one.
     await listen(server, 0)
   }
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('Static preview has no TCP address')
-  previewUrl.port = String(address.port)
+  for (let attempt = 0; reservedPorts.has(boundPort(server)); attempt++) {
+    await close(server)
+    if (attempt === 10) throw new Error('could not allocate a local preview port')
+    await listen(server, 0)
+  }
+  previewUrl.port = String(boundPort(server))
   const url = previewUrl.href
   try {
     const response = await fetch(url, {
       headers: { connection: 'close' },
       signal: AbortSignal.timeout(1_000),
     })
-    if (!response.ok || response.headers.get('x-harness-preview-id') !== previewId) {
+    if (!response.ok || response.headers.get(STATIC_PREVIEW_HEADER) !== previewId) {
       throw new Error('TasteCode static preview ownership check failed')
     }
     assertMarkupResources(root, { ...plan, url }, await response.text())
@@ -85,6 +132,22 @@ export async function startStaticDesignPreview(root: string, plan: StaticPlan) {
     output: () => `TasteCode static preview at ${url}`,
     stop: () => close(server),
   }
+}
+
+function byteRange(value: string, size: number): { start: number; end: number } | null {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim())
+  if (!match || (!match[1] && !match[2]) || size === 0) return null
+  if (!match[1]) {
+    const suffix = Number(match[2])
+    return Number.isSafeInteger(suffix) && suffix > 0
+      ? { start: Math.max(0, size - suffix), end: size - 1 }
+      : null
+  }
+  const start = Number(match[1])
+  const end = match[2] ? Number(match[2]) : size - 1
+  return Number.isSafeInteger(start) && Number.isSafeInteger(end) && start < size && end >= start
+    ? { start, end: Math.min(end, size - 1) }
+    : null
 }
 
 const RESOURCE_ATTRIBUTES = new Map<string, readonly string[]>([
@@ -220,11 +283,21 @@ function attribute(element: DefaultTreeAdapterTypes.Element, name: string): stri
 }
 
 function requestFile(root: string, entry: string, base: string, requestUrl = '/'): string {
-  const pathname = decodeURIComponent(new URL(requestUrl, 'http://127.0.0.1').pathname)
-  if (!pathname.startsWith(base)) throw new Error('outside preview path')
-  const suffix = pathname.slice(base.length)
-  if (suffix.includes('\\')) throw new Error('invalid preview path')
-  const relative = suffix ? suffix.split('/').join(path.sep) : entry
+  // Compare decoded segments: the base keeps its URL encoding while a request
+  // may spell the same characters differently. A decoded separator inside one
+  // segment is never a path step.
+  const segments = (pathname: string) => pathname.split('/').map(decodeURIComponent)
+  const prefix = segments(base).slice(0, -1)
+  const requested = segments(new URL(requestUrl, 'http://127.0.0.1').pathname)
+  if (
+    requested.length <= prefix.length ||
+    prefix.some((segment, index) => requested[index] !== segment)
+  )
+    throw new Error('outside preview path')
+  const suffix = requested.slice(prefix.length)
+  if (suffix.some((segment) => segment.includes('/') || segment.includes('\\')))
+    throw new Error('invalid preview path')
+  const relative = suffix.join('/') ? suffix.join(path.sep) : entry
   const file = existingWorkspacePath(root, relative, false)
   assertPublicWorkspaceFile(file)
   if (!CONTENT_TYPES.has(path.extname(file).toLowerCase())) throw new Error('unsupported file type')
@@ -240,6 +313,12 @@ function listen(server: Server, port: number): Promise<void> {
       resolve()
     })
   })
+}
+
+function boundPort(server: Server): number {
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('Static preview has no TCP address')
+  return address.port
 }
 
 function close(server: Server): Promise<void> {
