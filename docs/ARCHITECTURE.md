@@ -98,11 +98,12 @@ The desktop updater finds releases in `Leonxlnx/tastecode` through the public re
 feed on github.com. The API's anonymous limit is 60 requests an hour per IP address, shared
 by everything behind one office, school or VPN address, and an anonymous 304 still counts.
 The feed is outside that limit. A check that finds no newer version tag in the feed spends
-no API request. A newer tag costs one request to `/releases/tags/<tag>`, which confirms the
-release is published (drafts and bare tags answer 404) and supplies the asset digests. The
-feed holds the ten newest tags; when none of them is the installed version or older, the
-client lists every release through the API instead. Either way the highest semantic
-version wins regardless of publication order, and downgrades stay disabled.
+no API request. The newest newer tag costs one request to `/releases/tags/<tag>`, which
+confirms the release is published and supplies the asset digests. When that tag has no
+published release (drafts and bare tags answer 404), or when none of the feed's ten newest
+tags is the installed version or older, one request lists every release instead. A check
+therefore spends at most two API requests. Either way the highest semantic version wins
+regardless of publication order, and downgrades stay disabled.
 
 GitHub's pre-release flag does not matter: during the alpha every release is published as
 a pre-release, and every published release reaches every install. Drafts stay invisible.
@@ -113,8 +114,10 @@ its size and SHA-256 against GitHub's asset metadata.
 Downloads survive failures and restarts. The installer is stored in the machine's cache
 directory (`~/Library/Caches/TasteCode/update-downloads` on macOS, local AppData on Windows)
 under its SHA-256, and the next attempt asks for the remaining bytes with a Range request.
-The bytes are verified before use, removed once the native updater holds its own copy, and
-discarded when a check finds nothing newer.
+A minute without data ends an attempt and keeps the bytes so far. The bytes are verified
+before use, removed once the native updater holds its own copy, and discarded when a check
+finds nothing newer. Removal retries and never fails an update, because Windows virus
+scanners briefly lock fresh installers.
 
 Background attempts never surface their failures. An offline launch, a GitHub outage or a
 dropped download falls back to the last verdict, is recorded in opt-in local diagnostics,
