@@ -725,6 +725,19 @@ export function App() {
   >()
   const [rollbackLoadingId, setRollbackLoadingId] = useState<number | undefined>()
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
+  const rollbackInspectionRequest = useRef<object | undefined>(undefined)
+  const restoreInFlight = useRef(false)
+  useEffect(() => {
+    rollbackInspectionRequest.current = undefined
+    setRollbackInspection(undefined)
+    setRollbackLoadingId(undefined)
+  }, [activeId])
+  useEffect(() => {
+    if (rollbackOpen) return
+    rollbackInspectionRequest.current = undefined
+    setRollbackInspection(undefined)
+    setRollbackLoadingId(undefined)
+  }, [rollbackOpen])
   const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
   const [isolateSession, setIsolateSession] = useState(false)
   const [designModes, setDesignModes] = useState<Record<string, boolean>>({})
@@ -3406,17 +3419,23 @@ export function App() {
   const inspectCheckpoint = useCallback(
     async (checkpoint: Checkpoint) => {
       if (!activeId) return
+      const request = {}
+      rollbackInspectionRequest.current = request
+      setRollbackInspection(undefined)
       setRollbackLoadingId(checkpoint.id)
       try {
         const { files } = await transport.request('thread.changedSince', {
           threadId: activeId,
           checkpointId: checkpoint.id,
         })
+        if (rollbackInspectionRequest.current !== request || activeIdRef.current !== activeId)
+          return
         setRollbackInspection({ checkpoint, files })
       } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
+        if (rollbackInspectionRequest.current === request && activeIdRef.current === activeId)
+          reportError(error instanceof Error ? error.message : String(error))
       } finally {
-        setRollbackLoadingId(undefined)
+        if (rollbackInspectionRequest.current === request) setRollbackLoadingId(undefined)
       }
     },
     [transport, activeId],
@@ -3508,7 +3527,14 @@ export function App() {
   )
 
   const restoreCheckpoint = useCallback(async () => {
-    if (!activeId || !rollbackInspection) return
+    if (
+      !activeId ||
+      !rollbackInspection ||
+      rollbackLoadingId !== undefined ||
+      restoreInFlight.current
+    )
+      return
+    restoreInFlight.current = true
     setRollbackRestoring(true)
     try {
       threadController.invalidateHistory(activeId)
@@ -3516,19 +3542,33 @@ export function App() {
         threadId: activeId,
         checkpointId: rollbackInspection.checkpoint.id,
       })
-      await loadHistory(activeId)
-      await refreshCheckpoints(activeId)
-      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
       setUndoRestore({ threadId: activeId, token: undo })
-      setNotice(`Restored to before “${rollbackInspection.checkpoint.label}”.`)
       setRollbackOpen(false)
       setRollbackInspection(undefined)
+      rollbackInspectionRequest.current = undefined
+      setNotice(`Restored to before “${rollbackInspection.checkpoint.label}”.`)
+      await loadHistory(activeId)
+      await refreshCheckpoints(activeId)
+      if (activePath) {
+        const info = await transport.request('workspace.info', { path: activePath })
+        if (activePathRef.current === activePath && activeIdRef.current === activeId)
+          setWorkspace(info)
+      }
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
     } finally {
       setRollbackRestoring(false)
+      restoreInFlight.current = false
     }
-  }, [transport, activeId, activePath, rollbackInspection, loadHistory, refreshCheckpoints])
+  }, [
+    transport,
+    activeId,
+    activePath,
+    rollbackInspection,
+    rollbackLoadingId,
+    loadHistory,
+    refreshCheckpoints,
+  ])
 
   const reverseRestore = useCallback(async () => {
     if (!undoRestore) return
@@ -5023,6 +5063,8 @@ export function App() {
             onInspect={(checkpoint) => void inspectCheckpoint(checkpoint)}
             onRestore={() => void restoreCheckpoint()}
             onClose={() => {
+              rollbackInspectionRequest.current = undefined
+              setRollbackLoadingId(undefined)
               setRollbackOpen(false)
               setRollbackInspection(undefined)
             }}

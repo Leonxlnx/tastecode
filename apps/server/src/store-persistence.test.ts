@@ -38,6 +38,42 @@ const message = (text: string, createdAt = 1): DomainEvent => ({
 })
 
 describe('durable history ownership', () => {
+  it('restores imported membership without reviving retired branches or localizing imports', () => {
+    const { store, root, location } = setup()
+    store.saveProviderHistory('codex', 'thread', {
+      id: 'native',
+      workspacePath: root,
+      title: 'Native',
+      createdAt: 1,
+      updatedAt: 2,
+      revision: 'latest',
+    })
+    store.append('thread', message('local'))
+    const seq = store.lastSeq('thread')
+    store.mergeProviderHistory('thread', 'old', [{ key: 'old', event: message('retired') }])
+    store.mergeProviderHistory('thread', 'latest', [{ key: 'new', event: message('visible') }])
+    const before = store.history('thread')
+    const token = store.saveRestoreUndo('thread', seq, 'a'.repeat(40))
+    store.applyRestoreUndo('thread', token)
+    expect(store.history('thread')).toEqual(before)
+    expect(store.localHistory('thread').map(({ event }) => event)).toEqual([message('local')])
+    expect(store.searchSessions({ query: 'retired' }).results).toEqual([])
+    expect(store.searchSessions({ query: 'visible' }).results).toHaveLength(1)
+    const raw = new DatabaseSync(location)
+    try {
+      expect(
+        raw
+          .prepare('SELECT event_key, active FROM provider_history_events ORDER BY event_seq')
+          .all(),
+      ).toEqual([
+        { event_key: 'old', active: 0 },
+        { event_key: 'new', active: 1 },
+      ])
+    } finally {
+      raw.close()
+    }
+  })
+
   it('retains checkpoints and undo tails for providers absent from this build', () => {
     const { store, root, location } = setup()
     const seq = store.append('thread', message('first'))

@@ -5,6 +5,7 @@ import { ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
+import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 let store: Store
 const histories: ProviderHistory[] = []
@@ -81,6 +82,32 @@ const messages = (id: string) =>
   )
 
 describe('provider history integration', () => {
+  it('does not reimport a provider echo containing hidden restore context', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    for (const event of transcript('local-turn')) store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue(
+      transcript().map((event): DomainEvent =>
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, text: RESTORE_CONTEXT_NOTICE + event.item.text } }
+          : event,
+      ),
+    )
+    await history.refresh()
+    await history.load('local')
+    expect(
+      messages('local')
+        .filter((item) => item.role === 'user')
+        .map((item) => item.text),
+    ).toEqual(['Hello'])
+  })
+
   it('never imports provider-owned helper chats', async () => {
     const { history, source, hooks } = setup([{ ...metadata(), internal: true }])
     await history.refresh()
