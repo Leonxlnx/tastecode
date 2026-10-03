@@ -119,7 +119,7 @@ export function createApplicationMenuTemplate(options: AppMenuOptions): MenuItem
         action('Next Chat', 'nextChat'),
         separator,
         action('Pin or Unpin Chat', 'toggleSessionPin'),
-        action('Archive Current Chat…', 'archiveSession'),
+        action('Delete Current Chat…', 'archiveSession'),
         action('Open Restore Points…', 'rollback'),
       ],
     },
