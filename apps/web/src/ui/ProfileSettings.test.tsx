@@ -19,6 +19,45 @@ function expectedAvatarCells(name: string): string {
 }
 
 describe('profile settings', () => {
+  it('reserves the plan line while the account loads and fills the same slot', () => {
+    const view = render(<ProfileSettings account={undefined} accountLoading providerName="Codex" />)
+    const loading = screen.getByRole('status')
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.classList.contains('profile-identity__meta')).toBe(true)
+    expect(screen.getByText('Loading account plan…').className).toBe('visually-hidden')
+    expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 9px')
+    expect(screen.queryByText('Pro')).toBeNull()
+    const editor = screen.getByRole('textbox', { name: 'Display name' })
+
+    view.rerender(
+      <ProfileSettings account={{ signedIn: true, plan: 'Pro' }} providerName="Codex" />,
+    )
+    expect(screen.queryByText('Loading account plan…')).toBeNull()
+    expect(screen.getByText('Pro').closest('.profile-identity__meta')).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toBe(editor)
+  })
+
+  it('does not reserve an unknown plan without an active account request', () => {
+    const view = render(<ProfileSettings account={undefined} providerName="Codex" />)
+    expect(view.container.querySelector('.profile-identity__meta')).toBeNull()
+    view.rerender(<ProfileSettings account={undefined} accountLoading providerName="Codex" />)
+    expect(screen.getByRole('status')).toBeTruthy()
+    view.rerender(<ProfileSettings account={{ signedIn: false }} providerName="Codex" />)
+    expect(view.container.querySelector('.profile-identity__meta')).toBeNull()
+  })
+
+  it('keeps an already known plan visible during account refresh', () => {
+    render(
+      <ProfileSettings
+        account={{ signedIn: true, plan: 'Pro' }}
+        accountLoading
+        providerName="Codex"
+      />,
+    )
+    expect(screen.getByText('Pro')).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
   it('keeps the onboarding name when switching to Grok', () => {
     const view = render(
       <ProfileSettings

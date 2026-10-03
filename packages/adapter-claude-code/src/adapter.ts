@@ -94,44 +94,26 @@ type ToolInput = z.infer<typeof ToolInputSchema>
  */
 const FULL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 export const CLAUDE_MODELS: Model[] = [
-  claudeModel(
-    'claude-fable-5-1',
-    'Claude Fable 5.1',
-    'Long-horizon reasoning and coding',
-    FULL_EFFORTS,
-  ),
-  claudeModel(
-    'claude-fable-5',
-    'Claude Fable 5',
-    'Most capable — flagship tier',
-    FULL_EFFORTS,
-    true,
-  ),
-  claudeModel('claude-opus-5', 'Claude Opus 5', 'Deep reasoning', FULL_EFFORTS),
-  claudeModel('claude-sonnet-5', 'Claude Sonnet 5', 'Balanced speed and capability', FULL_EFFORTS),
-  claudeModel('claude-haiku-4-5', 'Claude Haiku 4.5', 'Fastest and cheapest', []),
-  claudeModel('claude-opus-4-8', 'Claude Opus 4.8', 'Previous Opus generation', FULL_EFFORTS),
-  claudeModel(
-    'claude-opus-4-7',
-    'Claude Opus 4.7',
-    'Older Opus generation',
-    FULL_EFFORTS,
-    false,
-    'xhigh',
-  ),
-  claudeModel('claude-opus-4-6', 'Claude Opus 4.6', 'Older Opus generation', [
+  claudeModel('claude-fable-5-1', 'Fable 5.1', 'Long-horizon reasoning and coding', FULL_EFFORTS),
+  claudeModel('claude-fable-5', 'Fable 5', 'Most capable — flagship tier', FULL_EFFORTS, true),
+  claudeModel('claude-opus-5', 'Opus 5', 'Deep reasoning', FULL_EFFORTS),
+  claudeModel('claude-sonnet-5', 'Sonnet 5', 'Balanced speed and capability', FULL_EFFORTS),
+  claudeModel('claude-haiku-4-5', 'Haiku 4.5', 'Fastest and cheapest', []),
+  claudeModel('claude-opus-4-8', 'Opus 4.8', 'Previous Opus generation', FULL_EFFORTS),
+  claudeModel('claude-opus-4-7', 'Opus 4.7', 'Older Opus generation', FULL_EFFORTS, false, 'xhigh'),
+  claudeModel('claude-opus-4-6', 'Opus 4.6', 'Older Opus generation', [
     'low',
     'medium',
     'high',
     'max',
   ]),
-  claudeModel('claude-opus-4-5', 'Claude Opus 4.5', 'Older Opus generation', [
+  claudeModel('claude-opus-4-5', 'Opus 4.5', 'Older Opus generation', [
     'low',
     'medium',
     'high',
     'max',
   ]),
-  claudeModel('claude-sonnet-4-6', 'Claude Sonnet 4.6', 'Previous Sonnet generation', [
+  claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Previous Sonnet generation', [
     'low',
     'medium',
     'high',
@@ -1411,7 +1393,7 @@ function versionedClaudeModelName(id: string): string | undefined {
   if (!match) return undefined
   const family = `${match[1]![0]!.toUpperCase()}${match[1]!.slice(1)}`
   const version = `${match[2]}${match[3] ? `.${match[3]}` : ''}`
-  return `Claude ${family} ${version}`
+  return `${family} ${version}`
 }
 
 async function withTimeout<T>(

@@ -128,6 +128,202 @@ describe('composer resource triggers', () => {
   })
 })
 
+describe('Composer loading controls', () => {
+  function expectSkeleton(label: string, className: string) {
+    const labelElement = screen.getByText(label)
+    const status = labelElement.closest('[role="status"]') as HTMLElement
+    expect(labelElement.classList.contains('visually-hidden')).toBe(true)
+    expect(status.classList.contains('skeleton-group')).toBe(true)
+    expect(status.classList.contains(className)).toBe(true)
+    expect(status.getAttribute('aria-busy')).toBe('true')
+    expect(status.hasAttribute('tabindex')).toBe(false)
+    expect(status.querySelector('button, input, [tabindex]')).toBeNull()
+    expect(status.querySelectorAll('.skeleton[aria-hidden="true"]').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/^Loading(?: models?)?…$/)).toBeNull()
+    return status
+  }
+
+  it('keeps the model trigger skeleton through discovery and its first lazy load', async () => {
+    const view = renderComposer(vi.fn(), { modelsLoaded: false })
+    expectSkeleton('Loading model', 'composer-skeleton-model')
+    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+
+    view.rerenderComposer({
+      modelsLoaded: true,
+      models: [
+        {
+          key: 'codex:model',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'model',
+            displayName: 'Test model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ],
+    })
+    expectSkeleton('Loading model', 'composer-skeleton-model')
+    expect(await screen.findByRole('button', { name: 'Model and reasoning' })).toBeTruthy()
+    expect(screen.queryByText('Loading model')).toBeNull()
+  })
+
+  it('removes the model placeholder when discovery finishes without models', () => {
+    const view = renderComposer(vi.fn(), { modelsLoaded: false })
+    expectSkeleton('Loading model', 'composer-skeleton-model')
+    view.rerenderComposer({ modelsLoaded: true })
+    expect(screen.queryByText('Loading model')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+  })
+
+  it('keeps the permission frame disabled until its icon and label arrive', () => {
+    const onApprovalChange = vi.fn()
+    const view = renderComposer(vi.fn(), { approvalLoading: true, onApprovalChange })
+    const button = screen.getByRole('button', { name: 'Permissions' }) as HTMLButtonElement
+    const status = expectSkeleton('Loading permissions', 'composer-skeleton-permission')
+    expect(button.contains(status)).toBe(true)
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(onApprovalChange).not.toHaveBeenCalled()
+
+    view.rerenderComposer({ approvalLoading: false })
+    expect(screen.getByRole('button', { name: 'Permissions' })).toBe(button)
+    expect(button.disabled).toBe(false)
+    expect(button.textContent).toBe('Ask first')
+    expect(screen.queryByText('Loading permissions')).toBeNull()
+  })
+
+  it('replaces the attachment slot with the real button once support is known', () => {
+    const view = renderComposer(vi.fn(), {
+      attachmentsLoading: true,
+      attachmentsSupported: false,
+    })
+    const status = expectSkeleton('Loading attachments', 'composer-skeleton-attachment')
+    expect(status.parentElement?.classList.contains('tools')).toBe(true)
+    expect(status.previousElementSibling).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+
+    view.rerenderComposer({ attachmentsLoading: false, attachmentsSupported: true })
+    expect(screen.getByRole('button', { name: 'Attach files' }).previousElementSibling).toBeNull()
+    expect(screen.queryByText('Loading attachments')).toBeNull()
+  })
+
+  it('keeps the voice slot through status discovery and its first lazy load', async () => {
+    const view = renderComposer(vi.fn(), { voiceLoading: true })
+    const status = expectSkeleton('Loading voice', 'composer-skeleton-voice')
+    expect(status.querySelector('.skeleton--circle')).toBeTruthy()
+    expect(status.nextElementSibling?.classList.contains('composer__send-beam')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
+
+    view.rerenderComposer({ voiceLoading: false, voiceAvailable: true })
+    expectSkeleton('Loading voice', 'composer-skeleton-voice')
+    expect(await screen.findByRole('button', { name: 'Record voice note' })).toBeTruthy()
+    expect(screen.queryByText('Loading voice')).toBeNull()
+  })
+
+  it('does not reserve an idle voice control while a turn is running', () => {
+    renderComposer(vi.fn(), { voiceLoading: true, running: true })
+    expect(screen.queryByText('Loading voice')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
+  })
+
+  it('replaces the branch placeholder in the new-session shelf', () => {
+    const view = renderComposer(vi.fn(), { branchesLoading: true, branches: [] })
+    const status = expectSkeleton('Loading branches', 'composer-skeleton-branch')
+    expect(status.parentElement?.classList.contains('composer__shelf')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Choose branch' })).toBeNull()
+
+    view.rerenderComposer({ branchesLoading: false, branches: ['main'] })
+    expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()
+    expect(screen.queryByText('Loading branches')).toBeNull()
+  })
+
+  it('does not offer “Choose project” before the project list has arrived', () => {
+    const view = renderComposer(vi.fn(), {
+      projects: [],
+      projectPath: undefined,
+      projectName: undefined,
+      projectsLoading: true,
+    })
+    const project = screen.getByRole('button', { name: 'Choose project' })
+    expect(project.querySelector('.skeleton')).not.toBeNull()
+    expect(project.textContent).toBe('')
+
+    view.rerenderComposer({ projectsLoading: false })
+    expect(project.querySelector('.skeleton')).toBeNull()
+    expect(project.textContent).toBe('Choose project')
+  })
+
+  it('removes unavailable controls after loading without leaving false placeholders', () => {
+    const view = renderComposer(vi.fn(), {
+      attachmentsLoading: true,
+      attachmentsSupported: false,
+      voiceLoading: true,
+      branchesLoading: true,
+      branches: [],
+    })
+    expectSkeleton('Loading attachments', 'composer-skeleton-attachment')
+    expectSkeleton('Loading voice', 'composer-skeleton-voice')
+    expectSkeleton('Loading branches', 'composer-skeleton-branch')
+    view.rerenderComposer({
+      attachmentsLoading: false,
+      voiceLoading: false,
+      branchesLoading: false,
+    })
+    expect(screen.queryByText(/^Loading (attachments|voice|branches)$/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Choose branch' })).toBeNull()
+  })
+
+  it('does not replace known controls with placeholders during a refresh', async () => {
+    renderComposer(vi.fn(), {
+      attachmentsLoading: true,
+      branchesLoading: true,
+      voiceLoading: true,
+      voiceAvailable: true,
+    })
+    expect(screen.getByRole('button', { name: 'Attach files' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Record voice note' })).toBeTruthy()
+    expect(screen.queryByText(/^Loading (attachments|voice|branches)$/)).toBeNull()
+  })
+
+  it('opens a non-interactive resource frame before the picker chunk arrives', async () => {
+    renderComposer(vi.fn(), { transport: populatedResourceTransport() })
+    const textarea = screen.getByRole('textbox', { name: 'Message' })
+    textarea.focus()
+    for (const marker of ['/', '$', '@']) {
+      fireEvent.change(textarea, { target: { value: marker } })
+      const status = expectSkeleton('Loading skills and MCP servers…', 'skeleton-group')
+      const list = screen.getByRole('listbox', { name: 'Skills and MCP servers' })
+      expect(list.classList.contains('composer-skeleton-picker__list')).toBe(true)
+      expect(list.parentElement?.classList.contains('composer-skeleton-picker')).toBe(true)
+      expect(textarea.getAttribute('aria-controls')).toBe(list.id)
+      expect(
+        Array.from(
+          status.querySelectorAll<HTMLElement>('.skeleton-row__title'),
+          (bar) => bar.style.width,
+        ),
+      ).toEqual(['108px', '76px', '132px', '92px'])
+      expect(document.activeElement).toBe(textarea)
+      expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(true)
+      fireEvent.keyDown(textarea, { key: 'Escape' })
+      expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+    }
+
+    fireEvent.change(textarea, { target: { value: '@skill' } })
+    fireEvent.change(textarea, { target: { value: '@' } })
+    expect(await screen.findByRole('option', { name: /Airtable CLI/ })).toBeTruthy()
+    expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+    expect(document.activeElement).toBe(textarea)
+  })
+})
+
 describe('Composer draft state', () => {
   it('keeps the native draft through unrelated rerenders and submits the latest text', () => {
     const onSend = vi.fn()
