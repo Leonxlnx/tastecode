@@ -189,6 +189,93 @@ describe('WorkspaceBrowser', () => {
     })
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('NAME_NOT_RESOLVED'))
   })
+
+  it.each(['dom-ready', 'did-stop-loading'])(
+    'shows a page skeleton only before the first page reaches %s',
+    (readyEvent) => {
+      const { container } = render(<WorkspaceBrowser active />)
+      const view = guests[0]!
+      act(() => view.dispatchEvent(new Event('dom-ready')))
+      expect(screen.queryByRole('status')).toBeNull()
+      view.loadURL.mockImplementation(async (url: string) => {
+        view.getURL.mockReturnValue(url)
+        view.isLoading.mockReturnValue(true)
+        view.dispatchEvent(new Event('did-start-loading'))
+      })
+
+      const address = screen.getByLabelText('Browser address')
+      fireEvent.change(address, { target: { value: 'example.com/first' } })
+      fireEvent.submit(address.closest('form')!)
+
+      const status = screen.getByRole('status')
+      const canvas = container.querySelector('.workspace-browser__canvas')!
+      const host = container.querySelector('.workspace-browser__guest-host')!
+      expect(status.textContent).toBe('Loading page…')
+      expect(status.parentElement).toBe(host)
+      expect(status.querySelector('.workspace-browser__skeleton-media')).toBeTruthy()
+      expect(canvas.getAttribute('aria-busy')).toBe('true')
+      expect(container.querySelector('.workspace-browser__placeholder')).toBeNull()
+      expect(host.contains(view)).toBe(true)
+
+      act(() => {
+        view.isLoading.mockReturnValue(readyEvent === 'dom-ready')
+        view.dispatchEvent(new Event(readyEvent))
+      })
+      expect(screen.queryByRole('status')).toBeNull()
+      act(() => {
+        view.isLoading.mockReturnValue(false)
+        view.dispatchEvent(new Event('did-stop-loading'))
+      })
+      expect(canvas.getAttribute('aria-busy')).toBe('false')
+
+      fireEvent.change(address, { target: { value: 'example.com/second' } })
+      fireEvent.submit(address.closest('form')!)
+      expect(view.loadURL).toHaveBeenLastCalledWith('https://example.com/second')
+      expect(canvas.getAttribute('aria-busy')).toBe('true')
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(host.getAttribute('data-visible')).toBe('true')
+      expect(host.contains(view)).toBe(true)
+      expect(screen.getByLabelText('Browser address')).toBe(address)
+    },
+  )
+
+  it.each(['event', 'rejection'])(
+    'removes the first-page skeleton after a load failure %s',
+    async (failureKind) => {
+      const { container } = render(<WorkspaceBrowser active />)
+      const view = guests[0]!
+      act(() => view.dispatchEvent(new Event('dom-ready')))
+      let rejectLoad!: (error: Error) => void
+      view.loadURL.mockImplementation(
+        (url: string) =>
+          new Promise<void>((_resolve, reject) => {
+            rejectLoad = reject
+            view.getURL.mockReturnValue(url)
+            view.isLoading.mockReturnValue(true)
+            view.dispatchEvent(new Event('did-start-loading'))
+          }),
+      )
+      const address = screen.getByLabelText('Browser address')
+      fireEvent.change(address, { target: { value: 'example.com' } })
+      fireEvent.submit(address.closest('form')!)
+      expect(screen.getByRole('status').textContent).toBe('Loading page…')
+
+      await act(async () => {
+        if (failureKind === 'rejection') rejectLoad(new Error('NAME_NOT_RESOLVED'))
+        else
+          dispatchGuestEvent(view, 'did-fail-load', {
+            errorCode: -105,
+            errorDescription: 'NAME_NOT_RESOLVED',
+            isMainFrame: true,
+          })
+      })
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(screen.getByRole('alert').textContent).toBe('NAME_NOT_RESOLVED')
+      expect(container.querySelector('.workspace-browser__canvas')?.getAttribute('aria-busy')).toBe(
+        'false',
+      )
+    },
+  )
 })
 
 function dispatchGuestEvent(

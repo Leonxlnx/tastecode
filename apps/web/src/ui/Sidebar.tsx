@@ -69,6 +69,7 @@ import type { AccountLimitsState } from './AccountLimits.js'
 import { useDialogFocus } from './dialog-focus.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
 type AccountLimitsComponent = AccountLimitsModule['AccountLimits']
@@ -191,6 +192,7 @@ const projectMenuTrigger = () => (
 
 function SidebarComponent(props: {
   projects: Project[]
+  projectsLoading?: boolean | undefined
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
   account: Account | undefined
@@ -715,9 +717,12 @@ function SidebarComponent(props: {
           </div>
         ) : null}
         {inbox ? (
-          <Suspense fallback={null}>
+          <Suspense
+            fallback={<InboxRailSkeleton pullRequests={Boolean(props.onOpenPullRequests)} />}
+          >
             <InboxSidebar
               projects={props.projects}
+              loading={props.projectsLoading}
               scope={scope}
               activeProjectPath={props.activeProjectPath}
               activeSessionId={props.activeSessionId}
@@ -839,7 +844,11 @@ function SidebarComponent(props: {
                 </button>
               </div>
               {orderedProjects.length === 0 ? (
-                <p className="rail__hint">Nothing here yet.</p>
+                props.projectsLoading ? (
+                  <SidebarTreeSkeleton />
+                ) : (
+                  <p className="rail__hint">Nothing here yet.</p>
+                )
               ) : (
                 renderedProjects.map((project) => (
                   <ProjectRow

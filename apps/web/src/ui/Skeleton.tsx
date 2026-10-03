@@ -1,6 +1,31 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useLayoutEffect, useState, type CSSProperties, type ReactNode } from 'react'
 
 import '../styles/skeleton.css'
+
+// Matches the .skeleton-group animation delay in skeleton.css.
+const APPEAR_DELAY_MS = 160
+let groupsOnScreen = 0
+let groupsEnteredAt = 0
+
+/**
+ * Placeholders on screen together share one entrance. A group that takes over
+ * from another (a lazy surface's shell handing over to the surface's own
+ * loading rows) picks up the opacity the first one reached instead of
+ * blinking out for the appear delay again. The handover renders while the
+ * outgoing group is still mounted, which is what makes it visible here.
+ */
+function useSharedEntrance(): CSSProperties | undefined {
+  const [delay] = useState(() =>
+    groupsOnScreen > 0 ? APPEAR_DELAY_MS - (performance.now() - groupsEnteredAt) : undefined,
+  )
+  useLayoutEffect(() => {
+    if (groupsOnScreen++ === 0) groupsEnteredAt = performance.now()
+    return () => {
+      groupsOnScreen--
+    }
+  }, [])
+  return delay === undefined ? undefined : { animationDelay: `${Math.round(delay)}ms` }
+}
 
 type Size = number | string
 
@@ -34,9 +59,25 @@ export function SkeletonStatus(props: {
   className?: string | undefined
   children: ReactNode
 }) {
+  const entrance = useSharedEntrance()
   return (
-    <div className={`skeleton-group${cls(props.className)}`} role="status" aria-busy="true">
+    <div
+      className={`skeleton-group${cls(props.className)}`}
+      role="status"
+      aria-busy="true"
+      style={entrance}
+    >
       <span className="visually-hidden">{props.label}</span>
+      {props.children}
+    </div>
+  )
+}
+
+/** A decorative stretch of placeholders next to a SkeletonStatus that already announces the load. */
+export function SkeletonGroup(props: { className?: string | undefined; children: ReactNode }) {
+  const entrance = useSharedEntrance()
+  return (
+    <div className={`skeleton-group${cls(props.className)}`} aria-hidden style={entrance}>
       {props.children}
     </div>
   )
