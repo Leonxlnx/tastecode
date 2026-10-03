@@ -956,7 +956,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         finalResponse={responseLead}
         settling={settling}
         onEditMessage={onEditMessage}
-        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex)}
+        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex, items)}
         onRevertCheckpoint={onRevertCheckpoint}
       />
     </div>

@@ -34,6 +34,7 @@ import {
   retainCheckpoint,
   retainCheckpoints,
   checkpointRepository,
+  RestoreSnapshotError,
 } from './checkpoint.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import { ProviderControls } from './provider-controls.js'
@@ -41,7 +42,7 @@ import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
-import { StartupCleanupError } from './provider-session.js'
+import { RESTORE_CONTEXT_NOTICE, StartupCleanupError } from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { Store, StoredCheckpoint } from './store.js'
@@ -1483,6 +1484,9 @@ export class Orchestrator {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
     const entry = this.#get(threadId)
+    if (this.#store.threadNeedsRestoreContext(threadId) && !submission) {
+      submission = { id: crypto.randomUUID(), text, attachments, createdAt: Date.now() }
+    }
     this.#touchThreadRuntime(threadId)
     if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
@@ -1601,7 +1605,12 @@ export class Orchestrator {
       const prompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
-      const turnId = await entry.session.sendTurn(threadId, prompt, attachments, options)
+      const turnId = await entry.session.sendTurn(
+        threadId,
+        this.#promptAfterRestore(threadId, prompt),
+        attachments,
+        options,
+      )
       if (panicGeneration !== this.#panicGeneration) {
         await entry.session.interrupt(threadId)
         throw new Error('turn cancelled by panic stop')
@@ -1613,6 +1622,7 @@ export class Orchestrator {
         throw new Error('turn cancelled because the provider session changed')
       }
       this.#acceptTurnStart(threadId, turnId, pendingStart)
+      this.#store.clearThreadRestoreContext(threadId)
       return turnId
     } catch (error) {
       if (this.#threads.get(threadId) === entry) this.#markIdleRuntimeEligible(threadId)
@@ -2613,17 +2623,18 @@ export class Orchestrator {
       }
 
       const repoPath = this.#repoPath(threadId)
-      const replaced = await restoreSnapshot(
+      const replaced = await this.#restoreSnapshotWithRecovery(
+        threadId,
         repoPath,
         checkpoint.commit,
-        this.#store.checkpointNamespace,
       )
 
       // Rolling the files back without this would leave the transcript
       // describing work that no longer exists on disk.
       try {
         this.#dropInboxProjection(threadId)
-        return { undo: this.#store.saveRestoreUndo(threadId, checkpoint.seq, replaced.commit) }
+        const undo = this.#store.saveRestoreUndo(threadId, checkpoint.seq, replaced.commit)
+        return { undo }
       } catch (error) {
         await restoreSnapshot(repoPath, replaced.commit)
         throw error
@@ -2639,7 +2650,7 @@ export class Orchestrator {
       if (!stored || !undo) throw new Error('restore can no longer be undone')
 
       const repoPath = this.#repoPath(threadId)
-      const replaced = await restoreSnapshot(repoPath, undo.commit, this.#store.checkpointNamespace)
+      const replaced = await this.#restoreSnapshotWithRecovery(threadId, repoPath, undo.commit)
       try {
         this.#store.applyRestoreUndo(threadId, token)
         this.#dropInboxProjection(threadId)
@@ -2648,6 +2659,36 @@ export class Orchestrator {
         throw error
       }
     })
+  }
+
+  #promptAfterRestore(threadId: string, prompt: string): string {
+    if (!this.#store.threadNeedsRestoreContext(threadId)) return prompt
+    return `${RESTORE_CONTEXT_NOTICE}${prompt}`
+  }
+
+  async #restoreSnapshotWithRecovery(threadId: string, repoPath: string, commit: string) {
+    try {
+      return await restoreSnapshot(repoPath, commit, this.#store.checkpointNamespace)
+    } catch (error) {
+      if (error instanceof RestoreSnapshotError) {
+        try {
+          this.#store.addCheckpoint({
+            threadId,
+            seq: this.#store.lastSeq(threadId),
+            commit: error.snapshot.commit,
+            label: 'Recovery: original files before failed restore',
+          })
+        } catch {
+          // The original message still names the commit holding the files.
+          throw error
+        }
+        throw new Error(
+          `${error.message} Select "Recovery: original files before failed restore" in this chat's checkpoints to recover them.`,
+          { cause: error },
+        )
+      }
+      throw error
+    }
   }
 
   /** What the agent has changed since a checkpoint, so a restore is informed. */
@@ -3586,7 +3627,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     this.#designStartWaiters.set(threadId, resolveStarted)
     const session = this.#get(threadId).session
     const providerStart = session
-      .sendTurn(threadId, prompt, attachments, options)
+      .sendTurn(threadId, this.#promptAfterRestore(threadId, prompt), attachments, options)
       .then(async (turnId) => {
         if (panicGeneration !== this.#panicGeneration) {
           await session.interrupt(threadId)
@@ -3618,6 +3659,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
       const { turnId } = result
       if (panicGeneration !== this.#panicGeneration) throw new Error('turn cancelled by panic stop')
       this.#acceptTurnStart(threadId, turnId, pendingStart)
+      this.#store.clearThreadRestoreContext(threadId)
       this.#startDesignActivity(threadId, turnId)
       if (result.source === 'event') {
         void providerStart.then(
