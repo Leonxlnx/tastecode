@@ -58,6 +58,7 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { preloadThread } from './LazyThread.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ComposerErrors, useComposerError, type ComposerError } from './ComposerErrors.js'
+import { Skeleton, SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import { droppedFilePath } from './composer-dropped-file.js'
 
 const ComposerResourcePicker = lazy(() =>
@@ -74,6 +75,47 @@ const ComposerVoiceControl = lazy(() =>
   })),
 )
 const DRAFT_HAS_CONTENT = /\S/u
+const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
+
+function ModelTriggerSkeleton() {
+  return (
+    <SkeletonStatus
+      label="Loading model"
+      className="menutrigger menutrigger--model-selector composer-skeleton-model"
+    >
+      <Skeleton className="skeleton--icon" />
+      <Skeleton width={88} height={9} />
+    </SkeletonStatus>
+  )
+}
+
+function VoiceControlSkeleton() {
+  return (
+    <SkeletonStatus
+      label="Loading voice"
+      className="composer-skeleton-slot composer-skeleton-voice"
+    >
+      <Skeleton className="skeleton--circle" width="100%" height="100%" />
+    </SkeletonStatus>
+  )
+}
+
+function ResourcePickerSkeleton() {
+  return (
+    <div className="composer-skeleton-picker">
+      <div
+        id={COMPOSER_RESOURCE_LIST_ID}
+        className="composer-skeleton-picker__list"
+        role="listbox"
+        aria-label="Skills and MCP servers"
+      >
+        <SkeletonStatus label="Loading skills and MCP servers…">
+          <SkeletonRows rows={4} icon widths={RESOURCE_SKELETON_WIDTHS} />
+        </SkeletonStatus>
+      </div>
+    </div>
+  )
+}
 
 type ContextUsageStyle = CSSProperties & { '--context-used': number }
 
@@ -410,8 +452,10 @@ function ComposerComponent(props: {
   projects: ReadonlyArray<ProjectChoice>
   projectPath: string | undefined
   projectName: string | undefined
+  projectsLoading?: boolean
   branch: string | undefined
   branches: string[]
+  branchesLoading?: boolean
   models: ModelChoice[]
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
@@ -423,7 +467,9 @@ function ComposerComponent(props: {
   approvalLoading?: boolean | undefined
   autoReviewSupported: boolean
   attachmentsSupported: boolean
+  attachmentsLoading?: boolean
   voiceAvailable: boolean
+  voiceLoading?: boolean
   disabled: boolean
   sendAvailability: SendAvailability
   providerSignInRequired?: boolean
@@ -867,8 +913,7 @@ function ComposerComponent(props: {
     setResourceTrigger(undefined)
   }, [props.provider, props.projectPath])
 
-  // A provider that cannot enumerate models shows nothing. Sitting on
-  // "Loading models…" forever is the UI lying about what it is doing.
+  // A provider that cannot enumerate models shows nothing once discovery finishes.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
 
@@ -1372,7 +1417,11 @@ function ComposerComponent(props: {
                 trigger={() => (
                   <span className="shelf-control__content">
                     <Folder size={15} aria-hidden />
-                    <span>{props.projectName ?? 'Choose project'}</span>
+                    {props.projectName === undefined && props.projectsLoading ? (
+                      <Skeleton className="skeleton-group" width={56} height={9} />
+                    ) : (
+                      <span>{props.projectName ?? 'Choose project'}</span>
+                    )}
                   </span>
                 )}
               >
@@ -1461,6 +1510,16 @@ function ComposerComponent(props: {
                     />
                   )}
                 </Menu>
+              ) : props.branchesLoading ? (
+                <SkeletonStatus
+                  label="Loading branches"
+                  className="menutrigger shelf-control shelf-control--branch composer-skeleton-branch"
+                >
+                  <span className="shelf-control__content">
+                    <Skeleton className="skeleton--icon" />
+                    <Skeleton width={64} height={9} />
+                  </span>
+                </SkeletonStatus>
               ) : null}
             </div>
           ) : null}
@@ -1579,7 +1638,7 @@ function ComposerComponent(props: {
           ) : null}
 
           {resourcePickerMounted ? (
-            <Suspense fallback={null}>
+            <Suspense fallback={resourceTrigger ? <ResourcePickerSkeleton /> : null}>
               <ComposerResourcePicker
                 ref={resourcePicker}
                 transport={props.transport}
@@ -1827,6 +1886,13 @@ function ComposerComponent(props: {
                       <Plus size={15} aria-hidden />
                     </span>
                   </button>
+                ) : props.attachmentsLoading ? (
+                  <SkeletonStatus
+                    label="Loading attachments"
+                    className="composer-skeleton-slot composer-skeleton-attachment"
+                  >
+                    <Skeleton width="100%" height="100%" />
+                  </SkeletonStatus>
                 ) : null}
 
                 <div
@@ -1842,18 +1908,33 @@ function ComposerComponent(props: {
                         disabled={Boolean(props.approvalLoading)}
                         triggerClassName="composer__permission"
                         panelClassName="menu--compact menu--permissions"
-                        trigger={() => (
-                          <span
-                            className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
-                          >
-                            <IconMorph active={APPROVAL_MODES.indexOf(approval)}>
-                              {APPROVAL_MODES.map((mode) => (
-                                <mode.icon key={mode.id} size={13} aria-hidden />
-                              ))}
-                            </IconMorph>
-                            <span>{props.approvalLoading ? 'Loading…' : approval.short}</span>
-                          </span>
-                        )}
+                        trigger={() =>
+                          props.approvalLoading ? (
+                            <SkeletonStatus
+                              label="Loading permissions"
+                              className="tool composer-skeleton-permission"
+                            >
+                              <div className="composer-skeleton-permission__icon">
+                                <Skeleton className="skeleton--icon" />
+                              </div>
+                              <span className="composer-skeleton-permission__label" aria-hidden>
+                                <span>{approval.short}</span>
+                                <Skeleton height={9} />
+                              </span>
+                            </SkeletonStatus>
+                          ) : (
+                            <span
+                              className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
+                            >
+                              <IconMorph active={APPROVAL_MODES.indexOf(approval)}>
+                                {APPROVAL_MODES.map((mode) => (
+                                  <mode.icon key={mode.id} size={13} aria-hidden />
+                                ))}
+                              </IconMorph>
+                              <span>{approval.short}</span>
+                            </span>
+                          )
+                        }
                       >
                         {(close) => (
                           <>
@@ -1910,7 +1991,7 @@ function ComposerComponent(props: {
                 ) : null}
 
                 {voiceState === 'idle' && props.models.length > 0 ? (
-                  <Suspense fallback={<span className="tool tool--quiet">Loading model…</span>}>
+                  <Suspense fallback={<ModelTriggerSkeleton />}>
                     <ModelSelector
                       models={props.models}
                       modelId={props.modelId}
@@ -1926,11 +2007,11 @@ function ComposerComponent(props: {
                     />
                   </Suspense>
                 ) : voiceState === 'idle' && showModelPlaceholder ? (
-                  <span className="tool tool--quiet">Loading models…</span>
+                  <ModelTriggerSkeleton />
                 ) : null}
 
                 {props.voiceAvailable ? (
-                  <Suspense fallback={null}>
+                  <Suspense fallback={props.running ? null : <VoiceControlSkeleton />}>
                     <ComposerVoiceControl
                       contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}`}
                       disabled={props.disabled}
@@ -1952,6 +2033,8 @@ function ComposerComponent(props: {
                       }}
                     />
                   </Suspense>
+                ) : props.voiceLoading && !props.running ? (
+                  <VoiceControlSkeleton />
                 ) : null}
 
                 {voiceState === 'idle' ? (
