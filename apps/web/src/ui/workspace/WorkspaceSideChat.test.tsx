@@ -324,4 +324,96 @@ describe('WorkspaceSideChat', () => {
     )
     expect(document.querySelector('.workspace-side-chat__starting')).toBeNull()
   })
+
+  it('fills the conversation with a skeleton until both startup and history finish', async () => {
+    const start = deferred<{ threadId: string }>()
+    const history = deferred<{ events: []; running: boolean }>()
+    const request = vi.fn((method: string) => {
+      if (method === 'sideChat.start') return start.promise
+      if (method === 'thread.history') return history.promise
+      return Promise.resolve({})
+    })
+    const { container } = render(
+      <WorkspaceSideChat
+        active
+        parentThreadId="main-1"
+        parentStatus="idle"
+        transport={
+          {
+            on: () => () => {},
+            onState: () => () => {},
+            onSequenceGap: () => () => {},
+            request,
+          } as unknown as Transport
+        }
+        startOptions={{ approval: 'ask' }}
+      />,
+    )
+
+    const status = await screen.findByRole('status')
+    const conversation = container.querySelector('.workspace-side-chat__conversation')!
+    const composer = screen.getByLabelText('Message temporary chat')
+    expect(status.textContent).toContain('Starting temporary chat…')
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(status.querySelector('.thread-skeleton__col')).toBeTruthy()
+    expect(conversation.getAttribute('aria-busy')).toBe('true')
+    expect(composer.getAttribute('placeholder')).toBe('Starting temporary chat…')
+
+    await act(async () => start.resolve({ threadId: 'side-1' }))
+    expect(request).toHaveBeenCalledWith('thread.history', { threadId: 'side-1' })
+    expect(screen.getByRole('status')).toBe(status)
+
+    await act(async () => history.resolve({ events: [], running: false }))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(conversation.getAttribute('aria-busy')).toBe('false')
+    expect(screen.getByText('Start a temporary chat')).toBeTruthy()
+    expect(screen.getByLabelText('Message temporary chat')).toBe(composer)
+    expect(composer.getAttribute('placeholder')).toBe('Do anything')
+  })
+
+  it.each(['sideChat.start', 'thread.history'])(
+    'removes the startup skeleton when %s fails',
+    async (failedMethod) => {
+      const pending = deferred<never>()
+      const request = vi.fn((method: string) => {
+        if (method === failedMethod) return pending.promise
+        return Promise.resolve(method === 'sideChat.start' ? { threadId: 'side-1' } : {})
+      })
+      const { container } = render(
+        <WorkspaceSideChat
+          active
+          parentThreadId="main-1"
+          parentStatus="idle"
+          transport={
+            {
+              on: () => () => {},
+              onState: () => () => {},
+              onSequenceGap: () => () => {},
+              request,
+            } as unknown as Transport
+          }
+          startOptions={{ approval: 'ask' }}
+        />,
+      )
+
+      await screen.findByRole('status')
+      await waitFor(() => expect(request).toHaveBeenCalledWith(failedMethod, expect.anything()))
+      await act(async () => pending.reject(new Error('Temporary chat unavailable')))
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(screen.getByRole('alert').textContent).toContain('Temporary chat unavailable')
+      expect(
+        container.querySelector('.workspace-side-chat__conversation')?.getAttribute('aria-busy'),
+      ).toBe('false')
+    },
+  )
 })
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
