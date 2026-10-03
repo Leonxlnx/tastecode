@@ -137,12 +137,13 @@ export async function restoreSnapshot(
 
   // Anything that exists now and did not exist at the checkpoint. Computed
   // against the snapshot we just took rather than the live tree, so untracked
-  // files are included.
+  // files are included. Treat renames as delete/add so their new paths are removed too.
   // `-z`: with git's default quotePath, a non-ASCII filename comes out
   // escape-quoted, the rm below silently no-ops, and the restore is partial
   // without any error. NUL-delimited output is always the literal path.
   const added = await git(repoPath, [
     'diff',
+    '--no-renames',
     '--name-only',
     '-z',
     '--diff-filter=A',

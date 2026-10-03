@@ -1,5 +1,13 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -107,6 +115,39 @@ describe('takeSnapshot', () => {
 })
 
 describe('restoreSnapshot', () => {
+  it.each(['true', 'copies'])(
+    'removes renamed files within the project scope with diff.renames=%s',
+    async (renameMode) => {
+      git('config', 'diff.renames', renameMode)
+      git('config', 'core.quotePath', 'true')
+      const project = path.join(repo, 'project [draft]')
+      mkdirSync(project)
+      const original = path.join(project, 'original 文档.ts')
+      const renamed = path.join(project, 'renamed 文档.ts')
+      writeFileSync(original, 'export const value = 1\n')
+      git('add', '.')
+      git('commit', '-m', 'nested project')
+      const before = await takeSnapshot(project)
+
+      renameSync(original, renamed)
+      write('tracked.txt', 'sibling must stay\n')
+      const after = await takeSnapshot(project)
+      expect(git('diff', '--name-status', before.commit, after.commit)).toMatch(/^R100\t/)
+
+      const replaced = await restoreSnapshot(project, before.commit)
+
+      expect(readFileSync(original, 'utf8')).toBe('export const value = 1\n')
+      expect(existsSync(renamed)).toBe(false)
+      expect(read('tracked.txt')).toBe('sibling must stay\n')
+      expect(await changedSince(project, before.commit)).toEqual([])
+
+      await restoreSnapshot(project, replaced.commit)
+      expect(existsSync(original)).toBe(false)
+      expect(readFileSync(renamed, 'utf8')).toBe('export const value = 1\n')
+      expect(read('tracked.txt')).toBe('sibling must stay\n')
+    },
+  )
+
   it('restores nested project files and removes new Unicode names without changing its sibling', async () => {
     const nested = path.join(repo, 'project with spaces')
     mkdirSync(nested)

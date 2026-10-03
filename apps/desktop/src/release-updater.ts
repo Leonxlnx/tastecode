@@ -28,6 +28,14 @@ const activeDownloads = new WeakMap<
   }
 >()
 
+function isTemporaryFileError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false
+  return (
+    typeof error.code === 'string' &&
+    ['ENOSPC', 'EDQUOT', 'EBUSY', 'EACCES', 'EPERM', 'EMFILE', 'ENFILE', 'EIO'].includes(error.code)
+  )
+}
+
 export async function downloadRelease(
   updater: AppUpdater,
   options: DownloadUpdateOptions,
@@ -66,7 +74,7 @@ export async function downloadRelease(
       percent: 100,
       bytesPerSecond: 0,
     })
-    let handedOver = false
+    let discardDownload = true
     try {
       const file = asset.name.endsWith('.dmg')
         ? await prepareDmgUpdate(downloaded, directory, info.version, abort.signal)
@@ -86,13 +94,17 @@ export async function downloadRelease(
           },
         }),
       )
-      handedOver = true
       return installed
+    } catch (error) {
+      // Keep verified bytes for a retry after a local copy or preparation failure.
+      // Signature and package validation failures still discard the download.
+      discardDownload = !abort.signal.aborted && !isTemporaryFileError(error)
+      throw error
     } finally {
-      // The native updater keeps its own copy, even when quitting raced its last
-      // step. Quitting before then keeps the verified bytes for the next launch.
+      // A completed handover leaves the native updater with its own copy, even
+      // when quitting raced the last step.
       // A Windows file lock must not turn a finished update into a failure.
-      if (handedOver || !abort.signal.aborted)
+      if (discardDownload)
         await rm(downloaded, { force: true, maxRetries: 3, retryDelay: 200 }).catch(() => {})
     }
   }).finally(() => {

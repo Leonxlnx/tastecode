@@ -5,6 +5,7 @@ export {
   GrokAdapter,
   grokAccount,
   grokCommand,
+  grokContextEnvironment,
   grokDisplayName,
   grokTurnArgs,
   type GrokNativeSession,

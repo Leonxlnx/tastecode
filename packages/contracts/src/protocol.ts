@@ -1,10 +1,5 @@
 import { z } from 'zod'
 import {
-  ModelConnectionListSchema,
-  ModelConnectionModelsSchema,
-  ModelConnectionSchema,
-} from './connections.js'
-import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
@@ -14,8 +9,8 @@ import {
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
+  ProviderContextSettingsSchema,
   ProviderIdSchema,
-  ProviderSetupSchema,
   ProviderStatusSchema,
   ProviderUpdateSchema,
   UsageSchema,
@@ -404,6 +399,12 @@ export const ThreadLifecycleSchema = z.discriminatedUnion('state', [
 ])
 export type ThreadLifecycle = z.infer<typeof ThreadLifecycleSchema>
 
+export const ProviderContextSettingsMapSchema = z.partialRecord(
+  ProviderIdSchema,
+  ProviderContextSettingsSchema,
+)
+export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
+
 export const SidebarSettingsSchema = z.object({
   mode: z.enum(['classic', 'inbox']),
   autoSettleDays: z.number().int().min(1).max(90).nullable(),
@@ -597,6 +598,19 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  /** Context settings applied when a session launches or resumes. */
+  'providers.contextSettings': {
+    params: z.object({}),
+    result: ProviderContextSettingsMapSchema,
+  },
+  /** Replaces one provider's settings; sessions already running keep theirs. */
+  'providers.updateContextSettings': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      settings: ProviderContextSettingsSchema,
+    }),
+    result: ProviderContextSettingsMapSchema,
+  },
   /** Cached background release checks, separate from startup provider detection. */
   'providers.updates': {
     params: z.object({ refresh: z.boolean().optional() }),
@@ -639,7 +653,6 @@ export const methods = {
   'providers.install': {
     params: z.object({
       provider: ProviderIdSchema,
-      agent: z.string().min(1).optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
@@ -657,34 +670,9 @@ export const methods = {
   'providers.launch': {
     params: z.object({
       provider: ProviderIdSchema,
-      agent: z.string().min(1).optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
-  },
-  'connections.list': {
-    params: z.object({}),
-    result: ModelConnectionListSchema,
-  },
-  'connections.upsert': {
-    params: ModelConnectionSchema.omit({
-      credentialConfigured: true,
-      capabilities: true,
-      problem: true,
-    }),
-    result: z.object({ connection: ModelConnectionSchema }),
-  },
-  'connections.setCredential': {
-    params: z.object({ connectionId: z.string().min(1), apiKey: z.string().min(1) }),
-    result: z.object({ credentialConfigured: z.literal(true) }),
-  },
-  'connections.remove': {
-    params: z.object({ connectionId: z.string().min(1) }),
-    result: z.object({}),
-  },
-  'connections.models': {
-    params: z.object({ connectionId: z.string().min(1) }),
-    result: ModelConnectionModelsSchema,
   },
   'mcp.list': {
     params: z.object({ provider: ProviderIdSchema, projectPath: z.string().min(1) }),
@@ -994,32 +982,6 @@ export const methods = {
     result: z.object({}),
   },
   /**
-   * Agents reachable over ACP, and whether each one is actually on this
-   * machine. The list is the server's to answer because only it can look.
-   */
-  'acp.agents': {
-    params: z.object({}),
-    result: z.object({
-      agents: z.array(
-        z.object({
-          id: z.string(),
-          name: z.string(),
-          installed: z.boolean(),
-          /** True when we captured and read this agent's frames ourselves. */
-          verified: z.boolean(),
-          install: z.string().optional(),
-          setup: ProviderSetupSchema,
-          /**
-           * Why sign-in or use is impaired right now, in language we can show
-           * the user directly — e.g. a vendor discontinuing a login path.
-           * Mirrors `ProviderStatus.problem`.
-           */
-          problem: z.string().optional(),
-        }),
-      ),
-    }),
-  },
-  /**
    * Projects and sessions the server knows about. These replace what the
    * renderer used to keep in localStorage, where a reload could destroy it.
    */
@@ -1286,40 +1248,24 @@ export const methods = {
     result: z.object({}),
   },
   'thread.start': {
-    params: z
-      .object({
-        provider: ProviderIdSchema,
-        /**
-         * Which ACP agent to launch, when `provider` is `acp`. ACP is one
-         * integration serving many agents, so the provider alone does not say
-         * which binary to spawn.
-         */
-        agent: z.string().optional(),
-        /** Server-owned model connection selected when `provider` is `api`. */
-        connectionId: z.string().min(1).optional(),
-        workspacePath: z.string(),
-        model: z.string().optional(),
-        serviceTier: z.string().optional(),
-        effort: z.string().optional(),
-        approval: ApprovalModeSchema.optional(),
-        /**
-         * Give this session a private git worktree instead of the project folder
-         * itself. Two agents in one directory overwrite each other, and the
-         * second to write wins silently.
-         */
-        isolate: z.boolean().optional(),
-        /** Local branch used atomically for a shared or isolated checkout. */
-        baseRef: z.string().min(1).max(1024).optional(),
-      })
-      .superRefine((request, context) => {
-        if ((request.provider === 'api') !== Boolean(request.connectionId)) {
-          context.addIssue({
-            code: 'custom',
-            path: ['connectionId'],
-            message: 'connectionId is required only for api sessions',
-          })
-        }
-      }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      /** Custom harness to launch instead of the provider's own CLI. */
+      agent: z.string().optional(),
+      workspacePath: z.string(),
+      model: z.string().optional(),
+      serviceTier: z.string().optional(),
+      effort: z.string().optional(),
+      approval: ApprovalModeSchema.optional(),
+      /**
+       * Give this session a private git worktree instead of the project folder
+       * itself. Two agents in one directory overwrite each other, and the
+       * second to write wins silently.
+       */
+      isolate: z.boolean().optional(),
+      /** Local branch used atomically for a shared or isolated checkout. */
+      baseRef: z.string().min(1).max(1024).optional(),
+    }),
     result: z.object({ threadId: z.string() }),
   },
   /**

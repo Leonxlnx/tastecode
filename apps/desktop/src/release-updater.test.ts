@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { access, chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { AppUpdater } from 'electron-updater'
@@ -161,6 +161,58 @@ describe('release download and installation', () => {
       ),
     ).rejects.toThrow(/signature mismatch/)
     await expect(access(stored('exe'))).rejects.toThrow()
+  })
+
+  it.each(['ENOSPC', 'EDQUOT', 'EBUSY', 'EACCES', 'EPERM', 'EMFILE', 'ENFILE', 'EIO'])(
+    'keeps verified bytes after a native copy fails with %s and retries without fetching',
+    async (code) => {
+      const error = Object.assign(new Error(`${code}: could not copy the installer`), { code })
+      const install = vi.fn(async () => {
+        throw error
+      })
+      await expect(downloadRelease(updater, options(), install, downloads)).rejects.toBe(error)
+      expect(await readFile(stored('exe'))).toEqual(bytes)
+
+      await downloadRelease(updater, options(), async () => ['native-cache/update.exe'], downloads)
+      expect(fetchAsset).toHaveBeenCalledOnce()
+      expect(await readdir(downloads.directory)).toEqual([])
+    },
+  )
+
+  it('keeps verified bytes after a temporary DMG preparation file error', async () => {
+    const error = Object.assign(new Error('ENOSPC: could not create the prepared ZIP'), {
+      code: 'ENOSPC',
+    })
+    mocks.prepare.mockRejectedValueOnce(error)
+    const install = vi.fn(async () => [])
+
+    await expect(downloadRelease(updater, options('dmg'), install, downloads)).rejects.toBe(error)
+    expect(install).not.toHaveBeenCalled()
+    expect(await readFile(stored('dmg'))).toEqual(bytes)
+    await downloadRelease(updater, options('dmg'), install, downloads)
+    expect(fetchAsset).toHaveBeenCalledOnce()
+    expect(install).toHaveBeenCalledOnce()
+    expect(await readdir(downloads.directory)).toEqual([])
+  })
+
+  it('still removes a package rejected by the native signature check', async () => {
+    const error = Object.assign(new Error('The installer is not signed by the application owner'), {
+      code: 'ERR_UPDATER_INVALID_SIGNATURE',
+    })
+    await expect(
+      downloadRelease(updater, options(), async () => Promise.reject(error), downloads),
+    ).rejects.toBe(error)
+    await expect(access(stored('exe'))).rejects.toThrow()
+  })
+
+  it('still removes a DMG containing the wrong app', async () => {
+    mocks.prepare.mockRejectedValueOnce(new Error('The DMG contains a different app.'))
+    const install = vi.fn()
+    await expect(downloadRelease(updater, options('dmg'), install, downloads)).rejects.toThrow(
+      'The DMG contains a different app.',
+    )
+    expect(install).not.toHaveBeenCalled()
+    await expect(access(stored('dmg'))).rejects.toThrow()
   })
 
   it('passes cancellation into DMG preparation and keeps the verified bytes', async () => {

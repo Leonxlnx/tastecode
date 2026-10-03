@@ -884,17 +884,28 @@ ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
   app.on('before-quit', (event) => {
+    if (waitingForUpdateCleanup) {
+      event.preventDefault()
+      return
+    }
     const updater = appUpdater
     const updateStatus = updater?.state().status
     if (
       updater &&
-      !waitingForUpdateCleanup &&
+      !appIsQuitting &&
       (updateStatus === 'downloading' || updateStatus === 'preparing')
     ) {
       waitingForUpdateCleanup = true
       event.preventDefault()
       // Finish detaching a mounted update DMG before the process exits.
-      void Promise.resolve(updater.dispose()).finally(() => app.quit())
+      const finishQuit = () => {
+        waitingForUpdateCleanup = false
+        appIsQuitting = true
+        app.quit()
+      }
+      void Promise.resolve()
+        .then(() => updater.dispose())
+        .then(finishQuit, finishQuit)
       return
     }
     appIsQuitting = true

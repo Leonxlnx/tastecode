@@ -8,7 +8,7 @@
   margin: 0;
   overflow: hidden;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   box-shadow: var(--shadow-flyout);
   transform-origin: center bottom;
@@ -46,7 +46,7 @@
   gap: 9px;
   padding: 5px 8px;
   border: 1px solid color-mix(in srgb, var(--line-strong) 68%, transparent);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   background: var(--control-hover);
   box-shadow: none;
   color: var(--text-2);
@@ -130,7 +130,7 @@
 
 .brief-input__option > .brief-input__custom-preview {
   border: 1px solid var(--line);
-  border-radius: calc(var(--r-md) - 2px);
+  border-radius: calc(var(--r-xl) - 2px);
   background: color-mix(in srgb, var(--surface) 72%, transparent);
   box-shadow: none;
   color: var(--text-3);
@@ -167,7 +167,7 @@
   min-height: 32px;
   padding: 6px 11px;
   border: 1px solid color-mix(in srgb, var(--line-strong) 70%, transparent);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   background: var(--control-hover);
   box-shadow: none;
   color: var(--text-2);

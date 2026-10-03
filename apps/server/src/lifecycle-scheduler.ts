@@ -20,6 +20,7 @@ export class LifecycleScheduler {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** Direct calls report errors; timer callbacks retry them in the background. */
   refreshNow(): void {
     if (this.#disposed || this.#refreshing) return
     this.#clearTimer()
@@ -99,7 +100,17 @@ export class LifecycleScheduler {
     this.#timer = setTimeout(() => {
       this.#timer = undefined
       this.#scheduledRefreshAt = undefined
-      this.refreshNow()
+      try {
+        this.refreshNow()
+      } catch {
+        // The refresh or its next-deadline read can fail. Retry without
+        // another persistence read, replacing any timer refreshNow installed.
+        this.#clearTimer()
+        this.#scheduleKnown = false
+        if (this.#disposed) return
+        const now = this.now()
+        this.#scheduleAt(now + BLOCKED_RETRY_MS, BLOCKED_RETRY_MS, now)
+      }
     }, delay)
     this.#timer.unref?.()
   }

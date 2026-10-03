@@ -234,7 +234,7 @@
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
         this browser only. Nothing here is a plan: everything listed is implemented. Sections marked
-        parked are built and tested but out of the beta UI (see dashboard.html).
+        nightly only are built and tested but absent from main's code (see dashboard.html).
       </p>
 
       <div class="toc">
@@ -415,9 +415,7 @@
           </li>
         </ul>
 
-        <h3>
-          Cursor (cursor-agent stream-json) <span class="pill-parked">parked for the beta</span>
-        </h3>
+        <h3>Cursor (cursor-agent stream-json) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -442,9 +440,7 @@
           </li>
         </ul>
 
-        <h3>
-          OpenCode (local server, HTTP/SSE) <span class="pill-parked">parked for the beta</span>
-        </h3>
+        <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -474,7 +470,7 @@
           </li>
         </ul>
 
-        <h3>Antigravity (agy, stream-json) <span class="pill-parked">parked for the beta</span></h3>
+        <h3>Antigravity (agy, stream-json) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -553,7 +549,7 @@
           </li>
         </ul>
 
-        <h3>Kimi CLI (over ACP) <span class="pill-parked">parked for the beta</span></h3>
+        <h3>Kimi CLI (over ACP) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -575,7 +571,7 @@
 
         <h3>
           Direct API connections (TasteCode-owned agent loop)
-          <span class="pill-parked">parked for the beta</span>
+          <span class="pill-parked">nightly only</span>
         </h3>
         <ul class="check">
           <li>
@@ -623,15 +619,20 @@
                 >One fixed setup and account row grammar
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
-                  stable slots across loading, ready, setup, busy, and failure states; empty action
-                  slots stay hidden, with account details below the provider name in compact rows;
-                  primary and secondary actions share the right edge on desktop and narrow layouts;
-                  CLI versions live in the provider-mark tooltip instead of widening account rows;
-                  account labels use the same email-or-signed-in grammar; error tooltips escape
-                  clipped cards, stay inside the viewport, and support keyboard dismissal;
-                  <a href="./screenshots/provider-density-after.png">compact evidence</a>,
-                  <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
-                  <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
+                  stable slots across loading, ready, setup, busy, and failure states; the roster is
+                  open type instead of a card, and a wire between the provider name and its account
+                  carries the state: solid between two terminals once an account is attached, a
+                  dotted leader while the provider waits for one, absent when the provider is not
+                  installed, flowing dashes while work is in flight, and the error colour after an
+                  announced failure; connected providers read in full ink and the rest are dimmed;
+                  hovering a row lights its wire; empty action slots stay hidden; in narrow rosters
+                  the wire steps aside and account details sit below the provider name between
+                  hairlines; primary and secondary actions share the right edge on desktop and
+                  narrow layouts; CLI versions live in the provider-mark tooltip instead of widening
+                  account rows; account labels use the same email-or-signed-in grammar; error
+                  tooltips stay inside the viewport and support keyboard dismissal;
+                  <a href="./screenshots/provider-roster-wired.png">desktop</a> and
+                  <a href="./screenshots/provider-roster-wired-390.png">390 px</a> evidence</span
                 ></span
               ></label
             >
@@ -681,7 +682,8 @@
                 <span class="d"
                   >separate model-picker source, desktop-safe PATH resolution, fixed argv without
                   shell parsing, optional cwd/environment, protocol-aware verification, bounded
-                  startup, explicit stability and secret warning; includes Pi RPC</span
+                  startup, explicit stability and secret warning; Codex, Claude Code and Grok only
+                  on main</span
                 ></span
               ></label
             >
@@ -721,8 +723,7 @@
                 >Honest rows for what does not exist
                 <span class="d"
                   >canonical source names and marks across the picker, inbox, search, Profile, and
-                  Usage; Pi only through an explicit custom RPC harness, Gemini CLI and Qwen
-                  retired</span
+                  Usage; only Codex, Claude Code and Grok exist on main</span
                 ></span
               ></label
             >
@@ -1499,7 +1500,8 @@
             <label
               ><input type="checkbox" /><span
                 >Drag to reorder projects and sessions with matching inset drop lines, with the
-                chosen order restored on reload</span
+                chosen order restored on reload; undragged projects stay newest first, and chats
+                imported later from another provider slot in by date</span
               ></label
             >
           </li>
@@ -1890,16 +1892,17 @@
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
                   >Debug is a hidden settings category, toggled with Cmd/Ctrl+Alt+Shift+D, and
-                  offers Force onboarding without resetting saved data; projects, workspaces, files,
-                  history, and provider credentials remain untouched; upgrades move legacy history
-                  and config into TasteCode paths without overwriting existing TasteCode data;
-                  desktop background provider probes start in app storage instead of inheriting the
-                  launch directory (macOS removable-volume permission verification pending); bounded
-                  opt-in text diagnostics rotate at 512 KiB, stop when disabled, and exclude legacy
-                  native dumps from the revealed folder; native crash collection is removed; logs
-                  can be revealed or copied only by the user after keyed and standalone credential
-                  shapes, private keys, emails, project paths, and cross-platform home paths are
-                  scrubbed;
+                  offers Force onboarding without resetting saved data and a simulated app update
+                  (update, failure with retry, or up to date) that drives the sidebar button and
+                  About without downloading anything; projects, workspaces, files, history, and
+                  provider credentials remain untouched; upgrades move legacy history and config
+                  into TasteCode paths without overwriting existing TasteCode data; desktop
+                  background provider probes start in app storage instead of inheriting the launch
+                  directory (macOS removable-volume permission verification pending); bounded opt-in
+                  text diagnostics rotate at 512 KiB, stop when disabled, and exclude legacy native
+                  dumps from the revealed folder; native crash collection is removed; logs can be
+                  revealed or copied only by the user after keyed and standalone credential shapes,
+                  private keys, emails, project paths, and cross-platform home paths are scrubbed;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span

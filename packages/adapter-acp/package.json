@@ -7,10 +7,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./agents": {
-      "types": "./dist/agents.d.ts",
-      "default": "./dist/agents.js"
     }
   },
   "main": "./dist/index.js",

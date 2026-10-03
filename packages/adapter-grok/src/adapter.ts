@@ -10,6 +10,7 @@ import type {
   Capabilities,
   DomainEvent,
   Model,
+  ProviderContextSettings,
   Thread,
 } from '@harness/contracts'
 import { JsonRpcValueSchema, killTree, spawnOwned, readNdjson } from '@harness/proc'
@@ -133,6 +134,19 @@ export type GrokStartOptions = {
   approval?: ApprovalMode | undefined
   /** Product-owned one-shot writing. Keep it on grok-4.6 low without tool loops. */
   ephemeral?: boolean | undefined
+  context?: ProviderContextSettings | undefined
+}
+
+/**
+ * Grok reads its compaction point from the environment, as a percent of the
+ * window; it has no switch for the window itself outside its own TUI.
+ */
+export function grokContextEnvironment(
+  context: ProviderContextSettings | undefined,
+): Record<string, string> | undefined {
+  return typeof context?.compactAt === 'number'
+    ? { GROK_AUTO_COMPACT_THRESHOLD_PERCENT: String(context.compactAt) }
+    : undefined
 }
 
 export type GrokTurnOptions = Pick<GrokStartOptions, 'model' | 'effort'>
@@ -266,7 +280,12 @@ export type GrokAdapterEvents = {
 type SpawnFn = (
   command: string,
   args: string[],
-  options: { cwd?: string; stdio: ['pipe', 'pipe', 'pipe']; windowsHide: boolean },
+  options: {
+    cwd?: string
+    env?: NodeJS.ProcessEnv
+    stdio: ['pipe', 'pipe', 'pipe']
+    windowsHide: boolean
+  },
 ) => ChildProcessWithoutNullStreams
 
 export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
@@ -402,6 +421,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         }
       : undefined
     const args = grokTurnArgs(promptFile, this.#options, session)
+    const environment = grokContextEnvironment(this.#options.context)
 
     // A turn already in flight would be orphaned by the reassignment below.
     if (this.#child) await this.#stop(this.#child)
@@ -409,6 +429,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     try {
       child = this.#spawn(grokCommand(), args, {
         cwd: this.#workspacePath,
+        ...(environment ? { env: { ...process.env, ...environment } } : {}),
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       })

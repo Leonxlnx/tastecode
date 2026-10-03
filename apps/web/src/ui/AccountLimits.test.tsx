@@ -133,8 +133,7 @@ describe('account limits', () => {
     expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
   })
 
-  it('keeps ordered provider states and retries their source independently', () => {
-    const onRetry = vi.fn()
+  it('keeps ordered provider states and hides sources without limits', () => {
     render(
       <AccountLimits
         states={[
@@ -155,15 +154,38 @@ describe('account limits', () => {
               limitSource: { provider: 'grok', status: 'unavailable' },
             },
           },
-          { status: 'error', provider: 'opencode', message: 'Offline' },
+        ]}
+        onRetry={vi.fn()}
+      />,
+    )
+    openUsage()
+
+    expect(
+      screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent),
+    ).toEqual(['Codex', 'Claude Code'])
+    expect(within(screen.getByRole('region', { name: 'Codex' })).getByText(/Checking/)).toBeTruthy()
+    expect(
+      within(screen.getByRole('region', { name: 'Claude Code' })).getByText(
+        'No plan limits reported.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+  })
+
+  it('keeps last known values and retries each source independently', () => {
+    const onRetry = vi.fn()
+    render(
+      <AccountLimits
+        states={[
+          { status: 'error', provider: 'codex', message: 'Offline' },
           {
             status: 'loading',
-            provider: 'cursor',
+            provider: 'claude-code',
             summary: summary([{ label: 'Weekly', usedPercent: 25 }]),
           },
           {
             status: 'error',
-            provider: 'api',
+            provider: 'grok',
             message: 'Timed out',
             summary: summary([{ label: 'Credits', usedPercent: 0, valueLabel: '$8.24' }]),
           },
@@ -175,28 +197,21 @@ describe('account limits', () => {
 
     expect(
       screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent),
-    ).toEqual(['Codex', 'Claude Code', 'OpenCode', 'Cursor', 'API connection'])
-    expect(within(screen.getByRole('region', { name: 'Codex' })).getByText(/Checking/)).toBeTruthy()
-    expect(
-      within(screen.getByRole('region', { name: 'Claude Code' })).getByText(
-        'No plan limits reported.',
-      ),
-    ).toBeTruthy()
-    expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+    ).toEqual(['Codex', 'Claude Code', 'Grok'])
 
-    const openCode = screen.getByRole('region', { name: 'OpenCode' })
-    expect(within(openCode).getByRole('alert').textContent).not.toContain('Last known values')
-    fireEvent.click(within(openCode).getByRole('button', { name: 'Retry' }))
-    expect(onRetry).toHaveBeenCalledWith('opencode')
+    const codex = screen.getByRole('region', { name: 'Codex' })
+    expect(within(codex).getByRole('alert').textContent).not.toContain('Last known values')
+    fireEvent.click(within(codex).getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledWith('codex')
 
-    const cursor = screen.getByRole('region', { name: 'Cursor' })
-    expect(within(cursor).getByText('75% left')).toBeTruthy()
-    expect(within(cursor).getByRole('status').textContent).toContain('Last known values')
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
+    expect(within(claude).getByText('75% left')).toBeTruthy()
+    expect(within(claude).getByRole('status').textContent).toContain('Last known values')
 
-    const api = screen.getByRole('region', { name: 'API connection' })
-    const apiValue = within(api).getByText('$8.24')
-    expect(apiValue.classList.contains('account-menu__limit-value')).toBe(true)
-    expect(within(api).getByRole('alert').textContent).toContain('Last known values')
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    const grokValue = within(grok).getByText('$8.24')
+    expect(grokValue.classList.contains('account-menu__limit-value')).toBe(true)
+    expect(within(grok).getByRole('alert').textContent).toContain('Last known values')
   })
 
   it('distinguishes loading from an empty successful response', () => {

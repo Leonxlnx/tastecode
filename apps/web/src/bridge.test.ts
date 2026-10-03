@@ -266,6 +266,60 @@ describe('app update bridge', () => {
     expect(checkForUpdates).toHaveBeenCalledOnce()
     expect(listener).toHaveBeenCalledWith(state)
   })
+
+  it('lets a Debug simulation stand in for the native updater until it stops', async () => {
+    vi.useFakeTimers()
+    const native = { status: 'idle' as const, currentVersion: '0.1.2' }
+    let nativeListener: ((state: typeof native) => void) | undefined
+    const harness = {
+      isDesktop: true,
+      getUpdateState: vi.fn().mockResolvedValue(native),
+      checkForUpdates: vi.fn(),
+      installUpdate: vi.fn(),
+      onUpdateState: vi.fn((listener: (state: typeof native) => void) => {
+        nativeListener = listener
+        return () => undefined
+      }),
+    }
+    ;(globalThis as { harness?: unknown }).harness = harness
+    const bridge = await import('./bridge.js')
+    const simulation = await import('./app-update-simulation.js')
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
+    const listener = vi.fn()
+    const off = bridge.onAppUpdateState(listener)
+
+    try {
+      const verdict = bridge.simulateAppUpdate('update')
+      await vi.advanceTimersByTimeAsync(0)
+      nativeListener?.(native)
+      await expect(bridge.appUpdateState()).resolves.toMatchObject({ status: 'checking' })
+      await expect(bridge.installAppUpdate()).resolves.toBe(false)
+      await vi.advanceTimersByTimeAsync(simulation.SIMULATED_CHECK_MS)
+      await expect(verdict).resolves.toMatchObject({ status: 'downloading', version: '0.1.3' })
+      await vi.advanceTimersByTimeAsync(simulation.SIMULATED_STEP_MS * 25)
+
+      expect(listener).not.toHaveBeenCalledWith(native)
+      expect(listener).toHaveBeenLastCalledWith({
+        status: 'ready',
+        currentVersion: '0.1.2',
+        version: '0.1.3',
+      })
+      await expect(bridge.checkForAppUpdates()).resolves.toMatchObject({ status: 'ready' })
+      await expect(bridge.installAppUpdate()).resolves.toBe(true)
+      expect(reload).toHaveBeenCalledOnce()
+      expect(harness.checkForUpdates).not.toHaveBeenCalled()
+      expect(harness.installUpdate).not.toHaveBeenCalled()
+
+      simulation.stopAppUpdateSimulation()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(listener).toHaveBeenLastCalledWith(native)
+      await expect(bridge.appUpdateState()).resolves.toEqual(native)
+    } finally {
+      off()
+      reload.mockRestore()
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('native menu bridge', () => {

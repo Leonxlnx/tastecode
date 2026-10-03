@@ -31,7 +31,6 @@ import type {
   BackgroundModelSource,
   BackgroundModelTarget,
   DataOf,
-  ModelConnection,
   ProviderId,
   ProviderStatus,
   ResultOf,
@@ -66,8 +65,15 @@ import {
   onAppUpdateState,
   openLocalDiagnostics,
   setLocalDiagnosticsEnabled,
+  simulateAppUpdate,
   type AppUpdateState,
 } from '../bridge.js'
+import {
+  onSimulatedAppUpdate,
+  simulatedAppUpdate,
+  stopAppUpdateSimulation,
+  type AppUpdateSimulation,
+} from '../app-update-simulation.js'
 import {
   beginInstall,
   beginLogin,
@@ -249,8 +255,6 @@ function SettingsComponent(props: {
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
-  acpAgents: ResultOf<'acp.agents'>['agents']
-  modelConnections: ModelConnection[]
   models: ModelChoice[]
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
@@ -459,6 +463,7 @@ function SettingsComponent(props: {
                   Force onboarding
                 </button>
               </SettingsRow>
+              <AppUpdateSimulationRow />
               <SettingsRow
                 title="Avatar generator"
                 note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
@@ -471,6 +476,44 @@ function SettingsComponent(props: {
         </div>
       </main>
     </div>
+  )
+}
+
+const UPDATE_SIMULATIONS = [
+  { scenario: 'update', label: 'Update' },
+  { scenario: 'failure', label: 'Failure' },
+  { scenario: 'current', label: 'Up to date' },
+] as const satisfies ReadonlyArray<{ scenario: AppUpdateSimulation; label: string }>
+
+function AppUpdateSimulationRow() {
+  const [running, setRunning] = useState(() => simulatedAppUpdate() !== undefined)
+  useEffect(() => onSimulatedAppUpdate((state) => setRunning(state !== undefined)), [])
+
+  return (
+    <SettingsRow
+      title="Simulate app update"
+      note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
+      className="settings__row--roomy"
+    >
+      {UPDATE_SIMULATIONS.map(({ scenario, label }) => (
+        <button
+          key={scenario}
+          className="settings__action"
+          type="button"
+          onClick={() => void simulateAppUpdate(scenario)}
+        >
+          {label}
+        </button>
+      ))}
+      <button
+        className="settings__action"
+        type="button"
+        disabled={!running}
+        onClick={stopAppUpdateSimulation}
+      >
+        Stop
+      </button>
+    </SettingsRow>
   )
 }
 
@@ -668,7 +711,7 @@ export function ProviderSettings(props: {
   )
 
   const authProviderIds = props.providerStatuses
-    .filter((status) => status.installed && status.id !== 'acp')
+    .filter((status) => status.installed)
     .map((status) => status.id)
   const authProviderKey = authProviderIds.join('|')
 
@@ -836,6 +879,7 @@ export function ProviderSettings(props: {
         key={status.id}
         provider={status}
         status={operationStatus}
+        link={account?.signedIn ? 'connected' : 'open'}
         live={operation !== undefined}
         issue={
           authError
@@ -870,11 +914,9 @@ export function ProviderSettings(props: {
     )
   }
 
-  // Public beta scope: exactly the three subscription plans the server lists
-  // (Codex, Claude Code, Grok). The ACP agents, Cursor, OpenCode, Antigravity
-  // and API-connection surfaces are parked, not deleted — see AGENTS.md.
-  const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
-  const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
+  // main ships exactly the three subscription plans the server lists (Codex,
+  // Claude Code, Grok). Every other provider lives on nightly — see AGENTS.md.
+  const byId = (id: ProviderId) => props.providerStatuses.filter((status) => status.id === id)
   const renderProviderRow = (status: ProviderStatus) => (
     <div className="provider-settings__entry" key={status.id}>
       {renderAccountRow(status)}
@@ -882,16 +924,13 @@ export function ProviderSettings(props: {
   )
 
   return (
-    <SettingsPanel title="Providers" groupClassName="settings__group--providers">
-      <header className="provider-settings__header">
-        <h2>Accounts</h2>
-      </header>
+    <SettingsPanel
+      title="Providers"
+      groupClassName="settings__group--plain settings__group--providers"
+    >
       {byId('codex').map(renderProviderRow)}
       {byId('claude-code').map(renderProviderRow)}
       {byId('grok').map(renderProviderRow)}
-      {direct
-        .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
-        .map(renderProviderRow)}
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>
   )
@@ -1044,11 +1083,6 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                 mode: 'manual',
                 target: {
                   provider: choice.source.provider,
-                  ...(choice.source.connectionId
-                    ? {
-                        connectionId: choice.source.connectionId,
-                      }
-                    : {}),
                   ...(choice.source.agent
                     ? {
                         agent: choice.source.agent,
@@ -1125,10 +1159,7 @@ function isBackgroundModelSettingsState(
 
 function findBackgroundModel(sources: BackgroundModelSource[], target: BackgroundModelTarget) {
   const source = sources.find(
-    (candidate) =>
-      candidate.provider === target.provider &&
-      candidate.connectionId === target.connectionId &&
-      candidate.agent === target.agent,
+    (candidate) => candidate.provider === target.provider && candidate.agent === target.agent,
   )
   const model = source?.models.find((candidate) => candidate.id === target.model)
   return source && model ? { source, model } : undefined
@@ -2011,6 +2042,7 @@ function InstallableRow(props: {
       <ProviderRow
         provider={props.provider}
         status={status}
+        link="none"
         live={install?.phase === 'running' || install?.phase === 'succeeded'}
         issue={issue}
         primary={primary}

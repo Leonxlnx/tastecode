@@ -143,6 +143,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     fileSelection.select(undefined)
     setSelectedPath(undefined)
     setFile(undefined)
+    setLoadingFile(false)
     setError(undefined)
     if (props.projectPath) void loadDirectory('')
     return () => {

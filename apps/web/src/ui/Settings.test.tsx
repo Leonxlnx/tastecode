@@ -5,6 +5,7 @@ import { methods, type Account, type ProviderId, type ResultOf } from '@harness/
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
+import { SIMULATED_CHECK_MS, stopAppUpdateSimulation } from '../app-update-simulation.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
@@ -22,7 +23,8 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
+    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'debug' | 'about'
+    showDebug?: boolean
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
@@ -42,8 +44,6 @@ function renderSettings(
       projectName={undefined}
       account={undefined}
       providerStatuses={[]}
-      acpAgents={[]}
-      modelConnections={[]}
       models={[]}
       hiddenModels={new Set()}
       onModelVisibilityChange={() => {}}
@@ -69,6 +69,7 @@ function renderSettings(
       showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
       initialSection={options.initialSection ?? 'appearance'}
+      showDebug={options.showDebug}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
     />,
@@ -81,6 +82,7 @@ function renderAppearanceSettings(showMacOSHaptics = false) {
 
 afterEach(() => {
   cleanup()
+  stopAppUpdateSimulation()
   vi.useRealTimers()
   vi.restoreAllMocks()
   resetInstalls()
@@ -207,6 +209,28 @@ describe('about status grammar', () => {
     expect((await screen.findByRole('status', { name: label })).className).toContain(`is-${state}`)
     expect(transport.requests).toContainEqual({ method: 'system.updateCheck', params: {} })
     expect(container.querySelector('.settings__status')).toBeNull()
+  })
+})
+
+describe('app update simulation', () => {
+  it('plays a fake release through About and stops back to the real updater', async () => {
+    vi.useFakeTimers()
+    renderSettings({ initialSection: 'debug', showDebug: true })
+    const stop = screen.getByRole('button', { name: 'Stop' })
+    expect(stop.hasAttribute('disabled')).toBe(true)
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Update' })))
+    expect(stop.hasAttribute('disabled')).toBe(false)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'About' })))
+    expect(screen.getByRole('status', { name: 'Checking' })).toBeTruthy()
+
+    await act(() => vi.advanceTimersByTimeAsync(SIMULATED_CHECK_MS))
+    expect(screen.getByRole('button', { name: 'Downloading…' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(/Downloading 1\.0\.0/)).toBeTruthy()
+
+    await act(async () => stopAppUpdateSimulation())
+    expect(screen.getByRole('button', { name: 'Check for updates' })).toBeTruthy()
+    expect(screen.queryByRole('status', { name: /Checking/ })).toBeNull()
   })
 })
 
@@ -442,6 +466,11 @@ describe('provider authentication states', () => {
     expect(screen.getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
     expect(within(grok).queryByRole('button', { name: 'Problem details' })).toBeNull()
+    expect([codex, claude, grok].map((row) => row.dataset['link'])).toEqual([
+      'connected',
+      'open',
+      'none',
+    ])
     const guide = within(grok).getByRole('link', { name: 'Open setup guide' })
     expect(guide.querySelector('svg')).toBeTruthy()
     expect(guide.getAttribute('href')).toBe('https://x.ai/cli')
@@ -727,13 +756,13 @@ describe('model settings', () => {
   it('uses All and None buttons to change every model for one provider', () => {
     const models: ModelChoice[] = [
       {
-        key: 'opencode:ling',
-        provider: 'opencode',
-        sourceName: 'OpenCode',
-        mark: 'opencode',
+        key: 'grok:ling',
+        provider: 'grok',
+        sourceName: 'Grok',
+        mark: 'grok',
         model: {
           id: 'zen/ling-3.0-tiny',
-          displayName: 'OpenCode Zen · Ling-3.0-tiny Free',
+          displayName: 'Grok 4.6 Fast',
           description: '',
           isDefault: false,
           reasoningEfforts: [],
@@ -741,13 +770,13 @@ describe('model settings', () => {
         },
       },
       {
-        key: 'opencode:qwen',
-        provider: 'opencode',
-        sourceName: 'OpenCode',
-        mark: 'opencode',
+        key: 'grok:qwen',
+        provider: 'grok',
+        sourceName: 'Grok',
+        mark: 'grok',
         model: {
           id: 'go/qwen3.8-max',
-          displayName: 'OpenCode Go · Qwen3.8 Max',
+          displayName: 'Grok Code Max',
           description: '',
           isDefault: false,
           reasoningEfforts: [],
@@ -767,8 +796,6 @@ describe('model settings', () => {
         projectName={undefined}
         account={undefined}
         providerStatuses={[]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={models}
         hiddenModels={hiddenModels}
         onModelVisibilityChange={onModelVisibilityChange}
@@ -792,28 +819,28 @@ describe('model settings', () => {
         onClose={() => {}}
       />
     )
-    const view = render(settings(new Set(['opencode:ling'])))
+    const view = render(settings(new Set(['grok:ling'])))
 
     const categories = screen.getByRole('navigation', { name: 'Settings categories' })
     expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('General')
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    const sourceHeading = screen.getByText('OpenCode').closest('.source-identity')
-    expect(sourceHeading?.getAttribute('title')).toBe('OpenCode')
+    const sourceHeading = screen.getByText('Grok').closest('.source-identity')
+    expect(sourceHeading?.getAttribute('title')).toBe('Grok')
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
-    expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
+    expect(screen.getByText('Grok 4.6 Fast')).toBeTruthy()
     const allButton = screen.getByRole('button', {
-      name: 'Show all OpenCode models in model picker',
+      name: 'Show all Grok models in model picker',
     })
     const noneButton = screen.getByRole('button', {
-      name: 'Hide all OpenCode models from model picker',
+      name: 'Hide all Grok models from model picker',
     })
     const ling = screen.getByRole('switch', {
-      name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
+      name: 'Include Grok 4.6 Fast in model picker',
     })
     const qwen = screen.getByRole('switch', {
-      name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
+      name: 'Include Grok Code Max in model picker',
     })
     expect(allButton.textContent).toBe('All')
     expect(noneButton.textContent).toBe('None')
@@ -821,7 +848,7 @@ describe('model settings', () => {
     expect((noneButton as HTMLButtonElement).disabled).toBe(false)
     expect(
       screen.queryByRole('switch', {
-        name: 'Include models from OpenCode in model picker',
+        name: 'Include models from Grok in model picker',
       }),
     ).toBeNull()
     expect(ling.getAttribute('aria-checked')).toBe('false')
@@ -829,54 +856,54 @@ describe('model settings', () => {
 
     fireEvent.click(allButton)
     expect(onModelVisibilityChange).toHaveBeenCalledOnce()
-    expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
+    expect(onModelVisibilityChange).toHaveBeenCalledWith('grok:ling', true)
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set()))
     const disabledAllButton = screen.getByRole('button', {
-      name: 'Show all OpenCode models in model picker',
+      name: 'Show all Grok models in model picker',
     })
     const enabledNoneButton = screen.getByRole('button', {
-      name: 'Hide all OpenCode models from model picker',
+      name: 'Hide all Grok models from model picker',
     })
     expect((disabledAllButton as HTMLButtonElement).disabled).toBe(true)
     expect((enabledNoneButton as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(enabledNoneButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', false)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', false)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'grok:ling', false)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'grok:qwen', false)
 
     onModelVisibilityChange.mockClear()
-    view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
+    view.rerender(settings(new Set(['grok:ling', 'grok:qwen'])))
     const enabledAllButton = screen.getByRole('button', {
-      name: 'Show all OpenCode models in model picker',
+      name: 'Show all Grok models in model picker',
     })
     const disabledNoneButton = screen.getByRole('button', {
-      name: 'Hide all OpenCode models from model picker',
+      name: 'Hide all Grok models from model picker',
     })
     expect((enabledAllButton as HTMLButtonElement).disabled).toBe(false)
     expect((disabledNoneButton as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(enabledAllButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'grok:ling', true)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'grok:qwen', true)
 
     onModelVisibilityChange.mockClear()
     fireEvent.click(
       screen.getByRole('switch', {
-        name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
+        name: 'Include Grok 4.6 Fast in model picker',
       }),
     )
-    expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
-    expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
+    expect(onModelVisibilityChange).toHaveBeenCalledWith('grok:ling', true)
+    expect(screen.getByText('Grok Code Max')).toBeTruthy()
   })
 
   it('omits stored custom-model management from beta settings', () => {
-    const custom = customModelChoice(
-      { provider: 'codex', modelId: 'qwen-max', displayName: 'Qwen Max' },
-      'Codex',
-      'openai',
-    )
+    const custom = customModelChoice({
+      provider: 'codex',
+      modelId: 'qwen-max',
+      displayName: 'Qwen Max',
+    })
     const onCustomModelAdd = vi.fn()
     const onCustomModelRemove = vi.fn()
     const transport = new TestTransport()
@@ -890,8 +917,6 @@ describe('model settings', () => {
         projectName={undefined}
         account={undefined}
         providerStatuses={[]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={[custom]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -928,13 +953,13 @@ describe('model settings', () => {
   it('does not offer raw custom ids from a provider list', () => {
     const models: ModelChoice[] = [
       {
-        key: 'opencode:ling',
-        provider: 'opencode',
-        sourceName: 'OpenCode',
-        mark: 'opencode',
+        key: 'grok:ling',
+        provider: 'grok',
+        sourceName: 'Grok',
+        mark: 'grok',
         model: {
           id: 'zen/ling-3.0-tiny',
-          displayName: 'OpenCode Zen · Ling-3.0-tiny Free',
+          displayName: 'Grok 4.6 Fast',
           description: '',
           isDefault: false,
           reasoningEfforts: [],
@@ -954,8 +979,6 @@ describe('model settings', () => {
         projectName={undefined}
         account={undefined}
         providerStatuses={[]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={models}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -981,7 +1004,7 @@ describe('model settings', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    const group = screen.getByRole('region', { name: 'OpenCode' })
+    const group = screen.getByRole('region', { name: 'Grok' })
     expect(within(group).queryByRole('button', { name: 'Add custom model' })).toBeNull()
     expect(onCustomModelAdd).not.toHaveBeenCalled()
   })
@@ -1041,8 +1064,6 @@ describe('provider settings', () => {
     const transport = new TestTransport(async (method, params) => {
       if (method === 'auth.status') {
         const request = methods[method].params.parse(params)
-        // The Kimi CLI on this machine is already logged in; Qwen is not.
-        if (request.agent) return { signedIn: request.agent === 'kimi' }
         return accountFor(request.provider)
       }
       if (method === 'auth.startLogin') {
@@ -1079,42 +1100,6 @@ describe('provider settings', () => {
             setup: { installUrl: 'https://example.test/grok', login: 'provider' },
           },
         ]}
-        acpAgents={[
-          // A stale server may still list retired gemini; the row must not render.
-          {
-            id: 'gemini',
-            name: 'Gemini CLI',
-            installed: false,
-            verified: true,
-            setup: {
-              installUrl: 'https://example.test/gemini',
-              installCommand: 'npm install -g @google/gemini-cli',
-              login: 'provider',
-            },
-          },
-          {
-            id: 'qwen',
-            name: 'Qwen Code',
-            installed: false,
-            verified: false,
-            setup: {
-              installUrl: 'https://example.test/qwen',
-              installCommand: 'npm install -g @qwen-code/qwen-code',
-              login: 'provider',
-            },
-          },
-          {
-            id: 'kimi',
-            name: 'Kimi CLI',
-            installed: true,
-            verified: true,
-            setup: {
-              installUrl: 'https://example.test/kimi',
-              login: 'provider',
-            },
-          },
-        ]}
-        modelConnections={[]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1173,11 +1158,7 @@ describe('provider settings', () => {
     expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
-    // Beta scope: agent rows and the API-connection form stay out entirely,
-    // even when the server still reports agents.
-    expect(screen.queryByText('Gemini CLI')).toBeNull()
-    expect(screen.queryByText('Qwen Code')).toBeNull()
-    expect(screen.queryByText('Kimi CLI')).toBeNull()
+    // API connections do not exist on main.
     expect(screen.queryByRole('button', { name: 'Connect another plan or API' })).toBeNull()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
@@ -1217,19 +1198,17 @@ describe('provider settings', () => {
         account={undefined}
         providerStatuses={[
           {
-            id: 'opencode',
-            displayName: 'OpenCode',
+            id: 'claude-code',
+            displayName: 'Claude Code',
             installed: false,
             auth: 'unknown',
             setup: {
-              installUrl: 'https://example.test/opencode',
-              installCommand: 'npm install -g opencode-ai',
+              installUrl: 'https://example.test/claude',
+              installCommand: 'npm install -g @anthropic-ai/claude-code',
               login: 'provider',
             },
           },
         ]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1259,7 +1238,7 @@ describe('provider settings', () => {
     await waitFor(() =>
       expect(transport.requests).toContainEqual({
         method: 'providers.install',
-        params: { provider: 'opencode', columns: 100, rows: 30 },
+        params: { provider: 'claude-code', columns: 100, rows: 30 },
       }),
     )
 
@@ -1267,7 +1246,7 @@ describe('provider settings', () => {
       terminalId: 'term-install-2',
       data: 'added 12 packages\r\n',
     })
-    const installRow = providerRow('OpenCode')
+    const installRow = providerRow('Claude Code')
     expect(within(installRow).getByRole('status').textContent).toContain('Installing…')
     expect(screen.queryByText('added 12 packages')).toBeNull()
     const details = within(installRow).getByRole('button', { name: 'Details' })
@@ -1372,20 +1351,6 @@ describe('provider settings', () => {
             },
           },
         ]}
-        acpAgents={[
-          {
-            id: 'kimi',
-            name: 'Kimi CLI',
-            installed: true,
-            verified: true,
-            setup: {
-              installUrl: 'https://example.test/kimi',
-              login: 'provider',
-            },
-            problem: 'Vendor ended individual sign-in.',
-          },
-        ]}
-        modelConnections={[]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1453,8 +1418,6 @@ describe('provider settings', () => {
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
 
-    // Beta scope: agent rows never render, even when the server reports one.
-    expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
     expect(onConnectionsChanged).not.toHaveBeenCalled()
   })

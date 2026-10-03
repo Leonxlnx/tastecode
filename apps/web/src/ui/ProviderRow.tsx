@@ -16,16 +16,30 @@ export type ProviderAction = {
   controls?: string | undefined
 }
 
+/**
+ * How the provider is wired to an account. The row draws it as the line
+ * between the name and the status: solid when an account is attached, a
+ * dotted leader while the provider waits for one, nothing when the provider
+ * is not on this machine.
+ */
+export type ProviderLink = 'connected' | 'open' | 'none'
+
 export function ProviderRow(props: {
   provider: ProviderStatus
   status: ReactNode
+  link?: ProviderLink | undefined
   live?: boolean
   issue?: ProviderIssue | undefined
   primary?: ProviderAction | undefined
   secondary?: ProviderAction | undefined
 }) {
   return (
-    <div className="settings__row provider-row">
+    <div
+      className="settings__row provider-row"
+      data-link={props.link ?? 'open'}
+      data-live={props.live || undefined}
+      data-fault={props.issue?.announce || undefined}
+    >
       <div className="provider-row__mark" title={props.provider.version}>
         <ProviderIcon mark={providerMark(props.provider.id)} size={18} />
       </div>

@@ -15,6 +15,7 @@ import {
   BackgroundModelPreferenceSchema,
   DiffDecisionSchema,
   DomainEventSchema,
+  ProviderContextSettingsMapSchema,
   ProviderIdSchema,
   SidebarSettingsSchema,
 } from '@harness/contracts'
@@ -24,6 +25,7 @@ import type {
   DiffDecision,
   DomainEvent,
   JsonValue,
+  ProviderContextSettingsMap,
   ProviderId,
   ProviderHistorySession,
   SidebarSettings,
@@ -44,6 +46,7 @@ import {
 } from './inbox-projection.js'
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
+const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
 })
@@ -87,7 +90,7 @@ export type StoredThread = {
   id: string
   projectPath: string
   provider: ProviderId
-  /** Which ACP agent, when the provider is `acp`. */
+  /** Custom harness id, when the thread runs one instead of the provider CLI. */
   agent?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
@@ -775,6 +778,7 @@ export class Store {
   #pendingSidebarThreads: StoredSidebarThread[] | undefined
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
+  #providerContextSettingsCache: ProviderContextSettingsMap | undefined
   #replaySnapshotCache = new Map<
     string,
     { seq: number; entries: ReplayEntry[]; characters: number }
@@ -1500,12 +1504,18 @@ export class Store {
       thread_id: string
       metadata: string
       loaded_revision: string | null
-    }>(this.#db.prepare('SELECT * FROM provider_history')).map((row) => ({
-      provider: ProviderIdSchema.parse(row.provider),
-      threadId: row.thread_id,
-      session: JSON.parse(row.metadata) as ProviderHistorySession,
-      loadedRevision: row.loaded_revision,
-    }))
+    }>(this.#db.prepare('SELECT * FROM provider_history')).flatMap((row) => {
+      const provider = toProviderId(row.provider)
+      if (!provider) return []
+      return [
+        {
+          provider,
+          threadId: row.thread_id,
+          session: JSON.parse(row.metadata) as ProviderHistorySession,
+          loadedRevision: row.loaded_revision,
+        },
+      ]
+    })
   }
 
   /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
@@ -1881,6 +1891,34 @@ export class Store {
     this.#writeAppSetting.run(BACKGROUND_MODEL_SETTING, JSON.stringify(preference))
     this.#backgroundModelPreferenceCache = freezeBackgroundModelPreference(preference)
     return this.#backgroundModelPreferenceCache
+  }
+
+  providerContextSettings(): ProviderContextSettingsMap {
+    if (this.#providerContextSettingsCache) return this.#providerContextSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_CONTEXT_SETTING)
+    let settings: ProviderContextSettingsMap = {}
+    if (row) {
+      try {
+        settings = ProviderContextSettingsMapSchema.parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every engine on its own defaults.
+        console.warn('[store] unreadable provider context settings, using engine defaults')
+      }
+    }
+    this.#providerContextSettingsCache = Object.freeze(settings)
+    return this.#providerContextSettingsCache
+  }
+
+  updateProviderContextSettings(
+    provider: ProviderId,
+    settings: NonNullable<ProviderContextSettingsMap[ProviderId]>,
+  ): ProviderContextSettingsMap {
+    const next: ProviderContextSettingsMap = { ...this.providerContextSettings() }
+    if (settings.window === undefined && settings.compactAt === undefined) delete next[provider]
+    else next[provider] = Object.freeze({ ...settings })
+    this.#writeAppSetting.run(PROVIDER_CONTEXT_SETTING, JSON.stringify(next))
+    this.#providerContextSettingsCache = Object.freeze(next)
+    return this.#providerContextSettingsCache
   }
 
   #updateThread(
@@ -4030,18 +4068,13 @@ function toProviderId(provider: string): ProviderId | undefined {
     case 'codex':
     case 'claude-code':
     case 'grok':
-    case 'cursor':
-    case 'opencode':
-    case 'antigravity':
-    case 'pi':
-    case 'acp':
-    case 'api':
       return provider
     default: {
       const parsed = ProviderIdSchema.safeParse(provider)
       if (parsed.success) return parsed.data
-      // A provider only a newer build knows. The row stays stored; readers
-      // skip it rather than die on it.
+      // A provider this build does not ship: a newer build, or one that lives
+      // only on the nightly branch. The row stays stored; readers skip it
+      // rather than die on it.
       console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
       return undefined
     }

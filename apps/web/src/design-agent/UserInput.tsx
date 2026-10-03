@@ -5,18 +5,20 @@ import { IconLoader2 } from '@tabler/icons-react'
 import { IndeterminateRequestError } from '../transport.js'
 import './user-input.css'
 
+type Answer = { mode: 'option' | 'custom'; value: string }
+
 export function UserInput(props: {
   request: UserInputRequest
   onSubmit: (answers: Record<string, string[]>) => void | Promise<void>
 }) {
-  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [answers, setAnswers] = useState<Record<string, Answer>>({})
   const [step, setStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [submissionError, setSubmissionError] = useState<'definite' | 'indeterminate'>()
   const previousRequest = useRef(props.request)
   const lastWheelAt = useRef(0)
   const question = props.request.questions[step]
-  const answer = question ? answers[question.id]?.trim() : undefined
+  const answer = question ? answers[question.id]?.value.trim() : undefined
   const lastStep = step === props.request.questions.length - 1
   const composer = globalThis.document?.querySelector<HTMLElement>('.composer__box') ?? null
 
@@ -44,9 +46,7 @@ export function UserInput(props: {
 
   const options = question.options ?? []
   const custom = question.allowOther || options.length === 0
-  const customSelected =
-    Object.hasOwn(answers, question.id) &&
-    !options.some((option) => option.label === answers[question.id])
+  const customSelected = answers[question.id]?.mode === 'custom'
 
   const goBack = () => {
     if (step === 0) return
@@ -101,7 +101,10 @@ export function UserInput(props: {
           void Promise.resolve(
             props.onSubmit(
               Object.fromEntries(
-                Object.entries(answers).map(([questionId, value]) => [questionId, [value.trim()]]),
+                Object.entries(answers).map(([questionId, answer]) => [
+                  questionId,
+                  [answer.value.trim()],
+                ]),
               ),
             ),
           ).catch(retry)
@@ -127,9 +130,12 @@ export function UserInput(props: {
                 <input
                   type="radio"
                   name={question.id}
-                  checked={answers[question.id] === option.label}
+                  checked={!customSelected && answers[question.id]?.value === option.label}
                   onChange={() =>
-                    setAnswers((current) => ({ ...current, [question.id]: option.label }))
+                    setAnswers((current) => ({
+                      ...current,
+                      [question.id]: { mode: 'option', value: option.label },
+                    }))
                   }
                 />
                 <span>{option.label}</span>
@@ -143,18 +149,26 @@ export function UserInput(props: {
                   name={question.id}
                   checked={customSelected}
                   aria-label="Write your own answer"
-                  onChange={() => setAnswers((current) => ({ ...current, [question.id]: '' }))}
+                  onChange={() =>
+                    setAnswers((current) => ({
+                      ...current,
+                      [question.id]: { mode: 'custom', value: '' },
+                    }))
+                  }
                 />
                 {customSelected ? (
                   <input
                     className="brief-input__custom"
                     type={question.secret ? 'password' : 'text'}
-                    value={answers[question.id] ?? ''}
+                    value={answers[question.id]?.value ?? ''}
                     placeholder="Type your answer…"
                     aria-label={`Custom answer: ${question.question}`}
                     autoFocus
                     onChange={(event) =>
-                      setAnswers((current) => ({ ...current, [question.id]: event.target.value }))
+                      setAnswers((current) => ({
+                        ...current,
+                        [question.id]: { mode: 'custom', value: event.target.value },
+                      }))
                     }
                   />
                 ) : (

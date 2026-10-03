@@ -78,4 +78,8 @@ describe('server access token', () => {
     expect(hasAccess('/?token=wrong-token', 'correct-token')).toBe(false)
     expect(hasAccess('/', 'correct-token')).toBe(false)
   })
+
+  it.each(['//[', 'http://[', '//%'])('refuses a malformed request target: %s', (target) => {
+    expect(hasAccess(target, 'correct-token')).toBe(false)
+  })
 })

@@ -11,14 +11,12 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ProviderContextSettings,
   ProviderId,
-  StoredModelConnection,
   Thread,
 } from '@harness/contracts'
-import { createApiWorkspaceTools } from './api-workspace-tools.js'
 import {
   actionableLaunchError,
-  customHarnessRun,
   customHarnessSpawn,
   resolveCustomHarnessLaunch,
   runCustomHarness,
@@ -26,15 +24,11 @@ import {
 import { retryableLazy } from './retryable-lazy.js'
 import { mapProviderSession } from './provider-session.js'
 
+// Grok speaks ACP when a project has MCP servers; there is no ACP provider.
 const loadAcpAdapter = retryableLazy(() => import('@harness/adapter-acp'))
-const loadAntigravityAdapter = retryableLazy(() => import('@harness/adapter-antigravity'))
-const loadApiAdapter = retryableLazy(() => import('@harness/adapter-api'))
 const loadClaudeAdapter = retryableLazy(() => import('@harness/adapter-claude-code'))
 const loadCodexAdapter = retryableLazy(() => import('@harness/adapter-codex'))
-const loadCursorAdapter = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrokAdapter = retryableLazy(() => import('@harness/adapter-grok'))
-const loadOpenCodeAdapter = retryableLazy(() => import('@harness/adapter-opencode'))
-const loadPiAdapter = retryableLazy(() => import('@harness/adapter-pi'))
 
 /**
  * One shape every engine is driven through.
@@ -50,10 +44,8 @@ export type StartOptions = {
   serviceTier?: string | undefined
   effort?: string | undefined
   approval?: ApprovalMode | undefined
-  /** Built-in ACP agent or user-owned harness source to launch. */
+  /** User-owned custom harness to launch instead of the provider's own CLI. */
   agent?: string | undefined
-  /** Server-owned direct API connection. Required only by the API runtime. */
-  connectionId?: string | undefined
   /** Provider-owned history should not retain product-internal background work. */
   ephemeral?: boolean | undefined
   /**
@@ -62,6 +54,8 @@ export type StartOptions = {
    */
   isolate?: boolean | undefined
   baseRef?: string | undefined
+  /** The user's context settings, already narrowed to what this engine declared. */
+  context?: ProviderContextSettings | undefined
   /** Internal project overrides and their already-resolved OS credentials. */
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
@@ -70,79 +64,6 @@ export type StartOptions = {
    * separate from the stable TasteCode thread id passed to `resume`.
    */
   providerSessionId?: string | undefined
-}
-
-export function apiRuntime(
-  connection: StoredModelConnection,
-  apiKey: string,
-  onLog: (line: string) => void,
-): ProviderRuntime {
-  return {
-    async start(workspacePath, options) {
-      const {
-        ApiAgentSession,
-        createAnthropicMessagesTransport,
-        createOpenAiCompatibleTransport,
-        createOpenAiResponsesTransport,
-      } = await loadApiAdapter()
-      const transport =
-        connection.transport === 'openai-responses'
-          ? createOpenAiResponsesTransport({ apiKey, baseUrl: connection.baseUrl })
-          : connection.transport === 'anthropic-messages'
-            ? createAnthropicMessagesTransport({ apiKey, baseUrl: connection.baseUrl })
-            : createOpenAiCompatibleTransport({
-                apiKey,
-                provider:
-                  connection.preset === 'openrouter' ||
-                  connection.preset === 'kimi' ||
-                  connection.preset === 'zai'
-                    ? connection.preset
-                    : 'custom',
-                baseUrl: connection.baseUrl,
-              })
-      const model = options.model ?? connection.defaultModel
-      if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
-      const workspaceTools = createApiWorkspaceTools(workspacePath, options.approval)
-      const session = new ApiAgentSession({
-        model,
-        transport,
-        secrets: [apiKey],
-        ...workspaceTools,
-        ...(options.instructions
-          ? {
-              instructions: options.instructions,
-            }
-          : {}),
-      })
-      session.on('log', onLog)
-      const thread = session.startThread(workspacePath, connection.id)
-      return { thread, session }
-    },
-    async listModels() {
-      const { listAnthropicModels, listOpenAiCompatibleModels, listOpenAiModels } =
-        await loadApiAdapter()
-      const options = {
-        apiKey,
-        baseUrl: connection.baseUrl,
-        ...(connection.defaultModel
-          ? {
-              defaultModel: connection.defaultModel,
-            }
-          : {}),
-      }
-      if (connection.transport === 'openai-responses') return listOpenAiModels(options)
-      if (connection.transport === 'anthropic-messages') return listAnthropicModels(options)
-      return listOpenAiCompatibleModels({
-        ...options,
-        provider:
-          connection.preset === 'openrouter' ||
-          connection.preset === 'kimi' ||
-          connection.preset === 'zai'
-            ? connection.preset
-            : 'custom',
-      })
-    },
-  }
 }
 
 export type TurnOptions = Pick<StartOptions, 'model' | 'serviceTier' | 'effort'>
@@ -174,6 +95,10 @@ export interface AgentSession {
   ): void
   /** Provider-owned subscription usage changed; the server should refetch. */
   onUsageChanged?(listener: () => void): void
+  /** Provider MCP discovery changed; the project inventory should be refreshed. */
+  onMcpChanged?(listener: () => void): (() => void) | void
+  /** The session cannot accept more work; its terminal events have already been emitted. */
+  onDisconnected?(listener: () => void): () => void
   /** Provider reported or rotated the opaque identity needed after a restart. */
   onProviderSessionId?(listener: (providerSessionId: string) => void): void
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
@@ -213,18 +138,8 @@ export function providerRuntime(
       return codexRuntime(onLog, resolveHarness)
     case 'claude-code':
       return claudeRuntime(onLog, resolveHarness)
-    case 'acp':
-      return acpRuntime(onLog, resolveHarness)
-    case 'cursor':
-      return cursorRuntime(onLog, resolveHarness)
-    case 'opencode':
-      return openCodeRuntime(onLog, resolveHarness)
-    case 'antigravity':
-      return antigravityRuntime(onLog, resolveHarness)
     case 'grok':
       return grokRuntime(onLog, resolveHarness)
-    case 'pi':
-      return piRuntime(onLog, resolveHarness)
     default:
       throw new Error(`provider "${provider}" is not implemented yet`)
   }
@@ -237,25 +152,12 @@ function harnessFor(
 ): CustomHarness | undefined {
   if (!id) return undefined
   const harness = resolveHarness(id)
-  // ACP also has built-in agent IDs. Every other non-empty source is a
-  // persisted custom harness and must fail loudly if it was removed.
-  if (!harness) {
-    if (provider === 'acp') return undefined
-    throw new Error(`custom harness "${id}" no longer exists`)
-  }
+  // A non-empty source is a persisted custom harness and must fail loudly if
+  // it was removed.
+  if (!harness) throw new Error(`custom harness "${id}" no longer exists`)
   if (harness.provider !== provider) {
     throw new Error(`custom harness "${harness.displayName}" is configured for ${harness.provider}`)
   }
-  return harness
-}
-
-function requireHarness(
-  provider: ProviderId,
-  id: string | undefined,
-  resolveHarness: (id: string) => CustomHarness | undefined,
-): CustomHarness {
-  const harness = harnessFor(provider, id, resolveHarness)
-  if (!harness) throw new Error(`${provider} requires a configured custom harness`)
   return harness
 }
 
@@ -263,15 +165,10 @@ const CUSTOM_HARNESS_PROTOCOL_LABELS = {
   codex: 'Codex app-server',
   'claude-code': 'Claude Code stream JSON',
   grok: 'Grok streaming JSON',
-  cursor: 'Cursor stream JSON',
-  opencode: 'OpenCode HTTP server',
-  antigravity: 'Antigravity stream JSON',
-  pi: 'Pi RPC',
-  acp: 'ACP',
 } satisfies Record<CustomHarness['provider'], string>
 
 /**
- * Side-effect-bounded compatibility check. Native/ACP integrations complete a
+ * Side-effect-bounded compatibility check. Native integrations complete a
  * real handshake; one-shot CLIs run only their free discovery/help command,
  * never a model prompt.
  */
@@ -359,60 +256,6 @@ async function probeCustomHarnessProtocol(
         await adapter.dispose()
       }
     }
-    case 'opencode': {
-      const { OpenCodeAdapter } = await loadOpenCodeAdapter()
-      const adapter = new OpenCodeAdapter({ spawn })
-      adapter.on('log', onLog)
-      try {
-        await customHarnessDeadline(harness, 'start its HTTP server', adapter.start())
-        const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
-        return modelProbeCheck(label, models, 'HTTP protocol detected')
-      } finally {
-        await adapter.dispose()
-      }
-    }
-    case 'pi': {
-      const { PiAdapter } = await loadPiAdapter()
-      const adapter = new PiAdapter({
-        command: harness.command,
-        args: [],
-        displayName: harness.displayName,
-        spawn,
-        workspacePath,
-      })
-      adapter.on('log', onLog)
-      try {
-        const models = await customHarnessDeadline(harness, 'complete Pi RPC', adapter.listModels())
-        return modelProbeCheck(label, models, 'RPC handshake completed')
-      } finally {
-        await adapter.dispose()
-      }
-    }
-    case 'acp': {
-      const { AcpAdapter } = await loadAcpAdapter()
-      const adapter = new AcpAdapter(harness.id, {
-        name: harness.displayName,
-        command: harness.command,
-        args: [],
-        spawn,
-      })
-      adapter.on('log', onLog)
-      try {
-        const result = await customHarnessDeadline(
-          harness,
-          'complete the ACP handshake',
-          adapter.verifyCompatibility(workspacePath),
-        )
-        const agent = [result.agentName, result.agentVersion].filter(Boolean).join(' ')
-        return {
-          label,
-          status: 'passed',
-          detail: `Initialize handshake completed${agent ? ` with ${agent}` : ''}.`,
-        }
-      } finally {
-        await adapter.dispose()
-      }
-    }
     case 'claude-code': {
       const result = await runCustomHarness(harness, workspacePath, ['--help'])
       const advertisesStreaming = /stream-json/i.test(result.stdout)
@@ -427,31 +270,6 @@ async function probeCustomHarnessProtocol(
     case 'grok': {
       const { GrokAdapter } = await loadGrokAdapter()
       const adapter = new GrokAdapter({ spawn })
-      adapter.on('log', onLog)
-      try {
-        const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
-        return modelProbeCheck(label, models, 'Streaming CLI model command responded')
-      } finally {
-        await adapter.dispose()
-      }
-    }
-    case 'cursor': {
-      const { CursorAdapter } = await loadCursorAdapter()
-      const adapter = new CursorAdapter({
-        spawn,
-        run: customHarnessRun(harness, workspacePath),
-      })
-      adapter.on('log', onLog)
-      try {
-        const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
-        return modelProbeCheck(label, models, 'Stream-json CLI model command responded')
-      } finally {
-        await adapter.dispose()
-      }
-    }
-    case 'antigravity': {
-      const { AntigravityAdapter } = await loadAntigravityAdapter()
-      const adapter = new AntigravityAdapter({ spawn })
       adapter.on('log', onLog)
       try {
         const models = await customHarnessDeadline(harness, 'list models', adapter.listModels())
@@ -525,10 +343,8 @@ function grokRuntime(
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
   const acpAdapterFor = async (harness: CustomHarness | undefined, options: StartOptions) => {
-    const [{ AcpAdapter, prepareAcpMcpServers }, { grokCommand }] = await Promise.all([
-      loadAcpAdapter(),
-      loadGrokAdapter(),
-    ])
+    const [{ AcpAdapter, prepareAcpMcpServers }, { grokCommand, grokContextEnvironment }] =
+      await Promise.all([loadAcpAdapter(), loadGrokAdapter()])
     return new AcpAdapter('grok', {
       name: harness?.displayName ?? 'Grok',
       command: grokCommand(),
@@ -540,6 +356,7 @@ function grokRuntime(
       ],
       provider: 'grok',
       mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
+      env: grokContextEnvironment(options.context),
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
   }
@@ -589,6 +406,7 @@ function grokRuntime(
         effort: options.effort,
         approval: options.approval,
         instructions: options.instructions,
+        context: options.context,
         ...(options.ephemeral ? { ephemeral: true } : {}),
       })
       return { thread, session: printSessionFor(adapter) }
@@ -629,6 +447,7 @@ function grokRuntime(
           effort: options.effort,
           approval: options.approval,
           instructions: options.instructions,
+          context: options.context,
           ...(options.ephemeral ? { ephemeral: true } : {}),
         },
       )
@@ -640,160 +459,6 @@ function grokRuntime(
       return new GrokAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {}).listModels()
     },
   }
-}
-
-function antigravityRuntime(
-  onLog: (line: string) => void,
-  resolveHarness: (id: string) => CustomHarness | undefined,
-): ProviderRuntime {
-  return {
-    async start(workspacePath, options) {
-      const harness = harnessFor('antigravity', options.agent, resolveHarness)
-      const { AntigravityAdapter } = await loadAntigravityAdapter()
-      const adapter = new AntigravityAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-      adapter.on('log', onLog)
-      const thread = await adapter.startThread(workspacePath, {
-        model: options.model,
-        effort: options.effort,
-        approval: options.approval,
-        instructions: options.instructions,
-      })
-      return {
-        thread,
-        session: {
-          capabilities: adapter.capabilities,
-          sendTurn: (threadId, text, attachments, turnOptions) =>
-            adapter.sendTurn(threadId, text, attachments, turnOptions),
-          interrupt: () => adapter.interrupt(),
-          // Print mode decides permissions from the launch switches; there is
-          // no mid-turn callback to answer.
-          respondToApproval: () => {},
-          dispose: () => adapter.dispose(),
-          on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
-        },
-      }
-    },
-    async listModels(agent) {
-      const harness = harnessFor('antigravity', agent, resolveHarness)
-      const { AntigravityAdapter } = await loadAntigravityAdapter()
-      return new AntigravityAdapter(
-        harness ? { spawn: customHarnessSpawn(harness) } : {},
-      ).listModels()
-    },
-  }
-}
-
-function cursorRuntime(
-  onLog: (line: string) => void,
-  resolveHarness: (id: string) => CustomHarness | undefined,
-): ProviderRuntime {
-  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
-    const harness = harnessFor('cursor', options.agent, resolveHarness)
-    const { CursorAdapter } = await loadCursorAdapter()
-    const adapter = new CursorAdapter(
-      harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
-    )
-    adapter.on('log', onLog)
-    const selection = {
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.effort ? { effort: options.effort } : {}),
-      ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
-      ...(options.approval ? { approval: options.approval } : {}),
-      ...(options.instructions ? { instructions: options.instructions } : {}),
-    }
-    const thread =
-      threadId === undefined
-        ? await adapter.startThread(workspacePath, selection)
-        : await adapter.resumeThread(threadId, workspacePath, selection)
-    return { thread, session: adapter }
-  }
-  return {
-    start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
-    async listModels(agent) {
-      const harness = harnessFor('cursor', agent, resolveHarness)
-      const { CursorAdapter } = await loadCursorAdapter()
-      return new CursorAdapter(
-        harness ? { spawn: customHarnessSpawn(harness), run: customHarnessRun(harness) } : {},
-      ).listModels()
-    },
-  }
-}
-
-function openCodeRuntime(
-  onLog: (line: string) => void,
-  resolveHarness: (id: string) => CustomHarness | undefined,
-): ProviderRuntime {
-  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
-    const harness = harnessFor('opencode', options.agent, resolveHarness)
-    const { OpenCodeAdapter } = await loadOpenCodeAdapter()
-    const adapter = new OpenCodeAdapter({
-      ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
-      ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
-      ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
-    })
-    adapter.on('log', onLog)
-    return startedSession(adapter, async () => {
-      if (harness) {
-        await customHarnessOperation(harness, 'start its server', adapter.start())
-      } else {
-        await adapter.start()
-      }
-      const selection = {
-        ...(options.model ? { model: options.model } : {}),
-        ...(options.effort ? { effort: options.effort } : {}),
-        ...(options.approval ? { approval: options.approval } : {}),
-        ...(options.instructions ? { instructions: options.instructions } : {}),
-      }
-      const opening =
-        threadId === undefined
-          ? adapter.startThread(workspacePath, selection)
-          : adapter.resumeThread(threadId, workspacePath, selection)
-      return harness
-        ? await customHarnessOperation(
-            harness,
-            threadId === undefined ? 'create a session' : 'resume its session',
-            opening,
-          )
-        : await opening
-    })
-  }
-  return {
-    start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
-    async listModels(agent) {
-      return listOpenCodeModels(harnessFor('opencode', agent, resolveHarness))
-    },
-  }
-}
-
-/**
- * Single-flight: every OpenCode model listing spawns a real `opencode serve`
- * process for its lifetime, so concurrent or rapid-fire requests must share
- * one run instead of forking one process each. A renderer refresh loop once
- * held ~170 of these processes alive at the same time — the server, not the
- * client, is where that has to be impossible.
- */
-const openCodeModelListings = new Map<string, Promise<Model[]>>()
-
-function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
-  const key = harness?.id ?? 'default'
-  const existing = openCodeModelListings.get(key)
-  if (existing) return existing
-  const listing = (async () => {
-    const { OpenCodeAdapter } = await loadOpenCodeAdapter()
-    const adapter = new OpenCodeAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
-    try {
-      const listing = adapter.listModels()
-      return harness ? await customHarnessOperation(harness, 'list models', listing) : await listing
-    } finally {
-      await adapter.dispose()
-    }
-  })().finally(() => {
-    openCodeModelListings.delete(key)
-  })
-  openCodeModelListings.set(key, listing)
-  return listing
 }
 
 function codexRuntime(
@@ -819,6 +484,7 @@ function codexRuntime(
       return adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
         ...(options.instructions ? { instructions: options.instructions } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.context ? { context: options.context } : {}),
       })
     })
   }
@@ -840,69 +506,6 @@ function codexRuntime(
       } finally {
         await adapter.dispose()
       }
-    },
-  }
-}
-
-function acpRuntime(
-  onLog: (line: string) => void,
-  resolveHarness: (id: string) => CustomHarness | undefined,
-): ProviderRuntime {
-  const open = async (workspacePath: string, options: StartOptions, threadId?: string) => {
-    if (!options.agent) throw new Error('no ACP agent chosen')
-    const harness = harnessFor('acp', options.agent, resolveHarness)
-    const { AcpAdapter } = await loadAcpAdapter()
-    const adapter = new AcpAdapter(
-      options.agent,
-      harness
-        ? {
-            name: harness.displayName,
-            command: harness.command,
-            args: [],
-            spawn: customHarnessSpawn(harness),
-          }
-        : undefined,
-    )
-    adapter.on('log', onLog)
-    return startedSession(adapter, async () => {
-      const selection = {
-        approval: options.approval,
-        model: options.model,
-        instructions: options.instructions,
-      }
-      const opening =
-        threadId === undefined
-          ? adapter.startThread(workspacePath, selection)
-          : adapter.resumeThread(threadId, workspacePath, selection)
-      return harness
-        ? await customHarnessOperation(
-            harness,
-            threadId === undefined
-              ? 'complete the ACP session handshake'
-              : 'resume the ACP session',
-            opening,
-          )
-        : await opening
-    })
-  }
-  return {
-    start: open,
-    resume: (threadId, workspacePath, options) => open(workspacePath, options, threadId),
-    async listModels(agent) {
-      if (!agent) return []
-      const harness = harnessFor('acp', agent, resolveHarness)
-      const { AcpAdapter } = await loadAcpAdapter()
-      return new AcpAdapter(
-        agent,
-        harness
-          ? {
-              name: harness.displayName,
-              command: harness.command,
-              args: [],
-              spawn: customHarnessSpawn(harness),
-            }
-          : undefined,
-      ).listModels()
     },
   }
 }
@@ -955,6 +558,7 @@ function claudeRuntime(
           ephemeral: options.ephemeral,
           mcpServers: options.mcpServers,
           mcpCredentials: options.mcpCredentials,
+          context: options.context,
         }),
       )
     },
@@ -970,6 +574,7 @@ function claudeRuntime(
             instructions: options.instructions,
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
+            context: options.context,
           }),
         ),
       )
@@ -978,49 +583,6 @@ function claudeRuntime(
       const adapter = await adapterFor(agent)
       try {
         return await adapter.listModels()
-      } finally {
-        await adapter.dispose()
-      }
-    },
-  }
-}
-
-function piRuntime(
-  onLog: (line: string) => void,
-  resolveHarness: (id: string) => CustomHarness | undefined,
-): ProviderRuntime {
-  const adapterFor = async (agent: string | undefined, workspacePath?: string) => {
-    const harness = requireHarness('pi', agent, resolveHarness)
-    const { PiAdapter } = await loadPiAdapter()
-    const adapter = new PiAdapter({
-      command: harness.command,
-      args: [],
-      displayName: harness.displayName,
-      spawn: customHarnessSpawn(harness, workspacePath),
-      ...(workspacePath ? { workspacePath } : {}),
-    })
-    adapter.on('log', onLog)
-    return adapter
-  }
-  return {
-    async start(workspacePath, options) {
-      const harness = requireHarness('pi', options.agent, resolveHarness)
-      const adapter = await adapterFor(options.agent, workspacePath)
-      return startedSession(adapter, async () => {
-        const starting = adapter.startThread(workspacePath, {
-          model: options.model,
-          effort: options.effort,
-          approval: options.approval,
-          instructions: options.instructions,
-        })
-        return customHarnessOperation(harness, 'complete the Pi RPC handshake', starting)
-      })
-    },
-    async listModels(agent) {
-      const harness = requireHarness('pi', agent, resolveHarness)
-      const adapter = await adapterFor(agent)
-      try {
-        return await customHarnessOperation(harness, 'list Pi models', adapter.listModels())
       } finally {
         await adapter.dispose()
       }

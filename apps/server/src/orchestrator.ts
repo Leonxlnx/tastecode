@@ -16,7 +16,6 @@ import { JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
 import { z } from 'zod'
 import {
   providerRuntime,
-  apiRuntime,
   verifyCustomHarness as verifyCustomHarnessCompatibility,
   type AgentSession,
   type ProviderRuntime,
@@ -39,6 +38,11 @@ import {
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import { ProviderControls } from './provider-controls.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
+import {
+  contextForLaunch,
+  providerContextControl,
+  validateContextSettings,
+} from './provider-context.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
@@ -68,6 +72,8 @@ import type {
   Item,
   PanicStopResult,
   ParamsOf,
+  ProviderContextSettings,
+  ProviderContextSettingsMap,
   ProviderId,
   ProviderLimitSource,
   QueuedTurn,
@@ -88,7 +94,6 @@ import {
 } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
-import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
@@ -169,6 +174,7 @@ type QueuedTurnEntry = QueuedTurn & {
 }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
+type QueueDrain = { queueId: string; completedTurnId?: string }
 type AttachedThreadRuntime = {
   thread: Thread
   session: AgentSession
@@ -523,7 +529,7 @@ export class Orchestrator {
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #emptyQueuedTurns = new Set<string>()
-  #drainingQueues = new Set<string>()
+  #drainingQueues = new Map<string, QueueDrain>()
   #designFlows = new Map<string, DesignFlow>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
@@ -579,7 +585,6 @@ export class Orchestrator {
   #sidebarStatusRevision = 0
   #sidebarStatusChanges: Array<{ revision: number; threadId: string }> = []
   #mcpConfig: McpConfigStore
-  #modelConnections: ModelConnectionStore
   #customHarnesses: CustomHarnessStore
   #backgroundSourcesCache:
     { expiresAt: number; sources: AvailableBackgroundModelSource[] } | undefined
@@ -595,7 +600,6 @@ export class Orchestrator {
    * other, and that is about this class, not about any vendor.
    */
   #runtimeFor: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
-  #runtimeForInjected: boolean
   #maxIdleThreadRuntimes: number
   #idleThreadRuntimeMs: number
   #controls: ProviderControls
@@ -626,7 +630,6 @@ export class Orchestrator {
         viewports: Array<{ width: number; height: number }>,
       ) => Promise<ReviewScreenshot[] | undefined>
       mcpConfig?: McpConfigStore
-      modelConnections?: ModelConnectionStore
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
       voiceTranscriber?: VoiceTranscriber
@@ -662,7 +665,6 @@ export class Orchestrator {
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
-    this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#voice = new VoiceService(handlers.voiceTranscriber)
@@ -674,7 +676,6 @@ export class Orchestrator {
       handlers.runtimeFor ??
       ((provider, onLog) =>
         providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id)))
-    this.#runtimeForInjected = handlers.runtimeFor !== undefined
     this.#maxIdleThreadRuntimes =
       handlers.maxIdleThreadRuntimes === undefined
         ? idleThreadRuntimeLimit(os.totalmem())
@@ -706,10 +707,6 @@ export class Orchestrator {
     return control.listModels ? control.listModels(agent) : []
   }
 
-  listModelConnections() {
-    return this.#modelConnections.list()
-  }
-
   listCustomHarnesses() {
     return this.#customHarnesses.list()
   }
@@ -732,26 +729,26 @@ export class Orchestrator {
     this.#invalidateBackgroundSources()
   }
 
-  upsertModelConnection(connection: Parameters<ModelConnectionStore['upsert']>[0]) {
-    const saved = this.#modelConnections.upsert(connection)
-    this.#invalidateBackgroundSources()
-    return saved
+  contextSettings(): ProviderContextSettingsMap {
+    return this.#store.providerContextSettings()
   }
 
-  setModelConnectionCredential(connectionId: string, apiKey: string): void {
-    this.#modelConnections.setCredential(connectionId, apiKey)
-    this.#invalidateBackgroundSources()
+  updateContextSettings(
+    provider: ProviderId,
+    settings: ProviderContextSettings,
+  ): ProviderContextSettingsMap {
+    validateContextSettings(providerContextControl(provider), settings)
+    return this.#store.updateProviderContextSettings(provider, settings)
   }
 
-  removeModelConnection(connectionId: string): void {
-    this.#modelConnections.remove(connectionId)
-    this.#invalidateBackgroundSources()
-  }
-
-  async listConnectionModels(connectionId: string): Promise<Model[]> {
-    const connection = this.#modelConnections.get(connectionId)
-    const apiKey = this.#readCredential(connection.credentialRef)
-    return apiRuntime(connection, apiKey, this.#onLog).listModels()
+  /** Custom harnesses configure their own engine, so only the provider's own CLI is tuned. */
+  #contextRuntimeOptions(provider: ProviderId, agent: string | undefined): StartOptions {
+    if (agent) return {}
+    const context = contextForLaunch(
+      providerContextControl(provider),
+      this.#store.providerContextSettings()[provider],
+    )
+    return context ? { context } : {}
   }
 
   async backgroundModelSettings(): Promise<BackgroundModelSettings> {
@@ -762,7 +759,6 @@ export class Orchestrator {
       id: source.id,
       displayName: source.displayName,
       provider: source.provider,
-      ...(source.connectionId ? { connectionId: source.connectionId } : {}),
       ...(source.agent ? { agent: source.agent } : {}),
       models: source.models,
     }))
@@ -808,10 +804,7 @@ export class Orchestrator {
           : 'Connect a provider with an available model before using background writing.',
       )
     }
-    const runtime =
-      settings.resolved.provider === 'api'
-        ? this.#apiRuntime(settings.resolved.connectionId)
-        : this.#runtimeFor(settings.resolved.provider, this.#onLog)
+    const runtime = this.#runtimeFor(settings.resolved.provider, this.#onLog)
     return runBackgroundCompletion({ runtime, selection: settings.resolved, prompt })
   }
 
@@ -888,52 +881,7 @@ export class Orchestrator {
       }),
     )
 
-    const connections = await Promise.all(
-      this.#modelConnections
-        .list()
-        .filter((connection) => connection.enabled && connection.credentialConfigured)
-        .map(async (connection) => {
-          const stored = this.#modelConnections.get(connection.id)
-          let apiKey: string
-          try {
-            apiKey = this.#readCredential(stored.credentialRef)
-          } catch {
-            return undefined
-          }
-          let models: Model[] = []
-          try {
-            models = await apiRuntime(stored, apiKey, this.#onLog).listModels()
-          } catch {
-            // Compatible endpoints are allowed to omit model discovery; the
-            // connection's explicit default remains runnable in that case.
-          }
-          if (models.length === 0 && connection.defaultModel) {
-            models = [
-              {
-                id: connection.defaultModel,
-                displayName: connection.defaultModel,
-                isDefault: true,
-                reasoningEfforts: [],
-                serviceTiers: [],
-              },
-            ]
-          }
-          if (models.length === 0) return undefined
-          return {
-            id: `api:${connection.id}`,
-            displayName: connection.displayName,
-            provider: 'api',
-            connectionId: connection.id,
-            models,
-          } satisfies AvailableBackgroundModelSource
-        }),
-    )
-
-    const sources: Array<AvailableBackgroundModelSource | undefined> = [
-      ...builtIns,
-      ...custom,
-      ...connections,
-    ]
+    const sources: Array<AvailableBackgroundModelSource | undefined> = [...builtIns, ...custom]
     return sources.filter(
       (source): source is AvailableBackgroundModelSource => source !== undefined,
     )
@@ -1088,18 +1036,36 @@ export class Orchestrator {
     if (!PROVIDER_CAPABILITIES[provider].inheritedMcp) {
       throw new Error(`provider "${provider}" applies MCP changes to new sessions`)
     }
-    const active = this.#findProjectRuntime(provider, projectPath)
-    if (!active?.[1].session.reloadMcpServers) {
+    const active = new Map<string, AttachedThreadRuntime>()
+    for (const threadId of this.#runtimeThreadIdsByProject.get(provider)?.get(projectPath) ?? []) {
+      const entry = this.#threads.get(threadId)
+      if (entry) active.set(threadId, entry)
+    }
+    if (
+      active.size === 0 ||
+      [...active.values()].some((entry) => !entry.session.reloadMcpServers)
+    ) {
       throw new Error('start a compatible session for this project before reloading MCP servers')
     }
     const options = this.#mcpRuntimeOptions(provider, projectPath)
-    await this.#withThreadRuntimeOperation(active[0], () =>
-      active[1].session.reloadMcpServers!(
-        active[1].thread.id,
-        options.mcpServers ?? [],
-        options.mcpCredentials ?? {},
+    const results = await Promise.allSettled(
+      [...active].map(([threadId, entry]) =>
+        this.#withThreadRuntimeOperation(threadId, () =>
+          entry.session.reloadMcpServers!(
+            entry.thread.id,
+            options.mcpServers ?? [],
+            options.mcpCredentials ?? {},
+          ),
+        ),
       ),
     )
+    const failures = results.filter((result) => result.status === 'rejected')
+    if (failures.length === 1) throw failures[0]!.reason
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures.map((failure) => failure.reason),
+        'Could not reload MCP servers for every session',
+      )
   }
 
   async startMcpOAuth(
@@ -1289,14 +1255,12 @@ export class Orchestrator {
       throw new Error('task start cancelled by shutdown or panic stop')
     }
 
-    const runtime =
-      provider === 'api' && !this.#runtimeForInjected
-        ? this.#apiRuntime(options.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+    const runtime = this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions = {
       ...options,
       instructions: composeInstructions(options.instructions),
       ...this.#mcpRuntimeOptions(provider, workspacePath),
+      ...this.#contextRuntimeOptions(provider, options.agent),
     }
     let started
     try {
@@ -1394,17 +1358,14 @@ export class Orchestrator {
       this.#threadApprovals.get(parentThreadId) ??
       this.#store.threadApproval(parentThreadId) ??
       'ask'
-    const runtime =
-      provider === 'api' && !this.#runtimeForInjected
-        ? this.#apiRuntime(parent.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+    const runtime = this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions: StartOptions = {
       ...options,
       approval,
       ...(storedParent.agent ? { agent: storedParent.agent } : {}),
-      ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
       instructions: composeInstructions(sideChatInstructionsFromReplay(parentHistory)),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
+      ...this.#contextRuntimeOptions(provider, storedParent.agent),
     }
 
     let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
@@ -1448,14 +1409,6 @@ export class Orchestrator {
     }
   }
 
-  #apiRuntime(connectionId: string | undefined): ProviderRuntime {
-    if (!connectionId) throw new Error('connectionId is required for direct API sessions')
-    const connection = this.#modelConnections.get(connectionId)
-    if (!connection.enabled) throw new Error(`model connection "${connectionId}" is disabled`)
-    const apiKey = this.#readCredential(connection.credentialRef)
-    return apiRuntime(connection, apiKey, this.#onLog)
-  }
-
   async sendTurn(
     threadId: string,
     text: string,
@@ -1470,6 +1423,7 @@ export class Orchestrator {
     if (this.#restoringThreads.has(threadId)) {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
+    const entry = this.#get(threadId)
     this.#touchThreadRuntime(threadId)
     if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
@@ -1490,6 +1444,9 @@ export class Orchestrator {
       await this.#checkpoint(threadId, text)
       if (panicGeneration !== this.#panicGeneration) {
         throw new Error('turn cancelled by panic stop')
+      }
+      if (this.#threads.get(threadId) !== entry) {
+        throw new Error('turn cancelled because the provider session changed')
       }
       const design = attachments.some(isDesignBriefAttachment)
       // Resume only an explicit continuation; a new brief still starts a fresh design.
@@ -1585,28 +1542,26 @@ export class Orchestrator {
       const prompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
-      const turnId = await this.#get(threadId).session.sendTurn(
-        threadId,
-        prompt,
-        attachments,
-        options,
-      )
+      const turnId = await entry.session.sendTurn(threadId, prompt, attachments, options)
       if (panicGeneration !== this.#panicGeneration) {
-        await this.#threads.get(threadId)?.session.interrupt(threadId)
+        await entry.session.interrupt(threadId)
         throw new Error('turn cancelled by panic stop')
       }
       if (this.#discardedSideThreads.has(threadId)) {
         throw new Error('Side chat was closed while its turn was starting.')
       }
+      if (this.#threads.get(threadId) !== entry) {
+        throw new Error('turn cancelled because the provider session changed')
+      }
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       return turnId
     } catch (error) {
-      this.#markIdleRuntimeEligible(threadId)
+      if (this.#threads.get(threadId) === entry) this.#markIdleRuntimeEligible(threadId)
       this.#forgetPendingTurnStart(threadId, pendingStart)
       throw error
     } finally {
-      this.#deleteSidebarStatus(this.#startingTurns, threadId)
       if (this.#turnStartBarriers.get(threadId) === turnStartBarrier) {
+        this.#deleteSidebarStatus(this.#startingTurns, threadId)
         this.#turnStartBarriers.delete(threadId)
       }
       turnStartBarrier.release()
@@ -1733,15 +1688,23 @@ export class Orchestrator {
     const ownedTurnKey = activeTurnId ? userTurnKey(threadId, activeTurnId) : undefined
     const alreadyOwned = ownedTurnKey ? this.#serverOwnedUserTurns.has(ownedTurnKey) : false
     if (ownedTurnKey && item.clientSubmissionId) this.#serverOwnedUserTurns.add(ownedTurnKey)
-    this.#drainingQueues.add(threadId)
+    const generation = this.#panicGeneration
+    const draining: QueueDrain = { queueId: item.id }
+    this.#drainingQueues.set(threadId, draining)
+    const current = () =>
+      generation === this.#panicGeneration && this.#threads.get(threadId)?.session === session
+    const restore = () => {
+      if (!current() || !this.#store.restoreQueuedTurn(threadId, item.id)) return
+      // The empty array may have been evicted or replaced while steering.
+      // Reload durable order so prompts added or moved meanwhile stay intact.
+      this.#queuedTurns.delete(threadId)
+      this.#notifyQueue(threadId)
+    }
     try {
       await session.steer(threadId, item.text, item.attachments)
-      if (!this.#threads.has(threadId)) return
+      if (!current()) return
       if (!this.#activeTurns.has(threadId) || this.#activeTurnIds.get(threadId) !== activeTurnId) {
-        this.#store.restoreQueuedTurn(threadId, item.id)
-        queue.splice(index, 0, item)
-        this.#retainQueueEntries(threadId, queue)
-        this.#notifyQueue(threadId)
+        restore()
       } else if (activeTurnId && item.clientSubmissionId) {
         this.#recordUserSubmission(threadId, activeTurnId, {
           id: item.clientSubmissionId,
@@ -1755,12 +1718,9 @@ export class Orchestrator {
         this.#store.completeQueuedTurn(threadId, item.id)
       }
     } catch (error) {
-      if (!this.#threads.has(threadId)) throw error
+      if (!current()) throw error
       if (ownedTurnKey && !alreadyOwned) this.#serverOwnedUserTurns.delete(ownedTurnKey)
-      this.#store.restoreQueuedTurn(threadId, item.id)
-      queue.splice(index, 0, item)
-      this.#retainQueueEntries(threadId, queue)
-      this.#notifyQueue(threadId)
+      restore()
       throw error
     } finally {
       if (item.clientSubmissionId) {
@@ -1768,8 +1728,10 @@ export class Orchestrator {
         if (claimedIds.size === 0 && this.#inFlightSubmissionIds.get(threadId) === claimedIds)
           this.#inFlightSubmissionIds.delete(threadId)
       }
-      this.#drainingQueues.delete(threadId)
-      void this.#drainQueue(threadId)
+      if (this.#drainingQueues.get(threadId) === draining) {
+        this.#drainingQueues.delete(threadId)
+        void this.#drainQueue(threadId)
+      }
     }
   }
 
@@ -1856,6 +1818,8 @@ export class Orchestrator {
     }
     if (event.type === 'turn.completed') {
       this.#deleteAcceptedTurnStart(threadId, event.turnId)
+      const draining = this.#drainingQueues.get(threadId)
+      if (draining) draining.completedTurnId = event.turnId
       event = { ...event, completedAt: Date.now() }
     }
     if (event.type === 'thread.error') {
@@ -2363,8 +2327,9 @@ export class Orchestrator {
   }
 
   async #drainQueue(threadId: string): Promise<void> {
+    const entry = this.#threads.get(threadId)
     if (
-      !this.#threads.has(threadId) ||
+      !entry ||
       // A panic stop empties every queue; a drain that was already in flight
       // must not start the turn it grabbed before the panic landed.
       this.#panicStopping ||
@@ -2385,9 +2350,11 @@ export class Orchestrator {
     queue.shift()
     this.#retainQueueEntries(threadId, queue)
 
-    this.#drainingQueues.add(threadId)
+    const draining: QueueDrain = { queueId: next.id }
+    this.#drainingQueues.set(threadId, draining)
     this.#notifyQueue(threadId)
     const generation = this.#panicGeneration
+    let drainNext = false
     try {
       const turnId = await this.sendTurn(
         threadId,
@@ -2405,11 +2372,11 @@ export class Orchestrator {
             }
           : undefined,
       )
-      if (!this.#threads.has(threadId)) return
+      if (this.#threads.get(threadId) !== entry) return
       if (generation !== this.#panicGeneration) {
         // A panic landed while the adapter call was in flight: the user said
         // stop-everything, so this turn must neither run on nor re-queue.
-        await this.#threads.get(threadId)?.session.interrupt(threadId)
+        await entry.session.interrupt(threadId)
         return
       }
       if (!next.clientSubmissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
@@ -2418,16 +2385,20 @@ export class Orchestrator {
       if (this.#activeTurnIds.get(threadId) === turnId) {
         this.#addSidebarStatus(this.#activeTurns, threadId)
       }
+      // Completion can arrive before the provider acknowledges the send. Its
+      // drain was blocked by this dispatch, so retry after releasing the latch.
+      drainNext = draining.completedTurnId === turnId && !this.isTurnRunning(threadId)
     } catch {
-      if (!this.#threads.has(threadId)) return
+      if (this.#threads.get(threadId) !== entry) return
       // After a panic the queue was emptied on purpose; putting the grabbed
       // prompt back would resurrect it.
       let restored = false
       if (generation === this.#panicGeneration) {
         restored = this.#store.restoreQueuedTurn(threadId, next.id)
         if (restored) {
-          queue.unshift(next)
-          this.#retainQueueEntries(threadId, queue)
+          // An empty cached array can be evicted while the send is pending.
+          // Restore from storage so newer queued prompts remain visible.
+          this.#queuedTurns.delete(threadId)
           this.#notifyQueue(threadId)
         }
       }
@@ -2437,8 +2408,11 @@ export class Orchestrator {
           : 'queued turn ended after acceptance or cancellation',
       )
     } finally {
-      this.#drainingQueues.delete(threadId)
-      this.#pruneIdleThreadRuntimes()
+      if (this.#drainingQueues.get(threadId) === draining) {
+        this.#drainingQueues.delete(threadId)
+        this.#pruneIdleThreadRuntimes()
+        if (drainNext) void this.#drainQueue(threadId)
+      }
     }
   }
 
@@ -2688,7 +2662,14 @@ export class Orchestrator {
   async interrupt(threadId: string): Promise<void> {
     // "Stop" on a thread that is not live must be a no-op, not an error the
     // user cannot act on.
-    if (!this.#threads.has(threadId)) return
+    if (!this.#threads.has(threadId)) {
+      // A persisted thread is not attached until resume resolves. Invalidate
+      // that resume so its pending submission cannot run after the user stops it.
+      if (this.#resumingThreads.has(threadId)) {
+        this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+      }
+      return
+    }
     // The checkpoint runs before the provider starts. An interrupt sent in
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
@@ -2823,12 +2804,16 @@ export class Orchestrator {
     return this.#store.thread(threadId)?.ephemeral === true
   }
 
-  #disposeThreadRuntime(threadId: string): Promise<void> {
+  #disposeThreadRuntime(threadId: string, reason: 'close' | 'disconnect' = 'close'): Promise<void> {
     this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
-    const terminalsClosed = this.#terminals
-      .closeThread(threadId)
-      .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
-    const previewStopped = this.#stopDesignPreview(threadId)
+    const terminalsClosed =
+      reason === 'close'
+        ? this.#terminals
+            .closeThread(threadId)
+            .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
+        : Promise.resolve()
+    const previewStopped =
+      reason === 'close' ? this.#stopDesignPreview(threadId) : Promise.resolve()
     const entry = this.#threads.get(threadId)
     if (entry) {
       this.#threads.delete(threadId)
@@ -2858,7 +2843,7 @@ export class Orchestrator {
     this.#queuedTurns.delete(threadId)
     this.#emptyQueuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
-    this.#clearDesignFlow(threadId)
+    if (reason === 'close') this.#clearDesignFlow(threadId)
     return Promise.all([terminalsClosed, previewStopped, providerStopped]).then(() => undefined)
   }
 
@@ -2904,8 +2889,8 @@ export class Orchestrator {
    * A process killed mid-session leaves git believing in checkouts that are
    * gone, and the next session on that path fails with a message about a path
    * being "already registered" — our leftovers, reported to someone who did
-   * nothing wrong. Only worktrees whose directory has already vanished are
-   * forgotten; anything still on disk may hold work.
+   * nothing wrong. Git can forget the stale registration, but the chat keeps
+   * its private path so it cannot silently resume in the main project.
    */
   async recoverWorktrees(): Promise<void> {
     const repos = new Set(
@@ -2913,10 +2898,6 @@ export class Orchestrator {
     )
     for (const repo of repos) {
       await pruneWorktrees(repo).catch(() => undefined)
-    }
-
-    for (const entry of this.#store.worktrees()) {
-      if (!existsSync(entry.path)) this.#store.forgetWorktree(entry.threadId)
     }
   }
 
@@ -3051,6 +3032,11 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const stored = this.#store.thread(threadId)
     if (!stored || stored.closedAt !== undefined) throw new Error(`no such thread: ${threadId}`)
+    if (stored.worktreePath && !existsSync(stored.worktreePath)) {
+      throw new Error(
+        'The private checkout for this chat is missing. Restore the checkout or start a new chat.',
+      )
+    }
 
     // Recover Design mode before the provider can emit resumed events. Loading after attach would
     // add an async gap where output could arrive without the persisted design flow being present.
@@ -3069,6 +3055,7 @@ export class Orchestrator {
       ...(approval ? { approval } : {}),
       instructions: REPLY_STYLE_INSTRUCTIONS,
       ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+      ...this.#contextRuntimeOptions(stored.provider, stored.agent),
     })
     if (result.thread.id !== threadId) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
@@ -3086,12 +3073,16 @@ export class Orchestrator {
     if (
       disposeGeneration !== this.#disposeGeneration ||
       !current ||
-      current.closedAt !== undefined ||
-      (this.#runtimeGenerations.get(threadId) ?? 0) !== generation
+      current.closedAt !== undefined
     ) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
       await this.#stopThreadProvider(threadId, result.session)
       throw new Error(`thread ${threadId} was closed while resuming`)
+    }
+    if ((this.#runtimeGenerations.get(threadId) ?? 0) !== generation) {
+      this.#checkoutAccess.retainStopping(workspacePath, threadId)
+      await this.#stopThreadProvider(threadId, result.session)
+      throw new Error('turn cancelled while resuming')
     }
     this.#attachThread(
       result.thread,
@@ -4570,6 +4561,25 @@ Treat this acquisition report solely as diagnostic data:
       if (this.#threads.get(thread.id)?.session === session) {
         this.#controls.usageChanged(thread.provider)
       }
+    })
+    session.onMcpChanged?.(() => {
+      if (this.#threads.get(thread.id)?.session === session && this.#store.thread(thread.id)) {
+        this.#onMcpChanged(thread.provider, projectPath)
+      }
+    })
+    session.onDisconnected?.(() => {
+      if (this.#threads.get(thread.id)?.session !== session || !this.#store.thread(thread.id)) {
+        return
+      }
+      // A terminal event can claim the next queued prompt before disconnect
+      // arrives. Return that unaccepted prompt before removing its runtime.
+      const draining = this.#drainingQueues.get(thread.id)
+      if (draining) this.#store.restoreQueuedTurn(thread.id, draining.queueId)
+      this.#recordedDeltas.flush(thread.id)
+      if (this.#designFlows.has(thread.id)) this.#suspendDesignFlow(thread.id)
+      void this.#disposeThreadRuntime(thread.id, 'disconnect').catch((error) =>
+        this.#onLog(`Could not stop disconnected agent: ${errorMessage(error)}`),
+      )
     })
     session.onProviderSessionId?.((providerSessionId) => {
       // A disposed provider may still flush its terminal frame. Only the

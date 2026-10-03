@@ -8,17 +8,7 @@ import { z } from 'zod'
  * engine-specific may leak past an adapter.
  */
 
-export const ProviderIdSchema = z.enum([
-  'codex',
-  'claude-code',
-  'grok',
-  'cursor',
-  'opencode',
-  'antigravity',
-  'pi',
-  'acp',
-  'api',
-])
+export const ProviderIdSchema = z.enum(['codex', 'claude-code', 'grok'])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 /**
@@ -82,26 +72,14 @@ export const TurnSchema = z.object({
 })
 export type Turn = z.infer<typeof TurnSchema>
 
-export const ThreadSchema = z
-  .object({
-    id: z.string(),
-    provider: ProviderIdSchema,
-    /** Selects a server-owned model connection for the Harness API runtime. */
-    connectionId: z.string().min(1).optional(),
-    /** Absolute path to the workspace this thread operates on. */
-    workspacePath: z.string(),
-    title: z.string().optional(),
-    createdAt: z.number(),
-  })
-  .superRefine((thread, context) => {
-    if ((thread.provider === 'api') !== Boolean(thread.connectionId)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['connectionId'],
-        message: 'connectionId is required only for api threads',
-      })
-    }
-  })
+export const ThreadSchema = z.object({
+  id: z.string(),
+  provider: ProviderIdSchema,
+  /** Absolute path to the workspace this thread operates on. */
+  workspacePath: z.string(),
+  title: z.string().optional(),
+  createdAt: z.number(),
+})
 export type Thread = z.infer<typeof ThreadSchema>
 
 /**
@@ -240,6 +218,24 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
 export type DomainEvent = z.infer<typeof DomainEventSchema>
 
 /**
+ * How much of the session context the user may shape before a session starts.
+ * Engines expose this very differently — a token budget, a percentage, a model
+ * variant — so each adapter declares what it can honour and translates the
+ * shared settings itself.
+ */
+export const ContextControlSchema = z.object({
+  /** Window sizes in tokens the engine accepts. The first is its own default. */
+  windows: z.array(z.number().int().positive()).min(1),
+  /** The point where the engine compacts on its own can be moved. */
+  compaction: z.boolean(),
+  /** Automatic compaction can be switched off entirely. */
+  compactionOff: z.boolean(),
+  /** Where the engine compacts when left alone, as a percent of its default window. */
+  defaultCompactAt: z.number().int().min(1).max(100).optional(),
+})
+export type ContextControl = z.infer<typeof ContextControlSchema>
+
+/**
  * What an engine can actually do. The UI reads this and hides what is
  * unavailable rather than showing a button that fails — capability negotiation
  * is the difference between a wrapper that feels solid and one that lies.
@@ -255,6 +251,8 @@ export const CapabilitiesSchema = z.object({
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
   images: z.boolean(),
+  /** Absent when the engine decides its context on its own. */
+  context: ContextControlSchema.optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
@@ -288,33 +286,15 @@ export type Model = z.infer<typeof ModelSchema>
 /**
  * The small model TasteCode uses for short product-owned writing such as thread
  * titles and commit-message drafts. Source identity stays explicit because
- * model ids are not globally unique and API connections have their own bill.
+ * model ids are not globally unique across custom harnesses.
  */
-export const BackgroundModelTargetSchema = z
-  .object({
-    provider: ProviderIdSchema,
-    connectionId: z.string().min(1).optional(),
-    agent: z.string().min(1).optional(),
-    model: z.string().min(1),
-    effort: z.string().min(1).optional(),
-    serviceTier: z.string().min(1).optional(),
-  })
-  .superRefine((target, context) => {
-    if ((target.provider === 'api') !== Boolean(target.connectionId)) {
-      context.addIssue({
-        code: 'custom',
-        path: ['connectionId'],
-        message: 'connectionId is required only for api background models',
-      })
-    }
-    if (target.provider === 'api' && target.agent) {
-      context.addIssue({
-        code: 'custom',
-        path: ['agent'],
-        message: 'api background models cannot select an agent',
-      })
-    }
-  })
+export const BackgroundModelTargetSchema = z.object({
+  provider: ProviderIdSchema,
+  agent: z.string().min(1).optional(),
+  model: z.string().min(1),
+  effort: z.string().min(1).optional(),
+  serviceTier: z.string().min(1).optional(),
+})
 export type BackgroundModelTarget = z.infer<typeof BackgroundModelTargetSchema>
 
 export const BackgroundModelPreferenceSchema = z.discriminatedUnion('mode', [
@@ -327,7 +307,6 @@ export const BackgroundModelSourceSchema = z.object({
   id: z.string().min(1),
   displayName: z.string().min(1),
   provider: ProviderIdSchema,
-  connectionId: z.string().min(1).optional(),
   agent: z.string().min(1).optional(),
   models: z.array(ModelSchema),
 })
@@ -353,6 +332,18 @@ export type BackgroundModelSettings = z.infer<typeof BackgroundModelSettingsSche
  */
 export const ApprovalModeSchema = z.enum(['ask', 'auto', 'auto-review', 'full'])
 export type ApprovalMode = z.infer<typeof ApprovalModeSchema>
+
+/**
+ * Context settings the server applies to every session it launches or resumes
+ * with one provider. Absent fields leave the engine's own behaviour alone.
+ */
+export const ProviderContextSettingsSchema = z.object({
+  /** Tokens the session may hold. Must be one of the provider's declared windows. */
+  window: z.number().int().positive().optional(),
+  /** Percent of the window at which the engine compacts on its own, or never. */
+  compactAt: z.union([z.number().int().min(10).max(99), z.literal('off')]).optional(),
+})
+export type ProviderContextSettings = z.infer<typeof ProviderContextSettingsSchema>
 
 /**
  * Who the user is signed in as with a given provider.
@@ -388,16 +379,7 @@ export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
 export const CustomHarnessSchema = z.object({
   id: z.string().trim().min(1).max(128),
   displayName: z.string().trim().min(1).max(80),
-  provider: z.enum([
-    'codex',
-    'claude-code',
-    'grok',
-    'cursor',
-    'opencode',
-    'antigravity',
-    'pi',
-    'acp',
-  ]),
+  provider: z.enum(['codex', 'claude-code', 'grok']),
   command: z
     .string()
     .trim()

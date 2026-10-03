@@ -309,7 +309,7 @@ class WebSocketTransport implements Transport {
               // The schema issues are for a developer, not for a notice bar.
               console.warn(`[transport] ${method} reply failed validation`, error)
               fail(
-                new Error(
+                new IndeterminateRequestError(
                   `The server sent an invalid reply to ${method}. Restart TasteCode if this keeps happening.`,
                 ),
               )

@@ -3,7 +3,6 @@ import type { ProviderRuntime } from './adapters.js'
 
 const adapters = vi.hoisted(() => ({
   providerRuntime: vi.fn(),
-  apiRuntime: vi.fn(),
   verifyCustomHarness: vi.fn(),
 }))
 
@@ -49,12 +48,8 @@ describe('provider runtime loading', () => {
     adapters.providerRuntime.mockReturnValue(fakeRuntime())
 
     expect(providerRuntime('codex', () => {}).resume).toEqual(expect.any(Function))
-    expect(providerRuntime('pi', () => {}).resume).toBeUndefined()
-    expect(providerRuntime('antigravity', () => {}).resume).toBeUndefined()
-  })
-
-  it('keeps API connections on their dedicated runtime path', () => {
-    expect(() => providerRuntime('api', () => {})).toThrow('provider "api" is not implemented yet')
+    expect(providerRuntime('claude-code', () => {}).resume).toEqual(expect.any(Function))
+    expect(providerRuntime('grok', () => {}).resume).toEqual(expect.any(Function))
   })
 
   it('retries runtime construction after a temporary failure', async () => {
