@@ -13,7 +13,15 @@ export type UpdateClient = Pick<
 > & { dispose?: () => void | Promise<void> }
 
 export type AppUpdateState = {
-  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
+  status:
+    | 'unsupported'
+    | 'idle'
+    | 'checking'
+    | 'downloading'
+    | 'preparing'
+    | 'current'
+    | 'ready'
+    | 'error'
   currentVersion: string
   version?: string
   progress?: number
@@ -136,14 +144,26 @@ export function createAppUpdateController(
       publish(versioned('downloading', info))
       void client.downloadUpdate().catch(fail)
     })
-    client.on('download-progress', (progress) =>
-      publish({
-        ...state,
-        status: 'downloading',
-        currentVersion: options.currentVersion,
-        progress: Math.round(progress.percent),
-      }),
-    )
+    client.on('download-progress', (progress) => {
+      // After the last byte, verification and the hand-over to the native
+      // updater take a while, and electron-updater reports its local copy as a
+      // second download from 0 percent. Neither is the user's download.
+      if (state.status === 'preparing') return
+      publish(
+        progress.percent >= 100
+          ? {
+              status: 'preparing',
+              currentVersion: options.currentVersion,
+              ...(state.version ? { version: state.version } : {}),
+            }
+          : {
+              ...state,
+              status: 'downloading',
+              currentVersion: options.currentVersion,
+              progress: Math.round(progress.percent),
+            },
+      )
+    })
     client.on('update-downloaded', (info) => succeed(versioned('ready', info)))
     client.on('error', fail)
     return client
@@ -168,7 +188,7 @@ export function createAppUpdateController(
     // A person who joins a background attempt is now waiting on its outcome.
     if (origin === 'user') quiet = false
     if (checking) return checking
-    if (state.status === 'downloading' || state.status === 'ready') return Promise.resolve(state)
+    if (['downloading', 'preparing', 'ready'].includes(state.status)) return Promise.resolve(state)
     attempt += 1
     quiet = origin === 'background'
     settled = state

@@ -11,6 +11,9 @@ describe('preload validation', () => {
         progress: 55,
       }),
     ).toBe(true)
+    expect(
+      isAppUpdateState({ status: 'preparing', currentVersion: '0.1.2', version: '0.1.3' }),
+    ).toBe(true)
     expect(isFiniteNumber(1.1)).toBe(true)
   })
 

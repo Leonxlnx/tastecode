@@ -94,6 +94,16 @@ describe('release download and installation', () => {
     expect(await readdir(downloads.directory)).toEqual([])
   })
 
+  it('reports every byte present when an earlier attempt already fetched them all', async () => {
+    await writeFile(stored('exe'), bytes)
+    await downloadRelease(updater, options(), async () => [], downloads)
+    expect(fetchAsset).not.toHaveBeenCalled()
+    expect(updater.emit).toHaveBeenCalledWith(
+      'download-progress',
+      expect.objectContaining({ percent: 100, transferred: bytes.length }),
+    )
+  })
+
   it('turns a verified DMG into a local ZIP for the normal native installer', async () => {
     await downloadRelease(
       updater,

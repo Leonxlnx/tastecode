@@ -6,6 +6,7 @@ function isUpdateStatus(value: unknown): value is AppUpdateState['status'] {
     case 'idle':
     case 'checking':
     case 'downloading':
+    case 'preparing':
     case 'current':
     case 'ready':
     case 'error':
