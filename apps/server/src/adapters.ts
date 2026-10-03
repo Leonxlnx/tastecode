@@ -11,6 +11,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ProviderContextSettings,
   ProviderId,
   Thread,
 } from '@harness/contracts'
@@ -53,6 +54,8 @@ export type StartOptions = {
    */
   isolate?: boolean | undefined
   baseRef?: string | undefined
+  /** The user's context settings, already narrowed to what this engine declared. */
+  context?: ProviderContextSettings | undefined
   /** Internal project overrides and their already-resolved OS credentials. */
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
@@ -348,10 +351,8 @@ function grokRuntime(
   resolveHarness: (id: string) => CustomHarness | undefined,
 ): ProviderRuntime {
   const acpAdapterFor = async (harness: CustomHarness | undefined, options: StartOptions) => {
-    const [{ AcpAdapter, prepareAcpMcpServers }, { grokCommand }] = await Promise.all([
-      loadAcpAdapter(),
-      loadGrokAdapter(),
-    ])
+    const [{ AcpAdapter, prepareAcpMcpServers }, { grokCommand, grokContextEnvironment }] =
+      await Promise.all([loadAcpAdapter(), loadGrokAdapter()])
     return new AcpAdapter('grok', {
       name: harness?.displayName ?? 'Grok',
       command: grokCommand(),
@@ -366,6 +367,7 @@ function grokRuntime(
       settings: { model: options.model, effort: options.effort },
       provider: 'grok',
       mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
+      env: grokContextEnvironment(options.context),
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
     })
   }
@@ -416,6 +418,7 @@ function grokRuntime(
         effort: options.effort,
         approval: options.approval,
         instructions: options.instructions,
+        context: options.context,
         ...(options.ephemeral ? { ephemeral: true } : {}),
       })
       return { thread, session: printSessionFor(adapter) }
@@ -456,6 +459,7 @@ function grokRuntime(
           effort: options.effort,
           approval: options.approval,
           instructions: options.instructions,
+          context: options.context,
           ...(options.ephemeral ? { ephemeral: true } : {}),
         },
       )
@@ -493,6 +497,7 @@ function codexRuntime(
       return adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
         ...(options.instructions ? { instructions: options.instructions } : {}),
         ...(options.approval ? { approval: options.approval } : {}),
+        ...(options.context ? { context: options.context } : {}),
       })
     })
   }
@@ -567,6 +572,7 @@ function claudeRuntime(
           ephemeral: options.ephemeral,
           mcpServers: options.mcpServers,
           mcpCredentials: options.mcpCredentials,
+          context: options.context,
         }),
       )
     },
@@ -582,6 +588,7 @@ function claudeRuntime(
             instructions: options.instructions,
             mcpServers: options.mcpServers,
             mcpCredentials: options.mcpCredentials,
+            context: options.context,
           }),
         ),
       )

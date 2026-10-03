@@ -1,6 +1,7 @@
 export {
   CodexAdapter,
   CODEX_CAPABILITIES,
+  codexContextConfig,
   type CodexLimitSource,
   type StartOptions,
 } from './adapter.js'
