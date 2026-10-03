@@ -82,6 +82,22 @@ const messages = (id: string) =>
   )
 
 describe('provider history integration', () => {
+  it('honors a temporary-session tombstone created after discovery started and before its first scan', async () => {
+    const { history, source } = setup()
+    source.resolveSessionId = (id) => id.replace(/^local-/, '')
+    store.saveProviderHistory('codex', 'side-thread', {
+      ...metadata('local-native'),
+      internal: true,
+    })
+    await history.refresh()
+    expect(store.threads()).toEqual([])
+    expect(source.read).not.toHaveBeenCalled()
+    const restarted = setup()
+    restarted.source.resolveSessionId = source.resolveSessionId
+    await restarted.history.refresh()
+    expect(store.threads()).toEqual([])
+  })
+
   it('does not reimport a provider echo containing hidden restore context', async () => {
     store.addThread({
       id: 'local',
@@ -274,7 +290,18 @@ describe('provider history integration', () => {
     const { history } = setup()
     await history.refresh()
     expect(store.threads()).toEqual([])
-    expect(store.providerHistories()).toEqual([])
+    expect(store.providerHistories()).toEqual([
+      expect.objectContaining({
+        threadId: 'native',
+        session: expect.objectContaining({ internal: true }),
+      }),
+    ])
+    store.deleteThread('native')
+    await history.refresh()
+    expect(store.threads()).toEqual([])
+    const restarted = setup()
+    await restarted.history.refresh()
+    expect(store.threads()).toEqual([])
   })
 
   it.each([false, true])(
