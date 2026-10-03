@@ -1,4 +1,5 @@
 import type { DomainEvent, Item, PlanStep } from '@harness/contracts'
+import path from 'node:path'
 import type { SessionUpdate, ToolCallContent, ToolKind } from './protocol.js'
 
 /**
@@ -21,6 +22,7 @@ const KIND_TO_ITEM = new Map<ToolKind, Item['type']>([
 
 export class Streamer {
   #turnId: string
+  readonly #workspacePath: string | undefined
   /** The item currently accumulating text, per kind. */
   #open = new Map<'message' | 'reasoning', Item>()
   /**
@@ -36,8 +38,9 @@ export class Streamer {
   /** Distinguishes successive id-less tool calls within one turn. */
   #anonymousSeq = 0
 
-  constructor(turnId: string) {
+  constructor(turnId: string, workspacePath?: string) {
     this.#turnId = turnId
+    this.#workspacePath = workspacePath
   }
 
   /**
@@ -189,7 +192,7 @@ export class Streamer {
       finished ? { type: 'item.completed', item } : { type: 'item.started', item },
     ]
 
-    const diff = diffOf(update.content)
+    const diff = diffOf(update.content, this.#workspacePath)
     if (diff) events.push({ type: 'diff.updated', turnId: this.#turnId, diff })
 
     return events
@@ -216,35 +219,62 @@ function pathFromContent(content: SessionUpdate['content']): string | undefined 
   return diff?.type === 'diff' ? diff.path : undefined
 }
 
-/**
- * ACP reports an edit as before/after text, not as a patch. We forward the two
- * sides rather than diffing them here — inventing a unified diff from a
- * whole-file replacement would be a worse lie than showing what was sent.
- */
-function diffOf(content: SessionUpdate['content']): string | undefined {
+/** ACP's complete before/after files form a reversible whole-file hunk. */
+function diffOf(content: SessionUpdate['content'], workspacePath?: string): string | undefined {
   if (!Array.isArray(content)) return undefined
   const parts = content.filter(
     (part): part is Extract<ToolCallContent, { type: 'diff' }> => part.type === 'diff',
   )
   if (parts.length === 0) return undefined
 
-  return parts
-    .map((part) => {
-      const path = part.path ?? 'file'
-      const before = part.oldText ?? ''
-      const after = part.newText ?? ''
-      return `--- a/${path}\n+++ b/${path}\n${body(before, '-')}${body(after, '+')}`
-    })
-    .join('\n')
+  return (
+    parts
+      .map((part) => {
+        if (!part.path || part.oldText === undefined || part.newText === undefined) return ''
+        const filePath = (
+          workspacePath && path.isAbsolute(part.path)
+            ? path.relative(workspacePath, part.path)
+            : part.path
+        )
+          .split(path.sep)
+          .join('/')
+        const before = part.oldText ?? ''
+        const after = part.newText ?? ''
+        if (before === after && part.oldText !== null) return ''
+        const oldCount = lineCount(before)
+        const newCount = lineCount(after)
+        const oldPath = JSON.stringify(`a/${filePath}`)
+        const newPath = JSON.stringify(`b/${filePath}`)
+        const headers = [
+          `diff --git ${oldPath} ${newPath}`,
+          ...(part.oldText === null ? ['new file mode 100644'] : []),
+          `--- ${part.oldText === null ? '/dev/null' : oldPath}`,
+          `+++ ${newPath}`,
+        ]
+        if (oldCount || newCount) {
+          headers.push(`@@ -${oldCount ? 1 : 0},${oldCount} +${newCount ? 1 : 0},${newCount} @@`)
+        }
+        return `${headers.join('\n')}\n${body(before, '-')}${body(after, '+')}`
+      })
+      .filter(Boolean)
+      .join('\n') || undefined
+  )
+}
+
+function lineCount(text: string): number {
+  return text === '' ? 0 : text.replace(/\n$/, '').split('\n').length
 }
 
 function body(text: string, sign: '+' | '-'): string {
   if (text === '') return ''
   return (
     text
+      .replace(/\n$/, '')
       .split('\n')
       .map((line) => `${sign}${line}`)
-      .join('\n') + '\n'
+      .join('\n') +
+    '\n' +
+    (text.endsWith('\n') ? '' : '\\ No newline at end of file\n')
   )
 }
 
