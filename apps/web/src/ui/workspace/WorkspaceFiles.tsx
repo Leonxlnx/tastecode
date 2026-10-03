@@ -29,7 +29,13 @@ import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 
 type Entry = ResultOf<'workspace.listDirectory'>['entries'][number]
 type FileContents = ResultOf<'workspace.readFile'>
+type FileSearch = {
+  key: string
+  result?: ResultOf<'workspace.searchFiles'>
+  error?: string
+}
 const EMPTY_WORKSPACE_ENTRIES: Entry[] = []
+const EMPTY_WORKSPACE_DIRECTORIES = new Map<string, Entry[]>()
 const WORKSPACE_TREE_INDENT = 18
 // Name widths for placeholder rows, in pixels: the tree column is narrow and
 // percentages of it would all look alike.
@@ -80,7 +86,10 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']))
   const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState('')
+  const [search, setSearch] = useState<FileSearch>()
+  const [searchRevision, setSearchRevision] = useState(0)
   const [selectedPath, setSelectedPath] = useState<string>()
+  const selectedPathRef = useRef<string>(undefined)
   const [file, setFile] = useState<FileContents>()
   const [loadingFile, setLoadingFile] = useState(false)
   const [error, setError] = useState<string>()
@@ -141,8 +150,10 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     setLoadingDirectories(new Set())
     setExpanded(new Set(['']))
     fileSelection.select(undefined)
+    selectedPathRef.current = undefined
     setSelectedPath(undefined)
     setFile(undefined)
+    setLoadingFile(false)
     setError(undefined)
     if (props.projectPath) void loadDirectory('')
     return () => {
@@ -150,6 +161,48 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       fileGeneration.current += 1
     }
   }, [fileSelection, loadDirectory, props.projectPath, props.threadId])
+
+  const query = filter.trim()
+  const searchKey = JSON.stringify([props.projectPath, props.threadId, query])
+  useEffect(() => {
+    if (!props.projectPath || !query) {
+      setSearch(undefined)
+      return
+    }
+    let cancelled = false
+    setSearch({ key: searchKey })
+    const timer = setTimeout(() => {
+      void props.transport
+        .request('workspace.searchFiles', {
+          ...context(),
+          query,
+          limit: 500,
+        })
+        .then((result) => {
+          if (!cancelled)
+            setSearch({
+              key: searchKey,
+              result: {
+                ...result,
+                entries: result.entries.map((entry) => ({ ...entry, name: entry.path })),
+              },
+            })
+        })
+        .catch((cause) => {
+          if (!cancelled)
+            setSearch({
+              key: searchKey,
+              error: cause instanceof Error ? cause.message : String(cause),
+            })
+        })
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [context, props.projectPath, props.transport, query, searchKey, searchRevision])
+  const currentSearch = search?.key === searchKey ? search : undefined
+  const searchResult = currentSearch?.result
 
   const toggleDirectory = useCallback(
     (entry: Entry) => {
@@ -166,10 +219,64 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     [expanded, loadDirectory],
   )
 
+  const openSearchDirectory = useCallback(
+    (entry: Entry) => {
+      if (entry.restricted) return
+      const ancestors = ['', entry.path]
+      // Workspace entry paths are slash-separated protocol paths on every platform.
+      for (
+        let end = entry.path.lastIndexOf('/');
+        end > 0;
+        end = entry.path.lastIndexOf('/', end - 1)
+      )
+        ancestors.push(entry.path.slice(0, end))
+      setFilter('')
+      setExpanded((current) => new Set([...current, ...ancestors]))
+      for (const directory of ancestors) void loadDirectory(directory)
+    },
+    [loadDirectory],
+  )
+
+  const readFile = useCallback(
+    async (path: string) => {
+      if (!props.projectPath) return
+      const mine = ++fileGeneration.current
+      setFile(undefined)
+      setLoadingFile(true)
+      setError(undefined)
+      try {
+        const result = await props.transport.request('workspace.readFile', {
+          ...context(),
+          path,
+        })
+        if (fileGeneration.current === mine) setFile(result)
+      } catch (cause) {
+        if (fileGeneration.current === mine) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+        }
+      } finally {
+        if (fileGeneration.current === mine) setLoadingFile(false)
+      }
+    },
+    [context, props.projectPath, props.transport],
+  )
+  const selectTreeFile = useCallback(
+    (entry: Entry) => {
+      if (entry.restricted) return
+      selectedPathRef.current = entry.path
+      fileSelection.select(entry.path)
+      setSelectedPath(entry.path)
+      void readFile(entry.path)
+    },
+    [fileSelection, readFile],
+  )
+
   const refreshDirectories = useCallback(() => {
     setError(undefined)
     for (const directory of expandedRef.current) void loadDirectory(directory)
-  }, [loadDirectory])
+    if (selectedPathRef.current) void readFile(selectedPathRef.current)
+    setSearchRevision((current) => current + 1)
+  }, [loadDirectory, readFile])
 
   useEffect(() => {
     let refresh: ReturnType<typeof setTimeout> | undefined
@@ -192,33 +299,6 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       offState()
     }
   }, [props.threadId, props.transport, refreshDirectories])
-
-  const selectFile = useCallback(
-    async (entry: Entry) => {
-      if (!props.projectPath || entry.restricted) return
-      const mine = ++fileGeneration.current
-      fileSelection.select(entry.path)
-      setSelectedPath(entry.path)
-      setFile(undefined)
-      setLoadingFile(true)
-      setError(undefined)
-      try {
-        const result = await props.transport.request('workspace.readFile', {
-          ...context(),
-          path: entry.path,
-        })
-        if (fileGeneration.current === mine) setFile(result)
-      } catch (cause) {
-        if (fileGeneration.current === mine) {
-          setError(cause instanceof Error ? cause.message : String(cause))
-        }
-      } finally {
-        if (fileGeneration.current === mine) setLoadingFile(false)
-      }
-    },
-    [context, fileSelection, props.projectPath, props.transport],
-  )
-  const selectTreeFile = useCallback((entry: Entry) => void selectFile(entry), [selectFile])
 
   const rootEntries = directories.get('') ?? EMPTY_WORKSPACE_ENTRIES
   const visibleRoot = useMemo(
@@ -297,6 +377,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
             <Search size={14} aria-hidden />
             <input
               value={filter}
+              maxLength={256}
               onChange={(event) => setFilter(event.target.value)}
               placeholder="Filter files…"
               aria-label="Filter workspace files"
@@ -309,15 +390,33 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
             </div>
           ) : null}
 
+          {query ? (
+            <div className="workspace-files__tree-error" role="status">
+              {currentSearch?.error
+                ? `Search unavailable. Showing matches in loaded folders only. ${currentSearch.error}`
+                : !searchResult
+                  ? 'Searching files…'
+                  : searchResult.truncated
+                    ? 'More files match. Refine your search to see them.'
+                    : searchResult.entries.length === 0
+                      ? 'No matching files.'
+                      : null}
+            </div>
+          ) : null}
+
           <WorkspaceFileTree
-            entries={visibleRoot}
-            directories={directories}
+            entries={searchResult?.entries ?? visibleRoot}
+            directories={searchResult ? EMPTY_WORKSPACE_DIRECTORIES : directories}
             expanded={expanded}
             loadingDirectories={loadingDirectories}
             filter={filter}
-            virtual={virtualFileTree}
+            virtual={
+              searchResult
+                ? searchResult.entries.length >= WORKSPACE_TREE_VIRTUAL_ROW_THRESHOLD
+                : virtualFileTree
+            }
             selection={fileSelection}
-            onToggle={toggleDirectory}
+            onToggle={searchResult ? openSearchDirectory : toggleDirectory}
             onSelect={selectTreeFile}
           />
         </aside>

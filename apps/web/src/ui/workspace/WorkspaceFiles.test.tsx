@@ -105,6 +105,55 @@ describe('WorkspaceFiles', () => {
     })
   })
 
+  it.each([
+    { context: 'project', projectPath: '/second', threadId: 'first-thread' },
+    { context: 'thread', projectPath: '/first', threadId: 'second-thread' },
+  ])(
+    'clears pending file loading when the $context changes and ignores the old reply',
+    async (next) => {
+      const pending: Array<(value: unknown) => void> = []
+      const transport = new TestTransport((method) => {
+        if (method === 'workspace.listDirectory') return { path: '', entries: [file('file.ts')] }
+        if (method === 'workspace.readFile') return new Promise((resolve) => pending.push(resolve))
+        throw new Error(`Unhandled test request: ${method}`)
+      })
+      const contents = (content: string) => ({
+        name: 'file.ts',
+        path: 'file.ts',
+        size: content.length,
+        binary: false,
+        truncated: false,
+        content,
+      })
+      const view = render(
+        <WorkspaceFiles transport={transport} projectPath="/first" threadId="first-thread" />,
+      )
+      fireEvent.click(await screen.findByTitle('file.ts'))
+      expect(screen.getByText('Opening file…')).toBeTruthy()
+
+      view.rerender(
+        <WorkspaceFiles
+          transport={transport}
+          projectPath={next.projectPath}
+          threadId={next.threadId}
+        />,
+      )
+      await waitFor(() => {
+        expect(screen.queryByText('Opening file…')).toBeNull()
+        expect(view.container.querySelector('.workspace-files__entry.is-selected')).toBeNull()
+      })
+
+      fireEvent.click(await screen.findByTitle('file.ts'))
+      await act(async () => pending[0]!(contents('stale contents')))
+      expect(screen.queryByText('stale contents')).toBeNull()
+      expect(screen.getByText('Opening file…')).toBeTruthy()
+
+      await act(async () => pending[1]!(contents('current contents')))
+      expect(screen.getByText('16 B')).toBeTruthy()
+      expect(screen.queryByText('Opening file…')).toBeNull()
+    },
+  )
+
   it('still expands folders and selects nested files', async () => {
     const transport = new TestTransport((method, params) => {
       if (method === 'workspace.listDirectory') {
