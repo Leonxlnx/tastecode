@@ -38,3 +38,11 @@
   outline: 2px solid currentColor;
   outline-offset: 4px;
 }
+
+/* A single surface's recovery covers the window the way the surface did. */
+.surface-recovery {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  min-height: 0;
+}

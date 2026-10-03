@@ -119,7 +119,11 @@ export function pruneInactiveThreadStates(
     if (id === options.activeId || options.protectedIds?.has(id) || options.isProtected?.(id))
       continue
     if (state.running) {
-      if (options.isPartial?.(id)) continue
+      if (options.isPartial?.(id)) {
+        states.set(id, compactRunningTranscript(state))
+        options.onCompact?.(id)
+        continue
+      }
       const usage = runningTranscriptUsage(state)
       runningCandidates.push({
         id,

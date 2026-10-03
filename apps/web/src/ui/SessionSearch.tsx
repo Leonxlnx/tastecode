@@ -172,8 +172,10 @@ function SessionSearchComponent(props: {
           setNextCursor(page.nextCursor)
         })
         .catch((cause) => {
-          if (revision.current === current)
+          if (revision.current === current) {
+            setResults([])
             setError(cause instanceof Error ? cause.message : String(cause))
+          }
         })
         .finally(() => {
           if (revision.current === current) setSearching(false)
