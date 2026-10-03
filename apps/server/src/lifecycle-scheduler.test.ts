@@ -69,6 +69,110 @@ describe('LifecycleScheduler', () => {
     scheduler.dispose()
   })
 
+  it.each(['refresh', 'deadline read'] as const)(
+    'catches timer-fired %s failures and retries without spinning',
+    async (failure) => {
+      vi.useFakeTimers({ now: 1_000 })
+      let failing = false
+      let nextAt: number | undefined = 2_000
+      const refresh = vi.fn(() => {
+        if (failing && failure === 'refresh') throw new Error('transient refresh failure')
+      })
+      const scheduler = new LifecycleScheduler(refresh, () => {
+        if (failing && failure === 'deadline read') throw new Error('transient read failure')
+        return nextAt
+      })
+
+      try {
+        scheduler.changed()
+        failing = true
+        await vi.advanceTimersByTimeAsync(1_000)
+        expect(refresh).toHaveBeenCalledOnce()
+        expect(vi.getTimerCount()).toBe(1)
+
+        await vi.advanceTimersByTimeAsync(29_999)
+        expect(refresh).toHaveBeenCalledOnce()
+        await vi.advanceTimersByTimeAsync(1)
+        expect(refresh).toHaveBeenCalledTimes(2)
+        expect(vi.getTimerCount()).toBe(1)
+
+        failing = false
+        nextAt = 64_000
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(refresh).toHaveBeenCalledTimes(3)
+        expect(vi.getTimerCount()).toBe(1)
+
+        nextAt = undefined
+        await vi.advanceTimersByTimeAsync(1_999)
+        expect(refresh).toHaveBeenCalledTimes(3)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(refresh).toHaveBeenCalledTimes(4)
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        scheduler.dispose()
+      }
+    },
+  )
+
+  it('keeps deadline-read failures visible to direct callers', () => {
+    const scheduler = new LifecycleScheduler(
+      () => {},
+      () => {
+        throw new Error('transient read failure')
+      },
+    )
+
+    try {
+      expect(() => scheduler.changed()).toThrow('transient read failure')
+      expect(() => scheduler.refreshNow()).toThrow('transient read failure')
+    } finally {
+      scheduler.dispose()
+    }
+  })
+
+  it('keeps a retry timer after a direct refresh cannot read the next deadline', async () => {
+    vi.useFakeTimers({ now: 1_000 })
+    let failRead = false
+    const refresh = vi.fn()
+    const scheduler = new LifecycleScheduler(refresh, () => {
+      if (failRead) throw new Error('transient read failure')
+      return 60_000
+    })
+
+    try {
+      scheduler.changed()
+      failRead = true
+      expect(() => scheduler.refreshNow()).toThrow('transient read failure')
+      expect(vi.getTimerCount()).toBe(1)
+      failRead = false
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(refresh).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(1)
+    } finally {
+      scheduler.dispose()
+    }
+  })
+
+  it('cancels a failed background wake retry when disposed', async () => {
+    vi.useFakeTimers({ now: 1_000 })
+    const refresh = vi.fn(() => {
+      throw new Error('transient refresh failure')
+    })
+    const scheduler = new LifecycleScheduler(refresh, () => 2_000)
+
+    try {
+      scheduler.changed()
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(vi.getTimerCount()).toBe(1)
+      scheduler.dispose()
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(refresh).toHaveBeenCalledOnce()
+    } finally {
+      scheduler.dispose()
+    }
+  })
+
   it('moves an existing timer when persisted state changes', async () => {
     vi.useFakeTimers({ now: 1_000 })
     let nextAt = 10_000
