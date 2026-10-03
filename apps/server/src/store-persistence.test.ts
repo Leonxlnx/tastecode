@@ -38,6 +38,32 @@ const message = (text: string, createdAt = 1): DomainEvent => ({
 })
 
 describe('durable history ownership', () => {
+  it.each(['before', 'between'])(
+    'fills search pages after removing a project %s page requests',
+    (when) => {
+      const { store, root } = setup()
+      const removed = path.join(root, 'removed')
+      store.addProject(removed)
+      store.addThread({ id: 'removed', projectPath: removed, provider: 'codex', title: 'Removed' })
+      for (let index = 0; index < 12; index += 1) {
+        store.append(index % 3 === 0 ? 'thread' : 'removed', message('needle', index))
+      }
+      if (when === 'before') store.removeProject(removed)
+      const first = store.searchSessions({ query: 'needle', limit: 2 })
+      if (when === 'between') store.removeProject(removed)
+      const results = [...first.results]
+      let cursor = first.nextCursor
+      while (cursor) {
+        const page = store.searchSessions({ query: 'needle', limit: 2, cursor })
+        expect(page.results.length).toBeGreaterThan(0)
+        results.push(...page.results)
+        cursor = page.nextCursor
+      }
+      expect(results.filter((result) => result.threadId === 'thread')).toHaveLength(4)
+      expect(new Set(results.map((result) => result.resultId)).size).toBe(results.length)
+    },
+  )
+
   it('restores imported membership without reviving retired branches or localizing imports', () => {
     const { store, root, location } = setup()
     store.saveProviderHistory('codex', 'thread', {
