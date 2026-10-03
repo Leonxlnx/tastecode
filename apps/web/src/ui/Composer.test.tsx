@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
@@ -215,6 +215,69 @@ describe('Composer media attachments', () => {
     expect(bridge.savePastedFile).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(onSend).toHaveBeenCalledWith('', ['/work/large.zip'])
+  })
+
+  it('keeps a pasted file registered with its original draft while saving', async () => {
+    let resolve!: (value: { path: string; name: string }) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const register = vi.fn()
+    const view = renderComposer(vi.fn(), {
+      draftRequest: { request: 1, text: '', attachments: [] },
+      onPendingAttachment: register,
+    })
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    expect(register).toHaveBeenCalledOnce()
+    const saved = register.mock.calls[0]![0] as Promise<string | undefined>
+    view.rerenderComposer({ draftRequest: { request: 2, text: 'Other chat', attachments: [] } })
+    await act(async () => resolve({ path: '/saved/notes.txt', name: 'notes.txt' }))
+    await expect(saved).resolves.toBe('/saved/notes.txt')
+    expect(screen.queryByText('notes.txt')).toBeNull()
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Other chat',
+    )
+  })
+
+  it('keeps a saved paste itself while its draft is still shown', async () => {
+    let resolve!: (value: { path: string; name: string }) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const register = vi.fn()
+    const onSend = vi.fn()
+    renderComposer(onSend, { onPendingAttachment: register })
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    await act(async () => resolve({ path: '/saved/notes.txt', name: 'notes.txt' }))
+    await expect(register.mock.calls[0]![0]).resolves.toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('', ['/saved/notes.txt'])
+  })
+
+  it('does not restore a removed pending paste when its save finishes', async () => {
+    let resolve!: (value: { path: string; name: string }) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const register = vi.fn()
+    renderComposer(vi.fn(), { onPendingAttachment: register })
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }))
+    await act(async () => resolve({ path: '/saved/notes.txt', name: 'notes.txt' }))
+    await expect(register.mock.calls[0]![0]).resolves.toBeUndefined()
+    expect(screen.queryByText('notes.txt')).toBeNull()
   })
 
   it('previews a pasted image and sends its materialized path', async () => {
@@ -471,6 +534,65 @@ describe('Composer send handoff', () => {
 })
 
 describe('Composer queue', () => {
+  it('waits for queue deletion confirmation and preserves typing during the wait', async () => {
+    let finish!: (removed: boolean) => void
+    const onDeleteQueuedTurn = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        }),
+    )
+    renderComposer(vi.fn(), {
+      queuedTurns: [
+        { id: 'q1', text: 'Queued prompt', attachments: ['/work/notes.txt'], createdAt: 1 },
+      ],
+      onDeleteQueuedTurn,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Queued prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Queued prompt' }))
+    expect(onDeleteQueuedTurn).toHaveBeenCalledOnce()
+    expect(composer.value).toBe('')
+    expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull()
+    fireEvent.change(composer, { target: { value: 'Still typing' } })
+    await act(async () => finish(true))
+    expect(composer.value).toBe('Queued prompt\n\nStill typing')
+    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeTruthy()
+  })
+
+  it.each([false, undefined])(
+    'does not copy a prompt when deletion returns %s',
+    async (removed) => {
+      renderComposer(vi.fn(), {
+        queuedTurns: [{ id: 'q1', text: 'Already started', attachments: [], createdAt: 1 }],
+        onDeleteQueuedTurn: vi.fn(async () => removed),
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Edit Already started' }))
+      expect((await screen.findByRole('alert')).textContent).toContain('may have already started')
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe('')
+    },
+  )
+
+  it('shows the server reason when a queued prompt cannot be removed or edited', async () => {
+    const onDeleteQueuedTurn = vi.fn(async () => {
+      throw new Error('That queued prompt already started or was removed.')
+    })
+    renderComposer(vi.fn(), {
+      queuedTurns: [{ id: 'q1', text: 'Already started', attachments: [], createdAt: 1 }],
+      onDeleteQueuedTurn,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Already started from queue' }))
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'already started or was removed',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Already started' }))
+    await waitFor(() => expect(onDeleteQueuedTurn).toHaveBeenCalledTimes(2))
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'already started or was removed',
+    )
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe('')
+  })
+
   it('shows the first queued media and restores every preview when editing', async () => {
     const previews = new Map([
       [
@@ -497,7 +619,7 @@ describe('Composer queue', () => {
     bridge.previewViewedImage.mockImplementation(async (reference: string) =>
       previews.get(reference),
     )
-    const onDeleteQueuedTurn = vi.fn()
+    const onDeleteQueuedTurn = vi.fn(async () => true)
     renderComposer(vi.fn(), {
       running: true,
       queuedTurns: [
@@ -816,7 +938,7 @@ describe('Composer queue', () => {
   })
 
   it('offers drag reorder, steer, remove, and edit actions for queued prompts', async () => {
-    const onDeleteQueuedTurn = vi.fn()
+    const onDeleteQueuedTurn = vi.fn(async () => true)
     const onMoveQueuedTurn = vi.fn()
     const onSteerQueuedTurn = vi.fn()
     renderComposer(vi.fn(), {
@@ -880,8 +1002,10 @@ describe('Composer queue', () => {
     expect(onMoveQueuedTurn).toHaveBeenCalledTimes(3)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Polish the queue' }))
-    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
-      'Polish the queue',
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Polish the queue',
+      ),
     )
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-1')
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('Polish the queue')
@@ -1392,6 +1516,29 @@ describe('Composer branch shelf', () => {
 })
 
 describe('Composer draft replacement', () => {
+  it.each(['remove', 'send'])(
+    'publishes an empty resource list after %s returns to the hydrated value',
+    async (action) => {
+      const onResourcesChange = vi.fn()
+      renderComposer(vi.fn(), {
+        transport: populatedResourceTransport(),
+        draftRequest: { text: '', attachments: [], resources: [], request: 1 },
+        onResourcesChange,
+      })
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/air' } })
+      fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
+      await waitFor(() =>
+        expect(onResourcesChange).toHaveBeenLastCalledWith([
+          expect.objectContaining({ name: 'Airtable CLI' }),
+        ]),
+      )
+      if (action === 'remove')
+        fireEvent.click(screen.getByRole('button', { name: 'Remove Airtable CLI' }))
+      else fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(onResourcesChange).toHaveBeenLastCalledWith([])
+    },
+  )
+
   it('loads a previous prompt for editing and focuses it', async () => {
     renderComposer(vi.fn(), {
       draftRequest: { text: 'Rewrite this request', request: 1 },
@@ -1567,7 +1714,7 @@ function renderComposer(
       onSend={onSend}
       onSteer={vi.fn()}
       onInterrupt={vi.fn()}
-      onDeleteQueuedTurn={vi.fn()}
+      onDeleteQueuedTurn={vi.fn(async () => true)}
       onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
       {...currentOverrides}

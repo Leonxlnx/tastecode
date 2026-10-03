@@ -487,6 +487,12 @@ function ComposerComponent(props: {
     | undefined
   onDraftChange?: ((text: string) => void) | undefined
   onAttachmentsChange?: ((attachments: string[]) => void) | undefined
+  /**
+   * Register a pending save with the current draft's owner before it can change.
+   * Resolves with the saved path only when this composer no longer shows that
+   * draft, so the owner must keep the file itself.
+   */
+  onPendingAttachment?: ((savedPath: Promise<string | undefined>) => void) | undefined
   onResourcesChange?: ((resources: ComposerResource[]) => void) | undefined
   onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
@@ -509,7 +515,7 @@ function ComposerComponent(props: {
   onInterrupt: () => void
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
-  onDeleteQueuedTurn: (id: string) => void
+  onDeleteQueuedTurn: (id: string) => void | Promise<boolean | void>
   onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
 }) {
@@ -528,6 +534,8 @@ function ComposerComponent(props: {
   }>()
   const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
   const [voiceError, setVoiceError] = useComposerError()
+  const [queueError, setQueueError] = useComposerError()
+  const editingQueue = useRef(new Set<string>())
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
   const [queueDropTarget, setQueueDropTarget] = useState<{
@@ -563,6 +571,8 @@ function ComposerComponent(props: {
   const attachmentsChangeReady = useRef(false)
   const attachmentsEdited = useRef(false)
   const resourcesChangeReady = useRef(false)
+  const resourcesEdited = useRef(false)
+  const pendingAttachments = useRef(new Set<string>())
   const onReady = useRef(props.onReady)
   onReady.current = props.onReady
   const draftRequestRef = useRef(props.draftRequest)
@@ -980,6 +990,7 @@ function ComposerComponent(props: {
       }
     }
     if (props.draftRequest.resources !== undefined) {
+      resourcesEdited.current = false
       setSelectedResources(props.draftRequest.resources)
     }
   }, [props.draftRequest?.request])
@@ -1046,6 +1057,7 @@ function ComposerComponent(props: {
   }
 
   const addPastedFiles = (files: File[]) => {
+    const owner = draftRequestRef.current?.request
     setAttachmentError(undefined)
     for (const file of files) {
       if (file.size > MAX_PASTED_FILE_BYTES) {
@@ -1056,6 +1068,7 @@ function ComposerComponent(props: {
       const previewUrl = mediaType ? URL.createObjectURL(file) : undefined
       if (previewUrl) previewUrls.current.add(previewUrl)
       const id = previewUrl ?? `pasted:${crypto.randomUUID()}`
+      pendingAttachments.current.add(id)
       setAttachments((current) => [
         ...current,
         {
@@ -1066,13 +1079,14 @@ function ComposerComponent(props: {
         },
       ])
 
-      void savePastedFile(file)
+      const savedPath = savePastedFile(file)
         .then((saved) => {
-          if (!mounted.current) return
+          if (!pendingAttachments.current.delete(id)) return undefined
+          if (!mounted.current || draftRequestRef.current?.request !== owner) return saved?.path
           if (!saved) {
             removeAttachment(id, previewUrl)
             setAttachmentError('Pasting files is available in the desktop app.')
-            return
+            return undefined
           }
           const picked = saved
           setAttachments((current) =>
@@ -1090,14 +1104,18 @@ function ComposerComponent(props: {
                 : attachment,
             ),
           )
+          return undefined
         })
         .catch(() => {
-          if (!mounted.current) return
+          pendingAttachments.current.delete(id)
+          if (!mounted.current || draftRequestRef.current?.request !== owner) return undefined
           removeAttachment(id, previewUrl)
           setAttachmentError(
             `Couldn’t attach “${file.name || 'that file'}”. Use the file picker instead.`,
           )
+          return undefined
         })
+      props.onPendingAttachment?.(savedPath)
     }
   }
 
@@ -1107,6 +1125,7 @@ function ComposerComponent(props: {
   }
 
   const removeAttachment = (id: string, previewUrl?: string) => {
+    pendingAttachments.current.delete(id)
     // Side effects stay outside the updater — updaters run during render and
     // replay under StrictMode. Only renderer-created blob previews are revoked;
     // signed native-picker URLs remain owned by the desktop protocol.
@@ -1175,7 +1194,13 @@ function ComposerComponent(props: {
       return
     }
     const hydrated = draftRequestRef.current?.resources
-    if (hydrated !== undefined && sameDraftResources(selectedResources, hydrated)) return
+    if (
+      !resourcesEdited.current &&
+      hydrated !== undefined &&
+      sameDraftResources(selectedResources, hydrated)
+    )
+      return
+    resourcesEdited.current = true
     props.onResourcesChange?.(selectedResources)
   }, [selectedResources, props.onResourcesChange])
 
@@ -1222,13 +1247,46 @@ function ComposerComponent(props: {
     sendContent(textRef.current, submission)
   }
 
-  const editQueuedTurn = (queuedTurn: QueuedTurn) => {
-    // Never overwrite words the user is mid-way through typing — prepend the
-    // queued text so both survive the edit.
-    const draft = textRef.current.trim()
-    setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
-    addFiles(queuedTurn.attachments)
-    props.onDeleteQueuedTurn(queuedTurn.id)
+  const editQueuedTurn = async (queuedTurn: QueuedTurn) => {
+    if (editingQueue.current.has(queuedTurn.id)) return
+    editingQueue.current.add(queuedTurn.id)
+    const owner = draftRequestRef.current?.request
+    setQueueError(undefined)
+    try {
+      const removed = await props.onDeleteQueuedTurn(queuedTurn.id)
+      if (!mounted.current || draftRequestRef.current?.request !== owner) return
+      if (removed !== true) {
+        setQueueError(
+          'Could not remove the queued prompt. It may have already started; no copy was added.',
+        )
+        return
+      }
+      // Preserve text typed while the deletion was in flight.
+      const draft = textRef.current.trim()
+      setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
+      addFiles(queuedTurn.attachments)
+    } catch (error) {
+      if (mounted.current && draftRequestRef.current?.request === owner) {
+        setQueueError(
+          error instanceof Error ? error.message : 'Could not remove the queued prompt.',
+        )
+      }
+    } finally {
+      editingQueue.current.delete(queuedTurn.id)
+    }
+  }
+
+  const removeQueuedTurn = async (queuedTurnId: string) => {
+    setQueueError(undefined)
+    try {
+      await props.onDeleteQueuedTurn(queuedTurnId)
+    } catch (error) {
+      if (mounted.current) {
+        setQueueError(
+          error instanceof Error ? error.message : 'Could not remove the queued prompt.',
+        )
+      }
+    }
   }
 
   const insertTranscript = (
@@ -1300,6 +1358,7 @@ function ComposerComponent(props: {
         : undefined),
     unsupportedAttachmentIssue ?? attachmentError,
     voiceError,
+    queueError,
   ].filter((error): error is ComposerError => error !== undefined)
 
   const selectResource = (resource: ComposerResource) => {
@@ -1540,7 +1599,7 @@ function ComposerComponent(props: {
                   <button
                     type="button"
                     className="queue-row__action"
-                    onClick={() => editQueuedTurn(queuedTurn)}
+                    onClick={() => void editQueuedTurn(queuedTurn)}
                     title="Edit prompt"
                     aria-label={`Edit ${queuedTurn.text}`}
                   >
@@ -1549,7 +1608,7 @@ function ComposerComponent(props: {
                   <button
                     type="button"
                     className="queue-row__action"
-                    onClick={() => props.onDeleteQueuedTurn(queuedTurn.id)}
+                    onClick={() => void removeQueuedTurn(queuedTurn.id)}
                     title="Remove from queue"
                     aria-label={`Remove ${queuedTurn.text} from queue`}
                   >
@@ -1914,6 +1973,7 @@ function ComposerComponent(props: {
                 {props.voiceAvailable ? (
                   <Suspense fallback={null}>
                     <ComposerVoiceControl
+                      contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}`}
                       disabled={props.disabled}
                       running={props.running}
                       getCursor={() => area.current?.selectionStart ?? textRef.current.length}

@@ -125,6 +125,7 @@ export const TRANSPORT_LIMITS = {
   validationFrames: 2_048,
   validationBytes: 16 * 1024 * 1024,
   responseValidationBytes: 128 * 1024 * 1024,
+  connectTimeoutMs: 10_000,
   requestTimeoutMs: 120_000,
 } as const
 
@@ -145,6 +146,7 @@ class WebSocketTransport implements Transport {
   #lastSequence = 0
   #state: ConnectionState = 'closed'
   #closedByUs = false
+  #connectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectDelayMs = 0
   #hasOpened = false
@@ -182,7 +184,10 @@ class WebSocketTransport implements Transport {
   close(): void {
     this.#closedByUs = true
     this.#clearReconnectTimer()
-    this.#socket?.close()
+    this.#clearConnectTimer()
+    const socket = this.#socket
+    this.#socket = undefined
+    socket?.close()
     this.#cancelCaptures()
     // This instance is being discarded; nothing will ever flush the queue or
     // answer in-flight calls. A request left pending here kept its caller's
@@ -309,7 +314,7 @@ class WebSocketTransport implements Transport {
               // The schema issues are for a developer, not for a notice bar.
               console.warn(`[transport] ${method} reply failed validation`, error)
               fail(
-                new Error(
+                new IndeterminateRequestError(
                   `The server sent an invalid reply to ${method}. Restart TasteCode if this keeps happening.`,
                 ),
               )
@@ -378,6 +383,7 @@ class WebSocketTransport implements Transport {
   #open(state: ConnectionState): void {
     if (this.#closedByUs) return
     this.#clearReconnectTimer()
+    this.#clearConnectTimer()
     this.#setState(state)
     // Sequence numbers are per connection, so a new socket restarts at 1.
     // Carrying the old counter across a reconnect made the gap detector fire
@@ -386,11 +392,16 @@ class WebSocketTransport implements Transport {
     this.#lastSequence = 0
     const socket = new WebSocket(this.#url)
     this.#socket = socket
+    this.#connectTimer = setTimeout(() => {
+      if (this.#socket === socket && socket.readyState === WebSocket.CONNECTING)
+        this.#restartSocket(false)
+    }, TRANSPORT_LIMITS.connectTimeoutMs)
 
     socket.onopen = () => {
       // Same replaced-socket guard as onmessage/onclose: an orphan socket
       // must not flush the queue into a connection whose replies are dropped.
       if (this.#socket !== socket) return
+      this.#clearConnectTimer()
       this.#hasOpened = true
       const queued = this.#queue.splice(0)
       this.#queuedBytes = 0
@@ -428,6 +439,7 @@ class WebSocketTransport implements Transport {
 
     socket.onclose = () => {
       if (this.#socket !== socket) return
+      this.#clearConnectTimer()
       // Calls already transmitted on this socket can never be answered — the
       // server's reply died with the connection. Leaving them pending is how
       // a session got stuck at "starting" forever. Requests still queued
@@ -439,12 +451,13 @@ class WebSocketTransport implements Transport {
     }
   }
 
-  #restartSocket(): void {
+  #restartSocket(immediate = true): void {
+    this.#clearConnectTimer()
     const socket = this.#socket
     this.#socket = undefined
     if (socket && socket.readyState !== WebSocket.CLOSED) socket.close()
     this.#rejectInFlight()
-    if (!this.#closedByUs) this.#scheduleReconnect(true)
+    if (!this.#closedByUs) this.#scheduleReconnect(immediate)
   }
 
   #rejectInFlight(): void {
@@ -486,6 +499,11 @@ class WebSocketTransport implements Transport {
   #clearReconnectTimer(): void {
     clearTimeout(this.#reconnectTimer)
     this.#reconnectTimer = undefined
+  }
+
+  #clearConnectTimer(): void {
+    clearTimeout(this.#connectTimer)
+    this.#connectTimer = undefined
   }
 
   #receive(raw: string, source: WebSocket): void {
@@ -624,10 +642,21 @@ class WebSocketTransport implements Transport {
         }
       })
       .catch((error: unknown) => {
+        console.warn('[transport] protocol validation failed to load', error)
         this.#validationLoad = undefined
+        const missedPushes = this.#validationQueue.length > 0
         this.#validationQueue = []
         this.#validationBytes = 0
-        for (const id of this.#responses.keys()) this.#pending.get(id)?.reject(asError(error))
+        for (const id of this.#responses.keys()) {
+          this.#pending
+            .get(id)
+            ?.reject(
+              new IndeterminateRequestError(
+                'The server reply could not be validated. The operation may have completed. Restart TasteCode before trying again.',
+              ),
+            )
+        }
+        if (missedPushes && !this.#closedByUs) this.#restartSocket(false)
       })
   }
 
