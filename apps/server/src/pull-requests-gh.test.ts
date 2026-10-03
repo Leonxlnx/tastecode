@@ -23,6 +23,25 @@ function processFixture() {
 }
 
 describe('GitHub CLI binary image output', () => {
+  it('rejects a broken stdin pipe once and keeps later pipe errors handled', async () => {
+    const child = processFixture()
+    const output = runGh(['api', '--input', '-'], { stdin: 'body'.repeat(100_000) })
+    const rejection = expect(output).rejects.toThrow('stopped accepting request input')
+
+    expect(() =>
+      child.stdin.emit(
+        'error',
+        Object.assign(new Error('write EPIPE'), {
+          code: 'EPIPE',
+        }),
+      ),
+    ).not.toThrow()
+    child.emit('close', 1)
+    await rejection
+    expect(() => child.stdin.emit('error', new Error('late EPIPE'))).not.toThrow()
+    expect(killTree).toHaveBeenCalledOnce()
+  })
+
   it('preserves non-UTF8 and split binary bytes', async () => {
     const child = processFixture()
     const output = runGh(['api', 'https://github.com/user-attachments/assets/example'], {
