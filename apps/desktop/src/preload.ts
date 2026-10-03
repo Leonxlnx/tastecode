@@ -2,8 +2,8 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'ele
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import type { AppUpdateState } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
-import { isNativeMenuAction } from './menu-contract.js'
-import { isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
+import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
 
 type PickedAttachment = {
   path: string
@@ -42,6 +42,8 @@ const api = {
   },
   pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
   pickFiles: (): Promise<PickedAttachment[]> => ipcRenderer.invoke('harness:pickFiles'),
+  droppedFilePath: (file: File): string | undefined =>
+    droppedFilePath(file, (value) => webUtils.getPathForFile(value)),
   previewViewedImage: (reference: string): Promise<PickedAttachment | undefined> =>
     ipcRenderer.invoke('harness:previewViewedImage', reference),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
@@ -78,13 +80,18 @@ const api = {
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
   setMenuShortcuts: (shortcuts: unknown): void =>
     ipcRenderer.send('harness:setMenuShortcuts', shortcuts),
-  onMenuAction: (listener: (action: string) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, action: unknown) => {
-      if (isNativeMenuAction(action)) listener(action)
+  onMenuAction: (
+    listener: (action: string, source: NativeMenuActionSource) => void,
+  ): (() => void) => {
+    const handler = (_event: IpcRendererEvent, message: unknown) => {
+      if (isNativeMenuActionMessage(message)) listener(message.action, message.source)
     }
     ipcRenderer.on('harness:menuAction', handler)
+    ipcRenderer.send('harness:menuReady')
     return () => ipcRenderer.removeListener('harness:menuAction', handler)
   },
+  suspendMenuShortcuts: (suspended: boolean): void =>
+    ipcRenderer.send('harness:suspendMenuShortcuts', suspended === true),
   onUpdateState: (listener: (state: AppUpdateState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: unknown) => {
       if (isAppUpdateState(state)) listener(state)
