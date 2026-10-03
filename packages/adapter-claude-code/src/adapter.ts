@@ -71,6 +71,7 @@ const UserInputSchema = z.object({
     z.object({
       question: z.coerce.string(),
       header: z.coerce.string().optional(),
+      multiSelect: z.boolean().optional(),
       options: z
         .array(
           z.object({
@@ -531,10 +532,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const pending = this.#pendingUserInputs.get(requestId)
     if (!pending) return
     const sdkAnswers = Object.fromEntries(
-      Object.entries(answers).map(([question, values]) => [
-        question,
-        values.length > 1 ? values : (values[0] ?? ''),
-      ]),
+      Object.entries(answers).map(([question, values]) => [question, values.join(', ')]),
     )
     pending.finish({
       behavior: 'allow',
@@ -1280,6 +1278,7 @@ function parseUserInputQuestions(input: ToolInput): UserInputQuestion[] {
         header: raw.header?.trim() || `Question ${index + 1}`,
         question,
         allowOther: true,
+        ...(raw.multiSelect ? { multiSelect: true } : {}),
         secret: false,
         options: options.length > 0 ? options : null,
       },
