@@ -188,7 +188,11 @@ const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
 const PROJECT_ORDER_KEY = 'harness.projectOrder'
-const SESSION_ORDER_KEY = 'harness.sessionOrder'
+/** Only projects whose chats the user reordered by dragging. */
+const SESSION_ORDER_KEY = 'harness.sessionOrder.dragged'
+/** Snapshots of every project's order, dragged or not. They froze the order in
+ *  which provider histories happened to arrive, so they are discarded. */
+const LEGACY_SESSION_ORDER_KEY = 'harness.sessionOrder'
 const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
@@ -479,6 +483,9 @@ export function App() {
   // A cache of what the server says, not a source of truth. Every change goes
   // to the server and comes back through here.
   const [projects, setProjects] = useState<Project[]>([])
+  // Other projects follow the server's newest-first order, so chats imported
+  // later from another provider land by date instead of below a saved snapshot.
+  const [draggedSessionOrder] = useState(() => new Set(Object.keys(loadSessionOrder())))
   const projectChoiceProjector = useMemo(createProjectChoiceProjector, [])
   const projectChoices = useMemo(
     () => projectChoiceProjector(projects),
@@ -2250,6 +2257,7 @@ export function App() {
   useEffect(() => {
     let cancelled = false
     void (async () => {
+      removeSetting(LEGACY_SESSION_ORDER_KEY)
       const legacy = takeLegacyProjects()
       for (const project of legacy) {
         await transport.request('projects.add', project).catch(() => undefined)
@@ -2281,9 +2289,9 @@ export function App() {
   useEffect(() => {
     if (projects.length > 0) {
       saveProjectOrder(projects)
-      saveSessionOrder(projects)
+      saveSessionOrder(projects, draggedSessionOrder)
     }
-  }, [projects])
+  }, [projects, draggedSessionOrder])
 
   usePersistedSettingChange(MODEL_KEY, modelId || undefined)
 
@@ -4018,6 +4026,7 @@ export function App() {
   )
   const reorderSidebarSession = useCallback(
     (projectPath: string, sourceId: string, targetId: string, position: 'before' | 'after') => {
+      draggedSessionOrder.add(projectPath)
       setProjects((current) =>
         current.map((project) => {
           if (project.path !== projectPath) return project
@@ -4033,7 +4042,7 @@ export function App() {
         }),
       )
     },
-    [],
+    [draggedSessionOrder],
   )
   const reorderSidebarProject = useCallback(
     (sourcePath: string, targetPath: string, position: 'before' | 'after') => {
@@ -5332,8 +5341,8 @@ function loadSessionOrder() {
 
 const serializeSessionOrder = createSessionOrderSerializer()
 
-function saveSessionOrder(projects: Project[]): void {
-  const serialized = serializeSessionOrder(projects)
+function saveSessionOrder(projects: Project[], dragged: ReadonlySet<string>): void {
+  const serialized = serializeSessionOrder(projects.filter((project) => dragged.has(project.path)))
   if (serialized === undefined) return
   writeSetting(SESSION_ORDER_KEY, serialized)
 }
