@@ -150,6 +150,44 @@ describe('embedded browser guest', () => {
     expect(subresource).toHaveBeenCalledWith({ cancel: false })
     expect(guestListeners.has('did-start-navigation')).toBe(false)
   })
+
+  it.each([
+    { contentType: 'application/x-www-form-urlencoded', boundary: undefined },
+    { contentType: 'multipart/form-data', boundary: '----chromium-form-boundary' },
+  ])('preserves target=_blank POST data and $contentType headers', ({ contentType, boundary }) => {
+    const owner = ownerHarness()
+    configureEmbeddedBrowser(owner.contents)
+    const guest = {
+      getUserAgent: () => '',
+      setUserAgent: vi.fn(),
+      on: vi.fn(),
+      loadURL: vi.fn(async () => undefined),
+      setWindowOpenHandler: vi.fn(),
+      session: {
+        webRequest: { onBeforeRequest: vi.fn() },
+        setPermissionCheckHandler: vi.fn(),
+        setPermissionRequestHandler: vi.fn(),
+      },
+    }
+    owner.listener('did-attach-webview')({}, guest)
+    const open = guest.setWindowOpenHandler.mock.calls[0]![0]
+    const data = [{ type: 'rawData', bytes: Buffer.from('name=value') }]
+    const referrer = { url: 'https://example.com/form', policy: 'strict-origin-when-cross-origin' }
+    expect(
+      open({
+        url: 'https://example.com/submit',
+        postBody: { data, contentType, boundary },
+        referrer,
+      }),
+    ).toEqual({ action: 'deny' })
+    expect(guest.loadURL).toHaveBeenCalledWith('https://example.com/submit', {
+      postData: data,
+      httpReferrer: referrer,
+      extraHeaders: `Content-Type: ${contentType}${boundary ? `; boundary=${boundary}` : ''}`,
+    })
+    open({ url: 'file:///private/data', postBody: { data, contentType }, referrer })
+    expect(guest.loadURL).toHaveBeenCalledOnce()
+  })
 })
 
 function ownerHarness() {

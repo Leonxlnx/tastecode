@@ -60,7 +60,18 @@ cross-platform problem.
 The local Node server remains a separate long-lived process behind the typed WebSocket
 protocol. Closing or restarting the Electron window does not stop active agents. The renderer
 stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
-credentials.
+credentials. Quitting asks the server to shut down over IPC (`{ type: 'harness:shutdown' }`),
+so it flushes streamed text and closes the store; the desktop force-stops it only after three
+seconds. A crashed renderer reloads once on its own and then offers a Reload dialog instead of
+looping. The packaged server takes its port from the renderer's compiled CSP, so a stray
+`HARNESS_PORT` cannot split the two.
+
+Durable user data never lives in the OS temp folder, which the system may clean at any time.
+Pasted attachments are written under the app's data folder, because chat history keeps their
+paths; files pasted by older builds into `<temp>/TasteCode/pasted-files` stay readable. They
+are never pruned by age: only chat history knows whether a file is still referenced. New
+isolated chat checkouts live in `trees` beside the database for the same reason
+(`HARNESS_WORKTREE_DIR` overrides it); existing checkouts keep their stored paths.
 
 Electron's weaker security defaults are fixed in the shell: `contextIsolation: true`,
 `nodeIntegration: false`, sandboxing, a strict CSP, a narrow typed `contextBridge`, and
@@ -569,6 +580,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
 | 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |
 | 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
