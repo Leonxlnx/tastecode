@@ -65,6 +65,7 @@ const shellRenders = vi.hoisted(() => ({
   composer: vi.fn(),
   sidebar: vi.fn(),
   stageHeader: vi.fn(),
+  threadFrame: vi.fn(),
 }))
 
 const utilityRenders = vi.hoisted(() => ({
@@ -84,10 +85,12 @@ const nativeMenu = vi.hoisted(() => ({
 }))
 type ThreadProps = ComponentProps<(typeof import('./ui/Thread.js'))['Thread']>
 interface ThreadCallbacks {
+  decideApproval: ThreadProps['onDecide'] | undefined
   answerUserInput: ThreadProps['onAnswerUserInput'] | undefined
   undoChanges: ThreadProps['onUndoChanges'] | undefined
 }
 const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
+  decideApproval: undefined,
   answerUserInput: undefined,
   undoChanges: undefined,
 }))
@@ -161,11 +164,13 @@ vi.mock('./ui/Thread.js', async () => {
         props.frameStore.getSnapshot,
       )
       const { items, liveItems } = frame
+      shellRenders.threadFrame(frame)
       return (
         <div
           data-testid="thread"
           data-started-at={frame.activeTurn?.startedAt}
           ref={() => {
+            threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
           }}
@@ -188,7 +193,7 @@ vi.mock('./ui/Sidebar.js', async (importOriginal) => {
   return {
     ...original,
     Sidebar: memo((props: ComponentProps<typeof original.Sidebar>) => {
-      shellRenders.sidebar()
+      shellRenders.sidebar(props)
       return <original.Sidebar {...props} />
     }),
   }
@@ -212,7 +217,7 @@ vi.mock('./ui/StageHeader.js', async (importOriginal) => {
   return {
     ...original,
     StageHeader: memo((props: ComponentProps<typeof original.StageHeader>) => {
-      shellRenders.stageHeader()
+      shellRenders.stageHeader(props)
       return <original.StageHeader {...props} />
     }),
   }
@@ -369,6 +374,7 @@ beforeEach(() => {
   shellRenders.composer.mockClear()
   shellRenders.sidebar.mockClear()
   shellRenders.stageHeader.mockClear()
+  shellRenders.threadFrame.mockClear()
   utilityRenders.commandPalette.mockClear()
   utilityRenders.sessionSearch.mockClear()
   utilityRenders.settings.mockClear()
@@ -377,6 +383,7 @@ beforeEach(() => {
   transport.stateListeners.clear()
   transport.sequenceGapListeners.clear()
   transport.urls.length = 0
+  threadCallbacks.decideApproval = undefined
   threadCallbacks.answerUserInput = undefined
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
@@ -696,7 +703,59 @@ function setConnectionState(state: ConnectionState): void {
   for (const listener of transport.stateListeners) listener(state)
 }
 
+function composerProps() {
+  return shellRenders.composer.mock.lastCall![0] as ComponentProps<
+    typeof import('./ui/Composer.js').Composer
+  >
+}
+
 describe('web client', () => {
+  it('keeps an acknowledged access mode when a change is rejected', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.history')
+        return Promise.resolve({ events: [], running: false, approval: 'full' })
+      if (method === 'thread.setApproval')
+        return new Promise((_, fail) => {
+          reject = fail
+        })
+      return request(method, params)
+    })
+    await openNewSession()
+    await waitFor(() => expect(composerProps().approval).toBe('full'))
+    act(() => composerProps().onApprovalChange('ask'))
+    expect(composerProps().approval).toBe('full')
+    await act(async () => reject(new Error('access refused')))
+    expect(composerProps().approval).toBe('full')
+    expect(await screen.findByText('access refused')).toBeTruthy()
+  })
+
+  it('serializes access edits and keeps the last successful mode', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.setApproval') {
+        const { approval } = methods['thread.setApproval'].params.parse(params)
+        return approval === 'full'
+          ? new Promise((resolve) => {
+              release = () => resolve({})
+            })
+          : Promise.reject(new Error('access refused'))
+      }
+      return request(method, params)
+    })
+    await openNewSession()
+    act(() => {
+      composerProps().onApprovalChange('full')
+      composerProps().onApprovalChange('ask')
+    })
+    expect(rpcCount('thread.setApproval')).toBe(1)
+    await act(async () => release())
+    expect(rpcCount('thread.setApproval')).toBe(2)
+    expect(composerProps().approval).toBe('full')
+  })
+
   it('does not ask the code highlighter before a code block needs it', () => {
     render(<App />)
 

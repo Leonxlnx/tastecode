@@ -77,6 +77,67 @@ const listCalls = (calls: RecordedRpcCall[]): RecordedRpcCall[] =>
   calls.filter((call) => call.method === 'mcpServerStatus/list')
 
 describe('Codex MCP hot-reload', () => {
+  it.each(['old-first', 'new-first'] as const)(
+    'ignores a pre-reload inventory result and its cleanup (%s)',
+    async (order) => {
+      const inventory = (name: string) => ({
+        data: [
+          {
+            name,
+            serverInfo: null,
+            authStatus: 'unsupported',
+            tools: {},
+            resources: [],
+            resourceTemplates: [],
+          },
+        ],
+        nextCursor: null,
+      })
+      const old = Promise.withResolvers<ReturnType<typeof inventory>>()
+      const fresh = Promise.withResolvers<ReturnType<typeof inventory>>()
+      let loads = 0
+      const rpc = new FakeCodexRpc((method) => {
+        if (method === 'mcpServerStatus/list') return ++loads === 1 ? old.promise : fresh.promise
+        return {}
+      })
+      proc.rpc = rpc
+      const adapter = new CodexAdapter()
+      const changed = vi.fn()
+      const unsubscribe = adapter.onMcpChanged(changed)
+      try {
+        await adapter.start()
+        await adapter.listMcpServers('t1')
+        await adapter.reloadMcpServers('t1', [stdioServer('fresh')], {})
+        changed.mockClear()
+        await adapter.listMcpServers('t1')
+        expect(loads).toBe(2)
+        if (order === 'old-first') {
+          old.resolve(inventory('old'))
+          await settle()
+          expect(await adapter.listMcpServers('t1')).toEqual([])
+          expect(loads).toBe(2)
+          expect(changed).not.toHaveBeenCalled()
+          fresh.resolve(inventory('fresh'))
+        } else {
+          fresh.resolve(inventory('fresh'))
+          await settle()
+          old.resolve(inventory('old'))
+        }
+        await settle()
+        expect((await adapter.listMcpServers('t1')).map(({ id }) => id)).toEqual(['fresh'])
+        expect(changed).toHaveBeenCalledOnce()
+        unsubscribe()
+        await adapter.reloadMcpServers('t1', [], {})
+        expect(changed).toHaveBeenCalledOnce()
+      } finally {
+        old.resolve(inventory('old'))
+        fresh.resolve(inventory('fresh'))
+        unsubscribe()
+        await adapter.dispose()
+      }
+    },
+  )
+
   it('reloads in order and drops the stale inventory cache on success', async () => {
     const { adapter, rpc } = await startedAdapter()
     const changed = vi.fn()
