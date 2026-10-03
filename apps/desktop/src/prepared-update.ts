@@ -6,12 +6,34 @@ import os from 'node:os'
 import path from 'node:path'
 import type { UpdateInfo } from 'electron-updater'
 
-export async function withUpdateDirectory<T>(use: (directory: string) => Promise<T>): Promise<T> {
+type StagingCleanup = {
+  remove?: typeof rm
+  onError?: (error: unknown) => void
+}
+
+/**
+ * Staging removal is best effort. After a native handover succeeded, a locked
+ * temp folder must not turn Ready into an error; after a failure, the original
+ * error is the one worth reporting.
+ */
+export async function withUpdateDirectory<T>(
+  use: (directory: string) => Promise<T>,
+  cleanup: StagingCleanup = {},
+): Promise<T> {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'tastecode-update-'))
   try {
     return await use(directory)
   } finally {
-    await rm(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 })
+    await (cleanup.remove ?? rm)(directory, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    }).catch(
+      cleanup.onError ??
+        ((error: unknown) =>
+          console.warn(`[desktop] could not remove update staging folder: ${String(error)}`)),
+    )
   }
 }
 

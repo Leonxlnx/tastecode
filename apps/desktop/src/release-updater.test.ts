@@ -1,12 +1,13 @@
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { access, chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { AppUpdater } from 'electron-updater'
 import type { DownloadUpdateOptions } from 'electron-updater/out/AppUpdater.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReleaseFetch } from './github-release-provider.js'
+import { InvalidUpdateError } from './update-validation.js'
 
 const mocks = vi.hoisted(() => ({ prepare: vi.fn() }))
 vi.mock('electron-updater/out/electronHttpExecutor.js', () => ({
@@ -163,6 +164,60 @@ describe('release download and installation', () => {
     await expect(access(stored('exe'))).rejects.toThrow()
   })
 
+  it.each(['ENOSPC', 'EDQUOT', 'EBUSY', 'EACCES', 'EPERM', 'EMFILE', 'ENFILE', 'EIO'])(
+    'keeps verified bytes after a native copy fails with %s and retries without fetching',
+    async (code) => {
+      const error = Object.assign(new Error(`${code}: could not copy the installer`), { code })
+      const install = vi.fn(async () => {
+        throw error
+      })
+      await expect(downloadRelease(updater, options(), install, downloads)).rejects.toBe(error)
+      expect(await readFile(stored('exe'))).toEqual(bytes)
+
+      await downloadRelease(updater, options(), async () => ['native-cache/update.exe'], downloads)
+      expect(fetchAsset).toHaveBeenCalledOnce()
+      expect(await readdir(downloads.directory)).toEqual([])
+    },
+  )
+
+  it.each([
+    ['a filesystem code', { code: 'ENOSPC' }],
+    // execFile reports a failed ditto with its numeric exit status.
+    ['a subprocess exit status', { code: 1, killed: false, signal: null, cmd: '/usr/bin/ditto' }],
+  ])('keeps verified bytes after DMG preparation fails with %s', async (_name, shape) => {
+    const error = Object.assign(new Error('could not create the prepared ZIP'), shape)
+    mocks.prepare.mockRejectedValueOnce(error)
+    const install = vi.fn(async () => [])
+
+    await expect(downloadRelease(updater, options('dmg'), install, downloads)).rejects.toBe(error)
+    expect(install).not.toHaveBeenCalled()
+    expect(await readFile(stored('dmg'))).toEqual(bytes)
+    await downloadRelease(updater, options('dmg'), install, downloads)
+    expect(fetchAsset).toHaveBeenCalledOnce()
+    expect(install).toHaveBeenCalledOnce()
+    expect(await readdir(downloads.directory)).toEqual([])
+  })
+
+  it('still removes a package rejected by the native signature check', async () => {
+    const error = Object.assign(new Error('The installer is not signed by the application owner'), {
+      code: 'ERR_UPDATER_INVALID_SIGNATURE',
+    })
+    await expect(
+      downloadRelease(updater, options(), async () => Promise.reject(error), downloads),
+    ).rejects.toBe(error)
+    await expect(access(stored('exe'))).rejects.toThrow()
+  })
+
+  it('still removes a DMG containing the wrong app', async () => {
+    mocks.prepare.mockRejectedValueOnce(new InvalidUpdateError('The DMG contains a different app.'))
+    const install = vi.fn()
+    await expect(downloadRelease(updater, options('dmg'), install, downloads)).rejects.toThrow(
+      'The DMG contains a different app.',
+    )
+    expect(install).not.toHaveBeenCalled()
+    await expect(access(stored('dmg'))).rejects.toThrow()
+  })
+
   it('passes cancellation into DMG preparation and keeps the verified bytes', async () => {
     const input = options('dmg')
     mocks.prepare.mockImplementation(async (_dmg, directory, _version, signal) => {
@@ -176,6 +231,24 @@ describe('release download and installation', () => {
     expect(input.cancellationToken.listenerCount('cancel')).toBe(0)
     // Quitting mid-update must not cost the next launch another full download.
     await expect(access(stored('dmg'))).resolves.toBeUndefined()
+  })
+
+  it.each([
+    ['ditto could not create archive', 'dmg'],
+    ['hdiutil could not attach: resource busy', 'dmg'],
+    ['codesign timed out', 'dmg'],
+    ['Squirrel failed to prepare update', 'exe'],
+    ['Native updater timed out', 'exe'],
+  ])('retains verified bytes after %s and retries without downloading', async (message, ext) => {
+    const error = new Error(message)
+    const install = vi.fn(async () => [])
+    if (ext === 'dmg') mocks.prepare.mockRejectedValueOnce(error)
+    else install.mockRejectedValueOnce(error)
+    await expect(downloadRelease(updater, options(ext), install, downloads)).rejects.toBe(error)
+    expect(await readFile(stored(ext))).toEqual(bytes)
+    await downloadRelease(updater, options(ext), install, downloads)
+    expect(fetchAsset).toHaveBeenCalledOnce()
+    expect(await readdir(downloads.directory)).toEqual([])
   })
 
   it('removes the bytes once the native updater has them, even if quitting raced it', async () => {

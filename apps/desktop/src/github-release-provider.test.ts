@@ -213,6 +213,36 @@ describe('GitHub asset releases', () => {
     expect(() => provider.resolveFiles()).toThrow(/verified/)
   })
 
+  it('looks beyond a full feed of older releases for a hidden newer version', async () => {
+    const fetch = feedFetch(
+      feed(...Array.from({ length: 10 }, (_, index) => `v0.0.${index}`)),
+      {},
+      [localRelease('0.1.3'), localRelease('0.1.2')],
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+    expect(fetch.mock.calls.map(([url]) => url.split('/').pop())).toEqual([
+      'releases.atom',
+      'releases?per_page=100&page=1',
+    ])
+  })
+
+  it('spends no API request on a full feed that still lists the installed release', async () => {
+    const fetch = feedFetch(
+      feed('v0.1.2', ...Array.from({ length: 9 }, (_, index) => `v0.0.${index}`)),
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.2')
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('reads the release list when a feed entry has no readable tag', async () => {
+    const atom = feed('v0.1.2').replace(
+      '</feed>',
+      '  <entry>\n    <link rel="alternate" href="https://github.com/Leonxlnx/tastecode/releases/tag/%E0%A4%A"/>\n  </entry>\n</feed>',
+    )
+    const fetch = feedFetch(atom, {}, [localRelease('0.1.3'), localRelease('0.1.2')])
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+  })
+
   it('defers a rate-limited lookup until GitHub resets the limit', async () => {
     const reset = Math.floor(Date.now() / 1000) + 25 * 60
     const fetch = feedFetch(feed('v0.1.2', 'v0.1.1'), {

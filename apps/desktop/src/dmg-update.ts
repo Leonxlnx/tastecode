@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { lstat, mkdir, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import { InvalidUpdateError, invalidDmgToolOutput } from './update-validation.js'
 
 const exec = promisify(execFile)
 
@@ -14,12 +15,23 @@ export async function prepareDmgUpdate(
   const mount = path.join(directory, 'volume')
   const zip = path.join(directory, 'update.zip')
   await mkdir(mount, { mode: 0o700 })
-  const run = (file: string, args: string[]) =>
-    exec(file, args, {
-      timeout: 5 * 60 * 1000,
-      maxBuffer: 1024 * 1024,
-      ...(signal ? { signal } : {}),
-    })
+  const run = async (file: string, args: string[]) => {
+    try {
+      return await exec(file, args, {
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 1024 * 1024,
+        ...(signal ? { signal } : {}),
+      })
+    } catch (error) {
+      const tool = path.basename(file)
+      if ((tool === 'hdiutil' || tool === 'codesign') && invalidDmgToolOutput(tool, error)) {
+        throw new InvalidUpdateError(error instanceof Error ? error.message : String(error), {
+          cause: error,
+        })
+      }
+      throw error
+    }
+  }
   try {
     await run('/usr/bin/hdiutil', [
       'attach',
@@ -31,18 +43,19 @@ export async function prepareDmgUpdate(
       mount,
     ])
     const apps = (await readdir(mount)).filter((name) => name.endsWith('.app'))
-    if (apps.length !== 1) throw new Error('The update DMG must contain exactly one app.')
+    if (apps.length !== 1)
+      throw new InvalidUpdateError('The update DMG must contain exactly one app.')
     const app = path.join(mount, apps[0]!)
     const stat = await lstat(app)
     if (!stat.isDirectory() || stat.isSymbolicLink())
-      throw new Error('The update app must be a real directory.')
+      throw new InvalidUpdateError('The update app must be a real directory.')
     const plist = path.join(app, 'Contents', 'Info.plist')
     const readKey = async (key: string) =>
       (await run('/usr/bin/plutil', ['-extract', key, 'raw', '-o', '-', plist])).stdout.trim()
     if ((await readKey('CFBundleIdentifier')) !== 'dev.tastecode.desktop')
-      throw new Error('The DMG contains a different app.')
+      throw new InvalidUpdateError('The DMG contains a different app.')
     if ((await readKey('CFBundleShortVersionString')) !== version)
-      throw new Error('The DMG app version does not match the release.')
+      throw new InvalidUpdateError('The DMG app version does not match the release.')
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])
     // Squirrel.Mac verifies the installed app's signing identity and owns the
     // atomic replacement. Only its transport ZIP is made locally from the DMG.
