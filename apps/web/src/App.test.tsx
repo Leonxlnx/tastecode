@@ -10,7 +10,7 @@ import {
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { App } from './App.js'
+import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -725,6 +725,266 @@ async function openCheckpointHistory() {
 }
 
 describe('web client', () => {
+  it('publishes a healthy source while another model catalog remains pending', async () => {
+    serverProviders.push({ ...serverProviders[0]!, id: 'claude-code', displayName: 'Claude Code' })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return methods[method].params.parse(params).provider === 'claude-code'
+          ? new Promise(() => undefined)
+          : Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
+    )
+    const cache = JSON.parse(localStorage.getItem('harness.modelCatalog.v1')!)
+    expect(cache.validatedSources.map((source: { source: string }) => source.source)).toEqual([
+      'codex',
+    ])
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBeNull()
+    expect(composerProps().modelsLoaded).toBe(true)
+  })
+
+  it('does not renew an unresolved source cache when another provider completes', async () => {
+    serverProviders.push({ ...serverProviders[0]!, id: 'claude-code', displayName: 'Claude Code' })
+    const stale = {
+      ...cachedCodexChoice(),
+      key: 'claude-code:old',
+      provider: 'claude-code' as const,
+      sourceName: 'Claude Code',
+      mark: 'anthropic' as const,
+      model: { ...cachedCodexChoice().model, id: 'old' },
+    }
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([stale], { validatedAt: Date.now() - 600_000 }),
+    )
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list')
+        return methods[method].params.parse(params).provider === 'claude-code'
+          ? new Promise((_, fail) => {
+              reject = fail
+            })
+          : Promise.resolve({ models: [cachedCodexChoice().model] })
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
+    )
+    await act(async () => reject(new Error('catalog unavailable')))
+    const cache = JSON.parse(localStorage.getItem('harness.modelCatalog.v1')!)
+    expect(cache.validatedSources.map((source: { source: string }) => source.source)).toEqual([
+      'codex',
+    ])
+    expect(cache.models.map((choice: { key: string }) => choice.key)).toContain(stale.key)
+  })
+
+  it('retains a legacy project list through an unacknowledged outage', async () => {
+    const legacy = [{ path: '/legacy', name: 'Important name' }]
+    localStorage.setItem('harness.projects', JSON.stringify(legacy))
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) =>
+      method === 'projects.add'
+        ? new Promise((_, fail) => {
+            reject = fail
+          })
+        : request(method, params),
+    )
+    const view = render(<App />)
+    await waitFor(() => expect(rpcCount('projects.add')).toBe(1))
+    expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual(legacy)
+    await act(async () => reject(new IndeterminateRequestError('request expired during outage')))
+    expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual(legacy)
+    view.unmount()
+    expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual(legacy)
+  })
+
+  it('migrates only acknowledged legacy projects across a restart', async () => {
+    const legacy = [
+      { path: '/one', name: 'One' },
+      { path: '/two', name: 'Two' },
+      { path: '/three', name: 'Three' },
+    ]
+    localStorage.setItem('harness.projects', JSON.stringify(legacy))
+    const request = transport.request.getMockImplementation()!
+    let fail = true
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'projects.add' && methods[method].params.parse(params).path === '/two' && fail)
+        return Promise.reject(new Error('offline'))
+      return request(method, params)
+    })
+    const first = render(<App />)
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual([legacy[1]]),
+    )
+    first.unmount()
+    fail = false
+    transport.request.mockClear()
+    render(<App />)
+    await waitFor(() => expect(localStorage.getItem('harness.projects')).toBeNull())
+    expect(transport.request.mock.calls.filter(([method]) => method === 'projects.add')).toEqual([
+      ['projects.add', legacy[1]],
+    ])
+  })
+
+  it.each([false, true])(
+    'recovers an indeterminate question reply on an open socket (resolved: %s)',
+    async (resolved) => {
+      const question: Extract<DomainEvent, { type: 'user_input.requested' }> = {
+        type: 'user_input.requested',
+        request: {
+          id: 'question-1',
+          turnId: 'turn-1',
+          createdAt: 1,
+          autoResolutionMs: null,
+          questions: [
+            {
+              id: 'choice',
+              header: 'Choice',
+              question: 'Which option?',
+              allowOther: true,
+              secret: false,
+              options: null,
+            },
+          ],
+        },
+      }
+      const request = transport.request.getMockImplementation()!
+      let replied = false
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'thread.respondToUserInput') {
+          replied = true
+          return Promise.reject(new IndeterminateRequestError('malformed reply'))
+        }
+        if (method === 'thread.history')
+          return Promise.resolve({
+            events: [
+              { seq: 1, event: question },
+              ...(replied && resolved
+                ? [{ seq: 2, event: { type: 'user_input.resolved', id: 'question-1' } }]
+                : []),
+            ],
+            running: true,
+            approval: 'ask',
+          })
+        return request(method, params)
+      })
+      await openNewSession()
+      await waitFor(() =>
+        expect(shellRenders.threadFrame.mock.lastCall![0].userInputs).toHaveLength(1),
+      )
+      const original = shellRenders.threadFrame.mock.lastCall![0].userInputs[0]
+      transport.request.mockClear()
+      await act(async () => {
+        await expect(
+          threadCallbacks.answerUserInput!('question-1', { choice: ['A'] }),
+        ).rejects.toThrow('malformed reply')
+      })
+      expect(transport.state).toBe('open')
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+      const requests = shellRenders.threadFrame.mock.lastCall![0].userInputs
+      expect(requests).toHaveLength(resolved ? 0 : 1)
+      if (!resolved) {
+        expect(requests[0]).toEqual(original)
+        expect(requests[0]).not.toBe(original)
+      }
+    },
+  )
+
+  it.each([true, false])('uses the latest account sign-in result (%s)', (signedIn) => {
+    const providers = contractValidServerProviders().map((status) => ({
+      ...status,
+      auth: signedIn ? ('unauthenticated' as const) : ('authenticated' as const),
+    }))
+    expect(
+      resolveSendAvailability({
+        catalog: 'ready',
+        activeProvider: 'codex',
+        providerStatuses: providers,
+        accountCheck: { provider: 'codex', state: 'ready', account: { signedIn } },
+      }),
+    ).toBe(signedIn ? 'ready' : 'setup-required')
+  })
+
+  it.each([false, true])(
+    'preserves the next draft through startup (switch away: %s)',
+    async (switchAway) => {
+      const request = transport.request.getMockImplementation()!
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      transport.request.mockImplementation(async (method, params) => {
+        if (method === 'thread.start') await gate
+        return request(method, params)
+      })
+      render(<App />)
+      await screen.findByRole('button', { name: /^New session,/ })
+      submitTurn('First prompt')
+      await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: 'Next unsent prompt' } })
+      act(() => composerProps().onAttachmentsChange?.(['/work/later.png']))
+      if (switchAway) fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+      await act(async () => release())
+      await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+      if (!switchAway) {
+        expect(composer.value).toBe('Next unsent prompt')
+        fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+      }
+      fireEvent.click(await screen.findByRole('button', { name: /^First prompt,/ }))
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Next unsent prompt',
+      )
+      expect(composerProps().draftRequest?.attachments).toEqual(['/work/later.png'])
+    },
+  )
+
+  it('restores failed startup into the new-chat draft without overwriting another chat', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.start'
+        ? new Promise((_, fail) => {
+            reject = fail
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    act(() => composerProps().onSend('Failed first prompt', ['/work/first.png']))
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Later draft' },
+    })
+    act(() => composerProps().onAttachmentsChange?.(['/work/later.png']))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Other chat draft' },
+    })
+    await act(async () => reject(new Error('start refused')))
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Other chat draft',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Later draft\n\nFailed first prompt',
+    )
+    expect(composerProps().draftRequest?.attachments).toEqual([
+      '/work/later.png',
+      '/work/first.png',
+    ])
+  })
+
   it('keeps an acknowledged access mode when a change is rejected', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
@@ -825,6 +1085,51 @@ describe('web client', () => {
     expect(rpcCount('thread.restore')).toBe(0)
   })
 
+  it('clears the removed project chat and rejects its pending start completion', async () => {
+    serverProjects.push({
+      path: '/work/other',
+      name: 'Other',
+      pinned: false,
+      createdAt: 1,
+      sessions: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    let release!: (value: { threadId: string }) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.start')
+        return new Promise((resolve) => {
+          release = resolve
+        })
+      if (method === 'projects.remove') {
+        serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('Pending removed project')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    act(() => sidebarProps().onRemoveProject('/work/project'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+    expect(composerProps().newSession).toBe(true)
+    expect(screen.queryByTestId('thread')).toBeNull()
+    // Even a stale list must not resurrect a removed project.
+    serverProjects.push({
+      path: '/work/project',
+      name: 'project',
+      pinned: false,
+      createdAt: 0,
+      sessions: [],
+    })
+    await act(async () => release({ threadId: 'late-thread' }))
+    act(() => setConnectionState('open'))
+    await act(async () => Promise.resolve())
+    expect(sidebarProps().projects.map((project) => project.path)).toEqual(['/work/other'])
+    expect(rpcCount('thread.sendTurn')).toBe(0)
+    expect(transport.request).toHaveBeenCalledWith('thread.close', { threadId: 'late-thread' })
+  })
+
   it.each(['select', 'send'] as const)('cancels a pending deletion on %s', async (activity) => {
     await openNewSession()
     const oldSend = composerProps().onSend
@@ -885,6 +1190,30 @@ describe('web client', () => {
       'Saved draft',
     )
     expect(composerProps().draftRequest?.attachments).toEqual(['/work/saved.png'])
+  })
+
+  it('clears an established chat when its active project is removed', async () => {
+    serverProjects.push({
+      path: '/work/other',
+      name: 'Other',
+      pinned: false,
+      createdAt: 1,
+      sessions: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'projects.remove') {
+        serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+    await openNewSession()
+    act(() => sidebarProps().onRemoveProject('/work/project'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+    expect(composerProps().newSession).toBe(true)
+    expect(sidebarProps().activeSessionId).toBeUndefined()
+    expect(screen.queryByTestId('thread')).toBeNull()
   })
 
   it('does not ask the code highlighter before a code block needs it', () => {
@@ -2214,6 +2543,46 @@ describe('new chats', () => {
     expect(screen.getByRole('button', { name: 'Remove session-one.png' })).toBeTruthy()
   })
 
+  it.each(['while away', 'after returning'])(
+    'keeps a paste that finishes saving %s with the chat it was pasted into',
+    async (timing) => {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'project',
+          pinned: false,
+          createdAt: 0,
+          sessions: [
+            { id: 'thread-1', title: 'Existing work', running: false },
+            { id: 'thread-2', title: 'Background', running: false },
+          ],
+        },
+      ]
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+      let finish!: (path: string | undefined) => void
+      act(() =>
+        composerProps().onPendingAttachment!(
+          new Promise<string | undefined>((resolve) => (finish = resolve)),
+        ),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      if (timing === 'while away') {
+        await act(async () => finish('/work/pasted.png'))
+        expect(screen.queryByRole('button', { name: 'Remove pasted.png' })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+        await act(async () => finish('/work/pasted.png'))
+      }
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Remove pasted.png' })).toBeTruthy(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      expect(screen.queryByRole('button', { name: 'Remove pasted.png' })).toBeNull()
+    },
+  )
+
   it('preloads plan limits under StrictMode and reuses them when Account opens', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -2661,6 +3030,8 @@ describe('new chats', () => {
   it.each(['success', 'failure', 'cancel'] as const)(
     'restores Settings after Claude sign-in ends with %s',
     async (outcome) => {
+      desktopShell.enabled = true
+      serverProjects = []
       serverProviders = [
         ...serverProviders,
         {
@@ -2707,6 +3078,9 @@ describe('new chats', () => {
       expect(workspace.classList.contains('is-panel-open')).toBe(true)
       expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
       expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
+      await waitFor(() =>
+        expect(document.querySelector<HTMLElement>('.onboarding')?.hidden).toBe(true),
+      )
       expect(transport.request).toHaveBeenCalledWith('providers.launch', {
         provider: 'claude-code',
         columns: 320,
@@ -8899,5 +9273,152 @@ describe('reopening a session', () => {
     expect(text).toContain('Live during reconnect')
     expect(text).not.toContain('Older history')
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+  })
+})
+
+describe('connection recovery regressions', () => {
+  it.each(['push gap', 'reconnect'] as const)(
+    'recovers an idle cached background chat after %s',
+    async (reason) => {
+      serverProjects[0]!.sessions = [
+        { id: 'a', title: 'Foreground', running: false },
+        { id: 'b', title: 'Background', running: false },
+      ]
+      const request = transport.request.getMockImplementation()!
+      let lost = false
+      transport.request.mockImplementation((method, params) => {
+        if (method !== 'thread.history') return request(method, params)
+        const { threadId, afterSeq } = methods['thread.history'].params.parse(params)
+        const events =
+          threadId === 'a'
+            ? [completedHistoryEvent(1, 'a-base', 'Foreground base')]
+            : [
+                completedHistoryEvent(1, 'b-base', 'Background base'),
+                ...(lost
+                  ? [
+                      completedHistoryEvent(2, 'missing', 'Recovered background message'),
+                      completedHistoryEvent(3, 'live', 'Background live message'),
+                    ]
+                  : []),
+              ]
+        return Promise.resolve({
+          events: events.filter(({ seq }) => seq > (afterSeq ?? 0)),
+          running: false,
+        })
+      })
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Background,/ }))
+      await screen.findByText('Background base')
+      fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
+      await screen.findByText('Foreground base')
+      transport.request.mockClear()
+      lost = true
+      act(() => {
+        if (reason === 'push gap') {
+          for (const listener of transport.sequenceGapListeners) listener(2, 3)
+        } else {
+          setConnectionState('reconnecting')
+          setConnectionState('open')
+        }
+      })
+      emitThreadEvent('b', completedHistoryEvent(3, 'live', 'Background live message').event, 3)
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('thread.history', {
+          threadId: 'b',
+          afterSeq: 1,
+        }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      expect(await screen.findByText('Recovered background message')).toBeTruthy()
+      expect(screen.getAllByText('Background live message')).toHaveLength(1)
+    },
+  )
+
+  it('retries a failed account check on reconnect and allows a new chat', async () => {
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
+    const request = transport.request.getMockImplementation()!
+    let online = false
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'auth.status')
+        return online
+          ? Promise.resolve({ signedIn: true })
+          : Promise.reject(new Error('Connection lost'))
+      return request(method, params)
+    })
+    render(<App />)
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Send after reconnect' } })
+    await screen.findByText('Could not check this account. Connection lost')
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    online = true
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ text: 'Send after reconnect' }),
+      ),
+    )
+  })
+
+  it('ignores an old failed account reply after the reconnect check succeeds', async () => {
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
+    const request = transport.request.getMockImplementation()!
+    let rejectOld!: (error: Error) => void
+    let reads = 0
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'auth.status')
+        return ++reads === 1
+          ? new Promise((_, reject) => {
+              rejectOld = reject
+            })
+          : Promise.resolve({ signedIn: true })
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Keep ready' },
+    })
+    await waitFor(() => expect(reads).toBe(1))
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    expect(reads).toBe(2)
+    await act(async () => rejectOld(new Error('Old connection failed')))
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText(/Old connection failed/)).toBeNull()
+  })
+
+  it('shows a notice when an approval reply cannot be sent', async () => {
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.respondToApproval'
+        ? Promise.reject(new Error('Connection lost'))
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() => expect(threadCallbacks.decideApproval).toBeTypeOf('function'))
+    act(() => threadCallbacks.decideApproval!('approval-1', 'approve'))
+    expect(await screen.findByText('Could not send the approval. Connection lost')).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('thread.respondToApproval', {
+      threadId: 'untouched-thread',
+      approvalId: 'approval-1',
+      decision: 'approve',
+    })
   })
 })
