@@ -53,9 +53,18 @@ export function configureEmbeddedBrowser(owner: EmbeddedBrowserOwner): void {
     configureBrowserSession(guest.session)
     guest.setUserAgent(browserUserAgent(guest.getUserAgent()))
 
-    guest.setWindowOpenHandler(({ url }) => {
+    guest.setWindowOpenHandler(({ url, postBody, referrer }) => {
       if (isBrowserGuestUrl(url)) {
-        void guest.loadURL(url).catch((error) => {
+        const navigation = postBody
+          ? guest.loadURL(url, {
+              postData: postBody.data,
+              httpReferrer: referrer,
+              extraHeaders: `Content-Type: ${postBody.contentType}${
+                postBody.boundary ? `; boundary=${postBody.boundary}` : ''
+              }`,
+            })
+          : guest.loadURL(url)
+        void navigation.catch((error) => {
           console.warn('[browser] failed to open guest link', error)
         })
       }

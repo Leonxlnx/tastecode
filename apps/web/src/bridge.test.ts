@@ -325,14 +325,18 @@ describe('app update bridge', () => {
 describe('native menu bridge', () => {
   it('syncs shortcuts and forwards menu actions', async () => {
     const setMenuShortcuts = vi.fn()
-    const onMenuAction = vi.fn((listener: (action: 'toggleSidebar') => void) => {
-      listener('toggleSidebar')
-      return () => undefined
-    })
+    const onMenuAction = vi.fn(
+      (listener: (action: 'toggleSidebar', source: 'accelerator') => void) => {
+        listener('toggleSidebar', 'accelerator')
+        return () => undefined
+      },
+    )
+    const suspendMenuShortcuts = vi.fn()
     ;(globalThis as { harness?: unknown }).harness = {
       isDesktop: true,
       setMenuShortcuts,
       onMenuAction,
+      suspendMenuShortcuts,
     }
     const bridge = await import('./bridge.js')
     const shortcuts = (await import('./shortcuts.js')).createDefaultKeybindings()
@@ -347,6 +351,8 @@ describe('native menu bridge', () => {
         toggleTerminal: { key: 'j', primary: true },
       }),
     )
-    expect(listener).toHaveBeenCalledWith('toggleSidebar')
+    expect(listener).toHaveBeenCalledWith('toggleSidebar', 'accelerator')
+    bridge.suspendNativeMenuShortcuts(true)
+    expect(suspendMenuShortcuts).toHaveBeenCalledWith(true)
   })
 })

@@ -1,7 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
 
 describe('preload validation', () => {
+  it('uses the native File lookup rather than a supplied path property', () => {
+    const file = { path: '/forged.txt' } as unknown as File
+    expect(droppedFilePath(file, () => '/native/large.zip')).toBe('/native/large.zip')
+    expect(droppedFilePath(file, () => 'C:\\Users\\Test\\large.zip')).toBe(
+      'C:\\Users\\Test\\large.zip',
+    )
+  })
+
+  it('rejects synthetic files, invalid native paths and forged File objects', () => {
+    const file = {} as File
+    expect(droppedFilePath(file, () => '')).toBeUndefined()
+    expect(droppedFilePath(file, () => '/native/\0secret')).toBeUndefined()
+    expect(droppedFilePath(file, () => 'x'.repeat(32_769))).toBeUndefined()
+    expect(
+      droppedFilePath(file, () => {
+        throw new TypeError('Not a File')
+      }),
+    ).toBeUndefined()
+  })
+
   it('accepts valid update states and finite zoom factors', () => {
     expect(
       isAppUpdateState({
