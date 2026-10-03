@@ -12,6 +12,7 @@ import type {
   SkillCapabilities,
   SkillDiscoveryError,
 } from '@harness/contracts'
+import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
 import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
@@ -19,9 +20,7 @@ import { WatchLeases } from './watch-leases.js'
 
 const loadCodex = retryableLazy(() => import('@harness/adapter-codex'))
 const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
-const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
-const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -140,11 +139,7 @@ type LimitEntry = {
 }
 
 const defaultServices = {
-  antigravity: {},
-  api: {},
   codex: {},
-  opencode: {},
-  pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
     account: async () => (await loadClaude()).claudeAccount(),
@@ -152,21 +147,12 @@ const defaultServices = {
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
-  cursor: {
-    account: async () => (await loadCursor()).cursorAccount(),
-    startLogin: async (complete) => (await loadCursor()).startCursorLogin(complete),
-    signOut: async () => (await loadCursor()).signOutCursor(),
-  },
   grok: {
+    // Grok's MCP sessions run through ACP.
+    validateMcpServer: validateAcpMcpServer,
     account: async () => (await loadGrok()).grokAccount(),
     usageLimitSource: async () => (await loadGrok()).grokLimitSource(),
     signOut: async () => (await loadGrok()).signOutGrok(),
-  },
-  acp: {
-    account: async (agent) => (agent ? (await loadAcp()).acpAccount(agent) : { signedIn: false }),
-    signOut: async (agent) => {
-      if (agent) await (await loadAcp()).acpSignOut(agent)
-    },
   },
 } satisfies Record<ProviderId, ProviderServices>
 

@@ -20,30 +20,21 @@ const catalog = [
   ...choicesFor({ provider: 'codex', sourceName: 'Codex', mark: 'openai' }, [model]),
   ...choicesFor(
     {
-      provider: 'acp',
-      sourceName: 'Kimi CLI',
-      mark: 'kimi',
-      agent: { id: 'kimi', name: 'Kimi CLI' },
+      provider: 'grok',
+      sourceName: 'Work Grok',
+      mark: 'grok',
+      agent: { id: 'work-grok', name: 'Work Grok' },
     },
-    [{ ...model, id: 'kimi/model' }],
+    [{ ...model, id: 'grok-4.6' }],
   ),
   ...choicesFor(
     {
-      provider: 'api',
-      connectionId: 'work-openrouter',
-      sourceName: 'Work OpenRouter',
-      mark: 'openrouter',
+      provider: 'claude-code',
+      sourceName: 'Claude Fork',
+      mark: 'anthropic',
+      agent: { id: 'claude-fork', name: 'Claude Fork' },
     },
-    [{ ...model, id: 'openai/gpt-5.6-sol' }],
-  ),
-  ...choicesFor(
-    {
-      provider: 'pi',
-      sourceName: 'DeepSeek Pi',
-      mark: 'pi',
-      agent: { id: 'deepseek-pi', name: 'DeepSeek Pi' },
-    },
-    [{ ...model, id: 'openrouter/deepseek-v3.2' }],
+    [{ ...model, id: 'opus' }],
   ),
 ]
 
@@ -55,9 +46,8 @@ describe('model catalog cache', () => {
       models: catalog,
       validatedSources: new Map([
         ['codex', 1_000],
-        ['acp:kimi', 1_000],
-        ['api:work-openrouter', 1_000],
-        ['pi:deepseek-pi', 1_000],
+        ['grok:work-grok', 1_000],
+        ['claude-code:claude-fork', 1_000],
       ]),
     })
   })
@@ -75,7 +65,7 @@ describe('model catalog cache', () => {
     expect(isModelCatalogSourceFresh(cache, 'codex', 1_001 + MODEL_CATALOG_CACHE_FRESH_MS)).toBe(
       false,
     )
-    expect(isModelCatalogSourceFresh(cache, 'acp:kimi', 1_000)).toBe(false)
+    expect(isModelCatalogSourceFresh(cache, 'grok:work-grok', 1_000)).toBe(false)
     expect(
       isModelCatalogSourceFresh(
         parseModelCatalogCache(JSON.stringify({ version: 1, models: catalog })),
@@ -89,6 +79,12 @@ describe('model catalog cache', () => {
 
   it('rejects corrupt, unknown-version, and inconsistent snapshots', () => {
     expect(parseModelCatalogCache('{')).toBeUndefined()
+    // A snapshot from a build that still had API connections is stale, not partly valid.
+    const withConnection = JSON.parse(serializeModelCatalogCache([catalog[0]!])) as {
+      models: Array<Record<string, unknown>>
+    }
+    withConnection.models[0]!['connectionId'] = 'work-openrouter'
+    expect(parseModelCatalogCache(JSON.stringify(withConnection))).toBeUndefined()
     expect(parseModelCatalogCache(JSON.stringify({ version: 3, models: catalog }))).toBeUndefined()
     expect(parseModelCatalogCache(JSON.stringify({ version: 2, models: catalog }))).toBeUndefined()
     expect(

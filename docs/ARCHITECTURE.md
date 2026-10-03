@@ -265,6 +265,11 @@ degradation to an `unknown` item (never a crash, never silent loss), and a visib
 Checkpoints, worktrees, cost accounting and search live **above** the adapters, implemented
 once. Git checkpoints work identically regardless of which engine made the change.
 
+**Branch scope (2026-10-03).** `main` ships only the Codex, Claude Code and Grok adapters.
+Every other adapter in this document, the ACP agent roster and the direct API runtime exist
+only on `nightly`; on `main`, `packages/adapter-acp` remains solely as the protocol client
+behind project-enabled Grok MCP sessions. The decisions below still bind both branches.
+
 **The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
 UI. Provider integrations supply inference and declare optional capabilities; they do not
@@ -563,6 +568,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
 | 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |
 | 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
 | 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |

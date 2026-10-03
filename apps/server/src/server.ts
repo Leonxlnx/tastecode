@@ -434,44 +434,19 @@ export function startServer(
       case 'providers.install': {
         const p = parseParams(method, params)
         const { installCommandFor } = await import('./providers.js')
-        const command = await installCommandFor(p.provider, p.agent)
-        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
-        return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
+        const command = await installCommandFor(p.provider)
+        return {
+          terminalId: orchestrator.installProvider(p.provider, command, p.columns, p.rows),
+        }
       }
 
       case 'providers.launch': {
         const p = parseParams(method, params)
         const { launchCommandFor } = await import('./providers.js')
-        const command = await launchCommandFor(p.provider, p.agent)
-        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        const command = await launchCommandFor(p.provider)
         return {
-          terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+          terminalId: orchestrator.launchProviderLogin(p.provider, command, p.columns, p.rows),
         }
-      }
-
-      case 'connections.list':
-        return { connections: orchestrator.listModelConnections() }
-
-      case 'connections.upsert':
-        return {
-          connection: orchestrator.upsertModelConnection(parseParams(method, params)),
-        }
-
-      case 'connections.setCredential': {
-        const p = parseParams(method, params)
-        orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
-        return { credentialConfigured: true }
-      }
-
-      case 'connections.remove': {
-        const p = parseParams(method, params)
-        orchestrator.removeModelConnection(p.connectionId)
-        return {}
-      }
-
-      case 'connections.models': {
-        const p = parseParams(method, params)
-        return { models: await orchestrator.listConnectionModels(p.connectionId) }
       }
 
       case 'mcp.list': {
@@ -628,21 +603,6 @@ export function startServer(
         const p = parseParams(method, params)
         orchestrator.cancelVoice(p.requestId)
         return {}
-      }
-
-      case 'acp.agents': {
-        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
-        return {
-          agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
-            id,
-            name,
-            installed,
-            verified,
-            setup,
-            ...(!(install === undefined) ? { install } : {}),
-            ...(!(problem === undefined) ? { problem } : {}),
-          })),
-        }
       }
 
       case 'projects.list': {
@@ -896,7 +856,6 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
-          connectionId: p.connectionId,
           isolate: p.isolate,
         })
         return { threadId: thread.id }

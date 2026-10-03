@@ -10,12 +10,16 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 **Branch model (Leon and Bluedev, 2026-08-08):** `main` is the public beta for roughly the
 next four weeks and becomes the stable release at v1. `nightly` is the integration branch:
 every new change lands there first and nothing is hidden on it — it carries the full
-provider roster (Codex, Claude Code, Grok plus the parked Cursor, OpenCode, Antigravity,
-ACP and API-connection surfaces, all working). Work that the beta itself needs (fixes and
-polish for the three shipped plans) still goes to `main` by PR and reaches `nightly` on the
-next sync; everything else targets `nightly`. Keep `nightly` synchronized by merging `main`
-and resolving conflicts without rewriting published history. Do not un-park a provider on
-`main` without Leon saying so. The Rust + GPUI rewrite is preserved only on
+provider roster (Codex, Claude Code, Grok plus Cursor, OpenCode, Antigravity, Pi, the ACP
+agents and API connections, all working). Since 2026-10-03 those other providers are absent
+from `main`'s code, not hidden: `main` ships only Codex, Claude Code and Grok (Grok's MCP
+mode still uses the ACP protocol client in `packages/adapter-acp`). Work that the beta itself
+needs (fixes and polish for the three shipped plans) still goes to `main` by PR and reaches
+`nightly` on the next sync; everything else targets `nightly`. Keep `nightly` synchronized
+by merging `main` and resolving conflicts without rewriting published history; a merge must
+never delete `nightly`'s provider code, so the first sync after the removal resolves those
+deletions in `nightly`'s favour. Do not bring another provider back to `main` without Leon
+saying so. The Rust + GPUI rewrite is preserved only on
 `archive/rust-rewrite-2026-08-15`; do not merge it back into `main` without Leon saying so.
 [docs/dashboard.html](./docs/dashboard.html) is the release checklist.
 
@@ -53,9 +57,9 @@ and resolving conflicts without rewriting published history. Do not un-park a pr
   the final PR merge method because it does not rewrite the published working branch.
 - **Never mix a refactor with a behavior change** in one commit.
 - **Build shared features for every provider.** Contracts, persistence, orchestration and UI
-  must still work when the user has only a direct API provider configured. A vendor CLI,
-  SDK or app-server may add capabilities, but must never become the foundation for shared
-  product behavior.
+  must still work when the user has only a direct API provider configured — checked on
+  `nightly`, where that provider lives. A vendor CLI, SDK or app-server may add
+  capabilities, but must never become the foundation for shared product behavior.
 - **Keep provider behavior checks inside adapters.** Shared code reads declared capabilities
   and degrades honestly when an engine lacks one; it never branches behavior on a provider name.
   Codex-backed voice dictation is the only approved exception.
