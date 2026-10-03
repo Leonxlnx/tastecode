@@ -72,14 +72,14 @@
   color: var(--text);
 }
 
-.brief-input__option:has(input[type='radio']:checked) {
+.brief-input__option:has(input:is([type='radio'], [type='checkbox']):checked) {
   border-color: color-mix(in srgb, var(--text-2) 74%, transparent);
   background: var(--surface-3);
   box-shadow: none;
   color: var(--text);
 }
 
-.brief-input__option input[type='radio'] {
+.brief-input__option input:is([type='radio'], [type='checkbox']) {
   width: 14px;
   height: 14px;
   flex: none;
