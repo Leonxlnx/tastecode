@@ -140,6 +140,8 @@ export interface ThreadProps {
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
+  /** Keep agent questions inside this thread instead of the main composer. */
+  inlineUserInput?: boolean | undefined
 }
 
 export const Thread = memo(function Thread(props: ThreadProps) {
@@ -530,6 +532,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               <UserInput
                 key={request.id}
                 request={request}
+                inline={props.inlineUserInput}
                 onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
               />
             ))}
