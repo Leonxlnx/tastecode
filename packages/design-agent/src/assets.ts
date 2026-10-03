@@ -62,6 +62,7 @@ export interface DesignAsset {
     kind: AssetSourceKind
     reference: string
     license?: string
+    contentType?: string
   }
   destination?: string
 }
@@ -251,6 +252,16 @@ export function validateAssetManifestForPage(
     if (asset.source?.kind === 'generated' && GENERATED_FUNCTIONAL_ROLES.has(asset.role)) {
       throw new Error(`functional asset ${asset.id} cannot use a generated source`)
     }
+    if (
+      asset.status === 'existing' &&
+      (RASTER_VISUAL_ROLES.has(asset.role) || asset.role === 'video' || asset.role === 'font') &&
+      asset.source?.kind !== 'project' &&
+      asset.source?.kind !== 'user'
+    ) {
+      throw new Error(
+        `existing visual or font asset ${asset.id} must be a real project or supplied user file; download external assets with status ready, a destination and license`,
+      )
+    }
 
     if (workspaceRoot) {
       let localFile: string | undefined
@@ -292,12 +303,6 @@ export function validateAssetManifestForPage(
           asset.destination!,
           `asset ${asset.id} destination`,
         )
-      } else if (asset.status === 'existing' && RASTER_VISUAL_ROLES.has(asset.role)) {
-        if (asset.source?.kind !== 'project' && asset.source?.kind !== 'user') {
-          throw new Error(
-            `existing visual asset ${asset.id} must be a real project or supplied user file`,
-          )
-        }
       }
       if (localFile) {
         const size = statSync(localFile).size
@@ -326,6 +331,7 @@ export function validateAssetManifestForPage(
       if (localFile && RASTER_VISUAL_ROLES.has(asset.role)) {
         validateRasterAsset(asset, localFile)
       }
+      if (localFile && asset.role === 'font') validateFontAsset(asset, localFile)
       if (localFile && asset.role === 'data') {
         try {
           JSON.parse(readWorkspaceFile(localFile, 1_000_000).toString('utf8'))
@@ -344,7 +350,10 @@ export function validateResolvedDesignAssets(manifest: AssetManifest): AssetMani
       (asset) =>
         asset.role !== undefined &&
         (RASTER_VISUAL_ROLES.has(asset.role) || asset.role === 'video') &&
-        asset.status === 'needed',
+        (asset.status === 'needed' ||
+          (asset.status === 'existing' &&
+            asset.source?.kind !== 'project' &&
+            asset.source?.kind !== 'user')),
     )
     .map(({ id }) => id)
     .sort()
@@ -370,6 +379,7 @@ function optionalSource(value: unknown, field: string): DesignAsset['source'] {
   if (value === undefined) return undefined
   const source = record(value, field)
   const license = optionalString(source.license, `${field}.license`)
+  const contentType = optionalString(source.contentType, `${field}.contentType`)
   const kind = member(source.kind, SOURCE_KINDS, `${field}.kind`)
   const reference = string(source.reference, `${field}.reference`)
   if (kind === 'external') {
@@ -387,6 +397,7 @@ function optionalSource(value: unknown, field: string): DesignAsset['source'] {
     kind,
     reference,
     ...(license ? { license } : {}),
+    ...(contentType ? { contentType } : {}),
   }
 }
 
@@ -443,6 +454,75 @@ function isSvg(filePath: string): boolean {
     .trimStart()
     .toLowerCase()
   return header.startsWith('<') && header.includes('<svg')
+}
+
+function validateFontAsset(asset: DesignAsset, filePath: string): void {
+  const bytes = readWorkspaceFile(filePath, 32_000_000)
+  const signature = bytes.toString('latin1', 0, 4)
+  const formats = new Map([
+    ['wOF2', { extension: '.woff2', minimum: 48, types: ['font/woff2', 'application/font-woff2'] }],
+    [
+      'wOFF',
+      {
+        extension: '.woff',
+        minimum: 44,
+        types: ['font/woff', 'application/font-woff', 'application/x-font-woff'],
+      },
+    ],
+    [
+      '\0\x01\0\0',
+      {
+        extension: '.ttf',
+        minimum: 12,
+        types: ['font/ttf', 'font/sfnt', 'application/x-font-ttf', 'application/x-font-truetype'],
+      },
+    ],
+    [
+      'true',
+      {
+        extension: '.ttf',
+        minimum: 12,
+        types: ['font/ttf', 'font/sfnt', 'application/x-font-ttf', 'application/x-font-truetype'],
+      },
+    ],
+    [
+      'OTTO',
+      {
+        extension: '.otf',
+        minimum: 12,
+        types: [
+          'font/otf',
+          'font/sfnt',
+          'application/x-font-opentype',
+          'application/vnd.ms-opentype',
+        ],
+      },
+    ],
+  ])
+  const format = formats.get(signature)
+  if (!format || bytes.length < format.minimum) {
+    throw new Error(
+      `font asset ${asset.id} must contain recognizable WOFF2, WOFF, TTF or OTF bytes`,
+    )
+  }
+  if (path.extname(filePath).toLowerCase() !== format.extension) {
+    throw new Error(
+      `font asset ${asset.id} extension does not match its ${format.extension} content`,
+    )
+  }
+  if ((signature === 'wOF2' || signature === 'wOFF') && bytes.readUInt32BE(8) !== bytes.length) {
+    throw new Error(`font asset ${asset.id} has an invalid font file length`)
+  }
+  const contentType = asset.source?.contentType?.split(';', 1)[0]?.trim().toLowerCase()
+  if (
+    contentType &&
+    contentType !== 'application/octet-stream' &&
+    !format.types.includes(contentType)
+  ) {
+    throw new Error(
+      `font asset ${asset.id} content type ${contentType} does not match its font bytes`,
+    )
+  }
 }
 
 function validateRasterAsset(asset: DesignAsset, filePath: string): void {

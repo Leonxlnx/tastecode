@@ -86,9 +86,24 @@ export function validateTypographySelection(
     `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
   const drawn = new Set(Object.values(candidates).map((families) => families[0]))
   for (const { family } of brand.typefaces) {
-    if (drawn.has(family) || explicit.includes(family.toLowerCase())) continue
+    if (drawn.has(family) || explicitlyRequestedTypeface(explicit, family)) continue
     throw new Error(
       `Use a persisted first-draw typeface for ${family}, or record the explicit existing-brand requirement. Do not replace the random draw with a habitual font.`,
     )
   }
+}
+
+function explicitlyRequestedTypeface(request: string, family: string): boolean {
+  const escaped = family.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const name = new RegExp(`\\b${escaped}\\b`, 'g')
+  for (const match of request.matchAll(name)) {
+    const before = request.slice(Math.max(0, match.index - 60), match.index)
+    const after = request.slice(match.index + match[0].length, match.index + match[0].length + 60)
+    if (
+      /\b(?:use|choose|keep|preserve|retain|prefer)\s+(?:the\s+)?["']?$/i.test(before) ||
+      /\b(?:font|typeface|typography|headings?|body text)\b/i.test(`${before} ${after}`)
+    )
+      return true
+  }
+  return false
 }
