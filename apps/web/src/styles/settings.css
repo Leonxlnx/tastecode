@@ -1319,8 +1319,34 @@
   color: var(--text);
 }
 
-.provider-row .settings__action.is-danger:hover:not(:disabled) {
+/* Signing out is housekeeping, not what the row asks for: a quiet tinted
+   slab that stays a button, and only shows its consequence on hover. */
+.provider-row .settings__action.is-primary.is-danger {
+  min-width: 0;
+  padding: 4px 12px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text-2);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.provider-row .settings__action.is-primary.is-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  border-color: color-mix(in srgb, var(--error) 14%, transparent);
   color: var(--error);
+}
+
+.provider-row .settings__action.is-primary.is-danger:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.provider-row .settings__action.is-primary.is-danger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--error) 55%, transparent);
+  outline-offset: 2px;
 }
 
 /* Sign-in and install details hang under the provider's name. */
