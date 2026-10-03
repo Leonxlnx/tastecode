@@ -34,12 +34,6 @@ const isProviderId = enumValidator<ProviderId>({
   codex: true,
   'claude-code': true,
   grok: true,
-  cursor: true,
-  opencode: true,
-  antigravity: true,
-  pi: true,
-  acp: true,
-  api: true,
 })
 const isInboxStatus = enumValidator<ThreadInboxStatus>({
   starting: true,

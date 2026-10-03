@@ -407,14 +407,14 @@ describe('MCP settings', () => {
     render(
       <McpSettings
         transport={transport}
-        provider="opencode"
-        providerName="OpenCode"
+        provider="grok"
+        providerName="Grok"
         projectPath="/work/project"
         projectName="Project"
       />,
     )
 
-    expect(await screen.findByText('OpenCode · MCP inventory unavailable')).toBeTruthy()
+    expect(await screen.findByText('Grok · MCP inventory unavailable')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 

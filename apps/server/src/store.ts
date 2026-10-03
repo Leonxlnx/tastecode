@@ -87,7 +87,7 @@ export type StoredThread = {
   id: string
   projectPath: string
   provider: ProviderId
-  /** Which ACP agent, when the provider is `acp`. */
+  /** Custom harness id, when the thread runs one instead of the provider CLI. */
   agent?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
@@ -1500,12 +1500,18 @@ export class Store {
       thread_id: string
       metadata: string
       loaded_revision: string | null
-    }>(this.#db.prepare('SELECT * FROM provider_history')).map((row) => ({
-      provider: ProviderIdSchema.parse(row.provider),
-      threadId: row.thread_id,
-      session: JSON.parse(row.metadata) as ProviderHistorySession,
-      loadedRevision: row.loaded_revision,
-    }))
+    }>(this.#db.prepare('SELECT * FROM provider_history')).flatMap((row) => {
+      const provider = toProviderId(row.provider)
+      if (!provider) return []
+      return [
+        {
+          provider,
+          threadId: row.thread_id,
+          session: JSON.parse(row.metadata) as ProviderHistorySession,
+          loadedRevision: row.loaded_revision,
+        },
+      ]
+    })
   }
 
   /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
@@ -3267,14 +3273,17 @@ export class Store {
       { threadId: string; projectPath: string; worktreePath?: string; commits: Set<string> }
     >()
     const add = (threadId: string, commit: string) => {
-      const thread = this.thread(threadId)
-      if (!thread) return
       let entry = result.get(threadId)
       if (!entry) {
+        const thread = sqliteRow<Pick<ThreadRow, 'project_path' | 'worktree_path'>>(
+          this.#db.prepare('SELECT project_path, worktree_path FROM threads WHERE id = ?'),
+          threadId,
+        )
+        if (!thread) return
         entry = {
           threadId,
-          projectPath: thread.projectPath,
-          ...(thread.worktreePath ? { worktreePath: thread.worktreePath } : {}),
+          projectPath: thread.project_path,
+          ...(thread.worktree_path ? { worktreePath: thread.worktree_path } : {}),
           commits: new Set(),
         }
         result.set(threadId, entry)
@@ -4030,18 +4039,13 @@ function toProviderId(provider: string): ProviderId | undefined {
     case 'codex':
     case 'claude-code':
     case 'grok':
-    case 'cursor':
-    case 'opencode':
-    case 'antigravity':
-    case 'pi':
-    case 'acp':
-    case 'api':
       return provider
     default: {
       const parsed = ProviderIdSchema.safeParse(provider)
       if (parsed.success) return parsed.data
-      // A provider only a newer build knows. The row stays stored; readers
-      // skip it rather than die on it.
+      // A provider this build does not ship: a newer build, or one that lives
+      // only on the nightly branch. The row stays stored; readers skip it
+      // rather than die on it.
       console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
       return undefined
     }

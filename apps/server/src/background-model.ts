@@ -54,11 +54,7 @@ export function resolveBackgroundModel(
   if (preference.mode === 'manual') return resolveManual(preference.target, sources)
 
   const codex = sources.find(
-    (source) =>
-      source.provider === 'codex' &&
-      !source.agent &&
-      !source.connectionId &&
-      source.codexSubscription,
+    (source) => source.provider === 'codex' && !source.agent && source.codexSubscription,
   )
   const luna = codex?.models
     .filter((model) => isLuna(model))
@@ -68,9 +64,7 @@ export function resolveBackgroundModel(
     return selection(codex, luna, low ?? lowestReasoningEffort(luna), true)
   }
 
-  const grok = sources.find(
-    (source) => source.provider === 'grok' && !source.agent && !source.connectionId,
-  )
+  const grok = sources.find((source) => source.provider === 'grok' && !source.agent)
   const grok46 = grok?.models
     .filter((model) => isGrok46(model))
     .sort((left, right) => compareVersions(right, left))[0]
@@ -101,10 +95,7 @@ function resolveManual(
   sources: AvailableBackgroundModelSource[],
 ): BackgroundModelSelection | undefined {
   const source = sources.find(
-    (candidate) =>
-      candidate.provider === target.provider &&
-      candidate.connectionId === target.connectionId &&
-      candidate.agent === target.agent,
+    (candidate) => candidate.provider === target.provider && candidate.agent === target.agent,
   )
   const model = source?.models.find((candidate) => candidate.id === target.model)
   if (!source || !model) return undefined
@@ -130,7 +121,6 @@ function selection(
 ): BackgroundModelSelection {
   return {
     provider: source.provider,
-    ...(source.connectionId ? { connectionId: source.connectionId } : {}),
     ...(source.agent ? { agent: source.agent } : {}),
     model: model.id,
     ...(effort ? { effort } : {}),
@@ -191,11 +181,6 @@ export async function runBackgroundCompletion(input: {
       ...(input.selection.effort ? { effort: input.selection.effort } : {}),
       ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
       ...(input.selection.agent ? { agent: input.selection.agent } : {}),
-      ...(input.selection.connectionId
-        ? {
-            connectionId: input.selection.connectionId,
-          }
-        : {}),
       approval: 'ask',
       ephemeral: true,
       instructions: BACKGROUND_INSTRUCTIONS,

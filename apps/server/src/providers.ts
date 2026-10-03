@@ -83,10 +83,8 @@ const PROBES: Probe[] = [
 ]
 
 /**
- * The public beta ships exactly three subscription plans: Codex, Claude Code
- * and Grok (Leon's release scope, 2026-08-07). The Cursor, OpenCode,
- * Antigravity and ACP adapters stay in the repo fully working and return to
- * this roster after the beta — docs/dashboard.html tracks that list.
+ * main ships exactly three subscription plans: Codex, Claude Code and Grok.
+ * Every other provider lives on the nightly branch only — see AGENTS.md.
  */
 
 /**
@@ -118,52 +116,25 @@ export function providerUpdateSources() {
 }
 
 /**
- * The install command for a provider or ACP agent, from the tables above and
- * nowhere else. The renderer names a target; it never sends command text —
- * that is what keeps `providers.install` from being a remote shell.
+ * The install command for a provider, from the table above and nowhere else.
+ * The renderer names a target; it never sends command text — that is what
+ * keeps `providers.install` from being a remote shell.
  */
-export async function installCommandFor(
-  provider: ProviderStatus['id'],
-  agent?: string,
-): Promise<string> {
-  const target =
-    provider === 'acp'
-      ? await (async () => {
-          const { findAgentSpec } = await import('@harness/adapter-acp/agents')
-          const spec = agent ? findAgentSpec(agent) : undefined
-          return spec ? { name: spec.name, setup: spec.setup } : undefined
-        })()
-      : (() => {
-          const entry = PROBES.find((candidate) => candidate.id === provider)
-          return entry ? { name: entry.displayName, setup: entry.setup } : undefined
-        })()
-  if (!target) throw new Error(`unknown install target: ${agent ?? provider}`)
-  if (!target.setup.installCommand) {
-    throw new Error(`${target.name} has no scripted install; use its setup page`)
+export async function installCommandFor(provider: ProviderStatus['id']): Promise<string> {
+  const entry = PROBES.find((candidate) => candidate.id === provider)
+  if (!entry) throw new Error(`unknown install target: ${provider}`)
+  if (!entry.setup.installCommand) {
+    throw new Error(`${entry.displayName} has no scripted install; use its setup page`)
   }
-  return target.setup.installCommand
+  return entry.setup.installCommand
 }
 
 /**
  * The interactive sign-in command for a provider whose login lives in its own
  * CLI (`setup.login === 'provider'`). Same boundary as `installCommandFor`:
- * the renderer names a target and the command comes from these tables only.
- * ACP agents sign in inside their ordinary interactive CLI, so the launch is
- * the bare binary; direct providers name an explicit login command.
+ * the renderer names a target and the command comes from this table only.
  */
-export async function launchCommandFor(
-  provider: ProviderStatus['id'],
-  agent?: string,
-): Promise<string> {
-  if (provider === 'acp') {
-    const { findAgentSpec } = await import('@harness/adapter-acp/agents')
-    const spec = agent ? findAgentSpec(agent) : undefined
-    if (!spec) throw new Error(`unknown launch target: ${agent ?? provider}`)
-    if (spec.setup.login !== 'provider') {
-      throw new Error(`${spec.name} signs in through the app, not its own CLI`)
-    }
-    return spec.command
-  }
+export async function launchCommandFor(provider: ProviderStatus['id']): Promise<string> {
   const entry = PROBES.find((candidate) => candidate.id === provider)
   if (!entry) throw new Error(`unknown launch target: ${provider}`)
   if (entry.setup.login !== 'provider' || !entry.loginCommand) {
@@ -214,8 +185,6 @@ function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
-  // Beta roster: direct probes only. The ACP aggregate row returns together
-  // with the parked adapters after the beta.
   const detection = Promise.all(PROBES.map((entry) => probe(entry, system)))
   providerDetections.set(system, detection)
   const clear = () => {

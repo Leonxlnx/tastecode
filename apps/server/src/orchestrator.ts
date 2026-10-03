@@ -16,7 +16,6 @@ import { JsonValueSchema, PreviewDomAuditSchema } from '@harness/contracts'
 import { z } from 'zod'
 import {
   providerRuntime,
-  apiRuntime,
   verifyCustomHarness as verifyCustomHarnessCompatibility,
   type AgentSession,
   type ProviderRuntime,
@@ -88,7 +87,6 @@ import {
 } from './diff-review.js'
 import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
-import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { TerminalManager } from './terminal.js'
 import { installLocalSkill } from './skill-install.js'
@@ -579,7 +577,6 @@ export class Orchestrator {
   #sidebarStatusRevision = 0
   #sidebarStatusChanges: Array<{ revision: number; threadId: string }> = []
   #mcpConfig: McpConfigStore
-  #modelConnections: ModelConnectionStore
   #customHarnesses: CustomHarnessStore
   #backgroundSourcesCache:
     { expiresAt: number; sources: AvailableBackgroundModelSource[] } | undefined
@@ -595,7 +592,6 @@ export class Orchestrator {
    * other, and that is about this class, not about any vendor.
    */
   #runtimeFor: (provider: ProviderId, onLog: (line: string) => void) => ProviderRuntime
-  #runtimeForInjected: boolean
   #maxIdleThreadRuntimes: number
   #idleThreadRuntimeMs: number
   #controls: ProviderControls
@@ -626,7 +622,6 @@ export class Orchestrator {
         viewports: Array<{ width: number; height: number }>,
       ) => Promise<ReviewScreenshot[] | undefined>
       mcpConfig?: McpConfigStore
-      modelConnections?: ModelConnectionStore
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
       voiceTranscriber?: VoiceTranscriber
@@ -662,7 +657,6 @@ export class Orchestrator {
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
-    this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#voice = new VoiceService(handlers.voiceTranscriber)
@@ -674,7 +668,6 @@ export class Orchestrator {
       handlers.runtimeFor ??
       ((provider, onLog) =>
         providerRuntime(provider, onLog, (id) => this.#customHarnesses.find(id)))
-    this.#runtimeForInjected = handlers.runtimeFor !== undefined
     this.#maxIdleThreadRuntimes =
       handlers.maxIdleThreadRuntimes === undefined
         ? idleThreadRuntimeLimit(os.totalmem())
@@ -706,10 +699,6 @@ export class Orchestrator {
     return control.listModels ? control.listModels(agent) : []
   }
 
-  listModelConnections() {
-    return this.#modelConnections.list()
-  }
-
   listCustomHarnesses() {
     return this.#customHarnesses.list()
   }
@@ -732,28 +721,6 @@ export class Orchestrator {
     this.#invalidateBackgroundSources()
   }
 
-  upsertModelConnection(connection: Parameters<ModelConnectionStore['upsert']>[0]) {
-    const saved = this.#modelConnections.upsert(connection)
-    this.#invalidateBackgroundSources()
-    return saved
-  }
-
-  setModelConnectionCredential(connectionId: string, apiKey: string): void {
-    this.#modelConnections.setCredential(connectionId, apiKey)
-    this.#invalidateBackgroundSources()
-  }
-
-  removeModelConnection(connectionId: string): void {
-    this.#modelConnections.remove(connectionId)
-    this.#invalidateBackgroundSources()
-  }
-
-  async listConnectionModels(connectionId: string): Promise<Model[]> {
-    const connection = this.#modelConnections.get(connectionId)
-    const apiKey = this.#readCredential(connection.credentialRef)
-    return apiRuntime(connection, apiKey, this.#onLog).listModels()
-  }
-
   async backgroundModelSettings(): Promise<BackgroundModelSettings> {
     const preference = this.#store.backgroundModelPreference()
     const available = await this.#backgroundModelSources()
@@ -762,7 +729,6 @@ export class Orchestrator {
       id: source.id,
       displayName: source.displayName,
       provider: source.provider,
-      ...(source.connectionId ? { connectionId: source.connectionId } : {}),
       ...(source.agent ? { agent: source.agent } : {}),
       models: source.models,
     }))
@@ -808,10 +774,7 @@ export class Orchestrator {
           : 'Connect a provider with an available model before using background writing.',
       )
     }
-    const runtime =
-      settings.resolved.provider === 'api'
-        ? this.#apiRuntime(settings.resolved.connectionId)
-        : this.#runtimeFor(settings.resolved.provider, this.#onLog)
+    const runtime = this.#runtimeFor(settings.resolved.provider, this.#onLog)
     return runBackgroundCompletion({ runtime, selection: settings.resolved, prompt })
   }
 
@@ -888,52 +851,7 @@ export class Orchestrator {
       }),
     )
 
-    const connections = await Promise.all(
-      this.#modelConnections
-        .list()
-        .filter((connection) => connection.enabled && connection.credentialConfigured)
-        .map(async (connection) => {
-          const stored = this.#modelConnections.get(connection.id)
-          let apiKey: string
-          try {
-            apiKey = this.#readCredential(stored.credentialRef)
-          } catch {
-            return undefined
-          }
-          let models: Model[] = []
-          try {
-            models = await apiRuntime(stored, apiKey, this.#onLog).listModels()
-          } catch {
-            // Compatible endpoints are allowed to omit model discovery; the
-            // connection's explicit default remains runnable in that case.
-          }
-          if (models.length === 0 && connection.defaultModel) {
-            models = [
-              {
-                id: connection.defaultModel,
-                displayName: connection.defaultModel,
-                isDefault: true,
-                reasoningEfforts: [],
-                serviceTiers: [],
-              },
-            ]
-          }
-          if (models.length === 0) return undefined
-          return {
-            id: `api:${connection.id}`,
-            displayName: connection.displayName,
-            provider: 'api',
-            connectionId: connection.id,
-            models,
-          } satisfies AvailableBackgroundModelSource
-        }),
-    )
-
-    const sources: Array<AvailableBackgroundModelSource | undefined> = [
-      ...builtIns,
-      ...custom,
-      ...connections,
-    ]
+    const sources: Array<AvailableBackgroundModelSource | undefined> = [...builtIns, ...custom]
     return sources.filter(
       (source): source is AvailableBackgroundModelSource => source !== undefined,
     )
@@ -1289,10 +1207,7 @@ export class Orchestrator {
       throw new Error('task start cancelled by shutdown or panic stop')
     }
 
-    const runtime =
-      provider === 'api' && !this.#runtimeForInjected
-        ? this.#apiRuntime(options.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+    const runtime = this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions = {
       ...options,
       instructions: composeInstructions(options.instructions),
@@ -1394,15 +1309,11 @@ export class Orchestrator {
       this.#threadApprovals.get(parentThreadId) ??
       this.#store.threadApproval(parentThreadId) ??
       'ask'
-    const runtime =
-      provider === 'api' && !this.#runtimeForInjected
-        ? this.#apiRuntime(parent.connectionId)
-        : this.#runtimeFor(provider, this.#onLog)
+    const runtime = this.#runtimeFor(provider, this.#onLog)
     const runtimeOptions: StartOptions = {
       ...options,
       approval,
       ...(storedParent.agent ? { agent: storedParent.agent } : {}),
-      ...(parent.connectionId ? { connectionId: parent.connectionId } : {}),
       instructions: composeInstructions(sideChatInstructionsFromReplay(parentHistory)),
       ...this.#mcpRuntimeOptions(provider, storedParent.projectPath),
     }
@@ -1446,14 +1357,6 @@ export class Orchestrator {
       }
       throw error
     }
-  }
-
-  #apiRuntime(connectionId: string | undefined): ProviderRuntime {
-    if (!connectionId) throw new Error('connectionId is required for direct API sessions')
-    const connection = this.#modelConnections.get(connectionId)
-    if (!connection.enabled) throw new Error(`model connection "${connectionId}" is disabled`)
-    const apiKey = this.#readCredential(connection.credentialRef)
-    return apiRuntime(connection, apiKey, this.#onLog)
   }
 
   async sendTurn(

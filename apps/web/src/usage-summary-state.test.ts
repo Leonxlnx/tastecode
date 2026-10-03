@@ -152,17 +152,17 @@ describe('UsageSummaryController', () => {
       .mockResolvedValueOnce(summary(2))
     const state = new UsageSummaryController(load)
 
-    state.select({ provider: 'api' })
+    state.select({ provider: 'grok' })
     await settle()
     expect(state.snapshot()).toEqual({
       status: 'error',
-      provider: 'api',
+      provider: 'grok',
       message: 'socket send failed',
     })
 
     state.refresh()
     await settle()
-    expect(state.snapshot()).toEqual({ status: 'ready', provider: 'api', summary: summary(2) })
+    expect(state.snapshot()).toEqual({ status: 'ready', provider: 'grok', summary: summary(2) })
   })
 
   it('publishes one loading transition per target selection', () => {

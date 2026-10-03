@@ -234,7 +234,7 @@
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
         this browser only. Nothing here is a plan: everything listed is implemented. Sections marked
-        parked are built and tested but out of the beta UI (see dashboard.html).
+        nightly only are built and tested but absent from main's code (see dashboard.html).
       </p>
 
       <div class="toc">
@@ -415,9 +415,7 @@
           </li>
         </ul>
 
-        <h3>
-          Cursor (cursor-agent stream-json) <span class="pill-parked">parked for the beta</span>
-        </h3>
+        <h3>Cursor (cursor-agent stream-json) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -442,9 +440,7 @@
           </li>
         </ul>
 
-        <h3>
-          OpenCode (local server, HTTP/SSE) <span class="pill-parked">parked for the beta</span>
-        </h3>
+        <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -474,7 +470,7 @@
           </li>
         </ul>
 
-        <h3>Antigravity (agy, stream-json) <span class="pill-parked">parked for the beta</span></h3>
+        <h3>Antigravity (agy, stream-json) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -553,7 +549,7 @@
           </li>
         </ul>
 
-        <h3>Kimi CLI (over ACP) <span class="pill-parked">parked for the beta</span></h3>
+        <h3>Kimi CLI (over ACP) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -575,7 +571,7 @@
 
         <h3>
           Direct API connections (TasteCode-owned agent loop)
-          <span class="pill-parked">parked for the beta</span>
+          <span class="pill-parked">nightly only</span>
         </h3>
         <ul class="check">
           <li>
@@ -681,7 +677,8 @@
                 <span class="d"
                   >separate model-picker source, desktop-safe PATH resolution, fixed argv without
                   shell parsing, optional cwd/environment, protocol-aware verification, bounded
-                  startup, explicit stability and secret warning; includes Pi RPC</span
+                  startup, explicit stability and secret warning; Codex, Claude Code and Grok only
+                  on main</span
                 ></span
               ></label
             >
@@ -721,8 +718,7 @@
                 >Honest rows for what does not exist
                 <span class="d"
                   >canonical source names and marks across the picker, inbox, search, Profile, and
-                  Usage; Pi only through an explicit custom RPC harness, Gemini CLI and Qwen
-                  retired</span
+                  Usage; only Codex, Claude Code and Grok exist on main</span
                 ></span
               ></label
             >

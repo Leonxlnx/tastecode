@@ -59,7 +59,7 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
-import { sessionSourcePresentation } from '../provider-presentation.js'
+import { providerPresentation } from '../provider-presentation.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
@@ -1733,7 +1733,7 @@ function SessionRow(props: {
         <span className="sess__title">{props.session.title}</span>
         <SourceIdentity
           className="sess__source"
-          presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
+          presentation={providerPresentation(props.session.provider)}
           density="compact"
         />
         <SessionStatus status={props.session.status} />
@@ -1880,7 +1880,7 @@ function SessionStatus(props: { status: Session['status'] }) {
 }
 
 function sessionLabel(session: Session): string {
-  const source = sessionSourcePresentation(session.provider, session.agent).label
+  const source = providerPresentation(session.provider).label
   const unread = session.unread ? ', unread' : ''
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {
