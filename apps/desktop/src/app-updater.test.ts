@@ -354,4 +354,85 @@ describe('app update controller', () => {
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
     controller.dispose()
   })
+
+  it('answers a check during a background download without starting another', async () => {
+    const updater = fakeUpdater()
+    let finish!: () => void
+    updater.downloadUpdate.mockImplementation(
+      () =>
+        new Promise<string[]>((resolve) => {
+          finish = () => resolve([])
+        }),
+    )
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', { version: '0.1.3' })
+    })
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    await controller.check('background')
+    await expect(controller.check()).resolves.toMatchObject({
+      status: 'downloading',
+      version: '0.1.3',
+    })
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce()
+    finish()
+  })
+
+  it('settles on the hourly check after repeated background failures', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    updater.checkForUpdates.mockRejectedValue(new Error('offline'))
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    controller.start()
+    for (const delay of [15_000, 5 * 60_000, 15 * 60_000, 30 * 60_000, 60 * 60_000, 60 * 60_000])
+      await vi.advanceTimersByTimeAsync(delay)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(6)
+    await vi.advanceTimersByTimeAsync(60 * 60_000 - 1)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(6)
+    expect(controller.state()).toMatchObject({ status: 'idle' })
+    controller.dispose()
+  })
+
+  it('clears an earlier failure once a later check succeeds', async () => {
+    const updater = fakeUpdater()
+    updater.checkForUpdates.mockRejectedValueOnce(new Error('offline'))
+    updater.checkForUpdates.mockImplementationOnce(async () => {
+      updater.emit('update-not-available', { version: '0.1.2' })
+    })
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    await expect(controller.check()).resolves.toMatchObject({ status: 'error' })
+    await expect(controller.check()).resolves.toMatchObject({ status: 'current' })
+  })
+
+  it('stays inert when disabled, even on wake', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: false,
+    })
+
+    controller.start()
+    vi.setSystemTime(Date.now() + 8 * 60 * 60 * 1000)
+    controller.resume()
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60 * 1000)
+    expect(updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(controller.state()).toMatchObject({ status: 'unsupported' })
+  })
 })
