@@ -227,6 +227,46 @@ describe('GitHub asset releases', () => {
     await expect(lookup).rejects.toThrow(/about 25 minutes/)
   })
 
+  it('falls back to the release list when the feed answers with an HTML error page', async () => {
+    const fetch = vi
+      .fn<ReleaseFetch>()
+      .mockResolvedValueOnce(new Response('<!DOCTYPE html><title>Unicorn!</title>'))
+      .mockResolvedValueOnce(Response.json([localRelease('0.1.2')]))
+    expect((await providerWith(fetch, '0.1.1').getLatestVersion()).version).toBe('0.1.2')
+  })
+
+  it.each([
+    ['the feed', 'releases.atom', 502],
+    ['the release lookup', 'tags/v0.1.2', 500],
+  ])('reports a server error from %s', async (_label, failing, status) => {
+    const fetch = vi.fn<ReleaseFetch>(async (url) =>
+      url.endsWith(failing)
+        ? new Response('', { status })
+        : url.endsWith('.atom')
+          ? new Response(feed('v0.1.2', 'v0.1.1'))
+          : Response.json(localRelease('0.1.2')),
+    )
+    await expect(providerWith(fetch, '0.1.1').getLatestVersion()).rejects.toThrow(`HTTP ${status}`)
+  })
+
+  it('rejects a release lookup that is not a release', async () => {
+    const fetch = feedFetch(feed('v0.1.2', 'v0.1.1'), {
+      'v0.1.2': Response.json({ message: 'Moved Permanently' }),
+    })
+    await expect(providerWith(fetch, '0.1.1').getLatestVersion()).rejects.toThrow()
+  })
+
+  it.each([
+    ['a beta install', '0.1.0-beta.9', '0.1.1'],
+    ['an install newer than every release', '0.1.3', '0.1.3'],
+    ['an install of the newest release', '0.1.1', '0.1.1'],
+  ])('handles %s', async (_label, installed, offered) => {
+    const fetch = feedFetch(feed('linux-preview-e9ac0a03', 'v0.1.1', 'v0.1.0-beta.9'), {
+      'v0.1.1': Response.json(localRelease('0.1.1')),
+    })
+    expect((await providerWith(fetch, installed).getLatestVersion()).version).toBe(offered)
+  })
+
   it.each([
     [429, { 'retry-after': '120' }, 120_000],
     [403, { 'retry-after': '30' }, 30_000],

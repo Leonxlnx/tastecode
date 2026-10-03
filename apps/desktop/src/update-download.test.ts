@@ -13,17 +13,45 @@ let server: Server
 let url = ''
 let directory = ''
 let requests: Array<{ range: string | undefined }> = []
-let behavior: 'ranges' | 'ignore-ranges' | 'refuse-ranges' | 'stall' | 'silent' = 'ranges'
+let behavior:
+  | 'ranges'
+  | 'ignore-ranges'
+  | 'refuse-ranges'
+  | 'stall'
+  | 'silent'
+  | 'drop'
+  | 'error'
+  | 'no-content-range'
+  | 'redirect' = 'ranges'
 
 function send(request: IncomingMessage, response: import('node:http').ServerResponse) {
+  if (behavior === 'redirect' && !request.url?.startsWith('/cdn/')) {
+    // GitHub answers release downloads with a redirect to its storage host.
+    response.writeHead(302, { Location: `/cdn${request.url}` }).end()
+    return
+  }
   requests.push({ range: request.headers.range })
   if (behavior === 'silent') return
+  if (behavior === 'error') {
+    response.writeHead(500).end()
+    return
+  }
+  if (behavior === 'drop') {
+    // The connection dies halfway, as on a network change.
+    response.writeHead(200, { 'Content-Length': bytes.length })
+    response.write(bytes.subarray(0, bytes.length / 2), () => response.destroy())
+    return
+  }
+  if (behavior === 'no-content-range' && request.headers.range) {
+    response.writeHead(206).end(bytes.subarray(100_000))
+    return
+  }
   const range = /^bytes=(\d+)-$/.exec(request.headers.range ?? '')
   if (range && behavior === 'refuse-ranges') {
     response.writeHead(416).end()
     return
   }
-  if (range && behavior === 'ranges') {
+  if (range && (behavior === 'ranges' || behavior === 'redirect')) {
     const start = Number(range[1])
     response.writeHead(206, {
       'Content-Length': bytes.length - start,
@@ -174,6 +202,69 @@ describe('resumable update downloads', () => {
     } finally {
       await chmod(locked, 0o700)
     }
+  })
+
+  it('keeps the bytes of a dropped connection and continues from them', async () => {
+    behavior = 'drop'
+    await expect(downloadVerified(options())).rejects.toThrow()
+    const kept = (await stat(stored())).size
+    expect(kept).toBeGreaterThan(0)
+    expect(kept).toBeLessThan(bytes.length)
+
+    behavior = 'ranges'
+    requests = []
+    expect(await readFile(await downloadVerified(options()))).toEqual(bytes)
+    expect(requests).toEqual([{ range: `bytes=${kept}-` }])
+  })
+
+  it('reports a server error and leaves earlier bytes alone', async () => {
+    await writeFile(stored(), bytes.subarray(0, 100_000))
+    behavior = 'error'
+    await expect(downloadVerified(options())).rejects.toThrow('HTTP 500')
+    expect((await stat(stored())).size).toBe(100_000)
+  })
+
+  it('discards stored bytes when a resumed answer does not say where it starts', async () => {
+    await writeFile(stored(), bytes.subarray(0, 100_000))
+    behavior = 'no-content-range'
+    await expect(downloadVerified(options())).rejects.toThrow(/wrong position/)
+    await expect(stat(stored())).rejects.toThrow()
+  })
+
+  it('keeps the range when GitHub redirects to its storage host', async () => {
+    behavior = 'redirect'
+    await writeFile(stored(), bytes.subarray(0, 100_000))
+    expect(await readFile(await downloadVerified(options()))).toEqual(bytes)
+    expect(requests).toEqual([{ range: 'bytes=100000-' }])
+  })
+
+  it('starts over when more bytes are stored than the asset has', async () => {
+    await writeFile(stored(), Buffer.concat([bytes, Buffer.from('extra')]))
+    expect(await readFile(await downloadVerified(options()))).toEqual(bytes)
+    expect(requests).toEqual([{ range: undefined }])
+  })
+
+  it('creates a missing download folder', async () => {
+    const nested = path.join(directory, 'Caches', 'TasteCode', 'update-downloads')
+    const file = await downloadVerified(options({ directory: nested }))
+    expect(path.dirname(file)).toBe(nested)
+  })
+
+  it('fails cleanly when the download folder cannot be written', async () => {
+    await chmod(directory, 0o500)
+    try {
+      await expect(downloadVerified(options())).rejects.toThrow()
+    } finally {
+      await chmod(directory, 0o700)
+    }
+  })
+
+  it('reports steadily rising progress that ends at exactly 100 percent', async () => {
+    const reports: number[] = []
+    await downloadVerified(options({ onProgress: (progress) => reports.push(progress.percent) }))
+    expect(reports.at(-1)).toBe(100)
+    expect(reports).toEqual([...reports].sort((a, b) => a - b))
+    expect(Math.max(...reports)).toBe(100)
   })
 
   it('rejects a body larger than GitHub announced', async () => {
