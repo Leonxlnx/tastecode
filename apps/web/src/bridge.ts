@@ -52,7 +52,10 @@ type Bridge = {
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
   setMenuShortcuts?: (shortcuts: NativeMenuShortcuts) => void
-  onMenuAction?: (listener: (action: NativeMenuAction) => void) => () => void
+  onMenuAction?: (
+    listener: (action: NativeMenuAction, source: NativeMenuActionSource) => void,
+  ) => () => void
+  suspendMenuShortcuts?: (suspended: boolean) => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
@@ -109,6 +112,8 @@ const NATIVE_MENU_ACTION_IDS = [
   'toggleIsolatedSession',
 ] as const satisfies readonly KeybindingId[]
 export type NativeMenuAction = (typeof NATIVE_MENU_ACTION_IDS)[number]
+/** An accelerator is a key press and follows the renderer's shortcut guards; a click does not. */
+export type NativeMenuActionSource = 'menu' | 'accelerator'
 type NativeMenuShortcuts = Record<NativeMenuAction, Shortcut | null>
 export type AppUpdateState = {
   status:
@@ -309,8 +314,15 @@ export function syncNativeMenuShortcuts(keybindings: Keybindings): void {
   bridge?.setMenuShortcuts?.(shortcuts)
 }
 
-export function onNativeMenuAction(listener: (action: NativeMenuAction) => void): () => void {
+export function onNativeMenuAction(
+  listener: (action: NativeMenuAction, source: NativeMenuActionSource) => void,
+): () => void {
   return bridge?.onMenuAction?.(listener) ?? (() => undefined)
+}
+
+/** Stops menu accelerators from firing while the page records a new shortcut. */
+export function suspendNativeMenuShortcuts(suspended: boolean): void {
+  bridge?.suspendMenuShortcuts?.(suspended)
 }
 
 export async function capturePreview(

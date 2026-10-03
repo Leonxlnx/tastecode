@@ -37,6 +37,7 @@ import {
   matchesShortcut,
   readKeybindings,
   shortcutLabel,
+  shortcutRoute,
   WORKSPACE_TOOL_SHORTCUTS,
   writeKeybindings,
   type KeybindingId,
@@ -4314,7 +4315,29 @@ export function App() {
 
   useEffect(() => syncNativeMenuShortcuts(keybindings), [keybindings])
 
-  useEffect(() => onNativeMenuAction((action) => keybindingActions[action]()), [keybindingActions])
+  const modalOwnsKeyboard = Boolean(paletteScope || rollbackOpen || checkoutDelete)
+  const runRoutedShortcut = useCallback(
+    (action: KeybindingId) => {
+      const route = shortcutRoute(action, {
+        settingsOpen,
+        onboardingPreview,
+        modalOpen: modalOwnsKeyboard,
+      })
+      if (route === 'closeSettings') setSettingsOpen(false)
+      else if (route === 'showKeybinds') setSettingsSection('keybinds')
+      else if (route === 'run') keybindingActions[action]()
+    },
+    [keybindingActions, modalOwnsKeyboard, onboardingPreview, settingsOpen],
+  )
+
+  useEffect(
+    () =>
+      onNativeMenuAction((action, source) => {
+        if (source === 'accelerator') runRoutedShortcut(action)
+        else keybindingActions[action]()
+      }),
+    [keybindingActions, runRoutedShortcut],
+  )
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -4336,16 +4359,16 @@ export function App() {
       // Settings owns all keys while open. Its two app shortcuts can close
       // the sheet or jump directly to the keybind editor.
       if (settingsOpen) {
-        if (matchesShortcut(event, keybindings.settings)) {
+        const action = (['settings', 'keybindings'] as const).find((id) =>
+          matchesShortcut(event, keybindings[id]),
+        )
+        if (action) {
           event.preventDefault()
-          setSettingsOpen(false)
-        } else if (matchesShortcut(event, keybindings.keybindings)) {
-          event.preventDefault()
-          setSettingsSection('keybinds')
+          runRoutedShortcut(action)
         }
         return
       }
-      if (paletteScope || rollbackOpen || checkoutDelete) return
+      if (modalOwnsKeyboard) return
 
       // Number keys open the newest sessions in the first sidebar project.
       const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
@@ -4365,7 +4388,7 @@ export function App() {
       )
       if (definition) {
         event.preventDefault()
-        keybindingActions[definition.id]()
+        runRoutedShortcut(definition.id)
         return
       }
 
@@ -4379,13 +4402,11 @@ export function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [
-    checkoutDelete,
     onboardingPreview,
-    keybindingActions,
     keybindings,
     macOS,
-    paletteScope,
-    rollbackOpen,
+    modalOwnsKeyboard,
+    runRoutedShortcut,
     selectSession,
     settingsOpen,
   ])
