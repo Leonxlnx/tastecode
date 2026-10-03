@@ -1232,6 +1232,30 @@ describe('reply style', () => {
 })
 
 describe('provider-neutral Side chat', () => {
+  it('does not attach a Side chat whose startup crossed Stop all', async () => {
+    const { orchestrator, sessions, startBarriers, startedIn, store } = harness()
+    const parent = await orchestrator.startThread('codex', '/repo')
+    await orchestrator.submitTurn(parent.id, 'Main question', [], {}, 'main-question')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    let release!: () => void
+    startBarriers.push(new Promise<void>((resolve) => (release = resolve)))
+    const starting = orchestrator.startSideThread(parent.id)
+    const rejected = expect(starting).rejects.toThrow(/panic stop/)
+    await vi.waitFor(() => expect(startedIn).toHaveLength(2))
+    await orchestrator.panicStop()
+    release()
+    await rejected
+    expect(sessions[1]?.disposed).toBe(true)
+    expect(store.thread('thread-2')).toBeUndefined()
+    expect(store.providerHistories()).toEqual([
+      expect.objectContaining({
+        threadId: 'thread-2',
+        session: expect.objectContaining({ internal: true }),
+      }),
+    ])
+    await orchestrator.disposeAll()
+  })
+
   it.each(ProviderIdSchema.options)(
     'forks an ephemeral %s session from the parent boundary',
     async (provider) => {
@@ -1296,6 +1320,52 @@ describe('provider-neutral Side chat', () => {
     expect(store.tailReplaySnapshotForResponse(parent.id)).toBeDefined()
     orchestrator.closeSideThread(side.id)
     await orchestrator.disposeAll()
+  })
+
+  it('refuses a replacement Side chat while its parent is closing', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const parent = await orchestrator.startThread('claude-code', process.cwd())
+      store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+      await orchestrator.startSideThread(parent.id)
+      let releaseSide = () => {}
+      sessions[1]!.disposeBarrier = new Promise<void>((resolve) => (releaseSide = resolve))
+
+      const closing = orchestrator.close(parent.id)
+      const replacement = orchestrator.startSideThread(parent.id)
+      const refused = expect(replacement).rejects.toThrow()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      releaseSide()
+      await closing
+      await refused
+
+      expect(sessions.slice(2).every((session) => session.disposed)).toBe(true)
+      expect(store.threads().filter((thread) => thread.ephemeral)).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('retries a failed Side chat stop when the close is retried', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const parent = await orchestrator.startThread('claude-code', process.cwd())
+      store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+      const side = await orchestrator.startSideThread(parent.id)
+      const sideSession = sessions[1]!
+      sideSession.disposeBarrier = Promise.reject(new Error('agent did not exit'))
+      sideSession.disposeBarrier.catch(() => undefined)
+
+      await expect(orchestrator.closeSideThread(side.id)).rejects.toThrow('agent did not exit')
+      expect(store.thread(side.id)).toBeUndefined()
+      sideSession.disposed = false
+      sideSession.disposeBarrier = undefined
+
+      await orchestrator.closeSideThread(side.id)
+      expect(sideSession.disposed).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 })
 
@@ -1482,6 +1552,12 @@ describe('queued Side-chat channel', () => {
       try {
         expect(restartedStore.thread(side.id)).toBeUndefined()
         expect(restartedStore.queuedTurns(side.id)).toEqual([])
+        expect(restartedStore.providerHistories()).toContainEqual(
+          expect.objectContaining({
+            threadId: side.id,
+            session: expect.objectContaining({ internal: true }),
+          }),
+        )
         expect(restartedStore.queuedTurns(parent.id).map(({ id }) => id)).toEqual(['main-queued'])
       } finally {
         restartedStore.close()
@@ -6537,6 +6613,25 @@ describe('isolated sessions', () => {
     expect(existsSync(trees) ? readdirSync(trees) : []).toEqual([])
     const branches = execFileSync('git', ['branch', '--list'], { cwd: repo, encoding: 'utf8' })
     expect(branches.trim()).toBe('* main')
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps Side chat checkpoints and restore guards in the parent private checkout', async () => {
+    const { orchestrator, sessions, store } = harness(trees)
+    const parent = await orchestrator.startThread('codex', repo, { isolate: true })
+    await orchestrator.submitTurn(parent.id, 'Main question', [], {}, 'main-question')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const side = await orchestrator.startSideThread(parent.id)
+    const checkout = store.thread(parent.id)!.worktreePath!
+    expect(store.thread(side.id)?.worktreePath).toBe(checkout)
+    writeFileSync(path.join(checkout, 'file.txt'), 'private state\n')
+    await orchestrator.sendTurn(side.id, 'temporary task')
+    expect(orchestrator.checkpoints(side.id)).toHaveLength(1)
+    await expect(orchestrator.switchBranch(checkout, 'main')).rejects.toThrow(/still working/)
+    sessions[1]!.emit({ type: 'turn.completed', turnId: 's2-turn', status: 'completed' })
+    await orchestrator.closeSideThread(side.id)
+    expect(existsSync(checkout)).toBe(true)
+    expect(readFileSync(path.join(checkout, 'file.txt'), 'utf8')).toBe('private state\n')
     await orchestrator.disposeAll()
   })
 

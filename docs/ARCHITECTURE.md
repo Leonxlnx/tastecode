@@ -386,8 +386,9 @@ identities prevent duplicate chats. Imported messages use the same
 typed items and renderer as local turns. New versions append events; source membership hides
 replaced native branches without moving local event positions or checkpoints. Replay orders
 imported turns by their original time and replaces stale partial client histories when needed.
-Provider files stay read-only. Local names, pins, archives, project removal, and deletion remain
-local choices. Cloud-only chats and missing native transcript files are outside this local reader.
+Provider files stay read-only. Local names, pins, project removal, and deletion remain local
+choices; a deleted chat or closed Side chat keeps an import marker, so a rescan does not bring
+it back. Cloud-only chats and missing native transcript files are outside this local reader.
 Background rescans stay cheap: Codex reuses indexed transcript file stats for up to 60 seconds
 while its state index is unchanged, and Grok keeps a parsed session summary until the file's
 size or modification time changes.

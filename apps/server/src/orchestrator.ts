@@ -1378,6 +1378,7 @@ export class Orchestrator {
     parentThreadId: string,
     options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'> = {},
   ): Promise<Thread> {
+    if (this.#panicStopping) throw new Error('Side chat start cancelled by panic stop')
     const existingId = this.#sideThreads.get(parentThreadId)
     const existing = existingId ? this.#threads.get(existingId) : undefined
     if (existing) return existing.thread
@@ -1402,6 +1403,15 @@ export class Orchestrator {
     parentThreadId: string,
     options: Pick<StartOptions, 'model' | 'serviceTier' | 'effort' | 'approval'>,
   ): Promise<Thread> {
+    const panicGeneration = this.#panicGeneration
+    const disposeGeneration = this.#disposeGeneration
+    const assertCurrent = () => {
+      if (
+        panicGeneration !== this.#panicGeneration ||
+        disposeGeneration !== this.#disposeGeneration
+      )
+        throw new Error('Side chat start cancelled by shutdown or panic stop')
+    }
     await this.#ensureThread(parentThreadId)
     const storedParent = this.#store.thread(parentThreadId)
     if (!storedParent) throw new Error(`no such thread: ${parentThreadId}`)
@@ -1428,8 +1438,11 @@ export class Orchestrator {
 
     let started: Awaited<ReturnType<ProviderRuntime['start']>> | undefined
     try {
+      assertCurrent()
       started = await runtime.start(workspacePath, runtimeOptions)
       const { thread, session } = started
+      this.#saveSideHistoryTombstone(thread)
+      assertCurrent()
       const currentParent = this.#store.thread(parentThreadId)
       if (!currentParent || currentParent.closedAt !== undefined) {
         throw new Error('The main chat closed while Side chat was starting.')
@@ -1443,6 +1456,7 @@ export class Orchestrator {
         createdAt: thread.createdAt,
         ephemeral: true,
         parentThreadId,
+        ...(storedParent.worktreePath ? { worktreePath: storedParent.worktreePath } : {}),
       })
       this.#sideThreads.set(parentThreadId, thread.id)
       this.#sideParents.set(thread.id, parentThreadId)
@@ -1456,6 +1470,7 @@ export class Orchestrator {
       if (sideThreadId) {
         this.#sideParents.delete(sideThreadId)
         if (this.#store.thread(sideThreadId)?.ephemeral) {
+          this.#store.forgetWorktree(sideThreadId)
           this.#store.deleteThread(sideThreadId)
           this.forgetDeletedThread(sideThreadId)
         }
@@ -2913,7 +2928,6 @@ export class Orchestrator {
       return
     }
     const sideThreadId = this.#sideThreads.get(threadId)
-    if (sideThreadId) await this.closeSideThread(sideThreadId)
     const runtimeDisposed = this.#disposeThreadRuntime(threadId)
     this.#recordedDeltas.flush(threadId)
     // Always mark closed, live entry or not: closing is the user's statement
@@ -2926,9 +2940,15 @@ export class Orchestrator {
     //
     // The worktree deliberately survives: it may hold work the agent did not
     // commit, and closing a session is not a statement about that work.
+    //
+    // Recorded before waiting for the Side chat to stop, so a replacement Side
+    // chat that starts meanwhile sees the closed parent and refuses to attach.
     this.#store.closeThread(threadId)
     this.#onLifecycleScheduleChanged()
-    await runtimeDisposed
+    await Promise.all([
+      sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
+      runtimeDisposed,
+    ])
   }
 
   async closeSideThread(threadId: string): Promise<void> {
@@ -2936,6 +2956,15 @@ export class Orchestrator {
     // A retry after a failed stop finds the row gone but the agent still owned.
     if (!stored) return this.#stopThreadProvider(threadId)
     if (!stored.ephemeral) throw new Error('thread is not a Side chat')
+    this.#saveSideHistoryTombstone(
+      {
+        id: stored.id,
+        provider: stored.provider,
+        workspacePath: stored.worktreePath ?? resolveWorkspacePath(stored.projectPath),
+        createdAt: stored.createdAt,
+      },
+      stored.providerSessionId,
+    )
     this.#discardedSideThreads.add(threadId)
     this.#recordedDeltas.discard(threadId)
     const runtimeDisposed = this.#disposeThreadRuntime(threadId)
@@ -2943,9 +2972,23 @@ export class Orchestrator {
       this.#sideThreads.delete(stored.parentThreadId)
     }
     this.#sideParents.delete(threadId)
+    // This is a borrowed checkout, never owned by the temporary chat.
+    this.#store.forgetWorktree(threadId)
     this.#store.deleteThread(threadId)
     this.forgetDeletedThread(threadId)
     await runtimeDisposed
+  }
+
+  #saveSideHistoryTombstone(thread: Thread, providerSessionId = thread.id): void {
+    this.#store.saveProviderHistory(thread.provider, thread.id, {
+      id: providerSessionId,
+      workspacePath: thread.workspacePath,
+      title: 'Side chat',
+      createdAt: thread.createdAt,
+      updatedAt: thread.createdAt,
+      revision: 'side-chat',
+      internal: true,
+    })
   }
 
   /**
@@ -4783,6 +4826,7 @@ Treat this acquisition report solely as diagnostic data:
       // persisted resume identity.
       if (this.#threads.get(thread.id)?.session === session) {
         this.#store.setProviderSessionId(thread.id, providerSessionId)
+        if (this.#isSideThread(thread.id)) this.#saveSideHistoryTombstone(thread, providerSessionId)
       }
     })
     session.on('event', (event) => {

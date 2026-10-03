@@ -62,6 +62,18 @@ export class ProviderHistory {
         try {
           const sessions = await history.list()
           if (this.#closed || this.hooks.canImport?.() === false) return
+          // Temporary sessions can close between scans, or disappear on restart.
+          // Their durable marker must win even before discovery has seen a row.
+          for (const entry of this.store.providerHistories()) {
+            if (entry.provider !== provider || !entry.session.internal) continue
+            this.#remember({
+              ...entry,
+              session: {
+                ...entry.session,
+                id: history.resolveSessionId?.(entry.session.id) ?? entry.session.id,
+              },
+            })
+          }
           // Starting a provider and scanning its saved sessions can overlap. Resolve
           // ownership only after the scan, preferring native tasks over imported copies.
           const nativeThreads = new Map(
@@ -115,6 +127,7 @@ export class ProviderHistory {
                 continue
               const key = `${provider}:${session.id}`
               const previous = this.#entries.get(key)
+              if (previous?.session.internal) continue
               const native = nativeThreads.get(session.id)
               const duplicateId = `external:${provider}:${session.id}`
               const duplicate = native && this.store.thread(duplicateId)
@@ -141,7 +154,17 @@ export class ProviderHistory {
               if (previous && !native && !this.store.thread(previous.threadId)) continue
               const existing =
                 native ?? (previous ? this.store.thread(previous.threadId) : undefined)
-              if (existing?.ephemeral) continue
+              if (existing?.ephemeral) {
+                const internal = { ...session, internal: true }
+                this.store.saveProviderHistory(provider, existing.id, internal)
+                imported.push({
+                  provider,
+                  threadId: existing.id,
+                  session: internal,
+                  loadedRevision: null,
+                })
+                continue
+              }
               const threadId = existing?.id ?? `external:${provider}:${session.id}`
               if (!existing) {
                 this.store.addProviderThread(threadId, provider, session)
@@ -182,7 +205,12 @@ export class ProviderHistory {
     const pending = this.#reading.get(threadId)
     if (pending) return pending
     let entry = this.#byThread.get(threadId)
-    if (!entry || !this.store.thread(threadId) || entry.loadedRevision === entry.session.revision)
+    if (
+      !entry ||
+      entry.session.internal ||
+      !this.store.thread(threadId) ||
+      entry.loadedRevision === entry.session.revision
+    )
       return false
     const provider = entry.provider
     const source = this.sources.find((source) => source.provider === provider)
