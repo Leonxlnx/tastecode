@@ -74,15 +74,17 @@ describe('radius system', () => {
     expect(commandPaletteCss).toMatch(
       /\.command-palette__panel \{[^}]*border-radius: var\(--r-lg\)/s,
     )
-    expect(appCss).toMatch(/\.composer__box \{[^}]*border-radius: var\(--r-card\)/s)
+    expect(tokensCss).toContain('--r-composer: var(--r-2xl);')
+    expect(appCss).toMatch(/\.composer__box \{[^}]*border-radius: var\(--r-composer\)/s)
+    expect(appCss).toMatch(/\.composer__prompt \{[^}]*border-radius: var\(--r-composer\)/s)
     expect(appCss).toMatch(
-      /\.tools \.composer__add \{[^}]*height: 32px;[^}]*border-radius: var\(--r-md\)/s,
+      /\.tools \.composer__add \{[^}]*height: 32px;[^}]*border-radius: var\(--r-xl\)/s,
     )
     expect(appCss).toMatch(/\.icon-btn\.titlebar__toggle \{[^}]*border-radius: var\(--r-md\);/s)
     expect(appCss).toMatch(/\.stage \{[^}]*border-top-left-radius: var\(--r-lg\)/s)
     expect(appCss).toMatch(/\.rail__resize::before \{[^}]*border-top-left-radius: var\(--r-lg\)/s)
     expect(designBeamCss).toMatch(
-      /\.composer__design-beam \{[^}]*--design-beam-radius: var\(--r-card\);[^}]*--design-beam-inner-radius: calc\(var\(--r-card\) - 1px\);/s,
+      /\.composer__design-beam \{[^}]*--design-beam-radius: var\(--r-composer\);[^}]*--design-beam-inner-radius: calc\(var\(--r-composer\) - 1px\);/s,
     )
   })
 
@@ -119,7 +121,7 @@ describe('radius system', () => {
       /\.model-selector__model \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
     expect(designInputCss).toMatch(
-      /\.brief-input__option \{[^}]*min-height: 32px;[^}]*border-radius: var\(--r-md\);/s,
+      /\.brief-input__option \{[^}]*min-height: 32px;[^}]*border-radius: var\(--r-xl\);/s,
     )
     expect(resourcePickerCss).toMatch(
       /\.composer-resource-picker \{[^}]*border-radius: var\(--r-popup\);/s,
