@@ -13,10 +13,11 @@ let server: Server
 let url = ''
 let directory = ''
 let requests: Array<{ range: string | undefined }> = []
-let behavior: 'ranges' | 'ignore-ranges' | 'refuse-ranges' | 'stall' = 'ranges'
+let behavior: 'ranges' | 'ignore-ranges' | 'refuse-ranges' | 'stall' | 'silent' = 'ranges'
 
 function send(request: IncomingMessage, response: import('node:http').ServerResponse) {
   requests.push({ range: request.headers.range })
+  if (behavior === 'silent') return
   const range = /^bytes=(\d+)-$/.exec(request.headers.range ?? '')
   if (range && behavior === 'refuse-ranges') {
     response.writeHead(416).end()
@@ -132,12 +133,28 @@ describe('resumable update downloads', () => {
     // Cancel once the half the server sent is on disk, as quitting mid-download would.
     await vi.waitFor(async () => expect((await stat(stored())).size).toBe(bytes.length / 2))
     abort.abort()
-    await expect(attempt).rejects.toThrow()
+    await expect(attempt).rejects.toMatchObject({ name: 'AbortError' })
 
     behavior = 'ranges'
     requests = []
     expect(await readFile(await downloadVerified(options()))).toEqual(bytes)
     expect(requests).toEqual([{ range: `bytes=${bytes.length / 2}-` }])
+  })
+
+  it('gives up on a stalled connection and continues from its bytes next time', async () => {
+    behavior = 'stall'
+    await expect(downloadVerified(options({ stallTimeout: 300 }))).rejects.toThrow(/stalled/)
+    expect((await stat(stored())).size).toBe(bytes.length / 2)
+
+    behavior = 'ranges'
+    requests = []
+    expect(await readFile(await downloadVerified(options()))).toEqual(bytes)
+    expect(requests).toEqual([{ range: `bytes=${bytes.length / 2}-` }])
+  })
+
+  it('gives up when the server accepts the connection but never answers', async () => {
+    behavior = 'silent'
+    await expect(downloadVerified(options({ stallTimeout: 300 }))).rejects.toThrow(/stalled/)
   })
 
   it('keeps only the asset being downloaded', async () => {
