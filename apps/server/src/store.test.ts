@@ -1405,6 +1405,35 @@ describe('events', () => {
     expect(store.replaySnapshotBase('t1')).toBeUndefined()
   })
 
+  it('drops replay snapshots saved before chronological replay once, keeping raw history', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-chronological-'))
+    const file = path.join(dir, 'replay.db')
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'T' })
+      const seq = seeded.append('t1', message('kept'))
+      seeded.saveReplaySnapshot('t1', seq, [{ seq, event: message('stale order') }])
+      seeded.close()
+      const raw = new DatabaseSync(file)
+      raw
+        .prepare('DELETE FROM schema_migrations WHERE name = ?')
+        .run('chronological_replay_snapshots_v1')
+      raw.close()
+
+      const migrated = new Store(file)
+      expect(migrated.replaySnapshotBase('t1')).toBeUndefined()
+      expect(migrated.history('t1')).toHaveLength(1)
+      migrated.saveReplaySnapshot('t1', seq, [{ seq, event: message('kept') }])
+      migrated.close()
+      const reopened = new Store(file)
+      expect(reopened.replaySnapshotBase('t1')?.seq).toBe(seq)
+      reopened.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('drops the saved replay of a closed thread and keeps only recent replays on disk', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-bound-'))
     const file = path.join(dir, 'replay.db')

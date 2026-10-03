@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type { DomainEvent, ProviderHistorySession, ProviderHistorySource } from '@harness/contracts'
 import { ProviderHistory } from './provider-history.js'
@@ -115,6 +117,95 @@ describe('provider history integration', () => {
           : event,
       ),
     )
+    await history.refresh()
+    await history.load('local')
+    expect(
+      messages('local')
+        .filter((item) => item.role === 'user')
+        .map((item) => item.text),
+    ).toEqual(['Hello'])
+  })
+
+  it('imports outside turns of an isolated chat whose provider runs in its private worktree', async () => {
+    const worktree = path.join(process.cwd(), '.private-worktree')
+    store.addThread({
+      id: 'isolated',
+      projectPath: process.cwd(),
+      worktreePath: worktree,
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Isolated',
+    })
+    const { history } = setup([{ ...metadata(), workspacePath: worktree }])
+    await history.refresh()
+    expect(store.project(worktree)).toBeUndefined()
+    expect(store.providerHistories()[0]?.threadId).toBe('isolated')
+    await history.load('isolated')
+    expect(messages('isolated').map((item) => item.text)).toContain('Hello')
+    expect(store.thread('external:codex:native')).toBeUndefined()
+  })
+
+  it('files a session saved under another spelling of a project folder under that project', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'harness-history-alias-'))
+    try {
+      const project = path.join(root, 'App')
+      mkdirSync(project)
+      store.addProject(project)
+      const spellings = [`${project}${path.sep}`, project.split(path.sep).join('/')]
+      // Case aliases exist only where the file system folds case.
+      if (existsSync(project.toUpperCase())) spellings.push(project.toUpperCase())
+      const sessions = spellings.map((workspacePath, index) => ({
+        ...metadata(`alias-${index}`),
+        workspacePath,
+      }))
+      const { history } = setup([
+        ...sessions,
+        { ...metadata('elsewhere'), workspacePath: path.join(root, 'Other') },
+      ])
+      await history.refresh()
+      for (const session of sessions)
+        expect(store.thread(`external:codex:${session.id}`)?.projectPath).toBe(project)
+      expect(store.thread('external:codex:elsewhere')).toBeUndefined()
+      expect(store.project(spellings[0]!)).toBeUndefined()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('skips an isolated chat once its project is removed', async () => {
+    const worktree = path.join(process.cwd(), '.private-worktree')
+    store.addThread({
+      id: 'isolated',
+      projectPath: path.join(process.cwd(), 'removed-project'),
+      worktreePath: worktree,
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Isolated',
+    })
+    const { history, source } = setup([{ ...metadata(), workspacePath: worktree }])
+    await history.refresh()
+    expect(store.providerHistories()).toEqual([])
+    expect(source.read).not.toHaveBeenCalled()
+  })
+
+  it('recognizes the echo of a prompt that waited in the queue before its turn started', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    // Displayed at enqueue time; the provider received it 90 seconds later.
+    for (const event of transcript('local', 'Answer', 91_000))
+      store.append(
+        'local',
+        event.type === 'item.completed' && event.item.role === 'user'
+          ? { ...event, item: { ...event.item, createdAt: 1000 } }
+          : event,
+      )
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue(transcript('native', 'Answer', 91_000))
     await history.refresh()
     await history.load('local')
     expect(
@@ -360,6 +451,45 @@ describe('provider history integration', () => {
       ).toBe(false)
     },
   )
+
+  it('retries a duplicate repair that failed after the canonical chat was read', async () => {
+    const internal = transcript('native', 'Internal phase output')
+    const outside = transcript('outside', 'Real outside answer', 90000).slice(1)
+    const { history, source, hooks } = setup()
+    vi.mocked(source.read).mockResolvedValue([...internal, ...outside])
+    await history.refresh()
+    const duplicateId = 'external:codex:native'
+    await history.load(duplicateId)
+    for (const event of transcript('reply', 'Keep this reply', 180000).slice(1))
+      store.append(duplicateId, event)
+    store.addThread({
+      id: 'native',
+      provider: 'codex',
+      projectPath: process.cwd(),
+      title: 'My design',
+    })
+    for (const event of transcript('native', 'Clean design progress')) store.append('native', event)
+    const merge = store.mergeProviderHistory.bind(store)
+    let failed = false
+    vi.spyOn(store, 'mergeProviderHistory').mockImplementation((threadId, revision, entries) => {
+      if (threadId === duplicateId && !failed) {
+        failed = true
+        throw new Error('disk is full')
+      }
+      return merge(threadId, revision, entries)
+    })
+    await history.refresh()
+    expect(failed).toBe(true)
+    expect(messages(duplicateId).map((item) => item.text)).toContain('Internal phase output')
+    // A restart must not read the interrupted repair as complete.
+    const restarted = new ProviderHistory(store, [{ provider: 'codex', history: source }], hooks)
+    histories.push(restarted)
+    await restarted.refresh()
+    const repaired = messages(duplicateId).map((item) => item.text)
+    expect(repaired).toContain('Keep this reply')
+    expect(repaired).not.toContain('Internal phase output')
+    expect(store.providerHistories()[0]).toMatchObject({ threadId: 'native', loadedRevision: '1' })
+  })
 
   it('keeps the imported copy when canonical transcript recovery fails, then retries', async () => {
     const { history, source } = setup()

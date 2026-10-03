@@ -38,8 +38,11 @@ node apps/server/dist/cli.js history prune --before 2026-01-01 --archive old-his
 The tool writes and flushes the archive before it deletes any rows. It refuses to overwrite
 an existing archive. Active tasks and tasks with a private checkout remain. A failed archive
 write leaves the conversations in the database. The archive contains thread, event,
-checkpoint, restore, diff-decision, and design-run records in versioned NDJSON. It is an
-export for inspection or future import; there is no automatic import command.
+checkpoint, restore, diff-decision, and design-run records in versioned NDJSON. Version 2
+also carries imported provider history (`provider_history`) and the active-membership
+records that link events to it (`provider_history_events`), so retired imported turns stay
+retired if the archive is ever read back. It is an export for inspection or future import;
+there is no automatic import command.
 
 **The archive is not a backup of workspace files.** Save wanted file states as normal Git
 commits before removing their task history. Checkpoint refs for retained tasks remain,
