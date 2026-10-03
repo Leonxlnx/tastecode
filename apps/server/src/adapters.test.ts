@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs'
+import os from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CustomHarness } from '@harness/contracts'
 import type { StartOptions } from './adapters.js'
@@ -150,6 +152,14 @@ vi.mock('@harness/adapter-claude-code', () => ({
   ClaudeCodeAdapter: FakeClaudeCodeAdapter,
 }))
 vi.mock('@harness/adapter-codex', () => ({ CodexAdapter: FakeCodexAdapter }))
+const spawnedCli = vi.hoisted(() => [] as Array<{ cwd: string | undefined; env: unknown }>)
+vi.mock('@harness/proc/cli', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc/cli')>()),
+  spawnCli: (_command: string, _args: string[], options: { cwd?: string; env?: unknown }) => {
+    spawnedCli.push({ cwd: options.cwd, env: options.env })
+    return { pid: 1 }
+  },
+}))
 
 const { providerRuntime } = await import('./adapters.js')
 
@@ -252,6 +262,39 @@ describe('resumable provider setup', () => {
     },
   )
 
+  it('launches a Codex wrapper from the chat project, not the server folder', async () => {
+    // Anything but the server's own folder, which the wrapper would otherwise use.
+    const workspace = realpathSync(os.tmpdir())
+    const runtime = providerRuntime(
+      'codex',
+      () => {},
+      () => ({
+        id: 'custom-source',
+        displayName: 'Custom',
+        provider: 'codex',
+        command: process.execPath,
+        args: [],
+      }),
+    )
+    for (const resume of [false, true]) {
+      spawnedCli.length = 0
+      if (resume) await runtime.resume!('existing-thread', workspace, { agent: 'custom-source' })
+      else await runtime.start(workspace, { agent: 'custom-source' })
+      const spawn = turnAdapters.at(-1)!.launchOptions!.spawn as (
+        command: string,
+        args: string[],
+        options?: object,
+      ) => unknown
+      spawn('codex', ['app-server'])
+      expect(spawnedCli).toEqual([
+        {
+          cwd: workspace,
+          env: expect.objectContaining({ HARNESS_WORKSPACE_PATH: workspace }),
+        },
+      ])
+    }
+  })
+
   it.each([
     ['codex', 'initialize', 'initialize app-server', 'initialize app-server'],
     ['codex', 'session', undefined, undefined],
@@ -351,9 +394,12 @@ describe('one-shot provider turn options', () => {
     expect(turnAdapters[0]).toBeInstanceOf(FakeAcpAdapter)
     expect(turnAdapters[0]?.launchOptions).toMatchObject({
       provider: 'grok',
-      args: ['agent', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', 'stdio'],
+      settings: { model: 'grok-4.6', effort: 'xhigh' },
       mcpServers: [{ name: 'test-tools' }],
     })
+    expect(
+      turnAdapters[0]?.launchOptions?.argsFor?.({ model: 'grok-4.6', effort: 'xhigh' }),
+    ).toEqual(['agent', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', 'stdio'])
   })
 
   it('resumes Grok with separate TasteCode and provider session identities', async () => {
@@ -427,9 +473,12 @@ describe('one-shot provider turn options', () => {
     })
     expect(turnAdapters[0]?.launchOptions).toMatchObject({
       provider: 'grok',
-      args: ['agent', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', 'stdio'],
+      settings: { model: 'grok-4.6', effort: 'xhigh' },
       mcpServers: [{ name: 'test-tools' }],
     })
+    expect(
+      turnAdapters[0]?.launchOptions?.argsFor?.({ model: 'grok-4.6', effort: 'xhigh' }),
+    ).toEqual(['agent', '--model', 'grok-4.6', '--reasoning-effort', 'xhigh', 'stdio'])
   })
 
   it('explains how to recover when Grok never reported a native session id', async () => {
