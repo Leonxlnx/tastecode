@@ -62,6 +62,7 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { preloadThread } from './LazyThread.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ComposerErrors, useComposerError, type ComposerError } from './ComposerErrors.js'
+import { droppedFilePath } from './composer-dropped-file.js'
 
 const ComposerResourcePicker = lazy(() =>
   import('./ComposerResourcePicker.js').then((module) => ({
@@ -77,12 +78,6 @@ const ComposerVoiceControl = lazy(() =>
   })),
 )
 const DRAFT_HAS_CONTENT = /\S/u
-
-declare global {
-  interface File {
-    readonly path?: string
-  }
-}
 
 type ContextUsageStyle = CSSProperties & { '--context-used': number }
 
@@ -1138,7 +1133,7 @@ function ComposerComponent(props: {
     const picked: PickedAttachment[] = []
     const materialized: File[] = []
     for (const file of files) {
-      const filePath = file.path
+      const filePath = droppedFilePath(file)
       if (!filePath) {
         materialized.push(file)
         continue
@@ -1777,13 +1772,16 @@ function ComposerComponent(props: {
                   onBlur={() => setResourceTrigger(undefined)}
                   onPaste={(e) => {
                     const files = Array.from(e.clipboardData.files)
-                    const paths = files
-                      .filter((file) => previewMediaType(file.type, file.name) === undefined)
-                      .map((file) => file.path)
-                      .filter((path): path is string => path !== undefined && path !== '')
-                    const materialized = files.filter(
-                      (file) => previewMediaType(file.type, file.name) !== undefined || !file.path,
-                    )
+                    const paths: string[] = []
+                    const materialized: File[] = []
+                    for (const file of files) {
+                      const filePath =
+                        previewMediaType(file.type, file.name) === undefined
+                          ? droppedFilePath(file)
+                          : undefined
+                      if (filePath) paths.push(filePath)
+                      else materialized.push(file)
+                    }
                     if (materialized.length > 0 || paths.length > 0) {
                       e.preventDefault()
                       if (!props.attachmentsSupported) {

@@ -11,6 +11,12 @@ import {
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
 
+const { suspendNativeMenuShortcuts } = vi.hoisted(() => ({ suspendNativeMenuShortcuts: vi.fn() }))
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
+  suspendNativeMenuShortcuts,
+}))
+
 function StatefulKeybindSettings(props: { macOS?: boolean; onReset?: () => void }) {
   const [keybindings, setKeybindings] = useState<Keybindings>(createDefaultKeybindings)
   const change = (action: KeybindingId, shortcut: Shortcut | null) => {
@@ -73,6 +79,23 @@ describe('keybind settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear Command palette keybind' }))
     expect(recorder.textContent).toBe('Set keybind')
+  })
+
+  it('turns native menu accelerators off only while recording', () => {
+    suspendNativeMenuShortcuts.mockClear()
+    const view = render(<StatefulKeybindSettings />)
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+
+    fireEvent.click(recorder)
+    expect(suspendNativeMenuShortcuts.mock.calls).toEqual([[true]])
+    fireEvent.keyDown(recorder, { key: 'k', metaKey: true })
+    expect(suspendNativeMenuShortcuts.mock.calls).toEqual([[true]])
+    fireEvent.keyDown(recorder, { key: 'Escape' })
+    expect(suspendNativeMenuShortcuts.mock.calls).toEqual([[true], [false]])
+
+    fireEvent.click(recorder)
+    view.unmount()
+    expect(suspendNativeMenuShortcuts.mock.calls).toEqual([[true], [false], [true], [false]])
   })
 
   it('keeps recording when a keybind conflicts or has no safe modifier', () => {
