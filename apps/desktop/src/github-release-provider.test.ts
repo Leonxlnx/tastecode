@@ -236,6 +236,30 @@ describe('GitHub asset releases', () => {
     expect(deferredUntil(new Response(null, { status, headers }), now)).toBe(now + delay)
   })
 
+  it.each([
+    ['a day behind', '2026-10-02T10:00:00Z'],
+    ['a day ahead', '2026-10-04T10:00:00Z'],
+    ['correct', '2026-10-03T10:00:00Z'],
+  ])("waits for the reset by GitHub's clock when the local clock is %s", (_label, local) => {
+    const now = Date.parse(local)
+    const github = Date.parse('2026-10-03T10:00:00Z')
+    const response = new Response(null, {
+      status: 403,
+      headers: {
+        date: new Date(github).toUTCString(),
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String((github + 20 * 60 * 1000) / 1000),
+      },
+    })
+    expect(deferredUntil(response, now)).toBe(now + 20 * 60 * 1000)
+  })
+
+  it('never waits longer than an hour, whatever GitHub answers', () => {
+    const now = Date.parse('2026-10-03T10:00:00Z')
+    const response = new Response(null, { status: 429, headers: { 'retry-after': '86400' } })
+    expect(deferredUntil(response, now)).toBe(now + 60 * 60 * 1000)
+  })
+
   it('reports other GitHub failures without treating them as a rate limit', async () => {
     const forbidden = vi.fn<ReleaseFetch>().mockResolvedValue(new Response('', { status: 403 }))
     await expect(providerWith(forbidden).getLatestVersion()).rejects.toThrow(/HTTP 403/)

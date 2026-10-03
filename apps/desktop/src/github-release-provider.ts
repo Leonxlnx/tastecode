@@ -42,16 +42,24 @@ export class UpdateCheckDeferredError extends Error {
   }
 }
 
+// GitHub's rate limit windows last an hour at most.
+const MAX_DEFERRAL = 60 * 60 * 1000
+
 /** When a rate-limited response says the next request may succeed. */
 export function deferredUntil(response: Response, now = Date.now()): number | undefined {
   if (response.status !== 403 && response.status !== 429) return undefined
+  const wait = (milliseconds: number) => now + Math.min(Math.max(milliseconds, 0), MAX_DEFERRAL)
   const retryAfter = Number(response.headers.get('retry-after'))
-  if (Number.isFinite(retryAfter) && retryAfter > 0) return now + retryAfter * 1000
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return wait(retryAfter * 1000)
   if (response.headers.get('x-ratelimit-remaining') === '0') {
     const reset = Number(response.headers.get('x-ratelimit-reset'))
-    if (Number.isFinite(reset) && reset > 0) return Math.max(now, reset * 1000)
+    // The reset is a moment on GitHub's clock; measure it against GitHub's own
+    // Date header so a wrong local clock neither waits a day nor retries early.
+    const answered = Date.parse(response.headers.get('date') ?? '')
+    if (Number.isFinite(reset) && reset > 0)
+      return wait(reset * 1000 - (Number.isFinite(answered) ? answered : now))
   }
-  return response.status === 429 ? now + 60_000 : undefined
+  return response.status === 429 ? wait(60_000) : undefined
 }
 
 function versionFromTag(tag: string): string | undefined {
