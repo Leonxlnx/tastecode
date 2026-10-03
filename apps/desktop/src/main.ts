@@ -916,7 +916,13 @@ if (ownsSingleInstance) {
     logStartupMilestone('diagnostics-ready')
 
     appUpdater = createAppUpdateController({
-      loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
+      loadUpdater: async () =>
+        (await import('./release-updater.js')).createReleaseUpdater({
+          // electron-updater's own uncached session: the system proxy applies and
+          // no browsing cookies ride along to GitHub.
+          fetch: (url, init) =>
+            session.fromPartition('electron-updater', { cache: false }).fetch(url, init),
+        }),
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
       onError: (cause) => void diagnostics?.record('updater', cause),
