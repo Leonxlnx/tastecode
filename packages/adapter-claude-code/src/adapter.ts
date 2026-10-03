@@ -1236,14 +1236,15 @@ function approvalRequest(
       ? ('file_change' as const)
       : ('permissions' as const)
   const pathValue = options.blockedPath ?? input['file_path'] ?? input['path']
+  const explanation = options.title ?? options.description ?? options.decisionReason
+  const reason =
+    kind === 'permissions'
+      ? [toolName, explanation, JSON.stringify(input)].filter(Boolean).join('\n').slice(0, 2_000)
+      : explanation
   return {
     id,
     kind,
-    ...(options.title || options.description || options.decisionReason
-      ? {
-          reason: options.title ?? options.description ?? options.decisionReason,
-        }
-      : {}),
+    ...(reason ? { reason } : {}),
     ...(kind === 'command'
       ? {
           command: String(input['command'] ?? toolName),

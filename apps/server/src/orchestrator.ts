@@ -91,7 +91,7 @@ import { McpConfigStore } from './mcp-config.js'
 import { readCredential } from './credentials.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
 import { TerminalManager } from './terminal.js'
-import { installLocalSkill } from './skill-install.js'
+import { insideSkillFolder, installLocalSkill, sameSkillFolder } from './skill-install.js'
 import type { RunningPreview } from './design-preview-runner.js'
 import { assertPublicWorkspaceFile, existingWorkspacePath } from './api-workspace-paths.js'
 import { sideChatInstructionsFromReplay } from './side-chat.js'
@@ -1018,13 +1018,12 @@ export class Orchestrator {
       const inventory = await control.listSkills(projectPath)
       const installed = inventory.skills.find(
         (skill) =>
-          skill.source.type === 'folder' &&
-          path.resolve(skill.source.path) === path.resolve(destination),
+          skill.source.type === 'folder' && sameSkillFolder(skill.source.path, destination),
       )
       if (installed) return installed
 
       const discoveryError = inventory.errors.find((error) =>
-        path.resolve(error.path).startsWith(`${path.resolve(destination)}${path.sep}`),
+        insideSkillFolder(error.path, destination),
       )
       throw new Error(discoveryError?.message ?? 'Provider did not discover the installed skill')
     } catch (error) {
