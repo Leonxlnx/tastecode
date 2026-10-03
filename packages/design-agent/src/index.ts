@@ -107,12 +107,14 @@ export {
   ExactBuildFilesError,
 } from './build-phase.js'
 export {
+  croppedReviewScreenshots,
   designRepairPrompt,
   designReviewPrompt,
   enforceDomAuditFindings,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
   readVisualReview,
+  validateReviewScreenshots,
   writeVisualReview,
   type RepairPhaseOutput,
   type ReviewScreenshot,
