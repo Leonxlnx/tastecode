@@ -1788,6 +1788,7 @@ function AboutSettings(props: { transport: Transport }) {
   const short = (sha: string) => sha.slice(0, 7)
   const nativeChecking = nativeUpdate?.status === 'checking'
   const nativeDownloading = nativeUpdate?.status === 'downloading'
+  const nativePreparing = nativeUpdate?.status === 'preparing'
   const nativeReady = nativeUpdate?.status === 'ready'
   // Verdicts stay on the row's one line; a failure goes behind the red dot.
   const updateStatus = !result
@@ -1813,12 +1814,17 @@ function AboutSettings(props: { transport: Transport }) {
             state: 'checking' as const,
             detail: `Downloading${nativeUpdate.version ? ` ${nativeUpdate.version}` : ''}${nativeUpdate.progress === undefined ? '' : ` · ${nativeUpdate.progress}%`}`,
           }
-        : nativeReady
+        : nativePreparing
           ? {
-              state: 'ready' as const,
-              detail: `${nativeUpdate.version ?? 'Update'} ready`,
+              state: 'checking' as const,
+              detail: `Preparing ${nativeUpdate.version ?? 'update'}`,
             }
-          : undefined
+          : nativeReady
+            ? {
+                state: 'ready' as const,
+                detail: `${nativeUpdate.version ?? 'Update'} ready`,
+              }
+            : undefined
 
   return (
     <SettingsPanel title="About">
@@ -1846,7 +1852,7 @@ function AboutSettings(props: { transport: Transport }) {
         <button
           className="settings__action"
           type="button"
-          disabled={checking || nativeChecking || nativeDownloading}
+          disabled={checking || nativeChecking || nativeDownloading || nativePreparing}
           onClick={() => void (nativeReady ? installAppUpdate() : check())}
         >
           <RotateCcw size={13} aria-hidden />
@@ -1854,9 +1860,11 @@ function AboutSettings(props: { transport: Transport }) {
             ? 'Restart to update'
             : nativeDownloading
               ? 'Downloading…'
-              : checking || nativeChecking
-                ? 'Checking…'
-                : 'Check for updates'}
+              : nativePreparing
+                ? 'Preparing…'
+                : checking || nativeChecking
+                  ? 'Checking…'
+                  : 'Check for updates'}
         </button>
       </SettingsRow>
       <SettingsRow title="Source">
