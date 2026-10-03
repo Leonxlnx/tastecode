@@ -26,7 +26,7 @@ import type {
   ThreadLifecycle,
 } from '@harness/contracts'
 import {
-  IconArchive as Archive,
+  IconTrash as Trash,
   IconChevronUp as ChevronUp,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -1352,8 +1352,8 @@ const ProjectRow = memo(function ProjectRow(props: {
                     }}
                   />
                   <MenuItem
-                    title="Archive chats"
-                    icon={<Archive size={14} aria-hidden />}
+                    title="Delete chats"
+                    icon={<Trash size={14} aria-hidden />}
                     onClick={() => {
                       setConfirming('archive')
                       close()
@@ -1385,14 +1385,14 @@ const ProjectRow = memo(function ProjectRow(props: {
 
       {confirming ? (
         <SidebarConfirmDialog
-          title={confirming === 'archive' ? 'Archive all chats?' : 'Remove project?'}
+          title={confirming === 'archive' ? 'Delete all chats?' : 'Remove project?'}
           body={
             confirming === 'archive'
-              ? `This archives every chat in ${displayName(props.project)}. Files on your computer stay untouched.`
+              ? `This permanently deletes every chat and its restore points in ${displayName(props.project)} after the Undo window. Files on your computer stay untouched.`
               : 'This only removes the project from the sidebar. Its folder and chats stay untouched.'
           }
-          action={confirming === 'archive' ? 'Archive chats' : 'Remove project'}
-          destructive={confirming === 'remove'}
+          action={confirming === 'archive' ? 'Delete chats' : 'Remove project'}
+          destructive
           onConfirm={() => {
             if (confirming === 'archive') {
               props.onArchiveProject(props.project.sessions.map((session) => session.id))
@@ -1753,10 +1753,10 @@ function SessionRow(props: {
           type="button"
           className="sess__action"
           onClick={props.onDelete}
-          aria-label={`Archive ${props.session.title}`}
-          title="Archive chat"
+          aria-label={`Delete ${props.session.title}`}
+          title="Delete chat"
         >
-          <Archive size={14} aria-hidden />
+          <Trash size={14} aria-hidden />
         </button>
       </span>
 
@@ -1793,8 +1793,8 @@ function SessionRow(props: {
               }}
             />
             <MenuItem
-              title="Archive chat"
-              icon={<Archive size={14} aria-hidden />}
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
               onClick={() => {
                 props.onDelete()
                 close()
