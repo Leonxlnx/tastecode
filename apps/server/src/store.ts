@@ -216,6 +216,7 @@ const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
 const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v1'
 const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
+const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
 const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
 // The renderer owns one active search. Keep a few recently used cursors for
@@ -1170,6 +1171,14 @@ export class Store {
       recovery: !completedMigrations.has(RECOVERY_STATE_VERSION),
     }
     if (Object.values(rebuild).some(Boolean)) this.#rebuildDerivedIndexes(rebuild)
+    if (!completedMigrations.has(CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION)) {
+      this.#transaction(() => {
+        this.#db.exec('DELETE FROM thread_replay_snapshots')
+        this.#db
+          .prepare('INSERT INTO schema_migrations (name) VALUES (?)')
+          .run(CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION)
+      })
+    }
     if (!completedMigrations.has(BOUNDED_REPLAY_SNAPSHOTS_VERSION)) {
       this.#transaction(() => {
         this.#db.exec(
@@ -1368,12 +1377,17 @@ export class Store {
     })
   }
 
-  addProviderThread(id: string, provider: ProviderId, session: ProviderHistorySession): void {
+  addProviderThread(
+    id: string,
+    provider: ProviderId,
+    session: ProviderHistorySession,
+    projectPath = session.workspacePath,
+  ): void {
     const thread = this.addThread({
       id,
       provider,
       providerSessionId: session.id,
-      projectPath: session.workspacePath,
+      projectPath,
       title: session.title || 'Untitled chat',
       createdAt: session.createdAt,
     })
@@ -2139,13 +2153,15 @@ export class Store {
       }
       write({
         format: 'tastecode-history',
-        version: 1,
+        version: 2,
         exportedAt: Date.now(),
         checkpointNamespace: this.checkpointNamespace,
       })
       const tables = [
         'threads',
         'events',
+        'provider_history',
+        'provider_history_events',
         'checkpoints',
         'restore_undos',
         'diff_decisions',

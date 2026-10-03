@@ -41,7 +41,6 @@ import { ProviderControls } from './provider-controls.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
-import { orderProviderHistory } from './provider-history-order.js'
 import { RESTORE_CONTEXT_NOTICE, StartupCleanupError } from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
@@ -2055,9 +2054,7 @@ export class Orchestrator {
       }
       const base = this.#store.replaySnapshotBase(threadId)
       const tail = this.#store.history(threadId, base?.seq ?? 0)
-      const compacted = orderProviderHistory(
-        compactHistoryReplay(base ? [...base.entries, ...tail] : tail),
-      )
+      const compacted = compactHistoryReplay(base ? [...base.entries, ...tail] : tail)
       const seq = tail.at(-1)?.seq ?? base?.seq ?? 0
       const serializedEvents = this.#store.saveReplaySnapshot(threadId, seq, compacted)
       return { events: compacted, serializedEvents }

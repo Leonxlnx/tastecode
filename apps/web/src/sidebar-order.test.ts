@@ -46,4 +46,27 @@ describe('stored sidebar order', () => {
       'one',
     ])
   })
+
+  it('slots chats missing from a dragged order in by date', () => {
+    const chat = (id: string, createdAt: number) => ({ id, createdAt })
+    // Server order is newest first; the user dragged the oldest chat to the top.
+    const sessions = [
+      chat('import-4', 4),
+      chat('saved-3', 3),
+      chat('import-2', 2),
+      chat('saved-1', 1),
+    ]
+
+    expect(
+      applySessionOrder('/one', sessions, { '/one': ['saved-1', 'saved-3'] }).map(({ id }) => id),
+    ).toEqual(['import-4', 'import-2', 'saved-1', 'saved-3'])
+    expect(
+      applySessionOrder('/one', sessions, { '/one': ['saved-3', 'saved-1'] }).map(({ id }) => id),
+    ).toEqual(['import-4', 'saved-3', 'import-2', 'saved-1'])
+    expect(
+      applySessionOrder('/one', [chat('new', 5), ...sessions], {
+        '/one': ['import-4', 'saved-3', 'import-2', 'saved-1'],
+      }).map(({ id }) => id),
+    ).toEqual(['new', 'import-4', 'saved-3', 'import-2', 'saved-1'])
+  })
 })
