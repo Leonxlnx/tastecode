@@ -135,19 +135,40 @@ describe('GitHub asset releases', () => {
     expect(fetch.mock.calls[0]![0]).toBe('https://github.com/Leonxlnx/tastecode/releases.atom')
   })
 
-  it('confirms a newer tag through the API and skips tags without a published release', async () => {
-    const fetch = feedFetch(feed('v0.1.3', 'v0.1.2', 'v0.1.1'), {
-      'v0.1.3': new Response(null, { status: 404 }),
+  it('confirms the newest tag through the API with one request', async () => {
+    const fetch = feedFetch(feed('v0.1.2', 'v0.1.1'), {
       'v0.1.2': Response.json(localRelease('0.1.2')),
     })
-    const result = await providerWith(fetch, '0.1.1').getLatestVersion()
-    expect(result.version).toBe('0.1.2')
+    expect((await providerWith(fetch, '0.1.1').getLatestVersion()).version).toBe('0.1.2')
     expect(fetch.mock.calls.map(([url]) => url)).toEqual([
       'https://github.com/Leonxlnx/tastecode/releases.atom',
-      'https://api.github.com/repos/Leonxlnx/tastecode/releases/tags/v0.1.3',
       'https://api.github.com/repos/Leonxlnx/tastecode/releases/tags/v0.1.2',
     ])
     expect(JSON.stringify(fetch.mock.calls)).not.toMatch(/authorization|\.yml/i)
+  })
+
+  it('looks past any number of unpublished tags with one list request', async () => {
+    const drafts = ['v0.2.5', 'v0.2.4', 'v0.2.3', 'v0.2.2', 'v0.2.1', 'v0.2.0']
+    const fetch = feedFetch(
+      feed(...drafts, 'v0.1.3', 'v0.1.2'),
+      { 'v0.2.5': new Response(null, { status: 404 }) },
+      [localRelease('0.1.3'), localRelease('0.1.2')],
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+    expect(fetch.mock.calls.map(([url]) => url.split('/').pop())).toEqual([
+      'releases.atom',
+      'v0.2.5',
+      'releases?per_page=100&page=1',
+    ])
+  })
+
+  it('treats a tag whose release has no publication date as unpublished', async () => {
+    const fetch = feedFetch(
+      feed('v0.1.3', 'v0.1.2'),
+      { 'v0.1.3': Response.json({ ...localRelease('0.1.3'), published_at: null }) },
+      [localRelease('0.1.2')],
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.2')
   })
 
   it('offers a release published as a GitHub pre-release to every install', async () => {
@@ -239,9 +260,10 @@ ${entries.join('\n')}
 </feed>`
 }
 
-function feedFetch(atom: string, releases: Record<string, Response> = {}) {
+function feedFetch(atom: string, releases: Record<string, Response> = {}, list?: unknown[]) {
   return vi.fn<ReleaseFetch>(async (url) => {
     if (url.endsWith('/releases.atom')) return new Response(atom)
+    if (list && url.endsWith('/releases?per_page=100&page=1')) return Response.json(list)
     const tag = /\/releases\/tags\/(.+)$/.exec(url)?.[1]
     const answer = tag === undefined ? undefined : releases[decodeURIComponent(tag)]
     if (!answer) throw new Error(`Unexpected request: ${url}`)
