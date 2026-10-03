@@ -103,9 +103,10 @@ let rpc: FakeAcpRpc | undefined
 
 function adapter(): AcpAdapter {
   rpc = new FakeAcpRpc()
-  return new AcpAdapter('gemini', {
-    name: 'Gemini',
-    command: 'gemini',
+  return new AcpAdapter('grok', {
+    name: 'Grok',
+    command: 'grok',
+    provider: 'grok',
   })
 }
 
@@ -119,7 +120,7 @@ async function startedAdapter(approval: 'ask' | 'auto') {
   const events: DomainEvent[] = []
   current.on('event', (event) => events.push(event))
   await current.startThread('C:\\repo', { approval })
-  const threadId = 'acp-gemini-sess-1'
+  const threadId = 'acp-grok-sess-1'
   const turnId = await current.sendTurn(threadId, 'go')
   return { adapter: current, events, turnId }
 }
@@ -132,7 +133,7 @@ describe('ACP approval lifecycle', () => {
     await current.startThread('C:\\repo')
 
     await expect(
-      current.sendTurn('acp-gemini-sess-1', 'review', ['preview.png']),
+      current.sendTurn('acp-grok-sess-1', 'review', ['preview.png']),
     ).rejects.toMatchObject({ code: 'ENOENT' })
     expect(events).toEqual([])
   })

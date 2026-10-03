@@ -480,13 +480,13 @@ describe('ModelSelector', () => {
     expect(onModelChange).not.toHaveBeenCalled()
   })
 
-  it('keeps ACP sources distinct by stable agent identity', async () => {
-    const acpModels: ModelChoice[] = ['gemini', 'qwen'].map((agentId) => ({
+  it('keeps custom harness sources distinct by stable agent identity', async () => {
+    const harnessModels: ModelChoice[] = ['work-codex', 'home-codex'].map((agentId) => ({
       ...MODELS[0]!,
-      key: `acp:${agentId}:default`,
-      provider: 'acp',
+      key: `codex:${agentId}:default`,
+      provider: 'codex',
       sourceName: 'Workspace agent',
-      mark: 'acp',
+      mark: 'openai',
       agent: { id: agentId, name: 'Workspace agent' },
       model: {
         ...MODELS[0]!.model,
@@ -497,9 +497,9 @@ describe('ModelSelector', () => {
       },
     }))
 
-    expect(groupModelsBySource(acpModels).map((group) => group.key)).toEqual([
-      'acp:gemini',
-      'acp:qwen',
+    expect(groupModelsBySource(harnessModels).map((group) => group.key)).toEqual([
+      'codex:work-codex',
+      'codex:home-codex',
     ])
   })
 

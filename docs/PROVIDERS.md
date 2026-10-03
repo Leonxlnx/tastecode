@@ -10,6 +10,9 @@ TasteCode supports two different things that must not be conflated:
 The UI presents both as ways to start a session, while the adapter boundary keeps their
 implementation details out of shared contracts and components.
 
+Since 2026-10-03 `main` ships only Codex, Claude Code and Grok. Everything else in this plan,
+model connections included, lives on the `nightly` branch only.
+
 ## Integration matrix
 
 | User-facing option     | Integration                                        | Shared implementation                              |

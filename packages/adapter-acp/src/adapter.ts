@@ -7,9 +7,6 @@ import type {
   ApprovalMode,
   Capabilities,
   DomainEvent,
-  McpConfigValue,
-  McpServerConfig,
-  Model,
   ProviderId,
   Thread,
 } from '@harness/contracts'
@@ -21,9 +18,9 @@ import {
   type ParsedJsonRpcRequestOptions,
   type ServerRequestHandler,
 } from '@harness/proc'
-import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { Streamer } from './events.js'
+import type { AcpMcpServer } from './mcp.js'
 import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
@@ -39,14 +36,14 @@ import {
 } from './protocol.js'
 
 /**
- * One adapter for every agent that speaks the Agent Client Protocol.
+ * Client for the Agent Client Protocol.
  *
- * This is the whole argument for supporting ACP: Gemini, Kimi, Qwen and
- * anything else that adopts it arrive through this file rather than through a
- * new package each. Agent-specific knowledge is limited to a launch command in
- * agents.ts.
+ * On main this is not a provider: Grok runs over it when a project has MCP
+ * servers, because Grok's ACP mode accepts MCP servers per session. The ACP
+ * agent roster (Gemini, Kimi, Qwen) lives on the nightly branch only.
  *
- * Verified against gemini-cli in `--experimental-acp` mode.
+ * Verified against gemini-cli in `--experimental-acp` mode; the fixtures in
+ * the tests are those captured frames.
  *
  * As with every adapter here, we spawn the vendor's binary and let it
  * authenticate itself. See rules/security.md.
@@ -68,7 +65,7 @@ export type AcpLaunchOptions = {
   command: string
   args?: string[]
   spawn?: typeof spawnCli
-  provider?: ProviderId
+  provider: ProviderId
   mcpServers?: AcpMcpServer[]
 }
 
@@ -90,70 +87,21 @@ export interface AcpRpc {
   dispose(): void | Promise<void>
 }
 
-export type AcpMcpServer =
-  | {
-      name: string
-      command: string
-      args: string[]
-      env: Array<{ name: string; value: string }>
-    }
-  | {
-      type: 'http'
-      name: string
-      url: string
-      headers: Array<{ name: string; value: string }>
-    }
+export { prepareAcpMcpServers, type AcpMcpServer } from './mcp.js'
 
-/** Translate TasteCode's credential-safe config into the ACP session shape. */
-export function prepareAcpMcpServers(
-  servers: McpServerConfig[],
-  credentials: Record<string, string>,
-): AcpMcpServer[] {
-  const result: AcpMcpServer[] = []
-  for (const server of servers) {
-    if (!server.enabled) continue
-    const transport = server.transport
-    if (transport.type === 'stdio') {
-      if (transport.cwd) {
-        throw new Error(`MCP server "${server.id}" cannot use a custom cwd through ACP`)
-      }
-      result.push({
-        name: server.id,
-        command: transport.command,
-        args: transport.args ?? [],
-        env: Object.entries(transport.environment ?? {}).map(([name, value]) => ({
-          name,
-          value: resolveMcpValue(value, credentials),
-        })),
-      })
-      continue
-    }
-    result.push({
-      type: 'http',
-      name: server.id,
-      url: transport.url,
-      headers: Object.entries(transport.headers ?? {}).map(([name, value]) => ({
-        name,
-        value: resolveMcpValue(value, credentials),
-      })),
-    })
-  }
-  return result
+type AcpLaunchSpec = {
+  id: string
+  name: string
+  /** Executable, resolved on PATH. May be an npm shim on Windows. */
+  command: string
+  args: string[]
+  /** Wire version captured while verifying this agent. */
+  supportedVersion?: string
+  /** CLI flag used to select a model before the ACP handshake. */
+  modelArg?: string
+  /** ACP config option used to select a model after creating a session. */
+  modelConfigId?: string
 }
-
-function resolveMcpValue(value: McpConfigValue, credentials: Record<string, string>): string {
-  if (value.source === 'literal') return value.value
-  const credential = credentials[value.credentialRef]
-  if (credential === undefined) {
-    throw new Error(`MCP credential "${value.credentialRef}" is unavailable`)
-  }
-  return credential
-}
-
-type AcpLaunchSpec = Pick<
-  AcpAgentSpec,
-  'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
->
 
 const IMAGE_MIME_TYPES = new Map([
   ['.gif', 'image/gif'],
@@ -212,23 +160,17 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
 
-  constructor(agentId: string, launch?: AcpLaunchOptions) {
+  constructor(agentId: string, launch: AcpLaunchOptions) {
     super()
-    this.#spawn = launch?.spawn ?? spawnCli
-    this.#provider = launch?.provider ?? 'acp'
-    this.#mcpServers = launch?.mcpServers ?? []
-    if (launch) {
-      this.#spec = {
-        id: agentId,
-        name: launch.name,
-        command: launch.command,
-        args: launch.args ?? [],
-      }
-      return
+    this.#spawn = launch.spawn ?? spawnCli
+    this.#provider = launch.provider
+    this.#mcpServers = launch.mcpServers ?? []
+    this.#spec = {
+      id: agentId,
+      name: launch.name,
+      command: launch.command,
+      args: launch.args ?? [],
     }
-    const spec = findAgentSpec(agentId)
-    if (!spec) throw new Error(`unknown ACP agent "${agentId}"`)
-    this.#spec = spec
   }
 
   get capabilities(): Capabilities {
@@ -393,10 +335,6 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   /** Live access-level change; read again for every permission request. */
   setApproval(approval: ApprovalMode | undefined): void {
     this.#setApproval(approval)
-  }
-
-  async listModels(): Promise<Model[]> {
-    return discoverAgentModels(this.#spec.id)
   }
 
   /** Complete the ACP initialize handshake without creating a paid session. */

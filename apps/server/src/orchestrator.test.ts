@@ -266,7 +266,6 @@ function harness(
         thread: {
           id: `thread-${sessions.length}`,
           provider,
-          ...(provider === 'api' ? { connectionId: 'test-connection' } : {}),
           workspacePath,
           createdAt: Date.now(),
         },
@@ -929,7 +928,7 @@ describe('provider-neutral Side chat', () => {
 
   it('reuses the compact replay snapshot for a long parent boundary', async () => {
     const { orchestrator, store } = harness()
-    const parent = await orchestrator.startThread('api', process.cwd())
+    const parent = await orchestrator.startThread('claude-code', process.cwd())
     store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
     for (let index = 0; index < 100; index += 1) {
       store.append(parent.id, {
@@ -1167,7 +1166,7 @@ describe('durable turn timing', () => {
     const optimistic = beginOptimisticTurn(emptyThread, 'Do the work.')
     const { orchestrator, sessions, store } = harness()
     try {
-      const thread = await orchestrator.startThread('api', '/repo')
+      const thread = await orchestrator.startThread('claude-code', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-replay')
       await orchestrator.sendTurn(thread.id, 'Do the work.')
@@ -1204,7 +1203,7 @@ describe('durable turn timing', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const { orchestrator, sessions, store } = harness()
     try {
-      const thread = await orchestrator.startThread('api', '/repo')
+      const thread = await orchestrator.startThread('claude-code', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-sync')
       session.eventDuringSend = {
@@ -1224,7 +1223,7 @@ describe('durable turn timing', () => {
     }
   })
 
-  it.each(['codex', 'api'] as const)(
+  it.each(['codex', 'claude-code'] as const)(
     'records server-owned lifecycle boundaries for %s turns',
     async (provider) => {
       const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
@@ -1719,7 +1718,6 @@ describe('durable user submissions', () => {
     ['codex', true],
     ['claude-code', false],
     ['grok', false],
-    ['api', false],
   ] as const)('owns exact repeated user messages for %s', async (provider, emitsUserEcho) => {
     const { orchestrator, sessions, store } = harness()
     try {
@@ -1768,7 +1766,7 @@ describe('durable user submissions', () => {
     let release = () => {}
     let submitting = Promise.resolve<unknown>(undefined)
     try {
-      const thread = await orchestrator.startThread('api', '/repo')
+      const thread = await orchestrator.startThread('claude-code', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-in-flight')
       session.eventDuringSend = turnStarted(thread.id, 'turn-in-flight')
@@ -1857,7 +1855,7 @@ describe('durable user submissions', () => {
   it('releases rejected identities but rejects a durable reuse', async () => {
     const { orchestrator, sessions } = harness()
     try {
-      const thread = await orchestrator.startThread('api', '/repo')
+      const thread = await orchestrator.startThread('claude-code', '/repo')
       const session = sessions[0]!
       session.sendError = new Error('provider rejected')
       await expect(
@@ -2023,7 +2021,7 @@ describe('provider-neutral design briefing', () => {
         path.join(workspace, 'comparison-mobile.html'),
         `<img src="data:image/png;base64,${'A'.repeat(2_100_000)}">`,
       )
-      const thread = await orchestrator.startThread('api', workspace)
+      const thread = await orchestrator.startThread('claude-code', workspace)
       await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
       expect(sessions[0]?.sent).toHaveLength(1)
       expect(store.designRun(thread.id)).toMatchObject({
@@ -2433,7 +2431,7 @@ describe('provider-neutral design briefing', () => {
     writeFileSync(reference, 'reference bytes')
     const { orchestrator, sessions, store } = harness()
     try {
-      const thread = await orchestrator.startThread('api', workspace)
+      const thread = await orchestrator.startThread('claude-code', workspace)
       Object.defineProperty(sessions[0], 'capabilities', {
         value: { ...CAPABILITIES, images: false },
       })
@@ -4626,6 +4624,26 @@ describe('MCP inventory', () => {
         orchestrator.updateMcpServer('claude-code', '/repo', { id: 'docs', enabled: false }),
       ).toThrow('cannot hide an inherited MCP server')
       expect(await orchestrator.listMcpServers('claude-code', '/repo')).toEqual(saved)
+      expect(sessions).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('refuses Grok MCP settings that its ACP launch cannot honor', async () => {
+    const { orchestrator, sessions } = harness()
+    try {
+      expect(() =>
+        orchestrator.addMcpServer('grok', '/repo', {
+          id: 'custom',
+          enabled: true,
+          transport: { type: 'stdio', command: 'node', args: [], cwd: '/work/tools' },
+        }),
+      ).toThrow('custom working directory')
+      expect(() =>
+        orchestrator.addMcpServer('grok', '/repo', { id: 'hidden', enabled: false }),
+      ).toThrow('cannot be hidden through ACP')
+      expect((await orchestrator.listMcpServers('grok', '/repo')).servers).toEqual([])
       expect(sessions).toEqual([])
     } finally {
       await orchestrator.disposeAll()

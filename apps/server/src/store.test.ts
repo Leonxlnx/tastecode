@@ -1102,15 +1102,15 @@ describe('threads', () => {
     store.addProject('/repo')
   })
 
-  it('keeps the ACP agent, because the provider alone cannot start the session', () => {
+  it('keeps the custom harness id, because the provider alone cannot start the session', () => {
     store.addThread({
       id: 't1',
       projectPath: '/repo',
-      provider: 'acp',
-      agent: 'gemini',
+      provider: 'codex',
+      agent: 'codex-fork',
       title: 'One',
     })
-    expect(store.thread('t1')?.agent).toBe('gemini')
+    expect(store.thread('t1')?.agent).toBe('codex-fork')
   })
 
   it('leaves the agent unset for providers that are a single engine', () => {
