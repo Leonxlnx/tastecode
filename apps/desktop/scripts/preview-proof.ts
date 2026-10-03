@@ -33,7 +33,13 @@ const server = createServer((request, response) => {
     return
   }
   response.end(`<!doctype html><html><body style="height:640px"><h1>Preview capture proof</h1>
-    <script>Math.min = () => 100000000; localStorage.setItem('preview-proof', 'dirty');</script>
+    <button id="tiny" style="width:20px;height:20px">x</button>
+    <div style="height:0;overflow:hidden"><button id="collapsed">x</button></div>
+    <div id="host"></div>
+    <script>Math.min = () => 100000000; localStorage.setItem('preview-proof', 'dirty');
+      document.getElementById('host').attachShadow({ mode: 'open' }).innerHTML =
+        '<button style="width:20px;height:20px">s</button>';
+      scrollTo(0, 400);</script>
   </body></html>`)
 })
 const deadline = setTimeout(() => {
@@ -60,11 +66,16 @@ function createOwner(timeoutMs = 2_000): PreviewCaptureOwner {
       })
       active.add(window)
       maximumActive = Math.max(maximumActive, active.size)
-      const capturePage = window.webContents.capturePage.bind(window.webContents)
-      window.webContents.capturePage = async (rect) => {
-        nativeRect = rect
-        observedPageMath = await window.webContents.executeJavaScript('Math.min(12000, 100000000)')
-        return capturePage(rect)
+      const devtools = window.webContents.debugger
+      const sendCommand = devtools.sendCommand.bind(devtools)
+      devtools.sendCommand = async (method, parameters, sessionId) => {
+        if (method === 'Page.captureScreenshot') {
+          nativeRect = (parameters as { clip?: Electron.Rectangle } | undefined)?.clip
+          observedPageMath = await window.webContents.executeJavaScript(
+            'Math.min(12000, 100000000)',
+          )
+        }
+        return sendCommand(method, parameters, sessionId)
       }
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
       return window
@@ -130,6 +141,16 @@ async function main() {
   assert.equal(first.status, 'completed')
   assert.equal(observedPageMath, 100_000_000)
   assert.ok(nativeRect && nativeRect.height <= 12_000 && nativeRect.height >= 240)
+  // The audit runs in real Chromium: shadow content counts, clipped content does
+  // not, and controls above the entry scroll position are still measured.
+  const [shot] = first.screenshots
+  assert.deepEqual(
+    shot!.domAudit?.interactiveTargetViolations.map(({ selector }) => selector),
+    ['#tiny', '#host >>> button'],
+  )
+  assert.equal(shot!.domAudit?.h1Count, 1)
+  assert.equal(shot!.domAudit?.coverage, 'complete')
+  assert.ok(shot!.capturedHeight && shot!.documentHeight === shot!.capturedHeight)
   const image = nativeImage.createFromPath(first.screenshots[0]!.path)
   assert.ok(!image.isEmpty() && image.getSize().height <= 12_000)
   await copyFile(first.screenshots[0]!.path, path.join(report, 'preview.png'))

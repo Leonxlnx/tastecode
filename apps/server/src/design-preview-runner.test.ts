@@ -1,10 +1,17 @@
 import { EventEmitter } from 'node:events'
 import { createServer, type Server } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parsePreviewPlan } from '@harness/design-agent'
 import {
   assertRunsWorkspaceCode,
@@ -31,6 +38,27 @@ afterEach(async () => {
 })
 
 describe('design preview runner', () => {
+  it('stops a preview process when its startup is cancelled', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-cancel-'))
+    workspaces.push(workspace)
+    const marker = path.join(workspace, 'started.txt')
+    writeFileSync(
+      path.join(workspace, 'preview.mjs'),
+      `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'started'); setInterval(() => {}, 1000);`,
+    )
+    const controller = new AbortController()
+    const starting = startDesignPreview(
+      workspace,
+      plan(await freePort()),
+      30_000,
+      controller.signal,
+    )
+    const stopped = expect(starting).rejects.toThrow('cancelled')
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true))
+    controller.abort(new Error('cancelled'))
+    await stopped
+  })
+
   it('never accepts another site when workspace code ignores the assigned port', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
@@ -408,9 +436,10 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
     const childFailure = watchPreviewChild(child)
     const waiting = waitForPreview(child, 'http://127.0.0.1:1', 5_000, () => '', childFailure)
 
-    child.emit('error', new Error('spawn bun ENOENT'))
+    child.emit('error', Object.assign(new Error('spawn bun ENOENT'), { code: 'ENOENT' }))
 
     await expect(waiting).rejects.toThrow('preview failed to start: spawn bun ENOENT')
+    await expect(waiting).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('reports a child that exits before opening its port', async () => {
@@ -461,6 +490,48 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
     previews.pop()
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
+
+  it('keeps a static preview off the port a command preview is still starting on', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), 'Static site')
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'command', 400))
+
+    const command = startDesignPreview(workspace, plan(port), 5_000)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const staticPreview = await startDesignPreview(workspace, staticPreviewPlan(port))
+    previews.push(staticPreview)
+    const commandPreview = await command
+    previews.push(commandPreview)
+
+    expect(new URL(staticPreview.url).port).not.toBe(new URL(commandPreview.url).port)
+    await expect(fetch(commandPreview.url).then((response) => response.text())).resolves.toBe(
+      'command',
+    )
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a stop while an escaped process still holds the preview port',
+    async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+      workspaces.push(workspace)
+      const port = await freePort()
+      const pidFile = path.join(workspace, 'escaped.pid')
+      writeFileSync(path.join(workspace, 'child.mjs'), previewServerSource(port, 'escaped'))
+      writeFileSync(
+        path.join(workspace, 'preview.mjs'),
+        `import { spawn } from 'node:child_process'\nimport { writeFileSync } from 'node:fs'\nconst child = spawn(process.execPath, ['child.mjs'], { detached: true, stdio: 'ignore' })\nwriteFileSync(${JSON.stringify(pidFile)}, String(child.pid))\nsetInterval(() => {}, 60_000)\n`,
+      )
+
+      const preview = await startDesignPreview(workspace, plan(port), 5_000)
+      try {
+        await expect(preview.stop()).rejects.toThrow('is still in use')
+      } finally {
+        process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL')
+      }
+    },
+  )
 
   it('rejects command arguments that could escape through a Windows shim', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
@@ -621,6 +692,49 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
       'local script',
     )
   }, 45_000)
+
+  it('runs the validated script when a package-manager option comes before run', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'dev script'))
+    writeFileSync(
+      path.join(workspace, 'package.json'),
+      JSON.stringify({ scripts: { dev: 'node preview.mjs', run: 'node missing.mjs' } }),
+    )
+    const plan = parsePreviewPlan({
+      version: 1,
+      command: 'pnpm',
+      args: ['--silent', 'run', 'dev'],
+      cwd: '.',
+      url: `http://127.0.0.1:${port}`,
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    const preview = await startDesignPreview(workspace, plan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe('dev script')
+  }, 45_000)
+
+  it('serves a static preview whose base path is URL-encoded', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    writeFileSync(path.join(workspace, 'index.html'), '<link rel="stylesheet" href="styles.css">')
+    writeFileSync(path.join(workspace, 'styles.css'), 'body {}')
+
+    const preview = await startDesignPreview(
+      workspace,
+      staticPreviewPlan(await freePort(), '/my%20site/caf%C3%A9/'),
+    )
+    previews.push(preview)
+
+    await expect(
+      fetch(new URL('styles.css', preview.url)).then((value) => value.text()),
+    ).resolves.toBe('body {}')
+    await expect(
+      fetch(new URL('..%2Fstyles.css', preview.url)).then((value) => value.status),
+    ).resolves.toBe(404)
+  })
 })
 
 function staticPreviewPlan(port: number, pathname = '/') {

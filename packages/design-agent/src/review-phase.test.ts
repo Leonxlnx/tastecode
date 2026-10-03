@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   designReviewPrompt,
   designRepairPrompt,
+  croppedReviewScreenshots,
   enforceDomAuditFindings,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
@@ -43,7 +44,10 @@ describe('review and repair phases', () => {
       {} as Parameters<typeof designReviewPrompt>[0],
       {} as Parameters<typeof designReviewPrompt>[1],
       {} as Parameters<typeof designReviewPrompt>[2],
-      [],
+      [
+        { path: 'desktop.png', width: 1440, height: 1000 },
+        { path: 'mobile.png', width: 390, height: 844 },
+      ],
     )
     expect(prompt).toContain(
       'Heading size, width, line count or placement differs materially from the reference',
@@ -117,10 +121,24 @@ describe('review and repair phases', () => {
     ).toMatchObject({ status: 'complete' })
   })
 
+  it('keeps the blocker of a failed repair reported in the Build failure shape', () => {
+    expect(
+      parseRepairPhaseOutput(
+        JSON.stringify({
+          status: 'failed',
+          error: 'helper.js predates this run',
+          files: [],
+          checks: [],
+        }),
+      ),
+    ).toMatchObject({ status: 'failed', summary: 'helper.js predates this run' })
+  })
+
   it('turns a model pass into a bounded repair from objective DOM evidence', () => {
     const result = enforceDomAuditFindings(
       { version: 1, verdict: 'pass', summary: 'Looks ready.', findings: [] },
       [
+        { path: 'desktop.png', width: 1440, height: 1000 },
         {
           path: 'mobile.png',
           width: 390,
@@ -144,6 +162,7 @@ describe('review and repair phases', () => {
 
   it('enforces target sizes outside mobile viewports', () => {
     const result = enforceDomAuditFindings(review, [
+      { path: 'mobile.png', width: 390, height: 844 },
       {
         path: 'desktop.png',
         width: 1440,
@@ -158,6 +177,52 @@ describe('review and repair phases', () => {
     ])
     expect(result.verdict).toBe('repair')
     expect(result.findings.at(-1)).toMatchObject({ id: 'interactive_target_size' })
+  })
+
+  it('does not treat zero headings from a partial DOM walk as evidence', () => {
+    const pass = { version: 1, verdict: 'pass', summary: 'Looks ready.', findings: [] } as const
+    const audit = (h1Count: number, coverage: 'complete' | 'partial') => [
+      { path: 'desktop.png', width: 1440, height: 1000 },
+      {
+        path: 'mobile.png',
+        width: 390,
+        height: 844,
+        domAudit: { h1Count, interactiveTargetViolations: [], coverage },
+      },
+    ]
+    expect(enforceDomAuditFindings(pass, audit(0, 'partial'))).toEqual(pass)
+    expect(enforceDomAuditFindings(pass, audit(2, 'partial')).findings).toMatchObject([
+      { id: 'document_h1_count' },
+    ])
+    expect(enforceDomAuditFindings(pass, audit(0, 'complete')).verdict).toBe('repair')
+  })
+
+  it('names partly clipped targets in the evidence', () => {
+    const result = enforceDomAuditFindings(review, [
+      { path: 'desktop.png', width: 1440, height: 1000 },
+      {
+        path: 'mobile.png',
+        width: 390,
+        height: 844,
+        domAudit: {
+          h1Count: 1,
+          interactiveTargetViolations: [
+            { selector: '#cut', label: '', width: 20, height: 20, partiallyClipped: true },
+          ],
+        },
+      },
+    ])
+    expect(result.findings.at(-1)?.evidence).toContain('#cut: 20x20, partly clipped by an ancestor')
+  })
+
+  it('lists screenshots that ended before the page did', () => {
+    expect(
+      croppedReviewScreenshots([
+        { path: 'a.png', width: 1440, height: 1000, documentHeight: 9000, capturedHeight: 9000 },
+        { path: 'b.png', width: 390, height: 844, documentHeight: 18_000, capturedHeight: 12_000 },
+        { path: 'c.png', width: 768, height: 1024 },
+      ]),
+    ).toEqual(['390x844'])
   })
 
   it('keeps older review findings readable with conservative evidence metadata', () => {
