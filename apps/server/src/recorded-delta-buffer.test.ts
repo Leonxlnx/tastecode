@@ -145,4 +145,77 @@ describe('RecordedDeltaBuffer', () => {
     expect(individual).toHaveBeenCalledWith('thread-1', delta('one'))
     expect(batch).not.toHaveBeenCalled()
   })
+
+  it('logs a timer failure and retries the buffered text without crashing', async () => {
+    vi.useFakeTimers()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const commit = vi.fn().mockImplementationOnce(() => {
+      throw new Error('database is full')
+    })
+    const buffer = new RecordedDeltaBuffer(commit)
+    try {
+      buffer.push('thread-1', delta('one'))
+      await vi.advanceTimersByTimeAsync(4)
+      expect(log).toHaveBeenCalledOnce()
+      buffer.push('thread-1', delta(' two'))
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(commit).toHaveBeenLastCalledWith('thread-1', delta('one two'))
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      buffer.discardAll()
+      log.mockRestore()
+    }
+  })
+
+  it('retains an atomic failed batch for an explicit retry', () => {
+    const batch = vi.fn().mockImplementationOnce(() => {
+      throw new Error('database is locked')
+    })
+    const buffer = new RecordedDeltaBuffer(vi.fn(), { commitBatch: batch })
+    try {
+      buffer.push('one', delta('one'))
+      buffer.push('two', delta('two'))
+      expect(() => buffer.flushAll()).toThrow('database is locked')
+      buffer.flushAll()
+      expect(batch).toHaveBeenCalledTimes(2)
+      expect(batch.mock.calls[1]).toEqual(batch.mock.calls[0])
+    } finally {
+      buffer.discardAll()
+    }
+  })
+
+  it('does not repeat earlier successes when a sequential flush fails', () => {
+    const saved: string[] = []
+    let fail = true
+    const buffer = new RecordedDeltaBuffer((threadId) => {
+      if (threadId === 'two' && fail) throw new Error('database is locked')
+      saved.push(threadId)
+    })
+    try {
+      buffer.push('one', delta('one'))
+      buffer.push('two', delta('two'))
+      expect(() => buffer.flushAll()).toThrow('database is locked')
+      fail = false
+      buffer.flushAll()
+      expect(saved).toEqual(['one', 'two'])
+    } finally {
+      buffer.discardAll()
+    }
+  })
+
+  it('keeps an individual failed flush until it succeeds', () => {
+    const commit = vi.fn().mockImplementationOnce(() => {
+      throw new Error('database is full')
+    })
+    const buffer = new RecordedDeltaBuffer(commit)
+    try {
+      buffer.push('one', delta('one'))
+      expect(() => buffer.flush('one')).toThrow('database is full')
+      buffer.flush('one')
+      expect(commit).toHaveBeenCalledTimes(2)
+      expect(commit.mock.calls[1]).toEqual(commit.mock.calls[0])
+    } finally {
+      buffer.discardAll()
+    }
+  })
 })

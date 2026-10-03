@@ -21,7 +21,7 @@ import {
   runCustomHarness,
 } from './custom-harness-launch.js'
 import { retryableLazy } from './retryable-lazy.js'
-import { mapProviderSession } from './provider-session.js'
+import { mapProviderSession, StartupCleanupError } from './provider-session.js'
 
 // Grok speaks ACP when a project has MCP servers; there is no ACP provider.
 const loadAcpAdapter = retryableLazy(() => import('@harness/adapter-acp'))
@@ -92,15 +92,23 @@ export interface AgentSession {
   ): void
   /** Provider-owned subscription usage changed; the server should refetch. */
   onUsageChanged?(listener: () => void): void
+  /** Provider MCP discovery changed; the project inventory should be refreshed. */
+  onMcpChanged?(listener: () => void): (() => void) | void
+  /**
+   * False when the live session negotiated no way to reload it, so releasing an
+   * idle runtime would lose it. Absent means the runtime's `resume` decides.
+   */
+  readonly resumable?: boolean
+  /** The session cannot accept more work; its terminal events have already been emitted. */
+  onDisconnected?(listener: () => void): () => void
   /** Provider reported or rotated the opaque identity needed after a restart. */
   onProviderSessionId?(listener: (providerSessionId: string) => void): void
   respondToApproval(approvalId: string, decision: ApprovalDecision): void
   respondToUserInput?(requestId: string, answers: Record<string, string[]>): void
   /**
-   * Live access-level change for a running thread. Providers that map the
-   * mode onto launch switches cannot change it mid-run and leave this
-   * undefined; the orchestrator then only records the new mode for the
-   * design-flow note and future turns.
+   * Apply an access-level change to the attached session, at least for its
+   * next turn. An already running turn may retain its launch policy.
+   * Sessions without this method must be replaced before their next turn.
    */
   setApproval?(approval: ApprovalMode): void | Promise<void>
   dispose(): void | Promise<void>
@@ -326,7 +334,11 @@ async function startedSession<TSession extends { dispose(): void | Promise<void>
   try {
     return { thread: await start(), session }
   } catch (error) {
-    await session.dispose()
+    try {
+      await session.dispose()
+    } catch (cleanup) {
+      throw new StartupCleanupError(error, cleanup, session)
+    }
     throw error
   }
 }
@@ -534,6 +546,7 @@ function claudeRuntime(
     respondToUserInput: (id, answers) => adapter.respondToUserInput(id, answers),
     setApproval: (approval) => adapter.setApproval(approval),
     onUsageChanged: (listener) => adapter.on('usageChanged', listener),
+    onDisconnected: (listener) => adapter.onDisconnected(listener),
     dispose: () => adapter.dispose(),
     on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
   })
