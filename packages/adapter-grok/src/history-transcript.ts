@@ -29,7 +29,7 @@ export function grokHistoryEvents(
 ) {
   const replay = new Replay(session)
   const seen = new Set<string>()
-  const backgroundTools = new Map<string, string>()
+  const backgroundTools = new Map<string, Item>()
   const promptIds = new Map<number, string>()
   let nextPromptId: string | undefined
   for (let index = updates.length - 1; index >= 0; index--) {
@@ -69,7 +69,8 @@ export function grokHistoryEvents(
     } else if (type === 'task_backgrounded') {
       const taskId = text(update.task_id),
         toolId = text(update.tool_call_id)
-      if (taskId && toolId) backgroundTools.set(taskId, toolId)
+      const item = toolId ? replay.toolItem(toolId) : undefined
+      if (taskId && item) backgroundTools.set(taskId, item)
     } else if (type === 'task_completed') {
       const task = record(update.task_snapshot)
       const taskId = text(task.task_id)
@@ -177,6 +178,10 @@ class Replay {
     const id = text(update.toolCallId)
     if (!id) return
     let item = this.#tools.get(id)
+    if (item && item.status !== 'started' && update.sessionUpdate === 'tool_call') {
+      item = undefined
+      this.#toolLabels.delete(id)
+    }
     const native = record(record(update._meta)['x.ai/tool'])
     const input = record(update.rawInput)
     const name = text(native.name) ?? text(update.title) ?? 'Tool'
@@ -263,8 +268,11 @@ class Replay {
     }
   }
 
-  backgroundResult(toolId: string | undefined, task: RecordValue, time: number) {
-    const item = toolId ? this.#allTools.get(toolId) : undefined
+  toolItem(toolId: string): Item | undefined {
+    return this.#allTools.get(toolId)
+  }
+
+  backgroundResult(item: Item | undefined, task: RecordValue, time: number) {
     if (!item) return
     const output = text(task.output),
       exitCode = number(task.exit_code)
@@ -430,6 +438,7 @@ function replayChat(replay: Replay, rows: RecordValue[], time: number) {
         }
         replay.tool(
           {
+            sessionUpdate: 'tool_call',
             toolCallId: call.id,
             title: call.name,
             rawInput: input,
