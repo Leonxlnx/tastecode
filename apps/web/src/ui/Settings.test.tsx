@@ -703,7 +703,7 @@ describe('provider authentication states', () => {
       'is-primary',
     )
     const signOut = within(codex).getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-secondary')
+    expect(signOut.className).toContain('is-primary')
     expect(signOut.className).toContain('is-danger')
     expect(signOut.className).not.toContain('is-quiet')
     fireEvent.focus(within(claude).getByRole('button', { name: 'Problem details' }))
