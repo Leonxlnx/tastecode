@@ -184,4 +184,126 @@ describe('app update controller', () => {
     expect(loadUpdater).toHaveBeenCalledTimes(2)
     expect(updater.checkForUpdates).toHaveBeenCalledOnce()
   })
+
+  it('keeps a failed background check out of view and retries it with backoff', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    const offline = new Error('net::ERR_INTERNET_DISCONNECTED')
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('checking-for-update')
+      updater.emit('error', offline)
+      throw offline
+    })
+    const onError = vi.fn()
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+      onError,
+    })
+    const states: string[] = []
+    controller.subscribe((state) => states.push(state.status))
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(controller.state()).toEqual({ status: 'idle', currentVersion: '0.1.2' })
+    expect(states).toEqual(['checking', 'idle'])
+    expect(onError).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledWith(offline)
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1)
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(3)
+
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-not-available', { version: '0.1.2' })
+    })
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(4)
+    expect(controller.state()).toMatchObject({ status: 'current' })
+    // A success returns to the hourly check.
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000 - 1)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(5)
+    controller.dispose()
+  })
+
+  it('shows a background failure to a user who joined the attempt', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    let reject!: (error: Error) => void
+    updater.checkForUpdates.mockImplementation(
+      () => new Promise((_resolve, fail) => (reject = fail)),
+    )
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    const joined = controller.check()
+    reject(new Error('GitHub could not be reached.'))
+    await expect(joined).resolves.toMatchObject({
+      status: 'error',
+      error: 'GitHub could not be reached.',
+    })
+    controller.dispose()
+  })
+
+  it('restores the last verdict when a background download fails, then retries', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-not-available', { version: '0.1.2' })
+    })
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(controller.state()).toMatchObject({ status: 'current' })
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', { version: '0.1.3' })
+    })
+    updater.downloadUpdate.mockRejectedValue(new Error('socket hang up'))
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce()
+    expect(controller.state()).toEqual({
+      status: 'current',
+      currentVersion: '0.1.2',
+      version: '0.1.2',
+    })
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    expect(updater.downloadUpdate).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
+  it('always shows a failed install of a ready update', async () => {
+    const updater = fakeUpdater()
+    updater.checkForUpdates.mockImplementation(async () => {
+      updater.emit('update-available', { version: '0.1.3' })
+      updater.emit('update-downloaded', { version: '0.1.3' })
+    })
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    await expect(controller.check('background')).resolves.toMatchObject({ status: 'ready' })
+    updater.emit('error', new Error('The update is not signed by TasteCode.'))
+    expect(controller.state()).toMatchObject({
+      status: 'error',
+      error: 'The update is not signed by TasteCode.',
+    })
+  })
 })
