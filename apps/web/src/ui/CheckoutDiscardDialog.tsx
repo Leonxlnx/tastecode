@@ -35,14 +35,14 @@ export function CheckoutDiscardDialog(props: {
         </header>
         <section className="sheet__section">
           <p className="checkout-discard__copy">
-            Archiving “{props.title}” now would discard changes the agent has not committed.
+            Deleting “{props.title}” now would discard changes the agent has not committed.
           </p>
           <div className="checkout-discard__actions">
             <button className="ghost" onClick={props.onClose} disabled={props.busy}>
               Keep session
             </button>
             <button className="btn btn--danger" onClick={props.onDiscard} disabled={props.busy}>
-              {props.busy ? 'Discarding…' : 'Discard changes and archive'}
+              {props.busy ? 'Discarding…' : 'Discard changes and delete'}
             </button>
           </div>
         </section>
