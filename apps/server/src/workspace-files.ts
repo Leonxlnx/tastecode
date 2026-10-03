@@ -1,11 +1,13 @@
 import { stat as callbackStat, type Dirent } from 'node:fs'
-import { open, readdir, realpath, stat } from 'node:fs/promises'
+import { open, opendir, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { assertPublicWorkspaceFile, isSecretWorkspaceName } from './api-workspace-paths.js'
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 const BINARY_SAMPLE_BYTES = 8 * 1024
 const WORKSPACE_ENTRY_COLLATOR = new Intl.Collator(undefined, { numeric: true })
+const MAX_SEARCH_ENTRIES = 20_000
+const MAX_SEARCH_DEPTH = 32
 
 export type WorkspaceFileEntry = {
   name: string
@@ -42,6 +44,55 @@ export async function listWorkspaceDirectory(
   const entries = await workspaceEntries(protocolDirectory, directory, children)
 
   return { path: protocolDirectory, entries }
+}
+
+/** Breadth-first search keeps unopened folders discoverable without an unbounded tree walk. */
+export async function searchWorkspaceFiles(
+  workspacePath: string,
+  query: string,
+  limit = 200,
+): Promise<{ entries: WorkspaceFileEntry[]; truncated: boolean }> {
+  const workspace = await realpath(workspacePath)
+  const needle = query.trim().toLowerCase()
+  const directories = [{ relative: '', depth: 0 }]
+  const entries: WorkspaceFileEntry[] = []
+  let visited = 0
+  let truncated = false
+
+  walk: for (const { relative, depth } of directories) {
+    try {
+      const directory = await containedRealPath(workspace, relative)
+      const protocolDirectory = toProtocolPath(path.relative(workspace, directory))
+      // Streaming entries bounds memory even when one directory alone exceeds the budget.
+      const children = await opendir(directory)
+      for await (const child of children) {
+        visited += 1
+        if (!child.isSymbolicLink() && (child.isDirectory() || child.isFile())) {
+          const relativeChild = path.join(protocolDirectory, child.name)
+          if (toProtocolPath(relativeChild).toLowerCase().includes(needle)) {
+            entries.push(...(await workspaceEntries(protocolDirectory, directory, [child])))
+          }
+          if (child.isDirectory()) {
+            if (depth < MAX_SEARCH_DEPTH) {
+              directories.push({ relative: relativeChild, depth: depth + 1 })
+            } else {
+              truncated = true
+            }
+          }
+        }
+        if (entries.length >= limit || visited >= MAX_SEARCH_ENTRIES) {
+          truncated = true
+          break walk
+        }
+      }
+    } catch (error) {
+      if (!relative) throw error
+      // A removed, unreadable or replaced directory must not hide other matches.
+      truncated = true
+    }
+  }
+
+  return { entries: entries.sort(compareWorkspaceEntries), truncated }
 }
 
 /** Queue every stat for maximum file-system throughput without one promise per child. */
