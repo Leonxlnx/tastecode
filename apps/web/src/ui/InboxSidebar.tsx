@@ -38,6 +38,7 @@ import { AppSelect } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { InboxCardsSkeleton } from './SurfaceSkeletons.js'
 
 type ProjectMetadata = Pick<Project, 'path' | 'name'>
 type Entry = { project: ProjectMetadata; session: Session }
@@ -145,6 +146,8 @@ export type InboxActions = {
 
 function InboxSidebarComponent(props: {
   projects: Project[]
+  /** The project list has not arrived yet, so an empty one is not the answer. */
+  loading?: boolean | undefined
   scope: string
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
@@ -433,26 +436,82 @@ function InboxSidebarComponent(props: {
       </div>
 
       <div className="rail__body inbox__body">
-        <div className="inbox">
-          {selectedIds.size > 1 ? (
-            <p className="inbox__selection-count">{selectedIds.size} threads selected</p>
-          ) : null}
+        {props.loading && props.projects.length === 0 ? (
+          <InboxCardsSkeleton />
+        ) : (
+          <div className="inbox">
+            {selectedIds.size > 1 ? (
+              <p className="inbox__selection-count">{selectedIds.size} threads selected</p>
+            ) : null}
 
-          {!normalizedQuery || active.length > 0 ? (
-            <>
-              <SectionHeading title="Active" count={active.length} />
-              {active.length > 0 ? (
-                <ul className="inbox__list" aria-label="Active threads">
-                  {visibleActive.map((entry) => {
+            {!normalizedQuery || active.length > 0 ? (
+              <>
+                <SectionHeading title="Active" count={active.length} />
+                {active.length > 0 ? (
+                  <ul className="inbox__list" aria-label="Active threads">
+                    {visibleActive.map((entry) => {
+                      const selected = selectedIds.has(entry.session.id)
+                      return (
+                        <ActiveRow
+                          {...entry}
+                          key={entry.session.id}
+                          current={entry.session.id === props.activeSessionId}
+                          selected={selected}
+                          eagerActions={eagerRowActions}
+                          menuEntries={
+                            selected && selectedIds.size > 1 ? selectedEntries : undefined
+                          }
+                          actions={props.actions}
+                          onChoose={chooseEntry}
+                          onContextMenu={prepareContextMenu}
+                          onRegister={registerRow}
+                          onNavigate={focusResult}
+                          onRename={props.onRenameSession}
+                          onTogglePin={props.onToggleSessionPin}
+                          onArchive={props.onArchiveSession}
+                          onArchiveMany={archiveSessions}
+                          onClearSelection={clearSelection}
+                        />
+                      )
+                    })}
+                    {active.length > activeLimit && !activePageDeferred ? (
+                      <li>
+                        <button
+                          className="inbox__more"
+                          type="button"
+                          onClick={() => setActiveLimit((limit) => limit + PAGE_SIZE)}
+                        >
+                          Show {PAGE_SIZE} more
+                        </button>
+                      </li>
+                    ) : null}
+                  </ul>
+                ) : (
+                  <p className="inbox__empty">No active threads in this project.</p>
+                )}
+              </>
+            ) : null}
+
+            <Shelf
+              title="Snoozed"
+              count={snoozed.length}
+              open={snoozedExpanded}
+              onToggle={() => setSnoozedOpen((open) => !open)}
+            >
+              {snoozedExpanded ? (
+                <>
+                  {visibleSnoozed.map((entry) => {
                     const selected = selectedIds.has(entry.session.id)
                     return (
-                      <ActiveRow
+                      <ShelfRow
                         {...entry}
                         key={entry.session.id}
                         current={entry.session.id === props.activeSessionId}
                         selected={selected}
                         eagerActions={eagerRowActions}
                         menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
+                        action="Wake now"
+                        actionIcon="wake"
                         actions={props.actions}
                         onChoose={chooseEntry}
                         onContextMenu={prepareContextMenu}
@@ -462,130 +521,82 @@ function InboxSidebarComponent(props: {
                         onTogglePin={props.onToggleSessionPin}
                         onArchive={props.onArchiveSession}
                         onArchiveMany={archiveSessions}
+                        onAction={unsnooze}
                         onClearSelection={clearSelection}
                       />
                     )
                   })}
-                  {active.length > activeLimit && !activePageDeferred ? (
+                  {snoozed.length > snoozedLimit ? (
                     <li>
                       <button
                         className="inbox__more"
                         type="button"
-                        onClick={() => setActiveLimit((limit) => limit + PAGE_SIZE)}
+                        onClick={() => setSnoozedLimit((limit) => limit + PAGE_SIZE)}
                       >
                         Show {PAGE_SIZE} more
                       </button>
                     </li>
                   ) : null}
-                </ul>
-              ) : (
-                <p className="inbox__empty">No active threads in this project.</p>
-              )}
-            </>
-          ) : null}
+                </>
+              ) : null}
+            </Shelf>
 
-          <Shelf
-            title="Snoozed"
-            count={snoozed.length}
-            open={snoozedExpanded}
-            onToggle={() => setSnoozedOpen((open) => !open)}
-          >
-            {snoozedExpanded ? (
-              <>
-                {visibleSnoozed.map((entry) => {
-                  const selected = selectedIds.has(entry.session.id)
-                  return (
-                    <ShelfRow
-                      {...entry}
-                      key={entry.session.id}
-                      current={entry.session.id === props.activeSessionId}
-                      selected={selected}
-                      eagerActions={eagerRowActions}
-                      menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
-                      action="Wake now"
-                      actionIcon="wake"
-                      actions={props.actions}
-                      onChoose={chooseEntry}
-                      onContextMenu={prepareContextMenu}
-                      onRegister={registerRow}
-                      onNavigate={focusResult}
-                      onRename={props.onRenameSession}
-                      onTogglePin={props.onToggleSessionPin}
-                      onArchive={props.onArchiveSession}
-                      onArchiveMany={archiveSessions}
-                      onAction={unsnooze}
-                      onClearSelection={clearSelection}
-                    />
-                  )
-                })}
-                {snoozed.length > snoozedLimit ? (
-                  <li>
-                    <button
-                      className="inbox__more"
-                      type="button"
-                      onClick={() => setSnoozedLimit((limit) => limit + PAGE_SIZE)}
-                    >
-                      Show {PAGE_SIZE} more
-                    </button>
-                  </li>
-                ) : null}
-              </>
+            <Shelf
+              title="Settled"
+              count={settled.length}
+              open={settledExpanded}
+              onToggle={() => setSettledOpen((open) => !open)}
+            >
+              {settledExpanded ? (
+                <>
+                  {visibleSettled.map((entry) => {
+                    const selected = selectedIds.has(entry.session.id)
+                    return (
+                      <ShelfRow
+                        {...entry}
+                        key={entry.session.id}
+                        current={entry.session.id === props.activeSessionId}
+                        selected={selected}
+                        eagerActions={eagerRowActions}
+                        menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
+                        action="Un-settle"
+                        actionIcon="unsettle"
+                        actions={props.actions}
+                        onChoose={chooseEntry}
+                        onContextMenu={prepareContextMenu}
+                        onRegister={registerRow}
+                        onNavigate={focusResult}
+                        onRename={props.onRenameSession}
+                        onTogglePin={props.onToggleSessionPin}
+                        onArchive={props.onArchiveSession}
+                        onArchiveMany={archiveSessions}
+                        onAction={unsettle}
+                        onClearSelection={clearSelection}
+                      />
+                    )
+                  })}
+                  {settled.length > settledLimit ? (
+                    <li>
+                      <button
+                        className="inbox__more"
+                        type="button"
+                        onClick={() => setSettledLimit((limit) => limit + PAGE_SIZE)}
+                      >
+                        Show {PAGE_SIZE} more
+                      </button>
+                    </li>
+                  ) : null}
+                </>
+              ) : null}
+            </Shelf>
+
+            {normalizedQuery && !hasMatches ? (
+              <p className="inbox__empty inbox__empty--search">
+                No threads match “{query.trim()}”.
+              </p>
             ) : null}
-          </Shelf>
-
-          <Shelf
-            title="Settled"
-            count={settled.length}
-            open={settledExpanded}
-            onToggle={() => setSettledOpen((open) => !open)}
-          >
-            {settledExpanded ? (
-              <>
-                {visibleSettled.map((entry) => {
-                  const selected = selectedIds.has(entry.session.id)
-                  return (
-                    <ShelfRow
-                      {...entry}
-                      key={entry.session.id}
-                      current={entry.session.id === props.activeSessionId}
-                      selected={selected}
-                      eagerActions={eagerRowActions}
-                      menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
-                      action="Un-settle"
-                      actionIcon="unsettle"
-                      actions={props.actions}
-                      onChoose={chooseEntry}
-                      onContextMenu={prepareContextMenu}
-                      onRegister={registerRow}
-                      onNavigate={focusResult}
-                      onRename={props.onRenameSession}
-                      onTogglePin={props.onToggleSessionPin}
-                      onArchive={props.onArchiveSession}
-                      onArchiveMany={archiveSessions}
-                      onAction={unsettle}
-                      onClearSelection={clearSelection}
-                    />
-                  )
-                })}
-                {settled.length > settledLimit ? (
-                  <li>
-                    <button
-                      className="inbox__more"
-                      type="button"
-                      onClick={() => setSettledLimit((limit) => limit + PAGE_SIZE)}
-                    >
-                      Show {PAGE_SIZE} more
-                    </button>
-                  </li>
-                ) : null}
-              </>
-            ) : null}
-          </Shelf>
-
-          {normalizedQuery && !hasMatches ? (
-            <p className="inbox__empty inbox__empty--search">No threads match “{query.trim()}”.</p>
-          ) : null}
-        </div>
+          </div>
+        )}
       </div>
     </InboxClock>
   )

@@ -1047,6 +1047,98 @@ describe('TerminalPane', () => {
     expect(onClose).toHaveBeenCalledOnce()
   })
 
+  it.each(['', 'ready\r\n'])(
+    'shows a workspace skeleton until the terminal connects with output %j',
+    async (output) => {
+      const snapshot = deferred<ResultOf<'terminal.status'>>()
+      const harness = fakeTransport((method) =>
+        method === 'terminal.status' ? snapshot.promise : undefined,
+      )
+      const { container } = render(
+        <TerminalPane
+          transport={harness.transport}
+          threadId="workspace-loading"
+          theme="dark"
+          mode="workspace"
+          onClose={vi.fn()}
+        />,
+      )
+      const status = screen.getByRole('status')
+      const viewport = container.querySelector('.terminal-pane__viewport')!
+      expect(status.textContent).toBe('Connecting terminal…')
+      expect(viewport.contains(status)).toBe(true)
+      expect(viewport.getAttribute('aria-busy')).toBe('true')
+      expect(status.querySelectorAll('.skeleton')).toHaveLength(5)
+      expect(screen.getByText('Connecting…').classList.contains('visually-hidden')).toBe(true)
+      expect(xterm.instances).toHaveLength(1)
+      await waitFor(() =>
+        expect(harness.request).toHaveBeenCalledWith('terminal.status', {
+          terminalId: 'terminal-1',
+        }),
+      )
+
+      await act(async () =>
+        snapshot.resolve({ status: 'running', output, outputOffset: 0, exitCode: null }),
+      )
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(viewport.getAttribute('aria-busy')).toBe('false')
+      expect(container.querySelector('.terminal-pane__viewport')).toBe(viewport)
+      expect(written(xterm.instances[0]!)).toBe(output)
+      expect(screen.getByText('Connected').classList.contains('visually-hidden')).toBe(true)
+      act(() =>
+        harness.emit('terminal.output', {
+          terminalId: 'terminal-1',
+          data: 'next',
+          outputOffset: output.length,
+        }),
+      )
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(written(xterm.instances[0]!)).toBe(`${output}next`)
+    },
+  )
+
+  it('removes the workspace skeleton when connecting fails', async () => {
+    const opened = deferred<{ terminalId: string }>()
+    const harness = fakeTransport((method) =>
+      method === 'terminal.open' ? opened.promise : undefined,
+    )
+    const { container } = render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="workspace-loading-error"
+        theme="dark"
+        mode="workspace"
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('status').textContent).toBe('Connecting terminal…')
+    await act(async () => opened.reject(new Error('Shell unavailable')))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByText('Shell unavailable').classList.contains('visually-hidden')).toBe(false)
+    expect(container.querySelector('.terminal-pane__viewport')?.getAttribute('aria-busy')).toBe(
+      'false',
+    )
+  })
+
+  it('keeps the existing inline connecting text without a workspace skeleton', async () => {
+    const opened = deferred<{ terminalId: string }>()
+    const harness = fakeTransport((method) =>
+      method === 'terminal.open' ? opened.promise : undefined,
+    )
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="inline-loading"
+        theme="dark"
+        onClose={vi.fn()}
+      />,
+    )
+    expect(screen.getByText('Connecting…').classList.contains('visually-hidden')).toBe(false)
+    expect(screen.queryByRole('status')).toBeNull()
+    await act(async () => opened.resolve({ terminalId: 'terminal-1' }))
+    expect(screen.getByText('Connected')).toBeTruthy()
+  })
+
   it('opens a project terminal before a chat exists', async () => {
     const harness = fakeTransport()
     render(
