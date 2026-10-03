@@ -92,8 +92,8 @@ export const KEYBINDING_DEFINITIONS = [
   {
     id: 'archiveSession',
     group: 'Chats',
-    label: 'Archive current chat',
-    description: 'Archive the current chat after any required safety check.',
+    label: 'Delete current chat',
+    description: 'Delete the current chat after any required safety check and the Undo window.',
     defaultShortcut: null,
   },
   {
