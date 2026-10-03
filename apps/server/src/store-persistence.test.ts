@@ -1,5 +1,5 @@
 import type { DomainEvent } from '@harness/contracts'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -72,6 +72,40 @@ describe('durable history ownership', () => {
     } finally {
       raw.close()
     }
+  })
+
+  it('archives provider import metadata and active membership before pruning', () => {
+    const { store, root } = setup()
+    store.saveProviderHistory('codex', 'thread', {
+      id: 'native',
+      workspacePath: root,
+      title: 'Native',
+      createdAt: 1,
+      updatedAt: 2,
+      revision: 'new',
+    })
+    store.mergeProviderHistory('thread', 'old', [{ key: 'old', event: message('retired') }])
+    store.mergeProviderHistory('thread', 'new', [{ key: 'new', event: message('visible') }])
+    store.closeThread('thread')
+    const archive = path.join(root, 'archive.ndjson')
+    expect(store.pruneHistory(Date.now() + 1_000, archive)).toBe(1)
+    const rows = readFileSync(archive, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(rows[0]).toMatchObject({ format: 'tastecode-history', version: 2 })
+    expect(rows.filter((entry) => entry.table === 'provider_history')).toEqual([
+      expect.objectContaining({
+        row: expect.objectContaining({ thread_id: 'thread', loaded_revision: 'new' }),
+      }),
+    ])
+    expect(
+      rows
+        .filter((entry) => entry.table === 'provider_history_events')
+        .map((entry) => entry.row.active),
+    ).toEqual([0, 1])
+    // Provider identities remain tombstones after local deletion.
+    expect(store.providerHistories()).toHaveLength(1)
   })
 
   it('retains checkpoints and undo tails for providers absent from this build', () => {
