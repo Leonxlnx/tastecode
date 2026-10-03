@@ -166,6 +166,8 @@ export async function measure(executable, index, environment = {}, arguments_ = 
         ...environment,
         HARNESS_DATA_DIR: path.join(dataRoot, 'server'),
         HARNESS_DESKTOP_DATA_DIR: path.join(dataRoot, 'desktop'),
+        // The real config folder would be read and could be migrated in place.
+        HARNESS_CONFIG_DIR: path.join(dataRoot, 'config'),
         HARNESS_STARTUP_EXIT_AFTER_READY: '1',
         HARNESS_STARTUP_STARTED_AT: String(Date.now()),
       },
