@@ -158,6 +158,8 @@ export const UserInputQuestionSchema = z.object({
   allowOther: z.boolean(),
   secret: z.boolean(),
   options: z.array(UserInputOptionSchema).nullable(),
+  /** The user may pick more than one option. Absent means a single choice. */
+  multiSelect: z.boolean().optional(),
 })
 export type UserInputQuestion = z.infer<typeof UserInputQuestionSchema>
 
@@ -240,6 +242,26 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
 export type DomainEvent = z.infer<typeof DomainEventSchema>
 
 /**
+ * How much of the session context the user may shape before a session starts.
+ * Engines expose this very differently — a token budget, a percentage, a model
+ * variant — so each adapter declares what it can honour and translates the
+ * shared settings itself.
+ */
+export const ContextControlSchema = z.object({
+  /** Window sizes in tokens the engine accepts. The first is its own default. */
+  windows: z.array(z.number().int().positive()).min(1),
+  /** The point where the engine compacts on its own can be moved. */
+  compaction: z.boolean(),
+  /** Automatic compaction can be switched off entirely. */
+  compactionOff: z.boolean(),
+  /** Where the engine compacts when left alone, as a percent of its default window. */
+  defaultCompactAt: z.number().int().min(1).max(100).optional(),
+  /** The latest compaction point the engine honours. A later one would have no effect. */
+  latestCompactAt: z.number().int().min(10).max(99).optional(),
+})
+export type ContextControl = z.infer<typeof ContextControlSchema>
+
+/**
  * What an engine can actually do. The UI reads this and hides what is
  * unavailable rather than showing a button that fails — capability negotiation
  * is the difference between a wrapper that feels solid and one that lies.
@@ -255,6 +277,8 @@ export const CapabilitiesSchema = z.object({
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
   images: z.boolean(),
+  /** Absent when the engine decides its context on its own. */
+  context: ContextControlSchema.optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
@@ -353,6 +377,18 @@ export type BackgroundModelSettings = z.infer<typeof BackgroundModelSettingsSche
  */
 export const ApprovalModeSchema = z.enum(['ask', 'auto', 'auto-review', 'full'])
 export type ApprovalMode = z.infer<typeof ApprovalModeSchema>
+
+/**
+ * Context settings the server applies to every session it launches or resumes
+ * with one provider. Absent fields leave the engine's own behaviour alone.
+ */
+export const ProviderContextSettingsSchema = z.object({
+  /** Tokens the session may hold. Must be one of the provider's declared windows. */
+  window: z.number().int().positive().optional(),
+  /** Percent of the window at which the engine compacts on its own, or never. */
+  compactAt: z.union([z.number().int().min(10).max(99), z.literal('off')]).optional(),
+})
+export type ProviderContextSettings = z.infer<typeof ProviderContextSettingsSchema>
 
 /**
  * Who the user is signed in as with a given provider.
