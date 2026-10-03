@@ -10,6 +10,7 @@ import { prepareAppHaptics } from '../haptics.js'
 import type { Transport, ConnectionState } from '../transport.js'
 import { errorMessage } from '../boundary.js'
 import { beginPanelResize } from './panel-resize.js'
+import { acquireTerminalLease } from './terminal-ownership.js'
 import '../styles/terminal-pane.css'
 
 const MIN_HEIGHT = 160
@@ -20,16 +21,7 @@ type TerminalStatus =
   | { state: 'reconnecting' }
   | { state: 'error'; message: string }
 
-const activeTerminalLeases = new Map<string, number>()
-
-function acquireTerminalLease(key: string): () => void {
-  activeTerminalLeases.set(key, (activeTerminalLeases.get(key) ?? 0) + 1)
-  return () => {
-    const next = (activeTerminalLeases.get(key) ?? 1) - 1
-    if (next > 0) activeTerminalLeases.set(key, next)
-    else activeTerminalLeases.delete(key)
-  }
-}
+type TerminalOutput = { data: string; outputOffset?: number | undefined }
 
 export type TerminalPaneProps = {
   terminalKey?: string
@@ -139,17 +131,55 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       })
 
     const terminalKey = props.terminalKey
-    const releaseTerminalLease = terminalKey ? acquireTerminalLease(terminalKey) : undefined
+    const lease = terminalKey
+      ? acquireTerminalLease(props.transport, JSON.stringify([target.ownerKey, terminalKey]))
+      : undefined
     let terminalId: string | undefined
     let opening = false
+    let attached = false
+    let finished = false
+    let recoveryVersion = 0
+    let outputOffset = 0
     let resizeFrame: number | undefined
     let lastResize: { columns: number; rows: number } | undefined
-    const earlyOutput = new Map<string, string[]>()
+    const earlyOutput = new Map<string, TerminalOutput[]>()
+    const earlyExits = new Set<string>()
+    const closingIds = new Set<string>()
+
+    const closeUnleasedTerminal = (id: string) => {
+      if (lease && !closingIds.has(id)) {
+        closingIds.add(id)
+        lease.closeWhenUnleased(id)
+      }
+    }
+
+    const writeOutput = (chunk: TerminalOutput) => {
+      const start = chunk.outputOffset ?? outputOffset
+      const end = start + chunk.data.length
+      if (end <= outputOffset) return
+      if (start > outputOffset) {
+        instance.write('\r\n[Some terminal output is no longer available.]\r\n')
+      }
+      instance.write(chunk.data.slice(Math.max(0, outputOffset - start)))
+      outputOffset = end
+    }
+
+    const finish = () => {
+      finished = true
+      attached = false
+      opening = false
+      recoveryVersion += 1
+      terminalId = undefined
+      lastResize = undefined
+      earlyOutput.clear()
+      earlyExits.clear()
+      onClose.current()
+    }
 
     const sendSize = () => {
       if (!activeRef.current || container.clientWidth < 1 || container.clientHeight < 1) return
       fit.fit()
-      if (!terminalId || props.transport.state !== 'open') return
+      if (!terminalId || !attached || props.transport.state !== 'open') return
       const nextResize = { columns: instance.cols, rows: instance.rows }
       if (lastResize?.columns === nextResize.columns && lastResize.rows === nextResize.rows) {
         return
@@ -189,36 +219,73 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
 
     const open = () => {
       if (
-        !activeRef.current ||
-        terminalId ||
+        (!terminalId && !activeRef.current) ||
+        attached ||
         opening ||
+        finished ||
         disposed ||
         props.transport.state !== 'open'
       )
         return
       opening = true
+      const version = ++recoveryVersion
       setStatus({ state: 'connecting' })
       if (activeRef.current && container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
       const openedSize = { columns: instance.cols, rows: instance.rows }
-      void props.transport
-        .request('terminal.open', {
-          ...target.request,
-          ...(terminalKey ? { terminalKey } : {}),
-          ...openedSize,
-        })
-        .then(({ terminalId: openedId }) => {
-          opening = false
+      const current = terminalId
+      const opened = current
+        ? Promise.resolve({ terminalId: current })
+        : props.transport.request('terminal.open', {
+            ...target.request,
+            ...(terminalKey ? { terminalKey } : {}),
+            ...openedSize,
+          })
+      void opened
+        .then(async ({ terminalId: openedId }) => {
           if (disposed) {
-            if (terminalKey && !activeTerminalLeases.has(terminalKey))
-              void props.transport
-                .request('terminal.close', { terminalId: openedId })
-                .catch(() => undefined)
+            closeUnleasedTerminal(openedId)
+            return
+          }
+          if (version !== recoveryVersion) {
+            // A known id still owns its shell while the connection is down.
+            if (!terminalId && props.transport.state !== 'open') terminalId = openedId
             return
           }
           terminalId = openedId
-          lastResize = openedSize
-          for (const data of earlyOutput.get(openedId) ?? []) instance.write(data)
+          const snapshot = await props.transport.request('terminal.status', {
+            terminalId: openedId,
+          })
+          if (disposed || version !== recoveryVersion) return
+          opening = false
+          if (snapshot.status === 'unknown') {
+            terminalId = undefined
+            finished = true
+            earlyOutput.clear()
+            earlyExits.clear()
+            setStatus({
+              state: 'error',
+              message: 'This terminal is no longer available. The server may have restarted.',
+            })
+            return
+          }
+          // Hold live chunks until the snapshot fills the offline gap. Sort by
+          // absolute position, then skip overlap with bytes already sent to xterm.
+          // Legacy offset-less pushes during recovery are covered by the snapshot.
+          const chunks = (earlyOutput.get(openedId) ?? []).filter(
+            (chunk): chunk is TerminalOutput & { outputOffset: number } =>
+              chunk.outputOffset !== undefined,
+          )
+          chunks.push({ data: snapshot.output, outputOffset: snapshot.outputOffset })
+          chunks.sort((left, right) => left.outputOffset - right.outputOffset)
+          for (const chunk of chunks) writeOutput(chunk)
           earlyOutput.clear()
+          if (snapshot.status === 'exited' || earlyExits.has(openedId)) {
+            finish()
+            return
+          }
+          earlyExits.clear()
+          attached = true
+          lastResize = current ? undefined : openedSize
           setStatus({ state: 'open' })
           if (activeRef.current) {
             instance.focus()
@@ -226,55 +293,67 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
           }
         })
         .catch((error) => {
+          if (disposed || version !== recoveryVersion) return
           opening = false
-          if (!disposed) {
-            setStatus({
-              state: 'error',
-              message: errorMessage(error),
-            })
-          }
+          earlyOutput.clear()
+          earlyExits.clear()
+          setStatus({ state: 'error', message: errorMessage(error) })
         })
     }
     reconnect.current = () => {
-      terminalId = undefined
+      finished = false
       lastResize = undefined
-      instance.clear()
+      if (!terminalId) {
+        outputOffset = 0
+        instance.reset()
+      }
       open()
     }
     activate.current = open
 
     const onConnection = (connection: ConnectionState) => {
+      if (finished) return
       if (connection === 'open') open()
       else {
-        terminalId = undefined
+        recoveryVersion += 1
+        attached = false
         lastResize = undefined
         opening = false
-        if (connection === 'connecting') setStatus({ state: 'connecting' })
-        else if (connection === 'reconnecting') setStatus({ state: 'reconnecting' })
+        earlyOutput.clear()
+        earlyExits.clear()
+        setStatus({ state: connection === 'connecting' ? 'connecting' : 'reconnecting' })
       }
     }
 
     const offState = props.transport.onState(onConnection)
     const offOutput = props.transport.on('terminal.output', (event) => {
-      if (event.terminalId === terminalId) instance.write(event.data)
+      if (event.terminalId === terminalId && attached) {
+        if (event.outputOffset === undefined || event.outputOffset <= outputOffset) {
+          writeOutput(event)
+          return
+        }
+        attached = false
+        open()
+      }
       // Only while our own open is in flight. terminal.output is a global
       // broadcast, so buffering whenever we have no id meant a pane left on
       // an exited terminal accumulated every other session's output forever.
-      else if (!terminalId && opening) {
+      if (opening && (!terminalId || event.terminalId === terminalId)) {
         const buffered = earlyOutput.get(event.terminalId) ?? []
-        buffered.push(event.data)
+        buffered.push(event)
         earlyOutput.set(event.terminalId, buffered)
       }
     })
     const offExit = props.transport.on('terminal.exit', (event) => {
+      if (opening && (!terminalId || event.terminalId === terminalId)) {
+        earlyExits.add(event.terminalId)
+        return
+      }
       if (event.terminalId !== terminalId) return
-      terminalId = undefined
-      lastResize = undefined
-      earlyOutput.clear()
-      onClose.current()
+      finish()
     })
     const input = instance.onData((data) => {
-      if (!terminalId || props.transport.state !== 'open') return
+      if (!terminalId || !attached || props.transport.state !== 'open') return
       void props.transport.request('terminal.input', { terminalId, data }).catch(() => undefined)
     })
     const selection = instance.onSelectionChange(() => setHasSelection(instance.hasSelection()))
@@ -291,15 +370,11 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
 
     return () => {
       disposed = true
-      releaseTerminalLease?.()
-      if (terminalKey && terminalId) {
+      recoveryVersion += 1
+      lease?.release()
+      if (terminalId) {
         const closingId = terminalId
-        queueMicrotask(() => {
-          if (!activeTerminalLeases.has(terminalKey))
-            void props.transport
-              .request('terminal.close', { terminalId: closingId })
-              .catch(() => undefined)
-        })
+        queueMicrotask(() => closeUnleasedTerminal(closingId))
       }
       resizeCleanup.current()
       if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame)
