@@ -167,6 +167,20 @@ describe('release download and installation', () => {
     await expect(access(stored('dmg'))).resolves.toBeUndefined()
   })
 
+  it('removes the bytes once the native updater has them, even if quitting raced it', async () => {
+    const input = options()
+    await downloadRelease(
+      updater,
+      input,
+      async () => {
+        input.cancellationToken.emit('cancel')
+        return ['native-cache/update.exe']
+      },
+      downloads,
+    )
+    expect(await readdir(downloads.directory)).toEqual([])
+  })
+
   it('reports a cancelled download as cancelled', async () => {
     const input = options()
     fetchAsset.mockImplementation(async (_url, init) => {

@@ -58,12 +58,13 @@ export async function downloadRelease(
     }).catch((error: unknown) => {
       throw abort.signal.aborted ? cancelled() : error
     })
+    let handedOver = false
     try {
       const file = asset.name.endsWith('.dmg')
         ? await prepareDmgUpdate(downloaded, directory, info.version, abort.signal)
         : downloaded
       if (abort.signal.aborted) throw cancelled()
-      return await servePreparedUpdate(file, info, (url, prepared) =>
+      const installed = await servePreparedUpdate(file, info, (url, prepared) =>
         install({
           ...options,
           disableDifferentialDownload: true,
@@ -77,10 +78,12 @@ export async function downloadRelease(
           },
         }),
       )
+      handedOver = true
+      return installed
     } finally {
-      // The native updater keeps its own copy. Quitting during preparation keeps
-      // the verified bytes so the next launch need not fetch them again.
-      if (!abort.signal.aborted) await rm(downloaded, { force: true })
+      // The native updater keeps its own copy, even when quitting raced its last
+      // step. Quitting before then keeps the verified bytes for the next launch.
+      if (handedOver || !abort.signal.aborted) await rm(downloaded, { force: true })
     }
   }).finally(() => {
     activeDownloads.delete(updater)
