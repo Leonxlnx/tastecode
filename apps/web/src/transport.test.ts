@@ -256,6 +256,38 @@ describe('Transport', () => {
     transport.close()
   })
 
+  it('keeps invalid mutation replies uncertain before and after validators load', async () => {
+    const parse = vi.spyOn(await import('./transport-validation.js'), 'parseMethodResult')
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        parse.mockClear()
+        const invalid = transport.request('thread.sendTurn', {
+          threadId: 'thread',
+          text: 'Do this once.',
+        })
+        const { id } = RequestFrameSchema.parse(JSON.parse(userFrames(socket).at(-1)!))
+        socket.onmessage?.({ data: JSON.stringify({ id, result: null }) })
+
+        // The first reply waits for the lazy validator; the second parses immediately.
+        expect(parse).toHaveBeenCalledTimes(attempt)
+        await expect(invalid).rejects.toBeInstanceOf(IndeterminateRequestError)
+        await expect(invalid).rejects.toThrow(
+          'The server sent an invalid reply to thread.sendTurn. Restart TasteCode if this keeps happening.',
+        )
+        expect(parse).toHaveBeenCalledOnce()
+      }
+      expect(transport.state).toBe('open')
+      expect(userFrames(socket)).toHaveLength(2)
+    } finally {
+      transport.close()
+    }
+  })
+
   it('rejects malformed push envelopes before dispatch', () => {
     expect(parseIncomingFrame('{')).toBeUndefined()
     expect(

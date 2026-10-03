@@ -99,6 +99,8 @@ import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
+import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
+import { surfaceLoadFailed } from './surface-load-error.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
@@ -125,6 +127,7 @@ import {
 } from './model-catalog.js'
 import {
   freshModelCatalogChoices,
+  isModelCatalogSourceFresh,
   parseModelCatalogCache,
   serializeModelCatalogCache,
 } from './model-catalog-cache.js'
@@ -239,7 +242,9 @@ const loadWorkspacePanel = (): Promise<LazyWorkspacePanelModule> =>
   }))
 const WorkspacePanel = lazy(loadWorkspacePanel)
 const Settings = lazy(() =>
-  import('./ui/Settings.js').then((module) => ({ default: module.Settings })),
+  import('./ui/Settings.js')
+    .then((module) => ({ default: module.Settings }))
+    .catch(surfaceLoadFailed),
 )
 const CommandPalette = lazy(() =>
   import('./ui/CommandPalette.js').then((module) => ({ default: module.CommandPalette })),
@@ -365,8 +370,12 @@ export function resolveSendAvailability(input: {
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
   if (!status) return 'unavailable'
-  if (!status.installed || status.auth === 'unauthenticated') return 'setup-required'
+  if (!status.installed) return 'setup-required'
   if (status.problem || !status.capabilities) return 'unavailable'
+  if (input.accountCheck.provider === provider && input.accountCheck.state === 'ready') {
+    return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
+  }
+  if (status.auth === 'unauthenticated') return 'setup-required'
   if (status.auth === 'authenticated') return 'ready'
   if (input.accountCheck.provider !== provider || input.accountCheck.state === 'loading') {
     return 'loading'
@@ -484,6 +493,8 @@ export function App() {
   // A cache of what the server says, not a source of truth. Every change goes
   // to the server and comes back through here.
   const [projects, setProjects] = useState<Project[]>([])
+  const removedProjectPaths = useRef(new Set<string>())
+  const projectStartRevisions = useRef(new Map<string, number>())
   // Other projects follow the server's newest-first order, so chats imported
   // later from another provider land by date instead of below a saved snapshot.
   const [draggedSessionOrder] = useState(() => new Set(Object.keys(loadSessionOrder())))
@@ -590,6 +601,7 @@ export function App() {
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
+  const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
     { transport: Transport; request: number } | undefined
   >()
@@ -670,6 +682,7 @@ export function App() {
   }, [])
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
+  const [authStatusRequest, setAuthStatusRequest] = useState(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
@@ -892,14 +905,25 @@ export function App() {
         : false,
     [activeModelSource, models],
   )
+  const preferredModelSource = activeModelSource ?? sourceKey({ provider, agentId: sourceAgent })
+  const preferredModelKey = useMemo(
+    () => readSourceSelections()[preferredModelSource]?.modelKey,
+    [preferredModelSource, selectableModels],
+  )
+  const preferredSourcePending = pendingModelSources.has(preferredModelSource)
   const selectableImplicitChoice =
     implicitChoice &&
     (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
-    (models.length === 0 || (activeModelSource && !sourceHasCatalogModels))
+    (models.length === 0 ||
+      preferredSourcePending ||
+      (activeModelSource && !sourceHasCatalogModels))
       ? implicitChoice
       : undefined
   const selectedModelChoice =
     selectableModels.find((choice) => choice.key === modelId) ??
+    selectableModels.find((choice) => choice.key === preferredModelKey) ??
+    selectableModels.find((choice) => modelSource(choice) === preferredModelSource) ??
+    (preferredSourcePending ? selectableImplicitChoice : undefined) ??
     selectableModels[0] ??
     selectableImplicitChoice
   const sendAvailability = resolveSendAvailability({
@@ -1076,7 +1100,7 @@ export function App() {
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
       const draft = threadController.recoverDraft(threadId, rejected)
-      if (threadId === activeIdRef.current) {
+      if (threadId === composerDraftKey(activeIdRef.current)) {
         threadController.draftOwner = threadId
         publishComposerDraft(draft)
       }
@@ -1125,6 +1149,23 @@ export function App() {
   const updateComposerDraftResources = useCallback((resources: ComposerResource[]) => {
     threadController.editDraft(threadController.draftOwner, { resources })
   }, [])
+  // A paste can finish saving after the user switched chats. The composer then
+  // no longer shows its draft, so the file joins the draft it was pasted into.
+  const keepPendingAttachment = useCallback(
+    (savedPath: Promise<string | undefined>) => {
+      const owner = threadController.draftOwner
+      void savedPath.then((path) => {
+        if (!path) return
+        const draft = threadController.draft(owner)
+        if (draft.attachments.includes(path)) return
+        const next = threadController.editDraft(owner, {
+          attachments: [...draft.attachments, path],
+        })
+        if (threadController.draftOwner === owner) publishComposerDraft(next)
+      })
+    },
+    [publishComposerDraft],
+  )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   const workspaceIdleProbe = useRef<WorkspaceIdleProbe>({
@@ -1482,7 +1523,10 @@ export function App() {
     const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
       usageController.changed(provider)
     })
-    const offSequenceGap = transport.onSequenceGap(() => resync.current())
+    const offSequenceGap = transport.onSequenceGap(() => {
+      threadController.markHistoriesForRecovery()
+      resync.current()
+    })
     // Held back briefly: a clean reconnect takes ~500ms, and a banner that
     // appears and vanishes in that time is noise, not information.
     let announce: number | undefined
@@ -1490,11 +1534,16 @@ export function App() {
     const offState = transport.onState((state) => {
       window.clearTimeout(announce)
       if (state === 'reconnecting') {
+        threadController.markHistoriesForRecovery()
         missedPushes = true
         announce = window.setTimeout(() => setOffline(true), 1200)
       } else {
         setOffline(false)
-        if (state === 'open' && missedPushes) setCatalogRequest((current) => current + 1)
+        if (state === 'open' && missedPushes) {
+          setCatalogRequest((current) => current + 1)
+          accountRequestRevision.current += 1
+          setAuthStatusRequest((current) => current + 1)
+        }
         if (
           state === 'open' &&
           usageController.snapshot().some((entry) => entry.status === 'error')
@@ -1610,7 +1659,59 @@ export function App() {
         }
       }
       setProviderCatalogSource({ transport, request: catalogRequest })
-      const unknownKeys = new Set<string>()
+      setPendingModelSources(
+        new Set([
+          ...providers
+            .filter((entry) => entry.installed)
+            .map((entry) => sourceKey({ provider: entry.id })),
+          ...(sourceAgentRef.current
+            ? [sourceKey({ provider: providerRef.current, agentId: sourceAgentRef.current })]
+            : []),
+        ]),
+      )
+      const cached = parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))
+      const unknownKeys = new Set(unvalidatedModelKeys)
+      const validatedSources = new Map<string, number>()
+      let publishedCatalog = catalogModelsRef.current
+      const settleSource = <T extends { discovered: boolean; models: ModelChoice[] }>(
+        source: string,
+        result: T,
+      ): T => {
+        if (cancelled) return result
+        setPendingModelSources((current) => {
+          const next = new Set(current)
+          next.delete(source)
+          return next
+        })
+        for (const choice of publishedCatalog) {
+          if (modelSource(choice) === source) unknownKeys.delete(choice.key)
+        }
+        if (result.discovered) validatedSources.set(source, Date.now())
+        else if (!isModelCatalogSourceFresh(cached, source)) {
+          for (const choice of result.models) unknownKeys.add(choice.key)
+        }
+        publishedCatalog = [
+          ...publishedCatalog.filter((choice) => modelSource(choice) !== source),
+          ...result.models,
+        ]
+        setModelCatalog({
+          models: publishedCatalog,
+          loaded: true,
+          unvalidatedModelKeys: new Set(unknownKeys),
+        })
+        setModelErrors({ ...discoveryErrors })
+        if (result.discovered) {
+          writeSetting(
+            MODEL_CATALOG_KEY,
+            serializeModelCatalogCache(publishedCatalog, {
+              validatedSources: validatedSources.keys(),
+              // A later completion must not refresh an earlier source's age.
+              validatedAt: Math.min(...validatedSources.values()),
+            }),
+          )
+        }
+        return result
+      }
       const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed)
@@ -1620,10 +1721,11 @@ export function App() {
               const preserved = catalogModelsRef.current.filter(
                 (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
               )
-              for (const choice of preserved) {
-                if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
-              }
-              return { provider: entry.id, discovered: false, models: preserved }
+              return settleSource(source, {
+                provider: entry.id,
+                discovered: false,
+                models: preserved,
+              })
             }
             try {
               const result = await transport.request('models.list', { provider: entry.id })
@@ -1637,7 +1739,11 @@ export function App() {
                 false,
               )
               return models.length > 0
-                ? { provider: entry.id, discovered: true, models }
+                ? settleSource(sourceKey({ provider: entry.id }), {
+                    provider: entry.id,
+                    discovered: true,
+                    models,
+                  })
                 : preserveCatalog()
             } catch (cause) {
               discoveryErrors[sourceKey({ provider: entry.id })] = {
@@ -1649,7 +1755,17 @@ export function App() {
           }),
       )
       const harnessesResult = await harnessesCatalog
+      if (cancelled) return
       const harnesses = harnessesResult?.harnesses ?? []
+      setPendingModelSources(
+        (current) =>
+          new Set([
+            ...current,
+            ...harnesses.map((harness) =>
+              sourceKey({ provider: harness.provider, agentId: harness.id }),
+            ),
+          ]),
+      )
       const customSourcesPromise = Promise.all(
         harnesses.map(async (harness) => {
           const source = sourceKey({ provider: harness.provider, agentId: harness.id })
@@ -1664,7 +1780,11 @@ export function App() {
               provider: harness.provider,
               agent: harness.id,
             })
-            return { source, discovered: true, models: choicesFor(input, result.models, true) }
+            return settleSource(source, {
+              source,
+              discovered: true,
+              models: choicesFor(input, result.models, true),
+            })
           } catch (cause) {
             discoveryErrors[source] = {
               id: `models:${source}:${catalogRequest}`,
@@ -1673,35 +1793,21 @@ export function App() {
             const preserved = catalogModelsRef.current.filter(
               (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
             )
-            if (preserved.length > 0) return { source, discovered: false, models: preserved }
+            if (preserved.length > 0)
+              return settleSource(source, { source, discovered: false, models: preserved })
             const fallback = choicesFor(input, [], true)
-            for (const choice of fallback) unknownKeys.add(choice.key)
-            return { source, discovered: false, models: fallback }
+            return settleSource(source, { source, discovered: false, models: fallback })
           }
         }),
       )
       const [direct, customSources] = await Promise.all([directPromise, customSourcesPromise])
       if (cancelled) return
+      setPendingModelSources(new Set())
       const directCatalog = direct.flatMap((entry) => entry.models)
       const catalog = [...directCatalog, ...customSources.flatMap((entry) => entry.models)]
       const directCatalogReady = direct.length > 0 && direct.every((entry) => entry.discovered)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
-      // A synthetic cache-miss entry has no tier metadata. Do not persist it
-      // as an authoritative snapshot after a transient discovery failure.
-      if (unknownKeys.size === 0 && direct.every((entry) => entry.discovered)) {
-        writeSetting(
-          MODEL_CATALOG_KEY,
-          serializeModelCatalogCache(catalog, {
-            validatedSources: [
-              ...direct
-                .filter((entry) => entry.discovered)
-                .map((entry) => sourceKey({ provider: entry.provider })),
-              ...customSources.filter((entry) => entry.discovered).map((entry) => entry.source),
-            ],
-          }),
-        )
-      }
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
@@ -1940,14 +2046,15 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, provider, selectedModelChoice?.agent])
+  }, [transport, provider, selectedModelChoice?.agent, authStatusRequest])
 
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
       reportStartupMilestone('projects-requested')
     }
-    const { projects: list } = await transport.request('projects.list', {})
+    const result = await transport.request('projects.list', {})
+    const list = result.projects.filter((project) => !removedProjectPaths.current.has(project.path))
     if (!startupMilestones.current.projectsReceived) {
       startupMilestones.current.projectsReceived = true
       reportStartupMilestone('projects-received')
@@ -2011,6 +2118,7 @@ export function App() {
     const activeId = activeIdRef.current
     const path = activePathRef.current
     const threadIds = new Set(threadController.pendingThreadIds())
+    for (const id of threadController.historyRecoveryIds()) threadIds.add(id)
     // prettier-ignore
     const ownerPaths = new Map([...workspaceIdleProbe.current.pendingStarts].filter(([id]) => !id.startsWith('pending:')).map(([id, owner]) => [id, { path: owner.path, tokens: [...owner.tokens] }]))
     for (const id of ownerPaths.keys()) threadIds.add(id)
@@ -2256,16 +2364,26 @@ export function App() {
   }, [usageController, usageThreadId, provider, usageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
-  // there is given to the server and the key removed, so it happens once.
+  // there stays recoverable until the server acknowledges that project.
   useEffect(() => {
     let cancelled = false
     void (async () => {
       removeSetting(LEGACY_SESSION_ORDER_KEY)
       const legacy = takeLegacyProjects()
       for (const project of legacy) {
-        await transport.request('projects.add', project).catch(() => undefined)
+        if (cancelled) return
+        try {
+          await transport.request('projects.add', project)
+          if (cancelled) return
+          const remaining = takeLegacyProjects().filter(
+            (entry) => entry.path !== project.path || entry.name !== project.name,
+          )
+          if (remaining.length) writeSetting(PROJECTS_KEY, JSON.stringify(remaining))
+          else removeSetting(PROJECTS_KEY)
+        } catch {
+          // Unacknowledged entries must survive transport timeouts and relaunches.
+        }
       }
-      if (legacy.length > 0) removeSetting(PROJECTS_KEY)
       if (!cancelled) {
         setProjectsStatus('loading')
         await refreshProjects()
@@ -2497,6 +2615,7 @@ export function App() {
       const activePath = uniquePaths.at(-1)
       if (!activePath) return
       await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
+      for (const path of uniquePaths) removedProjectPaths.current.delete(path)
       await refreshProjects()
       setActivePath(activePath)
       activeIdRef.current = undefined
@@ -2538,6 +2657,10 @@ export function App() {
     ): Promise<string | undefined> => {
       const choice = selectedModelChoice
       if (!choice) return undefined
+      const projectRevision = projectStartRevisions.current.get(projectPath) ?? 0
+      const projectRemoved = () =>
+        removedProjectPaths.current.has(projectPath) ||
+        (projectStartRevisions.current.get(projectPath) ?? 0) !== projectRevision
       setNotice(undefined)
       setActionError(undefined)
       setUndoRestore(undefined)
@@ -2557,6 +2680,8 @@ export function App() {
                 ? 'main'
                 : undefined
         }
+        if (projectRemoved())
+          throw new Error('The project was removed before the chat could start.')
         let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
@@ -2574,7 +2699,7 @@ export function App() {
           ...(isolateSession ? { isolate: true } : {}),
         })
         let pendingApproval = pendingThreadApprovals.current.get(provisionalId)
-        while (pendingApproval && pendingApproval !== sessionApproval) {
+        while (pendingApproval && pendingApproval !== sessionApproval && !projectRemoved()) {
           try {
             await transport.request('thread.setApproval', { threadId, approval: pendingApproval })
             sessionApproval = pendingApproval
@@ -2583,6 +2708,10 @@ export function App() {
             break
           }
           pendingApproval = pendingThreadApprovals.current.get(provisionalId)
+        }
+        if (projectRemoved()) {
+          await transport.request('thread.close', { threadId }).catch(() => undefined)
+          throw new Error('The project was removed before the chat could start.')
         }
         pendingThreadApprovals.current.delete(provisionalId)
         const savedSelection = readThreadModelSelection(provisionalId)
@@ -2634,8 +2763,8 @@ export function App() {
                 },
           ),
         )
+        threadController.moveDraft(provisionalId, threadId)
         if (activeIdRef.current === provisionalId) {
-          threadController.moveDraft(provisionalId, threadId)
           if (threadController.draftOwner === provisionalId) threadController.draftOwner = threadId
           if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId
           activeIdRef.current = threadId
@@ -2656,6 +2785,14 @@ export function App() {
         removeSetting(`${MODEL_BY_THREAD_PREFIX}${provisionalId}`)
         if (path) refreshWorkspaceAfterCompletion(path)
         threadController.discardSnapshot(provisionalId)
+        const laterDraft = threadController.draft(provisionalId)
+        threadController.forgetDraft(provisionalId)
+        if (!isEmptyComposerDraft(laterDraft)) {
+          const recovered = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, laterDraft)
+          threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
+            resources: [...recovered.resources, ...laterDraft.resources],
+          })
+        }
         setProjects((current) =>
           current.map((project) => ({
             ...project,
@@ -2738,18 +2875,18 @@ export function App() {
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
       // for the paragraph someone just typed.
-      const restoreDraft = () => {
-        const key = composerDraftKey(activeIdRef.current)
-        const next = threadController.editDraft(key, { text, attachments })
-        threadController.draftOwner = key
-        publishComposerDraft(next)
-      }
+      const draftKey = activeId?.startsWith('pending:')
+        ? NEW_CHAT_DRAFT_KEY
+        : composerDraftKey(activeId)
+      const restoreDraft = () => restoreRejectedDraft(draftKey, { text, attachments })
       if (activeId) pendingDeletionChecks.current.delete(activeId)
       if (activeId && !cancelQueuedArchive(activeId)) {
         restoreDraft()
         reportError('This chat is being deleted.')
         return
       }
+      // Clear only the submitted draft, before startup can yield to later edits.
+      threadController.forgetDraft(composerDraftKey(activeId))
       const sideChatCommand = parseSideChatCommand(text)
       if (sideChatCommand) {
         if (!activeId || activeId.startsWith('pending:')) {
@@ -2958,7 +3095,6 @@ export function App() {
         ])
       }
       const optimisticState = threadController.snapshot(threadId) ?? emptyThread
-      threadController.forgetDraft(threadId)
       const pendingOptimisticTurn = optimisticState.activeTurn
       const precedingTurn = wasRunning ? before.activeTurn : undefined
       const pendingSubmission: PendingSubmission = {
@@ -3195,13 +3331,13 @@ export function App() {
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
-      if (changedProvider === provider) {
+      if (changedProvider === providerRef.current) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
         setAccountCheck({ provider: changedProvider, state: 'ready', account: changedAccount })
       }
     },
-    [provider],
+    [],
   )
 
   useEffect(() => {
@@ -3245,7 +3381,7 @@ export function App() {
   ])
 
   // prettier-ignore
-  const deleteQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'delete', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
+  const deleteQueuedTurn = useCallback((queuedTurnId: string): Promise<boolean> => { if (!activeId) return Promise.resolve(false); holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; return transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath); return true }, (error: unknown) => { settleQueueAction(queuedTurnId, 'delete', error instanceof IndeterminateRequestError); throw error }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
   const moveQueuedTurn = useCallback(
     (queuedTurnId: string, direction: 'up' | 'down') => {
@@ -3436,7 +3572,13 @@ export function App() {
     (approvalId: string, decision: ApprovalDecision) => {
       const threadId = activeIdRef.current
       if (!threadId) return
-      void transport.request('thread.respondToApproval', { threadId, approvalId, decision })
+      void transport
+        .request('thread.respondToApproval', { threadId, approvalId, decision })
+        .catch((error) => {
+          setNotice(
+            `Could not send the approval. ${error instanceof Error ? error.message : String(error)}`,
+          )
+        })
     },
     [transport],
   )
@@ -3939,18 +4081,30 @@ export function App() {
   const removeSidebarProject = useCallback(
     (path: string) => {
       const previousActivePath = activePathRef.current
+      removedProjectPaths.current.add(path)
+      projectStartRevisions.current.set(path, (projectStartRevisions.current.get(path) ?? 0) + 1)
       setProjects((current) => current.filter((project) => project.path !== path))
-      if (previousActivePath === path) setActivePath(undefined)
+      if (previousActivePath === path) {
+        activePathRef.current = undefined
+        setActivePath(undefined)
+        activeIdRef.current = undefined
+        setActiveId(undefined)
+        setThread(emptyThread)
+        setActiveThreadApproval(undefined)
+        setUndoRestore(undefined)
+        setRollbackOpen(false)
+      }
       void transport
         .request('projects.remove', { path })
         .then(refreshProjects)
         .catch((error) => {
+          removedProjectPaths.current.delete(path)
           reportError(error instanceof Error ? error.message : String(error))
           // Put the selection back too, not just the list. Removal can now be
           // refused, and refreshProjects would otherwise fill the cleared
           // selection with an arbitrary other project while the open session
           // still belongs to this one.
-          setActivePath(previousActivePath)
+          if (!activePathRef.current && !activeIdRef.current) setActivePath(previousActivePath)
           void refreshProjects().catch(() => undefined)
         })
     },
@@ -4858,6 +5012,7 @@ export function App() {
                       draftRequest={composerDraft}
                       onDraftChange={updateComposerDraftText}
                       onAttachmentsChange={updateComposerDraftAttachments}
+                      onPendingAttachment={keepPendingAttachment}
                       onResourcesChange={updateComposerDraftResources}
                       onReady={handleComposerReady}
                       queuedTurns={queuedTurns}
@@ -4974,7 +5129,7 @@ export function App() {
       </div>
 
       {settingsOpen ? (
-        <Suspense fallback={null}>
+        <SurfaceErrorBoundary name="Settings" onClose={closeSettings}>
           <Settings
             initialSection={settingsSection}
             showDebug={debugSettingsVisible}
@@ -5017,13 +5172,13 @@ export function App() {
             }}
             onClose={closeSettings}
           />
-        </Suspense>
+        </SurfaceErrorBoundary>
       ) : null}
 
       {onboardingMounted ? (
         <Suspense fallback={null}>
           <Onboarding
-            hidden={settingsOpen}
+            hidden={settingsOpen || providerLoginTerminal !== undefined}
             finished={!onboardingWanted}
             displayName={profileIdentity.displayName}
             onDisplayNameChange={(displayName) => updateProfileIdentity({ displayName })}

@@ -74,6 +74,35 @@ describe('cross-session search', () => {
     expect(document.activeElement).toBe(search)
   })
 
+  it('does not keep old content results when the next query fails', async () => {
+    vi.useFakeTimers()
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [RESULT], nextCursor: 'next' })
+      .mockRejectedValueOnce(new Error('Search unavailable'))
+    const onSelect = vi.fn()
+    render(
+      <SessionSearch
+        transport={new TestTransport((method, params) => request(method, params))}
+        projects={PROJECTS}
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    )
+    const input = screen.getByLabelText('Search every chat')
+    fireEvent.change(input, { target: { value: 'regression' } })
+    await act(() => vi.advanceTimersByTimeAsync(80))
+    expect(screen.getByRole('option', { name: /Fix regression/ })).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: 'unmatched query' } })
+    await act(() => vi.advanceTimersByTimeAsync(80))
+    expect(screen.getByText('Search unavailable')).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Fix regression/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Load more results' })).toBeNull()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
   it('finds titles immediately, searches quickly, and supports keyboard navigation', async () => {
     vi.useFakeTimers()
     const request = vi
