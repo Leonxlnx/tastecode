@@ -950,22 +950,17 @@ export function ProviderSettings(props: {
         }
         primary={
           account?.signedIn
-            ? undefined
-            : {
-                label: operation?.kind === 'sign-in' ? 'Signing in…' : 'Sign in',
-                disabled: operation !== undefined,
-                onClick: () => void signIn(status.id),
-              }
-        }
-        secondary={
-          account?.signedIn
             ? {
                 label: operation?.kind === 'sign-out' ? 'Signing out…' : 'Sign out',
                 disabled: operation !== undefined,
                 danger: true,
                 onClick: () => void signOut(status.id),
               }
-            : undefined
+            : {
+                label: operation?.kind === 'sign-in' ? 'Signing in…' : 'Sign in',
+                disabled: operation !== undefined,
+                onClick: () => void signIn(status.id),
+              }
         }
       />
     )
