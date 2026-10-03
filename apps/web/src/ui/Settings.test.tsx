@@ -13,13 +13,27 @@ import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
 import { ProviderSettings, Settings } from './Settings.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
+import * as bridge from '../bridge.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
 
+const settingsLoading = vi.hoisted(() => ({
+  desktop: false,
+  terminal: undefined as Promise<void> | undefined,
+}))
+
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
+  get isDesktop() {
+    return settingsLoading.desktop
+  },
+}))
+
 vi.mock('./InstallTerminal.js', () => ({
-  InstallTerminal: (props: { installKey: string }) => (
-    <div data-testid="install-terminal" data-install-key={props.installKey} />
-  ),
+  InstallTerminal: (props: { installKey: string }) => {
+    if (settingsLoading.terminal) throw settingsLoading.terminal
+    return <div data-testid="install-terminal" data-install-key={props.installKey} />
+  },
 }))
 
 function renderSettings(
@@ -95,6 +109,8 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   resetInstalls()
+  settingsLoading.desktop = false
+  settingsLoading.terminal = undefined
   writeModelPickerLayout('list')
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
@@ -209,7 +225,7 @@ describe('about status grammar', () => {
       transport,
     })
 
-    expect(screen.getByText('Browser · pre-release').className).toBe('settings-meta')
+    expect((await screen.findByText('Browser · pre-release')).className).toBe('settings-meta')
     fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     expect(screen.getByRole('status', { name: 'Checking' }).className).toContain('is-checking')
 
@@ -375,6 +391,225 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+describe('settings loading values', () => {
+  it('holds model source cards until the first catalog arrives', async () => {
+    const { container, rerenderSettings } = renderSettings({
+      initialSection: 'models',
+      overrides: { modelsLoading: true },
+    })
+    const loading = screen.getByText('Loading models…').closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.classList.contains('model-settings__sources')).toBe(true)
+    expect(loading.querySelectorAll('.model-visibility')).toHaveLength(2)
+    expect(loading.querySelectorAll('.model-visibility__model')).toHaveLength(7)
+    expect(loading.querySelectorAll('.settings__switch-skeleton')).toHaveLength(7)
+    expect(container.querySelector('.model-settings__empty')).toBeNull()
+    expect(within(loading as HTMLElement).queryByRole('switch')).toBeNull()
+
+    const models: ModelChoice[] = [
+      {
+        key: 'codex:luna',
+        provider: 'codex',
+        sourceName: 'Codex',
+        mark: 'openai',
+        model: {
+          id: 'luna',
+          displayName: 'Luna',
+          isDefault: true,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+      },
+    ]
+    rerenderSettings({ modelsLoading: false, models })
+    expect(screen.queryByText('Loading models…')).toBeNull()
+    expect(screen.getByRole('switch', { name: 'Include Luna in model picker' })).toBeTruthy()
+
+    rerenderSettings({ modelsLoading: true, models })
+    expect(screen.queryByText('Loading models…')).toBeNull()
+    expect(screen.getByRole('switch', { name: 'Include Luna in model picker' })).toBeTruthy()
+
+    rerenderSettings({ modelsLoading: false, models: [] })
+    expect(
+      screen.getByText('No models are available from your connected providers yet.'),
+    ).toBeTruthy()
+    await act(async () => {})
+  })
+
+  it('loads the background model value and note without guessing Automatic', async () => {
+    const settings = deferred<ResultOf<'backgroundModel.settings'>>()
+    const transport = new TestTransport(() => settings.promise)
+    renderSettings({ initialSection: 'models', transport })
+    const background = screen.getByRole('region', { name: 'Background work' })
+    const loading = within(background).getByText('Loading background model…')
+    expect(loading.closest('[role="status"]')?.getAttribute('aria-busy')).toBe('true')
+    expect(loading.closest('[role="status"]')?.querySelector('.skeleton--block')).toBeTruthy()
+    expect(within(background).getByText('Loading background model details…').className).toBe(
+      'visually-hidden',
+    )
+    expect(within(background).queryByRole('combobox')).toBeNull()
+    expect(within(background).queryByText('Automatic (recommended)')).toBeNull()
+    expect(within(background).queryByText(/Connect a provider with an available model/)).toBeNull()
+    expect(within(background).queryByText('Reasoning effort')).toBeNull()
+    expect(within(background).queryByText('Speed')).toBeNull()
+
+    await act(async () =>
+      settings.resolve({
+        preference: { mode: 'automatic' },
+        sources: [],
+        resolved: {
+          provider: 'codex',
+          model: 'luna',
+          sourceName: 'Codex',
+          automatic: true,
+        },
+      }),
+    )
+    expect(within(background).queryByText('Loading background model…')).toBeNull()
+    expect(within(background).getByRole('combobox', { name: 'Background model' }).textContent).toBe(
+      'Automatic (recommended)',
+    )
+    expect(within(background).getByText('Currently luna through Codex.')).toBeTruthy()
+  })
+
+  it('ends the background skeleton on failure without inventing a selection', async () => {
+    const settings = deferred<ResultOf<'backgroundModel.settings'>>()
+    renderSettings({
+      initialSection: 'models',
+      transport: new TestTransport(() => settings.promise),
+    })
+    await act(async () => settings.reject(new Error('Background settings offline')))
+    const background = screen.getByRole('region', { name: 'Background work' })
+    expect(within(background).queryByText('Loading background model…')).toBeNull()
+    expect(within(background).getByRole('alert').textContent).toBe('Background settings offline')
+    expect(within(background).queryByText('Automatic (recommended)')).toBeNull()
+  })
+
+  it('holds the app version and update verdict until native state arrives', async () => {
+    const update = deferred<bridge.AppUpdateState>()
+    settingsLoading.desktop = true
+    vi.spyOn(bridge, 'appUpdateState').mockReturnValue(update.promise)
+    renderSettings({ initialSection: 'about' })
+    const version = screen.getByText('Loading app version…').closest('[aria-busy="true"]')!
+    expect(version.closest('.settings-meta')).toBeTruthy()
+    expect(version.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 9px')
+    expect(screen.getByText('Loading update status…').className).toBe('visually-hidden')
+    expect(screen.queryByText(/pre-release/)).toBeNull()
+
+    await act(async () =>
+      update.resolve({
+        status: 'current',
+        currentVersion: '1.2.3',
+      }),
+    )
+    expect(screen.queryByText('Loading app version…')).toBeNull()
+    expect(screen.queryByText('Loading update status…')).toBeNull()
+    expect(screen.getByText('Desktop · 1.2.3')).toBeTruthy()
+    expect(screen.getByRole('status', { name: 'Ready · Up to date' })).toBeTruthy()
+  })
+
+  it('passes the account loading state to the profile plan slot', () => {
+    const { rerenderSettings } = renderSettings({
+      overrides: { initialSection: 'profile', accountLoading: true },
+    })
+    expect(
+      screen.getByText('Loading account plan…').closest('.profile-identity__meta'),
+    ).toBeTruthy()
+    rerenderSettings({
+      initialSection: 'profile',
+      accountLoading: false,
+      account: { signedIn: true, plan: 'Pro' },
+    })
+    expect(screen.queryByText('Loading account plan…')).toBeNull()
+    expect(screen.getByText('Pro')).toBeTruthy()
+  })
+
+  it.each([true, false])(
+    'does not assume diagnostics is off before IPC returns %s',
+    async (enabled) => {
+      const diagnostics = deferred<boolean>()
+      settingsLoading.desktop = true
+      vi.spyOn(bridge, 'localDiagnosticsEnabled').mockReturnValue(diagnostics.promise)
+      const toggle = vi.spyOn(bridge, 'setLocalDiagnosticsEnabled').mockResolvedValue(!enabled)
+      renderSettings({ initialSection: 'data' })
+      const loading = screen.getByText('Loading local diagnostics…').closest('[role="status"]')!
+      expect(loading.getAttribute('aria-busy')).toBe('true')
+      expect(loading.classList.contains('settings__switch-skeleton')).toBe(true)
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 36px')
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 22px')
+      expect(screen.queryByRole('switch', { name: 'Local diagnostics' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Open folder' })).toBeNull()
+
+      await act(async () => diagnostics.resolve(enabled))
+      expect(screen.queryByText('Loading local diagnostics…')).toBeNull()
+      expect(
+        screen.getByRole('switch', { name: 'Local diagnostics' }).getAttribute('aria-checked'),
+      ).toBe(String(enabled))
+      expect(Boolean(screen.queryByRole('button', { name: 'Open folder' }))).toBe(enabled)
+      await act(async () =>
+        fireEvent.click(screen.getByRole('switch', { name: 'Local diagnostics' })),
+      )
+      expect(toggle).toHaveBeenCalledWith(!enabled)
+      expect(
+        screen.getByRole('switch', { name: 'Local diagnostics' }).getAttribute('aria-checked'),
+      ).toBe(String(!enabled))
+    },
+  )
+
+  it('keeps the project count pending without asserting zero projects', async () => {
+    const { rerenderSettings } = renderSettings({
+      initialSection: 'data',
+      overrides: { projectsLoading: true },
+    })
+    const loading = screen.getByText('Loading project count…')
+    expect(loading.className).toBe('visually-hidden')
+    expect(loading.closest('[aria-busy="true"]')?.querySelector('.skeleton')).toBeTruthy()
+    expect(screen.queryByText('0 projects on this machine')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Reset app preferences' })).toBeTruthy()
+    rerenderSettings({ projectsLoading: false, projectCount: 3 })
+    expect(screen.queryByText('Loading project count…')).toBeNull()
+    expect(screen.getByText('3 projects on this machine')).toBeTruthy()
+    await act(async () => {})
+  })
+
+  it('fills the install terminal frame while its lazy content opens', async () => {
+    const terminal = deferred<void>()
+    settingsLoading.terminal = terminal.promise
+    renderProviders(
+      [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: false,
+          auth: 'unknown',
+          setup: {
+            installUrl: 'https://example.test/claude',
+            installCommand: 'npm install -g @anthropic-ai/claude-code',
+            login: 'provider',
+          },
+        },
+      ],
+      (method) =>
+        method === 'providers.install' ? { terminalId: 'loading-install' } : { signedIn: false },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    const loading = (await screen.findByText('Opening terminal…')).closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.classList.contains('install-terminal')).toBe(true)
+    expect(loading.querySelectorAll('.skeleton-code__line')).toHaveLength(9)
+    expect(loading.querySelector('.skeleton-code__gutter')).toBeNull()
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+
+    await act(async () => {
+      settingsLoading.terminal = undefined
+      terminal.resolve()
+    })
+    expect(await screen.findByTestId('install-terminal')).toBeTruthy()
+    expect(screen.queryByText('Opening terminal…')).toBeNull()
+  })
+})
+
 function renderProviders(
   statuses: ProviderStatus[],
   request: TestRequestResolver,
@@ -475,6 +710,11 @@ describe('provider authentication states', () => {
     expect(screen.getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
     expect(within(grok).queryByRole('button', { name: 'Problem details' })).toBeNull()
+    expect([codex, claude, grok].map((row) => row.dataset['link'])).toEqual([
+      'connected',
+      'open',
+      'none',
+    ])
     const guide = within(grok).getByRole('link', { name: 'Open setup guide' })
     expect(guide.querySelector('svg')).toBeTruthy()
     expect(guide.getAttribute('href')).toBe('https://x.ai/cli')
@@ -1729,5 +1969,17 @@ describe('provider defaults', () => {
     renderRoster({ providerStatuses: [codex] }, () => ({ signedIn: false }))
     await waitFor(() => expect(screen.queryByRole('group', { name: 'Codex defaults' })).toBeNull())
     expect(action(providerRow('Codex'), 'Sign in')).toBeTruthy()
+  })
+
+  it('shows the roster as a skeleton until the provider list arrives', async () => {
+    const { rerender } = renderRoster({ providerStatuses: [], providersLoading: true })
+    const loading = screen.getByText('Loading providers…').closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.querySelectorAll('.provider-row--skeleton')).toHaveLength(3)
+    expect(loading.querySelectorAll('.provider-tune')).toHaveLength(3)
+
+    rerender({ providerStatuses: [codex], providersLoading: false })
+    expect(screen.queryByText('Loading providers…')).toBeNull()
+    expect(await screen.findByRole('group', { name: 'Codex defaults' })).toBeTruthy()
   })
 })
