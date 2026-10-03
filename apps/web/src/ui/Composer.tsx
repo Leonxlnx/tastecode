@@ -22,21 +22,17 @@ import {
   IconGripVertical as GripVertical,
   IconPhoto as ImageIcon,
   IconDeviceLaptop as Laptop,
-  IconLockOpen as LockOpen,
   IconPalette as Palette,
   IconPencil as Pencil,
   IconPlayerPlay as Play,
   IconPlus as Plus,
-  IconScanEye as ScanEye,
   IconServer as Server,
-  IconShieldCheck as ShieldCheck,
-  IconShieldQuestion as ShieldQuestion,
   IconSquare as Square,
   IconTrash as Trash2,
-  type TablerIcon,
   IconVideo as Video,
   IconX as X,
 } from '@tabler/icons-react'
+import { APPROVAL_MODES } from './approval-modes.js'
 import {
   pickFiles,
   previewViewedImage,
@@ -111,43 +107,6 @@ export type WorkspaceInfo = {
   removed: number
   dirtyFiles: number
 }
-
-export const APPROVAL_MODES: {
-  id: ApprovalMode
-  title: string
-  short: string
-  detail: string
-  icon: TablerIcon
-}[] = [
-  {
-    id: 'ask',
-    title: 'Ask first',
-    short: 'Ask first',
-    detail: 'Approve each edit and command',
-    icon: ShieldQuestion,
-  },
-  {
-    id: 'auto',
-    title: 'Auto-approve',
-    short: 'Auto',
-    detail: 'Edits and commands in this folder',
-    icon: ShieldCheck,
-  },
-  {
-    id: 'auto-review',
-    title: 'Auto-review',
-    short: 'Auto-review',
-    detail: 'Codex reviews elevated actions',
-    icon: ScanEye,
-  },
-  {
-    id: 'full',
-    title: 'Full access',
-    short: 'Full access',
-    detail: 'No sandbox, prompts, or undo',
-    icon: LockOpen,
-  },
-]
 
 const IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i
 const PREVIEWABLE_IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
