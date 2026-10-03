@@ -146,6 +146,28 @@ describe('Claude Agent SDK session', () => {
     expect(disconnected).toHaveBeenCalledOnce()
   })
 
+  it('includes a bounded tool name and argument summary for generic approvals', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Work')
+    const pending = fake.inputs[0]!.options.canUseTool!(
+      'mcp__mail__send',
+      { to: 'person@example.test', body: 'x'.repeat(5_000) },
+      { signal: new AbortController().signal, toolUseID: 'mail' },
+    )
+    const event = events.find((entry) => entry.type === 'approval.requested')
+    if (event?.type !== 'approval.requested') throw new Error('missing approval')
+    expect(event.request.reason).toContain('mcp__mail__send')
+    expect(event.request.reason).toContain('person@example.test')
+    expect(event.request.reason!.length).toBeLessThanOrEqual(2_000)
+    adapter.respondToApproval(event.request.id, 'deny')
+    await pending
+    await adapter.dispose()
+  })
+
   it('preserves multi-select and stringifies all selected labels for Claude', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
