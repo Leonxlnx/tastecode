@@ -1464,7 +1464,9 @@ describe('web client', () => {
 
     render(<App />)
 
-    expect(screen.getByText('Loading projects…').closest('[role="status"]')).not.toBeNull()
+    expect(
+      within(screen.getByRole('main')).getByText('Loading projects…').closest('[role="status"]'),
+    ).not.toBeNull()
     await screen.findByRole('button', { name: 'Retry' })
     expect(screen.getByRole('heading').textContent).toContain('Projects could not be loaded')
 
@@ -1500,7 +1502,8 @@ describe('web client', () => {
     render(<App />)
 
     expect(screen.getByRole('heading').textContent).toBe('What should we build in project?')
-    expect(screen.queryByText('Loading projects…')).toBeNull()
+    expect(within(screen.getByRole('main')).queryByText('Loading projects…')).toBeNull()
+    expect(within(screen.getByRole('navigation')).getByText('Loading projects…')).toBeTruthy()
 
     await waitFor(() => expect(listProjects).toBeDefined())
     act(() => listProjects?.())
@@ -5476,7 +5479,7 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
 
     const permissions = screen.getByRole('button', { name: 'Permissions' })
-    expect(permissions.textContent).toContain('Loading…')
+    expect(within(permissions).getByRole('status').textContent).toContain('Loading permissions')
     expect(permissions.hasAttribute('disabled')).toBe(true)
 
     await act(async () => resolveHistory?.({ events: [], running: false, approval: 'full' }))
@@ -5484,10 +5487,25 @@ describe('new chats', () => {
     expect(localStorage.getItem('harness.approvalByProvider')).toBe('{"codex":"ask"}')
   })
 
-  it('keeps full access selected after the app restarts', () => {
+  it('waits for the provider list before showing the default access mode', async () => {
+    render(<App />)
+
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    expect(within(permissions).getByRole('status').textContent).toContain('Loading permissions')
+    expect(permissions.querySelector('.tool--danger')).toBeNull()
+    expect(permissions.hasAttribute('disabled')).toBe(true)
+
+    await waitFor(() => expect(permissions.querySelector('.tool--review')).not.toBeNull())
+    expect(permissions.textContent).toContain('Auto-review')
+    expect(permissions.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('keeps full access selected after the app restarts', async () => {
     const first = render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    await waitFor(() => expect(permissions.hasAttribute('disabled')).toBe(false))
+    fireEvent.click(permissions)
     fireEvent.click(screen.getByRole('menuitem', { name: /Full access/ }))
 
     expect(localStorage.getItem('harness.approval')).toBe('full')

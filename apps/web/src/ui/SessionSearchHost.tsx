@@ -11,6 +11,7 @@ import {
   type ComponentProps,
 } from 'react'
 import type { SessionSearch as SessionSearchComponent } from './SessionSearch.js'
+import { ChatSearchSkeleton } from './SurfaceSkeletons.js'
 
 const SessionSearch = lazy(() =>
   import('./SessionSearch.js').then((module) => ({ default: module.SessionSearch })),
@@ -69,7 +70,7 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
 
     if (!request) return null
     return (
-      <Suspense fallback={null}>
+      <Suspense fallback={<ChatSearchSkeleton />}>
         <SessionSearch
           {...props}
           initialProjectPath={request.initialProjectPath}

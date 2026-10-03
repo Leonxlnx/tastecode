@@ -59,14 +59,39 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(
       /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty \{[^}]*display: none;/s,
     )
+    // Slots space themselves, so the empty action column collapses to nothing.
+    expect(settingsCss).toMatch(/\.settings__row\.provider-row \{[^}]*gap: 0;/s)
     expect(settingsCss).toMatch(
-      /\.provider-row__primary \{[^}]*grid-column: 4;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 4;/s,
+      /\.provider-row__secondary \{[^}]*grid-column: 5;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 6;/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*min-width: 0;/s,
+      /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[\s\S]*?\.provider-row__secondary \{[^}]*grid-column: 3;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 4;/s,
     )
+    expect(settingsCss).toMatch(/\.provider-row__status \{[^}]*grid-column: 4;[^}]*min-width: 0;/s)
     expect(settingsCss).toMatch(
       /\.provider-row \.settings__action \{[^}]*min-width: 70px;[^}]*min-height: 28px;/s,
+    )
+  })
+
+  it('draws the provider account wire from the link state', () => {
+    expect(settingsCss).toMatch(
+      /\.provider-row::after \{[^}]*grid-column: 3;[^}]*radial-gradient\([^}]*repeat-x;/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.provider-row\[data-link='connected'\]::after \{[^}]*linear-gradient\([^}]*animation: provider-wire-draw/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.provider-row\[data-link='none'\]::after \{[^}]*background: none;/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.provider-row\[data-live\]::after \{[^}]*animation: provider-wire-flow/s,
+    )
+    expect(settingsCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.provider-row::after \{[^}]*animation: none !important;/s,
+    )
+    // Too narrow for a wire: it steps aside instead of squeezing the account.
+    expect(settingsCss).toMatch(
+      /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row::after \{[^}]*display: none;/s,
     )
   })
 })
