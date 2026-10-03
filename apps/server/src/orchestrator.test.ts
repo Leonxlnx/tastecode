@@ -6299,6 +6299,32 @@ describe('sidebar inbox lifecycle', () => {
     await orchestrator.disposeAll()
   })
 
+  it.each(['unsettle', 'wake'] as const)(
+    'gives an old chat fresh activity after manual %s',
+    async (action) => {
+      const { orchestrator, store } = harness()
+      store.addProject('/repo')
+      store.addThread({
+        id: 'old',
+        provider: 'codex',
+        projectPath: '/repo',
+        title: 'Old',
+        createdAt: 1,
+      })
+      store.updateSidebarSettings({ autoSettleDays: 1 })
+      if (action === 'unsettle') {
+        orchestrator.settleThread('old')
+        orchestrator.unsettleThread('old')
+      } else {
+        orchestrator.snoozeThread('old', Date.now() + 60_000)
+        orchestrator.unsnoozeThread('old')
+      }
+      orchestrator.refreshLifecycle()
+      expect(store.thread('old')?.lifecycle.state).toBe('active')
+      await orchestrator.disposeAll()
+    },
+  )
+
   it('loads every persisted thread in bulk and advances the cached status', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')
@@ -6413,6 +6439,30 @@ describe('sidebar inbox lifecycle', () => {
     })
   })
 
+  it('publishes no lifecycle change when the refresh batch rolls back', async () => {
+    const { orchestrator, store, lifecycles } = harness()
+    const wakes = await orchestrator.startThread('codex', '/repo')
+    const fails = await orchestrator.startThread('codex', '/repo')
+    const now = Date.now()
+    orchestrator.snoozeThread(wakes.id, now + 1_000)
+    orchestrator.snoozeThread(fails.id, now + 1_000)
+    const published = lifecycles.length
+    const wake = store.wakeSnoozedThread.bind(store)
+    let calls = 0
+    vi.spyOn(store, 'wakeSnoozedThread').mockImplementation((threadId, ...rest) => {
+      calls += 1
+      if (calls === 2) throw new Error('disk full')
+      return wake(threadId, ...rest)
+    })
+
+    expect(() => orchestrator.refreshLifecycle(now + 2_000)).toThrow('disk full')
+
+    expect(lifecycles).toHaveLength(published)
+    expect(store.thread(wakes.id)?.lifecycle).toMatchObject({ state: 'snoozed' })
+    expect(store.thread(fails.id)?.lifecycle).toMatchObject({ state: 'snoozed' })
+    await orchestrator.disposeAll()
+  })
+
   it('checks durable queued work without loading every thread queue', async () => {
     const store = new Store(':memory:')
     store.addProject('/repo')
@@ -6449,29 +6499,25 @@ describe('sidebar inbox lifecycle', () => {
     await orchestrator.disposeAll()
   })
 
-  it('rechecks inactivity when a lifecycle callback changes a later thread', async () => {
+  it('publishes inactivity changes only after the whole batch committed', async () => {
     const { orchestrator, store, lifecycleHook } = harness()
-    const settles = await orchestrator.startThread('codex', '/repo')
-    const staysActive = await orchestrator.startThread('codex', '/repo')
+    const first = await orchestrator.startThread('codex', '/repo')
+    const second = await orchestrator.startThread('codex', '/repo')
     const now = Date.now()
 
-    store.touchThread(settles.id, false, now)
-    store.touchThread(staysActive.id, false, now + 1)
-    lifecycleHook.current = (_threadId, lifecycle) => {
-      if (lifecycle.state !== 'settled' || lifecycle.reason !== 'inactivity') return
-      lifecycleHook.current = undefined
-      orchestrator.setThreadKeepActive(staysActive.id, true)
+    store.touchThread(first.id, false, now)
+    store.touchThread(second.id, false, now + 1)
+    const seen: string[] = []
+    lifecycleHook.current = () => {
+      seen.push(store.thread(second.id)!.lifecycle.state)
     }
 
     orchestrator.refreshLifecycle(now + 4 * 24 * 60 * 60 * 1_000)
 
-    expect(store.thread(settles.id)?.lifecycle).toMatchObject({
+    expect(seen).toEqual(['settled', 'settled'])
+    expect(store.thread(first.id)?.lifecycle).toMatchObject({
       state: 'settled',
       reason: 'inactivity',
-    })
-    expect(store.thread(staysActive.id)?.lifecycle).toMatchObject({
-      state: 'active',
-      keepActive: true,
     })
     await orchestrator.disposeAll()
   })
