@@ -41,6 +41,12 @@ const provider = {
     userInput: true,
     autoReview: false,
     images: true,
+    context: {
+      windows: [200_000, 1_000_000],
+      compaction: true,
+      compactionOff: true,
+      defaultCompactAt: 90,
+    },
   },
   setup: {
     installUrl: 'https://example.com',
