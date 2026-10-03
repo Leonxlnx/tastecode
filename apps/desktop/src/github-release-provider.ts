@@ -173,16 +173,18 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
     })
     // Newer bare tags can push every release out of the feed's ten entries.
     if (!coversInstalled) return this.latestFromReleaseList()
-    for (const tag of newerTags(tags, current).slice(0, 5)) {
+    const newest = newerTags(tags, current)[0]
+    if (newest) {
       const row = await this.request(
-        `${releaseApi}/tags/${encodeURIComponent(tag)}`,
+        `${releaseApi}/tags/${encodeURIComponent(newest)}`,
         'application/vnd.github+json',
       )
-      // A pushed tag whose release is still a draft is invisible here.
-      if (!row) continue
-      const release = releaseSchema.parse(await row.json())
-      if (release.draft || !release.published_at) continue
-      return releaseUpdateInfo(release, this.platform, process.arch)
+      const release = row ? releaseSchema.parse(await row.json()) : undefined
+      if (release && !release.draft && release.published_at)
+        return releaseUpdateInfo(release, this.platform, process.arch)
+      // A pushed tag whose release is still a draft is invisible here, and any
+      // number of them may sit above the real release. One list answers all.
+      return this.latestFromReleaseList()
     }
     return {
       version: current,
