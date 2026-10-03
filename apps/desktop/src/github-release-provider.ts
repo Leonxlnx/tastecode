@@ -31,6 +31,29 @@ export type ReleaseFetch = (url: string, init?: RequestInit) => Promise<Response
 export type ReleaseProviderOptions = { provider: 'custom'; fetch?: ReleaseFetch }
 type InstalledVersion = Pick<AppUpdater, 'currentVersion'>
 
+/** GitHub asked for the next release lookup to wait until `retryAt`. */
+export class UpdateCheckDeferredError extends Error {
+  constructor(readonly retryAt: number) {
+    const minutes = Math.max(1, Math.ceil((retryAt - Date.now()) / 60_000))
+    super(
+      `GitHub is limiting update checks from this network. TasteCode will try again in about ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+    )
+    this.name = 'UpdateCheckDeferredError'
+  }
+}
+
+/** When a rate-limited response says the next request may succeed. */
+export function deferredUntil(response: Response, now = Date.now()): number | undefined {
+  if (response.status !== 403 && response.status !== 429) return undefined
+  const retryAfter = Number(response.headers.get('retry-after'))
+  if (Number.isFinite(retryAfter) && retryAfter > 0) return now + retryAfter * 1000
+  if (response.headers.get('x-ratelimit-remaining') === '0') {
+    const reset = Number(response.headers.get('x-ratelimit-reset'))
+    if (Number.isFinite(reset) && reset > 0) return Math.max(now, reset * 1000)
+  }
+  return response.status === 429 ? now + 60_000 : undefined
+}
+
 function versionFromTag(tag: string): string | undefined {
   const version = tag.replace(/^v/, '')
   return valid(version) ? version : undefined
@@ -125,9 +148,11 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
       const detail = cause instanceof Error ? cause.message : String(cause)
       throw new Error(`GitHub could not be reached to check for updates (${detail}).`, { cause })
     }
-    if (response.status === 404 || !response.ok) {
+    const retryAt = deferredUntil(response)
+    if (response.status === 404 || retryAt !== undefined || !response.ok) {
       await response.body?.cancel()
       if (response.status === 404) return undefined
+      if (retryAt !== undefined) throw new UpdateCheckDeferredError(retryAt)
       throw new Error(`GitHub answered the update check with HTTP ${response.status}.`)
     }
     return response

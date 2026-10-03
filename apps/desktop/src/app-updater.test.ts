@@ -306,4 +306,28 @@ describe('app update controller', () => {
       error: 'The update is not signed by TasteCode.',
     })
   })
+
+  it('waits for a rate limit to reset instead of retrying early', async () => {
+    vi.useFakeTimers()
+    const updater = fakeUpdater()
+    updater.checkForUpdates.mockRejectedValueOnce(
+      Object.assign(new Error('GitHub is limiting update checks.'), {
+        retryAt: Date.now() + 15_000 + 40 * 60 * 1000,
+      }),
+    )
+    const controller = createAppUpdateController({
+      updater,
+      currentVersion: '0.1.2',
+      enabled: true,
+    })
+
+    controller.start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(controller.state()).toMatchObject({ status: 'idle' })
+    await vi.advanceTimersByTimeAsync(40 * 60 * 1000 - 1)
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
 })

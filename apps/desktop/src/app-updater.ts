@@ -31,6 +31,12 @@ const CHECK_INTERVAL = 60 * 60 * 1000
 // off so an offline machine does not keep asking GitHub.
 const RETRY_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 30 * 60 * 1000]
 
+// GitHub names the moment its rate limit resets; asking sooner is wasted.
+function retryAt(cause: unknown): number | undefined {
+  if (typeof cause !== 'object' || cause === null || !('retryAt' in cause)) return undefined
+  return typeof cause.retryAt === 'number' ? cause.retryAt : undefined
+}
+
 export function createAppUpdateController(
   options: {
     currentVersion: string
@@ -93,7 +99,9 @@ export function createAppUpdateController(
     failedAttempt = attempt
     failures += 1
     options.onError?.(cause)
-    reschedule(RETRY_DELAYS[failures - 1] ?? CHECK_INTERVAL)
+    const backoff = RETRY_DELAYS[failures - 1] ?? CHECK_INTERVAL
+    const deferred = retryAt(cause)
+    reschedule(deferred === undefined ? backoff : Math.max(backoff, deferred - Date.now()))
     // An offline launch or a GitHub outage is not the user's problem until they
     // ask. A failed install of a ready update always is.
     if (quiet && state.status !== 'ready') {
