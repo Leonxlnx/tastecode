@@ -1,10 +1,11 @@
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CustomHarness } from '@harness/contracts'
 import {
   customHarnessSpawn,
+  mergeLaunchEnvironment,
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
@@ -82,5 +83,66 @@ describe('custom harness launch', () => {
     const result = await runCustomHarness(harness({ args: ['-e', script] }), undefined, [], 2_000)
 
     expect(result.stdout).toBe('early-late')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'reports a probe killed by a signal instead of accepting its partial output',
+    async () => {
+      const script = "process.stdout.write('stream-json'); process.kill(process.pid, 'SIGTERM')"
+      await expect(
+        runCustomHarness(harness({ args: ['-e', script] }), undefined, [], 2_000),
+      ).rejects.toThrow(/stopped by SIGTERM/)
+    },
+  )
+
+  it('resolves relative PATH entries against the launch directory', () => {
+    const launchDirectory = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'harness-mod-path-')))
+    roots.push(launchDirectory)
+    mkdirSync(path.join(launchDirectory, 'bin'))
+    const executable = path.join(
+      launchDirectory,
+      'bin',
+      process.platform === 'win32' ? 'my-agent.cmd' : 'my-agent',
+    )
+    writeFileSync(executable, '#!/bin/sh\n')
+    chmodSync(executable, 0o755)
+
+    const launch = resolveCustomHarnessLaunch(
+      harness({
+        command: 'my-agent',
+        workingDirectory: launchDirectory,
+        environment: { PATH: `.${path.sep}bin` },
+      }),
+      os.tmpdir(),
+    )
+
+    expect(launch.command).toBe(executable)
+  })
+
+  it('treats Windows variable names case-insensitively with later layers winning', () => {
+    const merged = mergeLaunchEnvironment(
+      [
+        { PATH: 'C:\\inherited', USERPROFILE: 'C:\\Users\\me' },
+        { Path: 'C:\\custom-agent-bin', Mode: 'custom' },
+        { MODE: 'adapter' },
+      ],
+      'win32',
+    )
+
+    expect(Object.keys(merged).filter((key) => key.toLowerCase() === 'path')).toEqual(['PATH'])
+    expect(merged.PATH?.split(';')[0]).toBe('C:\\custom-agent-bin')
+    expect(merged.PATH).not.toContain('C:\\inherited')
+    expect(Object.keys(merged).filter((key) => key.toLowerCase() === 'mode')).toEqual(['MODE'])
+    expect(merged.MODE).toBe('adapter')
+  })
+
+  it('keeps differently cased variable names apart outside Windows', () => {
+    const merged = mergeLaunchEnvironment(
+      [{ PATH: '/usr/bin', HOME: '/home/me' }, { Path: 'not-a-search-path' }],
+      'linux',
+    )
+
+    expect(merged.Path).toBe('not-a-search-path')
+    expect(merged.PATH?.split(':')[0]).toBe('/usr/bin')
   })
 })

@@ -40,7 +40,7 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
                 cached = {
                   revision: summaryRevision,
                   summary: summaryStat
-                    ? parseRecord(await readSessionFile(directory, 'summary.json'))
+                    ? parseRecord((await readSessionFile(directory, 'summary.json')) ?? '')
                     : {},
                 }
                 summaries.set(directory, cached)
@@ -109,21 +109,31 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
         readSessionFile(directory, 'updates.jsonl'),
         readSessionFile(directory, 'chat_history.jsonl'),
       ])
-      return grokHistoryEvents(session, jsonLines(updates), jsonLines(chat))
+      const [, updatesRevision, chatRevision] = session.revision.split('|')
+      if (
+        (updatesRevision && updatesRevision !== '-' && updates === undefined) ||
+        (chatRevision && chatRevision !== '-' && chat === undefined)
+      )
+        return []
+      if (updates === undefined && chat === undefined) return []
+      const events = grokHistoryEvents(session, jsonLines(updates ?? ''), jsonLines(chat ?? ''))
+      return events.some((event) => event.type === 'item.completed') ? events : []
     },
   }
 }
 
-async function readSessionFile(directory: string, name: string): Promise<string> {
+async function readSessionFile(directory: string, name: string): Promise<string | undefined> {
   try {
     const [folder, file] = await Promise.all([
       realpath(directory),
       realpath(path.join(directory, name)),
     ])
-    if (path.dirname(file) !== folder || !(await stat(file)).isFile()) return ''
+    if (path.dirname(file) !== folder) return undefined
+    if (!(await stat(file)).isFile()) throw new Error(`Grok history is not a file: ${name}`)
     return await readFile(file, 'utf8')
-  } catch {
-    return ''
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
   }
 }
 
