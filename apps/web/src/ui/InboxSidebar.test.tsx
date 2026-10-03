@@ -60,6 +60,47 @@ function props(projects: Project[]) {
 }
 
 describe('InboxSidebar', () => {
+  it('range-selects only mounted rows across collapsed and paginated sections', () => {
+    vi.stubGlobal(
+      'requestIdleCallback',
+      vi.fn(() => 1),
+    )
+    vi.stubGlobal('cancelIdleCallback', vi.fn())
+    const sessions: Session[] = [
+      ...Array.from({ length: 30 }, (_, index) =>
+        active(`a-${index}`, `Active ${index}`, 100 - index),
+      ),
+      {
+        ...active('snoozed', 'Hidden snoozed', 0),
+        lifecycle: { state: 'snoozed', snoozedAt: 1, wakeAt: 2 },
+      },
+      {
+        ...active('settled', 'Visible settled', 0),
+        lifecycle: { state: 'settled', settledAt: 1, reason: 'manual' },
+      },
+    ]
+    const onArchiveSessions = vi.fn()
+    render(
+      <InboxSidebar
+        {...props([{ path: '/alpha', sessions }])}
+        onArchiveSessions={onArchiveSessions}
+      />,
+    )
+    const first = screen.getByText('Active 0').closest('button')!
+    const last = screen.getByText('Visible settled').closest('button')!
+    expect(screen.queryByText('Hidden snoozed')).toBeNull()
+    expect(screen.queryByText('Active 12')).toBeNull()
+    fireEvent.click(first)
+    fireEvent.click(last, { shiftKey: true })
+    expect(screen.getByText('13 threads selected')).toBeTruthy()
+    fireEvent.contextMenu(last)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete 13 threads' }))
+    expect(onArchiveSessions).toHaveBeenCalledWith([
+      ...Array.from({ length: 12 }, (_, index) => `a-${index}`),
+      'settled',
+    ])
+  })
+
   it('moves only changed rows in retained many-thread groups', () => {
     const projects: Project[] = Array.from({ length: 10 }, (_, projectIndex) => ({
       path: `/project-${projectIndex}`,

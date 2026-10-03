@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import {
-  IconArchive as Archive,
+  IconTrash as Trash,
   IconCommand as Command,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -265,9 +265,9 @@ function StageHeaderComponent(props: {
                     }}
                   />
                   <MenuItem
-                    title="Archive chat"
+                    title="Delete chat"
                     shortcutAria={shortcutAria(keybindings.archiveSession)}
-                    icon={<Archive size={14} aria-hidden />}
+                    icon={<Trash size={14} aria-hidden />}
                     onClick={() => {
                       props.onArchiveSession(props.sessionId!)
                       close()
