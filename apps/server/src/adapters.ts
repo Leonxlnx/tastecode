@@ -355,12 +355,15 @@ function grokRuntime(
     return new AcpAdapter('grok', {
       name: harness?.displayName ?? 'Grok',
       command: grokCommand(),
-      args: [
+      // Grok takes model and effort only as launch switches; the adapter
+      // relaunches and reloads the session when a turn changes them.
+      argsFor: ({ model, effort }) => [
         'agent',
-        ...(options.model ? ['--model', options.model] : []),
-        ...(options.effort ? ['--reasoning-effort', options.effort] : []),
+        ...(model ? ['--model', model] : []),
+        ...(effort ? ['--reasoning-effort', effort] : []),
         'stdio',
       ],
+      settings: { model: options.model, effort: options.effort },
       provider: 'grok',
       mcpServers: prepareAcpMcpServers(options.mcpServers ?? [], options.mcpCredentials ?? {}),
       ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
@@ -476,7 +479,8 @@ function codexRuntime(
     const adapter = new CodexAdapter({
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
-      ...(harness ? { spawn: customHarnessSpawn(harness) } : {}),
+      // Codex spawns its app-server without a cwd; the wrapper resolves from the project.
+      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath) } : {}),
     })
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {

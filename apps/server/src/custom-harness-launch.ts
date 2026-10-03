@@ -74,10 +74,14 @@ export function runCustomHarness(
       return
     }
     void captureCli(child, timeoutMs).then((result) => {
-      if (result.code === 0 || result.code === null) resolve(result)
+      if (result.code === 0) resolve(result)
       else
         reject(
-          new Error(`Custom harness exited with code ${result.code}. Check its configuration.`),
+          new Error(
+            result.signal
+              ? `Custom harness was stopped by ${result.signal} before it finished. Check its configuration.`
+              : `Custom harness exited with code ${result.code}. Check its configuration.`,
+          ),
         )
     }, reject)
     child.stdin.on('error', () => undefined)
@@ -105,16 +109,37 @@ function launchEnvironment(
   workspacePath: string,
   adapterEnvironment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  const custom = harness.environment ?? {}
-  const merged = { ...process.env, ...custom, ...adapterEnvironment }
-  const suppliedPath = adapterEnvironment.PATH ?? custom.PATH ?? process.env.PATH ?? ''
   return {
-    ...merged,
-    PATH: desktopPath(suppliedPath, { env: merged }),
+    ...mergeLaunchEnvironment([process.env, harness.environment ?? {}, adapterEnvironment]),
     // A wrapper can boot from its own directory without losing the project it
     // should operate on. Native protocols also receive the workspace normally.
     HARNESS_WORKSPACE_PATH: workspacePath,
   }
+}
+
+/**
+ * Later layers win. Windows variable names are case-insensitive, so a `Path`
+ * in one layer replaces a `PATH` from an earlier one and only one spelling is
+ * emitted; on other platforms the case is part of the name.
+ */
+export function mergeLaunchEnvironment(
+  layers: NodeJS.ProcessEnv[],
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const sameName = (left: string, right: string) =>
+    platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+  const merged: NodeJS.ProcessEnv = {}
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer)) {
+      for (const existing of Object.keys(merged))
+        if (sameName(existing, key)) delete merged[existing]
+      merged[key] = value
+    }
+  }
+  const pathKey = Object.keys(merged).find((key) => sameName(key, 'PATH'))
+  const suppliedPath = pathKey === undefined ? '' : (merged[pathKey] ?? '')
+  if (pathKey !== undefined) delete merged[pathKey]
+  return { ...merged, PATH: desktopPath(suppliedPath, { env: merged, platform }) }
 }
 
 function resolveExecutable(command: string, cwd: string, environment: NodeJS.ProcessEnv): string {
@@ -129,7 +154,8 @@ function resolveExecutable(command: string, cwd: string, environment: NodeJS.Pro
   for (const directory of (environment.PATH ?? '').split(path.delimiter)) {
     if (!directory) continue
     for (const extension of extensions) {
-      const candidate = path.join(stripQuotes(directory), `${command}${extension}`)
+      // Relative entries belong to the launch directory, which is where the child runs.
+      const candidate = path.resolve(cwd, stripQuotes(directory), `${command}${extension}`)
       if (isExecutable(candidate)) return candidate
     }
   }
