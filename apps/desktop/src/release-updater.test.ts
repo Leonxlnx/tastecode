@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { access, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { AppUpdater } from 'electron-updater'
@@ -64,6 +64,7 @@ beforeEach(async () => {
 })
 afterEach(async () => {
   vi.resetAllMocks()
+  await chmod(downloads.directory, 0o700).catch(() => {})
   await rm(downloads.directory, { recursive: true, force: true })
 })
 
@@ -179,6 +180,20 @@ describe('release download and installation', () => {
       downloads,
     )
     expect(await readdir(downloads.directory)).toEqual([])
+  })
+
+  it('finishes the update even when a file lock keeps its bytes from being removed', async () => {
+    const installed = await downloadRelease(
+      updater,
+      options(),
+      async () => {
+        // A read-only folder stands in for a Windows virus scanner's file lock.
+        await chmod(downloads.directory, 0o500)
+        return ['native-cache/update.exe']
+      },
+      downloads,
+    )
+    expect(installed).toEqual(['native-cache/update.exe'])
   })
 
   it('reports a cancelled download as cancelled', async () => {

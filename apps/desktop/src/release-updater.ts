@@ -82,7 +82,9 @@ export async function downloadRelease(
     } finally {
       // The native updater keeps its own copy, even when quitting raced its last
       // step. Quitting before then keeps the verified bytes for the next launch.
-      if (handedOver || !abort.signal.aborted) await rm(downloaded, { force: true })
+      // A Windows file lock must not turn a finished update into a failure.
+      if (handedOver || !abort.signal.aborted)
+        await rm(downloaded, { force: true, maxRetries: 3, retryDelay: 200 }).catch(() => {})
     }
   }).finally(() => {
     activeDownloads.delete(updater)
