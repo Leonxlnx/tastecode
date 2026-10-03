@@ -1,4 +1,4 @@
-import { writeFile, access } from 'node:fs/promises'
+import { writeFile, access, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
@@ -60,5 +60,25 @@ describe('prepared update transport', () => {
     ).rejects.toThrow(/signature/)
     await expect(fetch(oldUrl)).rejects.toThrow()
     await expect(access(oldDirectory)).rejects.toThrow()
+  })
+
+  it('keeps the handover result or original error when staging cleanup fails', async () => {
+    const locked = Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' })
+    const cleanupErrors: unknown[] = []
+    const cleanup = {
+      remove: (async (target: string, options: Parameters<typeof rm>[1]) => {
+        await rm(target, options)
+        throw locked
+      }) as typeof rm,
+      onError: (error: unknown) => cleanupErrors.push(error),
+    }
+
+    await expect(withUpdateDirectory(async () => 'ready', cleanup)).resolves.toBe('ready')
+    await expect(
+      withUpdateDirectory(async () => {
+        throw new Error('Native installer rejected the signature')
+      }, cleanup),
+    ).rejects.toThrow(/signature/)
+    expect(cleanupErrors).toEqual([locked, locked])
   })
 })

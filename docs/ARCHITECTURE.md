@@ -100,10 +100,14 @@ by everything behind one office, school or VPN address, and an anonymous 304 sti
 The feed is outside that limit. A check that finds no newer version tag in the feed spends
 no API request. The newest newer tag costs one request to `/releases/tags/<tag>`, which
 confirms the release is published and supplies the asset digests. When that tag has no
-published release (drafts and bare tags answer 404), or when none of the feed's ten newest
-tags is the installed version or older, one request lists every release instead. A check
-therefore spends at most two API requests. Either way the highest semantic version wins
-regardless of publication order, and downgrades stay disabled.
+published release (drafts and bare tags answer 404), when none of the feed's ten newest
+tags is the installed version or older, when a feed entry has no readable tag, or when a
+full feed has nothing newer but no longer lists the installed release (later-published
+older versions can push a newer release out of the window), the release list is read
+instead. The feed is ordered by publication, so while it still lists the installed release
+everything published after it is in view. A check therefore spends at most two API
+requests while the project has fewer than 100 releases. Either way the highest semantic
+version wins regardless of publication order, and downgrades stay disabled.
 
 GitHub's pre-release flag does not matter: during the alpha every release is published as
 a pre-release, and every published release reaches every install. Drafts stay invisible.
@@ -116,8 +120,11 @@ directory (`~/Library/Caches/TasteCode/update-downloads` on macOS, local AppData
 under its SHA-256, and the next attempt asks for the remaining bytes with a Range request.
 A minute without data ends an attempt and keeps the bytes so far. The bytes are verified
 before use, removed once the native updater holds its own copy, and discarded when a check
-finds nothing newer. Removal retries and never fails an update, because Windows virus
-scanners briefly lock fresh installers.
+finds nothing newer. A verified download also survives a failed preparation (`ditto`,
+`hdiutil`, `codesign`, a timeout or a Squirrel error); only proof that the package itself
+is bad (wrong signature, invalid or corrupt image) discards it, so a local failure never
+costs a silent 500 MB re-download. Removal retries and never fails an update, because
+Windows virus scanners briefly lock fresh installers.
 
 Background attempts never surface their failures. An offline launch, a GitHub outage or a
 dropped download falls back to the last verdict, is recorded in opt-in local diagnostics,

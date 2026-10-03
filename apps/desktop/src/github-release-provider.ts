@@ -1,11 +1,12 @@
 import type { AppUpdater, ResolvedUpdateFileInfo, UpdateInfo } from 'electron-updater'
 import { Provider, type ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
-import { gt, lte, rcompare, valid } from 'semver'
+import { eq, gt, lte, rcompare, valid } from 'semver'
 import { z } from 'zod'
 
 export const releaseRepository = 'Leonxlnx/tastecode'
 const releasePage = `https://github.com/${releaseRepository}/releases`
 const releaseApi = `https://api.github.com/repos/${releaseRepository}/releases`
+const FEED_ENTRIES = 10
 const tagLink = new RegExp(`href="${releasePage.replaceAll('.', '\\.')}/tag/([^"?#]+)"`, 'g')
 const assetSchema = z.object({
   name: z.string(),
@@ -174,13 +175,16 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
     // spends none of it.
     const feed = await this.request(`${releasePage}.atom`, 'application/atom+xml')
     if (!feed) throw new Error('GitHub could not find the TasteCode release feed.')
-    const tags = feedTags(await feed.text())
+    const atom = await feed.text()
+    const tags = feedTags(atom)
+    const entries = atom.match(/<entry(?:\s|>)/g)?.length ?? 0
     const coversInstalled = tags.some((tag) => {
       const version = versionFromTag(tag)
       return version !== undefined && lte(version, current)
     })
-    // Newer bare tags can push every release out of the feed's ten entries.
-    if (!coversInstalled) return this.latestFromReleaseList()
+    // Newer bare tags can push every release out of the feed's ten entries,
+    // and an entry whose tag cannot be read may be the newer release.
+    if (!coversInstalled || tags.length < entries) return this.latestFromReleaseList()
     const newest = newerTags(tags, current)[0]
     if (newest) {
       const row = await this.request(
@@ -194,6 +198,15 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
       // number of them may sit above the real release. One list answers all.
       return this.latestFromReleaseList()
     }
+    // The feed holds the ten most recently published entries, not the ten highest
+    // versions. While it still lists the installed release, everything published
+    // after it is in view. Once later-published older versions have pushed it out,
+    // a newer release published in between can be hidden too.
+    const listsInstalled = tags.some((tag) => {
+      const version = versionFromTag(tag)
+      return version !== undefined && eq(version, current)
+    })
+    if (entries >= FEED_ENTRIES && !listsInstalled) return this.latestFromReleaseList()
     return {
       version: current,
       files: [],

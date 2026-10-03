@@ -5,6 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { prepareDmgUpdate } from './dmg-update.js'
+import { InvalidUpdateError } from './update-validation.js'
 
 const exec = promisify(execFile)
 let root = ''
@@ -124,7 +125,20 @@ describe.skipIf(process.platform !== 'darwin')('DMG update preparation', () => {
   ])(
     'refuses %s',
     async (_label, fixture, error) => {
-      await expect(prepare(fixture)).rejects.toThrow(error)
+      const result = prepare(fixture)
+      await expect(result).rejects.toThrow(error)
+      await expect(result).rejects.toBeInstanceOf(InvalidUpdateError)
+    },
+    60_000,
+  )
+
+  it.concurrent(
+    'marks a corrupt source image as invalid rather than retryable',
+    async () => {
+      const dmg = path.join(root, 'corrupt.dmg')
+      await writeFile(dmg, 'not a disk image')
+      const work = await mkdtemp(path.join(root, 'corrupt-work-'))
+      await expect(prepareDmgUpdate(dmg, work, '0.1.3')).rejects.toBeInstanceOf(InvalidUpdateError)
     },
     60_000,
   )
