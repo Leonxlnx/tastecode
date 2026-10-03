@@ -58,11 +58,11 @@ describe('provider row grammar', () => {
       <ProviderRow
         provider={{ id: 'grok', displayName: 'Grok', installed: true, auth: 'unknown' }}
         status="Signed in"
-        secondary={{ label: 'Sign out', danger: true }}
+        primary={{ label: 'Sign out', danger: true }}
       />,
     )
     const signOut = screen.getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-secondary')
+    expect(signOut.className).toContain('is-primary')
     expect(signOut.className).toContain('is-danger')
     expect(signOut.className).not.toContain('is-quiet')
   })
