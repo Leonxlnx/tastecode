@@ -66,8 +66,15 @@ import {
   onAppUpdateState,
   openLocalDiagnostics,
   setLocalDiagnosticsEnabled,
+  simulateAppUpdate,
   type AppUpdateState,
 } from '../bridge.js'
+import {
+  onSimulatedAppUpdate,
+  simulatedAppUpdate,
+  stopAppUpdateSimulation,
+  type AppUpdateSimulation,
+} from '../app-update-simulation.js'
 import {
   beginInstall,
   beginLogin,
@@ -459,6 +466,7 @@ function SettingsComponent(props: {
                   Force onboarding
                 </button>
               </SettingsRow>
+              <AppUpdateSimulationRow />
               <SettingsRow
                 title="Avatar generator"
                 note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
@@ -471,6 +479,44 @@ function SettingsComponent(props: {
         </div>
       </main>
     </div>
+  )
+}
+
+const UPDATE_SIMULATIONS = [
+  { scenario: 'update', label: 'Update' },
+  { scenario: 'failure', label: 'Failure' },
+  { scenario: 'current', label: 'Up to date' },
+] as const satisfies ReadonlyArray<{ scenario: AppUpdateSimulation; label: string }>
+
+function AppUpdateSimulationRow() {
+  const [running, setRunning] = useState(() => simulatedAppUpdate() !== undefined)
+  useEffect(() => onSimulatedAppUpdate((state) => setRunning(state !== undefined)), [])
+
+  return (
+    <SettingsRow
+      title="Simulate app update"
+      note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
+      className="settings__row--roomy"
+    >
+      {UPDATE_SIMULATIONS.map(({ scenario, label }) => (
+        <button
+          key={scenario}
+          className="settings__action"
+          type="button"
+          onClick={() => void simulateAppUpdate(scenario)}
+        >
+          {label}
+        </button>
+      ))}
+      <button
+        className="settings__action"
+        type="button"
+        disabled={!running}
+        onClick={stopAppUpdateSimulation}
+      >
+        Stop
+      </button>
+    </SettingsRow>
   )
 }
 
