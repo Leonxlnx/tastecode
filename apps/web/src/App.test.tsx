@@ -709,6 +709,15 @@ function composerProps() {
   >
 }
 
+async function openCheckpointHistory() {
+  const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+    typeof import('./ui/StageHeader.js').StageHeader
+  >
+  act(() => header.onOpenRollback())
+  fireEvent.click(await screen.findByRole('button', { name: /Before “Fix the parser”/ }))
+  await screen.findByRole('button', { name: 'Restore checkpoint' })
+}
+
 describe('web client', () => {
   it('keeps an acknowledged access mode when a change is rejected', async () => {
     const request = transport.request.getMockImplementation()!
@@ -754,6 +763,60 @@ describe('web client', () => {
     await act(async () => release())
     expect(rpcCount('thread.setApproval')).toBe(2)
     expect(composerProps().approval).toBe('full')
+  })
+
+  it.each(['thread.history', 'thread.checkpoints', 'workspace.info'])(
+    'retains restore Undo when %s refresh fails',
+    async (failedMethod) => {
+      const request = transport.request.getMockImplementation()!
+      let restored = false
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'thread.restore') restored = true
+        if (restored && method === failedMethod) return Promise.reject(new Error('refresh failed'))
+        return request(method, params)
+      })
+      await openNewSession()
+      await openCheckpointHistory()
+      fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
+          threadId: 'untouched-thread',
+          undo: 'undo-token',
+        }),
+      )
+      expect(rpcCount('thread.restore')).toBe(1)
+      expect(screen.queryByRole('dialog', { name: 'Restore checkpoint' })).toBeNull()
+    },
+  )
+
+  it('does not offer the previous restore target while inspecting another checkpoint', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.checkpoints')
+        return Promise.resolve({
+          checkpoints: [
+            { id: 7, seq: 1, label: 'Fix the parser', createdAt: 1 },
+            { id: 8, seq: 2, label: 'Fix the tests', createdAt: 2 },
+          ],
+        })
+      if (
+        method === 'thread.changedSince' &&
+        methods[method].params.parse(params).checkpointId === 8
+      )
+        return new Promise((_, fail) => {
+          reject = fail
+        })
+      return request(method, params)
+    })
+    await openNewSession()
+    await openCheckpointHistory()
+    fireEvent.click(screen.getByRole('button', { name: /Before “Fix the tests”/ }))
+    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    await act(async () => reject(new Error('inspection failed')))
+    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    expect(rpcCount('thread.restore')).toBe(0)
   })
 
   it('does not ask the code highlighter before a code block needs it', () => {

@@ -1,6 +1,9 @@
 import type { DomainEvent, Thread } from '@harness/contracts'
 import type { AgentSession } from './adapters.js'
 
+export const RESTORE_CONTEXT_NOTICE =
+  'TasteCode restored the conversation and workspace to a saved checkpoint (or undid a restore). Your provider memory may still include turns that are no longer part of this conversation. Treat those later turns as superseded, inspect the current files, and follow the request below rather than continuing removed work.\n\n'
+
 /** Preserve the local identity while resuming an imported provider session. */
 export function mapProviderSession(
   threadId: string,
