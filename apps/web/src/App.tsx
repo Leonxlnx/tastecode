@@ -146,6 +146,13 @@ import {
   subscribeInstalls,
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
+import {
+  pinnedModelChoice,
+  readProviderDefaults,
+  writeProviderDefaults,
+  type ProviderDefault,
+  type ProviderDefaults,
+} from './provider-defaults.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -651,6 +658,9 @@ export function App() {
   const [approvalByProvider, setApprovalByProvider] = useState<ApprovalPreferences>(() =>
     readApprovalPreferences(provider),
   )
+  const [providerDefaults, setProviderDefaults] = useState<ProviderDefaults>(readProviderDefaults)
+  const providerDefaultsRef = useRef(providerDefaults)
+  providerDefaultsRef.current = providerDefaults
   const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
   const pendingThreadApprovals = useRef(new Map<string, ApprovalMode>())
   const approvalChanges = useRef(new Map<string, Promise<void>>())
@@ -857,6 +867,8 @@ export function App() {
     () => models.filter((choice) => !hiddenModels.has(choice.key)),
     [models, hiddenModels],
   )
+  const visibleModelsRef = useRef(visibleModels)
+  visibleModelsRef.current = visibleModels
   // Memoised for identity: while the catalog is empty this is the selected
   // choice, and a fresh object per render would give every consumer downstream
   // (including effects that write settings) a new dependency each frame.
@@ -2555,6 +2567,63 @@ export function App() {
     },
     [selectedModelChoice, storedModelChoice, unvalidatedModelKeys],
   )
+  const commitModelChoiceRef = useRef(commitModelChoice)
+  commitModelChoiceRef.current = commitModelChoice
+
+  useEffect(() => writeProviderDefaults(providerDefaults), [providerDefaults])
+
+  /**
+   * A pinned model replaces whatever the last chat on its provider used. A
+   * pin the picker no longer offers is skipped, so the chat keeps the last
+   * model instead of starting on one the user hid or the provider dropped.
+   */
+  const applyProviderDefault = useCallback(
+    (target: ProviderId, pin: ProviderDefault | undefined) => {
+      const choice = pinnedModelChoice(visibleModelsRef.current, target, pin)
+      if (!choice) return
+      const remembered = readSourceSelections()[sourceKey({ provider: target })]
+      const serviceTier = remembered?.modelKey === choice.key ? remembered.serviceTier : undefined
+      commitModelChoiceRef.current(choice, {
+        modelKey: choice.key,
+        ...(pin?.effort ? { effort: pin.effort } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
+      })
+    },
+    [],
+  )
+
+  const changeProviderDefault = useCallback(
+    (target: ProviderId, pin: ProviderDefault | undefined) => {
+      setProviderDefaults((current) => {
+        const next = { ...current }
+        if (pin) next[target] = pin
+        else delete next[target]
+        return next
+      })
+      // A new chat that has not started yet is exactly what the pin
+      // describes, so it should not wait for the next one to show it.
+      if (!activeIdRef.current && !sourceAgentRef.current && providerRef.current === target) {
+        applyProviderDefault(target, pin)
+      }
+    },
+    [applyProviderDefault],
+  )
+
+  const changeApprovalDefault = useCallback((target: ProviderId, mode: ApprovalMode) => {
+    setApprovalByProvider((current) =>
+      current[target] === mode ? current : { ...current, [target]: mode },
+    )
+  }, [])
+
+  const providerDefaultsControls = useMemo(
+    () => ({
+      pins: providerDefaults,
+      onPinChange: changeProviderDefault,
+      access: approvalByProvider,
+      onAccessChange: changeApprovalDefault,
+    }),
+    [providerDefaults, changeProviderDefault, approvalByProvider, changeApprovalDefault],
+  )
 
   // Keep persisted selection state coherent after a visibility or cache
   // transition. Requests already use the effective values above, so even an
@@ -2843,9 +2912,13 @@ export function App() {
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
+      // A custom harness is a source of its own; the provider's pin is not its to follow.
+      if (!sourceAgentRef.current) {
+        applyProviderDefault(providerRef.current, providerDefaultsRef.current[providerRef.current])
+      }
       setComposerFocusRequest((request) => request + 1)
     },
-    [publishComposerDraft],
+    [publishComposerDraft, applyProviderDefault],
   )
 
   const updateQueue = useCallback(
@@ -5145,6 +5218,7 @@ export function App() {
             models={models}
             hiddenModels={hiddenModels}
             onModelVisibilityChange={changeModelVisibility}
+            providerDefaults={providerDefaultsControls}
             onConnectionsChanged={refreshCatalog}
             projectCount={projects.length}
             sidebarSettings={sidebarSettings}
