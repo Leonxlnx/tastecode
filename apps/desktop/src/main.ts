@@ -14,6 +14,7 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   protocol,
   screen,
   session,
@@ -952,6 +953,7 @@ if (ownsSingleInstance) {
       if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
     })
     appUpdater.start()
+    powerMonitor.on('resume', () => appUpdater?.resume())
     startOwnedServer()
     configureAttachmentPreviews()
     configureRendererPermissions()
