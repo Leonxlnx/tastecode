@@ -6137,10 +6137,72 @@ describe('sidebar chat ordering', () => {
 
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
-        JSON.parse(localStorage.getItem('harness.sessionOrder') ?? '{}'),
+        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
       )
       expect(order['/work/project']).toEqual(['thread-3', 'thread-1', 'thread-2'])
     })
+  })
+
+  it('keeps chats imported later from another provider in date order', async () => {
+    // Every project's order used to be saved automatically, freezing the order
+    // in which provider histories happened to arrive.
+    localStorage.setItem(
+      'harness.sessionOrder',
+      JSON.stringify({ '/work/project': ['claude-old', 'claude-new'] }),
+    )
+    const claudeNew = {
+      id: 'claude-new',
+      title: 'Newer Claude chat',
+      provider: 'claude-code' as const,
+      createdAt: 3,
+      running: false,
+    }
+    const claudeOld = {
+      id: 'claude-old',
+      title: 'Older Claude chat',
+      provider: 'claude-code' as const,
+      createdAt: 1,
+      running: false,
+    }
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [claudeNew, claudeOld],
+      },
+    ]
+    const titles = [
+      'Newest Codex chat',
+      'Newer Claude chat',
+      'Middle Codex chat',
+      'Older Claude chat',
+    ]
+    const sidebarOrder = () =>
+      screen
+        .getAllByRole('button', { name: / chat, / })
+        .map((button) => titles.find((title) => button.textContent?.includes(title)))
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^Older Claude chat,/ })
+    expect(sidebarOrder()).toEqual(['Newer Claude chat', 'Older Claude chat'])
+    expect(localStorage.getItem('harness.sessionOrder')).toBeNull()
+
+    serverProjects[0]!.sessions = [
+      { id: 'codex-newest', title: 'Newest Codex chat', provider: 'codex', createdAt: 4 },
+      claudeNew,
+      { id: 'codex-middle', title: 'Middle Codex chat', provider: 'codex', createdAt: 2 },
+      claudeOld,
+    ]
+    act(() => {
+      transport.listeners.get('providerHistory.changed')?.({
+        threadIds: ['codex-newest', 'codex-middle'],
+      })
+    })
+
+    await waitFor(() => expect(sidebarOrder()).toEqual(titles))
   })
 })
 

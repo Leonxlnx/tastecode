@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { statSync } from 'node:fs'
 import path from 'node:path'
 import type {
   DomainEvent,
@@ -107,28 +108,41 @@ export class ProviderHistory {
           this.store.batchLifecycleUpdates(() => {
             // Saved sessions share a few folders, and the store does not cache a
             // folder that is not a project.
-            const projectFolders = new Map<string, boolean>()
-            const inProject = (folder: string) => {
-              let known = projectFolders.get(folder)
-              if (known === undefined) {
-                known = this.store.project(folder) !== undefined
-                projectFolders.set(folder, known)
+            const projectFolders = new Map<string, string | undefined>()
+            let aliases: Map<string, string[]> | undefined
+            const projectFor = (folder: string) => {
+              if (projectFolders.has(folder)) return projectFolders.get(folder)
+              let project = this.store.project(folder)?.path
+              if (project === undefined) {
+                // Providers may save the same folder with another case or separator.
+                // Only the file system can say whether such a spelling is the same folder.
+                if (!aliases) {
+                  aliases = new Map()
+                  for (const { path: stored } of this.store.projects()) {
+                    const spelling = folderSpelling(stored)
+                    aliases.set(spelling, [...(aliases.get(spelling) ?? []), stored])
+                  }
+                }
+                const candidates = aliases.get(folderSpelling(folder))
+                const identity = candidates && folderIdentity(folder)
+                if (identity)
+                  project = candidates.find((candidate) => folderIdentity(candidate) === identity)
               }
-              return known
+              projectFolders.set(folder, project)
+              return project
             }
             for (const session of sessions) {
-              if (
-                session.internal ||
-                !session.id ||
-                !path.isAbsolute(session.workspacePath) ||
-                !inProject(session.workspacePath) ||
-                !Number.isFinite(session.createdAt)
-              )
+              if (session.internal || !session.id) continue
+              if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt))
                 continue
+              const native = nativeThreads.get(session.id)
+              // An isolated chat runs its provider in a private worktree, but
+              // belongs to the project it was started from.
+              const projectPath = projectFor(native?.projectPath ?? session.workspacePath)
+              if (projectPath === undefined) continue
               const key = `${provider}:${session.id}`
               const previous = this.#entries.get(key)
               if (previous?.session.internal) continue
-              const native = nativeThreads.get(session.id)
               const duplicateId = `external:${provider}:${session.id}`
               const duplicate = native && this.store.thread(duplicateId)
               if (
@@ -167,7 +181,7 @@ export class ProviderHistory {
               }
               const threadId = existing?.id ?? `external:${provider}:${session.id}`
               if (!existing) {
-                this.store.addProviderThread(threadId, provider, session)
+                this.store.addProviderThread(threadId, provider, session, projectPath)
                 this.#internalWithoutCopy.delete(threadId)
               } else if (
                 previous?.threadId === threadId &&
@@ -242,27 +256,31 @@ export class ProviderHistory {
         if (this.store.lastSeq(threadId) !== seq)
           local = this.store.localHistory(threadId).map(({ event }) => event)
         const entries = importedEvents(events, threadId, local)
+        const duplicate =
+          duplicateId !== threadId &&
+          this.store.thread(duplicateId) !== undefined &&
+          !this.hooks.isBusy(duplicateId) &&
+          !this.store.queuedTurns(duplicateId).length
+        const duplicateLocal = duplicate
+          ? this.store.localHistory(duplicateId).map(({ event }) => event)
+          : []
+        const mirror =
+          duplicate && duplicateLocal.length === 0 && !this.store.thread(duplicateId)?.worktreePath
+        // The canonical merge records the loaded revision that stops later repairs,
+        // so a duplicate holding real replies is repaired first.
+        if (duplicate && !mirror)
+          this.store.mergeProviderHistory(
+            duplicateId,
+            current.session.revision,
+            importedEvents(events, duplicateId, [...local, ...duplicateLocal]),
+          )
         changed =
           this.store.mergeProviderHistory(threadId, current.session.revision, entries) || changed
         current.loadedRevision = current.session.revision
-        if (
-          duplicateId !== threadId &&
-          this.store.thread(duplicateId) &&
-          !this.hooks.isBusy(duplicateId) &&
-          !this.store.queuedTurns(duplicateId).length
-        ) {
-          const duplicateLocal = this.store.localHistory(duplicateId).map(({ event }) => event)
+        if (duplicate) {
           // Only remove a read-only mirror after its real outside turns have been
           // imported successfully. Replies written in the duplicate remain intact.
-          if (duplicateLocal.length === 0 && !this.store.thread(duplicateId)?.worktreePath) {
-            this.store.deleteThread(duplicateId)
-          } else {
-            this.store.mergeProviderHistory(
-              duplicateId,
-              current.session.revision,
-              importedEvents(events, duplicateId, [...local, ...duplicateLocal]),
-            )
-          }
+          if (mirror) this.store.deleteThread(duplicateId)
           this.hooks.changed([threadId, duplicateId])
         }
         entry = this.#byThread.get(threadId)
@@ -279,6 +297,20 @@ export class ProviderHistory {
     this.#closed = true
     await Promise.allSettled([this.#refreshing, ...this.#reading.values()])
     await Promise.allSettled(this.sources.map(({ history }) => history.dispose?.()))
+  }
+}
+
+function folderSpelling(folder: string): string {
+  return path.resolve(folder).toLowerCase()
+}
+
+/** Same device and file id; a missing folder has none. */
+function folderIdentity(folder: string): string | undefined {
+  try {
+    const stat = statSync(folder, { bigint: true })
+    return stat.ino === 0n ? undefined : `${stat.dev}:${stat.ino}`
+  } catch {
+    return undefined
   }
 }
 
@@ -317,9 +349,14 @@ export function importedEvents(
     const item = finalItems.get(id)
     return item ? [{ type: 'item.completed', item }] : []
   })
-  const localTurns = new Set(
-    local.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : [])),
+  // A queued prompt keeps its enqueue time for display, but the provider saw it
+  // when its turn started; either moment can be the native row's time.
+  const localTurnStarts = new Map(
+    local.flatMap((event) =>
+      event.type === 'turn.started' ? [[event.turn.id, event.turn.createdAt] as const] : [],
+    ),
   )
+  const localTurns = new Set(localTurnStarts.keys())
   const users = local.flatMap((event) =>
     (event.type === 'item.completed' || event.type === 'item.started') && event.item.role === 'user'
       ? [event.item]
@@ -339,13 +376,16 @@ export function importedEvents(
         echoed.has(event.item.turnId)
       )
         return []
-      return users
-        .filter((item) => !echoed.has(item.turnId) && sameUserMessage(item, event.item))
-        .map((item) => ({
-          local: item.turnId,
-          native: event.item.turnId,
-          distance: Math.abs(item.createdAt - event.item.createdAt),
-        }))
+      const native = event.item
+      return users.flatMap((item) => {
+        if (echoed.has(item.turnId) || !sameUserMessage(item, native)) return []
+        const started = localTurnStarts.get(item.turnId)
+        const distance = Math.min(
+          Math.abs(item.createdAt - native.createdAt),
+          started === undefined ? Infinity : Math.abs(started - native.createdAt),
+        )
+        return distance < 60_000 ? [{ local: item.turnId, native: native.turnId, distance }] : []
+      })
     })
     .sort((a, b) => a.distance - b.distance)
   const matched = new Set<string>()
@@ -416,7 +456,6 @@ function sameUserMessage(left: Item, right: Item): boolean {
   }
   return (
     (left.text === right.text || left.text === text) &&
-    Math.abs(left.createdAt - right.createdAt) < 60_000 &&
     JSON.stringify(left.attachments ?? []) === JSON.stringify(right.attachments ?? [])
   )
 }
