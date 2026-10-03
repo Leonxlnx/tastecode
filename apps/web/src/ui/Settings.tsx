@@ -28,6 +28,7 @@ import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
 import type {
   Account,
+  ApprovalMode,
   BackgroundModelSettings as BackgroundModelSettingsState,
   BackgroundModelSource,
   BackgroundModelTarget,
@@ -56,6 +57,14 @@ import {
   IconUser as UserRound,
 } from '@tabler/icons-react'
 import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
+import {
+  pinnableModels,
+  pinnedModelChoice,
+  providerApprovalDefault,
+  type ProviderDefault,
+  type ProviderDefaults,
+} from '../provider-defaults.js'
+import { ProviderTuning, useProviderContextSettings } from './ProviderTuning.js'
 import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-fonts.js'
 import {
   appUpdateState,
@@ -261,6 +270,7 @@ function SettingsComponent(props: {
   models: ModelChoice[]
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  providerDefaults?: ProviderDefaultsControls | undefined
   onConnectionsChanged: () => void
   projectCount: number
   sidebarSettings: SidebarSettings
@@ -621,12 +631,23 @@ type ProviderMap<T> = Partial<Record<ProviderId, T>>
 // Claude Code, Grok). Every other provider lives on nightly — see AGENTS.md.
 const PROVIDER_ROSTER: readonly ProviderId[] = ['codex', 'claude-code', 'grok']
 
+/** What a new chat on each provider starts with. The app shell owns it. */
+export type ProviderDefaultsControls = {
+  pins: ProviderDefaults
+  onPinChange: (provider: ProviderId, pin: ProviderDefault | undefined) => void
+  access: ProviderMap<ApprovalMode>
+  onAccessChange: (provider: ProviderId, mode: ApprovalMode) => void
+}
+
 export function ProviderSettings(props: {
   provider: ProviderId
   account: Account | undefined
   providerStatuses: ProviderStatus[]
   projectPath?: string | undefined
   transport: Transport
+  models?: ModelChoice[] | undefined
+  hiddenModels?: Set<string> | undefined
+  providerDefaults?: ProviderDefaultsControls | undefined
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
   authRefreshRevision?: number | undefined
@@ -656,6 +677,8 @@ export function ProviderSettings(props: {
   >({})
   const currentTransport = useRef(props.transport)
   currentTransport.current = props.transport
+  const providerDefaults = props.providerDefaults
+  const context = useProviderContextSettings(props.transport, providerDefaults !== undefined)
 
   const updateOperation = useCallback((provider: ProviderId, operation?: AuthOperation) => {
     operations.current = { ...operations.current, [provider]: operation }
@@ -936,9 +959,47 @@ export function ProviderSettings(props: {
   }
 
   const byId = (id: ProviderId) => props.providerStatuses.filter((status) => status.id === id)
+  const signedIn = (status: ProviderStatus) => {
+    const authState = authStates[status.id]
+    if (authState) return authState.phase === 'ready' && authState.account.signedIn
+    return status.id === props.provider && props.account?.signedIn === true
+  }
+  const checkingAccount = (status: ProviderStatus) => {
+    const authState = authStates[status.id]
+    if (authState) return authState.phase === 'loading'
+    return !(status.id === props.provider && props.account)
+  }
+  const renderTuning = (status: ProviderStatus) => {
+    if (!providerDefaults) return null
+    // A provider that may well be signed in keeps the place of its defaults
+    // while the account is checked, so the roster does not jump when it answers.
+    const pending = status.installed && status.auth !== 'unauthenticated' && checkingAccount(status)
+    if (!pending && !signedIn(status)) return null
+    const pin = providerDefaults.pins[status.id]
+    const pinnedName = pinnedModelChoice(props.models ?? [], status.id, pin)?.model.displayName
+    return (
+      <ProviderTuning
+        provider={status}
+        models={pinnableModels(props.models ?? [], status.id, props.hiddenModels)}
+        pinned={pin}
+        pinnedName={pinnedName}
+        onPinnedChange={(next) => providerDefaults.onPinChange(status.id, next)}
+        access={providerApprovalDefault(
+          providerDefaults.access[status.id],
+          status.capabilities?.autoReview === true,
+        )}
+        onAccessChange={(mode) => providerDefaults.onAccessChange(status.id, mode)}
+        context={context.state}
+        contextError={context.errors[status.id]}
+        onContextChange={(settings) => context.update(status.id, settings)}
+        pending={pending}
+      />
+    )
+  }
   const renderProviderRow = (status: ProviderStatus) => (
     <div className="provider-settings__entry" key={status.id}>
       {renderAccountRow(status)}
+      {renderTuning(status)}
     </div>
   )
 
