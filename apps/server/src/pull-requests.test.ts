@@ -6,6 +6,8 @@ import {
   PullRequestService,
 } from './pull-requests.js'
 
+const comparison = { headRefOid: 'head-a', baseRefOid: 'base' }
+
 const authored = pullRequest({
   id: 'PR_authored',
   number: 7,
@@ -254,13 +256,14 @@ describe('PullRequestService', () => {
     ).toHaveLength(1)
     expect(
       run.mock.calls.filter(([args]) => args[0] === 'api' && args[1] === 'graphql'),
-    ).toHaveLength(1)
+    ).toHaveLength(2)
   })
 
   it('normalizes paged files and keeps comment bodies off the command line', async () => {
     const calls: Array<{ args: string[]; stdin?: string | undefined }> = []
     const run: GhRunner = async (args, options) => {
       calls.push({ args, stdin: options?.stdin })
+      if (args.at(-1) === 'headRefOid,baseRefOid') return JSON.stringify(comparison)
       if (args[0] === 'api' && args[1]?.includes('/files?')) {
         return JSON.stringify([
           {
@@ -279,7 +282,7 @@ describe('PullRequestService', () => {
     }
     const service = new PullRequestService({ run, installed: async () => true })
 
-    const files = await service.files('Blueemi/harness', 7)
+    const files = await service.files('Blueemi/harness', 7, comparison)
     expect(files).toMatchObject({
       page: 1,
       hasMore: false,
@@ -304,20 +307,21 @@ describe('PullRequestService', () => {
 
   it('bounds retained pull-request payloads by recent use', async () => {
     const run = vi.fn<GhRunner>(async (args) => {
+      if (args.at(-1) === 'headRefOid,baseRefOid') return JSON.stringify(comparison)
       if (args[0] === 'api' && args[1]?.includes('/files?')) return '[]'
       throw new Error(`Unexpected gh call: ${args.join(' ')}`)
     })
     const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
 
     for (let number = 1; number <= 13; number += 1) {
-      await service.files('Blueemi/harness', number)
+      await service.files('Blueemi/harness', number, comparison)
     }
-    await service.files('Blueemi/harness', 13)
-    expect(run).toHaveBeenCalledTimes(13)
+    await service.files('Blueemi/harness', 13, comparison)
+    expect(run).toHaveBeenCalledTimes(39)
 
     // The first large page is outside the 12-entry LRU window and reloads.
-    await service.files('Blueemi/harness', 1)
-    expect(run).toHaveBeenCalledTimes(14)
+    await service.files('Blueemi/harness', 1, comparison)
+    expect(run).toHaveBeenCalledTimes(42)
   })
 
   it('loads and caches repository metadata options while isolating unavailable sources', async () => {
@@ -390,6 +394,7 @@ describe('PullRequestService', () => {
       type: 'review',
       verdict: 'request_changes',
       body: 'Please add coverage.',
+      commitId: 'abc123',
     })
     await service.action(...target, {
       type: 'inline_comment',
@@ -441,14 +446,35 @@ describe('PullRequestService', () => {
     await service.action(...target, { type: 'reopen' })
     await service.action(...target, { type: 'update_branch', rebase: true })
     await service.action(...target, { type: 'rerun_checks', failedOnly: true })
-    await service.action(...target, { type: 'merge', method: 'squash', deleteBranch: true })
-    await service.action(...target, { type: 'enable_auto_merge', method: 'rebase' })
+    await service.action(...target, {
+      type: 'merge',
+      method: 'squash',
+      deleteBranch: true,
+      expectedHeadOid: 'abc123',
+    })
+    await service.action(...target, {
+      type: 'enable_auto_merge',
+      method: 'rebase',
+      expectedHeadOid: 'abc123',
+    })
     await service.action(...target, { type: 'disable_auto_merge' })
 
     const url = 'https://github.com/Blueemi/harness/pull/7'
     expect(calls).toContainEqual({
-      args: ['pr', 'review', url, '--request-changes', '--body-file', '-'],
-      stdin: 'Please add coverage.',
+      args: [
+        'api',
+        '--silent',
+        '--method',
+        'POST',
+        'repos/Blueemi/harness/pulls/7/reviews',
+        '--input',
+        '-',
+      ],
+      stdin: JSON.stringify({
+        event: 'REQUEST_CHANGES',
+        body: 'Please add coverage.',
+        commit_id: 'abc123',
+      }),
     })
     expect(calls).toContainEqual({
       args: [
@@ -507,17 +533,305 @@ describe('PullRequestService', () => {
       expect.objectContaining({ args: expect.arrayContaining(['99']) }),
     )
     expect(calls).toContainEqual({
-      args: ['pr', 'merge', url, '--squash', '--delete-branch'],
+      args: ['pr', 'merge', url, '--squash', '--match-head-commit', 'abc123', '--delete-branch'],
       stdin: undefined,
     })
     expect(calls).toContainEqual({
-      args: ['pr', 'merge', url, '--auto', '--rebase'],
+      args: ['pr', 'merge', url, '--auto', '--rebase', '--match-head-commit', 'abc123'],
       stdin: undefined,
     })
     expect(calls).toContainEqual({
       args: ['pr', 'merge', url, '--disable-auto'],
       stdin: undefined,
     })
+  })
+
+  it.each(['approve', 'comment', 'request_changes'] as const)(
+    'binds a %s review to the inspected commit through the API',
+    async (verdict) => {
+      const run = vi.fn<GhRunner>(async () => '')
+      const service = new PullRequestService({ run })
+      await service.action('Blueemi/harness', 7, {
+        type: 'review',
+        verdict,
+        body: '',
+        commitId: 'reviewed-head',
+      })
+      expect(run).toHaveBeenCalledWith(
+        [
+          'api',
+          '--silent',
+          '--method',
+          'POST',
+          'repos/Blueemi/harness/pulls/7/reviews',
+          '--input',
+          '-',
+        ],
+        {
+          stdin: JSON.stringify({
+            event:
+              verdict === 'approve'
+                ? 'APPROVE'
+                : verdict === 'comment'
+                  ? 'COMMENT'
+                  : 'REQUEST_CHANGES',
+            body: '',
+            commit_id: 'reviewed-head',
+          }),
+        },
+      )
+    },
+  )
+
+  it.each(['merge', 'enable_auto_merge'] as const)(
+    'explains a moved head without retrying %s',
+    async (type) => {
+      const run = vi.fn<GhRunner>(async () => {
+        throw new Error('the head of pull request #7 does not match abc123')
+      })
+      const service = new PullRequestService({ run })
+      await expect(
+        service.action('Blueemi/harness', 7, {
+          type,
+          method: 'squash',
+          expectedHeadOid: 'abc123',
+          deleteBranch: false,
+        }),
+      ).rejects.toThrow('Review the latest commits before merging')
+      expect(run).toHaveBeenCalledOnce()
+      expect(run.mock.calls[0]?.[0]).toContain('--match-head-commit')
+    },
+  )
+
+  it('invalidates all comparison pages and fences old file reads after a base change', async () => {
+    let finishOld!: (value: string) => void
+    let filesCalls = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args.at(-1) === 'headRefOid,baseRefOid') return JSON.stringify(comparison)
+      if (args[1]?.includes('/files?')) {
+        filesCalls += 1
+        if (filesCalls === 3)
+          return new Promise<string>((resolve) => {
+            finishOld = resolve
+          })
+        return '[]'
+      }
+      return ''
+    })
+    const service = new PullRequestService({ run })
+    await service.files('Blueemi/harness', 7, comparison, 1)
+    await service.files('Blueemi/harness', 7, comparison, 2)
+    const old = service.files('Blueemi/harness', 7, comparison, 3)
+    const rejected = expect(old).rejects.toThrow('comparison changed')
+    await vi.waitFor(() => expect(filesCalls).toBe(3))
+    await service.action('Blueemi/harness', 7, {
+      type: 'update_metadata',
+      baseRefName: 'release',
+      addReviewers: [],
+      removeReviewers: [],
+      addAssignees: [],
+      removeAssignees: [],
+      addLabels: [],
+      removeLabels: [],
+    })
+    await service.files('Blueemi/harness', 7, comparison, 1)
+    await service.files('Blueemi/harness', 7, comparison, 2)
+    await service.files('Blueemi/harness', 7, comparison, 3)
+    finishOld('[]')
+    await rejected
+    await service.files('Blueemi/harness', 7, comparison, 3)
+    expect(filesCalls).toBe(6)
+  })
+
+  it('invalidates cached and in-flight file pages when fresh detail observes a new head', async () => {
+    let head = 'head-a'
+    let finishOld!: (value: string) => void
+    let filesCalls = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view')
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          headRefOid: head,
+          baseRefOid: 'base',
+        })
+      if (args[1]?.includes('/files?')) {
+        filesCalls += 1
+        if (filesCalls === 2)
+          return new Promise<string>((resolve) => {
+            finishOld = resolve
+          })
+        return '[]'
+      }
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    await service.detail('Blueemi/harness', 7, [])
+    await service.files('Blueemi/harness', 7, { ...comparison, headRefOid: head })
+    const old = service.files('Blueemi/harness', 7, { ...comparison, headRefOid: head }, 2)
+    const rejected = expect(old).rejects.toThrow('comparison changed')
+    await vi.waitFor(() => expect(filesCalls).toBe(2))
+    head = 'head-b'
+    expect((await service.detail('Blueemi/harness', 7, [], true)).headRefOid).toBe('head-b')
+    await service.files('Blueemi/harness', 7, { ...comparison, headRefOid: head })
+    finishOld('[]')
+    await rejected
+    await service.files('Blueemi/harness', 7, { ...comparison, headRefOid: head }, 2)
+    expect(filesCalls).toBe(4)
+  })
+
+  it('starts a fresh detail read after a change instead of joining or caching an older one', async () => {
+    let title = 'Old title'
+    let finishOld!: () => void
+    let views = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view') {
+        views += 1
+        const value = JSON.stringify({
+          ...authored,
+          title,
+          comments: [],
+          createdAt: authored.updatedAt,
+          headRefOid: 'head-a',
+          baseRefOid: 'base',
+        })
+        if (views === 1)
+          return new Promise<string>((resolve) => {
+            finishOld = () => resolve(value)
+          })
+        return value
+      }
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    const old = service.detail('Blueemi/harness', 7, [], true)
+    const rejected = expect(old).rejects.toThrow('changed while loading')
+    await vi.waitFor(() => expect(views).toBe(1))
+    await service.action('Blueemi/harness', 7, { type: 'edit', title: 'New title' })
+    title = 'New title'
+    const fresh = service.detail('Blueemi/harness', 7, [])
+    finishOld()
+    await rejected
+    expect((await fresh).title).toBe('New title')
+    expect((await service.detail('Blueemi/harness', 7, [])).title).toBe('New title')
+    expect(views).toBe(2)
+  })
+
+  it('keeps detail honest about pending reviews, teams, long threads, and failed reads', async () => {
+    let threadsFail = true
+    let repositoryFails = false
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view')
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          headRefOid: 'head-a',
+          baseRefOid: 'base',
+          reviewRequests: [{ __typename: 'Team', name: 'Design', slug: 'acme/design' }],
+          reviews: [
+            {
+              id: 'PRR_pending',
+              author: { login: 'Blueemi' },
+              state: 'PENDING',
+              submittedAt: null,
+            },
+          ],
+        })
+      if (args[1] === 'repos/Blueemi/harness') {
+        if (repositoryFails) throw new Error('repository unavailable')
+        return '{}'
+      }
+      if (args[1] === 'graphql') {
+        if (threadsFail) throw new Error('graphql unavailable')
+        return JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: 'PRRT_1',
+                      path: 'src/example.ts',
+                      comments: {
+                        totalCount: 101,
+                        nodes: [
+                          {
+                            id: 'PRRC_1',
+                            databaseId: 1,
+                            author: { login: 'reviewer' },
+                            body: 'First',
+                            createdAt: '2026-08-09T11:30:00Z',
+                            url: 'https://github.com/Blueemi/harness/pull/7#discussion_r1',
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        })
+      }
+      return ''
+    })
+    const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
+
+    const failed = await service.detail('Blueemi/harness', 7, [])
+    expect(failed.reviews).toEqual([])
+    expect(failed.requestedReviewers).toEqual([{ login: 'acme/design', isBot: false }])
+    expect(failed.reviewThreadsUnavailable).toBe(true)
+
+    threadsFail = false
+    const loaded = await service.detail('Blueemi/harness', 7, [])
+    expect(loaded.reviewThreadsUnavailable).toBeUndefined()
+    expect(loaded.reviewThreads[0]?.commentsTruncated).toBe(true)
+
+    repositoryFails = true
+    await expect(service.detail('Blueemi/harness', 7, [], true)).rejects.toThrow(
+      'repository unavailable',
+    )
+
+    await service.action('Blueemi/harness', 7, {
+      type: 'update_metadata',
+      addReviewers: [],
+      removeReviewers: ['acme/design', 'reviewer'],
+      addAssignees: [],
+      removeAssignees: [],
+      addLabels: [],
+      removeLabels: [],
+    })
+    expect(run).toHaveBeenLastCalledWith(
+      [
+        'api',
+        '--silent',
+        '--method',
+        'DELETE',
+        'repos/Blueemi/harness/pulls/7/requested_reviewers',
+        '--input',
+        '-',
+      ],
+      { stdin: JSON.stringify({ reviewers: ['reviewer'], team_reviewers: ['design'] }) },
+    )
+  })
+
+  it('keeps base branches that differ only by case', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1]?.includes('/branches?')) {
+        return JSON.stringify([[{ name: 'release' }, { name: 'Release' }]])
+      }
+      return '[[]]'
+    })
+    const service = new PullRequestService({ run, installed: async () => true, now: () => 100 })
+    const options = await service.metadataOptions('Blueemi/harness')
+    expect(options.baseBranches).toHaveLength(2)
+    expect(options.baseBranches).toEqual(expect.arrayContaining(['release', 'Release']))
   })
 
   it('uses one direct API request for single-picker metadata changes', async () => {
