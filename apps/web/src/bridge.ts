@@ -1,5 +1,12 @@
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import type { KeybindingId, Keybindings, Shortcut } from './shortcuts.js'
+import {
+  checkSimulatedAppUpdate,
+  onSimulatedAppUpdate,
+  simulatedAppUpdate,
+  startAppUpdateSimulation,
+  type AppUpdateSimulation,
+} from './app-update-simulation.js'
 
 /**
  * The native bridge, when one exists.
@@ -354,18 +361,55 @@ const unsupportedUpdate: AppUpdateState = {
   currentVersion: 'pre-release',
 }
 
-export function appUpdateState(): Promise<AppUpdateState> {
+function nativeAppUpdateState(): Promise<AppUpdateState> {
   return bridge?.getUpdateState?.() ?? Promise.resolve(unsupportedUpdate)
 }
 
+// A Debug simulation stands in for the native updater until it is stopped or
+// the window restarts, so every update surface follows the fake release.
+export function appUpdateState(): Promise<AppUpdateState> {
+  const simulated = simulatedAppUpdate()
+  return simulated ? Promise.resolve(simulated) : nativeAppUpdateState()
+}
+
 export function checkForAppUpdates(): Promise<AppUpdateState> {
+  if (simulatedAppUpdate()) return checkSimulatedAppUpdate()
   return bridge?.checkForUpdates?.() ?? Promise.resolve(unsupportedUpdate)
 }
 
 export function installAppUpdate(): Promise<boolean> {
+  const simulated = simulatedAppUpdate()
+  if (simulated) {
+    // A reload is the renderer's half of a restart; nothing was installed.
+    if (simulated.status === 'ready') window.location.reload()
+    return Promise.resolve(simulated.status === 'ready')
+  }
   return bridge?.installUpdate?.() ?? Promise.resolve(false)
 }
 
 export function onAppUpdateState(listener: (state: AppUpdateState) => void): () => void {
-  return bridge?.onUpdateState?.(listener) ?? (() => undefined)
+  const offNative =
+    bridge?.onUpdateState?.((state) => {
+      if (!simulatedAppUpdate()) listener(state)
+    }) ?? (() => undefined)
+  const offSimulated = onSimulatedAppUpdate((state) => {
+    if (state) {
+      listener(state)
+      return
+    }
+    void nativeAppUpdateState()
+      .then((native) => {
+        if (!simulatedAppUpdate()) listener(native)
+      })
+      .catch(() => {})
+  })
+  return () => {
+    offNative()
+    offSimulated()
+  }
+}
+
+export async function simulateAppUpdate(scenario: AppUpdateSimulation): Promise<AppUpdateState> {
+  const { currentVersion } = simulatedAppUpdate() ?? (await nativeAppUpdateState())
+  return startAppUpdateSimulation(scenario, currentVersion)
 }

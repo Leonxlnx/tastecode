@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { methods, type Account, type ProviderId, type ResultOf } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
+import { SIMULATED_CHECK_MS, stopAppUpdateSimulation } from '../app-update-simulation.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
@@ -22,18 +24,20 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
+    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'debug' | 'about'
+    showDebug?: boolean
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
     showMacOSHaptics?: boolean
     onKeybindingChange?: (action: KeybindingId, shortcut: Shortcut | null) => void
     onKeybindingsReset?: () => void
+    overrides?: Partial<ComponentProps<typeof Settings>>
   } = {},
 ) {
   const transport = options.transport ?? new TestTransport()
 
-  return render(
+  const element = (
     <Settings
       provider="codex"
       providerName="Codex"
@@ -69,10 +73,18 @@ function renderSettings(
       showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
       initialSection={options.initialSection ?? 'appearance'}
+      showDebug={options.showDebug}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
-    />,
+      {...options.overrides}
+    />
   )
+  const view = render(element)
+  return {
+    ...view,
+    rerenderSettings: (updates: Partial<ComponentProps<typeof Settings>>) =>
+      view.rerender(<Settings {...element.props} {...updates} />),
+  }
 }
 
 function renderAppearanceSettings(showMacOSHaptics = false) {
@@ -81,6 +93,7 @@ function renderAppearanceSettings(showMacOSHaptics = false) {
 
 afterEach(() => {
   cleanup()
+  stopAppUpdateSimulation()
   vi.useRealTimers()
   vi.restoreAllMocks()
   resetInstalls()
@@ -207,6 +220,28 @@ describe('about status grammar', () => {
     expect((await screen.findByRole('status', { name: label })).className).toContain(`is-${state}`)
     expect(transport.requests).toContainEqual({ method: 'system.updateCheck', params: {} })
     expect(container.querySelector('.settings__status')).toBeNull()
+  })
+})
+
+describe('app update simulation', () => {
+  it('plays a fake release through About and stops back to the real updater', async () => {
+    vi.useFakeTimers()
+    renderSettings({ initialSection: 'debug', showDebug: true })
+    const stop = screen.getByRole('button', { name: 'Stop' })
+    expect(stop.hasAttribute('disabled')).toBe(true)
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Update' })))
+    expect(stop.hasAttribute('disabled')).toBe(false)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'About' })))
+    expect(screen.getByRole('status', { name: 'Checking' })).toBeTruthy()
+
+    await act(() => vi.advanceTimersByTimeAsync(SIMULATED_CHECK_MS))
+    expect(screen.getByRole('button', { name: 'Downloading…' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(/Downloading 1\.0\.0/)).toBeTruthy()
+
+    await act(async () => stopAppUpdateSimulation())
+    expect(screen.getByRole('button', { name: 'Check for updates' })).toBeTruthy()
+    expect(screen.queryByRole('status', { name: /Checking/ })).toBeNull()
   })
 })
 
