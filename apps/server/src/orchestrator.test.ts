@@ -6580,6 +6580,50 @@ describe('isolated sessions', () => {
     await orchestrator.disposeAll()
   })
 
+  it('sends restore context once without adding it to the visible prompt', async () => {
+    const { orchestrator, sessions, store } = harness(trees)
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.submitTurn(thread.id, 'initial')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const point = orchestrator.checkpoints(thread.id)[0]!
+    await orchestrator.restoreCheckpoint(thread.id, point.id)
+    await orchestrator.submitTurn(thread.id, 'after restore')
+    expect(sessions[0]!.sent.at(-1)).toContain('Your provider memory may still include turns')
+    expect(text(store.history(thread.id))).toEqual(['after restore'])
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await orchestrator.submitTurn(thread.id, 'next')
+    expect(sessions[0]!.sent.at(-1)).toBe('next')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const { undo } = await orchestrator.restoreCheckpoint(thread.id, point.id)
+    await orchestrator.undoRestore(thread.id, undo)
+    await orchestrator.submitTurn(thread.id, 'after undo')
+    expect(sessions[0]!.sent.at(-1)).toContain('Your provider memory may still include turns')
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps pending restore context across a server restart', async () => {
+    const store = new Store(':memory:')
+    const first = harness(trees, store)
+    const thread = await first.orchestrator.startThread('codex', repo)
+    await first.orchestrator.submitTurn(thread.id, 'initial')
+    first.sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const point = first.orchestrator.checkpoints(thread.id)[0]!
+    await first.orchestrator.restoreCheckpoint(thread.id, point.id)
+    await first.orchestrator.disposeAll()
+    expect(store.threadNeedsRestoreContext(thread.id)).toBe(true)
+
+    const second = harness(trees, store)
+    await second.orchestrator.submitTurn(thread.id, 'after restart')
+    expect(second.sessions[0]!.sent.at(-1)).toContain(
+      'Your provider memory may still include turns',
+    )
+    expect(store.threadNeedsRestoreContext(thread.id)).toBe(false)
+    second.sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    await second.orchestrator.submitTurn(thread.id, 'next')
+    expect(second.sessions[0]!.sent.at(-1)).toBe('next')
+    await second.orchestrator.disposeAll()
+  })
+
   it('rejects deleting a queued prompt that already started or was removed', async () => {
     const { orchestrator, store } = harness(trees)
     const thread = await orchestrator.startThread('codex', repo)
@@ -7161,6 +7205,28 @@ describe('rolling a session back', () => {
       release(heldSnapshot)
       await reviewing.catch(() => undefined)
     }
+  })
+
+  it('keeps the original files as a recovery checkpoint when restore and rollback both fail', async () => {
+    const { orchestrator, sessions } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'first task')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const first = orchestrator.checkpoints(thread.id)[0]!
+    vi.spyOn(checkpoint, 'restoreSnapshot').mockRejectedValueOnce(
+      new checkpoint.RestoreSnapshotError({ commit: 'original-files', clean: false }, [
+        new Error('restore failed'),
+        new Error('rollback failed'),
+      ]),
+    )
+
+    await expect(orchestrator.restoreCheckpoint(thread.id, first.id)).rejects.toThrow(
+      /Recovery: original files before failed restore/,
+    )
+    expect(orchestrator.checkpoints(thread.id).at(-1)).toMatchObject({
+      commit: 'original-files',
+      label: 'Recovery: original files before failed restore',
+    })
   })
 
   it('refuses hunk and file rejection while a checkpoint restore is still in progress', async () => {
