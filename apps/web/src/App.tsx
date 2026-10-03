@@ -711,11 +711,13 @@ export function App() {
     setActionError({ id: crypto.randomUUID(), message })
   }, [])
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
+  const pendingDeletionChecks = useRef(new Map<string, object>())
   const {
     hiddenIds: archivingIds,
     pendingIds: pendingArchives,
     queue: enqueueArchive,
     undo: undoQueuedArchives,
+    cancel: cancelQueuedArchive,
   } = useDeferredArchiveQueue(10_000)
   const archiveProjects = useMemo(() => {
     if (archivingIds.length === 0) return projects
@@ -2698,37 +2700,6 @@ export function App() {
         injectedDraftTransition.current = activeIdRef.current !== undefined
         publishComposerDraft(next)
       }
-      // A session nobody typed into is bookkeeping, not history. Pressing "new
-      // session" twice should not leave a trail of empty ones.
-      const untouched = projectsRef.current
-        .find((project) => project.path === projectPath)
-        ?.sessions.filter((session) => session.title === 'New session')
-      for (const session of untouched ?? []) {
-        threadController.discardSnapshot(session.id)
-      }
-      setProjects((current) =>
-        current.map((project) =>
-          project.path === projectPath
-            ? {
-                ...project,
-                sessions: project.sessions.filter((session) => session.title !== 'New session'),
-              }
-            : project,
-        ),
-      )
-      void (async () => {
-        for (const session of untouched ?? []) {
-          const deleted = await transport
-            .request('thread.delete', { threadId: session.id })
-            .then(() => true)
-            .catch(() => false)
-          if (deleted) {
-            clearWorkspaceThread(session.id)
-            refreshWorkspaceAfterCompletion(projectPath)
-          }
-        }
-        await refreshProjects().catch(() => undefined)
-      })()
       setNotice(undefined)
       setActionError(undefined)
       setActivePath(projectPath)
@@ -2737,15 +2708,7 @@ export function App() {
       setThread(emptyThread)
       setComposerFocusRequest((request) => request + 1)
     },
-    [
-      projects,
-      transport,
-      refreshProjects,
-      provider,
-      clearWorkspaceThread,
-      refreshWorkspaceAfterCompletion,
-      publishComposerDraft,
-    ],
+    [publishComposerDraft],
   )
 
   const updateQueue = useCallback(
@@ -2780,6 +2743,12 @@ export function App() {
         const next = threadController.editDraft(key, { text, attachments })
         threadController.draftOwner = key
         publishComposerDraft(next)
+      }
+      if (activeId) pendingDeletionChecks.current.delete(activeId)
+      if (activeId && !cancelQueuedArchive(activeId)) {
+        restoreDraft()
+        reportError('This chat is being deleted.')
+        return
       }
       const sideChatCommand = parseSideChatCommand(text)
       if (sideChatCommand) {
@@ -3175,6 +3144,7 @@ export function App() {
       restoreRejectedDraft,
       sendAvailability,
       publishComposerDraft,
+      cancelQueuedArchive,
     ],
   )
 
@@ -3344,6 +3314,11 @@ export function App() {
   const selectSession = useCallback(
     async (id: string) => {
       setSurface('chat')
+      pendingDeletionChecks.current.delete(id)
+      if (!cancelQueuedArchive(id)) {
+        reportError('This chat is being deleted.')
+        return
+      }
       const threadSelection = readThreadModelSelection(id)
       pendingThreadModelSave.current = threadSelection ? undefined : id
       const found = findSession(projectsRef.current, id)
@@ -3422,7 +3397,14 @@ export function App() {
         setLoadingThreadId((current) => (current === id ? undefined : current))
       }
     },
-    [visibleModels, selectedModelChoice, commitModelChoice, loadHistory, transport],
+    [
+      visibleModels,
+      selectedModelChoice,
+      commitModelChoice,
+      loadHistory,
+      transport,
+      cancelQueuedArchive,
+    ],
   )
 
   const inspectCheckpoint = useCallback(
@@ -3644,8 +3626,11 @@ export function App() {
     async (id: string) => {
       const found = findSession(projectsRef.current, id)
       if (!found) return false
+      const check = {}
+      pendingDeletionChecks.current.set(id, check)
       try {
         const work = await transport.request('thread.unsavedWork', { threadId: id })
+        if (pendingDeletionChecks.current.get(id) !== check) return false
         if (work.isolated && work.uncommitted) {
           setCheckoutDelete({
             id,
@@ -3666,6 +3651,9 @@ export function App() {
         reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
         return false
+      } finally {
+        if (pendingDeletionChecks.current.get(id) === check)
+          pendingDeletionChecks.current.delete(id)
       }
     },
     [transport, deleteSession, refreshProjects, queueArchive],
@@ -5126,10 +5114,6 @@ export function App() {
           <ArchiveToast
             count={pendingArchives.length}
             visible={!archiveToastDismissed}
-            onView={() => {
-              const id = pendingArchives.at(-1)
-              if (id) void selectSession(id)
-            }}
             onUndo={undoArchive}
             onDismiss={() => setArchiveToastDismissed(true)}
           />
