@@ -252,10 +252,15 @@ function InboxSidebarComponent(props: {
         : [],
     [normalizedQuery, props.projects, props.scope, selectedIds],
   )
-  const orderedRef = useRef(ordered)
+  const visibleOrdered = [
+    ...visibleActive,
+    ...(snoozedExpanded ? visibleSnoozed : []),
+    ...(settledExpanded ? visibleSettled : []),
+  ]
+  const orderedRef = useRef(visibleOrdered)
   const selectedIdsRef = useRef(selectedIds)
   const selectionAnchorRef = useRef(selectionAnchor)
-  orderedRef.current = ordered
+  orderedRef.current = visibleOrdered
   selectedIdsRef.current = selectedIds
   selectionAnchorRef.current = selectionAnchor
 
