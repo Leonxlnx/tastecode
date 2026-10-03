@@ -523,6 +523,7 @@ export function WorkspaceSideChat(props: {
             transport={props.transport}
             onDecide={decide}
             onAnswerUserInput={answer}
+            inlineUserInput
           />
         ) : !hasConversation && !starting ? (
           <WorkspaceEmptyState

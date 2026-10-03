@@ -146,6 +146,36 @@ describe('Claude Agent SDK session', () => {
     expect(disconnected).toHaveBeenCalledOnce()
   })
 
+  it('preserves multi-select and stringifies all selected labels for Claude', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Choose')
+    const pending = fake.inputs[0]!.options.canUseTool!(
+      'AskUserQuestion',
+      {
+        questions: [
+          {
+            question: 'constructor',
+            multiSelect: true,
+            options: [{ label: 'React' }, { label: 'Vue' }],
+          },
+        ],
+      },
+      { signal: new AbortController().signal, toolUseID: 'ask' },
+    )
+    const event = events.find((entry) => entry.type === 'user_input.requested')
+    if (event?.type !== 'user_input.requested') throw new Error('missing question')
+    expect(event.request.questions[0]).toMatchObject({ id: 'constructor', multiSelect: true })
+    adapter.respondToUserInput(event.request.id, { constructor: ['React', 'Vue', 'Other choice'] })
+    await expect(pending).resolves.toMatchObject({
+      updatedInput: { answers: { constructor: 'React, Vue, Other choice' } },
+    })
+    await adapter.dispose()
+  })
+
   it.each([false, true])('passes project MCP safely on open (resume: %s)', async (resume) => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
