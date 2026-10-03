@@ -382,7 +382,6 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       this.#instructionsPending && this.#options.instructions
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
         : text
-    this.#instructionsPending = false
     const promptDirectory = mkdtempSync(path.join(tmpdir(), 'harness-grok-'))
     const promptFile = path.join(promptDirectory, attachments.length ? 'prompt.json' : 'prompt.md')
     try {
@@ -418,10 +417,14 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     }
     this.#promptDirectories.set(child, promptDirectory)
     this.#child = child
-    // Spawn succeeded: the UUID now names a Grok session on disk (create) or
-    // continues one (resume). Follow-ups after Stop must use `--resume`.
-    this.#nativeSessionCreated = true
-    this.#announceProviderSessionId(this.#providerSessionId)
+    if (this.#nativeSessionCreated) this.#announceProviderSessionId(this.#providerSessionId)
+    // spawn() can return a child that later reports ENOENT. Only a successful
+    // launch may switch subsequent attempts from creation to resume.
+    child.once('spawn', () => {
+      if (this.#child !== child) return
+      this.#nativeSessionCreated = true
+      this.#announceProviderSessionId(this.#providerSessionId)
+    })
 
     this.emit('event', {
       type: 'turn.started',
@@ -497,6 +500,17 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           return
         }
         const frame = parsed.data
+        if (
+          this.#child === child &&
+          (frame.type === 'thought' ||
+            frame.type === 'text' ||
+            frame.type === 'tool_call' ||
+            (frame.type === 'end' && frame.stopReason === 'end_turn'))
+        ) {
+          this.#nativeSessionCreated = true
+          this.#instructionsPending = false
+          this.#announceProviderSessionId(this.#providerSessionId)
+        }
         if (frame.type === 'thought' && frame.data !== undefined) {
           message.complete(turnId, 'message', this, 'completed', 'commentary')
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
@@ -857,9 +871,9 @@ function readableGrokValue(value: unknown, depth = 0): string | undefined {
 }
 
 /** Auth as the CLI reports it on `grok models` — nothing else is read. */
-export type GrokAccount = { signedIn: boolean }
+export type GrokSignIn = { signedIn: boolean }
 
-export async function grokAccount(): Promise<GrokAccount> {
+export async function grokSignIn(): Promise<GrokSignIn> {
   return parseGrokAccount(await captureGrok(spawnOwned, ['models']))
 }
 
@@ -1000,7 +1014,7 @@ export function grokDisplayName(id: string): string {
 }
 
 /** The CLI announces its own auth state on `grok models`. */
-export function parseGrokAccount(output: string): GrokAccount {
+export function parseGrokAccount(output: string): GrokSignIn {
   return { signedIn: !/You are not authenticated/i.test(output) }
 }
 

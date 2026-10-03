@@ -227,10 +227,10 @@ describe('mapGrokBilling', () => {
   })
 
   it('reports signed-out billing as unavailable without starting provider ACP', async () => {
-    const account = vi.fn().mockResolvedValue({ signedIn: false })
+    const signIn = vi.fn().mockResolvedValue({ signedIn: false })
 
-    await expect(grokLimitSource(account)).resolves.toEqual({ status: 'unavailable' })
-    expect(account).toHaveBeenCalledOnce()
+    await expect(grokLimitSource(signIn)).resolves.toEqual({ status: 'unavailable' })
+    expect(signIn).toHaveBeenCalledOnce()
     expect(fake.spawns).toEqual([])
   })
 

@@ -140,13 +140,13 @@ describe('runCli', () => {
 
     const result = await runCli(process.execPath, ['-e', script], 2_000)
 
-    expect(result).toEqual({ code: 0, stdout: 'early-late', stderr: '' })
+    expect(result).toEqual({ code: 0, signal: null, stdout: 'early-late', stderr: '' })
   })
 
   it('captures provider status text written to stderr', async () => {
     const result = await runCli(process.execPath, ['-e', "process.stderr.write('provider status')"])
 
-    expect(result).toEqual({ code: 0, stdout: '', stderr: 'provider status' })
+    expect(result).toEqual({ code: 0, signal: null, stdout: '', stderr: 'provider status' })
   })
 })
 
