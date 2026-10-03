@@ -59,6 +59,62 @@ function items(events: DomainEvent[]) {
 }
 
 describe('Grok native history', () => {
+  it('rejects an unreadable primary transcript rather than replacing it with fallback history', async () => {
+    const { source, directory } = await fixture()
+    await save(directory, 'updates.jsonl', [
+      update('user_message_chunk', { content: { type: 'text', text: 'Original' } }),
+    ])
+    await save(directory, 'chat_history.jsonl', [{ type: 'user', content: 'Incomplete fallback' }])
+    const [session] = await source.list()
+    await rm(path.join(directory, 'updates.jsonl'))
+    await mkdir(path.join(directory, 'updates.jsonl'))
+    await expect(source.read(session!)).rejects.toThrow('not a file')
+  })
+
+  it.each([false, true])(
+    'returns no replacement when a listed transcript disappears (fallback: %s)',
+    async (fallback) => {
+      const { source, directory } = await fixture()
+      await save(directory, 'updates.jsonl', [
+        update('user_message_chunk', { content: { type: 'text', text: 'Original' } }),
+      ])
+      if (fallback)
+        await save(directory, 'chat_history.jsonl', [{ type: 'user', content: 'Fallback' }])
+      const [session] = await source.list()
+      await rm(path.join(directory, 'updates.jsonl'))
+      expect(await source.read(session!)).toEqual([])
+    },
+  )
+
+  it('keeps reused native tool ids and late background results distinct', async () => {
+    const { source, directory } = await fixture()
+    await save(directory, 'updates.jsonl', [
+      update('tool_call', { toolCallId: 'reused', rawInput: { command: 'first' } }, 1, 'turn'),
+      update('task_backgrounded', { tool_call_id: 'reused', task_id: 'task' }, 2),
+      update('tool_call_update', { toolCallId: 'reused', status: 'completed' }, 3, 'turn'),
+      update('tool_call', { toolCallId: 'reused', rawInput: { command: 'second' } }, 4, 'turn'),
+      update(
+        'tool_call_update',
+        { toolCallId: 'reused', status: 'completed', rawOutput: 'second output' },
+        5,
+        'turn',
+      ),
+      update(
+        'task_completed',
+        { task_snapshot: { task_id: 'task', output: 'first output', exit_code: 0 } },
+        6,
+      ),
+      update('turn_completed', { stop_reason: 'end_turn' }, 7),
+    ])
+    const [session] = await source.list()
+    const commands = items(await source.read(session!)).filter((item) => item.type === 'command')
+    expect(commands).toMatchObject([
+      { command: 'first', text: 'first output' },
+      { command: 'second', text: 'second output' },
+    ])
+    expect(commands[0]!.id).not.toBe(commands[1]!.id)
+  })
+
   it.skipIf(process.platform === 'win32')(
     'does not read transcript files linked outside their session folder',
     async () => {
