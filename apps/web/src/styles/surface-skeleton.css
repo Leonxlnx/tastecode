@@ -1,0 +1,604 @@
+/* ---------- surface skeletons ----------
+   Shells for surfaces whose chunk has not loaded yet; see SurfaceSkeletons.tsx.
+   Each block copies the geometry of the stylesheet it stands in for (named
+   above it), because that stylesheet arrives with the chunk. Bars are the
+   shared .skeleton primitive from skeleton.css. */
+
+/* ---------- sidebar tree (app.css: .proj, .sess) ---------- */
+
+.rail-skeleton__mark {
+  width: 13px;
+  height: 13px;
+  border-radius: var(--r-sm);
+}
+
+.rail-skeleton__name {
+  height: 9px;
+}
+
+.rail-skeleton__chat {
+  height: 8px;
+}
+
+/* ---------- inbox (inbox-sidebar.css) ---------- */
+
+.inbox-skeleton-toolbar {
+  display: grid;
+  gap: 5px;
+  padding: 10px 10px 9px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inbox-skeleton-toolbar > .skeleton,
+.inbox-skeleton-toolbar__projects > .skeleton {
+  border-radius: var(--r-md);
+}
+
+.inbox-skeleton-toolbar__search {
+  height: 32px;
+}
+
+.inbox-skeleton-toolbar__new {
+  height: 34px;
+  margin-top: -2px;
+}
+
+.inbox-skeleton-toolbar__projects {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.inbox-skeleton-toolbar__scope,
+.inbox-skeleton-toolbar__add {
+  height: 29px;
+}
+
+.inbox-skeleton-toolbar__pulls {
+  height: 30px;
+}
+
+.inbox-skeleton-body {
+  padding-top: 8px;
+}
+
+.inbox-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.inbox-skeleton__heading {
+  height: 7px;
+  margin: 6px 8px 7px;
+}
+
+.inbox-skeleton__card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 9px;
+  min-height: 76px;
+  padding: 8px 10px 9px;
+}
+
+.inbox-skeleton__topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inbox-skeleton__topline > .skeleton {
+  height: 7px;
+}
+
+.inbox-skeleton__title {
+  height: 9px;
+}
+
+.inbox-skeleton__meta {
+  height: 7px;
+}
+
+/* ---------- settings (settings.css) ---------- */
+
+.settings-skeleton {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.settings-skeleton__titlebar {
+  position: absolute;
+  z-index: 3;
+  inset: 0 0 auto;
+  height: var(--titlebar-h);
+  background: var(--titlebar-bg);
+  border-bottom: 1px solid var(--line);
+  box-shadow: inset 0 1px var(--chrome-highlight);
+  -webkit-app-region: drag;
+}
+
+.settings-skeleton__sidebar {
+  min-width: 0;
+  overflow: hidden;
+  padding: calc(var(--titlebar-h) + 10px) 8px 12px;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--line);
+}
+
+.settings-skeleton__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.settings-skeleton__item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.settings-skeleton__item > .skeleton:last-child {
+  height: 9px;
+}
+
+.settings-skeleton__label {
+  height: 7px;
+  margin: 15px 8px 8px;
+}
+
+.settings-skeleton__main {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.settings-skeleton__content {
+  width: min(840px, 100%);
+  margin: 0 auto;
+  padding: calc(var(--titlebar-h) + 48px) 48px 64px;
+}
+
+.settings-skeleton__title {
+  width: 136px;
+  height: 18px;
+  margin: 7px 0 29px;
+}
+
+.settings-skeleton__group {
+  overflow: hidden;
+  background: var(--bg-rail);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-lg);
+}
+
+.settings-skeleton__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 48px;
+  padding: 10px 14px;
+}
+
+.settings-skeleton__row + .settings-skeleton__row {
+  border-top: 1px solid var(--line);
+}
+
+.settings-skeleton__copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-skeleton__copy > .skeleton {
+  height: 9px;
+  max-width: 100%;
+}
+
+.settings-skeleton__copy > .settings-skeleton__note {
+  height: 7px;
+}
+
+.settings-skeleton__control {
+  border-radius: var(--r-md);
+}
+
+.settings-skeleton__control--segmented {
+  width: 172px;
+  height: 28px;
+}
+
+.settings-skeleton__control--select {
+  width: 148px;
+  height: 28px;
+}
+
+/* settings.css: .provider-row; provider-tuning.css: .provider-tune */
+.settings-skeleton__provider-head {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-height: 54px;
+  padding: 8px 0;
+}
+
+.settings-skeleton__provider-head > .skeleton:last-child {
+  margin-left: auto;
+}
+
+.settings-skeleton__provider-mark {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 22px;
+  margin-right: 14px;
+}
+
+.settings-skeleton__tune {
+  display: grid;
+  margin: -9px 0 16px 8px;
+}
+
+.settings-skeleton__tune-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 32px;
+  padding-left: 26px;
+}
+
+.settings-skeleton__control--switch {
+  width: 36px;
+  height: 22px;
+  border-radius: var(--r-pill);
+}
+
+/* ---------- pull requests (pull-requests/pull-requests.css) ---------- */
+
+.pr-shell-skeleton {
+  grid-row: 1 / -1;
+  border-top-left-radius: inherit;
+  display: grid;
+  grid-template-columns: minmax(330px, 36%) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.pr-shell-skeleton__list {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: color-mix(in srgb, var(--bg) 78%, var(--surface));
+  border-right: 1px solid var(--line);
+}
+
+.pr-shell-skeleton__head {
+  display: grid;
+  gap: 12px;
+  padding: 17px 18px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pr-shell-skeleton__title-row,
+.pr-shell-skeleton__search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pr-shell-skeleton__title-row {
+  justify-content: space-between;
+}
+
+.pr-shell-skeleton__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pr-shell-skeleton__search > .skeleton:first-child {
+  flex: 1;
+}
+
+.pr-shell-skeleton__rows {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  overflow: hidden;
+  padding: 12px 10px 20px;
+}
+
+.pr-shell-skeleton__row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-content: center;
+  column-gap: 10px;
+  /* The real title and repository lines sit 24px apart, centre to centre. */
+  row-gap: 16px;
+  min-height: 59px;
+  padding: 8px 10px;
+}
+
+.pr-shell-skeleton__row > .skeleton:first-child {
+  grid-row: 1 / span 2;
+  align-self: center;
+  margin: 0 auto;
+}
+
+/* ---------- workspace panel (workspace-panel.css) ---------- */
+
+.workspace-panel-skeleton {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.workspace-panel-skeleton[hidden] {
+  display: none;
+}
+
+.workspace-panel-skeleton--bottom {
+  border-left: 0;
+}
+
+.workspace-panel-skeleton__tabs {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 6px 42px 6px 8px;
+}
+
+.workspace-panel-skeleton__slot {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+}
+
+.workspace-panel-skeleton__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+/* .workspace-selector */
+.workspace-panel-skeleton__picker {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+  place-items: center;
+  padding: 24px;
+}
+
+.workspace-panel-skeleton__tools {
+  display: grid;
+  width: min(100%, 420px);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.workspace-panel-skeleton__tool {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 52px;
+  padding: 0 13px;
+  background: var(--bg-rail);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.workspace-panel-skeleton__tool:last-child:nth-child(odd) {
+  width: calc((100% - 6px) / 2);
+  grid-column: 1 / -1;
+  justify-self: center;
+}
+
+/* ---------- chat search (command-palette.css, session-search.css) ---------- */
+
+.search-skeleton {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: min(13vh, 104px) 16px 16px;
+}
+
+.search-skeleton__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.search-skeleton__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  overflow: hidden;
+  background: var(--bg-rail);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-modal);
+}
+
+.search-skeleton__search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.search-skeleton__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.search-skeleton__filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.search-skeleton__close {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+}
+
+/* Bars sit in line boxes the size of the real heading and two-line copy. The
+   extra 3px is the results list's own padding around the intro. */
+.search-skeleton__intro {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 35px 27px;
+}
+
+.search-skeleton__intro > .skeleton--circle {
+  margin-bottom: 4px;
+}
+
+.search-skeleton__heading {
+  display: flex;
+  align-items: center;
+  font-size: var(--t-lg);
+}
+
+.search-skeleton__heading::before {
+  content: '\200b';
+}
+
+.search-skeleton__copy {
+  display: grid;
+  justify-items: center;
+  font-size: var(--t-sm);
+}
+
+.search-skeleton__copy > .skeleton {
+  margin-block: calc((1.6em - 9px) / 2);
+}
+
+/* ---------- find bar (thread.css: .find) ---------- */
+
+/* The bar is drawn on --surface-2, the default skeleton color. */
+.find-skeleton {
+  --skeleton: color-mix(in srgb, var(--text) 9%, var(--surface-2));
+  --skeleton-shine: color-mix(in srgb, var(--text) 15%, var(--surface-2));
+}
+
+.find-skeleton__input {
+  display: flex;
+  align-items: center;
+  width: 170px;
+  height: 22px;
+}
+
+.find-skeleton__count {
+  width: 34px;
+}
+
+.find-skeleton__button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+}
+
+/* ---------- media viewer (media-viewer.css) ---------- */
+
+.media-skeleton {
+  --skeleton: rgb(255 255 255 / 7%);
+  --skeleton-shine: rgb(255 255 255 / 12%);
+
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 44%, rgb(30 30 32 / 46%), transparent 62%), rgb(7 7 8 / 97%);
+}
+
+.media-skeleton__actions {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: rgb(17 17 18 / 88%);
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: var(--r-lg);
+}
+
+.media-skeleton__actions > .skeleton {
+  margin: 10px;
+}
+
+.media-skeleton__viewport {
+  position: absolute;
+  inset: 62px 18px 72px;
+  display: grid;
+  place-items: center;
+}
+
+.media-skeleton--video .media-skeleton__viewport {
+  inset: 14px;
+}
+
+.media-skeleton__frame {
+  width: min(100%, 960px, calc((100vh - 134px) * 1.6));
+  aspect-ratio: 16 / 10;
+  border-radius: var(--r-lg);
+}
+
+/* ---------- surface entrance ----------
+   A full-window surface fades in as one layer, whether its first frame is
+   the skeleton or the surface itself. The surface drops its own fade, so a
+   skeleton that hands over halfway through does not let the app behind it
+   flash through a second fade. */
+
+.surface-enter {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  animation: fade-in var(--dur-fast) var(--ease-out);
+}
+
+/* [class] lifts this above a surface root's own single-class rule, which loads
+   later with the surface's chunk and would otherwise win on order. */
+.surface-enter > [class] {
+  animation: none;
+}
