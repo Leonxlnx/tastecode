@@ -22,10 +22,21 @@ export type AppUpdateState = {
 
 type Timer = ReturnType<typeof setTimeout>
 
+/** Who asked for an update attempt. Only a person's own attempt may show its failure. */
+export type UpdateCheckOrigin = 'user' | 'background'
+
+const FIRST_CHECK_DELAY = 15_000
+const CHECK_INTERVAL = 60 * 60 * 1000
+// A failed background attempt retries sooner than the hourly check, then backs
+// off so an offline machine does not keep asking GitHub.
+const RETRY_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 30 * 60 * 1000]
+
 export function createAppUpdateController(
   options: {
     currentVersion: string
     enabled: boolean
+    /** Receives every failure, including the background ones the UI never shows. */
+    onError?: (cause: unknown) => void
     setTimeoutFn?: typeof setTimeout
     clearTimeoutFn?: typeof clearTimeout
   } & (
@@ -47,6 +58,26 @@ export function createAppUpdateController(
     status: options.enabled ? 'idle' : 'unsupported',
     currentVersion: options.currentVersion,
   }
+  // One attempt is a check plus the download it starts. electron-updater reports
+  // a failure twice (an `error` event and a rejected promise); count it once.
+  let attempt = 0
+  let failedAttempt = -1
+  let failures = 0
+  let quiet = false
+  let settled = state
+
+  const reschedule = (delay: number) => {
+    if (!started) return
+    if (timer) clearTimeoutFn(timer)
+    timer = setTimeoutFn(() => {
+      timer = undefined
+      void check('background').finally(() => {
+        // A failure has already set its own, shorter retry.
+        if (!timer) reschedule(CHECK_INTERVAL)
+      })
+    }, delay)
+    timer.unref?.()
+  }
 
   const publish = (next: AppUpdateState) => {
     state = next
@@ -57,12 +88,28 @@ export function createAppUpdateController(
     currentVersion: options.currentVersion,
     version: info.version,
   })
-  const fail = (cause: unknown) =>
+  const fail = (cause: unknown) => {
+    if (failedAttempt === attempt) return
+    failedAttempt = attempt
+    failures += 1
+    options.onError?.(cause)
+    reschedule(RETRY_DELAYS[failures - 1] ?? CHECK_INTERVAL)
+    // An offline launch or a GitHub outage is not the user's problem until they
+    // ask. A failed install of a ready update always is.
+    if (quiet && state.status !== 'ready') {
+      publish(settled)
+      return
+    }
     publish({
       status: 'error',
       currentVersion: options.currentVersion,
       error: cause instanceof Error ? cause.message : String(cause),
     })
+  }
+  const succeed = (next: AppUpdateState) => {
+    failures = 0
+    publish(next)
+  }
 
   const configureUpdater = (client: UpdateClient): UpdateClient => {
     if (updaterConfigured) return client
@@ -75,7 +122,7 @@ export function createAppUpdateController(
     client.on('checking-for-update', () =>
       publish({ status: 'checking', currentVersion: options.currentVersion }),
     )
-    client.on('update-not-available', (info) => publish(versioned('current', info)))
+    client.on('update-not-available', (info) => succeed(versioned('current', info)))
     client.on('update-available', (info) => {
       publish(versioned('downloading', info))
       void client.downloadUpdate().catch(fail)
@@ -88,7 +135,7 @@ export function createAppUpdateController(
         progress: Math.round(progress.percent),
       }),
     )
-    client.on('update-downloaded', (info) => publish(versioned('ready', info)))
+    client.on('update-downloaded', (info) => succeed(versioned('ready', info)))
     client.on('error', fail)
     return client
   }
@@ -107,10 +154,15 @@ export function createAppUpdateController(
     return loading
   }
 
-  const check = (): Promise<AppUpdateState> => {
+  const check = (origin: UpdateCheckOrigin = 'user'): Promise<AppUpdateState> => {
     if (!options.enabled) return Promise.resolve(state)
+    // A person who joins a background attempt is now waiting on its outcome.
+    if (origin === 'user') quiet = false
     if (checking) return checking
     if (state.status === 'downloading' || state.status === 'ready') return Promise.resolve(state)
+    attempt += 1
+    quiet = origin === 'background'
+    settled = state
     checking = loadUpdater()
       .then((client) => client.checkForUpdates())
       .then(
@@ -124,16 +176,6 @@ export function createAppUpdateController(
         checking = undefined
       })
     return checking
-  }
-
-  const schedule = (delay: number) => {
-    timer = setTimeoutFn(() => {
-      timer = undefined
-      void check().finally(() => {
-        if (started) schedule(60 * 60 * 1000)
-      })
-    }, delay)
-    timer.unref?.()
   }
 
   return {
@@ -151,7 +193,7 @@ export function createAppUpdateController(
     start: () => {
       if (!options.enabled || started) return
       started = true
-      schedule(15_000)
+      reschedule(FIRST_CHECK_DELAY)
     },
     dispose: () => {
       started = false

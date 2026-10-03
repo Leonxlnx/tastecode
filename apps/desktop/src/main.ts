@@ -919,6 +919,7 @@ if (ownsSingleInstance) {
       loadUpdater: async () => (await import('./release-updater.js')).createReleaseUpdater(),
       currentVersion: app.getVersion(),
       enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
+      onError: (cause) => void diagnostics?.record('updater', cause),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
