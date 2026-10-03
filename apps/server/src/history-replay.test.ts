@@ -18,6 +18,34 @@ function entries(events: DomainEvent[]): Array<{ seq: number; event: DomainEvent
 }
 
 describe('history replay compaction', () => {
+  it('orders late-imported old turns before retaining the latest plan and diff', () => {
+    const history = entries([
+      {
+        type: 'turn.started',
+        turn: { id: 'local', threadId: 'thread', status: 'running', createdAt: 20 },
+      },
+      { type: 'diff.updated', turnId: 'local', diff: 'latest diff' },
+      { type: 'plan.updated', turnId: 'local', steps: [{ text: 'Latest plan', status: 'done' }] },
+      { type: 'turn.completed', turnId: 'local', status: 'completed' },
+      {
+        type: 'turn.started',
+        turn: { id: 'import:old', threadId: 'thread', status: 'running', createdAt: 10 },
+      },
+      { type: 'diff.updated', turnId: 'import:old', diff: 'draft old diff' },
+      { type: 'diff.updated', turnId: 'import:old', diff: 'old diff' },
+      { type: 'plan.updated', turnId: 'import:old', steps: [{ text: 'Old plan', status: 'done' }] },
+      { type: 'turn.completed', turnId: 'import:old', status: 'completed' },
+    ])
+    const compacted = compactHistoryReplay(history)
+    expect(
+      compacted.filter(({ event }) => event.type === 'diff.updated').at(-1)?.event,
+    ).toMatchObject({ diff: 'latest diff' })
+    expect(
+      compacted.filter(({ event }) => event.type === 'plan.updated').at(-1)?.event,
+    ).toMatchObject({ steps: [{ text: 'Latest plan', status: 'done' }] })
+    expect(compacted.at(-1)?.seq).toBe(history.at(-1)?.seq)
+  })
+
   it('replays the same thread without superseded deltas, diffs, plans, or usage', () => {
     const history = entries([
       {
