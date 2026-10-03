@@ -52,6 +52,7 @@ import {
 export type AcpAdapterEvents = {
   event: [DomainEvent]
   log: [string]
+  disconnected: []
 }
 
 export type AcpStartOptions = {
@@ -60,13 +61,28 @@ export type AcpStartOptions = {
   model?: string | undefined
 }
 
+export type AcpTurnSettings = {
+  model?: string | undefined
+  effort?: string | undefined
+}
+
 export type AcpLaunchOptions = {
   name: string
   command: string
   args?: string[]
+  /**
+   * Launch arguments for a model and effort the agent accepts only at startup.
+   * When set, a turn that asks for other settings restarts the agent and
+   * reloads its session first.
+   */
+  argsFor?: (settings: AcpTurnSettings) => string[]
+  /** The settings `argsFor` launches with first. */
+  settings?: AcpTurnSettings
   spawn?: typeof spawnCli
   provider: ProviderId
   mcpServers?: AcpMcpServer[]
+  /** Added to the inherited environment, for engines tuned through it. */
+  env?: Record<string, string> | undefined
 }
 
 export interface AcpRpc {
@@ -138,11 +154,17 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   readonly #spawn: typeof spawnCli
   readonly #provider: ProviderId
   readonly #mcpServers: AcpMcpServer[]
+  readonly #env: Record<string, string> | undefined
+  readonly #argsFor: ((settings: AcpTurnSettings) => string[]) | undefined
+  #settings: AcpTurnSettings
+  #relaunching = false
   #rpc: AcpRpc | undefined
   #initialize: InitializeResult | undefined
   #sessionId: string | undefined
+  #workspacePath = ''
   #model: string | undefined
   #streamer: Streamer | undefined
+  #activeTurn: { threadId: string; turnId: string } | undefined
   #turnCounter = 0
   #instructions: string | undefined
   #instructionsPending = false
@@ -165,12 +187,20 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#spawn = launch.spawn ?? spawnCli
     this.#provider = launch.provider
     this.#mcpServers = launch.mcpServers ?? []
+    this.#env = launch.env
+    this.#argsFor = launch.argsFor
+    this.#settings = { ...launch.settings }
     this.#spec = {
       id: agentId,
       name: launch.name,
       command: launch.command,
       args: launch.args ?? [],
     }
+  }
+
+  /** Whether the connected agent can reload this session after its process ends. */
+  get resumable(): boolean {
+    return this.#loadSession
   }
 
   get capabilities(): Capabilities {
@@ -257,7 +287,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     }
   }
 
-  async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
+  async sendTurn(
+    threadId: string,
+    text: string,
+    attachments: string[] = [],
+    settings: AcpTurnSettings = {},
+  ): Promise<string> {
+    if (!this.#rpc || !this.#sessionId) throw new Error('session not started')
+    if (this.#activeTurn || this.#relaunching) throw new Error('ACP already has a running turn')
+    await this.#applySettings(settings)
     const rpc = this.#rpc
     if (!rpc || !this.#sessionId) throw new Error('session not started')
 
@@ -273,8 +311,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // the persisted turns of the process it replaced — a bare counter reset
     // to zero on every construction and merged two different turns' items.
     const turnId = `${threadId}-turn-${++this.#turnCounter}-${crypto.randomUUID().slice(0, 8)}`
-    const streamer = new Streamer(turnId)
+    const streamer = new Streamer(turnId, this.#workspacePath)
     this.#streamer = streamer
+    this.#activeTurn = { threadId, turnId }
 
     this.emit('event', {
       type: 'turn.started',
@@ -295,6 +334,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       )
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((cause) => {
+        if (this.#streamer !== streamer) return
+        this.#clearTurn()
         this.emit('event', {
           type: 'thread.error',
           threadId,
@@ -337,6 +378,24 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#setApproval(approval)
   }
 
+  onDisconnected(listener: () => void): () => void {
+    this.on('disconnected', listener)
+    return () => this.off('disconnected', listener)
+  }
+
+  #clearTurn(): void {
+    const streamer = this.#streamer
+    this.#streamer = undefined
+    this.#activeTurn = undefined
+    for (const event of streamer?.finish() ?? []) this.emit('event', event)
+    for (const [id, respond] of this.#pendingApprovals) {
+      respond({ outcome: { outcome: 'cancelled' } })
+      this.emit('event', { type: 'approval.resolved', id })
+    }
+    this.#pendingApprovals.clear()
+    this.#optionsById.clear()
+  }
+
   /** Complete the ACP initialize handshake without creating a paid session. */
   async verifyCompatibility(workspacePath: string): Promise<{
     protocolVersion?: number
@@ -356,6 +415,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }
 
   dispose(): Promise<void> {
+    this.#clearTurn()
     const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#initialize = undefined
@@ -367,17 +427,82 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return stopped
   }
 
+  /** Restart with launch-only settings, keeping the session through `session/load`. */
+  async #applySettings(settings: AcpTurnSettings): Promise<void> {
+    if (!this.#argsFor) return
+    const next = {
+      model: settings.model ?? this.#settings.model,
+      effort: settings.effort ?? this.#settings.effort,
+    }
+    if (next.model === this.#settings.model && next.effort === this.#settings.effort) return
+    if (!this.#loadSession) {
+      throw new Error(
+        `${this.#spec.name} cannot reload this chat, so it keeps the model and effort it started with. Start a new chat to change them.`,
+      )
+    }
+    const sessionId = this.#sessionId!
+    const previous = this.#rpc
+    this.#relaunching = true
+    this.#rpc = undefined
+    this.#sessionId = undefined
+    try {
+      await previous?.dispose()
+      this.#settings = next
+      const rpc = await this.#connect(this.#workspacePath, next.model)
+      if (!this.#loadSession)
+        throw new Error(`${this.#spec.name} no longer supports session resume`)
+      await rpc.request('session/load', {
+        sessionId,
+        cwd: this.#workspacePath,
+        mcpServers: this.#mcpServers,
+      })
+      this.#sessionId = sessionId
+      this.#model = next.model
+    } catch (error) {
+      // The old process is gone. Report the session lost so it is resumed afresh.
+      await this.dispose()
+      this.emit('disconnected')
+      throw error
+    } finally {
+      this.#relaunching = false
+    }
+  }
+
   async #connect(workspacePath: string, model: string | undefined): Promise<AcpRpc> {
-    const args =
-      model && this.#spec.modelArg
+    this.#workspacePath = workspacePath
+    const args = this.#argsFor
+      ? this.#argsFor(this.#settings)
+      : model && this.#spec.modelArg
         ? [...this.#spec.args, this.#spec.modelArg, model]
         : this.#spec.args
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
     await this.#rpc?.dispose()
     const rpc = new StdioJsonRpc(
-      this.#spawn(this.#spec.command, args, { cwd: workspacePath }),
+      this.#spawn(this.#spec.command, args, {
+        cwd: workspacePath,
+        ...(this.#env ? { env: this.#env } : {}),
+      }),
       this.#spec.name,
+      {
+        onFailure: (error) => {
+          if (this.#rpc !== rpc) return
+          this.#rpc = undefined
+          this.#sessionId = undefined
+          const turn = this.#activeTurn
+          this.#clearTurn()
+          if (turn) {
+            this.emit('event', {
+              type: 'thread.error',
+              threadId: turn.threadId,
+              message: error.message,
+            })
+            this.emit('event', { type: 'turn.completed', turnId: turn.turnId, status: 'failed' })
+          }
+          this.#processStop = Promise.resolve(rpc.dispose())
+          this.emit('disconnected')
+        },
+      },
     )
     this.#rpc = rpc
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
@@ -478,6 +603,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       return
     }
     const request = parsed.data
+    if (!this.#streamer) {
+      respond({ outcome: { outcome: 'cancelled' } })
+      return
+    }
     const call = request.toolCall ?? {}
     const id = call.toolCallId ?? `approval-${Date.now()}`
     const options = request.options ?? []
@@ -547,20 +676,10 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // Finish the streamer this turn owns, never whichever one is current —
     // a late completion must not close the next turn's open items.
     const owned = streamer ?? this.#streamer
-    if (owned === this.#streamer) this.#streamer = undefined
-    for (const event of owned?.finish() ?? []) this.emit('event', event)
+    if (owned !== this.#streamer) return
+    this.#clearTurn()
     const usage = acpTurnUsage(result.usage, this.#model)
     if (usage) this.emit('event', { type: 'usage.updated', usage })
-
-    // Anything still waiting is now unanswerable — the turn it belonged to is
-    // over. The agent is still blocked on its request, so it must hear
-    // "cancelled", not silence; the UI must hear "resolved".
-    for (const [id, respond] of this.#pendingApprovals) {
-      respond({ outcome: { outcome: 'cancelled' } })
-      this.emit('event', { type: 'approval.resolved', id })
-    }
-    this.#pendingApprovals.clear()
-    this.#optionsById.clear()
 
     // A refused or truncated turn must not look identical to a successful
     // one — the stop reason goes to the user, not into a log nobody reads.
