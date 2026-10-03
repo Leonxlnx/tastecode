@@ -142,6 +142,7 @@ class FakeClaudeCodeAdapter extends FakeResumableAdapter {
 vi.mock('@harness/adapter-grok', () => ({
   GrokAdapter: FakeGrokAdapter,
   grokCommand: () => 'grok',
+  grokContextEnvironment: () => undefined,
 }))
 vi.mock('@harness/adapter-acp', () => ({
   AcpAdapter: FakeAcpAdapter,

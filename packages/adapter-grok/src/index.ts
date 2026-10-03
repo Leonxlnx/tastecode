@@ -4,6 +4,7 @@ export {
   GROK_SUPPORTED_VERSION,
   GrokAdapter,
   grokCommand,
+  grokContextEnvironment,
   grokDisplayName,
   grokSignIn,
   grokTurnArgs,
