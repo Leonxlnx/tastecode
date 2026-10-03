@@ -94,12 +94,34 @@ Linux.
 
 ### Desktop update assets
 
-The desktop updater reads public releases in `Leonxlnx/tastecode` and selects
-the highest semantic app version, including prereleases, regardless of publication order.
-Beta 7 through 0.1.1 selected by publication date; those installed clients still require
-the newest public release to contain both desktop installers. The installed
-version must still be lower than the offered version. The client requires the matching
-EXE or DMG and verifies its size and SHA-256 against GitHub's asset metadata.
+The desktop updater finds releases in `Leonxlnx/tastecode` through the public release Atom
+feed on github.com. The API's anonymous limit is 60 requests an hour per IP address, shared
+by everything behind one office, school or VPN address, and an anonymous 304 still counts.
+The feed is outside that limit. A check that finds no newer version tag in the feed spends
+no API request. A newer tag costs one request to `/releases/tags/<tag>`, which confirms the
+release is published (drafts and bare tags answer 404) and supplies the asset digests. The
+feed holds the ten newest tags; when none of them is the installed version or older, the
+client lists every release through the API instead. Either way the highest semantic
+version wins regardless of publication order, and downgrades stay disabled.
+
+A release marked as a pre-release on GitHub reaches only installs on the beta channel
+(**Settings → About → Beta updates**, saved as `update-channel.json` in the profile);
+normal releases reach both channels. Beta 7 through 0.1.1 ignore that flag and select by
+publication date; those installed clients still require the newest public release to
+contain both desktop installers. The client requires the matching EXE or DMG and verifies
+its size and SHA-256 against GitHub's asset metadata.
+
+Downloads survive failures and restarts. The installer is stored in the machine's cache
+directory (`~/Library/Caches/TasteCode/update-downloads` on macOS, local AppData on Windows)
+under its SHA-256, and the next attempt asks for the remaining bytes with a Range request.
+The bytes are verified before use, removed once the native updater holds its own copy, and
+discarded when a check finds nothing newer.
+
+Background attempts never surface their failures. An offline launch, a GitHub outage or a
+dropped download falls back to the last verdict, is recorded in opt-in local diagnostics,
+and retries after 5, 15 and 30 minutes, then hourly. A rate-limited answer waits for
+GitHub's reset. A check the user starts, and a failed install of a ready update, show the
+error. After the machine wakes, an overdue check runs within 15 seconds.
 
 Installation remains owned by electron-updater's NSIS and Squirrel.Mac paths. On macOS,
 the client mounts the DMG read-only, validates its app ID, version and signature, and
@@ -116,6 +138,9 @@ native signing checks and replacement logic; a second release repository would s
 the release process. Removing compatibility files in beta 7 would strand beta 6 users.
 Sorting by publication date allows an older, later-published platform proof to hide the
 current version and fail asset validation before the downgrade check runs.
+Conditional API requests with ETags do not save the anonymous limit. electron-updater's
+YAML feeds and blockmaps would add files to every release and give up the two-asset
+release that installed clients rely on, so differential downloads are not offered either.
 
 ---
 
@@ -526,6 +551,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-03 | Find desktop updates through the release feed, add stable and beta channels by GitHub's pre-release flag, resume interrupted downloads, and keep background failures quiet.    |
 | 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
 | 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |
 | 2026-07-28 | Initial decisions.                                                                                                                                                             |
