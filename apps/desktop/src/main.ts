@@ -1,6 +1,6 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { createReadStream, readFileSync } from 'node:fs'
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -50,14 +50,17 @@ import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permis
 import {
   parseNativeMenuShortcuts,
   type NativeMenuAction,
+  type NativeMenuActionSource,
   type NativeMenuShortcuts,
 } from './menu-contract.js'
+import { NativeMenuDispatch } from './native-menu-dispatch.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
-import { pastedFile } from './pasted-file.js'
+import { savePastedFile } from './pasted-file.js'
 import { ownedServerEnvironment } from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
+import { configureRendererLifecycle } from './renderer-lifecycle.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
 import { StartupIdleGate } from './startup-idle.js'
@@ -78,7 +81,7 @@ import {
   type ZoomAction,
   zoomShortcut,
 } from './zoom-shortcuts.js'
-import { viewedImagePath } from './viewed-image-path.js'
+import { PickedImagePaths, viewedImagePath } from './viewed-image-path.js'
 
 applyDesktopPath()
 
@@ -187,6 +190,8 @@ function finishStartupBenchmarkIfReady(): void {
 }
 
 const attachmentPreviewSecret = randomBytes(32)
+const pickedImagePaths = new PickedImagePaths()
+const nativeMenuDispatch = new NativeMenuDispatch<Electron.WebContents>()
 const attachmentThumbnailCache = new Map<string, Promise<Buffer | undefined>>()
 const MAX_ATTACHMENT_THUMBNAILS = 64
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
@@ -226,9 +231,35 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+let serverFailureNoticeOpen = false
+
+function showServerFailureNotice(): void {
+  const window = mainWindow
+  if (!serverSupervisor?.gaveUp || serverFailureNoticeOpen || !window || window.isDestroyed())
+    return
+  serverFailureNoticeOpen = true
+  void dialog
+    .showMessageBox(window, {
+      type: 'error',
+      title: nativeAppName,
+      message: 'The core server keeps crashing.',
+      detail: 'Restart the server to try again. If this keeps happening, reinstall the app.',
+      buttons: ['Restart server', 'Not now'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    .then(({ response }) => {
+      if (response === 0 && !appIsQuitting) serverSupervisor?.restart()
+    })
+    .catch(() => {})
+    .finally(() => {
+      serverFailureNoticeOpen = false
+    })
+}
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
 let waitingForUpdateCleanup = false
+let waitingForServerShutdown = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
@@ -332,16 +363,7 @@ function startOwnedServer(): boolean {
         finishStartupBenchmarkIfReady()
       }
     },
-    onGaveUp: () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        void dialog.showMessageBox(mainWindow, {
-          type: 'error',
-          title: nativeAppName,
-          message: 'The core server keeps crashing.',
-          detail: 'Restart the app. If this keeps happening, reinstall it.',
-        })
-      }
-    },
+    onGaveUp: showServerFailureNotice,
   }
   serverSupervisor =
     process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
@@ -386,6 +408,7 @@ function launchUtilityServer(
       return child.stderr
     },
     kill: () => child.kill(),
+    requestShutdown: () => child.postMessage({ type: 'harness:shutdown' }),
     onError: (listener) => {
       child.on('error', (type, location) => listener(new Error(`${type} at ${location}`)))
     },
@@ -459,6 +482,13 @@ function createWindow(): void {
   window.webContents.once('did-finish-load', () =>
     window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
   )
+  window.webContents.on('did-start-navigation', (details) => {
+    if (!details.isMainFrame || details.isSameDocument) return
+    nativeMenuDispatch.reset(window.webContents)
+    // A reload during shortcut recording must not leave accelerators off.
+    window.webContents.setIgnoreMenuShortcuts(false)
+  })
+  window.webContents.on('render-process-gone', () => nativeMenuDispatch.reset(window.webContents))
   configureEmbeddedBrowser(window.webContents)
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
@@ -506,6 +536,31 @@ function createWindow(): void {
     )
     void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
   })
+  let recoveryPromptOpen = false
+  configureRendererLifecycle(window.webContents, {
+    cancelCaptures: () => previewCaptures.cancelAll(),
+    isQuitting: () => appIsQuitting,
+    onRepeatedCrash: () => {
+      if (recoveryPromptOpen) return
+      recoveryPromptOpen = true
+      void dialog
+        .showMessageBox(window, {
+          type: 'error',
+          title: nativeAppName,
+          message: 'The window stopped unexpectedly.',
+          detail: 'Your core server is still running. Reload the window to reconnect.',
+          buttons: ['Reload', 'Not now'],
+          cancelId: 1,
+        })
+        .then(({ response }) => {
+          if (response === 0 && !appIsQuitting && !window.isDestroyed()) window.webContents.reload()
+        })
+        .catch(() => {})
+        .finally(() => {
+          recoveryPromptOpen = false
+        })
+    },
+  })
 
   // Avoid the white flash before React paints.
   window.once('ready-to-show', () => {
@@ -517,6 +572,8 @@ function createWindow(): void {
       return
     }
     showMainWindow()
+    // The server may have given up while no window existed (macOS keeps running).
+    showServerFailureNotice()
   })
 
   // Nothing in this app should ever open a second window, and any external
@@ -623,18 +680,22 @@ function installApplicationMenu(): void {
   )
 }
 
-function sendNativeMenuAction(action: NativeMenuAction): void {
-  const window = mainWindow
-  if (!window || window.isDestroyed()) {
-    createWindow()
-    mainWindow?.webContents.once('did-finish-load', () =>
-      mainWindow?.webContents.send('harness:menuAction', action),
-    )
-    return
-  }
+function sendNativeMenuAction(action: NativeMenuAction, source: NativeMenuActionSource): void {
   showMainWindow()
-  window.webContents.send('harness:menuAction', action)
+  const window = mainWindow
+  if (window && !window.isDestroyed())
+    nativeMenuDispatch.send(window.webContents, { action, source })
 }
+
+ipcMain.on('harness:menuReady', (event) => {
+  if (!isOwnRenderer(event.sender)) return
+  nativeMenuDispatch.markReady(event.sender)
+})
+
+ipcMain.on('harness:suspendMenuShortcuts', (event, suspended: unknown) => {
+  if (!isOwnRenderer(event.sender) || typeof suspended !== 'boolean') return
+  event.sender.setIgnoreMenuShortcuts(suspended)
+})
 
 ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   requireOwnRenderer(event.sender)
@@ -867,14 +928,24 @@ ipcMain.handle('harness:pickFiles', async (event) => {
   })
   return result.canceled
     ? []
-    : result.filePaths.map((filePath) => pickedAttachment(filePath, attachmentPreviewSecret))
+    : Promise.all(
+        result.filePaths.map(async (filePath) => {
+          const attachment = pickedAttachment(filePath, attachmentPreviewSecret)
+          if (attachment.mediaType) await pickedImagePaths.authorize(filePath)
+          return attachment
+        }),
+      )
 })
 
 ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) => {
   requireOwnRenderer(event.sender)
   const filePath = await viewedImagePath(
     reference,
-    path.join(app.getPath('temp'), 'TasteCode', 'pasted-files'),
+    [
+      path.join(productDataPath, 'pasted-files'),
+      path.join(app.getPath('temp'), 'TasteCode', 'pasted-files'),
+    ],
+    pickedImagePaths,
   )
   if (!filePath) return undefined
   const attachment = pickedAttachment(filePath, attachmentPreviewSecret)
@@ -896,18 +967,14 @@ ipcMain.handle(
 
 ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
-  const file = pastedFile(payload)
-  const directory = path.join(app.getPath('temp'), 'TasteCode', 'pasted-files')
-  await mkdir(directory, { recursive: true, mode: 0o700 })
-  const destination = path.join(directory, `${randomUUID()}-${file.name}`)
-  await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
+  const destination = await savePastedFile(productDataPath, payload)
   return pickedAttachment(destination, attachmentPreviewSecret)
 })
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
   app.on('before-quit', (event) => {
-    if (waitingForUpdateCleanup) {
+    if (waitingForUpdateCleanup || waitingForServerShutdown) {
       event.preventDefault()
       return
     }
@@ -931,6 +998,22 @@ if (ownsSingleInstance) {
         .then(finishQuit, finishQuit)
       return
     }
+    if (serverSupervisor) {
+      event.preventDefault()
+      waitingForServerShutdown = true
+      appIsQuitting = true
+      previewCaptures.cancelAll()
+      const supervisor = serverSupervisor
+      serverSupervisor = undefined
+      const finishQuit = () => {
+        waitingForServerShutdown = false
+        app.quit()
+      }
+      void Promise.resolve()
+        .then(() => supervisor.stop())
+        .then(finishQuit, finishQuit)
+      return
+    }
     appIsQuitting = true
     previewCaptures.cancelAll()
     mainWindowStatePersistence?.saveAndStop()
@@ -939,7 +1022,7 @@ if (ownsSingleInstance) {
     appUpdater?.dispose()
     appUpdater = undefined
     macOSHaptics.stop()
-    serverSupervisor?.stop()
+    void serverSupervisor?.stop()
     serverSupervisor = undefined
     tray?.destroy()
     tray = undefined
