@@ -27,7 +27,7 @@ describe('top-bar tool spacing', () => {
     expect(shelf).not.toContain('linear-gradient')
     expect(control).toContain('padding: 3px 5px;')
     expect(control).toContain('font-size: var(--t-sm);')
-    expect(control).toContain('border-radius: var(--r-md);')
+    expect(control).toContain('border-radius: var(--r-lg);')
     expect(content).toContain('gap: 6px;')
     expect(rule(css, '.composer__shelf .shelf-control:hover:not(:disabled)')).toContain(
       'box-shadow: none;',

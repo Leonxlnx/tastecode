@@ -64,10 +64,12 @@ function renderProjectCatalog(
   projects: Array<{ path: string; name: string; sessions: [] }>,
   active?: string,
   usageStates?: AccountLimitsState[],
+  projectsLoading?: boolean,
 ) {
-  const content = (active: string | undefined) => (
+  const content = (active: string | undefined, loading = projectsLoading) => (
     <Sidebar
       projects={projects}
+      projectsLoading={loading}
       activeProjectPath={active}
       activeSessionId={undefined}
       account={undefined}
@@ -92,7 +94,11 @@ function renderProjectCatalog(
     />
   )
   const view = render(content(active))
-  return { ...view, navigate: (active?: string) => view.rerender(content(active)) }
+  return {
+    ...view,
+    navigate: (active?: string) => view.rerender(content(active)),
+    finishLoading: () => view.rerender(content(active, false)),
+  }
 }
 
 function controlledIdleCallbacks() {
@@ -106,6 +112,62 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('shows placeholder projects instead of an empty list while projects load', () => {
+    const view = renderProjectCatalog([], undefined, undefined, true)
+
+    expect(screen.getByRole('status').textContent).toBe('Loading projects…')
+    expect(screen.queryByText('Nothing here yet.')).toBeNull()
+    expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
+
+    view.finishLoading()
+    expect(screen.queryByText('Loading projects…')).toBeNull()
+    expect(screen.getByText('Nothing here yet.')).toBeTruthy()
+  })
+
+  it('holds the inbox rail in place while its module loads', async () => {
+    render(
+      <Sidebar
+        projects={[]}
+        projectsLoading
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        mode="inbox"
+        inbox={{
+          onSettle: vi.fn(),
+          onUnsettle: vi.fn(),
+          onSnooze: vi.fn(),
+          onUnsnooze: vi.fn(),
+          onKeepActive: vi.fn(),
+        }}
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Loading threads…')).toBeTruthy()
+    expect(document.querySelector('.inbox-skeleton-toolbar')).not.toBeNull()
+
+    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(document.querySelector('.inbox-skeleton-toolbar')).toBeNull()
+    expect(screen.getByText('Loading threads…')).toBeTruthy()
+  })
+
   it('hides unavailable plan limits while the account component is loading', () => {
     const usage = {
       inputTokens: 0,
