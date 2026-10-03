@@ -172,20 +172,37 @@ export async function runBackgroundCompletion(input: {
   selection: BackgroundModelSelection
   prompt: string
   timeoutMs?: number | undefined
+  /** A provider process that could not be stopped; its folder is kept. */
+  onCleanupError?: ((error: unknown) => void) | undefined
 }): Promise<string> {
   const temporary = await mkdtemp(path.join(os.tmpdir(), 'tastecode-background-'))
+  const timeoutMs = input.timeoutMs ?? BACKGROUND_TIMEOUT_MS
+  // One deadline covers start, dispatch and completion: any of them can stall.
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      reject(new Error('Background model timed out.'))
+    }, timeoutMs)
+    timer.unref?.()
+  })
+  expired.catch(() => undefined)
+  const starting = input.runtime.start(temporary, {
+    model: input.selection.model,
+    ...(input.selection.effort ? { effort: input.selection.effort } : {}),
+    ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
+    ...(input.selection.agent ? { agent: input.selection.agent } : {}),
+    approval: 'ask',
+    ephemeral: true,
+    instructions: BACKGROUND_INSTRUCTIONS,
+  })
   let session: Awaited<ReturnType<ProviderRuntime['start']>>['session'] | undefined
+  let threadId: string | undefined
   try {
-    const started = await input.runtime.start(temporary, {
-      model: input.selection.model,
-      ...(input.selection.effort ? { effort: input.selection.effort } : {}),
-      ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
-      ...(input.selection.agent ? { agent: input.selection.agent } : {}),
-      approval: 'ask',
-      ephemeral: true,
-      instructions: BACKGROUND_INSTRUCTIONS,
-    })
+    const started = await Promise.race([starting, expired])
     session = started.session
+    threadId = started.thread.id
 
     const messages = new Map<string, Array<{ text: string; phase?: AssistantPhase }>>()
     const completions = new Map<string, 'completed' | 'interrupted' | 'failed'>()
@@ -219,27 +236,12 @@ export async function runBackgroundCompletion(input: {
       ...(input.selection.effort ? { effort: input.selection.effort } : {}),
       ...(input.selection.serviceTier ? { serviceTier: input.selection.serviceTier } : {}),
     }
-    expectedTurnId = await session.sendTurn(started.thread.id, input.prompt, [], options)
+    expectedTurnId = await Promise.race([
+      session.sendTurn(started.thread.id, input.prompt, [], options),
+      expired,
+    ])
     if (completions.has(expectedTurnId)) settle?.()
-
-    let timeout: ReturnType<typeof setTimeout> | undefined
-    try {
-      await Promise.race([
-        completed,
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(
-            () => reject(new Error('Background model timed out.')),
-            input.timeoutMs ?? BACKGROUND_TIMEOUT_MS,
-          )
-          timeout.unref?.()
-        }),
-      ])
-    } catch (error) {
-      await session.interrupt(started.thread.id).catch(() => undefined)
-      throw error
-    } finally {
-      if (timeout) clearTimeout(timeout)
-    }
+    await Promise.race([completed, expired])
 
     const status = completions.get(expectedTurnId)
     if (status !== 'completed') throw new Error(`Background model turn ${status ?? 'failed'}.`)
@@ -247,10 +249,46 @@ export async function runBackgroundCompletion(input: {
     const final = output.findLast((message) => message.phase === 'final_answer') ?? output.at(-1)
     if (!final?.text.trim()) throw new Error('Background model returned no text.')
     return final.text.trim()
+  } catch (error) {
+    if (timedOut && session && threadId) {
+      await withinMs(
+        session.interrupt(threadId).catch(() => undefined),
+        BACKGROUND_INTERRUPT_MS,
+      )
+    }
+    throw error
   } finally {
-    session?.dispose()
-    await rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+    if (timer) clearTimeout(timer)
+    const release = async (owned: typeof session) => {
+      try {
+        await owned?.dispose()
+      } catch (error) {
+        input.onCleanupError?.(error)
+        return
+      }
+      await rm(temporary, { recursive: true, force: true }).catch(() => undefined)
+    }
+    if (session) await release(session)
+    // A start that outlives the deadline still owns a process; stop it when it lands.
+    else
+      void starting.then(
+        (late) => release(late.session),
+        () => rm(temporary, { recursive: true, force: true }).catch(() => undefined),
+      )
   }
+}
+
+const BACKGROUND_INTERRUPT_MS = 5_000
+
+function withinMs(promise: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref?.()
+    void promise.finally(() => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
 }
 
 export function titlePrompt(request: string): string {

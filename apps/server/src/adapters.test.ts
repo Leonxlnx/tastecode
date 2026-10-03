@@ -16,6 +16,17 @@ class FakeTurnAdapter {
   }
   readonly provider: 'grok' | 'claude-code' | 'codex'
   disposed = false
+  approval: string | undefined
+  disconnected: (() => void) | undefined
+  setApproval(approval: string): void {
+    this.approval = approval
+  }
+  onDisconnected(listener: () => void): () => void {
+    this.disconnected = listener
+    return () => {
+      this.disconnected = undefined
+    }
+  }
   startOptions: Record<string, unknown> | undefined
   turnOptions: Record<string, unknown> | undefined
   launchOptions: Record<string, unknown> | undefined
@@ -117,7 +128,6 @@ class FakeAcpAdapter extends FakeResumableAdapter {
     super('grok', options)
   }
 
-  setApproval(): void {}
   respondToApproval(): void {}
 }
 
@@ -151,6 +161,25 @@ afterEach(() => {
 })
 
 describe('resumable provider setup', () => {
+  it.each(['grok', 'claude-code'] as const)(
+    'forwards live %s approval changes',
+    async (provider) => {
+      const { session } = await providerRuntime(provider, () => {}).start('/repo', {
+        approval: 'full',
+      })
+      await session.setApproval!('ask')
+      expect(turnAdapters.at(-1)!.approval).toBe('ask')
+      if (provider === 'claude-code') {
+        const listener = vi.fn()
+        const unsubscribe = session.onDisconnected!(listener)
+        turnAdapters.at(-1)!.disconnected!()
+        expect(listener).toHaveBeenCalledOnce()
+        unsubscribe()
+        expect(turnAdapters.at(-1)!.disconnected).toBeUndefined()
+      }
+    },
+  )
+
   it.each([false, true])(
     'passes Claude MCP options and cleans up a failed open (resume: %s)',
     async (resume) => {

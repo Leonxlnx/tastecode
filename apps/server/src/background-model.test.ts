@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
+import { describe, expect, it, vi } from 'vitest'
 import type {
   BackgroundModelPreference,
   Capabilities,
@@ -217,6 +218,92 @@ describe('background completion', () => {
   )
 })
 
+describe('background completion deadline and cleanup', () => {
+  const selection = {
+    provider: 'codex' as const,
+    model: 'gpt-5.6-luna',
+    sourceName: 'Codex',
+    automatic: true,
+  }
+  const runtimeWith = (start: ProviderRuntime['start']): ProviderRuntime => ({
+    start,
+    async listModels() {
+      return []
+    },
+  })
+  const startedWith = (session: AgentSession, workspacePath: string) => ({
+    thread: { id: 'background-thread', provider: 'codex' as const, workspacePath, createdAt: 0 },
+    session,
+  })
+
+  it('times out a stalled start and stops the session if it starts later', async () => {
+    let finishStart!: () => void
+    const session = new CompletingSession()
+    let folder = ''
+    const runtime = runtimeWith(
+      (workspacePath) =>
+        new Promise((resolve) => {
+          folder = workspacePath
+          finishStart = () => resolve(startedWith(session, workspacePath))
+        }),
+    )
+    await expect(
+      runBackgroundCompletion({ runtime, selection, prompt: 'Title.', timeoutMs: 20 }),
+    ).rejects.toThrow('Background model timed out.')
+    expect(existsSync(folder)).toBe(true)
+    finishStart()
+    await vi.waitFor(() => expect(session.disposed).toBe(true))
+    await vi.waitFor(() => expect(existsSync(folder)).toBe(false))
+  })
+
+  it('times out a dispatch that never answers and bounds the interrupt', async () => {
+    const session = new CompletingSession()
+    session.sendTurn = () => new Promise(() => {})
+    session.interrupt = vi.fn(() => new Promise<void>(() => {}))
+    const runtime = runtimeWith(async (workspacePath) => startedWith(session, workspacePath))
+    // The temporary folder is real I/O; only the deadline timers are faked.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const result = runBackgroundCompletion({
+        runtime,
+        selection,
+        prompt: 'Title.',
+        timeoutMs: 20,
+      })
+      const settled = expect(result).rejects.toThrow('Background model timed out.')
+      await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0))
+      await vi.advanceTimersByTimeAsync(20)
+      await vi.waitFor(() => expect(session.interrupt).toHaveBeenCalledOnce())
+      await vi.advanceTimersByTimeAsync(5_000)
+      await settled
+      expect(session.disposed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a failed cleanup and keeps the folder the process may still use', async () => {
+    const session = new CompletingSession()
+    session.dispose = () => Promise.reject(new Error('child survived'))
+    let folder = ''
+    const runtime = runtimeWith(async (workspacePath) => {
+      folder = workspacePath
+      return startedWith(session, workspacePath)
+    })
+    const failures: unknown[] = []
+    await expect(
+      runBackgroundCompletion({
+        runtime,
+        selection,
+        prompt: 'Title.',
+        onCleanupError: (error) => failures.push(error),
+      }),
+    ).resolves.toBe('Generated title')
+    expect(failures).toEqual([new Error('child survived')])
+    expect(existsSync(folder)).toBe(true)
+  })
+})
+
 describe('background output shaping', () => {
   it('removes fences and title decoration', () => {
     expect(cleanGeneratedTitle('```text\nTitle: Fix queue ordering.\n```', 'Fallback')).toBe(
@@ -302,7 +389,7 @@ class CompletingSession implements AgentSession {
 
   async interrupt(): Promise<void> {}
   respondToApproval(): void {}
-  dispose(): void {
+  dispose(): void | Promise<void> {
     this.disposed = true
   }
   on(event: 'event' | 'log', listener: (value: never) => void): void {

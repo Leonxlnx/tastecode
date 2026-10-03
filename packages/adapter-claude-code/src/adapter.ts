@@ -167,6 +167,7 @@ export type ClaudeAdapterEvents = {
   event: [DomainEvent]
   log: [string]
   usageChanged: []
+  disconnected: []
 }
 
 export type ClaudeStartOptions = {
@@ -357,6 +358,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     return CLAUDE_CAPABILITIES
   }
 
+  onDisconnected(listener: () => void): () => void {
+    this.on('disconnected', listener)
+    return () => this.off('disconnected', listener)
+  }
+
   async startThread(workspacePath: string, options: ClaudeStartOptions = {}): Promise<Thread> {
     const sessionId = crypto.randomUUID()
     const threadId = `claude-${sessionId}`
@@ -512,7 +518,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       ...(decision === 'abort' ? { interrupt: true } : {}),
       ...common,
     })
-    if (decision === 'abort') void this.interrupt()
+    if (decision === 'abort') {
+      void this.interrupt().catch((error: unknown) => {
+        this.#log(
+          `Could not stop Claude: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
+    }
   }
 
   respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
@@ -781,7 +793,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     } finally {
       if (generation === this.#queryGeneration && this.#query === query) {
         this.#query = undefined
+        this.#promptQueue?.close()
         this.#promptQueue = undefined
+        this.#settlePending('Claude session disconnected.')
+        if (!this.#disposed) this.emit('disconnected')
       }
     }
   }
