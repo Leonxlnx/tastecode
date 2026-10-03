@@ -92,3 +92,34 @@
   background-color: transparent;
   scrollbar-color: var(--surface-3) transparent;
 }
+
+.terminal-pane--workspace .terminal-pane__viewport {
+  position: relative;
+}
+
+.terminal-pane__skeleton {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: hidden;
+  padding: inherit;
+  pointer-events: none;
+}
+
+.terminal-pane__skeleton-prompt {
+  display: flex;
+  max-width: 360px;
+  height: 13px;
+  align-items: center;
+  gap: 8px;
+}
+
+.terminal-pane__skeleton .skeleton-lines {
+  max-width: 360px;
+  gap: 4px;
+  padding-block: 2px;
+}
+
+.terminal-pane__skeleton .skeleton-lines > .skeleton {
+  height: 9px;
+}
