@@ -84,11 +84,91 @@ describe('CommandPalette', () => {
 
     const input = screen.getByRole('textbox', { name: 'Search commands' })
     const target = screen.getByRole('option', { name: 'Settings' })
-    fireEvent.mouseEnter(target)
+    fireEvent.mouseMove(target)
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(target.getAttribute('aria-selected')).toBe('true')
     expect(ran).toEqual(['settings'])
+  })
+
+  it('keeps the keyboard selection when the list scrolls under a resting pointer', () => {
+    const { commands } = makeCommands()
+    render(<CommandPalette commands={commands} scope="all" onClose={vi.fn()} />)
+
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.mouseEnter(screen.getByRole('option', { name: /^Project A/ }))
+
+    expect(screen.getByRole('option', { selected: true }).textContent).toBe('Settings')
+  })
+
+  it('returns from a project list with the back arrow or Backspace on an empty search', () => {
+    const { commands } = makeCommands()
+    const onBack = vi.fn()
+    const { rerender } = render(
+      <CommandPalette commands={commands} scope="projects" onBack={onBack} onClose={vi.fn()} />,
+    )
+
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.change(input, { target: { value: 'a' } })
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    expect(onBack).not.toHaveBeenCalled()
+    fireEvent.change(input, { target: { value: '' } })
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    expect(onBack).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Back to all commands' }))
+    expect(onBack).toHaveBeenCalledTimes(2)
+
+    // The root list has nowhere to go back to.
+    rerender(<CommandPalette commands={commands} scope="all" onBack={onBack} onClose={vi.fn()} />)
+    fireEvent.keyDown(input, { key: 'Backspace' })
+    expect(onBack).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('button', { name: 'Back to all commands' })).toBeNull()
+  })
+
+  it('starts each list with an empty search', () => {
+    const { commands } = makeCommands()
+    const { rerender } = render(
+      <CommandPalette commands={commands} scope="all" onClose={vi.fn()} />,
+    )
+    const input = screen.getByRole<HTMLInputElement>('textbox', { name: 'Search commands' })
+    fireEvent.change(input, { target: { value: 'project' } })
+
+    rerender(<CommandPalette commands={commands} scope="new-thread" onClose={vi.fn()} />)
+
+    expect(input.value).toBe('')
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+  })
+
+  it('shows the emphasised name, sub-list marker, and project details', () => {
+    const run = vi.fn()
+    render(
+      <CommandPalette
+        commands={[
+          {
+            id: 'new',
+            title: 'New thread in',
+            emphasis: 'Alpha',
+            detail: 'Start in Alpha',
+            group: 'Actions',
+            run,
+          },
+          { id: 'switch', title: 'Switch project…', group: 'Actions', submenu: true, run },
+          { id: 'alpha', title: 'Alpha', detail: '/work/alpha', group: 'Projects', run },
+        ]}
+        scope="all"
+        onClose={vi.fn()}
+      />,
+    )
+
+    const newThread = screen.getByRole('option', { name: 'New thread in Alpha' })
+    expect(newThread.querySelector('strong')?.textContent).toBe('Alpha')
+    // Actions stay on one line; their detail is only searchable.
+    expect(screen.queryByText('Start in Alpha')).toBeNull()
+    expect(
+      screen.getByRole('option', { name: 'Switch project…' }).getAttribute('aria-haspopup'),
+    ).toBe('listbox')
+    expect(screen.getByText('/work/alpha')).toBeTruthy()
   })
 
   it('limits the projects scope to project commands', () => {

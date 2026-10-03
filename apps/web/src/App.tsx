@@ -10,7 +10,24 @@ import {
   useSyncExternalStore,
 } from 'react'
 import type { CSSProperties, TransitionEvent as ReactTransitionEvent } from 'react'
-import { IconLoader2 as LoaderCircle } from '@tabler/icons-react'
+import {
+  IconCursorText,
+  IconEdit,
+  IconFolder,
+  IconFolderPlus,
+  IconGitPullRequest,
+  IconHistory,
+  IconKeyboard,
+  IconLayoutSidebar,
+  IconLayoutSidebarRight,
+  IconLoader2 as LoaderCircle,
+  IconMessageSearch,
+  IconPinned,
+  IconPinnedOff,
+  IconPlayerStop,
+  IconSettings,
+  IconTerminal2,
+} from '@tabler/icons-react'
 import type {
   Account,
   ApprovalDecision,
@@ -4377,6 +4394,7 @@ export function App() {
     setPaletteScope(null)
     setPreferredNewThreadProject(undefined)
   }, [])
+  const openPaletteRoot = useCallback(() => setPaletteScope('all'), [])
   const toggleRail = useCallback(() => setCollapsed((current) => !current), [])
   const openRollback = useCallback(() => {
     setRollbackInspection(undefined)
@@ -4703,6 +4721,7 @@ export function App() {
         title: 'Search all chats',
         detail: 'Titles, messages, commands, and tool output across projects',
         group: 'Actions',
+        icon: <IconMessageSearch size={16} />,
         shortcut: keybind('searchSessions'),
         run: () => {
           sessionSearch.current?.open()
@@ -4710,20 +4729,38 @@ export function App() {
       },
       {
         id: 'new-chat',
-        title: 'New chat',
+        title: activePath ? 'New thread in' : 'New thread',
+        emphasis: activePath ? basename(activePath) : undefined,
         detail: activePath ? `Start in ${basename(activePath)}` : 'Choose a project folder',
         group: 'Actions',
-        keywords: 'session conversation',
+        icon: <IconEdit size={16} />,
+        keywords: 'new chat session conversation',
         shortcut: keybind('newChat'),
         run: startNewChat,
       },
+      ...(projectChoices.length > 1
+        ? [
+            {
+              id: 'new-chat-in',
+              title: 'New thread in…',
+              detail: 'Choose a project for the new chat',
+              group: 'Actions' as const,
+              icon: <IconEdit size={16} />,
+              keywords: 'session conversation thread project',
+              submenu: true,
+              run: () => setPaletteScope('new-thread'),
+            },
+          ]
+        : []),
       {
         id: 'switch-project',
         title: 'Switch project…',
         detail: 'Choose another workspace',
         group: 'Actions',
+        icon: <IconFolder size={16} />,
         keywords: 'folder workspace',
         shortcut: keybind('switchProject'),
+        submenu: true,
         run: () => setPaletteScope('projects'),
       },
       {
@@ -4731,6 +4768,7 @@ export function App() {
         title: 'New project',
         detail: 'Add a folder to the sidebar',
         group: 'Actions',
+        icon: <IconFolderPlus size={16} />,
         keywords: 'add open folder workspace',
         projectCommand: true,
         shortcut: keybind('newProject'),
@@ -4743,6 +4781,7 @@ export function App() {
               title: 'Focus composer',
               detail: 'Move the cursor to your prompt',
               group: 'Actions' as const,
+              icon: <IconCursorText size={16} />,
               keywords: 'prompt message type',
               shortcut: keybind('focusComposer'),
               run: () => setComposerFocusRequest((request) => request + 1),
@@ -4753,6 +4792,7 @@ export function App() {
         id: 'toggle-sidebar',
         title: collapsed ? 'Show sidebar' : 'Hide sidebar',
         group: 'Actions',
+        icon: <IconLayoutSidebar size={16} />,
         keywords: 'rail navigation',
         shortcut: keybind('toggleSidebar'),
         run: () => setCollapsed((current) => !current),
@@ -4762,6 +4802,7 @@ export function App() {
         title: 'Settings',
         detail: 'General, appearance, keybinds, providers, and data',
         group: 'Actions',
+        icon: <IconSettings size={16} />,
         shortcut: keybind('settings'),
         run: () => openSettings(),
       },
@@ -4770,6 +4811,7 @@ export function App() {
         title: 'Keybinds',
         detail: 'View and customize every app keybind',
         group: 'Actions',
+        icon: <IconKeyboard size={16} />,
         keywords: 'help keyboard shortcuts hotkeys key bindings',
         shortcut: keybind('keybindings'),
         run: () => openSettings('keybinds'),
@@ -4779,6 +4821,7 @@ export function App() {
         title: 'Pull requests',
         detail: 'Open the pull request inbox',
         group: 'Actions',
+        icon: <IconGitPullRequest size={16} />,
         keywords: 'github prs review',
         shortcut: keybind('openPullRequests'),
         run: openPullRequests,
@@ -4795,6 +4838,7 @@ export function App() {
                     : 'Show terminal',
               detail: terminalPlacement === 'workspace' ? 'Right sidebar' : 'Bottom panel',
               group: 'Actions' as const,
+              icon: <IconTerminal2 size={16} />,
               keywords: 'console shell',
               shortcut: keybind('toggleTerminal'),
               run: toggleDefaultTerminal,
@@ -4807,6 +4851,7 @@ export function App() {
               id: 'toggle-chat-pin',
               title: active?.session.pinned ? 'Unpin current chat' : 'Pin current chat',
               group: 'Actions' as const,
+              icon: active?.session.pinned ? <IconPinnedOff size={16} /> : <IconPinned size={16} />,
               shortcut: keybind('toggleSessionPin'),
               run: () => toggleSidebarSessionPin(activeId),
             },
@@ -4816,6 +4861,7 @@ export function App() {
                     id: 'stop-response',
                     title: 'Stop response',
                     group: 'Actions' as const,
+                    icon: <IconPlayerStop size={16} />,
                     shortcut: keybind('interrupt'),
                     run: interrupt,
                   },
@@ -4828,6 +4874,7 @@ export function App() {
                     title: 'Restore points',
                     detail: 'Review chat checkpoints',
                     group: 'Actions' as const,
+                    icon: <IconHistory size={16} />,
                     shortcut: keybind('rollback'),
                     run: openRollback,
                   },
@@ -4842,6 +4889,7 @@ export function App() {
               title: workspacePanelOpen ? 'Hide workspace tools' : 'Show workspace tools',
               detail: 'Files, review, browser, and side chat',
               group: 'Actions' as const,
+              icon: <IconLayoutSidebarRight size={16} />,
               shortcut: keybind('toggleWorkspace'),
               run: toggleWorkspacePanel,
             },
@@ -4858,9 +4906,11 @@ export function App() {
       })),
       ...projectChoices.map((project): PaletteCommand => ({
         id: `new-chat-${encodeURIComponent(project.path)}`,
-        title: `New thread in ${displayName(project)}`,
+        title: 'New thread in',
+        emphasis: displayName(project),
         detail: project.path,
         group: 'Projects',
+        icon: <IconEdit size={16} />,
         keywords: 'session conversation',
         newThreadProject: true,
         run: () => beginSession(project.path),
@@ -5333,6 +5383,7 @@ export function App() {
                 ? `new-chat-${encodeURIComponent(preferredNewThreadProject)}`
                 : undefined
             }
+            onBack={openPaletteRoot}
             onClose={closePalette}
           />
         </Suspense>
