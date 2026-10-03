@@ -2275,7 +2275,7 @@ export class Orchestrator {
 
   unsettleThread(threadId: string): ThreadLifecycle {
     this.#assertLifecycleState(threadId, 'settled')
-    return this.#notifyLifecycle(threadId, this.#store.activateThread(threadId))
+    return this.#notifyLifecycle(threadId, this.#store.touchThread(threadId))
   }
 
   snoozeThread(threadId: string, wakeAt: number): ThreadLifecycle {
@@ -2287,7 +2287,7 @@ export class Orchestrator {
 
   unsnoozeThread(threadId: string): ThreadLifecycle {
     this.#assertLifecycleState(threadId, 'snoozed')
-    return this.#notifyLifecycle(threadId, this.#store.activateThread(threadId))
+    return this.#notifyLifecycle(threadId, this.#store.touchThread(threadId))
   }
 
   setThreadKeepActive(threadId: string, keepActive: boolean): ThreadLifecycle {
@@ -2300,10 +2300,12 @@ export class Orchestrator {
   }
 
   refreshLifecycle(now = Date.now()): void {
+    // Clients only hear about changes the batch actually committed.
+    const changed: Array<[string, ThreadLifecycle]> = []
     this.#store.batchLifecycleUpdates(() => {
       for (const threadId of this.#store.dueSnoozedThreadIds(now)) {
         const lifecycle = this.#store.wakeSnoozedThread(threadId, now, now)
-        if (lifecycle) this.#notifyLifecycle(threadId, lifecycle)
+        if (lifecycle) changed.push([threadId, lifecycle])
       }
 
       const days = this.#store.sidebarSettings().autoSettleDays
@@ -2312,9 +2314,10 @@ export class Orchestrator {
       for (const thread of this.#store.inactiveThreadCandidates(cutoff)) {
         if (!this.#canHide(thread)) continue
         const lifecycle = this.#store.settleInactiveThread(thread.id, cutoff, now)
-        if (lifecycle) this.#notifyLifecycle(thread.id, lifecycle)
+        if (lifecycle) changed.push([thread.id, lifecycle])
       }
     })
+    for (const [threadId, lifecycle] of changed) this.#notifyLifecycle(threadId, lifecycle)
   }
 
   #wakeForActivity(threadId: string, unread = false): void {
