@@ -130,6 +130,7 @@ import {
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
+import { UpdateChannelToggle } from './UpdateChannelToggle.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -1859,6 +1860,14 @@ function AboutSettings(props: { transport: Transport }) {
                 : 'Check for updates'}
         </button>
       </SettingsRow>
+      {nativeUpdate?.channel && nativeUpdate.status !== 'unsupported' ? (
+        <SettingsRow
+          title="Beta updates"
+          note="Also install pre-releases. Turning this off keeps your version until a newer stable release."
+        >
+          <UpdateChannelToggle channel={nativeUpdate.channel} />
+        </SettingsRow>
+      ) : null}
       <SettingsRow title="Source">
         <button
           className="settings__action"

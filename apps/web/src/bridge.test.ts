@@ -12,6 +12,25 @@ afterEach(() => {
   vi.resetModules()
 })
 
+describe('update channel bridge', () => {
+  it('asks the desktop updater to switch channel', async () => {
+    const state = { status: 'checking' as const, currentVersion: '0.1.2', channel: 'beta' as const }
+    const setUpdateChannel = vi.fn().mockResolvedValue(state)
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, setUpdateChannel }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.setAppUpdateChannel('beta')).resolves.toEqual(state)
+    expect(setUpdateChannel).toHaveBeenCalledWith('beta')
+  })
+
+  it('stays unsupported without a desktop updater', async () => {
+    const bridge = await import('./bridge.js')
+    await expect(bridge.setAppUpdateChannel('beta')).resolves.toMatchObject({
+      status: 'unsupported',
+    })
+  })
+})
+
 describe('preview capture bridge', () => {
   it('degrades when no native bridge exists', async () => {
     const bridge = await import('./bridge.js')
