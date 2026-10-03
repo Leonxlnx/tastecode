@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
+  constants,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -11,18 +13,21 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import {
-  JsonValueSchema,
   McpServerConfigSchema,
   ProviderIdSchema,
   type McpServerConfig,
   type ProviderId,
 } from '@harness/contracts'
-import { z } from 'zod'
 import { configFile } from './product-paths.js'
 
 type ConfigFile = {
   version: 1
   projects: Record<string, Partial<Record<ProviderId, Record<string, McpServerConfig>>>>
+  /**
+   * Provider blocks this build does not ship (nightly has more providers).
+   * They are never listed or launched here, only written back unchanged.
+   */
+  unsupported: Record<string, Record<string, unknown>>
 }
 
 type ParsedConfig = { config: ConfigFile; skipped: boolean }
@@ -32,14 +37,9 @@ type CachedConfig = {
   checkedAt: number
 }
 
-const EMPTY_CONFIG: ConfigFile = { version: 1, projects: {} }
+const EMPTY_CONFIG: ConfigFile = { version: 1, projects: {}, unsupported: {} }
 const CACHE_RECHECK_MS = 100
 const PROJECT_PATH_CACHE_LIMIT = 256
-const JsonObjectSchema = z.record(z.string(), JsonValueSchema)
-const StoredConfigSchema = z.object({
-  version: z.literal(1),
-  projects: JsonObjectSchema,
-})
 
 function defaultLocation(): string {
   return configFile('mcp.json')
@@ -63,12 +63,26 @@ function deepFreeze<T>(value: T): T {
   return Object.freeze(value)
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Server IDs are user-chosen, so `__proto__` must stay an ordinary own key. */
+function setOwn<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
 function parseConfig(raw: string): ParsedConfig {
-  const parsed = StoredConfigSchema.safeParse(JSON.parse(raw))
-  if (!parsed.success) {
+  // Walked by hand rather than with record schemas, which drop a `__proto__` key.
+  const value: unknown = JSON.parse(raw)
+  if (!isObject(value) || value.version !== 1 || !isObject(value.projects)) {
     throw new Error('invalid MCP config: expected a version 1 project map')
   }
-  const value = parsed.data
   let skipped = false
 
   // One malformed entry must not take the whole file down: throwing here
@@ -76,18 +90,23 @@ function parseConfig(raw: string): ParsedConfig {
   // the file from inside the app. Invalid entries are skipped and logged;
   // the next write persists the sanitised shape.
   const projects: ConfigFile['projects'] = {}
+  const unsupported: ConfigFile['unsupported'] = {}
   for (const [projectPath, providersValue] of Object.entries(value.projects)) {
-    const parsedProviders = JsonObjectSchema.safeParse(providersValue)
-    if (!parsedProviders.success) {
+    if (!isObject(providersValue)) {
       skipped = true
       console.warn(`[mcp-config] skipping invalid project entry "${projectPath}"`)
       continue
     }
     const providers: ConfigFile['projects'][string] = {}
-    for (const [providerName, serversValue] of Object.entries(parsedProviders.data)) {
+    for (const [providerName, serversValue] of Object.entries(providersValue)) {
       const provider = ProviderIdSchema.safeParse(providerName)
-      const parsedServers = JsonObjectSchema.safeParse(serversValue)
-      if (!provider.success || !parsedServers.success) {
+      if (!provider.success) {
+        const kept = unsupported[projectPath] ?? {}
+        setOwn(kept, providerName, serversValue)
+        setOwn(unsupported, projectPath, kept)
+        continue
+      }
+      if (!isObject(serversValue)) {
         skipped = true
         console.warn(
           `[mcp-config] skipping invalid provider "${providerName}" for "${projectPath}"`,
@@ -95,20 +114,36 @@ function parseConfig(raw: string): ParsedConfig {
         continue
       }
       const servers: Record<string, McpServerConfig> = {}
-      for (const [serverId, serverValue] of Object.entries(parsedServers.data)) {
+      for (const [serverId, serverValue] of Object.entries(serversValue)) {
         const server = McpServerConfigSchema.safeParse(serverValue)
         if (!server.success || server.data.id !== serverId) {
           skipped = true
           console.warn(`[mcp-config] skipping invalid server "${serverId}" for "${projectPath}"`)
           continue
         }
-        servers[serverId] = server.data
+        setOwn(servers, serverId, server.data)
       }
       providers[provider.data] = servers
     }
-    projects[projectPath] = providers
+    setOwn(projects, projectPath, providers)
   }
-  return { config: { version: 1, projects }, skipped }
+  return { config: { version: 1, projects, unsupported }, skipped }
+}
+
+function serializeConfig(file: ConfigFile): string {
+  const projects: Record<string, Record<string, unknown>> = {}
+  for (const projectPath of new Set([
+    ...Object.keys(file.unsupported),
+    ...Object.keys(file.projects),
+  ])) {
+    const providers: Record<string, unknown> = {}
+    for (const source of [file.unsupported[projectPath], file.projects[projectPath]]) {
+      for (const [provider, servers] of Object.entries(source ?? {}))
+        setOwn(providers, provider, servers)
+    }
+    setOwn(projects, projectPath, providers)
+  }
+  return `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
 }
 
 /** Human-readable project MCP definitions. Secret values never enter this file. */
@@ -128,16 +163,18 @@ export class McpConfigStore {
   add(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     const file = structuredClone(this.#read(true))
     const servers = this.#servers(file, provider, projectPath)
-    if (servers[server.id]) throw new Error(`project MCP server "${server.id}" already exists`)
-    servers[server.id] = structuredClone(server)
+    if (Object.hasOwn(servers, server.id))
+      throw new Error(`project MCP server "${server.id}" already exists`)
+    setOwn(servers, server.id, structuredClone(server))
     this.#write(file)
   }
 
   update(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     const file = structuredClone(this.#read(true))
     const servers = this.#servers(file, provider, projectPath)
-    if (!servers[server.id]) throw new Error(`project MCP server "${server.id}" does not exist`)
-    servers[server.id] = structuredClone(server)
+    if (!Object.hasOwn(servers, server.id))
+      throw new Error(`project MCP server "${server.id}" does not exist`)
+    setOwn(servers, server.id, structuredClone(server))
     this.#write(file)
   }
 
@@ -145,7 +182,8 @@ export class McpConfigStore {
     const file = structuredClone(this.#read(true))
     const projectKey = this.#projectPath(projectPath, true)
     const servers = file.projects[projectKey]?.[provider]
-    if (!servers?.[serverId]) throw new Error(`project MCP server "${serverId}" does not exist`)
+    if (!servers || !Object.hasOwn(servers, serverId))
+      throw new Error(`project MCP server "${serverId}" does not exist`)
     delete servers[serverId]
     if (Object.keys(servers).length === 0) delete file.projects[projectKey]?.[provider]
     if (Object.keys(file.projects[projectKey] ?? {}).length === 0) delete file.projects[projectKey]
@@ -158,7 +196,8 @@ export class McpConfigStore {
     projectPath: string,
   ): Record<string, McpServerConfig> {
     const projectKey = this.#projectPath(projectPath, true)
-    const project = (file.projects[projectKey] ??= {})
+    if (!Object.hasOwn(file.projects, projectKey)) setOwn(file.projects, projectKey, {})
+    const project = file.projects[projectKey]!
     return (project[provider] ??= {})
   }
 
@@ -192,19 +231,24 @@ export class McpConfigStore {
 
   #write(file: ConfigFile): void {
     mkdirSync(path.dirname(this.location), { recursive: true })
-    // A hand-edited file with entries we could not parse is not ours to
-    // destroy — park the original next to the sanitised rewrite.
-    if (this.#readLossy && existsSync(this.location)) {
-      renameSync(this.location, `${this.location}.invalid-${Date.now()}.bak`)
-      this.#readLossy = false
-    }
     const temporary = `${this.location}.${randomUUID()}.tmp`
     try {
-      writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, {
+      writeFileSync(temporary, serializeConfig(file), {
         encoding: 'utf8',
         mode: 0o600,
       })
+      // A hand-edited file with entries we could not parse is not ours to
+      // destroy: copy the original aside, and leave it active until the
+      // complete replacement is atomically in place.
+      if (this.#readLossy && existsSync(this.location)) {
+        copyFileSync(
+          this.location,
+          `${this.location}.invalid-${Date.now()}-${randomUUID().slice(0, 8)}.bak`,
+          constants.COPYFILE_EXCL,
+        )
+      }
       renameSync(temporary, this.location)
+      this.#readLossy = false
       let stamp: string | undefined
       try {
         stamp = configFileStamp(this.location)
@@ -215,7 +259,11 @@ export class McpConfigStore {
     } catch (error) {
       // A failed atomic write (disk full, AV holding the handle) must not
       // leave a stray .tmp behind on every retry.
-      rmSync(temporary, { force: true })
+      try {
+        rmSync(temporary, { force: true })
+      } catch {
+        // Report the write failure, not the cleanup one.
+      }
       throw error
     }
   }
