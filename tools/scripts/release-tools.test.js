@@ -961,10 +961,34 @@ test('workflow is manual, pinned, read-only by default, and has one optional wri
         assert.doesNotMatch(JSON.stringify(step), /GITHUB_TOKEN|upload-draft-release/)
       if (step.uses?.startsWith('actions/download-artifact@')) {
         assert.equal(step.with.pattern, undefined)
-        assert.match(step.with.name, /github\.run_id.*github\.run_attempt.*inputs\.approved_sha/)
+        assert.match(
+          step.with.name,
+          /^\$\{\{ needs\.package\.outputs\.(windows|macos)_artifact \}\}$/,
+        )
       }
     }
   }
+  const packageJob = workflow.jobs.package
+  assert.deepEqual(packageJob.outputs, {
+    windows_artifact: '${{ steps.artifact.outputs.windows }}',
+    macos_artifact: '${{ steps.artifact.outputs.macos }}',
+  })
+  const naming = packageJob.steps.find((step) => step.id === 'artifact')
+  assert.match(
+    naming.env.ARTIFACT_NAME,
+    /github\.run_id.*github\.run_attempt.*inputs\.approved_sha/,
+  )
+  assert.equal(
+    packageJob.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@')).with.name,
+    '${{ steps.artifact.outputs.name }}',
+  )
+  const nameCheck = writer.steps.findIndex((step) => step.env?.WINDOWS_ARTIFACT)
+  assert.ok(nameCheck >= 0)
+  assert.ok(
+    nameCheck <
+      writer.steps.findIndex((step) => step.uses?.startsWith('actions/download-artifact@')),
+  )
+  assert.match(writer.steps[nameCheck].run, /RUN_ID.*APPROVED_SHA/)
   for (const line of source.split('\n').filter((line) => /^\s*- uses:/.test(line))) {
     assert.match(line, /^\s*- uses: [\w/-]+@[a-f0-9]{40} # v\d+\.\d+\.\d+\s*$/)
   }
