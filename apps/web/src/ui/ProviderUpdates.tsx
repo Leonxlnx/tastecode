@@ -15,6 +15,7 @@ import type { Transport } from '../transport.js'
 import { NoticePresence } from './NoticePresence.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { IconMorph } from './IconMorph.js'
+import { SkeletonCode, SkeletonStatus } from './Skeleton.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
@@ -223,7 +224,13 @@ function ProviderUpdateItem(props: {
       ) : null}
       {details && hasLog ? (
         <div id={detailsId} className="provider-toast__terminal">
-          <Suspense fallback={<span>Opening details…</span>}>
+          <Suspense
+            fallback={
+              <SkeletonStatus label="Opening details…" className="install-terminal">
+                <SkeletonCode lines={5} />
+              </SkeletonStatus>
+            }
+          >
             <InstallTerminal
               transport={props.transport}
               installKey={key}

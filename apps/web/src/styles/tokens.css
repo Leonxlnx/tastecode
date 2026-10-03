@@ -172,6 +172,9 @@
   --r-card: 12px;
   --r-panel: 16px;
   --r-dialog: 20px;
+  /* The prompt bar and everything docked to it share one outer corner. 10px
+     controls sit ~10px inside it, so 20px keeps the two curves concentric. */
+  --r-composer: var(--r-2xl);
   /* Compact rows and controls use 5px corners; floating panels use 8px. */
   --r-popup-item: var(--r-md);
   --r-popup: var(--r-lg);
