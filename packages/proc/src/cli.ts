@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { accessSync, constants, realpathSync } from 'node:fs'
+import { accessSync, constants, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
@@ -13,7 +13,8 @@ import { killTree, spawnOwned } from './kill.js'
  * most common way a cross-platform agent wrapper breaks on Windows, so every
  * adapter shares this one implementation rather than each rediscovering it.
  *
- * Arguments are passed as an array, so cmd.exe never sees an unquoted value.
+ * Native executables bypass the shell. Batch shims need both Windows argv
+ * quoting and cmd escaping; Node's default argv quoting alone is not enough.
  */
 export function spawnCli(
   command: string,
@@ -29,9 +30,75 @@ export function spawnCli(
 
   if (process.platform === 'win32') {
     if (/\.(?:exe|com)$/i.test(command)) return spawnOwned(command, args, spawnOptions)
-    return spawnOwned('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions)
+    const executable = resolveWindowsExecutable(command, spawnOptions.env, options.cwd) ?? command
+    if (/\.(?:exe|com)$/i.test(executable)) return spawnOwned(executable, args, spawnOptions)
+    const batch = /\.(?:cmd|bat)$/i.test(executable)
+    const shellCommand = [
+      escapeCmdToken(path.win32.normalize(executable)),
+      ...args.map((argument) => quoteCmdArgument(argument, batch)),
+    ].join(' ')
+    return spawnOwned('cmd.exe', ['/d', '/s', '/v:off', '/c', `"${shellCommand}"`], {
+      ...spawnOptions,
+      windowsVerbatimArguments: true,
+    })
   }
   return spawnOwned(command, args, spawnOptions)
+}
+
+const CMD_META = /([()[\]%!^"`<>&|;, *?\t\v\f])/g
+
+function escapeCmdToken(value: string): string {
+  // cmd cannot carry literal line breaks safely. Multiline CLI bodies belong on stdin.
+  if (/[\r\n\0]/.test(value)) {
+    throw new Error('Windows batch commands cannot contain line breaks or NUL bytes')
+  }
+  return value.replace(CMD_META, '^$1')
+}
+
+export function quoteCmdArgument(value: string, batch = false): string {
+  if (value && !/[\s()[\]%!^"`<>&|;,*?\0]/.test(value)) return value
+  let quoted = '"'
+  let backslashes = 0
+  for (const character of value) {
+    if (character === '\\') {
+      backslashes += 1
+      continue
+    }
+    quoted += '\\'.repeat(character === '"' ? backslashes * 2 + 1 : backslashes) + character
+    backslashes = 0
+  }
+  quoted += '\\'.repeat(backslashes * 2) + '"'
+  const escaped = escapeCmdToken(quoted)
+  // A forwarding .cmd shim parses %* a second time before starting its executable.
+  return batch ? escapeCmdToken(escaped) : escaped
+}
+
+function resolveWindowsExecutable(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+): string | undefined {
+  const envValue = (name: string) =>
+    Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1]
+  const extensions = path.win32.extname(command)
+    ? ['']
+    : (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';')
+  const directories = /[\\/]/.test(command) ? [cwd] : [cwd, ...(envValue('PATH') ?? '').split(';')]
+  for (const directory of directories) {
+    for (const extension of extensions) {
+      const candidate = path.win32.resolve(
+        cwd,
+        directory.replace(/^"|"$/g, ''),
+        command + extension,
+      )
+      try {
+        if (statSync(candidate).isFile()) return candidate
+      } catch {
+        // Match Windows PATH/PATHEXT order without launching the candidate.
+      }
+    }
+  }
+  return undefined
 }
 
 /**
