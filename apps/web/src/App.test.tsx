@@ -8010,8 +8010,20 @@ describe('live sessions', () => {
 
 function dropFile(composer: HTMLElement, path: string) {
   const file = new File(['test'], path.split('/').at(-1) ?? 'attachment')
-  Object.defineProperty(file, 'path', { value: path })
-  fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'harness')
+  Object.defineProperty(window, 'harness', {
+    configurable: true,
+    value: {
+      ...window.harness,
+      droppedFilePath: (candidate: File) => (candidate === file ? path : undefined),
+    },
+  })
+  try {
+    fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+  } finally {
+    if (descriptor) Object.defineProperty(window, 'harness', descriptor)
+    else Reflect.deleteProperty(window, 'harness')
+  }
 }
 
 function finishQueueAnimations() {
