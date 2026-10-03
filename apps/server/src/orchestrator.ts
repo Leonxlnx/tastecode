@@ -41,6 +41,7 @@ import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
+import { StartupCleanupError } from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { Store, StoredCheckpoint } from './store.js'
@@ -50,6 +51,7 @@ import {
   pruneWorktrees,
   removeWorktree,
   type Worktree,
+  WorktreeDirty,
 } from './worktree.js'
 import type {
   Account,
@@ -117,6 +119,7 @@ import {
   type InboxProjection,
 } from './inbox-projection.js'
 import { retryableLazy } from './retryable-lazy.js'
+import { storeLocation } from './data-location.js'
 
 type RecordedEventHandler = (
   threadId: string,
@@ -167,6 +170,8 @@ type QueuedTurnEntry = QueuedTurn & {
 }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
+type QueueDrain = { queueId: string; completedTurnId?: string }
+type TurnStartBarrier = { done: Promise<void>; release: () => void; turnCompleted?: boolean }
 type AttachedThreadRuntime = {
   thread: Thread
   session: AgentSession
@@ -456,6 +461,7 @@ function designRecoveryState(history: Array<{ event: DomainEvent }>): DesignReco
   return { unresolved, openTurnId }
 }
 const PANIC_STOP_TIMEOUT_MS = 5_000
+const IDLE_RUNTIME_PRUNE_RETRY_MS = 30_000
 const DESIGN_START_TIMEOUT_MS = 30_000
 const DESIGN_REPAIR_LIMIT = 2
 const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
@@ -501,9 +507,17 @@ export class Orchestrator {
   #idleRuntimePruneScheduled = false
   #idleRuntimeEligible = new Set<string>()
   #runtimeOperationCounts = new Map<string, number>()
-  #mcpOAuthThreads = new Set<string>()
+  /**
+   * MCP sign-ins that keep a runtime alive, per thread. `early` holds results
+   * that arrived before their start reply so that reply does not re-add them.
+   */
+  #mcpOAuthThreads = new Map<
+    string,
+    { starting: number; logins: Map<string, string>; early: Set<string> }
+  >()
   /** Approval mode selected for each attached or pending-resume thread; not persisted. */
   #threadApprovals = new Map<string, ApprovalMode>()
+  #approvalChanges = new Map<string, Promise<void>>()
   #sideThreads = new Map<string, string>()
   #sideParents = new Map<string, string>()
   #startingSideThreads = new Map<string, Promise<Thread>>()
@@ -514,14 +528,14 @@ export class Orchestrator {
   #suppressedUserItems = new Map<string, Set<string>>()
   #inFlightSubmissionIds = new Map<string, Set<string>>()
   #startingTurns = new Set<string>()
-  #turnStartBarriers = new Map<string, { done: Promise<void>; release: () => void }>()
+  #turnStartBarriers = new Map<string, TurnStartBarrier>()
   #pendingTurnStarts = new Map<string, PendingTurnStart>()
   #acceptedTurnStarts = new Map<string, Map<string, PendingTurnStart>>()
   #restoringThreads = new Map<string, Promise<void>>()
   #reviewingDiffs = new Set<string>()
   #queuedTurns = new Map<string, QueuedTurnEntry[]>()
   #emptyQueuedTurns = new Set<string>()
-  #drainingQueues = new Set<string>()
+  #drainingQueues = new Map<string, QueueDrain>()
   #designFlows = new Map<string, DesignFlow>()
   #designTurns = new Map<string, string>()
   #designStartingThreads = new Set<string>()
@@ -536,12 +550,14 @@ export class Orchestrator {
   #resumingThreads = new Map<string, Promise<void>>()
   #panicGeneration = 0
   #panicStopping = false
+  #panicStop: Promise<PanicStopResult> | undefined
   #checkoutAccess = new CheckoutAccess()
   #stoppingSessions = new Map<string, AgentSession>()
   #runtimeStops = new Map<string, Promise<void>>()
   #runtimeGenerations = new Map<string, number>()
   #designProviderStarts = new Map<string, Promise<string>>()
   #disposeGeneration = 0
+  #projectGenerations = new Map<string, number>()
   #store: Store
   #recordedDeltas: RecordedDeltaBuffer
   /** The latest patch recorded for each running turn. */
@@ -643,7 +659,9 @@ export class Orchestrator {
       (threadId, event) => this.#commitRecordedDelta(threadId, event),
       { commitBatch: (records) => this.#commitRecordedDeltas(records) },
     )
-    this.#worktreeRoot = handlers.worktreeRoot ?? path.join(os.tmpdir(), 'tastecode-trees')
+    this.#worktreeRoot =
+      handlers.worktreeRoot ??
+      (process.env['HARNESS_WORKTREE_DIR'] || path.join(path.dirname(storeLocation()), 'trees'))
     this.#onEvent = handlers.onEvent
     this.#onSideEvent = handlers.onSideEvent ?? handlers.onEvent
     this.#onQueue = handlers.onQueue ?? (() => {})
@@ -775,7 +793,13 @@ export class Orchestrator {
       )
     }
     const runtime = this.#runtimeFor(settings.resolved.provider, this.#onLog)
-    return runBackgroundCompletion({ runtime, selection: settings.resolved, prompt })
+    return runBackgroundCompletion({
+      runtime,
+      selection: settings.resolved,
+      prompt,
+      onCleanupError: (error) =>
+        this.#onLog(`[background] provider cleanup failed: ${errorMessage(error)}`),
+    })
   }
 
   async #backgroundModelSources(): Promise<AvailableBackgroundModelSource[]> {
@@ -1006,18 +1030,36 @@ export class Orchestrator {
     if (!PROVIDER_CAPABILITIES[provider].inheritedMcp) {
       throw new Error(`provider "${provider}" applies MCP changes to new sessions`)
     }
-    const active = this.#findProjectRuntime(provider, projectPath)
-    if (!active?.[1].session.reloadMcpServers) {
+    const active = new Map<string, AttachedThreadRuntime>()
+    for (const threadId of this.#runtimeThreadIdsByProject.get(provider)?.get(projectPath) ?? []) {
+      const entry = this.#threads.get(threadId)
+      if (entry) active.set(threadId, entry)
+    }
+    if (
+      active.size === 0 ||
+      [...active.values()].some((entry) => !entry.session.reloadMcpServers)
+    ) {
       throw new Error('start a compatible session for this project before reloading MCP servers')
     }
     const options = this.#mcpRuntimeOptions(provider, projectPath)
-    await this.#withThreadRuntimeOperation(active[0], () =>
-      active[1].session.reloadMcpServers!(
-        active[1].thread.id,
-        options.mcpServers ?? [],
-        options.mcpCredentials ?? {},
+    const results = await Promise.allSettled(
+      [...active].map(([threadId, entry]) =>
+        this.#withThreadRuntimeOperation(threadId, () =>
+          entry.session.reloadMcpServers!(
+            entry.thread.id,
+            options.mcpServers ?? [],
+            options.mcpCredentials ?? {},
+          ),
+        ),
       ),
     )
+    const failures = results.filter((result) => result.status === 'rejected')
+    if (failures.length === 1) throw failures[0]!.reason
+    if (failures.length > 1)
+      throw new AggregateError(
+        failures.map((failure) => failure.reason),
+        'Could not reload MCP servers for every session',
+      )
   }
 
   async startMcpOAuth(
@@ -1033,15 +1075,46 @@ export class Orchestrator {
       )
     }
     const [threadId, entry] = active
-    this.#mcpOAuthThreads.add(threadId)
+    const pending = this.#mcpOAuthThreads.get(threadId) ?? {
+      starting: 0,
+      logins: new Map<string, string>(),
+      early: new Set<string>(),
+    }
+    this.#mcpOAuthThreads.set(threadId, pending)
+    pending.starting += 1
     this.#touchThreadRuntime(threadId)
     try {
-      return await entry.session.startMcpOAuth!(serverId, entry.thread.id)
-    } catch (error) {
-      this.#mcpOAuthThreads.delete(threadId)
-      this.#pruneIdleThreadRuntimes()
-      throw error
+      const login = await entry.session.startMcpOAuth!(serverId, entry.thread.id)
+      if (!pending.early.delete(login.loginId)) {
+        // A newer sign-in to the same server replaces the older one, which
+        // will never report a result.
+        for (const [loginId, server] of pending.logins)
+          if (server === serverId) pending.logins.delete(loginId)
+        pending.logins.set(login.loginId, serverId)
+      }
+      return login
+    } finally {
+      pending.starting -= 1
+      this.#settleMcpOAuth(threadId, pending)
     }
+  }
+
+  #finishMcpOAuth(threadId: string, loginId: string): void {
+    const pending = this.#mcpOAuthThreads.get(threadId)
+    if (!pending) return
+    if (!pending.logins.delete(loginId) && pending.starting > 0) pending.early.add(loginId)
+    this.#settleMcpOAuth(threadId, pending)
+  }
+
+  #settleMcpOAuth(
+    threadId: string,
+    pending: { starting: number; logins: Map<string, string>; early: Set<string> },
+  ): void {
+    if (pending.starting > 0) return
+    pending.early.clear()
+    if (pending.logins.size > 0 || this.#mcpOAuthThreads.get(threadId) !== pending) return
+    this.#mcpOAuthThreads.delete(threadId)
+    this.#pruneIdleThreadRuntimes()
   }
 
   cancelMcpOAuth(provider: ProviderId): never {
@@ -1158,7 +1231,11 @@ export class Orchestrator {
   ): Promise<Thread> {
     const resolved = resolveWorkspacePath(workspacePath)
     if (this.#panicStopping) throw new Error('task start cancelled by panic stop')
-    const generation = { dispose: this.#disposeGeneration, panic: this.#panicGeneration }
+    const generation = {
+      dispose: this.#disposeGeneration,
+      panic: this.#panicGeneration,
+      project: this.#projectGenerations.get(resolved) ?? 0,
+    }
     const start = () => this.#startThread(provider, workspacePath, options, generation)
     if (options.isolate) return start()
     const owner = `start-${crypto.randomUUID()}`
@@ -1190,10 +1267,13 @@ export class Orchestrator {
     provider: ProviderId,
     workspacePath: string,
     options: StartOptions,
-    generation: { dispose: number; panic: number },
+    generation: { dispose: number; panic: number; project: number },
   ): Promise<Thread> {
     const cancelled = () =>
-      generation.dispose !== this.#disposeGeneration || generation.panic !== this.#panicGeneration
+      generation.dispose !== this.#disposeGeneration ||
+      generation.panic !== this.#panicGeneration ||
+      generation.project !==
+        (this.#projectGenerations.get(resolveWorkspacePath(workspacePath)) ?? 0)
     if (cancelled()) throw new Error('task start cancelled by shutdown or panic stop')
     // The id has to exist before the worktree, and the worktree before the
     // agent — it is the directory the agent will be spawned in.
@@ -1202,6 +1282,7 @@ export class Orchestrator {
     const worktree = options.isolate
       ? await createWorktree(resolvedWorkspacePath, threadId, this.#worktreeRoot, options.baseRef)
       : undefined
+    const directory = worktree?.workPath ?? worktree?.path ?? resolvedWorkspacePath
     if (cancelled()) {
       if (worktree) await removeWorktree(worktree, true)
       throw new Error('task start cancelled by shutdown or panic stop')
@@ -1215,8 +1296,20 @@ export class Orchestrator {
     }
     let started
     try {
-      started = await runtime.start(worktree?.path ?? resolvedWorkspacePath, runtimeOptions)
+      started = await runtime.start(directory, runtimeOptions)
     } catch (error) {
+      if (error instanceof StartupCleanupError) {
+        // The agent may still be running in the new checkout. Keep the session
+        // for shutdown to retry, and remove the checkout only after it stops.
+        this.#onLog(`[startup] agent cleanup failed: ${errorMessage(error.cleanupError)}`)
+        this.#checkoutAccess.retainStopping(directory, threadId)
+        void this.#stopThreadProvider(threadId, error.session as AgentSession)
+          .then(() => (worktree ? removeWorktree(worktree, true) : undefined))
+          .catch((stopError: unknown) =>
+            this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+          )
+        throw error.startError
+      }
       // A worktree for a session that never started is litter, and the next
       // attempt would trip over it.
       if (worktree) await removeWorktree(worktree, true).catch(() => undefined)
@@ -1225,33 +1318,47 @@ export class Orchestrator {
 
     const { thread, session } = started
     if (cancelled()) {
-      this.#checkoutAccess.retainStopping(worktree?.path ?? resolvedWorkspacePath, thread.id)
+      this.#checkoutAccess.retainStopping(directory, thread.id)
       await this.#stopThreadProvider(thread.id, session)
       if (worktree) await removeWorktree(worktree, true)
       throw new Error('task start cancelled by shutdown or panic stop')
     }
-    this.#store.addProject(workspacePath)
-    this.#store.addThread({
-      id: thread.id,
-      // The project is the repository, not the private checkout. A session
-      // still belongs to the folder the user chose.
-      projectPath: workspacePath,
-      provider,
-      ...(options.agent ? { agent: options.agent } : {}),
-      title: 'New session',
-      createdAt: thread.createdAt,
-      ...(worktree
-        ? {
-            worktreePath: worktree.path,
-            worktreeBranch: worktree.branch,
-          }
-        : {}),
-    })
+    try {
+      this.#store.addProject(workspacePath)
+      this.#store.addThread({
+        id: thread.id,
+        // The project is the repository, not the private checkout. A session
+        // still belongs to the folder the user chose.
+        projectPath: workspacePath,
+        provider,
+        ...(options.agent ? { agent: options.agent } : {}),
+        title: 'New session',
+        createdAt: thread.createdAt,
+        ...(worktree
+          ? {
+              worktreePath: directory,
+              worktreeBranch: worktree.branch,
+            }
+          : {}),
+      })
+    } catch (error) {
+      // Nothing records this session. Stop it through the tracked path so a
+      // failed stop stays owned, and remove its checkout only once it stopped.
+      this.#checkoutAccess.retainStopping(directory, thread.id)
+      await this.#stopThreadProvider(thread.id, session)
+        .then(() => (worktree ? removeWorktree(worktree, true) : undefined))
+        .catch((cleanupError: unknown) =>
+          this.#onLog(`[startup] agent cleanup failed: ${errorMessage(cleanupError)}`),
+        )
+      throw error
+    }
+    // Attach before any further storage read so a failure there leaves the
+    // session owned by the thread rather than by nobody.
+    this.#attachThread(thread, session, workspacePath, runtime.resume !== undefined, worktree)
     const autoSettleDays = this.#store.sidebarSettings().autoSettleDays
     this.#onLifecycleScheduleChanged(
       autoSettleDays === null ? 'later' : thread.createdAt + autoSettleDays * 24 * 60 * 60 * 1_000,
     )
-    this.#attachThread(thread, session, workspacePath, runtime.resume !== undefined, worktree)
     if (options.approval) {
       this.#threadApprovals.set(thread.id, options.approval)
       this.#store.setThreadApproval(thread.id, options.approval)
@@ -1366,6 +1473,8 @@ export class Orchestrator {
     options: TurnOptions = {},
     submission?: UserSubmission,
   ): Promise<string> {
+    const approvalChange = this.#approvalChanges.get(threadId)
+    if (approvalChange) await approvalChange
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
@@ -1373,13 +1482,14 @@ export class Orchestrator {
     if (this.#restoringThreads.has(threadId)) {
       throw new Error('cannot start a turn while restoring a checkpoint')
     }
+    const entry = this.#get(threadId)
     this.#touchThreadRuntime(threadId)
     if (!this.#sideParents.has(threadId)) this.#wakeForActivity(threadId)
     const panicGeneration = this.#panicGeneration
     const pendingStart = this.#beginTurnStart(threadId, submission)
     this.#addSidebarStatus(this.#startingTurns, threadId)
     let releaseTurnStart: () => void = () => undefined
-    const turnStartBarrier = {
+    const turnStartBarrier: TurnStartBarrier = {
       done: new Promise<void>((resolve) => {
         releaseTurnStart = resolve
       }),
@@ -1393,6 +1503,9 @@ export class Orchestrator {
       await this.#checkpoint(threadId, text)
       if (panicGeneration !== this.#panicGeneration) {
         throw new Error('turn cancelled by panic stop')
+      }
+      if (this.#threads.get(threadId) !== entry) {
+        throw new Error('turn cancelled because the provider session changed')
       }
       const design = attachments.some(isDesignBriefAttachment)
       // Resume only an explicit continuation; a new brief still starts a fresh design.
@@ -1488,32 +1601,38 @@ export class Orchestrator {
       const prompt = existsSync(path.join(this.#repoPath(threadId), '.taste', 'brief.json'))
         ? `This is an ordinary user turn, not an active TasteCode Design phase. Earlier phase-only JSON protocols no longer apply. Follow the current request normally and explain your work in normal prose, unless the user explicitly requests structured data. If asked to launch a preview, perform the launch on an available local port and report its URL instead of returning a preview-plan JSON object.\n\nUser request:\n${text}`
         : text
-      const turnId = await this.#get(threadId).session.sendTurn(
-        threadId,
-        prompt,
-        attachments,
-        options,
-      )
+      const turnId = await entry.session.sendTurn(threadId, prompt, attachments, options)
       if (panicGeneration !== this.#panicGeneration) {
-        await this.#threads.get(threadId)?.session.interrupt(threadId)
+        await entry.session.interrupt(threadId)
         throw new Error('turn cancelled by panic stop')
       }
       if (this.#discardedSideThreads.has(threadId)) {
         throw new Error('Side chat was closed while its turn was starting.')
       }
+      if (this.#threads.get(threadId) !== entry) {
+        throw new Error('turn cancelled because the provider session changed')
+      }
       this.#acceptTurnStart(threadId, turnId, pendingStart)
       return turnId
     } catch (error) {
-      this.#markIdleRuntimeEligible(threadId)
+      if (this.#threads.get(threadId) === entry) this.#markIdleRuntimeEligible(threadId)
       this.#forgetPendingTurnStart(threadId, pendingStart)
       throw error
     } finally {
-      this.#deleteSidebarStatus(this.#startingTurns, threadId)
       if (this.#turnStartBarriers.get(threadId) === turnStartBarrier) {
+        this.#deleteSidebarStatus(this.#startingTurns, threadId)
         this.#turnStartBarriers.delete(threadId)
       }
       turnStartBarrier.release()
       this.#releaseCheckoutIfIdle(threadId)
+      // The completion's own drain found this start still running. A queued
+      // dispatch retries through #drainQueue; a direct send retries here.
+      if (
+        turnStartBarrier.turnCompleted &&
+        this.#threads.get(threadId) === entry &&
+        !this.isTurnRunning(threadId)
+      )
+        void this.#drainQueue(threadId)
       this.#pruneIdleThreadRuntimes()
     }
   }
@@ -1529,6 +1648,8 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+    const approvalChange = this.#approvalChanges.get(threadId)
+    if (approvalChange) await approvalChange
     await this.#ensureThread(threadId)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
@@ -1587,8 +1708,9 @@ export class Orchestrator {
   deleteQueuedTurn(threadId: string, queuedTurnId: string): void {
     const queue = this.#queueEntries(threadId)
     const index = queue.findIndex((item) => item.id === queuedTurnId)
-    if (index < 0) return
-    if (!this.#store.deleteQueuedTurn(threadId, queuedTurnId)) return
+    if (index < 0 || !this.#store.deleteQueuedTurn(threadId, queuedTurnId)) {
+      throw new Error('That queued prompt already started or was removed.')
+    }
     queue.splice(index, 1)
     this.#retainQueueEntries(threadId, queue)
     this.#notifyQueue(threadId)
@@ -1636,16 +1758,24 @@ export class Orchestrator {
     const ownedTurnKey = activeTurnId ? userTurnKey(threadId, activeTurnId) : undefined
     const alreadyOwned = ownedTurnKey ? this.#serverOwnedUserTurns.has(ownedTurnKey) : false
     if (ownedTurnKey && item.clientSubmissionId) this.#serverOwnedUserTurns.add(ownedTurnKey)
-    this.#drainingQueues.add(threadId)
+    const generation = this.#panicGeneration
+    const draining: QueueDrain = { queueId: item.id }
+    this.#drainingQueues.set(threadId, draining)
+    const current = () =>
+      generation === this.#panicGeneration && this.#threads.get(threadId)?.session === session
+    const restore = () => {
+      if (!current() || !this.#store.restoreQueuedTurn(threadId, item.id)) return
+      // The empty array may have been evicted or replaced while steering.
+      // Reload durable order so prompts added or moved meanwhile stay intact.
+      this.#queuedTurns.delete(threadId)
+      this.#notifyQueue(threadId)
+    }
     try {
       await session.steer(threadId, item.text, item.attachments)
-      if (!this.#threads.has(threadId)) return
-      if (!this.#activeTurns.has(threadId) || this.#activeTurnIds.get(threadId) !== activeTurnId) {
-        this.#store.restoreQueuedTurn(threadId, item.id)
-        queue.splice(index, 0, item)
-        this.#retainQueueEntries(threadId, queue)
-        this.#notifyQueue(threadId)
-      } else if (activeTurnId && item.clientSubmissionId) {
+      if (!current()) return
+      // An acknowledged steer belongs to the captured turn even when that turn
+      // finished before this continuation ran; restoring it would run it twice.
+      if (activeTurnId && item.clientSubmissionId) {
         this.#recordUserSubmission(threadId, activeTurnId, {
           id: item.clientSubmissionId,
           text: item.text,
@@ -1658,12 +1788,9 @@ export class Orchestrator {
         this.#store.completeQueuedTurn(threadId, item.id)
       }
     } catch (error) {
-      if (!this.#threads.has(threadId)) throw error
+      if (!current()) throw error
       if (ownedTurnKey && !alreadyOwned) this.#serverOwnedUserTurns.delete(ownedTurnKey)
-      this.#store.restoreQueuedTurn(threadId, item.id)
-      queue.splice(index, 0, item)
-      this.#retainQueueEntries(threadId, queue)
-      this.#notifyQueue(threadId)
+      restore()
       throw error
     } finally {
       if (item.clientSubmissionId) {
@@ -1671,8 +1798,10 @@ export class Orchestrator {
         if (claimedIds.size === 0 && this.#inFlightSubmissionIds.get(threadId) === claimedIds)
           this.#inFlightSubmissionIds.delete(threadId)
       }
-      this.#drainingQueues.delete(threadId)
-      void this.#drainQueue(threadId)
+      if (this.#drainingQueues.get(threadId) === draining) {
+        this.#drainingQueues.delete(threadId)
+        void this.#drainQueue(threadId)
+      }
     }
   }
 
@@ -1759,6 +1888,10 @@ export class Orchestrator {
     }
     if (event.type === 'turn.completed') {
       this.#deleteAcceptedTurnStart(threadId, event.turnId)
+      const draining = this.#drainingQueues.get(threadId)
+      if (draining) draining.completedTurnId = event.turnId
+      const starting = this.#turnStartBarriers.get(threadId)
+      if (starting) starting.turnCompleted = true
       event = { ...event, completedAt: Date.now() }
     }
     if (event.type === 'thread.error') {
@@ -2016,12 +2149,6 @@ export class Orchestrator {
   }
 
   inboxStatus(threadId: string, queued?: boolean, unread?: boolean): ThreadInboxStatus {
-    if (this.#startingTurns.has(threadId) || this.#designStartingThreads.has(threadId)) {
-      return 'starting'
-    }
-    if (this.#activeTurns.has(threadId)) return 'working'
-    if (queued ?? this.#hasQueuedTurns(threadId)) return 'queued'
-
     // The first sidebar read folds only non-default status rows in one bulk
     // query. After that, #commitRecord advances the sparse cache without
     // another SQLite read. A history rewrite pays for only that thread once.
@@ -2041,9 +2168,14 @@ export class Orchestrator {
         this.#inboxProjections.set(threadId, projection)
       }
     }
+    if ((projection?.approvals?.size ?? 0) > 0) return 'approval'
+    if ((projection?.inputs?.size ?? 0) > 0) return 'input'
+    if (this.#startingTurns.has(threadId) || this.#designStartingThreads.has(threadId)) {
+      return 'starting'
+    }
+    if (this.#activeTurns.has(threadId) || this.#acceptedTurnStarts.has(threadId)) return 'working'
+    if (queued ?? this.#hasQueuedTurns(threadId)) return 'queued'
     if (!projection) return (unread ?? this.#store.thread(threadId)?.unread) ? 'ready' : 'idle'
-    if ((projection.approvals?.size ?? 0) > 0) return 'approval'
-    if ((projection.inputs?.size ?? 0) > 0) return 'input'
     if (projection.last === 'failed') return 'failed'
     return (unread ?? this.#store.thread(threadId)?.unread) ? 'ready' : projection.last
   }
@@ -2258,21 +2390,32 @@ export class Orchestrator {
     if (this.#reviewingDiffs.has(threadId)) throw new StaleDiffSnapshotError()
     this.#reviewingDiffs.add(threadId)
     try {
-      return await review()
+      return await this.#checkoutAccess.exclusive(this.#diffRepoPath(threadId), review)
     } finally {
       this.#reviewingDiffs.delete(threadId)
       this.#pruneIdleThreadRuntimes()
     }
   }
 
-  async #drainQueue(threadId: string): Promise<void> {
+  /** Detached callers never await this, so a storage failure is logged rather than thrown. */
+  #drainQueue(threadId: string): Promise<void> {
+    return this.#drainQueueOnce(threadId).catch((error: unknown) => {
+      this.#onLog(`could not start the next queued turn; it remains queued: ${errorMessage(error)}`)
+    })
+  }
+
+  async #drainQueueOnce(threadId: string): Promise<void> {
+    const entry = this.#threads.get(threadId)
     if (
-      !this.#threads.has(threadId) ||
+      !entry ||
       // A panic stop empties every queue; a drain that was already in flight
       // must not start the turn it grabbed before the panic landed.
       this.#panicStopping ||
       this.#drainingQueues.has(threadId) ||
-      this.isTurnRunning(threadId)
+      this.isTurnRunning(threadId) ||
+      // Design owns the thread between phases too (preview and capture run
+      // with no provider turn); it drains when the run finishes or fails.
+      this.#designFlows.has(threadId)
     ) {
       return
     }
@@ -2288,9 +2431,11 @@ export class Orchestrator {
     queue.shift()
     this.#retainQueueEntries(threadId, queue)
 
-    this.#drainingQueues.add(threadId)
+    const draining: QueueDrain = { queueId: next.id }
+    this.#drainingQueues.set(threadId, draining)
     this.#notifyQueue(threadId)
     const generation = this.#panicGeneration
+    let drainNext = false
     try {
       const turnId = await this.sendTurn(
         threadId,
@@ -2308,11 +2453,11 @@ export class Orchestrator {
             }
           : undefined,
       )
-      if (!this.#threads.has(threadId)) return
+      if (this.#threads.get(threadId) !== entry) return
       if (generation !== this.#panicGeneration) {
         // A panic landed while the adapter call was in flight: the user said
         // stop-everything, so this turn must neither run on nor re-queue.
-        await this.#threads.get(threadId)?.session.interrupt(threadId)
+        await entry.session.interrupt(threadId)
         return
       }
       if (!next.clientSubmissionId && !this.#store.completeQueuedTurn(threadId, next.id)) return
@@ -2321,16 +2466,20 @@ export class Orchestrator {
       if (this.#activeTurnIds.get(threadId) === turnId) {
         this.#addSidebarStatus(this.#activeTurns, threadId)
       }
+      // Completion can arrive before the provider acknowledges the send. Its
+      // drain was blocked by this dispatch, so retry after releasing the latch.
+      drainNext = draining.completedTurnId === turnId && !this.isTurnRunning(threadId)
     } catch {
-      if (!this.#threads.has(threadId)) return
+      if (this.#threads.get(threadId) !== entry) return
       // After a panic the queue was emptied on purpose; putting the grabbed
       // prompt back would resurrect it.
       let restored = false
       if (generation === this.#panicGeneration) {
         restored = this.#store.restoreQueuedTurn(threadId, next.id)
         if (restored) {
-          queue.unshift(next)
-          this.#retainQueueEntries(threadId, queue)
+          // An empty cached array can be evicted while the send is pending.
+          // Restore from storage so newer queued prompts remain visible.
+          this.#queuedTurns.delete(threadId)
           this.#notifyQueue(threadId)
         }
       }
@@ -2340,8 +2489,11 @@ export class Orchestrator {
           : 'queued turn ended after acceptance or cancellation',
       )
     } finally {
-      this.#drainingQueues.delete(threadId)
-      this.#pruneIdleThreadRuntimes()
+      if (this.#drainingQueues.get(threadId) === draining) {
+        this.#drainingQueues.delete(threadId)
+        this.#pruneIdleThreadRuntimes()
+        if (drainNext) void this.#drainQueue(threadId)
+      }
     }
   }
 
@@ -2560,19 +2712,41 @@ export class Orchestrator {
    * adapter supports it.
    */
   async setThreadApproval(threadId: string, approval: ApprovalMode): Promise<void> {
+    const previous = this.#approvalChanges.get(threadId)
+    const changing = (async () => {
+      await previous?.catch(() => undefined)
+      await this.#applyThreadApproval(threadId, approval)
+    })()
+    this.#approvalChanges.set(threadId, changing)
+    try {
+      await changing
+    } finally {
+      if (this.#approvalChanges.get(threadId) === changing) this.#approvalChanges.delete(threadId)
+    }
+  }
+
+  async #applyThreadApproval(threadId: string, approval: ApprovalMode): Promise<void> {
+    await this.#resumingThreads.get(threadId)
     const previous = this.#threadApprovals.get(threadId)
     const hadPrevious = this.#threadApprovals.has(threadId)
-    this.#threadApprovals.set(threadId, approval)
     try {
       const attached = this.#threads.get(threadId)
+      if (attached && !attached.session.setApproval) {
+        if (this.isTurnRunning(threadId) || this.#designFlows.has(threadId)) {
+          throw new Error('Stop the running turn before changing access mode for this agent.')
+        }
+        if (!attached.resumable) {
+          throw new Error('This agent cannot change access mode. Start a new chat with that mode.')
+        }
+        await this.#disposeThreadRuntime(threadId, 'disconnect')
+      }
+      this.#threadApprovals.set(threadId, approval)
       if (attached?.session.setApproval) {
         await this.#withThreadRuntimeOperation(threadId, () =>
           attached.session.setApproval!(approval),
         )
       } else {
-        const joiningResume = this.#resumingThreads.has(threadId)
         await this.#ensureThread(threadId)
-        if (joiningResume) await this.#get(threadId).session.setApproval?.(approval)
       }
       this.#store.setThreadApproval(threadId, approval)
     } catch (error) {
@@ -2591,31 +2765,43 @@ export class Orchestrator {
   async interrupt(threadId: string): Promise<void> {
     // "Stop" on a thread that is not live must be a no-op, not an error the
     // user cannot act on.
-    if (!this.#threads.has(threadId)) return
+    if (!this.#threads.has(threadId)) {
+      // A persisted thread is not attached until resume resolves. Invalidate
+      // that resume so its pending submission cannot run after the user stops it.
+      if (this.#resumingThreads.has(threadId)) {
+        this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
+      }
+      return
+    }
     // The checkpoint runs before the provider starts. An interrupt sent in
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
     // the start, then deliver the interrupt against its real active turn.
     const barrier = this.#turnStartBarriers.get(threadId)?.done
-    void (async () => {
-      await barrier
-      const entry = this.#threads.get(threadId)
-      if (entry) await entry.session.interrupt(threadId)
-    })().catch((error) => {
-      if (!this.isTurnRunning(threadId)) return
-      this.#record(threadId, {
-        type: 'thread.error',
-        threadId,
-        message: `Could not stop the agent: ${errorMessage(error)}`,
-      })
-    })
+    await barrier
+    const entry = this.#threads.get(threadId)
+    if (entry) await entry.session.interrupt(threadId)
   }
 
-  async panicStop(): Promise<PanicStopResult> {
+  /** Overlapping callers share one stop, so none can lift the guard while another still runs. */
+  panicStop(): Promise<PanicStopResult> {
+    if (this.#panicStop) return this.#panicStop
+    const stop = this.#runPanicStop().finally(() => {
+      if (this.#panicStop === stop) this.#panicStop = undefined
+    })
+    this.#panicStop = stop
+    return stop
+  }
+
+  async #runPanicStop(): Promise<PanicStopResult> {
     const sessions = [...this.#threads.entries()]
+    // An idle chat has nothing to stop, and some agents reject an interrupt
+    // without a running turn; that failure must not close the chat.
+    const busy = sessions.filter(
+      ([threadId]) => this.isTurnRunning(threadId) || this.#designProviderStarts.has(threadId),
+    )
     this.#panicStopping = true
     this.#panicGeneration += 1
-
     try {
       let queueClearFailed = false
       const hideQueues = (threadIds: Iterable<string>) => {
@@ -2640,7 +2826,7 @@ export class Orchestrator {
       }
 
       const stoppedSessions = await Promise.all(
-        sessions.map(async ([threadId, entry]) => {
+        busy.map(async ([threadId, entry]) => {
           let timeout: NodeJS.Timeout | undefined
           try {
             await Promise.race([
@@ -2658,7 +2844,11 @@ export class Orchestrator {
             ])
             return { threadId, status: 'interrupted' as const }
           } catch (error) {
-            await this.close(threadId)
+            // Force-stop the runtime only. Stop all is not the user closing the chat.
+            // A runtime that replaced it meanwhile was not the one that hung.
+            if (this.#threads.get(threadId) === entry) {
+              await this.#disposeThreadRuntime(threadId, 'disconnect')
+            }
             return {
               threadId,
               status: 'failed' as const,
@@ -2702,7 +2892,8 @@ export class Orchestrator {
 
   async closeSideThread(threadId: string): Promise<void> {
     const stored = this.#store.thread(threadId)
-    if (!stored) return
+    // A retry after a failed stop finds the row gone but the agent still owned.
+    if (!stored) return this.#stopThreadProvider(threadId)
     if (!stored.ephemeral) throw new Error('thread is not a Side chat')
     this.#discardedSideThreads.add(threadId)
     this.#recordedDeltas.discard(threadId)
@@ -2726,12 +2917,16 @@ export class Orchestrator {
     return this.#store.thread(threadId)?.ephemeral === true
   }
 
-  #disposeThreadRuntime(threadId: string): Promise<void> {
+  #disposeThreadRuntime(threadId: string, reason: 'close' | 'disconnect' = 'close'): Promise<void> {
     this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
-    const terminalsClosed = this.#terminals
-      .closeThread(threadId)
-      .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
-    const previewStopped = this.#stopDesignPreview(threadId)
+    const terminalsClosed =
+      reason === 'close'
+        ? this.#terminals
+            .closeThread(threadId)
+            .catch((error) => this.#onLog(`[terminal] thread close failed: ${errorMessage(error)}`))
+        : Promise.resolve()
+    const previewStopped =
+      reason === 'close' ? this.#stopDesignPreview(threadId) : Promise.resolve()
     const entry = this.#threads.get(threadId)
     if (entry) {
       this.#threads.delete(threadId)
@@ -2761,7 +2956,7 @@ export class Orchestrator {
     this.#queuedTurns.delete(threadId)
     this.#emptyQueuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
-    this.#clearDesignFlow(threadId)
+    if (reason === 'close') this.#clearDesignFlow(threadId)
     return Promise.all([terminalsClosed, previewStopped, providerStopped]).then(() => undefined)
   }
 
@@ -2787,18 +2982,46 @@ export class Orchestrator {
   async discardWorktree(threadId: string, force = false): Promise<void> {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath || !stored.worktreeBranch) return
+    const root = canonicalCheckoutRoot(stored.worktreePath)
+    // A nested project's chat stores its folder inside the checkout; git only
+    // removes a worktree by its root.
+    const worktree = {
+      path: existsSync(stored.worktreePath) ? root : stored.worktreePath,
+      branch: stored.worktreeBranch,
+      repoPath: resolveWorkspacePath(stored.projectPath),
+    }
 
-    await Promise.all([this.#terminals.closeThread(threadId), this.#stopDesignPreview(threadId)])
-
-    await removeWorktree(
-      {
-        path: stored.worktreePath,
-        branch: stored.worktreeBranch,
-        repoPath: resolveWorkspacePath(stored.projectPath),
-      },
-      force,
-    )
-    this.#store.forgetWorktree(threadId)
+    const assertUnshared = () => {
+      const referenced =
+        this.#store
+          .projects()
+          .some((project) => canonicalCheckoutRoot(resolveWorkspacePath(project.path)) === root) ||
+        this.#store
+          .threads()
+          .some(
+            (thread) =>
+              thread.id !== threadId &&
+              canonicalCheckoutRoot(
+                thread.worktreePath ?? resolveWorkspacePath(thread.projectPath),
+              ) === root,
+          )
+      if (referenced || this.#sideThreads.has(threadId))
+        throw new Error(
+          'This checkout is used by another project or chat. Remove those references before discarding it.',
+        )
+    }
+    assertUnshared()
+    await this.#checkoutAccess.exclusive(stored.worktreePath, async () => {
+      await Promise.all([this.#terminals.closeThread(threadId), this.#stopDesignPreview(threadId)])
+      assertUnshared()
+      if (!force && (await hasUncommittedChanges(worktree.path)))
+        throw new WorktreeDirty(worktree.path)
+      // The agent process works inside this checkout. Close the chat and wait
+      // for that process to exit; a failed stop keeps the checkout in place.
+      await this.close(threadId)
+      await removeWorktree(worktree, force)
+      this.#store.forgetWorktree(threadId)
+    })
   }
 
   /**
@@ -2807,8 +3030,8 @@ export class Orchestrator {
    * A process killed mid-session leaves git believing in checkouts that are
    * gone, and the next session on that path fails with a message about a path
    * being "already registered" — our leftovers, reported to someone who did
-   * nothing wrong. Only worktrees whose directory has already vanished are
-   * forgotten; anything still on disk may hold work.
+   * nothing wrong. Git can forget the stale registration, but the chat keeps
+   * its private path so it cannot silently resume in the main project.
    */
   async recoverWorktrees(): Promise<void> {
     const repos = new Set(
@@ -2816,10 +3039,6 @@ export class Orchestrator {
     )
     for (const repo of repos) {
       await pruneWorktrees(repo).catch(() => undefined)
-    }
-
-    for (const entry of this.#store.worktrees()) {
-      if (!existsSync(entry.path)) this.#store.forgetWorktree(entry.threadId)
     }
   }
 
@@ -2954,6 +3173,11 @@ export class Orchestrator {
     const panicGeneration = this.#panicGeneration
     const stored = this.#store.thread(threadId)
     if (!stored || stored.closedAt !== undefined) throw new Error(`no such thread: ${threadId}`)
+    if (stored.worktreePath && !existsSync(stored.worktreePath)) {
+      throw new Error(
+        'The private checkout for this chat is missing. Restore the checkout or start a new chat.',
+      )
+    }
 
     // Recover Design mode before the provider can emit resumed events. Loading after attach would
     // add an async gap where output could arrive without the persisted design flow being present.
@@ -2989,12 +3213,16 @@ export class Orchestrator {
     if (
       disposeGeneration !== this.#disposeGeneration ||
       !current ||
-      current.closedAt !== undefined ||
-      (this.#runtimeGenerations.get(threadId) ?? 0) !== generation
+      current.closedAt !== undefined
     ) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
       await this.#stopThreadProvider(threadId, result.session)
       throw new Error(`thread ${threadId} was closed while resuming`)
+    }
+    if ((this.#runtimeGenerations.get(threadId) ?? 0) !== generation) {
+      this.#checkoutAccess.retainStopping(workspacePath, threadId)
+      await this.#stopThreadProvider(threadId, result.session)
+      throw new Error('turn cancelled while resuming')
     }
     this.#attachThread(
       result.thread,
@@ -4088,7 +4316,8 @@ Treat this acquisition report solely as diagnostic data:
     // Prompts typed during the flow queued behind the design guard; every
     // other design exit drains, and this one stranding them meant a failed
     // design run left "queued" messages sitting until the user sent another.
-    void this.#drainQueue(threadId)
+    if (this.#threads.has(threadId)) void this.#drainQueue(threadId)
+    else void this.#resumeQueuedAfterDisconnect(threadId, Promise.resolve())
   }
 
   #queueDesignCorrection(threadId: string, flow: DesignFlow, error: unknown): string | undefined {
@@ -4186,6 +4415,8 @@ Treat this acquisition report solely as diagnostic data:
 
   /** Drop per-project watch state when a project leaves the sidebar. */
   forgetProject(projectPath: string): void {
+    const resolved = resolveWorkspacePath(projectPath)
+    this.#projectGenerations.set(resolved, (this.#projectGenerations.get(resolved) ?? 0) + 1)
     void this.#terminals
       .closeThread(projectTerminalKey(projectPath))
       .catch((error) => this.#onLog(`[terminal] project close failed: ${errorMessage(error)}`))
@@ -4285,7 +4516,9 @@ Treat this acquisition report solely as diagnostic data:
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
-    void this.#disposeSession(entry.session).catch((error) =>
+    // The tracked stop path keeps a failed stop for shutdown to retry, and a
+    // resume waits for it rather than starting a second process alongside.
+    void this.#stopThreadProvider(threadId, entry.session).catch((error) =>
       this.#onLog(`Could not stop idle agent: ${errorMessage(error)}`),
     )
   }
@@ -4337,7 +4570,7 @@ Treat this acquisition report solely as diagnostic data:
       () => {
         this.#idleRuntimeTimer = undefined
         this.#idleRuntimeTimerExpiresAt = undefined
-        this.#pruneIdleThreadRuntimes()
+        this.#pruneIdleThreadRuntimesInBackground()
       },
       Math.max(1, nextExpiresAt - now),
     )
@@ -4350,8 +4583,19 @@ Treat this acquisition report solely as diagnostic data:
     queueMicrotask(() => {
       if (!this.#idleRuntimePruneScheduled) return
       this.#idleRuntimePruneScheduled = false
-      this.#pruneIdleThreadRuntimes()
+      this.#pruneIdleThreadRuntimesInBackground()
     })
+  }
+
+  /** Timer and microtask callbacks have no caller to report to; a throw there would crash the server. */
+  #pruneIdleThreadRuntimesInBackground(): void {
+    try {
+      this.#pruneIdleThreadRuntimes()
+    } catch (error) {
+      this.#onLog(`Could not release idle agents: ${errorMessage(error)}`)
+      const now = performance.now()
+      this.#scheduleIdleRuntimeExpiry(now + IDLE_RUNTIME_PRUNE_RETRY_MS, now)
+    }
   }
 
   #pruneIdleThreadRuntimes(): void {
@@ -4457,7 +4701,7 @@ Treat this acquisition report solely as diagnostic data:
       thread,
       session,
       projectPath,
-      resumable,
+      resumable: resumable && session.resumable !== false,
       ...(worktree ? { worktree } : {}),
     }
     this.#threads.set(thread.id, entry)
@@ -4465,14 +4709,31 @@ Treat this acquisition report solely as diagnostic data:
     this.#touchThreadRuntime(thread.id)
     session.onMcpOAuth?.((result) => {
       if (this.#threads.get(thread.id)?.session !== session) return
-      this.#mcpOAuthThreads.delete(thread.id)
       this.#onMcpOAuth(thread.provider, projectPath, result)
-      this.#pruneIdleThreadRuntimes()
+      this.#finishMcpOAuth(thread.id, result.loginId)
     })
     session.onUsageChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session) {
         this.#controls.usageChanged(thread.provider)
       }
+    })
+    session.onMcpChanged?.(() => {
+      if (this.#threads.get(thread.id)?.session === session && this.#store.thread(thread.id)) {
+        this.#onMcpChanged(thread.provider, projectPath)
+      }
+    })
+    session.onDisconnected?.(() => {
+      if (this.#threads.get(thread.id)?.session !== session || !this.#store.thread(thread.id)) {
+        return
+      }
+      // A terminal event can claim the next queued prompt before disconnect
+      // arrives. Return that unaccepted prompt before removing its runtime.
+      const draining = this.#drainingQueues.get(thread.id)
+      if (draining) this.#store.restoreQueuedTurn(thread.id, draining.queueId)
+      this.#recordedDeltas.flush(thread.id)
+      if (this.#designFlows.has(thread.id)) this.#suspendDesignFlow(thread.id)
+      const stopped = this.#disposeThreadRuntime(thread.id, 'disconnect')
+      void this.#resumeQueuedAfterDisconnect(thread.id, stopped)
     })
     session.onProviderSessionId?.((providerSessionId) => {
       // A disposed provider may still flush its terminal frame. Only the
@@ -4488,5 +4749,35 @@ Treat this acquisition report solely as diagnostic data:
       }
     })
     this.#pruneIdleThreadRuntimes()
+  }
+
+  async #resumeQueuedAfterDisconnect(threadId: string, stopped: Promise<void>): Promise<void> {
+    const panic = this.#panicGeneration
+    const dispose = this.#disposeGeneration
+    try {
+      await stopped
+      if (
+        panic !== this.#panicGeneration ||
+        dispose !== this.#disposeGeneration ||
+        this.#panicStopping ||
+        !this.#hasQueuedTurns(threadId) ||
+        !this.#store.thread(threadId) ||
+        this.#store.thread(threadId)?.closedAt !== undefined
+      )
+        return
+      await this.#ensureThread(threadId)
+      if (panic === this.#panicGeneration && dispose === this.#disposeGeneration)
+        await this.#drainQueue(threadId)
+    } catch (error) {
+      if (panic !== this.#panicGeneration || dispose !== this.#disposeGeneration) return
+      this.#onLog(`Could not resume queued prompts: ${errorMessage(error)}`)
+      if (this.#store.thread(threadId) && this.#hasQueuedTurns(threadId)) {
+        this.#record(threadId, {
+          type: 'thread.error',
+          threadId,
+          message: `Could not resume queued prompts: ${errorMessage(error)}. They remain queued; retry or remove them.`,
+        })
+      }
+    }
   }
 }
