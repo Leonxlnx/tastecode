@@ -9,6 +9,8 @@ import type { ProgressInfo } from 'electron-updater'
 import type { ReleaseFetch } from './github-release-provider.js'
 
 const PROGRESS_INTERVAL = 250
+// electron-updater's own downloader gave up after a minute without data too.
+const STALL_TIMEOUT = 60_000
 
 export type VerifiedDownload = {
   url: string
@@ -21,6 +23,8 @@ export type VerifiedDownload = {
   fetch: ReleaseFetch
   signal: AbortSignal
   onProgress?: (progress: ProgressInfo) => void
+  /** Gives up, keeping the bytes so far, when nothing arrives for this long. */
+  stallTimeout?: number
 }
 
 async function sizeOf(file: string): Promise<number> {
@@ -53,7 +57,11 @@ export async function downloadVerified(download: VerifiedDownload): Promise<stri
     await rm(file, { force: true })
     offset = 0
   }
-  if (offset < download.size) await fetchRemainder(download, file, offset, true)
+  if (offset < download.size && (await fetchRemainder(download, file, offset)) === 'restart') {
+    // The stored bytes no longer fit this asset; start over once.
+    await rm(file, { force: true })
+    await fetchRemainder(download, file, 0)
+  }
   const size = await sizeOf(file)
   // Bytes that arrived stay for the next attempt to continue from.
   if (size < download.size) throw new Error('The update download stopped before it finished.')
@@ -68,70 +76,90 @@ async function fetchRemainder(
   download: VerifiedDownload,
   file: string,
   offset: number,
-  mayRestart: boolean,
-): Promise<void> {
-  const response = await download.fetch(download.url, {
-    headers: {
-      Accept: 'application/octet-stream',
-      ...(offset > 0 ? { Range: `bytes=${offset}-` } : {}),
-    },
-    signal: download.signal,
-  })
-  if (response.status === 416 && mayRestart) {
-    // The stored bytes no longer fit this asset; start over once.
-    await response.body?.cancel()
-    await rm(file, { force: true })
-    return fetchRemainder(download, file, 0, false)
+): Promise<'done' | 'restart'> {
+  // A connection that stays open but stops sending would otherwise hold the
+  // update in "downloading" forever. Every arriving chunk resets the clock.
+  const stall = new AbortController()
+  const stallTimeout = download.stallTimeout ?? STALL_TIMEOUT
+  let timer = setTimeout(() => stall.abort(), stallTimeout)
+  const alive = () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => stall.abort(), stallTimeout)
   }
-  const resumed = response.status === 206
-  if ((response.status !== 200 && !resumed) || !response.body) {
-    await response.body?.cancel()
-    throw new Error(`GitHub answered the update download with HTTP ${response.status}.`)
-  }
-  if (resumed) {
-    const range = /^bytes (\d+)-\d+\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
-    if (Number(range?.[1]) !== offset || Number(range?.[2]) !== download.size) {
-      await response.body.cancel()
-      await rm(file, { force: true })
-      throw new Error('GitHub resumed the update download at the wrong position.')
-    }
-  }
-  // A server that ignores the range sends the whole file again.
-  let transferred = resumed ? offset : 0
-  const started = Date.now()
-  let reportedAt = 0
-  let unreported = 0
-  const report = (force: boolean) => {
-    const now = Date.now()
-    if (!force && now - reportedAt < PROGRESS_INTERVAL) return
-    const seconds = Math.max((now - started) / 1000, 0.001)
-    download.onProgress?.({
-      total: download.size,
-      delta: unreported,
-      transferred,
-      percent: (transferred / download.size) * 100,
-      bytesPerSecond: Math.round((transferred - (resumed ? offset : 0)) / seconds),
+  const signal = AbortSignal.any([download.signal, stall.signal])
+  try {
+    const response = await download.fetch(download.url, {
+      headers: {
+        Accept: 'application/octet-stream',
+        ...(offset > 0 ? { Range: `bytes=${offset}-` } : {}),
+      },
+      signal,
     })
-    reportedAt = now
-    unreported = 0
-  }
-  const counter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      if (transferred + chunk.length > download.size) {
-        callback(new Error('The update download is larger than GitHub announced.'))
-        return
+    alive()
+    if (response.status === 416 && offset > 0) {
+      await response.body?.cancel()
+      return 'restart'
+    }
+    const resumed = response.status === 206
+    if ((response.status !== 200 && !resumed) || !response.body) {
+      await response.body?.cancel()
+      throw new Error(`GitHub answered the update download with HTTP ${response.status}.`)
+    }
+    if (resumed) {
+      const range = /^bytes (\d+)-\d+\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
+      if (Number(range?.[1]) !== offset || Number(range?.[2]) !== download.size) {
+        await response.body.cancel()
+        await rm(file, { force: true })
+        throw new Error('GitHub resumed the update download at the wrong position.')
       }
-      transferred += chunk.length
-      unreported += chunk.length
-      report(false)
-      callback(null, chunk)
-    },
-  })
-  await pipeline(
-    Readable.fromWeb(response.body as WebReadableStream<Uint8Array>),
-    counter,
-    createWriteStream(file, { flags: resumed ? 'a' : 'w', mode: 0o600 }),
-    { signal: download.signal },
-  )
-  report(true)
+    }
+    // A server that ignores the range sends the whole file again.
+    let transferred = resumed ? offset : 0
+    const started = Date.now()
+    let reportedAt = 0
+    let unreported = 0
+    const report = (force: boolean) => {
+      const now = Date.now()
+      if (!force && now - reportedAt < PROGRESS_INTERVAL) return
+      const seconds = Math.max((now - started) / 1000, 0.001)
+      download.onProgress?.({
+        total: download.size,
+        delta: unreported,
+        transferred,
+        percent: (transferred / download.size) * 100,
+        bytesPerSecond: Math.round((transferred - (resumed ? offset : 0)) / seconds),
+      })
+      reportedAt = now
+      unreported = 0
+    }
+    const counter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        alive()
+        if (transferred + chunk.length > download.size) {
+          callback(new Error('The update download is larger than GitHub announced.'))
+          return
+        }
+        transferred += chunk.length
+        unreported += chunk.length
+        report(false)
+        callback(null, chunk)
+      },
+    })
+    await pipeline(
+      Readable.fromWeb(response.body as WebReadableStream<Uint8Array>),
+      counter,
+      createWriteStream(file, { flags: resumed ? 'a' : 'w', mode: 0o600 }),
+      { signal },
+    )
+    report(true)
+    return 'done'
+  } catch (error) {
+    if (stall.signal.aborted && !download.signal.aborted)
+      throw new Error('The update download stalled; the next attempt continues from here.', {
+        cause: error,
+      })
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
