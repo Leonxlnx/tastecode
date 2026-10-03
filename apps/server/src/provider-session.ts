@@ -42,3 +42,20 @@ function mapEventThread(event: DomainEvent, id: string): DomainEvent {
   if (event.type === 'thread.error') return { ...event, threadId: id }
   return event
 }
+
+/**
+ * A session failed to start and then could not confirm that its process exited.
+ * The caller must keep the session for a later stop, and its checkout until then.
+ */
+export class StartupCleanupError extends Error {
+  constructor(
+    readonly startError: unknown,
+    readonly cleanupError: unknown,
+    readonly session: { dispose(): void | Promise<void> },
+  ) {
+    super(startError instanceof Error ? startError.message : String(startError), {
+      cause: startError,
+    })
+    this.name = 'StartupCleanupError'
+  }
+}

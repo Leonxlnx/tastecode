@@ -386,7 +386,8 @@
                 <span class="d"
                   >one long-lived prompt stream carries follow-up turns while SDK controls change
                   the model and stop active work without replacing the process; incomplete text,
-                  reasoning, and tool blocks settle before every terminal result</span
+                  reasoning, and tool blocks settle before every terminal result; if the CLI process
+                  dies, the next send resumes the saved session in a new process</span
                 ></span
               ></label
             >
