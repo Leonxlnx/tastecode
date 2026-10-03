@@ -54,6 +54,11 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+    # Separate keys per platform: a shared matrix output keeps only the last leg's value.
+    # Re-running only the writer reuses these outputs from the attempt that built them.
+    outputs:
+      windows_artifact: ${{ steps.artifact.outputs.windows }}
+      macos_artifact: ${{ steps.artifact.outputs.macos }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,9 +97,15 @@ jobs:
         run: node tools/scripts/verify-release-assets.js --package release/proof-${{ matrix.label }} ${{ matrix.platform }}
       - name: Stage the exact verified platform assets
         run: node tools/scripts/stage-release-assets.js release/proof-${{ matrix.label }} release/staged-${{ matrix.label }} ${{ matrix.platform }}
+      - name: Name the platform artifact
+        id: artifact
+        env:
+          ARTIFACT_NAME: release-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          PLATFORM: ${{ matrix.platform }}
+        run: node -e "require('node:fs').appendFileSync(process.env.GITHUB_OUTPUT, 'name=' + process.env.ARTIFACT_NAME + '\n' + process.env.PLATFORM + '=' + process.env.ARTIFACT_NAME + '\n')"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-${{ matrix.label }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          name: ${{ steps.artifact.outputs.name }}
           path: release/staged-${{ matrix.label }}
           if-no-files-found: error
           retention-days: 7
@@ -120,13 +131,20 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile --ignore-scripts --filter .
       - run: node tools/scripts/verify-release-input.js
+      - name: Check both artifacts belong to this run and source
+        env:
+          WINDOWS_ARTIFACT: ${{ needs.package.outputs.windows_artifact }}
+          MACOS_ARTIFACT: ${{ needs.package.outputs.macos_artifact }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          node -e "for (const [label, name] of [['windows-x64', process.env.WINDOWS_ARTIFACT], ['macos-arm64', process.env.MACOS_ARTIFACT]]) if (!new RegExp('^release-' + label + '-' + process.env.RUN_ID + '-[0-9]+-' + process.env.APPROVED_SHA + '$').test(name || '')) throw new Error('Unexpected ' + label + ' artifact: ' + name)"
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: release-windows-x64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          name: ${{ needs.package.outputs.windows_artifact }}
           path: release/final
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: release-macos-arm64-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.approved_sha }}
+          name: ${{ needs.package.outputs.macos_artifact }}
           path: release/final
       - name: Verify both platform manifests, provenance, and hashes
         run: node tools/scripts/verify-release-assets.js release/final all
