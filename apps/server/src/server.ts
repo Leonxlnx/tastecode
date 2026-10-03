@@ -376,6 +376,7 @@ export function startServer(
         return (await pullRequestService()).files(
           p.repository,
           p.number,
+          { headRefOid: p.expectedHeadOid, baseRefOid: p.expectedBaseOid },
           p.page ?? 1,
           p.refresh ?? false,
         )
