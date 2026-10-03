@@ -14,6 +14,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
+import { surfaceLoadFailed } from '../surface-load-error.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
 import { accentColor, backdropColor, backdropColorScheme } from '../theme-colors.js'
 import {
@@ -138,7 +139,9 @@ import { KeybindSettings } from './KeybindSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
 
 const InstallTerminal = lazy(() =>
-  import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
+  import('./InstallTerminal.js')
+    .then((module) => ({ default: module.InstallTerminal }))
+    .catch(surfaceLoadFailed),
 )
 
 export type SettingsSection =
@@ -675,6 +678,16 @@ export function ProviderSettings(props: {
     return operation
   }
 
+  useEffect(() => {
+    const account = props.account
+    if (!account) return
+    delete statusRequests.current[props.provider]
+    setAuthStates((current) => ({
+      ...current,
+      [props.provider]: { phase: 'ready', account },
+    }))
+  }, [props.provider, props.account])
+
   const refreshAccount = useCallback(
     async (provider: ProviderId, forceLoading = false) => {
       const request = { id: ++sequence.current, transport: props.transport }
@@ -794,8 +807,13 @@ export function ProviderSettings(props: {
     try {
       await props.transport.request('auth.signOut', { provider })
       if (!operationIsCurrent(provider, operation)) return
+      delete statusRequests.current[provider]
       const account = { signedIn: false }
-      localStorage.removeItem(providerEmailKey(provider))
+      try {
+        localStorage.removeItem(providerEmailKey(provider))
+      } catch {
+        // An optional display cache must not turn a successful sign-out into a failure.
+      }
       setAuthStates((current) => ({
         ...current,
         [provider]: { phase: 'ready', account },
@@ -2086,7 +2104,12 @@ function CliSignInRow(props: {
   const notifiedLogin = useRef(false)
   const confirmedEmail = signedInEmail(login?.log ?? '')
   useEffect(() => {
-    if (confirmedEmail) localStorage.setItem(providerEmailKey(props.provider.id), confirmedEmail)
+    if (!confirmedEmail) return
+    try {
+      localStorage.setItem(providerEmailKey(props.provider.id), confirmedEmail)
+    } catch {
+      // Sign-in still completes when storage is full or blocked.
+    }
   }, [confirmedEmail, props.provider.id])
 
   useEffect(() => {
@@ -2264,7 +2287,13 @@ function providerEmailKey(provider: ProviderId): string {
 }
 
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {
-  const [savedEmail] = useState(() => localStorage.getItem(providerEmailKey(props.provider)))
+  const [savedEmail] = useState(() => {
+    try {
+      return localStorage.getItem(providerEmailKey(props.provider))
+    } catch {
+      return null
+    }
+  })
   const email = props.account.email ?? savedEmail
 
   return (
