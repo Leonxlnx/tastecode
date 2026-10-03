@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import type { Transport } from '../transport.js'
 import { Composer, insertTranscriptAtCursor } from './Composer.js'
@@ -30,6 +30,32 @@ beforeEach(() => vi.clearAllMocks())
 afterEach(cleanup)
 
 describe('Composer voice dictation', () => {
+  it('drops a send-after transcript when a different draft is restored', async () => {
+    let resolve!: (transcript: string) => void
+    const onTranscribeVoice = vi.fn(
+      () =>
+        new Promise<string>((done) => {
+          resolve = done
+        }),
+    )
+    const onSend = vi.fn()
+    const view = renderVoiceComposer({
+      draftRequest: { text: 'First chat', request: 1 },
+      onTranscribeVoice,
+      onSend,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
+    await waitFor(() => expect(onTranscribeVoice).toHaveBeenCalledOnce())
+    view.rerenderComposer({ draftRequest: { text: 'Second chat', request: 2 } })
+    await act(async () => resolve('First chat voice'))
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Second chat',
+    )
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Record voice note' })).toBeTruthy()
+  })
+
   it('records, transcribes, and inserts at the cursor without sending', async () => {
     const onSend = vi.fn()
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
@@ -194,9 +220,11 @@ describe('Dictation startup and recovery', () => {
 })
 
 function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
-  return render(
+  const transport = voiceTransport()
+  let currentOverrides = overrides
+  const composer = () => (
     <Composer
-      transport={voiceTransport()}
+      transport={transport}
       provider="codex"
       projects={[{ path: '/work/harness', name: 'TasteCode' }]}
       projectPath="/work/harness"
@@ -239,9 +267,16 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       onDeleteQueuedTurn={vi.fn()}
       onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
-      {...overrides}
-    />,
+      {...currentOverrides}
+    />
   )
+  const view = render(composer())
+  return Object.assign(view, {
+    rerenderComposer(next: Partial<ComponentProps<typeof Composer>>) {
+      currentOverrides = { ...currentOverrides, ...next }
+      view.rerender(composer())
+    },
+  })
 }
 
 function voiceTransport(): Transport {

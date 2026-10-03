@@ -45,6 +45,7 @@ export type PendingSubmission = RecoverableDraft & {
 }
 type BufferedEvent = { seq: number | undefined; event: DomainEvent }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
+type HistoryBase = { state: ThreadState; sequence: number | undefined }
 const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
 
 /** Owns transcript, replay, submission, queue and draft lifetimes. React reads
@@ -57,6 +58,9 @@ export class ThreadController {
   #drafts = new Map<string, ComposerDraft>()
   #histories = new Map<string, Set<BufferedEvent[]>>()
   #historyOwners = new Map<string, BufferedEvent[]>()
+  // Live cursors can cross a gap. Keep the last safe state and cursor together
+  // until an authoritative replay succeeds, including across failed reads.
+  #historyBases = new Map<string, HistoryBase>()
   #deltas = new Map<string, PendingThreadDeltaBatch>()
   #backgroundCharacters = new Map<string, number>()
   #queues = new Map<string, QueueState>()
@@ -83,6 +87,7 @@ export class ThreadController {
   }
   discardSnapshot(id: string): void {
     this.#states.delete(id)
+    this.#historyBases.delete(id)
   }
   cursor(id: string): number | undefined {
     return this.#sequences.get(id)
@@ -96,6 +101,24 @@ export class ThreadController {
   invalidateHistory(id: string): void {
     this.#sequences.delete(id)
     this.#historyOwners.delete(id)
+    this.#historyBases.delete(id)
+  }
+  markHistoriesForRecovery(): void {
+    for (const id of new Set([...this.#states.keys(), ...this.#histories.keys()])) {
+      if (id.startsWith('pending:')) continue
+      if (!this.#historyBases.has(id)) {
+        const sequence = this.cursor(id)
+        this.#historyBases.set(id, {
+          state: sequence === undefined ? emptyThread : (this.snapshot(id) ?? emptyThread),
+          sequence,
+        })
+      }
+      // A read started before this gap cannot confirm the missing suffix.
+      this.#historyOwners.delete(id)
+    }
+  }
+  historyRecoveryIds(): IterableIterator<string> {
+    return this.#historyBases.keys()
   }
   resetBackground(id: string): void {
     this.#backgroundCharacters.delete(id)
@@ -240,12 +263,13 @@ export class ThreadController {
   prune(isProtected: (id: string) => boolean): void {
     for (const id of this.#deltas.keys())
       if (id !== this.#activeId) this.flush(id, () => isProtected(id))
-    pruneInactiveThreadStates(this.#states, this.#sequences, {
+    const evicted = pruneInactiveThreadStates(this.#states, this.#sequences, {
       activeId: this.#activeId,
       isProtected,
       isPartial: (id) => !this.#sequences.has(id),
-      onCompact: (id) => this.#backgroundCharacters.delete(id),
+      onCompact: (id) => this.#releaseCompactedHistory(id),
     })
+    for (const id of evicted) this.#historyBases.delete(id)
   }
   pruneQueues(isProtected: (id: string) => boolean): void {
     pruneInactiveQueueMetadata(
@@ -256,11 +280,18 @@ export class ThreadController {
       { activeId: this.#activeId, isProtected },
     )
   }
-  compact(id: string, protectedState: boolean): void {
-    compactInactiveRunningThreadState(this.#states, this.#sequences, id, {
+  compact(id: string, protectedState: boolean): boolean {
+    const compacted = compactInactiveRunningThreadState(this.#states, this.#sequences, id, {
       activeId: this.#activeId,
       protected: protectedState,
     })
+    if (compacted) this.#releaseCompactedHistory(id)
+    return compacted
+  }
+  #releaseCompactedHistory(id: string): void {
+    this.#backgroundCharacters.delete(id)
+    if (this.#historyBases.has(id))
+      this.#historyBases.set(id, { state: emptyThread, sequence: undefined })
   }
   forget(id: string): void {
     this.#states.delete(id)
@@ -269,6 +300,7 @@ export class ThreadController {
     this.#deltas.delete(id)
     this.#backgroundCharacters.delete(id)
     this.#historyOwners.delete(id)
+    this.#historyBases.delete(id)
     this.#histories.delete(id)
     this.#queues.delete(id)
     this.#localQueueRevisions.delete(id)
@@ -284,12 +316,8 @@ export class ThreadController {
     if (id !== this.#activeId) {
       const characters = (this.#backgroundCharacters.get(id) ?? 0) + pending.textLength
       if (characters >= BACKGROUND_COMPACTION_CHECK_CHARACTERS) {
-        const compacted = compactInactiveRunningThreadState(this.#states, this.#sequences, id, {
-          activeId: this.#activeId,
-          protected: protectedState(),
-        })
+        const compacted = this.compact(id, protectedState())
         if (compacted) {
-          this.#backgroundCharacters.delete(id)
           return this.snapshot(id) ?? next
         }
       }
@@ -346,6 +374,10 @@ export class ThreadController {
       if (this.#frame !== undefined) cancelAnimationFrame(this.#frame)
       this.#frame = undefined
       this.frames.publish(next)
+    } else if (event.type === 'item.started' || event.type === 'item.completed') {
+      // Completed tool payloads can be large even when all their deltas were
+      // dropped from a partial background transcript. Bound those stores too.
+      this.prune(isProtected)
     }
     return next
   }
@@ -363,13 +395,19 @@ export class ThreadController {
     | { visible: ThreadState; authority: ThreadState; approval?: ApprovalMode | undefined }
     | undefined
   > {
-    if (afterSeq === undefined) this.#sequences.delete(id)
+    if (afterSeq === undefined) {
+      this.#sequences.delete(id)
+      this.#historyBases.set(id, { state: emptyThread, sequence: undefined })
+    } else if (!this.#historyBases.has(id)) {
+      this.#historyBases.set(id, { state: this.snapshot(id) ?? emptyThread, sequence: afterSeq })
+    }
+    const base = this.#historyBases.get(id)!
+    afterSeq = base.sequence
     const buffer: BufferedEvent[] = []
     const buffers = this.#histories.get(id) ?? new Set()
     buffers.add(buffer)
     this.#histories.set(id, buffers)
     this.#historyOwners.set(id, buffer)
-    const base = afterSeq === undefined ? emptyThread : (this.snapshot(id) ?? emptyThread)
     try {
       const { events, running, approval, reset } = await this.transport.request(
         'thread.history',
@@ -377,13 +415,18 @@ export class ThreadController {
       )
       if (this.#historyOwners.get(id) !== buffer) return
       if (reset) afterSeq = undefined
-      const restored = reduceEventLog(reset ? emptyThread : base, events, afterSeq)
+      const restored = reduceEventLog(reset ? emptyThread : base.state, events, afterSeq)
       const lastSeq = events.at(-1)?.seq ?? afterSeq ?? 0
-      const live = reduceEventLog(
+      const replayed = reduceEventLog(
         { ...restored, running, activeTurn: running ? restored.activeTurn : undefined },
         buffer,
         lastSeq,
       )
+      // A confirmed unresolved request may be retried after a lost answer reply.
+      // Live deltas and failed/stale history reads must keep its identity stable.
+      const live = replayed.userInputs.length
+        ? { ...replayed, userInputs: replayed.userInputs.map((request) => ({ ...request })) }
+        : replayed
       if (buffer.some((entry) => entry.seq === undefined)) this.#sequences.delete(id)
       else
         this.setCursor(
@@ -393,6 +436,7 @@ export class ThreadController {
       const visible = this.#preserveSubmissions(id, live)
       this.#deltas.delete(id)
       this.update(id, visible)
+      this.#historyBases.delete(id)
       if (id === this.#activeId) this.frames.publish(visible)
       if (afterSeq === undefined) return { visible, authority: live, approval }
       const suffix = reduceEventLog(reduceEventLog(emptyThread, events), buffer, lastSeq)

@@ -222,3 +222,188 @@ describe('ThreadController lifecycle owner', () => {
     expect(controller.isCurrentRecovery(next)).toBe(false)
   })
 })
+
+describe('history gap recovery', () => {
+  it.each(['superseded', 'failed'] as const)(
+    'keeps the safe replay base after a %s read',
+    async (outcome) => {
+      const replies: Array<{
+        resolve(value: ResultOf<'thread.history'>): void
+        reject(error: Error): void
+      }> = []
+      const transport = new TestTransport(
+        () => new Promise((resolve, reject) => replies.push({ resolve, reject })),
+      )
+      const controller = new ThreadController(transport)
+      vi.stubGlobal('requestAnimationFrame', () => 1)
+      vi.stubGlobal('cancelAnimationFrame', () => {})
+      controller.activate('thread')
+      controller.update('thread', reduce(emptyThread, started))
+      controller.setCursor('thread', 1)
+      controller.markHistoriesForRecovery()
+      const first = controller.loadHistory('thread', controller.cursor('thread'))
+      const firstResult = first.catch(() => undefined)
+      controller.receive(
+        { threadId: 'thread', seq: 3, event: { ...delta, textDelta: 'B' } },
+        unprotected,
+      )
+      controller.flush('thread')
+      expect(controller.cursor('thread')).toBe(3)
+      if (outcome === 'failed') {
+        replies[0]!.reject(new Error('offline'))
+        await firstResult
+      }
+      controller.markHistoriesForRecovery()
+      const second = controller.loadHistory('thread', controller.cursor('thread'))
+      controller.receive(
+        { threadId: 'thread', seq: 5, event: { ...delta, textDelta: 'D' } },
+        unprotected,
+      )
+      const recovered = {
+        events: ['A', 'B', 'C', 'D'].map((textDelta, index) => ({
+          seq: index + 2,
+          event: { ...delta, textDelta },
+        })),
+        running: true,
+      }
+      replies[1]!.resolve(recovered)
+      await second
+      if (outcome === 'superseded') {
+        replies[0]!.resolve(recovered)
+        expect(await firstResult).toBeUndefined()
+      }
+      expect(transport.requests.map(({ params }) => params)).toEqual([
+        { threadId: 'thread', afterSeq: 1 },
+        { threadId: 'thread', afterSeq: 1 },
+      ])
+      expect(threadItems(controller.snapshot('thread')!)[0]?.text).toBe('ABCD')
+      expect(controller.cursor('thread')).toBe(5)
+      expect([...controller.historyRecoveryIds()]).toEqual([])
+      controller.suspend()
+    },
+  )
+
+  it('does not let a read started before the gap clear recovery state', async () => {
+    let resolve!: (value: ResultOf<'thread.history'>) => void
+    const controller = new ThreadController(
+      new TestTransport(
+        () =>
+          new Promise((reply) => {
+            resolve = reply
+          }),
+      ),
+    )
+    controller.update('thread', reduce(emptyThread, started))
+    controller.setCursor('thread', 1)
+    const pending = controller.loadHistory('thread', 1)
+    controller.markHistoriesForRecovery()
+    resolve({ events: [], running: false })
+    expect(await pending).toBeUndefined()
+    expect([...controller.historyRecoveryIds()]).toEqual(['thread'])
+  })
+
+  it('releases recovery bases when their cached threads are evicted or forgotten', () => {
+    const controller = new ThreadController(new TestTransport())
+    for (let index = 0; index < 6; index++) {
+      controller.update(String(index), reduce(emptyThread, started))
+      controller.setCursor(String(index), 1)
+    }
+    controller.markHistoriesForRecovery()
+    controller.prune(unprotected)
+    expect([...controller.historyRecoveryIds()]).toEqual(['3', '4', '5'])
+    controller.forget('3')
+    controller.invalidateHistory('4')
+    controller.discardSnapshot('5')
+    expect([...controller.historyRecoveryIds()]).toEqual([])
+  })
+
+  it('refreshes unresolved input identity only after a successful owned replay', async () => {
+    const replies: Array<{
+      resolve(value: ResultOf<'thread.history'>): void
+      reject(error: Error): void
+    }> = []
+    const controller = new ThreadController(
+      new TestTransport(() => new Promise((resolve, reject) => replies.push({ resolve, reject }))),
+    )
+    const request = {
+      id: 'input',
+      turnId: 'turn',
+      questions: [],
+      createdAt: 1,
+      autoResolutionMs: null,
+    }
+    controller.update('thread', reduce(emptyThread, { type: 'user_input.requested', request }))
+    controller.setCursor('thread', 1)
+    const failed = controller.loadHistory('thread', 1)
+    replies[0]!.reject(new Error('offline'))
+    await expect(failed).rejects.toThrow('offline')
+    controller.receive({ threadId: 'thread', seq: 2, event: started }, unprotected)
+    expect(controller.snapshot('thread')!.userInputs[0]).toBe(request)
+    const stale = controller.loadHistory('thread', 2)
+    controller.markHistoriesForRecovery()
+    replies[1]!.resolve({ events: [], running: false })
+    expect(await stale).toBeUndefined()
+    expect(controller.snapshot('thread')!.userInputs[0]).toBe(request)
+    const current = controller.loadHistory('thread', 2)
+    replies[2]!.resolve({ events: [{ seq: 2, event: started }], running: false })
+    await current
+    expect(controller.snapshot('thread')!.userInputs[0]).toEqual(request)
+    expect(controller.snapshot('thread')!.userInputs[0]).not.toBe(request)
+    const confirmed = controller.snapshot('thread')!.userInputs[0]
+    controller.receive({ threadId: 'thread', seq: 3, event: delta }, unprotected)
+    controller.flush('thread')
+    expect(controller.snapshot('thread')!.userInputs[0]).toBe(confirmed)
+    const emptySuffix = controller.loadHistory('thread', 3)
+    replies[3]!.resolve({ events: [], running: false })
+    await emptySuffix
+    expect(controller.snapshot('thread')!.userInputs[0]).toEqual(confirmed)
+    expect(controller.snapshot('thread')!.userInputs[0]).not.toBe(confirmed)
+    const resolved = controller.loadHistory('thread', 3)
+    replies[4]!.resolve({
+      events: [{ seq: 4, event: { type: 'user_input.resolved', id: request.id } }],
+      running: false,
+    })
+    await resolved
+    expect(controller.snapshot('thread')!.userInputs).toEqual([])
+  })
+
+  it('bounds completed tool payloads in an unseen running background thread', () => {
+    const controller = new ThreadController(new TestTransport())
+    controller.activate('foreground')
+    const protectedState = (id: string) => controller.isProtected(id)
+    controller.receive(
+      {
+        threadId: 'background',
+        seq: 1,
+        event: {
+          type: 'turn.started',
+          turn: { id: 'turn', threadId: 'background', status: 'running', createdAt: 1 },
+        },
+      },
+      protectedState,
+    )
+    for (let index = 0; index < 300; index++) {
+      controller.receive(
+        {
+          threadId: 'background',
+          seq: index + 2,
+          event: {
+            type: 'item.completed',
+            item: {
+              id: String(index),
+              turnId: 'turn',
+              type: 'tool_call',
+              status: 'completed',
+              text: 'x'.repeat(8192),
+              createdAt: index,
+            },
+          },
+        },
+        protectedState,
+      )
+      expect(controller.snapshot('background')!.items).toHaveLength(0)
+    }
+    expect(controller.snapshot('background')!.running).toBe(true)
+    expect(controller.cursor('background')).toBeUndefined()
+  })
+})
