@@ -58,7 +58,6 @@ describe('app update controller', () => {
     expect(controller.state()).toEqual({
       status: 'ready',
       currentVersion: '0.1.0-beta.1',
-      channel: 'stable',
       version: '0.1.0-beta.2',
     })
     expect(states).toEqual(['checking', 'downloading', 'downloading', 'ready'])
@@ -163,7 +162,6 @@ describe('app update controller', () => {
     await expect(controller.check()).resolves.toEqual({
       status: 'error',
       currentVersion: '0.1.0-beta.1',
-      channel: 'stable',
       error: 'Updater failed to load.',
     })
   })
@@ -208,11 +206,7 @@ describe('app update controller', () => {
 
     controller.start()
     await vi.advanceTimersByTimeAsync(15_000)
-    expect(controller.state()).toEqual({
-      status: 'idle',
-      currentVersion: '0.1.2',
-      channel: 'stable',
-    })
+    expect(controller.state()).toEqual({ status: 'idle', currentVersion: '0.1.2' })
     expect(states).toEqual(['checking', 'idle'])
     expect(onError).toHaveBeenCalledOnce()
     expect(onError).toHaveBeenCalledWith(offline)
@@ -286,7 +280,6 @@ describe('app update controller', () => {
     expect(controller.state()).toEqual({
       status: 'current',
       currentVersion: '0.1.2',
-      channel: 'stable',
       version: '0.1.2',
     })
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
@@ -336,47 +329,6 @@ describe('app update controller', () => {
     await vi.advanceTimersByTimeAsync(1)
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(2)
     controller.dispose()
-  })
-
-  it('switches channel, remembers it, and checks the new channel at once', async () => {
-    const updater = fakeUpdater()
-    const onChannelChange = vi.fn()
-    const controller = createAppUpdateController({
-      updater,
-      currentVersion: '0.1.2',
-      enabled: true,
-      channel: 'stable',
-      onChannelChange,
-    })
-    const channels: string[] = []
-    controller.subscribe((state) => channels.push(state.channel))
-
-    await expect(controller.setChannel('stable')).resolves.toMatchObject({ channel: 'stable' })
-    expect(onChannelChange).not.toHaveBeenCalled()
-    expect(updater.checkForUpdates).not.toHaveBeenCalled()
-    await expect(controller.setChannel('beta')).resolves.toMatchObject({ channel: 'beta' })
-    expect(onChannelChange).toHaveBeenCalledWith('beta')
-    expect(updater.checkForUpdates).toHaveBeenCalledOnce()
-    expect(channels).toEqual(['beta'])
-  })
-
-  it('starts on the saved channel and keeps a ready update when leaving beta', async () => {
-    const updater = fakeUpdater()
-    const controller = createAppUpdateController({
-      updater,
-      currentVersion: '0.1.2',
-      enabled: true,
-      channel: 'beta',
-    })
-    expect(controller.state().channel).toBe('beta')
-    updater.emit('update-downloaded', { version: '0.2.0-rc.1' })
-
-    await expect(controller.setChannel('stable')).resolves.toMatchObject({
-      status: 'ready',
-      channel: 'stable',
-      version: '0.2.0-rc.1',
-    })
-    expect(updater.checkForUpdates).not.toHaveBeenCalled()
   })
 
   it('checks soon after waking when the hourly check came due during sleep', async () => {

@@ -12,13 +12,12 @@ import {
   UpdateCheckDeferredError,
   type ReleaseFetch,
 } from './github-release-provider.js'
-import type { UpdateChannel } from './app-updater.js'
 
 function release(version = '0.1.0-beta.8', date = '2026-09-20T00:00:00Z') {
   return {
     tag_name: `v${version}`,
     draft: false,
-    prerelease: false,
+    prerelease: true,
     published_at: date,
     assets: [
       ['mac-arm64', 'dmg'],
@@ -151,6 +150,17 @@ describe('GitHub asset releases', () => {
     expect(JSON.stringify(fetch.mock.calls)).not.toMatch(/authorization|\.yml/i)
   })
 
+  it('offers a release published as a GitHub pre-release to every install', async () => {
+    // Every alpha release is published as a pre-release; the flag must not hide it.
+    const fetch = feedFetch(feed('v0.1.3', 'v0.1.2'), {
+      'v0.1.3': Response.json({ ...localRelease('0.1.3'), prerelease: true }),
+    })
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+    const flagged = { ...release('0.1.3', '2026-09-19T00:00:00Z'), prerelease: true }
+    const normal = { ...release('0.1.2', '2026-09-21T00:00:00Z'), prerelease: false }
+    expect(selectLatestRelease([normal, flagged]).tag_name).toBe('v0.1.3')
+  })
+
   it('does not fall back to an older release when the newest one is incomplete', async () => {
     const incomplete = { ...localRelease('0.1.3'), assets: [] }
     const fetch = feedFetch(feed('v0.1.3', 'v0.1.2', 'v0.1.1'), {
@@ -180,39 +190,6 @@ describe('GitHub asset releases', () => {
       'https://api.github.com/repos/Leonxlnx/tastecode/releases?per_page=100&page=2',
     )
     expect(() => provider.resolveFiles()).toThrow(/verified/)
-  })
-
-  it('keeps stable installs off releases marked as pre-releases', async () => {
-    const fetch = feedFetch(feed('v0.2.0-rc.1', 'v0.1.2', 'v0.1.1'), {
-      'v0.2.0-rc.1': Response.json({ ...localRelease('0.2.0-rc.1'), prerelease: true }),
-      'v0.1.2': Response.json(localRelease('0.1.2')),
-    })
-    const provider = providerWith(fetch, '0.1.1')
-
-    expect((await provider.getLatestVersion()).version).toBe('0.1.2')
-    expect((await provider.getLatestVersion()).version).toBe('0.1.2')
-    // The skipped pre-release is remembered rather than looked up every hour.
-    const lookups = fetch.mock.calls.map(([url]) => url.split('/').pop())
-    expect(lookups).toEqual(['releases.atom', 'v0.2.0-rc.1', 'v0.1.2', 'releases.atom', 'v0.1.2'])
-  })
-
-  it('offers releases marked as pre-releases on the beta channel', async () => {
-    let channel: UpdateChannel = 'stable'
-    const fetch = feedFetch(feed('v0.2.0-rc.1', 'v0.1.1'), {
-      'v0.2.0-rc.1': Response.json({ ...localRelease('0.2.0-rc.1'), prerelease: true }),
-    })
-    const provider = providerWith(fetch, '0.1.1', () => channel)
-
-    expect((await provider.getLatestVersion()).version).toBe('0.1.1')
-    channel = 'beta'
-    expect((await provider.getLatestVersion()).version).toBe('0.2.0-rc.1')
-  })
-
-  it('applies the channel to the full release list as well', () => {
-    const rc = { ...release('0.2.0-rc.1', '2026-09-21T00:00:00Z'), prerelease: true }
-    const stable = release('0.1.2', '2026-09-20T00:00:00Z')
-    expect(selectLatestRelease([rc, stable]).tag_name).toBe('v0.1.2')
-    expect(selectLatestRelease([rc, stable], 'beta').tag_name).toBe('v0.2.0-rc.1')
   })
 
   it('defers a rate-limited lookup until GitHub resets the limit', async () => {
@@ -268,9 +245,7 @@ function feedFetch(atom: string, releases: Record<string, Response> = {}) {
     const tag = /\/releases\/tags\/(.+)$/.exec(url)?.[1]
     const answer = tag === undefined ? undefined : releases[decodeURIComponent(tag)]
     if (!answer) throw new Error(`Unexpected request: ${url}`)
-    // A fresh copy per request, since a check may ask for the same tag again.
-    const body = await answer.clone().arrayBuffer()
-    return new Response(body.byteLength ? body : null, answer)
+    return answer
   })
 }
 
@@ -284,13 +259,9 @@ function localRelease(version?: string) {
   return newest
 }
 
-function providerWith(
-  fetch: ReleaseFetch,
-  installed = '0.1.0',
-  channel = (): UpdateChannel => 'stable',
-) {
+function providerWith(fetch: ReleaseFetch, installed = '0.1.0') {
   return new GitHubReleaseProvider(
-    { provider: 'custom', fetch, channel },
+    { provider: 'custom', fetch },
     { currentVersion: new SemVer(installed) } as AppUpdater,
     { platform: 'darwin', isUseMultipleRangeRequest: false } as unknown as ProviderRuntimeOptions,
   )

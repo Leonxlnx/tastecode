@@ -2,7 +2,6 @@ import type { AppUpdater, ResolvedUpdateFileInfo, UpdateInfo } from 'electron-up
 import { Provider, type ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
 import { gt, lte, rcompare, valid } from 'semver'
 import { z } from 'zod'
-import type { UpdateChannel } from './app-updater.js'
 
 export const releaseRepository = 'Leonxlnx/tastecode'
 const releasePage = `https://github.com/${releaseRepository}/releases`
@@ -22,7 +21,6 @@ const assetSchema = z.object({
 const releaseSchema = z.object({
   tag_name: z.string(),
   draft: z.boolean(),
-  prerelease: z.boolean(),
   published_at: z.string().datetime({ offset: true }).nullable(),
   assets: z.array(z.unknown()),
 })
@@ -30,14 +28,7 @@ type Release = z.infer<typeof releaseSchema>
 export type ReleaseAsset = z.infer<typeof assetSchema>
 export type AssetUpdateInfo = UpdateInfo & { asset: ReleaseAsset }
 export type ReleaseFetch = (url: string, init?: RequestInit) => Promise<Response>
-export type ReleaseProviderOptions = {
-  provider: 'custom'
-  fetch?: ReleaseFetch
-  channel?: () => UpdateChannel
-}
-// A stable install skips a newer pre-release on every check. Remembering it
-// spares an API request each hour; a promoted release is noticed within this.
-const PRERELEASE_MEMORY = 6 * 60 * 60 * 1000
+export type ReleaseProviderOptions = { provider: 'custom'; fetch?: ReleaseFetch }
 type InstalledVersion = Pick<AppUpdater, 'currentVersion'>
 
 /** GitHub asked for the next release lookup to wait until `retryAt`. */
@@ -91,16 +82,10 @@ export function newerTags(tags: string[], current: string): string[] {
   return [...newer.keys()].sort(rcompare).map((version) => newer.get(version)!)
 }
 
-export function selectLatestRelease(rows: unknown[], channel: UpdateChannel = 'stable'): Release {
+export function selectLatestRelease(rows: unknown[]): Release {
   const releases = rows
     .map((row) => releaseSchema.parse(row))
-    .filter(
-      (release) =>
-        !release.draft &&
-        release.published_at &&
-        versionFromTag(release.tag_name) &&
-        (channel === 'beta' || !release.prerelease),
-    )
+    .filter((release) => !release.draft && release.published_at && versionFromTag(release.tag_name))
   releases.sort((a, b) => rcompare(versionFromTag(a.tag_name)!, versionFromTag(b.tag_name)!))
   const latest = releases[0]
   if (!latest) throw new Error('No published TasteCode release is available.')
@@ -140,8 +125,6 @@ export function assetFromUpdateInfo(info: UpdateInfo): ReleaseAsset {
 export class GitHubReleaseProvider extends Provider<UpdateInfo> {
   private readonly platform: string
   private readonly fetch: ReleaseFetch
-  private readonly channel: () => UpdateChannel
-  private readonly skippedPrereleases = new Map<string, number>()
 
   constructor(
     options: ReleaseProviderOptions,
@@ -151,7 +134,6 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
     super({ ...runtime, isUseMultipleRangeRequest: false })
     this.platform = runtime.platform
     this.fetch = options.fetch ?? fetch
-    this.channel = options.channel ?? (() => 'stable')
   }
 
   /** The response, or undefined for a 404. */
@@ -178,7 +160,6 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
 
   async getLatestVersion(): Promise<UpdateInfo> {
     const current = this.installed.currentVersion.version
-    const channel = this.channel()
     // Installs behind one office or VPN address share GitHub's unauthenticated
     // API limit of 60 requests an hour, and a 304 still counts. The release
     // feed is not part of that limit, so a check that finds nothing newer
@@ -191,9 +172,8 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
       return version !== undefined && lte(version, current)
     })
     // Newer bare tags can push every release out of the feed's ten entries.
-    if (!coversInstalled) return this.latestFromReleaseList(channel)
+    if (!coversInstalled) return this.latestFromReleaseList()
     for (const tag of newerTags(tags, current).slice(0, 5)) {
-      if (channel === 'stable' && (this.skippedPrereleases.get(tag) ?? 0) > Date.now()) continue
       const row = await this.request(
         `${releaseApi}/tags/${encodeURIComponent(tag)}`,
         'application/vnd.github+json',
@@ -202,10 +182,6 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
       if (!row) continue
       const release = releaseSchema.parse(await row.json())
       if (release.draft || !release.published_at) continue
-      if (release.prerelease && channel === 'stable') {
-        this.skippedPrereleases.set(tag, Date.now() + PRERELEASE_MEMORY)
-        continue
-      }
       return releaseUpdateInfo(release, this.platform, process.arch)
     }
     return {
@@ -217,7 +193,7 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
     }
   }
 
-  private async latestFromReleaseList(channel: UpdateChannel): Promise<UpdateInfo> {
+  private async latestFromReleaseList(): Promise<UpdateInfo> {
     const releases: unknown[] = []
     // Scan pages rather than trusting GitHub's "Latest" badge or excluding beta
     // releases. Version order decides; publishing an old proof must not hide an update.
@@ -230,11 +206,7 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
       if (!Array.isArray(rows)) throw new Error('GitHub returned an invalid release list.')
       releases.push(...rows)
       if (rows.length < 100)
-        return releaseUpdateInfo(
-          selectLatestRelease(releases, channel),
-          this.platform,
-          process.arch,
-        )
+        return releaseUpdateInfo(selectLatestRelease(releases), this.platform, process.arch)
     }
     throw new Error('GitHub release history exceeded the update lookup limit.')
   }
