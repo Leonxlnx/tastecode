@@ -56,6 +56,7 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSkeleton } from './Skeleton.js'
+import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -438,7 +439,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     <RowMeasureContext.Provider value={measureRow}>
       <div className="thread-shell">
         {finding ? (
-          <Suspense fallback={null}>
+          <Suspense fallback={<FindBarSkeleton />}>
             <ThreadSearch
               items={thread.items}
               liveItems={liveItems}

@@ -36,14 +36,17 @@ it('opens on import completion without a Suspense reveal delay, then reopens syn
   )
   expect(screen.queryByText('Waiting for viewer')).toBeNull()
   expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.getByRole('status').textContent).toBe('Opening viewer…')
 
   await act(async () => {
     moduleLoad.release()
     await vi.dynamicImportSettled()
   })
   expect(screen.getByRole('dialog', { name: props.name })).toBeTruthy()
+  expect(screen.queryByRole('status')).toBeNull()
   view.unmount()
 
   render(<LazyMediaViewer {...props} />)
   expect(screen.getByRole('dialog', { name: props.name })).toBeTruthy()
+  expect(screen.queryByRole('status')).toBeNull()
 })
