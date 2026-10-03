@@ -14,6 +14,7 @@ import {
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
+  ProviderContextSettingsSchema,
   ProviderIdSchema,
   ProviderSetupSchema,
   ProviderStatusSchema,
@@ -153,6 +154,8 @@ export const PreviewInteractiveTargetViolationSchema = z
     label: z.string().max(200),
     width: z.number().finite().nonnegative(),
     height: z.number().finite().nonnegative(),
+    /** An ancestor's overflow hides part of the target. */
+    partiallyClipped: z.boolean().optional(),
   })
   .refine(({ width, height }) => width < 44 || height < 44, {
     message: 'interactive target violations must be smaller than 44 CSS px',
@@ -164,12 +167,20 @@ export type PreviewInteractiveTargetViolation = z.infer<
 export const PreviewDomAuditSchema = z.object({
   h1Count: z.number().int().nonnegative().max(10_000),
   interactiveTargetViolations: z.array(PreviewInteractiveTargetViolationSchema).max(200),
+  /**
+   * `partial` when the bounded DOM walk stopped early or content may sit in closed
+   * shadow roots; counts are then lower bounds.
+   */
+  coverage: z.enum(['complete', 'partial']).optional(),
 })
 export type PreviewDomAudit = z.infer<typeof PreviewDomAuditSchema>
 
 export const PreviewScreenshotSchema = PreviewViewportSchema.extend({
   path: z.string().min(1),
   domAudit: PreviewDomAuditSchema.optional(),
+  /** Full document height; larger than `capturedHeight` when the bitmap cap cut the page. */
+  documentHeight: z.number().int().positive().optional(),
+  capturedHeight: z.number().int().positive().optional(),
 })
 export type PreviewScreenshot = z.infer<typeof PreviewScreenshotSchema>
 
@@ -404,6 +415,12 @@ export const ThreadLifecycleSchema = z.discriminatedUnion('state', [
 ])
 export type ThreadLifecycle = z.infer<typeof ThreadLifecycleSchema>
 
+export const ProviderContextSettingsMapSchema = z.partialRecord(
+  ProviderIdSchema,
+  ProviderContextSettingsSchema,
+)
+export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
+
 export const SidebarSettingsSchema = z.object({
   mode: z.enum(['classic', 'inbox']),
   autoSettleDays: z.number().int().min(1).max(90).nullable(),
@@ -596,6 +613,19 @@ export const methods = {
   'providers.list': {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
+  },
+  /** Context settings applied when a session launches or resumes. */
+  'providers.contextSettings': {
+    params: z.object({}),
+    result: ProviderContextSettingsMapSchema,
+  },
+  /** Replaces one provider's settings; sessions already running keep theirs. */
+  'providers.updateContextSettings': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      settings: ProviderContextSettingsSchema,
+    }),
+    result: ProviderContextSettingsMapSchema,
   },
   /** Cached background release checks, separate from startup provider detection. */
   'providers.updates': {
@@ -914,6 +944,33 @@ export const methods = {
           restricted: z.boolean(),
         }),
       ),
+    }),
+  },
+  /**
+   * Find files and folders by name anywhere in a registered project or a session's isolated
+   * checkout, including folders the client has not opened yet. Follows the same visibility
+   * rules as `workspace.listDirectory`.
+   */
+  'workspace.searchFiles': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      query: z.string().trim().min(1).max(256),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+    result: z.object({
+      entries: z.array(
+        z.object({
+          name: z.string().min(1),
+          path: z.string(),
+          kind: z.enum(['directory', 'file']),
+          size: z.number().nonnegative(),
+          modifiedAt: z.number().nonnegative(),
+          restricted: z.boolean(),
+        }),
+      ),
+      /** More matches exist than were returned, or the walk stopped at its bound. */
+      truncated: z.boolean(),
     }),
   },
   /** Read a bounded public text file without exposing renderer filesystem access. */
