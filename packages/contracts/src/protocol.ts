@@ -802,6 +802,8 @@ export const methods = {
     params: z.object({
       repository: GitHubRepositoryNameSchema,
       number: z.number().int().positive(),
+      expectedHeadOid: z.string().min(1),
+      expectedBaseOid: z.string().min(1),
       page: z.number().int().min(1).max(100).optional(),
       refresh: z.boolean().optional(),
     }),
