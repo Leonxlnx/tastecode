@@ -44,6 +44,7 @@ type Bridge = {
   getUpdateState?: () => Promise<AppUpdateState>
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
+  setUpdateChannel?: (channel: AppUpdateChannel) => Promise<AppUpdateState>
   setMenuShortcuts?: (shortcuts: NativeMenuShortcuts) => void
   onMenuAction?: (listener: (action: NativeMenuAction) => void) => () => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
@@ -103,9 +104,11 @@ const NATIVE_MENU_ACTION_IDS = [
 ] as const satisfies readonly KeybindingId[]
 export type NativeMenuAction = (typeof NATIVE_MENU_ACTION_IDS)[number]
 type NativeMenuShortcuts = Record<NativeMenuAction, Shortcut | null>
+export type AppUpdateChannel = 'stable' | 'beta'
 export type AppUpdateState = {
   status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
   currentVersion: string
+  channel?: AppUpdateChannel
   version?: string
   progress?: number
   error?: string
@@ -344,6 +347,10 @@ export function reportRendererError(cause: unknown): void {
 const unsupportedUpdate: AppUpdateState = {
   status: 'unsupported',
   currentVersion: 'pre-release',
+}
+
+export function setAppUpdateChannel(channel: AppUpdateChannel): Promise<AppUpdateState> {
+  return bridge?.setUpdateChannel?.(channel) ?? Promise.resolve(unsupportedUpdate)
 }
 
 export function appUpdateState(): Promise<AppUpdateState> {
