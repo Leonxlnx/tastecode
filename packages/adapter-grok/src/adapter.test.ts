@@ -30,6 +30,10 @@ class FakeChild extends ChildProcess {
     null,
   ]
   wasKilled = false
+  constructor(spawns = true) {
+    super()
+    if (spawns) queueMicrotask(() => this.emit('spawn'))
+  }
 
   override kill(): boolean {
     this.wasKilled = true
@@ -72,6 +76,48 @@ describe('Grok adapter', () => {
     expect(() => adapter.setApproval('auto-review')).toThrow('does not support')
     await adapter.dispose()
   })
+
+  it.each(['throw', 'error', 'attachment'] as const)(
+    'retains initial session creation and instructions after %s failure',
+    async (failure) => {
+      const children: FakeChild[] = []
+      const args: string[][] = []
+      let fail = true
+      const adapter = new GrokAdapter({
+        spawn: (_command, value) => {
+          if (fail && failure === 'throw') throw new Error('launch failed')
+          args.push(value)
+          const child = new FakeChild(!fail)
+          children.push(child)
+          return child
+        },
+      })
+      const thread = await adapter.startThread('C:\\repo', { instructions: 'Keep the rules.' })
+      if (failure === 'error') {
+        await adapter.sendTurn(thread.id, 'first')
+        children[0]!.emit('error', new Error('ENOENT'))
+      } else {
+        await expect(
+          adapter.sendTurn(
+            thread.id,
+            'first',
+            failure === 'attachment'
+              ? [path.join(os.tmpdir(), `missing-${crypto.randomUUID()}.png`)]
+              : [],
+          ),
+        ).rejects.toThrow()
+      }
+      fail = false
+      await adapter.sendTurn(thread.id, 'retry')
+      const retryArgs = args.at(-1)!
+      expect(retryArgs).toContain('--session-id')
+      expect(retryArgs).not.toContain('--resume')
+      expect(readFileSync(retryArgs[retryArgs.indexOf('--prompt-file') + 1]!, 'utf8')).toContain(
+        '<system-instructions>\nKeep the rules.\n</system-instructions>\n\nretry',
+      )
+      await adapter.dispose()
+    },
+  )
 
   it('encodes images and files as ACP prompt content blocks', () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-grok-attachment-'))
