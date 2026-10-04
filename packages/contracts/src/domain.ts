@@ -59,6 +59,8 @@ export const ItemSchema = z.object({
   phase: AssistantPhaseSchema.optional(),
   /** Accumulated text. Deltas append here. */
   text: z.string().optional(),
+  /** Absolute paths attached to a user message. The renderer only previews images. */
+  attachments: z.array(z.string()).optional(),
   /** Present on `command`: the command line and its exit code once finished. */
   command: z.string().optional(),
   exitCode: z.number().optional(),
@@ -156,6 +158,8 @@ export const UserInputQuestionSchema = z.object({
   allowOther: z.boolean(),
   secret: z.boolean(),
   options: z.array(UserInputOptionSchema).nullable(),
+  /** The user may pick more than one option. Absent means a single choice. */
+  multiSelect: z.boolean().optional(),
 })
 export type UserInputQuestion = z.infer<typeof UserInputQuestionSchema>
 
@@ -238,6 +242,26 @@ export const DomainEventSchema = z.discriminatedUnion('type', [
 export type DomainEvent = z.infer<typeof DomainEventSchema>
 
 /**
+ * How much of the session context the user may shape before a session starts.
+ * Engines expose this very differently — a token budget, a percentage, a model
+ * variant — so each adapter declares what it can honour and translates the
+ * shared settings itself.
+ */
+export const ContextControlSchema = z.object({
+  /** Window sizes in tokens the engine accepts. The first is its own default. */
+  windows: z.array(z.number().int().positive()).min(1),
+  /** The point where the engine compacts on its own can be moved. */
+  compaction: z.boolean(),
+  /** Automatic compaction can be switched off entirely. */
+  compactionOff: z.boolean(),
+  /** Where the engine compacts when left alone, as a percent of its default window. */
+  defaultCompactAt: z.number().int().min(1).max(100).optional(),
+  /** The latest compaction point the engine honours. A later one would have no effect. */
+  latestCompactAt: z.number().int().min(10).max(99).optional(),
+})
+export type ContextControl = z.infer<typeof ContextControlSchema>
+
+/**
  * What an engine can actually do. The UI reads this and hides what is
  * unavailable rather than showing a button that fails — capability negotiation
  * is the difference between a wrapper that feels solid and one that lies.
@@ -253,6 +277,8 @@ export const CapabilitiesSchema = z.object({
   /** Can route elevated approval requests through an automatic risk reviewer. */
   autoReview: z.boolean().optional(),
   images: z.boolean(),
+  /** Absent when the engine decides its context on its own. */
+  context: ContextControlSchema.optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
@@ -284,12 +310,85 @@ export const ModelSchema = z.object({
 export type Model = z.infer<typeof ModelSchema>
 
 /**
+ * The small model TasteCode uses for short product-owned writing such as thread
+ * titles and commit-message drafts. Source identity stays explicit because
+ * model ids are not globally unique and API connections have their own bill.
+ */
+export const BackgroundModelTargetSchema = z
+  .object({
+    provider: ProviderIdSchema,
+    connectionId: z.string().min(1).optional(),
+    agent: z.string().min(1).optional(),
+    model: z.string().min(1),
+    effort: z.string().min(1).optional(),
+    serviceTier: z.string().min(1).optional(),
+  })
+  .superRefine((target, context) => {
+    if ((target.provider === 'api') !== Boolean(target.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api background models',
+      })
+    }
+    if (target.provider === 'api' && target.agent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agent'],
+        message: 'api background models cannot select an agent',
+      })
+    }
+  })
+export type BackgroundModelTarget = z.infer<typeof BackgroundModelTargetSchema>
+
+export const BackgroundModelPreferenceSchema = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('automatic') }),
+  z.object({ mode: z.literal('manual'), target: BackgroundModelTargetSchema }),
+])
+export type BackgroundModelPreference = z.infer<typeof BackgroundModelPreferenceSchema>
+
+export const BackgroundModelSourceSchema = z.object({
+  id: z.string().min(1),
+  displayName: z.string().min(1),
+  provider: ProviderIdSchema,
+  connectionId: z.string().min(1).optional(),
+  agent: z.string().min(1).optional(),
+  models: z.array(ModelSchema),
+})
+export type BackgroundModelSource = z.infer<typeof BackgroundModelSourceSchema>
+
+export const BackgroundModelSelectionSchema = BackgroundModelTargetSchema.extend({
+  sourceName: z.string().min(1),
+  automatic: z.boolean(),
+})
+export type BackgroundModelSelection = z.infer<typeof BackgroundModelSelectionSchema>
+
+export const BackgroundModelSettingsSchema = z.object({
+  preference: BackgroundModelPreferenceSchema,
+  sources: z.array(BackgroundModelSourceSchema),
+  resolved: BackgroundModelSelectionSchema.optional(),
+})
+export type BackgroundModelSettings = z.infer<typeof BackgroundModelSettingsSchema>
+
+/**
  * How much the agent may do without asking. Mapped per adapter onto whatever
  * the engine calls it — this is the user-facing concept, and it is the single
  * most consequential setting in the app, so it is never hidden in a menu.
  */
 export const ApprovalModeSchema = z.enum(['ask', 'auto', 'auto-review', 'full'])
 export type ApprovalMode = z.infer<typeof ApprovalModeSchema>
+
+/**
+ * Context settings the server applies to every session it launches or resumes
+ * with one provider. Absent fields leave the engine's own behaviour alone.
+ */
+export const ProviderContextSettingsSchema = z.object({
+  /** Tokens the session may hold. Must be one of the provider's declared windows. */
+  window: z.number().int().positive().optional(),
+  /** Percent of the window at which the engine compacts on its own, or never. */
+  compactAt: z.union([z.number().int().min(10).max(99), z.literal('off')]).optional(),
+})
+export type ProviderContextSettings = z.infer<typeof ProviderContextSettingsSchema>
 
 /**
  * Who the user is signed in as with a given provider.
@@ -311,6 +410,8 @@ export const ProviderSetupSchema = z.object({
   installCommand: z.string().optional(),
   /** `app` can authenticate in Harness; `provider` finishes setup in the provider's CLI. */
   login: z.enum(['app', 'provider']),
+  /** Whether the provider CLI opens its own OAuth page during terminal sign-in. */
+  loginOpensBrowser: z.boolean().optional(),
 })
 export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
 
@@ -414,3 +515,16 @@ export const ProviderStatusSchema = z.object({
   problem: z.string().optional(),
 })
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
+
+/** Public release metadata; update commands remain on the server. */
+export const ProviderUpdateSchema = z.object({
+  provider: ProviderIdSchema,
+  displayName: z.string(),
+  currentVersion: z.string().optional(),
+  latestVersion: z.string().optional(),
+  updateAvailable: z.boolean(),
+  canUpdate: z.boolean(),
+  updateUrl: z.url(),
+  error: z.string().optional(),
+})
+export type ProviderUpdate = z.infer<typeof ProviderUpdateSchema>

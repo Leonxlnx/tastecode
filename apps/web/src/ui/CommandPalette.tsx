@@ -1,5 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Search } from 'lucide-react'
+import { IconSearch as Search } from '@tabler/icons-react'
+import '../styles/command-palette.css'
+import { useDialogFocus } from './dialog-focus.js'
 
 export type CommandScope = 'all' | 'projects' | 'new-thread'
 
@@ -11,45 +13,90 @@ export type PaletteCommand = {
   keywords?: string
   projectCommand?: boolean
   newThreadProject?: boolean
+  shortcut?: string | undefined
   run: () => void
+}
+
+export type PaletteDeferredSearch = (terms: readonly string[], limit: number) => PaletteCommand[]
+
+export const MAX_VISIBLE_PALETTE_COMMANDS = 100
+
+class PaletteCommandSearchIndex {
+  readonly #searchable = new Map<PaletteCommand, string>()
+
+  constructor(readonly commands: readonly PaletteCommand[]) {}
+
+  text(command: PaletteCommand): string {
+    const cached = this.#searchable.get(command)
+    if (cached !== undefined) return cached
+    const searchable =
+      `${command.title} ${command.detail ?? ''} ${command.group} ${command.keywords ?? ''}`.toLowerCase()
+    this.#searchable.set(command, searchable)
+    return searchable
+  }
+}
+
+function visiblePaletteCommands(
+  index: PaletteCommandSearchIndex,
+  scope: CommandScope,
+  preferredCommandId: string | undefined,
+  query: string,
+  deferredSearch: PaletteDeferredSearch | undefined,
+): PaletteCommand[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const inScope = (command: PaletteCommand) =>
+    scope === 'projects'
+      ? command.projectCommand === true
+      : scope === 'new-thread'
+        ? command.newThreadProject === true
+        : true
+  const matches = (command: PaletteCommand) =>
+    inScope(command) && terms.every((term) => index.text(command).includes(term))
+  const visible: PaletteCommand[] = []
+  const preferred = preferredCommandId
+    ? index.commands.find((command) => command.id === preferredCommandId)
+    : undefined
+  if (preferred && matches(preferred)) visible.push(preferred)
+
+  for (const command of index.commands) {
+    if (visible.length >= MAX_VISIBLE_PALETTE_COMMANDS) break
+    if (command !== preferred && matches(command)) visible.push(command)
+  }
+  if (scope === 'all' && deferredSearch && visible.length < MAX_VISIBLE_PALETTE_COMMANDS) {
+    visible.push(...deferredSearch(terms, MAX_VISIBLE_PALETTE_COMMANDS - visible.length))
+  }
+  return visible
 }
 
 function CommandPaletteComponent(props: {
   commands: PaletteCommand[]
   scope: CommandScope
   preferredCommandId?: string | undefined
+  deferredSearch?: PaletteDeferredSearch | undefined
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const results = useRef<HTMLDivElement>(null)
+  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
 
   useEffect(() => {
     input.current?.focus()
   }, [])
 
-  const commands = useMemo(() => {
-    const scoped =
-      props.scope === 'projects'
-        ? props.commands.filter((command) => command.projectCommand)
-        : props.scope === 'new-thread'
-          ? props.commands.filter((command) => command.newThreadProject)
-          : props.commands
-    const preferred = props.preferredCommandId
-      ? scoped.find((command) => command.id === props.preferredCommandId)
-      : undefined
-    const available = preferred
-      ? [preferred, ...scoped.filter((command) => command.id !== preferred.id)]
-      : scoped
-    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-    if (terms.length === 0) return available
-    return available.filter((command) => {
-      const searchable =
-        `${command.title} ${command.detail ?? ''} ${command.group} ${command.keywords ?? ''}`.toLowerCase()
-      return terms.every((term) => searchable.includes(term))
-    })
-  }, [props.commands, props.scope, props.preferredCommandId, query])
+  const searchIndex = useMemo(() => new PaletteCommandSearchIndex(props.commands), [props.commands])
+  const commands = useMemo(
+    () =>
+      visiblePaletteCommands(
+        searchIndex,
+        props.scope,
+        props.preferredCommandId,
+        query,
+        props.deferredSearch,
+      ),
+    [searchIndex, props.scope, props.preferredCommandId, props.deferredSearch, query],
+  )
 
   useEffect(() => {
     setSelected(0)
@@ -80,6 +127,8 @@ function CommandPaletteComponent(props: {
       className="command-palette"
       role="dialog"
       aria-modal="true"
+      ref={dialog.panel}
+      tabIndex={-1}
       aria-label={
         props.scope === 'projects'
           ? 'Switch project'
@@ -87,17 +136,13 @@ function CommandPaletteComponent(props: {
             ? 'Choose a project for the new thread'
             : 'Command palette'
       }
-      onKeyDown={(event) => {
-        if (event.key === 'Escape' && !event.defaultPrevented) {
-          event.preventDefault()
-          props.onClose()
-        }
-      }}
+      onKeyDown={dialog.onKeyDown}
     >
       <button
         className="command-palette__scrim"
         onClick={props.onClose}
         aria-label="Close command palette"
+        tabIndex={-1}
       />
       <div className="command-palette__panel">
         <div className="command-palette__search">
@@ -160,6 +205,7 @@ function CommandPaletteComponent(props: {
                     onClick={() => choose(command)}
                     onMouseEnter={() => setSelected(index)}
                     role="option"
+                    tabIndex={-1}
                     aria-selected={index === selected}
                   >
                     <span className="command-palette__copy">
@@ -168,6 +214,9 @@ function CommandPaletteComponent(props: {
                         <span className="command-palette__detail">{command.detail}</span>
                       ) : null}
                     </span>
+                    {command.shortcut ? (
+                      <kbd className="command-palette__shortcut">{command.shortcut}</kbd>
+                    ) : null}
                   </button>
                 </div>
               )

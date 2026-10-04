@@ -1,17 +1,21 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { z } from 'zod'
 import {
-  ArrowLeft,
-  ArrowRight,
-  ExternalLink,
-  Globe2,
-  LoaderCircle,
-  Laptop,
-  Monitor,
-  RefreshCw,
-  Smartphone,
-  Tablet,
-} from 'lucide-react'
+  IconArrowLeft as ArrowLeft,
+  IconArrowRight as ArrowRight,
+  IconExternalLink as ExternalLink,
+  IconWorld as Globe2,
+  IconLoader2 as LoaderCircle,
+  IconDeviceLaptop as Laptop,
+  IconDeviceDesktop as Monitor,
+  IconRefresh as RefreshCw,
+  IconDeviceMobile as Smartphone,
+  IconDeviceTablet as Tablet,
+} from '@tabler/icons-react'
 import { isDesktop, openExternalUrl } from '../../bridge.js'
+import { errorMessage } from '../../boundary.js'
+import { IconMorph } from '../IconMorph.js'
+import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import { browserUrl } from './browser-url.js'
 import {
@@ -49,6 +53,26 @@ type BrowserGuest = HTMLElement & {
   stop(): void
 }
 
+declare global {
+  interface HTMLElementTagNameMap {
+    webview: BrowserGuest
+  }
+}
+
+const NavigationEventSchema = z.object({
+  isMainFrame: z.boolean().optional(),
+  url: z.string().optional(),
+})
+const PageTitleEventSchema = z.object({ title: z.string() })
+const LoadFailureEventSchema = z.object({
+  errorCode: z.number().optional(),
+  errorDescription: z.string().optional(),
+  isMainFrame: z.boolean().optional(),
+})
+const RendererGoneEventSchema = z.object({
+  details: z.object({ reason: z.string().optional() }).optional(),
+})
+
 const EMPTY_STATE: BrowserState = {
   url: '',
   title: 'New tab',
@@ -77,10 +101,11 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [guestReadyRevision, setGuestReadyRevision] = useState(0)
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
+  const [hasRenderedPage, setHasRenderedPage] = useState(false)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
   const [error, setError] = useState<string>()
 
-  const syncGuestState = useCallback(() => {
+  const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
     if (!view) return
     try {
@@ -93,6 +118,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         canGoForward: view.canGoForward(),
       })
       if (currentUrl) setAddress(currentUrl)
+      if (currentUrl && pageReady) setHasRenderedPage(true)
     } catch {
       // The guest can detach between an event and this state read. Its next
       // lifecycle event, or a remount, supplies the authoritative state.
@@ -103,7 +129,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     const element = host.current
     if (!element || !isDesktop) return
 
-    const view = document.createElement('webview') as BrowserGuest
+    const view = document.createElement('webview')
     view.className = 'workspace-browser__guest'
     view.setAttribute('aria-label', 'Browser page')
     view.setAttribute('partition', 'persist:harness-browser')
@@ -118,15 +144,16 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       if (guest.current !== view) return
       readyGuest.current = view
       setGuestReadyRevision((revision) => revision + 1)
-      syncGuestState()
+      syncGuestState(true)
     }
     const onStart = () => {
       setError(undefined)
       setState((current) => ({ ...current, loading: true }))
     }
-    const onStop = () => syncGuestState()
+    const onStop = () => syncGuestState(true)
     const onNavigate = (event: Event) => {
-      const url = webPageUrl((event as Event & { url?: unknown }).url)
+      const navigation = NavigationEventSchema.safeParse(event)
+      const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
       if (url) {
         setAddress(url)
         setState((current) => ({ ...current, url }))
@@ -134,26 +161,23 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState()
     }
     const onNavigateInPage = (event: Event) => {
-      const navigation = event as Event & { isMainFrame?: boolean; url?: unknown }
-      if (navigation.isMainFrame !== false) onNavigate(event)
+      const navigation = NavigationEventSchema.safeParse(event)
+      if (!navigation.success || navigation.data.isMainFrame !== false) onNavigate(event)
     }
     const onTitle = (event: Event) => {
-      const title = (event as Event & { title?: unknown }).title
-      if (typeof title === 'string') setState((current) => ({ ...current, title }))
+      const title = PageTitleEventSchema.safeParse(event)
+      if (title.success) setState((current) => ({ ...current, title: title.data.title }))
     }
     const onFail = (event: Event) => {
-      const failure = event as Event & {
-        errorCode?: number
-        errorDescription?: string
-        isMainFrame?: boolean
-      }
-      if (failure.isMainFrame !== false && failure.errorCode !== -3) {
-        setError(failure.errorDescription || 'The page could not be loaded.')
+      const failure = LoadFailureEventSchema.safeParse(event)
+      if (failure.success && failure.data.isMainFrame !== false && failure.data.errorCode !== -3) {
+        setError(failure.data.errorDescription || 'The page could not be loaded.')
       }
       syncGuestState()
     }
     const onRendererGone = (event: Event) => {
-      const reason = (event as Event & { details?: { reason?: string } }).details?.reason
+      const stopped = RendererGoneEventSchema.safeParse(event)
+      const reason = stopped.success ? stopped.data.details?.reason : undefined
       setError(`Page renderer stopped${reason ? `: ${reason}` : '.'}`)
       syncGuestState()
     }
@@ -278,6 +302,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
   }
 
+  const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !error
+
   return (
     <div className="workspace-browser">
       <div className="workspace-browser__toolbar">
@@ -303,11 +329,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
           disabled={!state.url}
           onClick={() => action(state.loading ? 'stop' : 'reload')}
         >
-          {state.loading ? (
-            <LoaderCircle className="spinner" size={15} aria-hidden />
-          ) : (
+          <IconMorph active={state.loading ? 1 : 0}>
             <RefreshCw size={14} aria-hidden />
-          )}
+            <LoaderCircle className="spinner" size={15} aria-hidden />
+          </IconMorph>
         </button>
         <form
           className="workspace-browser__address"
@@ -358,13 +383,33 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         </div>
       </div>
 
-      <div ref={canvas} className="workspace-browser__canvas" data-viewport={viewport}>
+      <div
+        ref={canvas}
+        className="workspace-browser__canvas"
+        data-viewport={viewport}
+        aria-busy={state.loading && !error}
+      >
         <div
           ref={host}
           className="workspace-browser__guest-host"
           data-visible={Boolean(state.url)}
           aria-hidden={!active}
-        />
+        >
+          {loadingFirstPage ? (
+            <SkeletonStatus label="Loading page…" className="workspace-browser__skeleton">
+              <div className="workspace-browser__skeleton-header">
+                <Skeleton width={72} height={11} />
+                <Skeleton width="26%" height={9} />
+              </div>
+              <div className="workspace-browser__skeleton-body">
+                <Skeleton width="58%" height={18} />
+                <SkeletonLines lines={3} widths={['94%', '88%', '64%']} />
+                <Skeleton className="skeleton--block workspace-browser__skeleton-media" />
+                <SkeletonLines lines={2} widths={['90%', '72%']} />
+              </div>
+            </SkeletonStatus>
+          ) : null}
+        </div>
         {!state.url ? (
           <div className="workspace-browser__placeholder">
             <WorkspaceEmptyState
@@ -400,8 +445,4 @@ function webPageUrl(value: unknown): string {
 
 function isAbortedNavigation(cause: unknown): boolean {
   return cause instanceof Error && /ERR_ABORTED|\(-3\)/i.test(cause.message)
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause)
 }

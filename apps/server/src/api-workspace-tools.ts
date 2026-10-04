@@ -13,7 +13,9 @@ import {
 import path from 'node:path'
 import type { ApiTool, ApiToolCall, ApiToolResult } from '@harness/adapter-api'
 import type { ApprovalMode, ApprovalRequest } from '@harness/contracts'
-import { killTree, spawnCli } from '@harness/proc'
+import { spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
+import { z } from 'zod'
 import {
   assertPublicWorkspaceFile,
   existingWorkspacePath,
@@ -27,8 +29,21 @@ const MAX_WRITE_BYTES = 1_000_000
 const MAX_OUTPUT_BYTES = 100_000
 const COMMANDS = new Set(['bun', 'git', 'node', 'npm', 'npx', 'pnpm', 'yarn'])
 const UNSAFE_ARG = /[&|<>^%!"\r\n()]/
+const WorkspacePathInputSchema = z.object({ path: z.string().min(1) })
+const WriteFileReviewInputSchema = z.object({ path: z.string().min(1) })
+const WriteFileInputSchema = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+  expectedSha256: z.string().min(1).nullable(),
+})
+const RunCommandInputSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()),
+  cwd: z.string().min(1),
+})
+type RunCommandInput = z.infer<typeof RunCommandInputSchema>
 
-export const API_WORKSPACE_TOOLS: ApiTool[] = [
+const API_WORKSPACE_TOOLS: ApiTool[] = [
   {
     name: 'list_files',
     description: 'List one directory inside the active workspace. Secret files are omitted.',
@@ -91,19 +106,22 @@ export function createApiWorkspaceTools(workspacePath: string, approval: Approva
       executeWorkspaceTool(workspace, call, signal),
     reviewTool: (call: ApiToolCall): Omit<ApprovalRequest, 'id' | 'createdAt'> | undefined => {
       if (currentApproval === 'full') return undefined
-      const input = record(call.input, `${call.name} input`)
       if (call.name === 'write_file') {
+        const input = WriteFileReviewInputSchema.parse(call.input)
+        const destination = writableWorkspacePath(workspace, input.path)
         return {
           kind: 'file_change',
-          path: displayPath(input.path),
+          path: displayPath(path.relative(workspace, destination)),
           reason: 'Modify a project file',
         }
       }
       if (call.name === 'run_command') {
+        const input = RunCommandInputSchema.parse(call.input)
+        const directory = existingWorkspacePath(workspace, input.cwd, true)
         return {
           kind: 'command',
           command: commandLine(input),
-          cwd: displayPath(input.cwd),
+          cwd: displayPath(path.relative(workspace, directory) || '.'),
           reason: 'Run a project command',
         }
       }
@@ -121,18 +139,36 @@ async function executeWorkspaceTool(
   call: ApiToolCall,
   signal: AbortSignal,
 ): Promise<ApiToolResult> {
-  const input = record(call.input, `${call.name} input`)
   switch (call.name) {
     case 'list_files': {
-      const directory = existingWorkspacePath(workspace, string(input.path, 'workspace path'), true)
+      const input = WorkspacePathInputSchema.parse(call.input)
+      const directory = existingWorkspacePath(workspace, input.path, true)
       const entries = readdirSync(directory, { withFileTypes: true })
         .filter((entry) => !isSecretWorkspaceName(entry.name))
+        .filter((entry) => {
+          try {
+            // An innocent-looking alias must obey the target's policy as well.
+            const target = realpathSync(path.join(directory, entry.name))
+            const relative = path.relative(workspace, target)
+            if (
+              relative === '..' ||
+              relative.startsWith(`..${path.sep}`) ||
+              path.isAbsolute(relative)
+            )
+              return false
+            assertPublicWorkspaceFile(target)
+            return true
+          } catch {
+            return false
+          }
+        })
         .slice(0, 500)
         .map((entry) => `${entry.isDirectory() ? 'directory' : 'file'}\t${entry.name}`)
       return { content: entries.join('\n') || '(empty directory)' }
     }
     case 'read_file': {
-      const file = existingWorkspacePath(workspace, string(input.path, 'workspace path'), false)
+      const input = WorkspacePathInputSchema.parse(call.input)
+      const file = existingWorkspacePath(workspace, input.path, false)
       assertPublicWorkspaceFile(file)
       if (statSync(file).size > MAX_READ_BYTES) throw new Error('file exceeds the read limit')
       const content = readFileSync(file, 'utf8')
@@ -145,12 +181,13 @@ async function executeWorkspaceTool(
       }
     }
     case 'write_file': {
-      const destination = writableWorkspacePath(workspace, string(input.path, 'workspace path'))
+      const input = WriteFileInputSchema.parse(call.input)
+      const destination = writableWorkspacePath(workspace, input.path)
       assertPublicWorkspaceFile(destination)
-      const content = text(input.content, 'write_file content')
+      const content = input.content
       if (Buffer.byteLength(content) > MAX_WRITE_BYTES)
         throw new Error('file exceeds the write limit')
-      const expected = nullableString(input.expectedSha256, 'write_file expectedSha256')
+      const expected = input.expectedSha256
       const current = existsSync(destination) ? readFileSync(destination, 'utf8') : undefined
       if ((current === undefined ? null : sha256(current)) !== expected) {
         throw new Error('file changed since it was read')
@@ -176,7 +213,7 @@ async function executeWorkspaceTool(
       return { content: JSON.stringify({ path: displayPath(input.path), sha256: sha256(content) }) }
     }
     case 'run_command':
-      return runCommand(workspace, input, signal)
+      return runCommand(workspace, RunCommandInputSchema.parse(call.input), signal)
     default:
       return { content: `Unknown tool: ${call.name}`, isError: true }
   }
@@ -192,20 +229,31 @@ function removeTemporary(file: string): void {
 
 function runCommand(
   workspace: string,
-  input: Record<string, unknown>,
+  input: RunCommandInput,
   signal: AbortSignal,
 ): Promise<ApiToolResult> {
-  const command = string(input.command, 'run_command command')
+  const command = input.command
   if (!COMMANDS.has(command)) throw new Error('command is not in the project-tool allowlist')
-  const args = strings(input.args, 'run_command args')
+  const args = input.args
   if (args.some((arg) => UNSAFE_ARG.test(arg))) throw new Error('command argument is unsafe')
-  const cwd = existingWorkspacePath(workspace, string(input.cwd, 'workspace path'), true)
+  const cwd = existingWorkspacePath(workspace, input.cwd, true)
+  let environment: NodeJS.ProcessEnv
+  try {
+    environment = safeCommandEnvironment(workspace)
+  } catch (error) {
+    // A refused runtime directory is actionable ("Remove it and retry"), but a
+    // throw would be collapsed into "Tool execution failed." by the runtime.
+    return Promise.resolve({
+      content: error instanceof Error ? error.message : String(error),
+      isError: true,
+    })
+  }
 
   return new Promise((resolve, reject) => {
     const child = spawnCli(command, args, {
       cwd,
       replaceEnv: true,
-      env: safeCommandEnvironment(workspace),
+      env: environment,
     })
     let output = ''
     let settled = false
@@ -214,7 +262,10 @@ function runCommand(
       settled = true
       clearTimeout(timer)
       signal.removeEventListener('abort', abort)
-      result instanceof Error ? reject(result) : resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const append = (chunk: string) => {
       output = `${output}${chunk}`.slice(-MAX_OUTPUT_BYTES)
@@ -223,11 +274,9 @@ function runCommand(
     // kill() ends the shim and leaves the real npm/node running — holding
     // locks in the worktree that later break its removal.
     const abort = () => {
-      killTree(child)
       finish(new DOMException('interrupted', 'AbortError'))
     }
     const timer = setTimeout(() => {
-      killTree(child)
       // Keep what the command printed. A timeout is exactly the case where
       // the agent most needs the output to work out what hung.
       finish({
@@ -244,10 +293,10 @@ function runCommand(
     child.stdout.on('data', append)
     child.stderr.on('data', append)
     child.on('error', finish)
-    child.on('exit', (code) =>
+    child.on('close', (code) =>
       finish({
         content: JSON.stringify({ code, output }),
-        ...(code === 0 ? {} : { isError: true }),
+        ...(!(code === 0) ? { isError: true } : {}),
       }),
     )
     signal.addEventListener('abort', abort, { once: true })
@@ -256,46 +305,14 @@ function runCommand(
   })
 }
 
-function commandLine(input: Record<string, unknown>): string {
-  return [
-    string(input.command, 'run_command command'),
-    ...strings(input.args, 'run_command args'),
-  ].join(' ')
+function commandLine(input: RunCommandInput): string {
+  return [input.command, ...input.args].join(' ')
 }
 
-function displayPath(value: unknown): string {
-  return typeof value === 'string' && value ? value : '.'
+function displayPath(value: string): string {
+  return value || '.'
 }
 
 function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex')
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value === '') throw new Error(`${field} must be a string`)
-  return value
-}
-
-function text(value: unknown, field: string): string {
-  if (typeof value !== 'string') throw new Error(`${field} must be a string`)
-  return value
-}
-
-function nullableString(value: unknown, field: string): string | null {
-  if (value === null) return null
-  return string(value, field)
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
 }

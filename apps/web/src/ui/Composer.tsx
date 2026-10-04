@@ -1,5 +1,7 @@
 import {
+  lazy,
   memo,
+  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,53 +12,127 @@ import {
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
 import type { ModelChoice } from '../model-catalog.js'
-import { BorderBeam } from 'border-beam'
 import {
-  ArrowUp,
-  Box,
-  CornerDownRight,
-  File as FileIcon,
-  Folder,
-  GitBranch,
-  GripVertical,
-  Image as ImageIcon,
-  Laptop,
-  LockOpen,
-  Palette,
-  Pencil,
-  Plus,
-  ScanEye,
-  Server,
-  ShieldCheck,
-  ShieldQuestion,
-  Square,
-  Trash2,
-  type LucideIcon,
-  X,
-} from 'lucide-react'
-import { pickFiles, savePastedFile } from '../bridge.js'
-import { SHORTCUTS, shortcutAria } from '../shortcuts.js'
+  IconArrowUp as ArrowUp,
+  IconBox as Box,
+  IconCornerDownRight as CornerDownRight,
+  IconFile as FileIcon,
+  IconFolder as Folder,
+  IconGitBranch as GitBranch,
+  IconGripVertical as GripVertical,
+  IconPhoto as ImageIcon,
+  IconDeviceLaptop as Laptop,
+  IconPalette as Palette,
+  IconPencil as Pencil,
+  IconPlayerPlay as Play,
+  IconPlus as Plus,
+  IconServer as Server,
+  IconSquare as Square,
+  IconTrash as Trash2,
+  IconVideo as Video,
+  IconX as X,
+} from '@tabler/icons-react'
+import { APPROVAL_MODES } from './approval-modes.js'
+import {
+  pickFiles,
+  previewViewedImage,
+  revealPath,
+  savePastedFile,
+  type PickedAttachment,
+} from '../bridge.js'
+import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
-import {
-  describeMicrophoneError,
-  formatRecordingDuration,
-  MAX_RECORDING_MS,
-  type VoiceRecording,
-  useVoiceRecorder,
-} from '../voice-recorder.js'
-import { ComposerVoiceButton } from './ComposerVoiceButton.js'
-import { ComposerVoiceRecorderBar } from './ComposerVoiceRecorderBar.js'
+import { type VoiceRecording } from '../voice-capability.js'
+import type { ProjectChoice } from '../project-choices.js'
+import type { ComposerVoiceState } from './ComposerVoiceControl.js'
+import { DesignBeam, preloadDesignBeamStyles } from './DesignBeam.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
-  ComposerResourcePicker,
   type ComposerResource,
   type ComposerResourcePickerHandle,
   type ComposerResourceTrigger,
-} from './ComposerResourcePicker.js'
-import { ImageViewer } from './ImageViewer.js'
+} from './composer-resource.js'
 import { Menu, MenuItem } from './Menu.js'
-import { ModelSelector } from './ModelSelector.js'
-import type { Project } from './Sidebar.js'
+import { IconMorph } from './IconMorph.js'
+import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
+import { preloadThread } from './LazyThread.js'
+import { ModelSearchField } from './ModelSearchField.js'
+import { ComposerErrors, useComposerError, type ComposerError } from './ComposerErrors.js'
+import { Skeleton, SkeletonRows, SkeletonStatus } from './Skeleton.js'
+import { droppedFilePath } from './composer-dropped-file.js'
+
+const ComposerResourcePicker = lazy(() =>
+  import('./ComposerResourcePicker.js').then((module) => ({
+    default: module.ComposerResourcePicker,
+  })),
+)
+const ModelSelector = lazy(() =>
+  import('./ModelSelector.js').then((module) => ({ default: module.ModelSelector })),
+)
+const ComposerVoiceControl = lazy(() =>
+  import('./ComposerVoiceControl.js').then((module) => ({
+    default: module.ComposerVoiceControl,
+  })),
+)
+const DRAFT_HAS_CONTENT = /\S/u
+const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
+
+function ModelTriggerSkeleton() {
+  return (
+    <SkeletonStatus
+      label="Loading model"
+      className="menutrigger menutrigger--model-selector composer-skeleton-model"
+    >
+      <Skeleton className="skeleton--icon" />
+      <Skeleton width={88} height={9} />
+    </SkeletonStatus>
+  )
+}
+
+function VoiceControlSkeleton() {
+  return (
+    <SkeletonStatus
+      label="Loading voice"
+      className="composer-skeleton-slot composer-skeleton-voice"
+    >
+      <Skeleton className="skeleton--circle" width="100%" height="100%" />
+    </SkeletonStatus>
+  )
+}
+
+function ResourcePickerSkeleton() {
+  return (
+    <div className="composer-skeleton-picker">
+      <div
+        id={COMPOSER_RESOURCE_LIST_ID}
+        className="composer-skeleton-picker__list"
+        role="listbox"
+        aria-label="Skills and MCP servers"
+      >
+        <SkeletonStatus label="Loading skills and MCP servers…">
+          <SkeletonRows rows={4} icon widths={RESOURCE_SKELETON_WIDTHS} />
+        </SkeletonStatus>
+      </div>
+    </div>
+  )
+}
+
+type ContextUsageStyle = CSSProperties & { '--context-used': number }
+
+function contextUsageStyle(percent: number): ContextUsageStyle {
+  return { '--context-used': percent }
+}
+
+function sameDraftPaths(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((path, index) => path === right[index])
+}
+
+function sameDraftResources(left: ComposerResource[], right: ComposerResource[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((resource, index) => resource.key === right[index]?.key)
+  )
+}
 
 /**
  * Prompt bar.
@@ -74,58 +150,103 @@ export type WorkspaceInfo = {
   dirtyFiles: number
 }
 
-export const APPROVAL_MODES: {
-  id: ApprovalMode
-  title: string
-  short: string
-  detail: string
-  icon: LucideIcon
-}[] = [
-  {
-    id: 'ask',
-    title: 'Ask first',
-    short: 'Ask first',
-    detail: 'Read-only until you approve each action',
-    icon: ShieldQuestion,
-  },
-  {
-    id: 'auto',
-    title: 'Auto-approve',
-    short: 'Auto',
-    detail: 'Edits and commands inside this folder',
-    icon: ShieldCheck,
-  },
-  {
-    id: 'auto-review',
-    title: 'Auto-review',
-    short: 'Auto-review',
-    detail: 'Codex reviews elevated actions before they run',
-    icon: ScanEye,
-  },
-  {
-    id: 'full',
-    title: 'Full access',
-    short: 'Full access',
-    detail: 'No sandbox, no prompts, no undo. Use with care.',
-    icon: LockOpen,
-  },
-]
-
-const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
-const COMPOSER_MIN_HEIGHT = 68
+const IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i
+const PREVIEWABLE_IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
+const VIDEO_RE = /\.(avi|m4v|mkv|mov|mp4|mpe?g|ogg|ogv|webm)$/i
+const COMPOSER_MIN_HEIGHT = 48
 const COMPOSER_MAX_HEIGHT = 242
+
+function composerInputOnlyInserts(previous: string, next: string, event: InputEvent): boolean {
+  if (event.isComposing) return false
+  if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
+    return next.length === previous.length + 1
+  }
+  if (event.inputType !== 'insertText' && event.inputType !== 'insertFromPaste') return false
+  return event.data !== null && next.length === previous.length + event.data.length
+}
+const COMPOSER_RESOURCE_FAST_QUERY_LENGTH = 64
+
+function BranchMenu(props: {
+  branches: string[]
+  activeBranch: string | undefined
+  onSelect: (branch: string) => void
+}) {
+  const [query, setQuery] = useState('')
+  const results = useRef<HTMLDivElement>(null)
+  const orderedBranches = useMemo(
+    () => [
+      ...props.branches.filter((branch) => branch === 'main'),
+      ...props.branches.filter((branch) => branch !== 'main'),
+    ],
+    [props.branches],
+  )
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const filteredBranches = normalizedQuery
+    ? orderedBranches.filter((branch) => branch.toLocaleLowerCase().includes(normalizedQuery))
+    : orderedBranches
+
+  const focusResult = (edge: 'first' | 'last') => {
+    const items = results.current?.querySelectorAll<HTMLButtonElement>('.menu__item')
+    const target = edge === 'first' ? items?.[0] : items?.[items.length - 1]
+    target?.focus()
+  }
+
+  return (
+    <>
+      <ModelSearchField
+        className="branch-menu__search"
+        value={query}
+        label="Search branches"
+        placeholder="Search branches"
+        autoFocus
+        onChange={setQuery}
+        onNavigate={focusResult}
+      />
+      <div className="branch-menu__results" ref={results}>
+        {filteredBranches.length > 0 ? (
+          filteredBranches.map((branch) => (
+            <MenuItem
+              key={branch}
+              title={branch}
+              icon={<GitBranch size={14} aria-hidden />}
+              active={branch === props.activeBranch}
+              onClick={() => props.onSelect(branch)}
+            />
+          ))
+        ) : (
+          <p className="branch-menu__empty" role="status">
+            No matching branches.
+          </p>
+        )}
+      </div>
+    </>
+  )
+}
 const COMPOSER_DOCK_ANIMATION_ID = 'harness-composer-dock'
 const COMPOSER_DOCK_MOTION_MS = 320
 const COMPOSER_DOCK_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
+const COMPOSER_QUEUE_ANIMATION_ID = 'harness-composer-queue'
+// Match --dur-slow and --ease-rail so the panel and row reveal settle together.
+const COMPOSER_QUEUE_MOTION_MS = 260
+const COMPOSER_QUEUE_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
 const ATTACHMENTS_UNSUPPORTED = 'Attachments aren’t supported by this source.'
 const ATTACHMENTS_BLOCK_SEND = 'Remove attachments or switch to a source that supports them.'
 const MAX_PASTED_FILE_BYTES = 25 * 1024 * 1024
-const PASTEABLE_IMAGE_TYPES = new Set([
+const PREVIEWABLE_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/gif',
   'image/webp',
   'image/bmp',
+])
+const PREVIEWABLE_VIDEO_TYPES = new Set([
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/ogg',
+  'video/mpeg',
+  'video/x-matroska',
+  'video/x-msvideo',
 ])
 
 type ComposerAttachment = {
@@ -133,25 +254,189 @@ type ComposerAttachment = {
   name: string
   path?: string
   previewUrl?: string
+  thumbnailUrl?: string
+  mediaType?: 'image' | 'video'
 }
 
 type RunningSubmission = 'queue' | 'steer'
 
+type QueueItemPhase = 'present' | 'entering' | 'exiting'
+
+type QueueExitBox = {
+  top: number
+  left: number
+  width: number
+  height: number
+}
+
+type RenderedQueuedTurn = {
+  turn: QueuedTurn
+  phase: QueueItemPhase
+  exitBox?: QueueExitBox | undefined
+}
+
+type QueueRenderState = {
+  revision: number
+  items: RenderedQueuedTurn[]
+}
+
+type QueueLayoutSnapshot = {
+  revision: number
+  queueRect: DOMRectReadOnly | null
+  rowRects: Map<string, DOMRectReadOnly>
+  reduceMotion: boolean
+}
+
 export type SendAvailability = 'loading' | 'ready' | 'setup-required' | 'unavailable'
 
+function QueuedMediaPreview({ attachments }: { attachments: string[] }) {
+  const reference = attachments.find((attachment) => previewMediaType('', attachment))
+  return reference ? <QueuedMediaPreviewCard key={reference} reference={reference} /> : null
+}
+
+function QueuedMediaPreviewCard({ reference }: { reference: string }) {
+  const inferredMediaType = previewMediaType('', reference)
+  const [preview, setPreview] = useState<PickedAttachment>()
+  const [thumbnailFailed, setThumbnailFailed] = useState(false)
+  const [mediaFailed, setMediaFailed] = useState(false)
+  const [viewerOpen, setViewerOpen] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void previewViewedImage(reference).then((result) => {
+      if (!cancelled) setPreview(result)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [reference])
+
+  if (!inferredMediaType) return null
+  const mediaType = preview?.mediaType ?? inferredMediaType
+  const name = preview?.name ?? basename(reference)
+  const inlineSource =
+    !mediaFailed && preview?.thumbnailUrl && !thumbnailFailed
+      ? preview.thumbnailUrl
+      : !mediaFailed && mediaType === 'image'
+        ? preview?.previewUrl
+        : undefined
+  const canOpen = Boolean(preview?.previewUrl && preview.mediaType)
+
+  return (
+    <>
+      <button
+        type="button"
+        className="queue-row__media"
+        disabled={!canOpen}
+        onPointerEnter={preloadMediaViewer}
+        onFocus={preloadMediaViewer}
+        onClick={() => setViewerOpen(true)}
+        aria-label={
+          canOpen ? `Open queued preview of ${name}` : `Loading queued preview of ${name}`
+        }
+      >
+        <span className="queue-row__media-fallback" aria-hidden>
+          {mediaType === 'video' ? <Video size={12} /> : <ImageIcon size={12} />}
+        </span>
+        {inlineSource ? (
+          <img
+            src={inlineSource}
+            onLoad={preloadMediaViewer}
+            alt=""
+            draggable={false}
+            onError={() => {
+              if (preview?.thumbnailUrl && !thumbnailFailed) setThumbnailFailed(true)
+              else setMediaFailed(true)
+            }}
+          />
+        ) : null}
+        {mediaType === 'video' ? (
+          <span className="queue-row__media-play" aria-hidden>
+            <Play size={7} fill="currentColor" />
+          </span>
+        ) : null}
+      </button>
+      {viewerOpen && preview?.previewUrl && preview.mediaType ? (
+        <Suspense fallback={null}>
+          <MediaViewer
+            src={preview.previewUrl}
+            thumbnailSrc={inlineSource}
+            name={preview.name}
+            mediaType={preview.mediaType}
+            onReveal={() => void revealPath(reference)}
+            onClose={() => setViewerOpen(false)}
+          />
+        </Suspense>
+      ) : null}
+    </>
+  )
+}
+
 export function composerResourceTriggerAt(
+  text: string,
+  cursor: number,
+): ComposerResourceTrigger | undefined {
+  if (!Number.isFinite(cursor)) return undefined
+  const position = Math.max(0, Math.min(text.length, Math.trunc(cursor)))
+  if (position === 0) return undefined
+
+  // Most resource names are short. Walk only the active token instead of
+  // slicing and running a regular expression across the complete draft on
+  // every key. A pathological long token keeps the old parser as a bounded
+  // fallback, so its worst case does not regress.
+  const fastStart = Math.max(0, position - COMPOSER_RESOURCE_FAST_QUERY_LENGTH)
+  let queryStart = position
+  while (queryStart > fastStart && isResourceQueryCharacter(text.charCodeAt(queryStart - 1))) {
+    queryStart -= 1
+  }
+  if (
+    queryStart === fastStart &&
+    queryStart > 0 &&
+    isResourceQueryCharacter(text.charCodeAt(queryStart - 1))
+  ) {
+    return composerResourceTriggerAtLongToken(text, position)
+  }
+
+  const markerIndex = queryStart - 1
+  if (markerIndex < 0) return undefined
+  if (markerIndex > 0 && !/[\s([{]/.test(text[markerIndex - 1]!)) return undefined
+
+  const marker = text[markerIndex]
+  if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
+  const query = text.slice(queryStart, position)
+  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  let end = position
+  while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
+  return { marker, query, start: markerIndex, end }
+}
+
+function composerResourceTriggerAtLongToken(
   text: string,
   cursor: number,
 ): ComposerResourceTrigger | undefined {
   const beforeCursor = text.slice(0, cursor)
   const match = /(^|[\s([{])([/$@])([\w.:-]*)$/.exec(beforeCursor)
   if (!match) return undefined
+  const marker = match[2]
+  if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
-  if (match[2] === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
   let end = cursor
-  while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
-  return { marker: match[2] as '/' | '$' | '@', query, start, end }
+  while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
+  return { marker, query, start, end }
+}
+
+function isResourceQueryCharacter(code: number): boolean {
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    code === 45 ||
+    code === 46 ||
+    code === 58 ||
+    code === 95
+  )
 }
 
 export function composerPromptWithResources(text: string, resources: ComposerResource[]): string {
@@ -164,11 +449,13 @@ export function composerPromptWithResources(text: string, resources: ComposerRes
 function ComposerComponent(props: {
   transport: Transport
   provider: ProviderId
-  projects: Project[]
+  projects: ReadonlyArray<ProjectChoice>
   projectPath: string | undefined
   projectName: string | undefined
+  projectsLoading?: boolean
   branch: string | undefined
   branches: string[]
+  branchesLoading?: boolean
   models: ModelChoice[]
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
@@ -177,21 +464,45 @@ function ComposerComponent(props: {
   serviceTier: string | undefined
   usage?: Usage | undefined
   approval: ApprovalMode
+  approvalLoading?: boolean | undefined
   autoReviewSupported: boolean
   attachmentsSupported: boolean
+  attachmentsLoading?: boolean
   voiceAvailable: boolean
+  voiceLoading?: boolean
   disabled: boolean
   sendAvailability: SendAvailability
+  providerSignInRequired?: boolean
+  errors?: readonly ComposerError[] | undefined
+  errorsVisible?: boolean
+  providerError?: ComposerError | undefined
   running: boolean
   newSession: boolean
   isolate: boolean
   designMode: boolean
+  keybindings?: Keybindings | undefined
   focusRequest: number
-  draftRequest?: { text: string; attachments?: string[]; request: number } | undefined
+  draftRequest?:
+    | {
+        text: string
+        attachments?: string[] | undefined
+        resources?: ComposerResource[] | undefined
+        request: number
+      }
+    | undefined
   onDraftChange?: ((text: string) => void) | undefined
   onAttachmentsChange?: ((attachments: string[]) => void) | undefined
+  /**
+   * Register a pending save with the current draft's owner before it can change.
+   * Resolves with the saved path only when this composer no longer shows that
+   * draft, so the owner must keep the file itself.
+   */
+  onPendingAttachment?: ((savedPath: Promise<string | undefined>) => void) | undefined
+  onResourcesChange?: ((resources: ComposerResource[]) => void) | undefined
+  onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
+  onModelSelectorOpen?: (() => void) | undefined
   onModelChange: (id: string) => void
   onEffortChange: (effort: string) => void
   onServiceTierChange: (serviceTier: string | undefined) => void
@@ -209,44 +520,119 @@ function ComposerComponent(props: {
   onInterrupt: () => void
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
-  onDeleteQueuedTurn: (id: string) => void
+  onDeleteQueuedTurn: (id: string) => void | Promise<boolean | void>
   onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
 }) {
-  const [text, setText] = useState('')
+  const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
+  // The textarea owns its full draft. React only needs the blank/nonblank
+  // boundary, so ordinary typing does not rerender the complete composer.
+  const [hasDraftText, setHasDraftText] = useState(false)
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([])
-  const [attachmentError, setAttachmentError] = useState<string>()
-  const [viewingImage, setViewingImage] = useState<{ src: string; name: string }>()
-  const [voiceState, setVoiceState] = useState<'idle' | 'recording' | 'transcribing'>('idle')
-  const [voiceError, setVoiceError] = useState<string>()
+  const [attachmentError, setAttachmentError] = useComposerError()
+  const [viewingMedia, setViewingMedia] = useState<{
+    src: string
+    thumbnailSrc?: string | undefined
+    name: string
+    mediaType: 'image' | 'video'
+    localPath?: string
+  }>()
+  const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
+  const [voiceError, setVoiceError] = useComposerError()
+  const [queueError, setQueueError] = useComposerError()
+  const editingQueue = useRef(new Set<string>())
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
   const [queueDropTarget, setQueueDropTarget] = useState<{
     id: string
     position: 'before' | 'after'
   }>()
+  const [renderedQueue, setRenderedQueue] = useState<QueueRenderState>(() => ({
+    revision: 0,
+    items: props.queuedTurns.map((turn) => ({ turn, phase: 'present' })),
+  }))
   const [selectedResources, setSelectedResources] = useState<ComposerResource[]>([])
   const [resourceTrigger, setResourceTrigger] = useState<ComposerResourceTrigger>()
+  const [resourcePickerMounted, setResourcePickerMounted] = useState(false)
   const area = useRef<HTMLTextAreaElement>(null)
   const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
-  const voiceRequest = useRef<string | undefined>(undefined)
-  const voiceOperation = useRef(0)
-  const cancelVoiceRequest = useRef(props.onCancelVoice)
   const sendAvailabilityRef = useRef(props.sendAvailability)
-  const textRef = useRef(text)
+  const textRef = useRef('')
+  const hasDraftTextRef = useRef(false)
   const attachmentsSupportedRef = useRef(props.attachmentsSupported)
   const previewUrls = useRef(new Set<string>())
   const resizeFrame = useRef<number | undefined>(undefined)
+  const composerAtMaximumHeight = useRef(false)
+  const observedComposerWidth = useRef<number | undefined>(undefined)
+  const composerRoot = useRef<HTMLDivElement>(null)
   const composerAnchor = useRef<HTMLDivElement>(null)
+  const queuePanel = useRef<HTMLDivElement>(null)
+  const queueRowNodes = useRef(new Map<string, HTMLDivElement>())
+  const queueRowRefCallbacks = useRef(new Map<string, (node: HTMLDivElement | null) => void>())
+  const queueRowAnimations = useRef(new Map<string, Animation>())
+  const queuePanelAnimation = useRef<Animation | null>(null)
+  const pendingQueueLayout = useRef<QueueLayoutSnapshot | null>(null)
   const previousNewSession = useRef(props.newSession)
+  const attachmentsChangeReady = useRef(false)
+  const attachmentsEdited = useRef(false)
+  const resourcesChangeReady = useRef(false)
+  const resourcesEdited = useRef(false)
+  const pendingAttachments = useRef(new Set<string>())
+  const onReady = useRef(props.onReady)
+  onReady.current = props.onReady
+  const draftRequestRef = useRef(props.draftRequest)
+  draftRequestRef.current = props.draftRequest
   const previousComposerRect = useRef<DOMRect | null>(null)
   const dockAnimation = useRef<Animation | null>(null)
   const mounted = useRef(true)
-  const recorder = useVoiceRecorder()
   const selectedResourceKeys = useMemo(
     () => new Set(selectedResources.map((resource) => resource.key)),
     [selectedResources],
   )
+
+  const updateResourceTrigger = (trigger: ComposerResourceTrigger | undefined) => {
+    setResourceTrigger(trigger)
+    if (trigger) setResourcePickerMounted(true)
+  }
+
+  const getQueueRowRef = (queueRowId: string) => {
+    const existing = queueRowRefCallbacks.current.get(queueRowId)
+    if (existing) return existing
+
+    const ref = (node: HTMLDivElement | null) => {
+      if (node) queueRowNodes.current.set(queueRowId, node)
+      else {
+        queueRowNodes.current.delete(queueRowId)
+        // Strict Mode detaches and immediately reattaches callback refs while
+        // checking effects in development. Wait one microtask before treating
+        // this as a real unmount so both sides of a queue reorder keep moving.
+        window.queueMicrotask(() => {
+          if (queueRowNodes.current.has(queueRowId)) return
+          queueRowAnimations.current.get(queueRowId)?.cancel()
+          queueRowAnimations.current.delete(queueRowId)
+          queueRowRefCallbacks.current.delete(queueRowId)
+        })
+      }
+    }
+    queueRowRefCallbacks.current.set(queueRowId, ref)
+    return ref
+  }
+
+  const finishQueueItemMotion = (queueRowId: string, phase: QueueItemPhase) => {
+    setRenderedQueue((current) => {
+      const item = current.items.find((candidate) => candidate.turn.id === queueRowId)
+      if (!item || item.phase !== phase) return current
+      return {
+        ...current,
+        items:
+          phase === 'exiting'
+            ? current.items.filter((candidate) => candidate.turn.id !== queueRowId)
+            : current.items.map((candidate) =>
+                candidate.turn.id === queueRowId ? { ...candidate, phase: 'present' } : candidate,
+              ),
+      }
+    })
+  }
 
   const endQueueDrag = () => {
     setDraggedQueueId(undefined)
@@ -274,9 +660,7 @@ function ComposerComponent(props: {
     endQueueDrag()
   }
 
-  textRef.current = text
   attachmentsSupportedRef.current = props.attachmentsSupported
-  cancelVoiceRequest.current = props.onCancelVoice
   sendAvailabilityRef.current = props.sendAvailability
 
   useEffect(() => {
@@ -287,14 +671,58 @@ function ComposerComponent(props: {
     mounted.current = true
     return () => {
       mounted.current = false
-      void recorder.cancel()
-      if (voiceRequest.current) cancelVoiceRequest.current(voiceRequest.current)
       if (resizeFrame.current !== undefined) window.cancelAnimationFrame(resizeFrame.current)
       dockAnimation.current?.cancel()
+      queuePanelAnimation.current?.cancel()
+      for (const animation of queueRowAnimations.current.values()) animation.cancel()
+      queueRowAnimations.current.clear()
+      queueRowRefCallbacks.current.clear()
       for (const url of previewUrls.current) URL.revokeObjectURL(url)
       previewUrls.current.clear()
     }
-  }, [recorder.cancel])
+  }, [])
+
+  useEffect(() => {
+    const el = area.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width
+      if (width === undefined) return
+      const previousWidth = observedComposerWidth.current
+      observedComposerWidth.current = width
+      if (previousWidth !== undefined && width !== previousWidth) {
+        composerAtMaximumHeight.current = false
+      }
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  useLayoutEffect(() => {
+    if (props.newSession) return
+    const root = composerRoot.current
+    const conversation = root?.parentElement
+    if (!root || !conversation?.classList.contains('stage__conversation')) return
+
+    const updateOverlayHeight = () => {
+      const height = root.getBoundingClientRect().height
+      if (height > 0) {
+        conversation.style.setProperty('--composer-overlay-height', `${height}px`)
+      }
+    }
+
+    updateOverlayHeight()
+    const ResizeObserverConstructor = globalThis.ResizeObserver
+    const observer = ResizeObserverConstructor
+      ? new ResizeObserverConstructor(updateOverlayHeight)
+      : undefined
+    observer?.observe(root)
+
+    return () => {
+      observer?.disconnect()
+      conversation.style.removeProperty('--composer-overlay-height')
+    }
+  }, [props.newSession])
 
   // T3 Code's draft composer uses a FLIP transition: remember where the real
   // composer was before send, render it in the docked layout, then animate only
@@ -331,6 +759,151 @@ function ComposerComponent(props: {
     previousComposerRect.current = nextRect
   }, [props.newSession])
 
+  useLayoutEffect(() => {
+    const activeItems = renderedQueue.items.filter((item) => item.phase !== 'exiting')
+    const sameOrder =
+      activeItems.length === props.queuedTurns.length &&
+      activeItems.every((item, index) => item.turn.id === props.queuedTurns[index]?.id)
+
+    if (sameOrder) {
+      const nextById = new Map(props.queuedTurns.map((turn) => [turn.id, turn]))
+      if (activeItems.some((item) => nextById.get(item.turn.id) !== item.turn)) {
+        setRenderedQueue((current) => ({
+          ...current,
+          items: current.items.map((item) => {
+            if (item.phase === 'exiting') return item
+            const turn = nextById.get(item.turn.id)
+            return turn && turn !== item.turn ? { ...item, turn } : item
+          }),
+        }))
+      }
+      return
+    }
+
+    const panel = queuePanel.current
+    const queueRect = panel?.getBoundingClientRect() ?? null
+    const rowRects = new Map<string, DOMRectReadOnly>()
+    for (const item of renderedQueue.items) {
+      const row = queueRowNodes.current.get(item.turn.id)
+      if (row) rowRects.set(item.turn.id, row.getBoundingClientRect())
+    }
+
+    const nextIds = new Set(props.queuedTurns.map((turn) => turn.id))
+    const currentById = new Map(renderedQueue.items.map((item) => [item.turn.id, item]))
+    const nextItems: RenderedQueuedTurn[] = props.queuedTurns.map((turn) => {
+      const current = currentById.get(turn.id)
+      return {
+        turn,
+        phase: current?.phase === 'entering' ? 'entering' : current ? 'present' : 'entering',
+      }
+    })
+
+    for (const item of renderedQueue.items) {
+      if (nextIds.has(item.turn.id)) continue
+      if (item.phase === 'exiting') {
+        nextItems.push(item)
+        continue
+      }
+
+      const rect = rowRects.get(item.turn.id)
+      const exitBox =
+        panel && queueRect && rect
+          ? {
+              top: rect.top - queueRect.top + panel.scrollTop,
+              left: rect.left - queueRect.left + panel.scrollLeft,
+              width: rect.width,
+              height: rect.height,
+            }
+          : undefined
+      nextItems.push({ turn: item.turn, phase: 'exiting', exitBox })
+    }
+
+    const revision = renderedQueue.revision + 1
+    pendingQueueLayout.current = {
+      revision,
+      queueRect,
+      rowRects,
+      reduceMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+    }
+    setRenderedQueue({ revision, items: nextItems })
+  }, [props.queuedTurns, renderedQueue])
+
+  useLayoutEffect(() => {
+    const snapshot = pendingQueueLayout.current
+    if (!snapshot || snapshot.revision !== renderedQueue.revision) return
+    pendingQueueLayout.current = null
+
+    queuePanelAnimation.current?.cancel()
+    queuePanelAnimation.current = null
+    queuePanel.current?.style.removeProperty('overflow-y')
+    for (const animation of queueRowAnimations.current.values()) animation.cancel()
+    queueRowAnimations.current.clear()
+
+    const panel = queuePanel.current
+    const nextQueueRect = panel?.getBoundingClientRect() ?? null
+    const nextRowRects = new Map<string, DOMRectReadOnly>()
+    for (const item of renderedQueue.items) {
+      if (item.phase !== 'present') continue
+      const row = queueRowNodes.current.get(item.turn.id)
+      if (row) nextRowRects.set(item.turn.id, row.getBoundingClientRect())
+    }
+    if (
+      snapshot.reduceMotion ||
+      !panel ||
+      !panel.animate ||
+      !snapshot.queueRect ||
+      !nextQueueRect
+    ) {
+      return
+    }
+
+    if (Math.abs(snapshot.queueRect.height - nextQueueRect.height) >= 0.5) {
+      panel.style.overflowY = 'hidden'
+      const animation = panel.animate(
+        [{ height: `${snapshot.queueRect.height}px` }, { height: `${nextQueueRect.height}px` }],
+        { duration: COMPOSER_QUEUE_MOTION_MS, easing: COMPOSER_QUEUE_EASING },
+      )
+      animation.id = `${COMPOSER_QUEUE_ANIMATION_ID}-panel`
+      queuePanelAnimation.current = animation
+      void animation.finished
+        .catch(() => undefined)
+        .then(() => {
+          if (queuePanelAnimation.current !== animation) return
+          queuePanelAnimation.current = null
+          if (queuePanel.current === panel) panel.style.removeProperty('overflow-y')
+        })
+    }
+
+    for (const item of renderedQueue.items) {
+      // Let an entering row finish its opacity reveal. Starting a transform
+      // FLIP on the same row can be canceled when that reveal becomes present,
+      // which makes rapid queue additions jump for one frame.
+      if (item.phase !== 'present') continue
+      const previousRect = snapshot.rowRects.get(item.turn.id)
+      const row = queueRowNodes.current.get(item.turn.id)
+      const nextRect = nextRowRects.get(item.turn.id)
+      if (!previousRect || !nextRect || !row?.animate) continue
+
+      const x = previousRect.left - snapshot.queueRect.left - (nextRect.left - nextQueueRect.left)
+      const y = previousRect.top - snapshot.queueRect.top - (nextRect.top - nextQueueRect.top)
+      if (Math.abs(x) < 0.5 && Math.abs(y) < 0.5) continue
+
+      const animation = row.animate(
+        [{ transform: `translate3d(${x}px, ${y}px, 0)` }, { transform: 'translate3d(0, 0, 0)' }],
+        { duration: COMPOSER_QUEUE_MOTION_MS, easing: COMPOSER_QUEUE_EASING },
+      )
+      animation.id = COMPOSER_QUEUE_ANIMATION_ID
+      queueRowAnimations.current.set(item.turn.id, animation)
+      void animation.finished
+        .catch(() => undefined)
+        .then(() => {
+          if (queueRowAnimations.current.get(item.turn.id) === animation) {
+            queueRowAnimations.current.delete(item.turn.id)
+          }
+        })
+    }
+  }, [renderedQueue])
+
   useEffect(() => {
     if (props.focusRequest > 0 && !props.disabled) area.current?.focus()
   }, [props.focusRequest, props.disabled])
@@ -340,11 +913,9 @@ function ComposerComponent(props: {
     setResourceTrigger(undefined)
   }, [props.provider, props.projectPath])
 
-  // A provider that cannot enumerate models shows nothing. Sitting on
-  // "Loading models…" forever is the UI lying about what it is doing.
+  // A provider that cannot enumerate models shows nothing once discovery finishes.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
-  const ApprovalIcon = approval.icon
 
   const grow = () => {
     const el = area.current
@@ -352,6 +923,7 @@ function ComposerComponent(props: {
     const currentHeight = el.offsetHeight
     el.style.height = 'auto'
     const contentHeight = el.scrollHeight
+    composerAtMaximumHeight.current = contentHeight > COMPOSER_MAX_HEIGHT
     const nextHeight = Math.max(COMPOSER_MIN_HEIGHT, Math.min(contentHeight, COMPOSER_MAX_HEIGHT))
     el.style.height = `${currentHeight}px`
     el.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden'
@@ -362,10 +934,15 @@ function ComposerComponent(props: {
     })
   }
 
-  const updateText = (value: string) => {
+  const updateText = (value: string, syncArea = true, notify = true) => {
     textRef.current = value
-    setText(value)
-    props.onDraftChange?.(value)
+    if (syncArea && area.current && area.current.value !== value) area.current.value = value
+    const nextHasDraftText = DRAFT_HAS_CONTENT.test(value)
+    if (nextHasDraftText !== hasDraftTextRef.current) {
+      hasDraftTextRef.current = nextHasDraftText
+      setHasDraftText(nextHasDraftText)
+    }
+    if (notify) props.onDraftChange?.(value)
   }
 
   const setValue = (value: string) => {
@@ -377,76 +954,172 @@ function ComposerComponent(props: {
     })
   }
 
-  useEffect(() => {
-    if (!props.draftRequest) return
-    setValue(props.draftRequest.text)
-    if (props.draftRequest.attachments !== undefined) {
-      clearAttachments()
-      addFiles(props.draftRequest.attachments)
-    }
-  }, [props.draftRequest?.request])
-
-  const addFiles = (paths: string[]) => {
-    if (paths.length === 0) return
-    setAttachments((current) => {
-      const attached = new Set(current.flatMap((attachment) => attachment.path ?? []))
-      return [
-        ...current,
-        ...paths
-          .filter((path) => !attached.has(path))
-          .map((path) => ({ id: path, name: basename(path), path })),
-      ]
+  const replaceDraft = (value: string) => {
+    updateText(value, true, false)
+    setResourceTrigger(undefined)
+    requestAnimationFrame(() => {
+      area.current?.focus()
+      grow()
     })
   }
 
-  const attachFiles = (paths: string[]) => {
-    if (paths.length === 0) return
+  useEffect(() => {
+    onReady.current?.()
+  }, [])
+
+  useEffect(() => {
+    if (!props.draftRequest) return
+    // Parent already holds this snapshot. Writing it back would let a stale
+    // empty request wipe a draft that was typed after the last publish.
+    replaceDraft(props.draftRequest.text)
+    if (props.draftRequest.attachments !== undefined) {
+      for (const attachment of attachments) releasePreview(attachment.previewUrl)
+      setViewingMedia(undefined)
+      attachmentsEdited.current = false
+      const paths = props.draftRequest.attachments
+      setAttachments(
+        paths.map((path) => {
+          const name = basename(path)
+          const inferredMediaType = previewMediaType('', name)
+          return {
+            id: path,
+            name,
+            path,
+            ...(inferredMediaType ? { mediaType: inferredMediaType } : {}),
+          }
+        }),
+      )
+      for (const path of paths) {
+        if (previewMediaType('', path)) hydrateAttachmentPreview(path)
+      }
+    }
+    if (props.draftRequest.resources !== undefined) {
+      resourcesEdited.current = false
+      setSelectedResources(props.draftRequest.resources)
+    }
+  }, [props.draftRequest?.request])
+
+  const hydrateAttachmentPreview = (reference: string) => {
+    void previewViewedImage(reference).then((preview) => {
+      if (!mounted.current || !preview?.mediaType || !preview.previewUrl) return
+      const { mediaType, name, previewUrl, thumbnailUrl } = preview
+      setAttachments((current) =>
+        current.map((attachment) =>
+          attachment.path === reference
+            ? {
+                ...attachment,
+                name,
+                mediaType,
+                previewUrl,
+                ...(thumbnailUrl ? { thumbnailUrl } : {}),
+              }
+            : attachment,
+        ),
+      )
+    })
+  }
+
+  const addFiles = (files: Array<PickedAttachment | string>) => {
+    if (files.length === 0) return
+    setAttachments((current) => {
+      const attached = new Set(current.flatMap((attachment) => attachment.path ?? []))
+      const additions: ComposerAttachment[] = []
+      for (const file of files) {
+        const picked = typeof file === 'string' ? { path: file, name: basename(file) } : file
+        if (attached.has(picked.path)) continue
+        attached.add(picked.path)
+        const inferredMediaType = previewMediaType('', picked.name)
+        additions.push({
+          id: picked.path,
+          name: picked.name,
+          path: picked.path,
+          ...(inferredMediaType ? { mediaType: inferredMediaType } : {}),
+          ...(picked.previewUrl ? { previewUrl: picked.previewUrl } : {}),
+          ...(picked.thumbnailUrl
+            ? {
+                thumbnailUrl: picked.thumbnailUrl,
+              }
+            : {}),
+          ...(picked.mediaType ? { mediaType: picked.mediaType } : {}),
+        })
+      }
+      return [...current, ...additions]
+    })
+    for (const file of files) {
+      if (typeof file === 'string' && previewMediaType('', file)) hydrateAttachmentPreview(file)
+    }
+  }
+
+  const attachFiles = (files: Array<PickedAttachment | string>) => {
+    if (files.length === 0) return
     if (!attachmentsSupportedRef.current) {
       setAttachmentError(ATTACHMENTS_UNSUPPORTED)
       return
     }
     setAttachmentError(undefined)
-    addFiles(paths)
+    addFiles(files)
   }
 
   const addPastedFiles = (files: File[]) => {
+    const owner = draftRequestRef.current?.request
     setAttachmentError(undefined)
     for (const file of files) {
       if (file.size > MAX_PASTED_FILE_BYTES) {
         setAttachmentError(`“${file.name}” is larger than 25 MB. Use the file picker instead.`)
         continue
       }
-      const previewUrl = PASTEABLE_IMAGE_TYPES.has(file.type)
-        ? URL.createObjectURL(file)
-        : undefined
+      const mediaType = previewMediaType(file.type, file.name)
+      const previewUrl = mediaType ? URL.createObjectURL(file) : undefined
       if (previewUrl) previewUrls.current.add(previewUrl)
       const id = previewUrl ?? `pasted:${crypto.randomUUID()}`
+      pendingAttachments.current.add(id)
       setAttachments((current) => [
         ...current,
-        { id, name: file.name || 'Pasted file', ...(previewUrl ? { previewUrl } : {}) },
+        {
+          id,
+          name: file.name || 'Pasted file',
+          ...(previewUrl ? { previewUrl } : {}),
+          ...(mediaType ? { mediaType } : {}),
+        },
       ])
 
-      void savePastedFile(file)
-        .then((path) => {
-          if (!mounted.current) return
-          if (!path) {
-            removeAttachment(id)
-            setAttachmentError('Pasting images is available in the desktop app.')
-            return
+      const savedPath = savePastedFile(file)
+        .then((saved) => {
+          if (!pendingAttachments.current.delete(id)) return undefined
+          if (!mounted.current || draftRequestRef.current?.request !== owner) return saved?.path
+          if (!saved) {
+            removeAttachment(id, previewUrl)
+            setAttachmentError('Pasting files is available in the desktop app.')
+            return undefined
           }
+          const picked = saved
           setAttachments((current) =>
             current.map((attachment) =>
-              attachment.id === id ? { ...attachment, path } : attachment,
+              attachment.id === id
+                ? {
+                    ...attachment,
+                    path: picked.path,
+                    ...(picked.thumbnailUrl
+                      ? {
+                          thumbnailUrl: picked.thumbnailUrl,
+                        }
+                      : {}),
+                  }
+                : attachment,
             ),
           )
+          return undefined
         })
         .catch(() => {
-          if (!mounted.current) return
-          removeAttachment(id)
+          pendingAttachments.current.delete(id)
+          if (!mounted.current || draftRequestRef.current?.request !== owner) return undefined
+          removeAttachment(id, previewUrl)
           setAttachmentError(
             `Couldn’t attach “${file.name || 'that file'}”. Use the file picker instead.`,
           )
+          return undefined
         })
+      props.onPendingAttachment?.(savedPath)
     }
   }
 
@@ -455,31 +1128,91 @@ function ComposerComponent(props: {
     URL.revokeObjectURL(previewUrl)
   }
 
-  const removeAttachment = (id: string) => {
+  const removeAttachment = (id: string, previewUrl?: string) => {
+    pendingAttachments.current.delete(id)
     // Side effects stay outside the updater — updaters run during render and
-    // replay under StrictMode. Pasted images use their preview URL as their
-    // id, so `id` is the URL; file attachments have no preview to release.
-    if (previewUrls.current.has(id)) {
-      if (viewingImage?.src === id) setViewingImage(undefined)
-      releasePreview(id)
+    // replay under StrictMode. Only renderer-created blob previews are revoked;
+    // signed native-picker URLs remain owned by the desktop protocol.
+    if (previewUrl) {
+      setViewingMedia((current) => (current?.src === previewUrl ? undefined : current))
     }
+    releasePreview(previewUrl)
     setAttachments((current) => current.filter((attachment) => attachment.id !== id))
   }
 
   const clearAttachments = () => {
     for (const attachment of attachments) releasePreview(attachment.previewUrl)
+    setViewingMedia(undefined)
     setAttachments([])
   }
 
+  const addDroppedFiles = (files: File[]) => {
+    if (!attachmentsSupportedRef.current) {
+      setAttachmentError(ATTACHMENTS_UNSUPPORTED)
+      return
+    }
+
+    const attachedPaths = new Set(attachments.flatMap((attachment) => attachment.path ?? []))
+    const picked: PickedAttachment[] = []
+    const materialized: File[] = []
+    for (const file of files) {
+      const filePath = droppedFilePath(file)
+      if (!filePath) {
+        materialized.push(file)
+        continue
+      }
+      if (attachedPaths.has(filePath)) continue
+      attachedPaths.add(filePath)
+      const mediaType = previewMediaType(file.type, file.name)
+      const previewUrl = mediaType ? URL.createObjectURL(file) : undefined
+      if (previewUrl) previewUrls.current.add(previewUrl)
+      picked.push({
+        path: filePath,
+        name: file.name || basename(filePath),
+        ...(previewUrl ? { previewUrl } : {}),
+        ...(mediaType ? { mediaType } : {}),
+      })
+    }
+    attachFiles(picked)
+    addPastedFiles(materialized)
+  }
+
   useEffect(() => {
-    props.onAttachmentsChange?.(attachments.flatMap((attachment) => attachment.path ?? []))
+    if (!attachmentsChangeReady.current) {
+      attachmentsChangeReady.current = true
+      return
+    }
+    const paths = attachments.flatMap((attachment) => attachment.path ?? [])
+    const hydrated = draftRequestRef.current?.attachments
+    // Only suppress the initial restore. Returning to that same list after an
+    // edit (including clearing on send) must also update the saved draft.
+    if (!attachmentsEdited.current && hydrated !== undefined && sameDraftPaths(paths, hydrated))
+      return
+    attachmentsEdited.current = true
+    props.onAttachmentsChange?.(paths)
   }, [attachments, props.onAttachmentsChange])
+
+  useEffect(() => {
+    if (!resourcesChangeReady.current) {
+      resourcesChangeReady.current = true
+      return
+    }
+    const hydrated = draftRequestRef.current?.resources
+    if (
+      !resourcesEdited.current &&
+      hydrated !== undefined &&
+      sameDraftResources(selectedResources, hydrated)
+    )
+      return
+    resourcesEdited.current = true
+    props.onResourcesChange?.(selectedResources)
+  }, [selectedResources, props.onResourcesChange])
 
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
     const trimmed = composerPromptWithResources(content, selectedResources)
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (
-      trimmed === '' ||
+      (trimmed === '' && paths.length === 0) ||
       paths.length !== attachments.length ||
       props.disabled ||
       sendAvailabilityRef.current !== 'ready' ||
@@ -495,6 +1228,7 @@ function ComposerComponent(props: {
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
     if (submission === 'steer') props.onSteer(trimmed, paths)
     else props.onSend(trimmed, paths)
+    composerAtMaximumHeight.current = false
     updateText('')
     setSelectedResources([])
     setResourceTrigger(undefined)
@@ -514,16 +1248,49 @@ function ComposerComponent(props: {
 
   const submit = (submission: RunningSubmission = 'queue') => {
     if (voiceState !== 'idle') return
-    sendContent(text, submission)
+    sendContent(textRef.current, submission)
   }
 
-  const editQueuedTurn = (queuedTurn: QueuedTurn) => {
-    // Never overwrite words the user is mid-way through typing — prepend the
-    // queued text so both survive the edit.
-    const draft = textRef.current.trim()
-    setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
-    addFiles(queuedTurn.attachments)
-    props.onDeleteQueuedTurn(queuedTurn.id)
+  const editQueuedTurn = async (queuedTurn: QueuedTurn) => {
+    if (editingQueue.current.has(queuedTurn.id)) return
+    editingQueue.current.add(queuedTurn.id)
+    const owner = draftRequestRef.current?.request
+    setQueueError(undefined)
+    try {
+      const removed = await props.onDeleteQueuedTurn(queuedTurn.id)
+      if (!mounted.current || draftRequestRef.current?.request !== owner) return
+      if (removed !== true) {
+        setQueueError(
+          'Could not remove the queued prompt. It may have already started; no copy was added.',
+        )
+        return
+      }
+      // Preserve text typed while the deletion was in flight.
+      const draft = textRef.current.trim()
+      setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
+      addFiles(queuedTurn.attachments)
+    } catch (error) {
+      if (mounted.current && draftRequestRef.current?.request === owner) {
+        setQueueError(
+          error instanceof Error ? error.message : 'Could not remove the queued prompt.',
+        )
+      }
+    } finally {
+      editingQueue.current.delete(queuedTurn.id)
+    }
+  }
+
+  const removeQueuedTurn = async (queuedTurnId: string) => {
+    setQueueError(undefined)
+    try {
+      await props.onDeleteQueuedTurn(queuedTurnId)
+    } catch (error) {
+      if (mounted.current) {
+        setQueueError(
+          error instanceof Error ? error.message : 'Could not remove the queued prompt.',
+        )
+      }
+    }
   }
 
   const insertTranscript = (
@@ -541,108 +1308,62 @@ function ComposerComponent(props: {
     })
   }
 
-  const startVoice = async () => {
-    const operation = voiceOperation.current + 1
-    voiceOperation.current = operation
-    setVoiceError(undefined)
-    try {
-      await recorder.start()
-      if (mounted.current && voiceOperation.current === operation) setVoiceState('recording')
-      else await recorder.cancel()
-    } catch (error) {
-      if (mounted.current && voiceOperation.current === operation) {
-        setVoiceState('idle')
-        setVoiceError(describeMicrophoneError(error))
-      }
-    }
-  }
-
-  const transcribeVoice = async (sendAfter = false) => {
-    if (voiceState !== 'recording') return
-    const operation = voiceOperation.current
-    const cursor = area.current?.selectionStart ?? textRef.current.length
-    setVoiceState('transcribing')
-    setVoiceError(undefined)
-    const recording = await recorder.stop()
-    if (!mounted.current || voiceOperation.current !== operation) return
-    if (!recording) {
-      setVoiceState('idle')
-      setVoiceError('No audio was captured. Check the selected microphone and try again.')
-      return
-    }
-    const requestId = crypto.randomUUID()
-    voiceRequest.current = requestId
-    try {
-      const transcript = await props.onTranscribeVoice(requestId, recording)
-      if (
-        mounted.current &&
-        voiceOperation.current === operation &&
-        voiceRequest.current === requestId
-      ) {
-        const inserted = insertTranscriptAtCursor(textRef.current, transcript, cursor)
-        if (inserted) {
-          if (!sendAfter || !sendContent(inserted.text)) insertTranscript(transcript, cursor)
-        }
-      }
-    } catch (error) {
-      if (
-        mounted.current &&
-        voiceOperation.current === operation &&
-        voiceRequest.current === requestId
-      ) {
-        setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.')
-      }
-    } finally {
-      if (
-        mounted.current &&
-        voiceOperation.current === operation &&
-        voiceRequest.current === requestId
-      ) {
-        voiceRequest.current = undefined
-        setVoiceState('idle')
-      }
-    }
-  }
-
-  const cancelVoice = () => {
-    voiceOperation.current += 1
-    if (voiceRequest.current) {
-      props.onCancelVoice(voiceRequest.current)
-      voiceRequest.current = undefined
-    }
-    void recorder.cancel()
-    setVoiceError(undefined)
+  useEffect(() => {
+    if (props.voiceAvailable) return
     setVoiceState('idle')
-  }
-
-  // Dependency-scoped: without an array this ran after every streamed frame
-  // just to check the recording cap.
-  useEffect(() => {
-    if (voiceState === 'recording' && recorder.durationMs >= MAX_RECORDING_MS) {
-      void transcribeVoice()
-    }
-  }, [voiceState, recorder.durationMs])
-
-  const voiceStateRef = useRef(voiceState)
-  voiceStateRef.current = voiceState
-  useEffect(() => {
-    if (!props.voiceAvailable && voiceStateRef.current !== 'idle') cancelVoice()
+    setVoiceError(undefined)
   }, [props.voiceAvailable])
 
   const showStop =
-    props.running &&
-    text.trim() === '' &&
-    attachments.length === 0 &&
-    selectedResources.length === 0
+    props.running && !hasDraftText && attachments.length === 0 && selectedResources.length === 0
   const submitLabel = props.running ? 'Queue' : 'Send'
   const sendDisabled =
-    composerPromptWithResources(text, selectedResources) === '' ||
+    (!hasDraftText && selectedResources.length === 0 && attachments.length === 0) ||
     attachments.some((attachment) => !attachment.path) ||
     props.disabled ||
     props.sendAvailability !== 'ready' ||
     (!props.attachmentsSupported && attachments.length > 0)
-  const visibleAttachmentError =
-    !props.attachmentsSupported && attachments.length > 0 ? ATTACHMENTS_BLOCK_SEND : attachmentError
+  const unsupportedAttachmentIssue = useMemo<ComposerError | undefined>(
+    () =>
+      !props.attachmentsSupported && attachments.length > 0
+        ? { id: crypto.randomUUID(), message: ATTACHMENTS_BLOCK_SEND }
+        : undefined,
+    [props.attachmentsSupported, attachments.length],
+  )
+
+  const setupError = useMemo<
+    (Omit<ComposerError, 'action'> & { action: { label: string } }) | undefined
+  >(() => {
+    if (props.sendAvailability === 'ready' || props.sendAvailability === 'loading') return undefined
+    return {
+      id: crypto.randomUUID(),
+      role: 'status',
+      message:
+        props.sendAvailability === 'unavailable'
+          ? 'Provider unavailable'
+          : props.providerSignInRequired
+            ? 'Sign in to use this provider.'
+            : 'Set up this provider to start chatting.',
+      action: {
+        label:
+          props.sendAvailability === 'unavailable'
+            ? 'Check setup'
+            : props.providerSignInRequired
+              ? 'Sign in'
+              : 'Set up provider',
+      },
+    }
+  }, [props.provider, props.sendAvailability, props.providerSignInRequired])
+  const composerErrors = [
+    ...(props.errors ?? []),
+    props.providerError ??
+      (setupError
+        ? { ...setupError, action: { ...setupError.action, run: props.onSetupProvider } }
+        : undefined),
+    unsupportedAttachmentIssue ?? attachmentError,
+    voiceError,
+    queueError,
+  ].filter((error): error is ComposerError => error !== undefined)
 
   const selectResource = (resource: ComposerResource) => {
     const trigger = resourceTrigger
@@ -666,7 +1387,7 @@ function ComposerComponent(props: {
 
   return (
     <>
-      <div className={`composer${props.newSession ? ' is-new-session' : ''}`}>
+      <div ref={composerRoot} className={`composer${props.newSession ? ' is-new-session' : ''}`}>
         <div
           ref={composerAnchor}
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
@@ -678,24 +1399,29 @@ function ComposerComponent(props: {
           onDrop={(e) => {
             e.preventDefault()
             setDragging(false)
-            // Electron exposes a real path on dropped files; browsers do not, so
-            // this quietly does nothing during development rather than lying.
-            const paths = Array.from(e.dataTransfer.files)
-              .map((file) => (file as File & { path?: string }).path)
-              .filter((path): path is string => typeof path === 'string' && path !== '')
-            attachFiles(paths)
+            addDroppedFiles(Array.from(e.dataTransfer.files))
           }}
         >
+          <ComposerErrors
+            errors={composerErrors}
+            visible={props.errorsVisible ?? true}
+            onDismiss={() => area.current?.focus()}
+          />
           {props.newSession ? (
             <div className="composer__shelf">
               <Menu
                 label="Choose project"
                 drop="down"
                 triggerClassName="shelf-control shelf-control--project"
+                panelClassName="menu--compact menu--project-picker"
                 trigger={() => (
                   <span className="shelf-control__content">
                     <Folder size={15} aria-hidden />
-                    <span>{props.projectName ?? 'Choose project'}</span>
+                    {props.projectName === undefined && props.projectsLoading ? (
+                      <Skeleton className="skeleton-group" width={56} height={9} />
+                    ) : (
+                      <span>{props.projectName ?? 'Choose project'}</span>
+                    )}
                   </span>
                 )}
               >
@@ -705,6 +1431,7 @@ function ComposerComponent(props: {
                       <MenuItem
                         key={project.path}
                         title={project.name ?? basename(project.path)}
+                        icon={<Folder size={14} aria-hidden />}
                         detail={project.path}
                         active={project.path === props.projectPath}
                         onClick={() => {
@@ -717,29 +1444,54 @@ function ComposerComponent(props: {
                 )}
               </Menu>
 
-              <button
-                type="button"
-                className="shelf-control shelf-control--mode"
-                aria-label="Workspace mode"
-                aria-pressed={props.isolate}
-                onClick={() => props.onIsolateChange(!props.isolate)}
-                title="Switch between the project checkout and an isolated worktree"
+              <Menu
+                label="Workspace mode"
+                drop="down"
+                triggerClassName="shelf-control shelf-control--mode"
+                panelClassName="menu--compact"
+                shortcutAria={shortcutAria(keybindings.toggleIsolatedSession)}
+                trigger={() => (
+                  <span className="shelf-control__content">
+                    <IconMorph active={props.isolate ? 1 : 0}>
+                      <Laptop size={15} aria-hidden />
+                      <GitBranch size={15} aria-hidden />
+                    </IconMorph>
+                    <span>{props.isolate ? 'Isolated' : 'Local'}</span>
+                  </span>
+                )}
               >
-                <span className="shelf-control__content">
-                  {props.isolate ? (
-                    <GitBranch size={15} aria-hidden />
-                  ) : (
-                    <Laptop size={15} aria-hidden />
-                  )}
-                  <span>{props.isolate ? 'Isolated' : 'Local'}</span>
-                </span>
-              </button>
+                {(close) => (
+                  <>
+                    <MenuItem
+                      title="Local"
+                      icon={<Laptop size={14} aria-hidden />}
+                      checked={!props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(false)
+                        close()
+                      }}
+                    />
+                    <MenuItem
+                      title="Isolated"
+                      icon={<GitBranch size={14} aria-hidden />}
+                      checked={props.isolate}
+                      onClick={() => {
+                        props.onIsolateChange(true)
+                        close()
+                      }}
+                    />
+                  </>
+                )}
+              </Menu>
 
               {props.branches.length > 0 ? (
                 <Menu
                   label="Choose branch"
                   drop="down"
                   triggerClassName="shelf-control shelf-control--branch"
+                  panelRole="dialog"
+                  panelLabel="Choose branch"
+                  panelClassName="branch-menu"
                   trigger={() => (
                     <span className="shelf-control__content">
                       <GitBranch size={15} aria-hidden />
@@ -748,35 +1500,64 @@ function ComposerComponent(props: {
                   )}
                 >
                   {(close) => (
-                    <>
-                      {props.branches.map((branch) => (
-                        <MenuItem
-                          key={branch}
-                          title={branch}
-                          active={branch === props.branch}
-                          onClick={() => {
-                            props.onBranchChange(branch)
-                            close()
-                          }}
-                        />
-                      ))}
-                    </>
+                    <BranchMenu
+                      branches={props.branches}
+                      activeBranch={props.branch}
+                      onSelect={(branch) => {
+                        props.onBranchChange(branch)
+                        close()
+                      }}
+                    />
                   )}
                 </Menu>
+              ) : props.branchesLoading ? (
+                <SkeletonStatus
+                  label="Loading branches"
+                  className="menutrigger shelf-control shelf-control--branch composer-skeleton-branch"
+                >
+                  <span className="shelf-control__content">
+                    <Skeleton className="skeleton--icon" />
+                    <Skeleton width={64} height={9} />
+                  </span>
+                </SkeletonStatus>
               ) : null}
             </div>
           ) : null}
 
-          {props.queuedTurns.length > 0 ? (
-            <div className="composer__queue" aria-label="Queued prompts">
-              {props.queuedTurns.map((queuedTurn, index) => (
+          {renderedQueue.items.length > 0 ? (
+            <div
+              ref={queuePanel}
+              className="composer__queue"
+              aria-label="Queued prompts"
+              aria-hidden={props.queuedTurns.length === 0 ? true : undefined}
+              inert={props.queuedTurns.length === 0 ? true : undefined}
+            >
+              {renderedQueue.items.map(({ turn: queuedTurn, phase, exitBox }, index) => (
                 <div
-                  className={`queue-row${draggedQueueId === queuedTurn.id ? ' is-dragging' : ''}`}
+                  className={`queue-row${phase !== 'exiting' && draggedQueueId === queuedTurn.id ? ' is-dragging' : ''}`}
                   data-drop-position={
-                    queueDropTarget?.id === queuedTurn.id ? queueDropTarget.position : undefined
+                    phase !== 'exiting' && queueDropTarget?.id === queuedTurn.id
+                      ? queueDropTarget.position
+                      : undefined
                   }
+                  data-queue-id={queuedTurn.id}
+                  data-queue-phase={phase}
+                  data-queue-positioned={exitBox ? true : undefined}
+                  style={
+                    exitBox
+                      ? {
+                          top: exitBox.top,
+                          left: exitBox.left,
+                          width: exitBox.width,
+                          height: exitBox.height,
+                        }
+                      : undefined
+                  }
+                  aria-hidden={phase === 'exiting' ? true : undefined}
+                  inert={phase === 'exiting' ? true : undefined}
                   key={queuedTurn.id}
-                  draggable
+                  ref={getQueueRowRef(queuedTurn.id)}
+                  draggable={phase !== 'exiting'}
                   onDragStart={(event) => {
                     event.dataTransfer.effectAllowed = 'move'
                     event.dataTransfer.setData('text/plain', queuedTurn.id)
@@ -794,6 +1575,11 @@ function ComposerComponent(props: {
                   }}
                   onDrop={(event) => dropQueuedTurn(event, queuedTurn.id)}
                   onDragEnd={endQueueDrag}
+                  onAnimationEnd={(event) => {
+                    if (event.target === event.currentTarget && phase !== 'present') {
+                      finishQueueItemMotion(queuedTurn.id, phase)
+                    }
+                  }}
                 >
                   <button
                     type="button"
@@ -811,8 +1597,9 @@ function ComposerComponent(props: {
                         void props.onMoveQueuedTurn(queuedTurn.id, direction)
                     }}
                   >
-                    <GripVertical size={14} aria-hidden />
+                    <GripVertical size={12} aria-hidden />
                   </button>
+                  <QueuedMediaPreview attachments={queuedTurn.attachments} />
                   <span className="queue-row__text" title={queuedTurn.text}>
                     {queuedTurn.text}
                   </span>
@@ -823,74 +1610,112 @@ function ComposerComponent(props: {
                       onClick={() => props.onSteerQueuedTurn(queuedTurn.id)}
                       title="Steer the running agent with this prompt"
                     >
-                      <CornerDownRight size={15} aria-hidden />
+                      <CornerDownRight size={12} aria-hidden />
                       <span>Steer</span>
                     </button>
                   ) : null}
                   <button
                     type="button"
                     className="queue-row__action"
-                    onClick={() => editQueuedTurn(queuedTurn)}
+                    onClick={() => void editQueuedTurn(queuedTurn)}
                     title="Edit prompt"
                     aria-label={`Edit ${queuedTurn.text}`}
                   >
-                    <Pencil size={14} aria-hidden />
+                    <Pencil size={12} aria-hidden />
                   </button>
                   <button
                     type="button"
                     className="queue-row__action"
-                    onClick={() => props.onDeleteQueuedTurn(queuedTurn.id)}
+                    onClick={() => void removeQueuedTurn(queuedTurn.id)}
                     title="Remove from queue"
                     aria-label={`Remove ${queuedTurn.text} from queue`}
                   >
-                    <Trash2 size={15} aria-hidden />
+                    <Trash2 size={12} aria-hidden />
                   </button>
                 </div>
               ))}
             </div>
           ) : null}
 
-          <ComposerResourcePicker
-            ref={resourcePicker}
-            transport={props.transport}
-            provider={props.provider}
-            projectPath={props.projectPath}
-            trigger={resourceTrigger}
-            selectedKeys={selectedResourceKeys}
-            onSelect={selectResource}
-          />
+          {resourcePickerMounted ? (
+            <Suspense fallback={resourceTrigger ? <ResourcePickerSkeleton /> : null}>
+              <ComposerResourcePicker
+                ref={resourcePicker}
+                transport={props.transport}
+                provider={props.provider}
+                projectPath={props.projectPath}
+                trigger={resourceTrigger}
+                selectedKeys={selectedResourceKeys}
+                onSelect={selectResource}
+              />
+            </Suspense>
+          ) : null}
 
-          <BorderBeam
+          <DesignBeam
             className={`composer__design-beam${props.newSession ? ' is-shelved' : ''}`}
-            size="md"
-            colorVariant="colorful"
             strength={1}
-            brightness={1.7}
-            duration={2.4}
             active={props.designMode}
           >
             <div className="composer__prompt">
               <div className="chips">
                 {attachments.map((attachment) =>
-                  attachment.previewUrl ? (
+                  attachment.mediaType ? (
                     <span
-                      className={`attachment-preview ${attachment.path ? '' : 'is-loading'}`}
+                      className={`attachment-preview attachment-preview--${attachment.mediaType}${attachment.path ? '' : ' is-loading'}`}
                       key={attachment.id}
                       title={attachment.name}
                     >
                       <button
                         className="attachment-preview__open"
                         type="button"
-                        onClick={() =>
-                          setViewingImage({ src: attachment.previewUrl!, name: attachment.name })
+                        disabled={!attachment.previewUrl}
+                        onPointerEnter={preloadMediaViewer}
+                        onFocus={preloadMediaViewer}
+                        onClick={() => {
+                          if (!attachment.previewUrl || !attachment.mediaType) return
+                          setViewingMedia({
+                            src: attachment.previewUrl,
+                            thumbnailSrc: attachmentThumbnailUrl(attachment),
+                            name: attachment.name,
+                            mediaType: attachment.mediaType,
+                            ...(attachment.previewUrl.startsWith('tastecode-attachment:') &&
+                            attachment.path
+                              ? { localPath: attachment.path }
+                              : {}),
+                          })
+                        }}
+                        aria-label={
+                          attachment.previewUrl
+                            ? `Open ${attachment.name}`
+                            : `Loading preview of ${attachment.name}`
                         }
-                        aria-label={`Open ${attachment.name}`}
                       >
-                        <img src={attachment.previewUrl} alt="" />
+                        <span className="attachment-preview__fallback" aria-hidden>
+                          {attachment.mediaType === 'video' ? (
+                            <Video size={21} strokeWidth={1.6} />
+                          ) : (
+                            <ImageIcon size={21} strokeWidth={1.6} />
+                          )}
+                        </span>
+                        {attachmentThumbnailUrl(attachment) ? (
+                          <img
+                            src={attachmentThumbnailUrl(attachment)}
+                            onLoad={preloadMediaViewer}
+                            alt=""
+                            onError={(event) => {
+                              event.currentTarget.hidden = true
+                            }}
+                          />
+                        ) : null}
+                        {attachment.mediaType === 'video' ? (
+                          <span className="attachment-preview__play" aria-hidden>
+                            <Play size={14} fill="currentColor" />
+                          </span>
+                        ) : null}
                       </button>
                       <button
                         className="attachment-preview__remove"
-                        onClick={() => removeAttachment(attachment.id)}
+                        onClick={() => removeAttachment(attachment.id, attachment.previewUrl)}
                         title="Remove"
                         aria-label={`Remove ${attachment.name}`}
                       >
@@ -902,13 +1727,15 @@ function ComposerComponent(props: {
                     <span className="chip chip--file" key={attachment.id} title={attachment.path}>
                       {attachment.path && IMAGE_RE.test(attachment.path) ? (
                         <ImageIcon size={13} aria-hidden />
+                      ) : attachment.path && VIDEO_RE.test(attachment.path) ? (
+                        <Play size={13} aria-hidden />
                       ) : (
                         <FileIcon size={13} aria-hidden />
                       )}
                       <span className="chip__label">{attachment.name}</span>
                       <button
                         className="chip__x"
-                        onClick={() => removeAttachment(attachment.id)}
+                        onClick={() => removeAttachment(attachment.id, attachment.previewUrl)}
                         title="Remove"
                         aria-label={`Remove ${attachment.name}`}
                       >
@@ -944,32 +1771,33 @@ function ComposerComponent(props: {
                     </span>
                   )
                 })}
-                {visibleAttachmentError ? (
-                  <span className="chip chip--error" role="alert">
-                    {visibleAttachmentError}
-                  </span>
-                ) : null}
               </div>
 
               <div className="composer__field">
                 <textarea
                   ref={area}
-                  value={text}
-                  rows={2}
+                  defaultValue=""
+                  rows={1}
                   spellCheck={false}
                   disabled={props.disabled}
-                  aria-keyshortcuts={shortcutAria(SHORTCUTS.focusComposer)}
+                  aria-label="Message"
+                  aria-keyshortcuts={shortcutAria(keybindings.focusComposer)}
                   aria-controls={resourceTrigger ? COMPOSER_RESOURCE_LIST_ID : undefined}
                   aria-expanded={resourceTrigger !== undefined}
                   aria-haspopup="listbox"
                   aria-autocomplete="list"
+                  onFocus={preloadThread}
+                  onPointerEnter={preloadThread}
                   onChange={(e) => {
                     const value = e.target.value
-                    updateText(value)
-                    setResourceTrigger(
+                    const onlyInserts =
+                      composerAtMaximumHeight.current &&
+                      composerInputOnlyInserts(textRef.current, value, e.nativeEvent as InputEvent)
+                    updateText(value, false)
+                    updateResourceTrigger(
                       composerResourceTriggerAt(value, e.target.selectionStart ?? value.length),
                     )
-                    grow()
+                    if (!onlyInserts) grow()
                   }}
                   onKeyDown={(e) => {
                     // IME users press Escape to dismiss the candidate window;
@@ -1014,22 +1842,23 @@ function ComposerComponent(props: {
                   }}
                   onSelect={(e) => {
                     const target = e.currentTarget
-                    setResourceTrigger(
+                    updateResourceTrigger(
                       composerResourceTriggerAt(textRef.current, target.selectionStart ?? 0),
                     )
                   }}
                   onBlur={() => setResourceTrigger(undefined)}
                   onPaste={(e) => {
                     const files = Array.from(e.clipboardData.files)
-                    const paths = files
-                      .filter((file) => !PASTEABLE_IMAGE_TYPES.has(file.type))
-                      .map((file) => (file as File & { path?: string }).path)
-                      .filter((path): path is string => typeof path === 'string' && path !== '')
-                    const materialized = files.filter(
-                      (file) =>
-                        PASTEABLE_IMAGE_TYPES.has(file.type) ||
-                        !(file as File & { path?: string }).path,
-                    )
+                    const paths: string[] = []
+                    const materialized: File[] = []
+                    for (const file of files) {
+                      const filePath =
+                        previewMediaType(file.type, file.name) === undefined
+                          ? droppedFilePath(file)
+                          : undefined
+                      if (filePath) paths.push(filePath)
+                      else materialized.push(file)
+                    }
                     if (materialized.length > 0 || paths.length > 0) {
                       e.preventDefault()
                       if (!props.attachmentsSupported) {
@@ -1044,19 +1873,6 @@ function ComposerComponent(props: {
                 />
               </div>
 
-              {props.sendAvailability !== 'ready' && props.sendAvailability !== 'loading' ? (
-                <div className="composer__provider-state">
-                  <span role="status">
-                    {props.sendAvailability === 'setup-required'
-                      ? 'Provider setup required'
-                      : 'Provider unavailable'}
-                  </span>
-                  <button className="ghost" type="button" onClick={props.onSetupProvider}>
-                    Set up a provider
-                  </button>
-                </div>
-              ) : null}
-
               <div className="tools">
                 {props.attachmentsSupported ? (
                   <button
@@ -1070,64 +1886,103 @@ function ComposerComponent(props: {
                       <Plus size={15} aria-hidden />
                     </span>
                   </button>
+                ) : props.attachmentsLoading ? (
+                  <SkeletonStatus
+                    label="Loading attachments"
+                    className="composer-skeleton-slot composer-skeleton-attachment"
+                  >
+                    <Skeleton width="100%" height="100%" />
+                  </SkeletonStatus>
                 ) : null}
 
-                <Menu
-                  label="Permissions"
-                  triggerClassName="composer__permission"
-                  trigger={() => (
-                    <span
-                      className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
-                    >
-                      <ApprovalIcon size={13} aria-hidden />
-                      <span>{approval.short}</span>
-                    </span>
-                  )}
+                <div
+                  className="composer__dictation-options"
+                  data-hidden={voiceState !== 'idle' ? '' : undefined}
+                  inert={voiceState !== 'idle'}
+                  aria-hidden={voiceState !== 'idle'}
                 >
-                  {(close) => (
-                    <>
-                      {APPROVAL_MODES.filter(
-                        (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
-                      ).map((mode) => {
-                        const ModeIcon = mode.icon
-                        return (
-                          <MenuItem
-                            key={mode.id}
-                            title={mode.title}
-                            detail={mode.detail}
-                            icon={<ModeIcon size={14} aria-hidden />}
-                            className={`composer__permission-option composer__permission-option--${mode.id}`}
-                            active={mode.id === props.approval}
-                            onClick={() => {
-                              props.onApprovalChange(mode.id)
-                              close()
-                            }}
-                          />
-                        )
-                      })}
-                    </>
-                  )}
-                </Menu>
+                  <div className="composer__dictation-options-clip">
+                    <div className="composer__dictation-options-content">
+                      <Menu
+                        label="Permissions"
+                        disabled={Boolean(props.approvalLoading)}
+                        triggerClassName="composer__permission"
+                        panelClassName="menu--compact menu--permissions"
+                        trigger={() =>
+                          props.approvalLoading ? (
+                            <SkeletonStatus
+                              label="Loading permissions"
+                              className="tool composer-skeleton-permission"
+                            >
+                              <div className="composer-skeleton-permission__icon">
+                                <Skeleton className="skeleton--icon" />
+                              </div>
+                              <span className="composer-skeleton-permission__label" aria-hidden>
+                                <span>{approval.short}</span>
+                                <Skeleton height={9} />
+                              </span>
+                            </SkeletonStatus>
+                          ) : (
+                            <span
+                              className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
+                            >
+                              <IconMorph active={APPROVAL_MODES.indexOf(approval)}>
+                                {APPROVAL_MODES.map((mode) => (
+                                  <mode.icon key={mode.id} size={13} aria-hidden />
+                                ))}
+                              </IconMorph>
+                              <span>{approval.short}</span>
+                            </span>
+                          )
+                        }
+                      >
+                        {(close) => (
+                          <>
+                            {APPROVAL_MODES.filter(
+                              (mode) => mode.id !== 'auto-review' || props.autoReviewSupported,
+                            ).map((mode) => {
+                              const ModeIcon = mode.icon
+                              return (
+                                <MenuItem
+                                  key={mode.id}
+                                  title={mode.title}
+                                  detail={mode.detail}
+                                  icon={<ModeIcon size={14} aria-hidden />}
+                                  className={`composer__permission-option composer__permission-option--${mode.id}`}
+                                  active={mode.id === props.approval}
+                                  onClick={() => {
+                                    props.onApprovalChange(mode.id)
+                                    close()
+                                  }}
+                                />
+                              )
+                            })}
+                          </>
+                        )}
+                      </Menu>
 
-                <BorderBeam
-                  className="composer__design-button-beam"
-                  size="sm"
-                  colorVariant="colorful"
-                  strength={0.58}
-                  duration={2.4}
-                  active={props.designMode}
-                >
-                  <button
-                    type="button"
-                    className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
-                    aria-pressed={props.designMode}
-                    onClick={() => props.onDesignModeChange(!props.designMode)}
-                    title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
-                  >
-                    <Palette size={13} aria-hidden />
-                    <span>Design</span>
-                  </button>
-                </BorderBeam>
+                      <DesignBeam
+                        className="composer__design-button-beam"
+                        strength={0.58}
+                        active={props.designMode}
+                      >
+                        <button
+                          type="button"
+                          className={`menutrigger tool composer__design${props.designMode ? ' is-active' : ''}`}
+                          aria-pressed={props.designMode}
+                          aria-keyshortcuts={shortcutAria(keybindings.toggleDesignMode)}
+                          onFocus={preloadDesignBeamStyles}
+                          onPointerEnter={preloadDesignBeamStyles}
+                          onClick={() => props.onDesignModeChange(!props.designMode)}
+                          title={props.designMode ? 'Turn off Design mode' : 'Turn on Design mode'}
+                        >
+                          <Palette size={13} aria-hidden />
+                          <span>Design</span>
+                        </button>
+                      </DesignBeam>
+                    </div>
+                  </div>
+                </div>
 
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
@@ -1136,41 +1991,53 @@ function ComposerComponent(props: {
                 ) : null}
 
                 {voiceState === 'idle' && props.models.length > 0 ? (
-                  <ModelSelector
-                    models={props.models}
-                    modelId={props.modelId}
-                    effort={props.effort}
-                    serviceTier={props.serviceTier}
-                    disabled={props.running}
-                    onModelChange={props.onModelChange}
-                    onEffortChange={props.onEffortChange}
-                    onServiceTierChange={props.onServiceTierChange}
-                  />
+                  <Suspense fallback={<ModelTriggerSkeleton />}>
+                    <ModelSelector
+                      models={props.models}
+                      modelId={props.modelId}
+                      effort={props.effort}
+                      serviceTier={props.serviceTier}
+                      // The active turn already captured its settings. Changes
+                      // here configure the next prompt, including a queued one.
+                      disabled={false}
+                      onOpen={props.onModelSelectorOpen}
+                      onModelChange={props.onModelChange}
+                      onEffortChange={props.onEffortChange}
+                      onServiceTierChange={props.onServiceTierChange}
+                    />
+                  </Suspense>
                 ) : voiceState === 'idle' && showModelPlaceholder ? (
-                  <span className="tool tool--quiet">Loading models…</span>
+                  <ModelTriggerSkeleton />
                 ) : null}
 
-                {props.voiceAvailable && voiceState === 'idle' && !props.running ? (
-                  <ComposerVoiceButton
-                    disabled={props.disabled}
-                    isRecording={false}
-                    isTranscribing={false}
-                    durationLabel={formatRecordingDuration(recorder.durationMs)}
-                    onClick={() => void startVoice()}
-                  />
+                {props.voiceAvailable ? (
+                  <Suspense fallback={props.running ? null : <VoiceControlSkeleton />}>
+                    <ComposerVoiceControl
+                      contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}`}
+                      disabled={props.disabled}
+                      running={props.running}
+                      getCursor={() => area.current?.selectionStart ?? textRef.current.length}
+                      onStateChange={setVoiceState}
+                      onError={setVoiceError}
+                      onTranscribeVoice={props.onTranscribeVoice}
+                      onCancelVoice={props.onCancelVoice}
+                      onTranscript={(transcript, cursor, sendAfter) => {
+                        const inserted = insertTranscriptAtCursor(
+                          textRef.current,
+                          transcript,
+                          cursor,
+                        )
+                        if (inserted && (!sendAfter || !sendContent(inserted.text))) {
+                          insertTranscript(transcript, cursor)
+                        }
+                      }}
+                    />
+                  </Suspense>
+                ) : props.voiceLoading && !props.running ? (
+                  <VoiceControlSkeleton />
                 ) : null}
 
-                {props.voiceAvailable && voiceState !== 'idle' ? (
-                  <ComposerVoiceRecorderBar
-                    disabled={props.disabled || props.running}
-                    isTranscribing={voiceState === 'transcribing'}
-                    durationLabel={formatRecordingDuration(recorder.durationMs)}
-                    waveformLevels={recorder.levels}
-                    onCancel={cancelVoice}
-                    onStop={() => void transcribeVoice()}
-                    onSubmit={() => void transcribeVoice(true)}
-                  />
-                ) : (
+                {voiceState === 'idle' ? (
                   <>
                     {props.running && !showStop && props.canSteerQueue ? (
                       <button
@@ -1197,32 +2064,42 @@ function ComposerComponent(props: {
                           showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel
                         }
                       >
-                        <span className="orb__icon orb__icon--send">
+                        <IconMorph active={showStop ? 1 : 0}>
                           <ArrowUp size={15} aria-hidden />
-                        </span>
-                        <span className="orb__icon orb__icon--stop">
-                          <Square size={9} fill="currentColor" strokeWidth={0} aria-hidden />
-                        </span>
+                          <Square
+                            className="orb__stop-glyph"
+                            size={9}
+                            fill="currentColor"
+                            strokeWidth={0}
+                            aria-hidden
+                          />
+                        </IconMorph>
                       </button>
                     </span>
                   </>
-                )}
+                ) : null}
               </div>
             </div>
-          </BorderBeam>
+          </DesignBeam>
         </div>
       </div>
-      {voiceError ? (
-        <div className="composer__voice-error" role="alert">
-          {voiceError}
-        </div>
-      ) : null}
-      {viewingImage ? (
-        <ImageViewer
-          src={viewingImage.src}
-          name={viewingImage.name}
-          onClose={() => setViewingImage(undefined)}
-        />
+      {viewingMedia ? (
+        <Suspense fallback={null}>
+          <MediaViewer
+            src={viewingMedia.src}
+            thumbnailSrc={viewingMedia.thumbnailSrc}
+            name={viewingMedia.name}
+            mediaType={viewingMedia.mediaType}
+            onReveal={
+              viewingMedia.localPath
+                ? () => {
+                    if (viewingMedia.localPath) void revealPath(viewingMedia.localPath)
+                  }
+                : undefined
+            }
+            onClose={() => setViewingMedia(undefined)}
+          />
+        </Suspense>
       ) : null}
     </>
   )
@@ -1241,7 +2118,7 @@ function ContextUsage({ usage }: { usage: Usage }) {
       tabIndex={0}
       role="img"
       aria-label={detail}
-      style={{ '--context-used': percent } as CSSProperties}
+      style={contextUsageStyle(percent)}
     >
       <svg viewBox="0 0 24 24" aria-hidden>
         <circle className="context-usage__track" cx="12" cy="12" r="9" />
@@ -1279,6 +2156,19 @@ export function insertTranscriptAtCursor(
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+function previewMediaType(mimeType: string, fileName: string): 'image' | 'video' | undefined {
+  if (PREVIEWABLE_IMAGE_TYPES.has(mimeType) || PREVIEWABLE_IMAGE_RE.test(fileName)) return 'image'
+  if (PREVIEWABLE_VIDEO_TYPES.has(mimeType) || VIDEO_RE.test(fileName)) return 'video'
+  return undefined
+}
+
+function attachmentThumbnailUrl(attachment: ComposerAttachment): string | undefined {
+  return (
+    attachment.thumbnailUrl ??
+    (attachment.mediaType === 'image' ? attachment.previewUrl : undefined)
+  )
 }
 
 /**

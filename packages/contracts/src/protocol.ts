@@ -8,13 +8,17 @@ import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
+  BackgroundModelPreferenceSchema,
+  BackgroundModelSettingsSchema,
   CustomHarnessSchema,
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
+  ProviderContextSettingsSchema,
   ProviderIdSchema,
   ProviderSetupSchema,
   ProviderStatusSchema,
+  ProviderUpdateSchema,
   UsageSchema,
 } from './domain.js'
 import {
@@ -23,6 +27,8 @@ import {
   PullRequestActionSchema,
   PullRequestDetailSchema,
   PullRequestFilesResultSchema,
+  PullRequestImageSchema,
+  PullRequestImageUrlSchema,
   PullRequestListResultSchema,
   PullRequestMetadataOptionsSchema,
 } from './pull-requests.js'
@@ -148,6 +154,8 @@ export const PreviewInteractiveTargetViolationSchema = z
     label: z.string().max(200),
     width: z.number().finite().nonnegative(),
     height: z.number().finite().nonnegative(),
+    /** An ancestor's overflow hides part of the target. */
+    partiallyClipped: z.boolean().optional(),
   })
   .refine(({ width, height }) => width < 44 || height < 44, {
     message: 'interactive target violations must be smaller than 44 CSS px',
@@ -159,12 +167,20 @@ export type PreviewInteractiveTargetViolation = z.infer<
 export const PreviewDomAuditSchema = z.object({
   h1Count: z.number().int().nonnegative().max(10_000),
   interactiveTargetViolations: z.array(PreviewInteractiveTargetViolationSchema).max(200),
+  /**
+   * `partial` when the bounded DOM walk stopped early or content may sit in closed
+   * shadow roots; counts are then lower bounds.
+   */
+  coverage: z.enum(['complete', 'partial']).optional(),
 })
 export type PreviewDomAudit = z.infer<typeof PreviewDomAuditSchema>
 
 export const PreviewScreenshotSchema = PreviewViewportSchema.extend({
   path: z.string().min(1),
   domAudit: PreviewDomAuditSchema.optional(),
+  /** Full document height; larger than `capturedHeight` when the bitmap cap cut the page. */
+  documentHeight: z.number().int().positive().optional(),
+  capturedHeight: z.number().int().positive().optional(),
 })
 export type PreviewScreenshot = z.infer<typeof PreviewScreenshotSchema>
 
@@ -280,8 +296,10 @@ export const McpServerSchema = z.object({
   enabled: z.boolean(),
   /** Vendor-global inventory may not expose its underlying transport. */
   transport: McpTransportSchema.optional(),
-  auth: McpAuthSchema,
-  startup: McpStartupStatusSchema,
+  /** Older live provider adapters may not report authentication state yet. */
+  auth: McpAuthSchema.optional(),
+  /** Older live provider adapters may not report startup state yet. */
+  startup: McpStartupStatusSchema.optional(),
   tools: z.array(McpToolSchema),
   resources: z.array(McpResourceSchema),
   resourceTemplates: z.array(McpResourceTemplateSchema),
@@ -396,6 +414,12 @@ export const ThreadLifecycleSchema = z.discriminatedUnion('state', [
   }),
 ])
 export type ThreadLifecycle = z.infer<typeof ThreadLifecycleSchema>
+
+export const ProviderContextSettingsMapSchema = z.partialRecord(
+  ProviderIdSchema,
+  ProviderContextSettingsSchema,
+)
+export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
 
 export const SidebarSettingsSchema = z.object({
   mode: z.enum(['classic', 'inbox']),
@@ -557,6 +581,17 @@ export const ProviderLimitSchema = z.object({
   resetsAt: z.number().int().nonnegative().optional(),
   /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
   valueLabel: z.string().min(1).max(160).optional(),
+  /** Present when this row can be spent as a one-shot quota reset. */
+  action: z.literal('consume-reset').optional(),
+  /** Available reset details, when reported. Expiry is Unix milliseconds; null means no expiry. */
+  resetCredits: z
+    .array(
+      z.object({
+        id: z.string().min(1).optional(),
+        expiresAt: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .optional(),
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
@@ -658,6 +693,29 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  /** Context settings applied when a session launches or resumes. */
+  'providers.contextSettings': {
+    params: z.object({}),
+    result: ProviderContextSettingsMapSchema,
+  },
+  /** Replaces one provider's settings; sessions already running keep theirs. */
+  'providers.updateContextSettings': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      settings: ProviderContextSettingsSchema,
+    }),
+    result: ProviderContextSettingsMapSchema,
+  },
+  /** Cached background release checks, separate from startup provider detection. */
+  'providers.updates': {
+    params: z.object({ refresh: z.boolean().optional() }),
+    result: z.object({ updates: z.array(ProviderUpdateSchema) }),
+  },
+  /** The server selects the updater; the client can only name a supported provider. */
+  'providers.update': {
+    params: z.object({ provider: ProviderIdSchema, ...TerminalSizeSchema['shape'] }),
+    result: z.object({ terminalId: TerminalIdSchema }),
+  },
   /** User-owned protocol-compatible CLIs. Secrets never belong in these fields. */
   'harnesses.list': {
     params: z.object({}),
@@ -691,7 +749,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
-      ...TerminalSizeSchema.shape,
+      ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -709,7 +767,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
-      ...TerminalSizeSchema.shape,
+      ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -831,6 +889,18 @@ export const methods = {
     params: z.object({ refresh: z.boolean().optional() }),
     result: PullRequestListResultSchema,
   },
+  /**
+   * Install or authenticate the local GitHub CLI in an interactive terminal.
+   * The renderer names only the fixed setup action; the server owns the
+   * platform-specific command so this boundary cannot become a remote shell.
+   */
+  'pullRequests.setup': {
+    params: z.object({
+      action: z.enum(['install', 'login']),
+      ...TerminalSizeSchema['shape'],
+    }),
+    result: z.object({ terminalId: TerminalIdSchema }),
+  },
   'pullRequests.detail': {
     params: z.object({
       repository: GitHubRepositoryNameSchema,
@@ -843,6 +913,8 @@ export const methods = {
     params: z.object({
       repository: GitHubRepositoryNameSchema,
       number: z.number().int().positive(),
+      expectedHeadOid: z.string().min(1),
+      expectedBaseOid: z.string().min(1),
       page: z.number().int().min(1).max(100).optional(),
       refresh: z.boolean().optional(),
     }),
@@ -862,6 +934,15 @@ export const methods = {
       action: PullRequestActionSchema,
     }),
     result: PullRequestActionResultSchema,
+  },
+  /**
+   * Load a repository file or upload embedded as an image. The
+   * renderer has no GitHub session, so the server fetches the bytes through
+   * the authenticated CLI and private repositories render like public ones.
+   */
+  'pullRequests.image': {
+    params: z.object({ url: PullRequestImageUrlSchema }),
+    result: PullRequestImageSchema,
   },
   'auth.status': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
@@ -946,6 +1027,33 @@ export const methods = {
       ),
     }),
   },
+  /**
+   * Find files and folders by name anywhere in a registered project or a session's isolated
+   * checkout, including folders the client has not opened yet. Follows the same visibility
+   * rules as `workspace.listDirectory`.
+   */
+  'workspace.searchFiles': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      query: z.string().trim().min(1).max(256),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+    result: z.object({
+      entries: z.array(
+        z.object({
+          name: z.string().min(1),
+          path: z.string(),
+          kind: z.enum(['directory', 'file']),
+          size: z.number().nonnegative(),
+          modifiedAt: z.number().nonnegative(),
+          restricted: z.boolean(),
+        }),
+      ),
+      /** More matches exist than were returned, or the walk stopped at its bound. */
+      truncated: z.boolean(),
+    }),
+  },
   /** Read a bounded public text file without exposing renderer filesystem access. */
   'workspace.readFile': {
     params: z.object({
@@ -965,6 +1073,30 @@ export const methods = {
   'models.list': {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({ models: z.array(ModelSchema) }),
+  },
+  /** Model policy for short product-owned writing tasks. */
+  'backgroundModel.settings': {
+    params: z.object({}),
+    result: BackgroundModelSettingsSchema,
+  },
+  'backgroundModel.updateSettings': {
+    params: BackgroundModelPreferenceSchema,
+    result: BackgroundModelSettingsSchema,
+  },
+  'backgroundModel.generateTitle': {
+    params: z.object({
+      threadId: z.string().min(1),
+      prompt: z.string().trim().min(1).max(40_000),
+      expectedTitle: z.string().min(1).max(200),
+    }),
+    result: z.object({ title: z.string().min(1).max(200), applied: z.boolean() }),
+  },
+  'backgroundModel.generateCommitMessage': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.object({ message: z.string().min(1).max(2_000) }),
   },
   /**
    * Whether this provider can accept a recorded clip. Availability is account-
@@ -1089,8 +1221,20 @@ export const methods = {
   /** Open the platform-selected shell in a session checkout or registered project. */
   'terminal.open': {
     params: z.union([
-      z.object({ threadId: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
-      z.object({ projectPath: z.string().min(1), ...TerminalSizeSchema.shape }).strict(),
+      z
+        .object({
+          threadId: z.string().min(1),
+          terminalKey: z.string().min(1).max(200).optional(),
+          ...TerminalSizeSchema['shape'],
+        })
+        .strict(),
+      z
+        .object({
+          projectPath: z.string().min(1),
+          terminalKey: z.string().min(1).max(200).optional(),
+          ...TerminalSizeSchema['shape'],
+        })
+        .strict(),
     ]),
     result: z.object({ terminalId: TerminalIdSchema }),
   },
@@ -1099,12 +1243,31 @@ export const methods = {
     result: z.object({}),
   },
   'terminal.resize': {
-    params: z.object({ terminalId: TerminalIdSchema, ...TerminalSizeSchema.shape }),
+    params: z.object({ terminalId: TerminalIdSchema, ...TerminalSizeSchema['shape'] }),
     result: z.object({}),
   },
   'terminal.close': {
     params: z.object({ terminalId: TerminalIdSchema }),
     result: z.object({}),
+  },
+  /** Recover a terminal job after output or completion was missed on reconnect. */
+  'terminal.status': {
+    params: z.object({ terminalId: TerminalIdSchema }),
+    result: z.object({
+      status: z.enum(['running', 'exited', 'unknown']),
+      output: z.string(),
+      outputOffset: z.number().int().nonnegative(),
+      exitCode: z.number().int().nullable(),
+    }),
+  },
+  /** Renew short provider notification leases while a settings view is visible. */
+  'providers.watch': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string(),
+      targets: z.array(z.enum(['skills', 'mcp'])).max(2),
+    }),
+    result: z.object({ expiresInMs: z.number().int().positive() }),
   },
   /** Materialize a browser clipboard image where the local agents can read it. */
   'attachments.saveImage': {
@@ -1155,15 +1318,57 @@ export const methods = {
    * which is what a client that fell behind needs.
    */
   'thread.history': {
-    params: z.object({ threadId: z.string(), afterSeq: z.number().optional() }),
+    params: z
+      .object({
+        threadId: z.string(),
+        afterSeq: z.number().optional(),
+        /** Opt in to complete-turn pages. Omit before for the newest page. */
+        page: z
+          .object({
+            before: z.string().min(1).max(512).optional(),
+            turnLimit: z.number().int().min(1).max(100).optional(),
+          })
+          .optional(),
+      })
+      .refine((value) => value.page === undefined || value.afterSeq === undefined, {
+        message: 'Backward history pages cannot be combined with forward replay',
+      }),
     result: z.object({
       events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
       running: z.boolean(),
+      /** Older provider turns were found; replace the partial client history. */
+      reset: z.boolean().optional(),
+      /** Effective access mode used when this task resumes. */
+      approval: ApprovalModeSchema.optional(),
+      /** Absent on servers without paging. Cursors are opaque and thread-scoped.
+       * Pages contain whole turn lifecycles and assistant/tool pairs; a single
+       * oversized turn may exceed the normal page size. A rewrite invalidates
+       * cursors and returns reset instead of silently mixing history revisions.
+       */
+      page: z
+        .object({
+          olderCursor: z.string().min(1).max(512).nullable(),
+          /** Stable upper bound used to reconcile live events during paging. */
+          snapshotSeq: z.number().int().nonnegative(),
+        })
+        .optional(),
     }),
   },
   'thread.diff': {
     params: z.object({ threadId: z.string() }),
     result: SessionDiffSchema,
+  },
+  /** Reverse only the exact file patch represented by one completed turn's edit block. */
+  'thread.undoTurnChanges': {
+    params: z.object({
+      threadId: z.string(),
+      turnId: z.string(),
+      expectedDiff: z
+        .string()
+        .min(1)
+        .max(64 * 1024 * 1024),
+    }),
+    result: z.object({}),
   },
   'thread.reviewHunk': {
     params: z.object({
@@ -1206,6 +1411,21 @@ export const methods = {
     params: z.object({}),
     result: z.object({ started: z.literal(true) }),
   },
+  /**
+   * Spend one earned rate-limit reset. The provider must have declared a
+   * `consume-reset` limit row. Callers generate a UUID and reuse it when
+   * retrying the same attempt.
+   */
+  'usage.consumeReset': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      idempotencyKey: z.string().uuid(),
+      creditId: z.string().min(1).optional(),
+    }),
+    result: z.object({
+      outcome: z.enum(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed']),
+    }),
+  },
   /** Start a temporary conversation forked from the current main chat. */
   'sideChat.start': {
     params: z.object({
@@ -1245,6 +1465,8 @@ export const methods = {
          * second to write wins silently.
          */
         isolate: z.boolean().optional(),
+        /** Local branch used atomically for a shared or isolated checkout. */
+        baseRef: z.string().min(1).max(1024).optional(),
       })
       .superRefine((request, context) => {
         if ((request.provider === 'api') !== Boolean(request.connectionId)) {
@@ -1415,6 +1637,7 @@ export type Push = z.infer<typeof PushSchema>
 
 export const channels = {
   'preview.captureRequested': PreviewCaptureRequestSchema,
+  'preview.captureCancelled': z.object({ requestId: z.string().uuid() }),
   'server.welcome': z.object({
     serverVersion: z.string(),
     protocolVersion: z.number(),
@@ -1457,6 +1680,8 @@ export const channels = {
      */
     seq: z.number().optional(),
   }),
+  /** Provider metadata or saved transcripts changed outside TasteCode. */
+  'providerHistory.changed': z.object({ threadIds: z.array(z.string()) }),
   /** Events from an ephemeral Side chat stay out of the main conversation stream. */
   'sideChat.event': z.object({
     threadId: z.string(),
@@ -1476,6 +1701,7 @@ export const channels = {
   'terminal.output': z.object({
     terminalId: TerminalIdSchema,
     data: z.string(),
+    outputOffset: z.number().int().nonnegative().optional(),
   }),
   'terminal.exit': z.object({
     terminalId: TerminalIdSchema,

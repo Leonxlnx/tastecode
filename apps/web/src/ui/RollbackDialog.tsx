@@ -1,5 +1,10 @@
-import { History, X } from 'lucide-react'
+import {
+  IconHistory as History,
+  IconLoader2 as LoaderCircle,
+  IconX as X,
+} from '@tabler/icons-react'
 import { useDialogFocus } from './dialog-focus.js'
+import '../styles/rollback.css'
 
 export type Checkpoint = {
   id: number
@@ -53,7 +58,9 @@ export function RollbackDialog(props: {
                 <strong>Before “{checkpoint.label}”</strong>
                 <small>{new Date(checkpoint.createdAt).toLocaleString()}</small>
               </span>
-              {props.loadingId === checkpoint.id ? <span className="spinner" /> : null}
+              {props.loadingId === checkpoint.id ? (
+                <LoaderCircle className="spinner" aria-hidden />
+              ) : null}
             </button>
           ))}
         </div>

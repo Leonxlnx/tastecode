@@ -1,25 +1,30 @@
 import { EventEmitter } from 'node:events'
+import { boundedContext, contextBudgetBytes } from './context-budget.js'
+import { realpathSync } from 'node:fs'
+import path from 'node:path'
 import type {
   ApprovalDecision,
   ApprovalMode,
   ApprovalRequest,
   Capabilities,
   DomainEvent,
+  Item,
   Thread,
   Usage,
 } from '@harness/contracts'
+import type { JsonObject, JsonValue } from './json.js'
 
-export type ApiToolCall = { id: string; name: string; input: unknown }
+export type ApiToolCall = { id: string; name: string; input: JsonValue }
 
 export type ApiMessage =
   | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string; toolCalls: ApiToolCall[]; transportState?: unknown }
+  | { role: 'assistant'; content: string; toolCalls: ApiToolCall[]; transportState?: JsonValue }
   | { role: 'tool'; content: string; toolCallId: string; isError: boolean }
 
 export type ApiTool = {
   name: string
   description: string
-  inputSchema: Record<string, unknown>
+  inputSchema: JsonObject
 }
 
 export type ApiStreamEvent =
@@ -27,7 +32,7 @@ export type ApiStreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'tool_call'; call: ApiToolCall }
   | { type: 'usage'; usage: Usage }
-  | { type: 'state'; value: unknown }
+  | { type: 'state'; value: JsonValue }
   | { type: 'finish'; reason: 'stop' | 'tool_calls' }
 
 export type ApiTransport = (request: {
@@ -35,6 +40,7 @@ export type ApiTransport = (request: {
   messages: readonly ApiMessage[]
   tools: readonly ApiTool[]
   signal: AbortSignal
+  contextBudgetBytes?: number
 }) => AsyncIterable<ApiStreamEvent>
 
 export type ApiSessionState = { thread: Thread; messages: ApiMessage[]; turnCounter: number }
@@ -51,6 +57,18 @@ export const API_CAPABILITIES: Capabilities = {
 
 type Events = { event: [DomainEvent]; log: [string] }
 
+interface StreamResult {
+  text: string
+  calls: ApiToolCall[]
+  finish: 'stop' | 'tool_calls'
+  state: JsonValue | undefined
+}
+
+interface RedactedDelta {
+  chunk: string
+  pending: string
+}
+
 export class ApiAgentSession extends EventEmitter<Events> {
   readonly capabilities = API_CAPABILITIES
   readonly #model: string
@@ -60,12 +78,14 @@ export class ApiAgentSession extends EventEmitter<Events> {
   readonly #reviewTool: (call: ApiToolCall) => Omit<ApprovalRequest, 'id' | 'createdAt'> | undefined
   readonly #onSetApproval: ((approval: ApprovalMode) => void) | undefined
   readonly #maxToolCalls: number
+  readonly #contextBudgetBytes: number | undefined
   readonly #secrets: readonly string[]
   readonly #instructions: string | undefined
   #instructionsPending = false
   #thread: Thread | undefined
   #messages: ApiMessage[] = []
   #active: { turnId: string; controller: AbortController; done: Promise<void> } | undefined
+  readonly #openItems = new Map<string, Item>()
   #approval: { id: string; resolve: (decision: ApprovalDecision) => void } | undefined
   #approvedTools = new Set<string>()
   #turnCounter = 0
@@ -79,6 +99,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     /** Live access-level change; the owner swaps the review policy behind it. */
     setApproval?: (approval: ApprovalMode) => void
     maxToolCalls?: number
+    contextBudgetBytes?: number
     secrets?: readonly string[]
     instructions?: string
   }) {
@@ -92,6 +113,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     this.#reviewTool = options.reviewTool ?? (() => undefined)
     this.#onSetApproval = options.setApproval
     this.#maxToolCalls = options.maxToolCalls ?? 32
+    this.#contextBudgetBytes = options.contextBudgetBytes
     if (!Number.isInteger(this.#maxToolCalls) || this.#maxToolCalls < 1) {
       throw new Error('maxToolCalls must be a positive integer')
     }
@@ -187,12 +209,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
       while (true) {
         signal.throwIfAborted()
         const response = await this.#stream(turnId, signal)
-        this.#messages.push({
+        const assistant: ApiMessage = {
           role: 'assistant',
           content: response.text,
           toolCalls: response.calls,
-          ...(response.state === undefined ? {} : { transportState: response.state }),
-        })
+        }
+        if (response.state !== undefined) assistant.transportState = response.state
+        this.#messages.push(assistant)
         if (response.finish === 'stop') break
         if (response.calls.length === 0) throw new Error('missing tool calls')
 
@@ -201,6 +224,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
           await this.#runTool(turnId, call, signal)
         }
       }
+      this.#finishOpenItems('completed')
       this.emit('event', {
         type: 'turn.completed',
         turnId,
@@ -232,16 +256,20 @@ export class ApiAgentSession extends EventEmitter<Events> {
         }
       }
       if (!interrupted) {
-        const detail = error instanceof Error ? error.message : String(error)
+        const detail = this.#redact(error instanceof Error ? error.message : String(error)).slice(
+          0,
+          400,
+        )
         this.emit('log', `direct API model request failed: ${detail}`)
         this.emit('event', {
           type: 'thread.error',
           threadId: thread.id,
           // The redacted real cause, not a shrug — "credit balance too low"
           // and "invalid api key" are actionable; "request failed" is not.
-          message: this.#redact(detail) || 'The model request failed.',
+          message: detail || 'The model request failed.',
         })
       }
+      this.#finishOpenItems('failed')
       this.emit('event', {
         type: 'turn.completed',
         turnId,
@@ -250,15 +278,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     }
   }
 
-  async #stream(
-    turnId: string,
-    signal: AbortSignal,
-  ): Promise<{
-    text: string
-    calls: ApiToolCall[]
-    finish: 'stop' | 'tool_calls'
-    state: unknown
-  }> {
+  async #stream(turnId: string, signal: AbortSignal): Promise<StreamResult> {
     const itemId = `${turnId}-assistant-${this.#messages.length}`
     const reasoningId = `${itemId}-reasoning`
     let started = false
@@ -266,7 +286,7 @@ export class ApiAgentSession extends EventEmitter<Events> {
     let text = ''
     let reasoning = ''
     let finish: 'stop' | 'tool_calls' | undefined
-    let state: unknown
+    let state: JsonValue | undefined
     const calls: ApiToolCall[] = []
     // Per-delta redaction misses a secret split across two chunks. Redact a
     // rolling window instead: only the unemitted tail is scanned, holding
@@ -280,31 +300,52 @@ export class ApiAgentSession extends EventEmitter<Events> {
       this.#secrets.length > 0 ? Math.max(...this.#secrets.map((secret) => secret.length)) - 1 : 0
     let pendingText = ''
     let pendingReasoning = ''
-    const safeDelta = (pending: string): { chunk: string; pending: string } => {
+    const safeDelta = (pending: string): RedactedDelta => {
       const redacted = this.#redact(pending)
       const safe = Math.max(0, redacted.length - holdback)
       return { chunk: redacted.slice(0, safe), pending: redacted.slice(safe) }
+    }
+    const bounded = boundedContext(
+      this.#messages,
+      this.#tools,
+      this.#model,
+      this.#contextBudgetBytes,
+      this.#instructions,
+    )
+    if (bounded.removedTurns > 0) {
+      this.#messages = bounded.messages
+      this.emit(
+        'log',
+        `API context omitted ${bounded.removedTurns} older turn(s) to stay within its budget.`,
+      )
+      this.#completeItem({
+        id: `${turnId}-context-${itemId}`,
+        turnId,
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: `Context limit: ${bounded.removedTurns} older turn(s) were omitted from this request. The transcript is unchanged.`,
+        createdAt: Date.now(),
+      })
     }
     for await (const event of this.#transport({
       model: this.#model,
       messages: this.#messages,
       tools: this.#tools,
+      contextBudgetBytes: this.#contextBudgetBytes ?? contextBudgetBytes(this.#model),
       signal,
     })) {
       if (event.type === 'text') {
         if (!started) {
           started = true
-          this.emit('event', {
-            type: 'item.started',
-            item: {
-              id: itemId,
-              turnId,
-              type: 'message',
-              role: 'assistant',
-              status: 'started',
-              text: '',
-              createdAt: Date.now(),
-            },
+          this.#startItem({
+            id: itemId,
+            turnId,
+            type: 'message',
+            role: 'assistant',
+            status: 'started',
+            text: '',
+            createdAt: Date.now(),
           })
         }
         const step = safeDelta(pendingText + event.delta)
@@ -316,16 +357,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
       } else if (event.type === 'reasoning') {
         if (!reasoningStarted) {
           reasoningStarted = true
-          this.emit('event', {
-            type: 'item.started',
-            item: {
-              id: reasoningId,
-              turnId,
-              type: 'reasoning',
-              status: 'started',
-              text: '',
-              createdAt: Date.now(),
-            },
+          this.#startItem({
+            id: reasoningId,
+            turnId,
+            type: 'reasoning',
+            status: 'started',
+            text: '',
+            createdAt: Date.now(),
           })
         }
         const step = safeDelta(pendingReasoning + event.delta)
@@ -373,31 +411,25 @@ export class ApiAgentSession extends EventEmitter<Events> {
       }
     }
     if (started) {
-      this.emit('event', {
-        type: 'item.completed',
-        item: {
-          id: itemId,
-          turnId,
-          type: 'message',
-          role: 'assistant',
-          phase: finish === 'tool_calls' ? 'commentary' : 'final_answer',
-          status: 'completed',
-          text,
-          createdAt: Date.now(),
-        },
+      this.#completeItem({
+        id: itemId,
+        turnId,
+        type: 'message',
+        role: 'assistant',
+        phase: finish === 'tool_calls' ? 'commentary' : 'final_answer',
+        status: 'completed',
+        text,
+        createdAt: Date.now(),
       })
     }
     if (reasoningStarted) {
-      this.emit('event', {
-        type: 'item.completed',
-        item: {
-          id: reasoningId,
-          turnId,
-          type: 'reasoning',
-          status: 'completed',
-          text: reasoning,
-          createdAt: Date.now(),
-        },
+      this.#completeItem({
+        id: reasoningId,
+        turnId,
+        type: 'reasoning',
+        status: 'completed',
+        text: reasoning,
+        createdAt: Date.now(),
       })
     }
     return { text, calls, finish, state }
@@ -406,16 +438,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
   async #runTool(turnId: string, call: ApiToolCall, signal: AbortSignal): Promise<void> {
     const itemId = `${turnId}-tool-${call.id}`
     const createdAt = Date.now()
-    this.emit('event', {
-      type: 'item.started',
-      item: {
-        id: itemId,
-        turnId,
-        type: 'tool_call',
-        status: 'started',
-        text: call.name,
-        createdAt,
-      },
+    this.#startItem({
+      id: itemId,
+      turnId,
+      type: 'tool_call',
+      status: 'started',
+      text: call.name,
+      createdAt,
     })
 
     let result: ApiToolResult
@@ -435,26 +464,47 @@ export class ApiAgentSession extends EventEmitter<Events> {
       toolCallId: call.id,
       isError: result.isError ?? false,
     })
-    this.emit('event', {
-      type: 'item.completed',
-      item: {
-        id: itemId,
-        turnId,
-        type: 'tool_call',
-        status: result.isError ? 'failed' : 'completed',
-        text: `${call.name}\n${content}`,
-        createdAt,
-      },
+    this.#completeItem({
+      id: itemId,
+      turnId,
+      type: 'tool_call',
+      status: result.isError ? 'failed' : 'completed',
+      text: `${call.name}\n${content}`,
+      createdAt,
     })
+  }
+
+  #startItem(item: Item): void {
+    this.#openItems.set(item.id, item)
+    this.emit('event', { type: 'item.started', item })
+  }
+
+  #completeItem(item: Item): void {
+    this.#openItems.delete(item.id)
+    this.emit('event', { type: 'item.completed', item })
+  }
+
+  #finishOpenItems(status: 'completed' | 'failed'): void {
+    for (const item of this.#openItems.values()) {
+      const { text: _streamedText, ...started } = item
+      this.emit('event', { type: 'item.completed', item: { ...started, status } })
+    }
+    this.#openItems.clear()
   }
 
   async #approved(call: ApiToolCall, signal: AbortSignal): Promise<boolean> {
     const review = this.#reviewTool(call)
-    // Session approval is keyed on what the user actually reviewed — command
-    // plus path plus reason — not on the tool name. Approving one `bash`
-    // invocation must not silently approve every future one.
+    // Include every reviewed field and exact structured input. A command can
+    // run different code in another directory even when its display is equal.
     const approvalKey = review
-      ? `${call.name}\0${review.command ?? ''}\0${review.path ?? ''}\0${review.reason ?? ''}`
+      ? JSON.stringify({
+          tool: call.name,
+          input: call.input,
+          review: {
+            ...review,
+            cwd: canonicalDirectory(review.cwd ?? '.', this.#thread!.workspacePath),
+          },
+        })
       : call.name
     if (!review || this.#approvedTools.has(approvalKey)) return true
     const request: ApprovalRequest = {
@@ -488,5 +538,15 @@ export class ApiAgentSession extends EventEmitter<Events> {
   #requireThread(threadId: string): Thread {
     if (!this.#thread || this.#thread.id !== threadId) throw new Error('no such API thread')
     return this.#thread
+  }
+}
+
+function canonicalDirectory(directory: string, workspace: string): string {
+  const resolved = path.resolve(workspace, directory)
+  try {
+    return realpathSync(resolved)
+  } catch {
+    // Preserve an absolute identity when the target does not exist yet.
+    return resolved
   }
 }

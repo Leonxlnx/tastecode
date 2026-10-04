@@ -1,0 +1,100 @@
+.composer__shelf.composer__provider-shelf {
+  --provider-shelf-bg: color-mix(in oklab, var(--error) 12%, var(--bg-shelf));
+  display: block;
+  min-height: 36px;
+  padding: 4px 10px 4px 16px;
+  background: var(--provider-shelf-bg);
+  color: var(--error);
+  font-size: var(--t-sm);
+  line-height: 1.4;
+  box-shadow: none;
+}
+
+.composer__shelf.composer__provider-shelf::after {
+  background: var(--provider-shelf-bg);
+}
+
+.composer__error-row > svg {
+  flex: none;
+}
+
+.composer__provider-message {
+  flex: 1;
+  min-width: 0;
+  padding-block: 3px;
+  text-wrap: pretty;
+}
+
+.composer__provider-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in oklab, var(--error) 20%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--error) 7%, transparent);
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.composer__provider-action:hover {
+  background: color-mix(in oklab, var(--error) 15%, transparent);
+}
+
+.composer__provider-action:active {
+  background: color-mix(in oklab, var(--error) 20%, transparent);
+}
+
+.composer__provider-action:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.composer__error-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer__error-row + .composer__error-row {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in oklab, var(--error) 12%, transparent);
+}
+
+.composer__provider-message {
+  overflow-wrap: anywhere;
+}
+
+.composer__error-dismiss {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.composer__error-dismiss:hover {
+  background: color-mix(in oklab, var(--error) 10%, transparent);
+  opacity: 1;
+}
+
+.composer__error-dismiss:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}

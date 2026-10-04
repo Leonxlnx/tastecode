@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Transport } from './transport.js'
+import { TestTransport } from './test-transport.js'
 import {
   beginInstall,
   beginLogin,
+  cancelInstall,
   deviceCode,
   firstAuthUrl,
   installKey,
@@ -64,38 +65,30 @@ describe('deviceCode', () => {
 
 describe('beginInstall', () => {
   function fakeTransport() {
-    const channels = new Map<string, Set<(data: unknown) => void>>()
-    const transport = {
-      request: vi.fn(async () => ({ terminalId: 'term-1' })),
-      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
-        const listeners = channels.get(channel) ?? new Set()
-        listeners.add(listener)
-        channels.set(channel, listeners)
-        return () => listeners.delete(listener)
-      }),
-    } as unknown as Transport
-    const emit = (channel: string, data: unknown) => {
-      for (const listener of channels.get(channel) ?? []) listener(data)
-    }
-    return { transport, emit }
+    return new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-1' }
+      throw new Error(`Unexpected request: ${method}`)
+    })
   }
 
   it('tracks one run per target and does not start a second while one is going', async () => {
-    const { transport } = fakeTransport()
+    const transport = fakeTransport()
     const target = { provider: 'acp' as const, agent: 'gemini' }
     await beginInstall(transport, target)
     await beginInstall(transport, target)
-    expect(transport.request).toHaveBeenCalledTimes(1)
+    expect(
+      transport.requests.filter((request) => request.method !== 'terminal.status'),
+    ).toHaveLength(1)
     expect(installState(installKey(target))?.phase).toBe('running')
   })
 
   it('keeps the log and marks failure with the exit code when the command dies', async () => {
-    const { transport, emit } = fakeTransport()
+    const transport = fakeTransport()
     const target = { provider: 'opencode' as const }
     await beginInstall(transport, target)
 
-    emit('terminal.output', { terminalId: 'term-1', data: 'npm ERR! EACCES\r\n' })
-    emit('terminal.exit', { terminalId: 'term-1', exitCode: 243 })
+    transport.emit('terminal.output', { terminalId: 'term-1', data: 'npm ERR! EACCES\r\n' })
+    transport.emit('terminal.exit', { terminalId: 'term-1', exitCode: 243 })
 
     const state = installState(installKey(target))
     expect(state?.phase).toBe('failed')
@@ -105,32 +98,31 @@ describe('beginInstall', () => {
   })
 
   it('marks success on a clean exit so the UI can refresh the provider list', async () => {
-    const { transport, emit } = fakeTransport()
+    const transport = fakeTransport()
     const target = { provider: 'opencode' as const }
     await beginInstall(transport, target)
 
-    emit('terminal.exit', { terminalId: 'term-1', exitCode: 0 })
+    transport.emit('terminal.exit', { terminalId: 'term-1', exitCode: 0 })
     expect(installState(installKey(target))?.phase).toBe('succeeded')
   })
 })
 
 describe('beginLogin', () => {
   function fakeTransport() {
-    const transport = {
-      request: vi.fn(async () => ({ terminalId: 'term-login-1' })),
-      on: vi.fn(() => () => {}),
-    } as unknown as Transport
-    return transport
+    return new TestTransport(async (method) => {
+      if (method === 'providers.install' || method === 'providers.launch') {
+        return { terminalId: 'term-login-1' }
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
   }
 
   it('asks the server to launch the sign-in CLI, never naming a command', async () => {
     const transport = fakeTransport()
     await beginLogin(transport, { provider: 'acp', agent: 'gemini' })
-    expect(transport.request).toHaveBeenCalledWith('providers.launch', {
-      provider: 'acp',
-      agent: 'gemini',
-      columns: 320,
-      rows: 30,
+    expect(transport.requests).toContainEqual({
+      method: 'providers.launch',
+      params: { provider: 'acp', agent: 'gemini', columns: 320, rows: 30 },
     })
   })
 
@@ -142,7 +134,9 @@ describe('beginLogin', () => {
     expect(loginKey(target)).not.toBe(installKey(target))
     expect(installState(installKey(target))?.phase).toBe('running')
     expect(installState(loginKey(target))?.phase).toBe('running')
-    expect(transport.request).toHaveBeenCalledTimes(2)
+    expect(
+      transport.requests.filter((request) => request.method !== 'terminal.status'),
+    ).toHaveLength(2)
   })
 
   it('reattaches instead of launching twice while a login is running', async () => {
@@ -150,32 +144,28 @@ describe('beginLogin', () => {
     const target = { provider: 'acp' as const, agent: 'kimi' }
     await beginLogin(transport, target, () => {})
     await beginLogin(transport, target, () => {})
-    expect(transport.request).toHaveBeenCalledTimes(1)
+    expect(
+      transport.requests.filter((request) => request.method !== 'terminal.status'),
+    ).toHaveLength(1)
   })
 
   it('opens the first auth URL the CLI prints, exactly once', async () => {
-    const channels = new Map<string, Set<(data: unknown) => void>>()
-    const transport = {
-      request: vi.fn(async () => ({ terminalId: 'term-login-2' })),
-      on: vi.fn((channel: string, listener: (data: unknown) => void) => {
-        const listeners = channels.get(channel) ?? new Set()
-        listeners.add(listener)
-        channels.set(channel, listeners)
-        return () => listeners.delete(listener)
-      }),
-    } as unknown as Transport
-    const emit = (channel: string, data: unknown) => {
-      for (const listener of channels.get(channel) ?? []) listener(data)
-    }
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'term-login-2' }
+      throw new Error(`Unexpected request: ${method}`)
+    })
     const opened: string[] = []
 
     await beginLogin(transport, { provider: 'acp', agent: 'gemini' }, (url) => opened.push(url))
-    emit('terminal.output', { terminalId: 'term-login-2', data: 'Starting sign-in...\r\n' })
-    emit('terminal.output', {
+    transport.emit('terminal.output', {
+      terminalId: 'term-login-2',
+      data: 'Starting sign-in...\r\n',
+    })
+    transport.emit('terminal.output', {
       terminalId: 'term-login-2',
       data: 'Open this URL: https://accounts.example.test/auth?code=abc\r\n',
     })
-    emit('terminal.output', {
+    transport.emit('terminal.output', {
       terminalId: 'term-login-2',
       data: 'Or later https://example.test/other\r\n',
     })
@@ -213,5 +203,86 @@ describe('signedInEmail', () => {
       'grok.user@example.com',
     )
     expect(signedInEmail('Waiting for authorization...')).toBeUndefined()
+  })
+})
+
+describe('cancelInstall', () => {
+  it('stops the owned sign-in once and ignores late output and exit events', async () => {
+    let finishClose!: () => void
+    let run = 0
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: `login-${++run}` }
+      if (method === 'terminal.close') {
+        await new Promise<void>((resolve) => {
+          finishClose = resolve
+        })
+        return {}
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const open = vi.fn()
+    const target = { provider: 'claude-code' as const }
+    const key = loginKey(target)
+    await beginLogin(transport, target, open)
+    const cancel = cancelInstall(transport, key)
+    expect(cancelInstall(transport, key)).toBe(cancel)
+    await vi.waitFor(() => expect(installState(key)?.canceling).toBe(true))
+    transport.emit('terminal.output', {
+      terminalId: 'login-1',
+      data: 'https://example.test/auth\n',
+    })
+    expect(open).not.toHaveBeenCalled()
+    expect(installState(key)?.phase).toBe('running')
+    finishClose()
+    await cancel
+    expect(installState(key)?.phase).toBe('canceled')
+    await beginLogin(transport, target, open)
+    transport.emit('terminal.exit', { terminalId: 'login-1', exitCode: 130 })
+    expect(installState(key)?.terminalId).toBe('login-2')
+    expect(installState(key)?.phase).toBe('running')
+    expect(transport.requests.filter(({ method }) => method === 'terminal.close')).toEqual([
+      { method: 'terminal.close', params: { terminalId: 'login-1' } },
+    ])
+  })
+
+  it('keeps a failed stop available for retry', async () => {
+    let rejectClose = true
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch') return { terminalId: 'login-retry' }
+      if (method === 'terminal.close') {
+        if (rejectClose) throw new Error('Could not stop sign-in')
+        return {}
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const target = { provider: 'codex' as const }
+    await beginLogin(transport, target, () => {})
+    await expect(cancelInstall(transport, loginKey(target))).rejects.toThrow('Could not stop')
+    expect(installState(loginKey(target))).toMatchObject({ phase: 'running', canceling: false })
+    rejectClose = false
+    await cancelInstall(transport, loginKey(target))
+    expect(installState(loginKey(target))?.phase).toBe('canceled')
+  })
+
+  it('cancels a terminal that arrives after cancellation was requested', async () => {
+    let launched!: (value: { terminalId: string }) => void
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.launch')
+        return new Promise((resolve) => {
+          launched = resolve
+        })
+      if (method === 'terminal.close') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    const target = { provider: 'grok' as const }
+    const start = beginLogin(transport, target, () => {})
+    const cancel = cancelInstall(transport, loginKey(target))
+    launched({ terminalId: 'late-login' })
+    await Promise.all([start, cancel])
+    expect(installState(loginKey(target))?.phase).toBe('canceled')
+    expect(transport.requests).toContainEqual({
+      method: 'terminal.close',
+      params: { terminalId: 'late-login' },
+    })
   })
 })

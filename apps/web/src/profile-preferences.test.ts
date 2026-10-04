@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  avatarSeedName,
   PROFILE_IMAGE_MAX_BYTES,
-  profileInitials,
   readProfileIdentityPreferences,
   readProfileImage,
   writeProfileIdentityPreferences,
@@ -11,12 +11,22 @@ import {
 afterEach(() => localStorage.clear())
 
 describe('profile preferences', () => {
-  it('persists a bounded local identity and derives stable initials', () => {
+  it('persists a bounded local identity', () => {
     writeProfileIdentityPreferences({ displayName: '  Blue Emi  ', avatarDataUrl: undefined })
 
     expect(readProfileIdentityPreferences()).toEqual({ displayName: 'Blue Emi' })
-    expect(profileInitials('Blue Emi')).toBe('BE')
-    expect(profileInitials('Codex')).toBe('CO')
+  })
+
+  it('keeps the word the picture is struck from apart from the name', () => {
+    writeProfileIdentityPreferences({ displayName: 'Blue Emi', avatarSeed: '  harbor  ' })
+    const identity = readProfileIdentityPreferences()
+    expect(identity).toEqual({ displayName: 'Blue Emi', avatarSeed: 'harbor' })
+    expect(avatarSeedName(identity)).toBe('harbor')
+
+    writeProfileIdentityPreferences({ displayName: 'Blue Emi', avatarSeed: '   ' })
+    expect(readProfileIdentityPreferences()).toEqual({ displayName: 'Blue Emi' })
+    expect(avatarSeedName(readProfileIdentityPreferences())).toBe('Blue Emi')
+    expect(avatarSeedName({ displayName: ' ' })).toBe('Local profile')
   })
 
   it('accepts signed raster images and rejects unsafe or oversized files', async () => {

@@ -1,18 +1,36 @@
 // @vitest-environment happy-dom
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
+import { memo, useSyncExternalStore } from 'react'
+import type { ThreadFrameStore } from '../../thread-frame-store.js'
 import type { Transport } from '../../transport.js'
 
+const sideThreadRenders = vi.hoisted(() => vi.fn())
+
 vi.mock('../Thread.js', () => ({
-  Thread: (props: { items: Array<{ id: string; text?: string | undefined }> }) => (
-    <div data-testid="side-thread">{props.items.map((item) => item.text).join('|')}</div>
-  ),
+  Thread: memo((props: { frameStore: ThreadFrameStore }) => {
+    sideThreadRenders()
+    const snapshot = useSyncExternalStore(
+      props.frameStore.subscribe,
+      props.frameStore.getSnapshot,
+      props.frameStore.getSnapshot,
+    )
+    const { items, liveItems } = snapshot
+    return (
+      <div data-testid="side-thread">
+        {items.map((item, index) => liveItems?.get(index)?.item.text ?? item.text).join('|')}
+      </div>
+    )
+  }),
 }))
 
 import { WorkspaceSideChat } from './WorkspaceSideChat.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+})
 
 describe('WorkspaceSideChat', () => {
   it('starts a separate ephemeral session and consumes only its event stream', async () => {
@@ -40,7 +58,7 @@ describe('WorkspaceSideChat', () => {
         active
         parentThreadId="main-1"
         parentStatus="working"
-        projectName="Harness"
+        projectName="TasteCode"
         transport={transport}
         startOptions={{ model: 'model-1', effort: 'high', approval: 'ask' }}
         promptRequest={{
@@ -117,6 +135,170 @@ describe('WorkspaceSideChat', () => {
     expect(screen.getByText('Start a chat first')).toBeTruthy()
   })
 
+  it('renders coalesced live text without rerendering the side-chat shell', async () => {
+    let sideEvent:
+      | ((payload: { threadId: string; event: DomainEvent; seq?: number | undefined }) => void)
+      | undefined
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sideChat.start') return { threadId: 'side-1' }
+      if (method === 'thread.history') return { events: [], running: false }
+      return {}
+    })
+    const transport = {
+      request,
+      on: vi.fn((channel: string, listener: typeof sideEvent) => {
+        if (channel === 'sideChat.event') sideEvent = listener
+        return () => {}
+      }),
+      onState: vi.fn(() => () => {}),
+      onSequenceGap: vi.fn(() => () => {}),
+    } as unknown as Transport
+
+    render(
+      <WorkspaceSideChat
+        active
+        parentThreadId="main-1"
+        parentStatus="idle"
+        transport={transport}
+        startOptions={{ approval: 'ask' }}
+      />,
+    )
+
+    await waitFor(() => expect(request).toHaveBeenCalledWith('sideChat.start', expect.anything()))
+    await waitFor(() => expect(sideEvent).toBeDefined())
+    act(() => {
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 1,
+        event: {
+          type: 'turn.started',
+          turn: { id: 'turn-1', threadId: 'side-1', status: 'running', createdAt: 1 },
+        },
+      })
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 2,
+        event: {
+          type: 'item.started',
+          item: {
+            id: 'answer-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'assistant',
+            status: 'started',
+            text: '',
+            createdAt: 2,
+          },
+        },
+      })
+    })
+    await screen.findByTestId('side-thread')
+
+    const frames: FrameRequestCallback[] = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    sideThreadRenders.mockClear()
+    act(() => {
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 3,
+        event: { type: 'item.delta', turnId: 'turn-1', itemId: 'answer-1', textDelta: 'Hel' },
+      })
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 4,
+        event: { type: 'item.delta', turnId: 'turn-1', itemId: 'answer-1', textDelta: 'lo' },
+      })
+    })
+
+    expect(frames).toHaveLength(1)
+    expect(screen.getByTestId('side-thread').textContent).not.toContain('Hello')
+    act(() => frames[0]?.(16))
+    expect(screen.getByTestId('side-thread').textContent).toContain('Hello')
+    expect(sideThreadRenders).toHaveBeenCalledTimes(1)
+  })
+
+  it('defers hidden live text until the temporary chat is visible again', async () => {
+    let sideEvent:
+      | ((payload: { threadId: string; event: DomainEvent; seq?: number | undefined }) => void)
+      | undefined
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sideChat.start') return { threadId: 'side-1' }
+      if (method === 'thread.history') return { events: [], running: false }
+      return {}
+    })
+    const transport = {
+      request,
+      on: vi.fn((channel: string, listener: typeof sideEvent) => {
+        if (channel === 'sideChat.event') sideEvent = listener
+        return () => {}
+      }),
+      onState: vi.fn(() => () => {}),
+      onSequenceGap: vi.fn(() => () => {}),
+    } as unknown as Transport
+    const renderSideChat = (active: boolean) => (
+      <WorkspaceSideChat
+        active={active}
+        parentThreadId="main-1"
+        parentStatus="idle"
+        transport={transport}
+        startOptions={{ approval: 'ask' }}
+      />
+    )
+    const view = render(renderSideChat(true))
+
+    await waitFor(() => expect(request).toHaveBeenCalledWith('sideChat.start', expect.anything()))
+    await waitFor(() => expect(sideEvent).toBeDefined())
+    act(() => {
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 1,
+        event: {
+          type: 'turn.started',
+          turn: { id: 'turn-1', threadId: 'side-1', status: 'running', createdAt: 1 },
+        },
+      })
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 2,
+        event: {
+          type: 'item.started',
+          item: {
+            id: 'answer-1',
+            turnId: 'turn-1',
+            type: 'message',
+            role: 'assistant',
+            status: 'started',
+            text: '',
+            createdAt: 2,
+          },
+        },
+      })
+    })
+    await screen.findByTestId('side-thread')
+    view.rerender(renderSideChat(false))
+
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 1)
+    act(() => {
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 3,
+        event: { type: 'item.delta', turnId: 'turn-1', itemId: 'answer-1', textDelta: 'Hel' },
+      })
+      sideEvent?.({
+        threadId: 'side-1',
+        seq: 4,
+        event: { type: 'item.delta', turnId: 'turn-1', itemId: 'answer-1', textDelta: 'lo' },
+      })
+    })
+
+    expect(requestFrame).not.toHaveBeenCalled()
+    act(() => view.rerender(renderSideChat(true)))
+    await waitFor(() => expect(screen.getByTestId('side-thread').textContent).toContain('Hello'))
+  })
+
   it('keeps the normal composer visible while the temporary chat starts', async () => {
     render(
       <WorkspaceSideChat
@@ -142,4 +324,96 @@ describe('WorkspaceSideChat', () => {
     )
     expect(document.querySelector('.workspace-side-chat__starting')).toBeNull()
   })
+
+  it('fills the conversation with a skeleton until both startup and history finish', async () => {
+    const start = deferred<{ threadId: string }>()
+    const history = deferred<{ events: []; running: boolean }>()
+    const request = vi.fn((method: string) => {
+      if (method === 'sideChat.start') return start.promise
+      if (method === 'thread.history') return history.promise
+      return Promise.resolve({})
+    })
+    const { container } = render(
+      <WorkspaceSideChat
+        active
+        parentThreadId="main-1"
+        parentStatus="idle"
+        transport={
+          {
+            on: () => () => {},
+            onState: () => () => {},
+            onSequenceGap: () => () => {},
+            request,
+          } as unknown as Transport
+        }
+        startOptions={{ approval: 'ask' }}
+      />,
+    )
+
+    const status = await screen.findByRole('status')
+    const conversation = container.querySelector('.workspace-side-chat__conversation')!
+    const composer = screen.getByLabelText('Message temporary chat')
+    expect(status.textContent).toContain('Starting temporary chat…')
+    expect(screen.getAllByRole('status')).toHaveLength(1)
+    expect(status.querySelector('.thread-skeleton__col')).toBeTruthy()
+    expect(conversation.getAttribute('aria-busy')).toBe('true')
+    expect(composer.getAttribute('placeholder')).toBe('Starting temporary chat…')
+
+    await act(async () => start.resolve({ threadId: 'side-1' }))
+    expect(request).toHaveBeenCalledWith('thread.history', { threadId: 'side-1' })
+    expect(screen.getByRole('status')).toBe(status)
+
+    await act(async () => history.resolve({ events: [], running: false }))
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(conversation.getAttribute('aria-busy')).toBe('false')
+    expect(screen.getByText('Start a temporary chat')).toBeTruthy()
+    expect(screen.getByLabelText('Message temporary chat')).toBe(composer)
+    expect(composer.getAttribute('placeholder')).toBe('Do anything')
+  })
+
+  it.each(['sideChat.start', 'thread.history'])(
+    'removes the startup skeleton when %s fails',
+    async (failedMethod) => {
+      const pending = deferred<never>()
+      const request = vi.fn((method: string) => {
+        if (method === failedMethod) return pending.promise
+        return Promise.resolve(method === 'sideChat.start' ? { threadId: 'side-1' } : {})
+      })
+      const { container } = render(
+        <WorkspaceSideChat
+          active
+          parentThreadId="main-1"
+          parentStatus="idle"
+          transport={
+            {
+              on: () => () => {},
+              onState: () => () => {},
+              onSequenceGap: () => () => {},
+              request,
+            } as unknown as Transport
+          }
+          startOptions={{ approval: 'ask' }}
+        />,
+      )
+
+      await screen.findByRole('status')
+      await waitFor(() => expect(request).toHaveBeenCalledWith(failedMethod, expect.anything()))
+      await act(async () => pending.reject(new Error('Temporary chat unavailable')))
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(screen.getByRole('alert').textContent).toContain('Temporary chat unavailable')
+      expect(
+        container.querySelector('.workspace-side-chat__conversation')?.getAttribute('aria-busy'),
+      ).toBe('false')
+    },
+  )
 })
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}

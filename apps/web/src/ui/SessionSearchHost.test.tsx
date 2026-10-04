@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 import { createRef, useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../transport.js'
 import { SessionSearchHost, type SessionSearchHandle } from './SessionSearchHost.js'
 
 const PROJECTS = [
   {
     path: 'D:\\repo',
-    name: 'Harness',
+    name: 'TasteCode',
     sessions: [
       {
         id: 'thread-1',
@@ -42,6 +42,11 @@ function SearchHost(props: { onSelect?: () => void }) {
 }
 
 describe('SessionSearchHost focus restoration', () => {
+  // Exercise focus behavior without timing the first cold module transform.
+  beforeAll(async () => {
+    await import('./SessionSearch.js')
+  })
+
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
@@ -57,7 +62,7 @@ describe('SessionSearchHost focus restoration', () => {
     opener.focus()
     fireEvent.click(opener)
     const input = await screen.findByRole('combobox', { name: 'Search every chat' })
-    expect(document.activeElement).toBe(input)
+    await waitFor(() => expect(document.activeElement).toBe(input))
 
     close(input)
 
@@ -127,7 +132,7 @@ describe('SessionSearchHost focus restoration', () => {
   })
 
   it('falls back when the invoking control unmounts after selection', async () => {
-    function Harness() {
+    function TasteCode() {
       const search = useRef<SessionSearchHandle>(null)
       const [showOpener, setShowOpener] = useState(true)
       return (
@@ -147,7 +152,7 @@ describe('SessionSearchHost focus restoration', () => {
         </>
       )
     }
-    render(<Harness />)
+    render(<TasteCode />)
     const opener = screen.getByRole('button', { name: 'Temporary opener' })
     opener.focus()
     fireEvent.click(opener)

@@ -5,7 +5,7 @@ const html = readFileSync(new URL('../../../index.html', import.meta.url), 'utf8
 
 describe('GitHub avatar CSP', () => {
   it('allows the avatar CDN for images without granting it API access', () => {
-    const policy = /content="(default-src[^\"]+)"/.exec(html)?.[1] ?? ''
+    const policy = /content="(default-src[^"]+)"/.exec(html)?.[1] ?? ''
     const directives = new Map(
       policy.split(';').map((directive) => {
         const [name = '', ...sources] = directive.trim().split(/\s+/)

@@ -1,8 +1,14 @@
+import { serializeContextRequest } from './context-budget.js'
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
+import {
+  type JsonObject,
+  jsonNumber as number,
+  jsonObject as object,
+  parseJsonValue,
+  jsonString as string,
+} from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiToolCall, ApiTransport } from './runtime.js'
 import { httpError, serverSentEvents } from './sse.js'
-
-type JsonObject = Record<string, unknown>
 
 export type OpenAiOptions = {
   apiKey: string
@@ -13,21 +19,24 @@ export function createOpenAiResponsesTransport(options: OpenAiOptions): ApiTrans
   const endpoint = endpointFor(options.baseUrl, 'responses')
   const apiKey = requiredKey(options.apiKey)
 
-  return async function* ({ model, messages, tools, signal }) {
+  return async function* ({ model, messages, tools, signal, contextBudgetBytes }) {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${apiKey}`,
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model,
-        input: toInput(messages),
-        tools: tools.map(toTool),
-        stream: true,
-        store: false,
-        include: ['reasoning.encrypted_content'],
-      }),
+      body: serializeContextRequest(
+        {
+          model,
+          input: toInput(messages),
+          tools: tools.map(toTool),
+          stream: true,
+          store: false,
+          include: ['reasoning.encrypted_content'],
+        },
+        contextBudgetBytes,
+      ),
       signal,
     })
     if (!response.ok) throw new Error(await httpError('OpenAI', response, [apiKey]))
@@ -65,7 +74,7 @@ export function createOpenAiResponsesTransport(options: OpenAiOptions): ApiTrans
           call: {
             id: callId,
             name,
-            input: JSON.parse(string(event.arguments)),
+            input: parseJsonValue(string(event.arguments)),
           },
         } satisfies ApiStreamEvent
       } else if (type === 'response.completed') {
@@ -104,7 +113,7 @@ export async function listOpenAiModels(
     headers: { authorization: `Bearer ${apiKey}` },
   })
   if (!response.ok) throw new Error(`OpenAI model listing failed with HTTP ${response.status}`)
-  const body = object(await response.json())
+  const body = object(parseJsonValue(await response.text()))
   return Array.isArray(body.data)
     ? body.data
         .map(object)
@@ -168,16 +177,4 @@ function endpointFor(baseUrl = 'https://api.openai.com/v1', path: string): URL {
 function requiredKey(value: string): string {
   if (!value.trim()) throw new Error('OpenAI API key is required')
   return value
-}
-
-function object(value: unknown): JsonObject {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
-}
-
-function string(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function number(value: unknown): number {
-  return typeof value === 'number' ? value : 0
 }

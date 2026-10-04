@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const request = {
@@ -28,6 +29,142 @@ describe('preview capture bridge', () => {
     expect(bridge.canCapturePreview).toBe(true)
     await expect(bridge.capturePreview(request)).resolves.toEqual(result)
     expect(capturePreview).toHaveBeenCalledWith(request)
+  })
+})
+
+describe('attachment preview bridge', () => {
+  it('previews imported raster data without a native file read', async () => {
+    const bridge = await import('./bridge.js')
+    const reference = 'data:image/png;base64,iVBORw0KGgo='
+    await expect(bridge.previewViewedImage(reference)).resolves.toMatchObject({
+      previewUrl: reference,
+      name: 'Attached image',
+    })
+    await expect(
+      bridge.previewViewedImage('data:image/svg+xml;base64,PHN2Zz4='),
+    ).resolves.toBeUndefined()
+  })
+
+  it('knows a preview without a round trip only once one exists', async () => {
+    const preview = {
+      path: '/work/layout.png',
+      name: 'layout.png',
+      mediaType: 'image' as const,
+      previewUrl: 'tastecode-attachment://preview/layout',
+    }
+    const previewViewedImage = vi.fn().mockResolvedValue(preview)
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, previewViewedImage }
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canPreviewViewedImages).toBe(true)
+    expect(bridge.knownViewedImagePreview('data:image/png;base64,iVBORw0KGgo=')).toMatchObject({
+      name: 'Attached image',
+    })
+    expect(bridge.knownViewedImagePreview(preview.path)).toBeUndefined()
+    await bridge.previewViewedImage(preview.path)
+    expect(bridge.knownViewedImagePreview(preview.path)).toEqual(preview)
+  })
+
+  it('cannot preview a file reference without the desktop bridge', async () => {
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canPreviewViewedImages).toBe(false)
+    expect(bridge.knownViewedImagePreview('/work/layout.png')).toBeUndefined()
+  })
+  it('reuses the signed preview returned by the file picker', async () => {
+    const picked = {
+      path: '/work/reference.png',
+      name: 'reference.png',
+      mediaType: 'image' as const,
+      previewUrl: 'tastecode-attachment://preview/reference',
+    }
+    const pickFiles = vi.fn().mockResolvedValue([picked])
+    const previewViewedImage = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      pickFiles,
+      previewViewedImage,
+    }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.pickFiles()).resolves.toEqual([picked])
+    await expect(bridge.previewViewedImage(picked.path)).resolves.toEqual(picked)
+    expect(previewViewedImage).not.toHaveBeenCalled()
+  })
+
+  it('resolves a persisted pasted-file path through its safe basename', async () => {
+    const preview = {
+      path: '/private/tmp/TasteCode/pasted-files/uuid-reference.png',
+      name: 'uuid-reference.png',
+      mediaType: 'image' as const,
+      previewUrl: 'tastecode-attachment://preview/pasted',
+    }
+    const previewViewedImage = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(preview)
+    ;(globalThis as { harness?: unknown }).harness = { isDesktop: true, previewViewedImage }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.previewViewedImage(preview.path)).resolves.toEqual(preview)
+    expect(previewViewedImage).toHaveBeenNthCalledWith(1, preview.path)
+    expect(previewViewedImage).toHaveBeenNthCalledWith(2, preview.name)
+  })
+
+  it('bounds old attachment metadata while keeping recent previews hot', async () => {
+    const bridgeModule = await import('./bridge.js')
+    const picked = Array.from(
+      { length: bridgeModule.MAX_CACHED_ATTACHMENT_PREVIEWS + 1 },
+      (_, index) => ({
+        path: `/work/reference-${index}.png`,
+        name: `reference-${index}.png`,
+        mediaType: 'image' as const,
+        previewUrl: `tastecode-attachment://preview/reference-${index}`,
+      }),
+    )
+    const pickFiles = vi.fn().mockResolvedValue(picked)
+    const previewViewedImage = vi.fn(async (reference: string) =>
+      picked.find((attachment) => attachment.path === reference),
+    )
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      pickFiles,
+      previewViewedImage,
+    }
+    vi.resetModules()
+    const bridge = await import('./bridge.js')
+
+    await bridge.pickFiles()
+    await expect(bridge.previewViewedImage(picked[0]!.path)).resolves.toEqual(picked[0])
+    await expect(bridge.previewViewedImage(picked.at(-1)!.path)).resolves.toEqual(picked.at(-1))
+    expect(previewViewedImage).toHaveBeenCalledOnce()
+    expect(previewViewedImage).toHaveBeenCalledWith(picked[0]!.path)
+  })
+})
+
+describe('dropped project folder bridge', () => {
+  it('delegates dropped files to the native folder validator', async () => {
+    const files = [new File([], 'first'), new File([], 'second')]
+    const droppedFolderPaths = vi.fn().mockResolvedValue(['/work/first', '/work/second'])
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      droppedFolderPaths,
+    }
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canDropProjectFolders).toBe(true)
+    await expect(bridge.droppedProjectFolderPaths(files)).resolves.toEqual([
+      '/work/first',
+      '/work/second',
+    ])
+    expect(droppedFolderPaths).toHaveBeenCalledWith(files)
+  })
+
+  it('ignores a drop when no desktop bridge exists', async () => {
+    const bridge = await import('./bridge.js')
+
+    expect(bridge.canDropProjectFolders).toBe(false)
+    await expect(bridge.droppedProjectFolderPaths([new File([], 'project')])).resolves.toEqual([])
   })
 })
 
@@ -69,5 +206,153 @@ describe('external URL bridge', () => {
 
     await expect(bridge.openExternalUrl('https://example.com/')).resolves.toBeUndefined()
     expect(openExternal).toHaveBeenCalledWith('https://example.com/')
+  })
+})
+
+describe('local diagnostics bridge', () => {
+  it('is off and inert in the browser', async () => {
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.localDiagnosticsEnabled()).resolves.toBe(false)
+    await expect(bridge.setLocalDiagnosticsEnabled(true)).resolves.toBe(false)
+    expect(() => bridge.reportRendererError(new Error('test'))).not.toThrow()
+  })
+
+  it('delegates the preference and redacted error source to the desktop', async () => {
+    const setDiagnosticsEnabled = vi.fn().mockResolvedValue(true)
+    const reportRendererError = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      setDiagnosticsEnabled,
+      reportRendererError,
+    }
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.setLocalDiagnosticsEnabled(true)).resolves.toBe(true)
+    bridge.reportRendererError(new Error('renderer failed'))
+    expect(setDiagnosticsEnabled).toHaveBeenCalledWith(true)
+    expect(reportRendererError).toHaveBeenCalledWith(expect.stringContaining('renderer failed'))
+  })
+})
+
+describe('app update bridge', () => {
+  it('stays unsupported in the browser', async () => {
+    const bridge = await import('./bridge.js')
+
+    await expect(bridge.appUpdateState()).resolves.toEqual({
+      status: 'unsupported',
+      currentVersion: 'pre-release',
+    })
+    await expect(bridge.installAppUpdate()).resolves.toBe(false)
+  })
+
+  it('delegates update checks and state events to the desktop shell', async () => {
+    const state = { status: 'ready' as const, currentVersion: '1.0.0', version: '1.0.1' }
+    const checkForUpdates = vi.fn().mockResolvedValue(state)
+    const onUpdateState = vi.fn((listener: (next: typeof state) => void) => {
+      listener(state)
+      return () => undefined
+    })
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      checkForUpdates,
+      onUpdateState,
+    }
+    const bridge = await import('./bridge.js')
+    const listener = vi.fn()
+
+    await expect(bridge.checkForAppUpdates()).resolves.toEqual(state)
+    bridge.onAppUpdateState(listener)
+    expect(checkForUpdates).toHaveBeenCalledOnce()
+    expect(listener).toHaveBeenCalledWith(state)
+  })
+
+  it('lets a Debug simulation stand in for the native updater until it stops', async () => {
+    vi.useFakeTimers()
+    const native = { status: 'idle' as const, currentVersion: '0.1.2' }
+    let nativeListener: ((state: typeof native) => void) | undefined
+    const harness = {
+      isDesktop: true,
+      getUpdateState: vi.fn().mockResolvedValue(native),
+      checkForUpdates: vi.fn(),
+      installUpdate: vi.fn(),
+      onUpdateState: vi.fn((listener: (state: typeof native) => void) => {
+        nativeListener = listener
+        return () => undefined
+      }),
+    }
+    ;(globalThis as { harness?: unknown }).harness = harness
+    const bridge = await import('./bridge.js')
+    const simulation = await import('./app-update-simulation.js')
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => undefined)
+    const listener = vi.fn()
+    const off = bridge.onAppUpdateState(listener)
+
+    try {
+      const verdict = bridge.simulateAppUpdate('update')
+      await vi.advanceTimersByTimeAsync(0)
+      nativeListener?.(native)
+      await expect(bridge.appUpdateState()).resolves.toMatchObject({ status: 'checking' })
+      await expect(bridge.installAppUpdate()).resolves.toBe(false)
+      await vi.advanceTimersByTimeAsync(simulation.SIMULATED_CHECK_MS)
+      await expect(verdict).resolves.toMatchObject({ status: 'downloading', version: '0.1.3' })
+      await vi.advanceTimersByTimeAsync(simulation.SIMULATED_STEP_MS * 25)
+
+      expect(listener).not.toHaveBeenCalledWith(native)
+      expect(listener).toHaveBeenLastCalledWith({
+        status: 'ready',
+        currentVersion: '0.1.2',
+        version: '0.1.3',
+      })
+      await expect(bridge.checkForAppUpdates()).resolves.toMatchObject({ status: 'ready' })
+      await expect(bridge.installAppUpdate()).resolves.toBe(true)
+      expect(reload).toHaveBeenCalledOnce()
+      expect(harness.checkForUpdates).not.toHaveBeenCalled()
+      expect(harness.installUpdate).not.toHaveBeenCalled()
+
+      simulation.stopAppUpdateSimulation()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(listener).toHaveBeenLastCalledWith(native)
+      await expect(bridge.appUpdateState()).resolves.toEqual(native)
+    } finally {
+      off()
+      reload.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('native menu bridge', () => {
+  it('syncs shortcuts and forwards menu actions', async () => {
+    const setMenuShortcuts = vi.fn()
+    const onMenuAction = vi.fn(
+      (listener: (action: 'toggleSidebar', source: 'accelerator') => void) => {
+        listener('toggleSidebar', 'accelerator')
+        return () => undefined
+      },
+    )
+    const suspendMenuShortcuts = vi.fn()
+    ;(globalThis as { harness?: unknown }).harness = {
+      isDesktop: true,
+      setMenuShortcuts,
+      onMenuAction,
+      suspendMenuShortcuts,
+    }
+    const bridge = await import('./bridge.js')
+    const shortcuts = (await import('./shortcuts.js')).createDefaultKeybindings()
+    const listener = vi.fn()
+
+    bridge.syncNativeMenuShortcuts(shortcuts)
+    bridge.onNativeMenuAction(listener)
+
+    expect(setMenuShortcuts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toggleSidebar: { key: 'b', primary: true },
+        toggleTerminal: { key: 'j', primary: true },
+      }),
+    )
+    expect(listener).toHaveBeenCalledWith('toggleSidebar', 'accelerator')
+    bridge.suspendNativeMenuShortcuts(true)
+    expect(suspendMenuShortcuts).toHaveBeenCalledWith(true)
   })
 })

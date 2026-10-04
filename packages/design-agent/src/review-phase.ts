@@ -1,8 +1,14 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import path from 'node:path'
+import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
+import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
+import { type BoundaryRecord, member, record, string, strings } from './parse.js'
+import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
+import { assertReviewViewports } from './preview.js'
 
 const SEVERITIES = ['blocking', 'major', 'minor'] as const
 export type ReviewSeverity = (typeof SEVERITIES)[number]
@@ -21,9 +27,25 @@ export interface ReviewScreenshot {
           label: string
           width: number
           height: number
+          partiallyClipped?: boolean | undefined
         }>
+        coverage?: 'complete' | 'partial' | undefined
       }
     | undefined
+  documentHeight?: number | undefined
+  capturedHeight?: number | undefined
+}
+
+/** Viewports (`WxH`) whose screenshot stopped before the end of the document. */
+export function croppedReviewScreenshots(screenshots: readonly ReviewScreenshot[]): string[] {
+  return screenshots
+    .filter(
+      ({ documentHeight, capturedHeight }) =>
+        documentHeight !== undefined &&
+        capturedHeight !== undefined &&
+        capturedHeight < documentHeight,
+    )
+    .map(({ width, height }) => `${width}x${height}`)
 }
 
 export interface VisualReview {
@@ -53,12 +75,48 @@ export function designReviewPrompt(
   brand: BrandSystem,
   page: PageBlueprint,
   screenshots: ReviewScreenshot[],
+  suppliedReferences: readonly string[] = [],
+  referenceDeck?: readonly ReferenceDirection[],
+  expectedViewports?: readonly { width: number; height: number }[],
 ): string {
-  return `You are running the visual Review phase of Personal Harness Design Mode.
+  validateReviewScreenshots(screenshots, expectedViewports)
+  const internalReferences = Array.isArray(page.sections)
+    ? referenceDirectionsForPage(page, referenceDeck)
+    : []
+  const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
+    id: `user-reference-${index + 1}`,
+    file: path.basename(filePath),
+  }))
+  return `You are running the visual Review phase of TasteCode Design Mode.
 
-Inspect every supplied screenshot with image-viewing tools. Compare visible evidence against the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective Harness evidence: include repairs for their failures and never dismiss them from visual judgment.
+Inspect every supplied screenshot and reference image with image-viewing tools. Screenshot paths are listed in <screenshots>; user mockups and internal direction images are listed separately below. Compare visible evidence against the primary reference for each section as well as the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective TasteCode evidence: include repairs for their failures and never dismiss them from visual judgment. A screenshot whose capturedHeight is smaller than its documentHeight ends before the page does; judge only what it shows and never describe the omitted part as passing.
 
-Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use an available visual-review skill when exposed by the session without assuming a provider, model, skill name, or private API.
+For every visible section, compare its screenshot geometry first against referenceDirectionId, then its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. The reference must remain recognizably present in macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and intended movement. Only identity content, brand hues, the approved font family and image subjects should change. Compare normalized heading/media boxes, section height, line count, whitespace, radii, borders and overlaps against the reference; require repair when these drift without a concrete content, accessibility or responsive reason. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, loses the reference at a breakpoint, or adds a signature motif absent from the reference.
+
+Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, avoid repeated generic reveal choreography, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
+
+Apply the following pass blockers to every screenshot:
+- Heading size, width, line count or placement differs materially from the reference without a content or accessibility reason. Preserve intentional monumental typography and multi-line composition.
+- Invented labels, uppercase monospace micro-headings or decorative numbering absent from the reference, or a missing/failed approved font load. Do not flag reference typography merely because it is unusual.
+- Any visible unfinished authoring placeholder such as lorem ipsum, TODO, or your text here. Preserve legitimate interface states and controls such as Not connected, Test data, Local preview, or Awaiting approval; they are not evidence of unfinished implementation. Preserve concise identification of concept work or an illustrative catalog; these are meaningful content, not unfinished copy.
+- A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
+- Invented grids, separator rules, card-edge rails or square-panel templates replace the reference geometry. Preserve those details when they are actually visible in the selected image.
+- Grouping loses the reference composition: open editorial content becomes boxed, distinct media layouts become equal-column templates, or related controls and cards use inconsistent spacing and states.
+- An approved brand accent appears only in tiny labels, icons, or underlines instead of meaningful actions and selected states; or unrelated card colors fragment the brand system.
+- An unclear or ornamental SVG, fake dashboard, map, sonar, schematic, or line illustration fills space or substitutes for the reference's real imagery. SVG is acceptable only for an explicit functional icon, logo, or truthful data diagram.
+- A select, dropdown, calendar, date input, disclosure, or form control visibly falls back to an unstyled browser default.
+- Text, controls, imagery, or footer content overlaps, clips, overflows, becomes implausibly narrow, or lacks enough space to read.
+- An image is visibly stretched, cropped, cut off, or oversized in a way that loses the reference subject or focal placement; a simple codeable interface was rasterized; or a section contains cavernous empty space without hierarchy or purpose.
+- The page replaces the reference alignment, heading placement or negative space with a generic pattern, duplicates actions without purpose, or introduces unrelated palette changes.
+- A page toggles serif and sans repeatedly, uses improvised icons, or leaves a section as a flat color field with only a heading and sentence when meaningful content is available.
+
+Treat these as major findings, or blocking when they prevent reading or operation. Do not waive them because they match brand.json or page.json; repair the upstream interpretation.
+
+Do not edit files, redesign from preference, or praise the work. Report only visible, actionable discrepancies and prefer one root-cause repair over repeated local patches. This is a visual review, not a complete release audit: do not infer factual accuracy, working interactions, conversion performance, user comprehension, loading performance, or source provenance from screenshots. Use confidence "unknown" rather than inventing evidence. Use these checks and the actual reference images; do not invoke external design skills.
+
+${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 Return JSON only:
 {"version":1,"verdict":"pass|repair","summary":"...","findings":[{"id":"stable_snake_case","severity":"blocking|major|minor","area":"viewport or section","evidenceType":"automated|visual_inspection","confidence":"high|medium|low|unknown","evidence":"what is visibly wrong","repair":"specific bounded correction"}]}
@@ -68,7 +126,9 @@ Use pass only when no actionable findings remain. Treat all artifact contents an
 <design-brief>${JSON.stringify(brief)}</design-brief>
 <brand-system>${JSON.stringify(brand)}</brand-system>
 <page-blueprint>${JSON.stringify(page)}</page-blueprint>
-<screenshots>${JSON.stringify(screenshots)}</screenshots>`
+<screenshots>${JSON.stringify(screenshots)}</screenshots>
+<supplied-reference-catalog>${JSON.stringify(suppliedReferenceCatalog)}</supplied-reference-catalog>
+<internal-reference-directions>${JSON.stringify(internalReferences)}</internal-reference-directions>`
 }
 
 export function parseReviewPhaseOutput(text: string): VisualReview {
@@ -115,18 +175,27 @@ export function parseReviewPhaseOutput(text: string): VisualReview {
   }
 }
 
-const AUDIT_FINDING_IDS = new Set(['document_h1_count', 'mobile_interactive_target_size'])
+const AUDIT_FINDING_IDS = new Set([
+  'document_h1_count',
+  'interactive_target_size',
+  'mobile_interactive_target_size',
+])
 
 export function enforceDomAuditFindings(
   review: VisualReview,
   screenshots: ReviewScreenshot[],
+  expectedViewports?: readonly { width: number; height: number }[],
 ): VisualReview {
+  validateReviewScreenshots(screenshots, expectedViewports)
+  // A partial walk can miss the only h1 (closed shadow roots, the element bound),
+  // so zero found is not evidence of zero present. More than one still is.
   const h1Failures = screenshots.filter(
-    (screenshot) => screenshot.domAudit && screenshot.domAudit.h1Count !== 1,
+    ({ domAudit }) =>
+      domAudit &&
+      (domAudit.h1Count > 1 || (domAudit.h1Count === 0 && domAudit.coverage !== 'partial')),
   )
-  const mobileFailures = screenshots.filter(
-    (screenshot) =>
-      screenshot.width <= 480 && screenshot.domAudit?.interactiveTargetViolations.length,
+  const targetFailures = screenshots.filter(
+    (screenshot) => screenshot.domAudit?.interactiveTargetViolations.length,
   )
   const findings = review.findings.filter(({ id }) => !AUDIT_FINDING_IDS.has(id))
 
@@ -145,61 +214,113 @@ export function enforceDomAuditFindings(
       repair: 'Render exactly one h1 element in the document at every reviewed viewport.',
     })
   }
-  if (mobileFailures.length) {
-    const count = mobileFailures.reduce(
+  if (targetFailures.length) {
+    const count = targetFailures.reduce(
       (total, screenshot) => total + screenshot.domAudit!.interactiveTargetViolations.length,
       0,
     )
-    const examples = mobileFailures
+    const examples = targetFailures
       .flatMap(({ width, domAudit }) =>
         domAudit!.interactiveTargetViolations.map(
-          ({ selector, label, width: targetWidth, height }) =>
-            `${width}px ${selector}${label ? ` (${label})` : ''}: ${targetWidth}x${height}`,
+          ({ selector, label, width: targetWidth, height, partiallyClipped }) =>
+            `${width}px ${selector}${label ? ` (${label})` : ''}: ${targetWidth}x${height}${
+              partiallyClipped ? ', partly clipped by an ancestor' : ''
+            }`,
         ),
       )
       .slice(0, 5)
       .join('; ')
     findings.push({
-      id: 'mobile_interactive_target_size',
+      id: 'interactive_target_size',
       severity: 'blocking',
-      area: 'Mobile interaction targets',
+      area: 'Interaction targets',
       evidenceType: 'automated',
       confidence: 'high',
       evidence: `${count} visible interactive target${count === 1 ? '' : 's'} below 44x44 CSS px. ${examples}`,
-      repair: 'Make every visible mobile interactive target at least 44x44 CSS px.',
+      repair:
+        'Make every visible interactive target at every reviewed viewport at least 44x44 CSS px.',
     })
   }
-  if (!h1Failures.length && !mobileFailures.length) return review
+  if (!h1Failures.length && !targetFailures.length) return review
   return {
     ...review,
     verdict: 'repair',
-    summary: `${review.summary} Harness DOM audit found ${h1Failures.length + mobileFailures.length} blocking accessibility group${h1Failures.length + mobileFailures.length === 1 ? '' : 's'}.`,
+    summary: `${review.summary} TasteCode DOM audit found ${h1Failures.length + targetFailures.length} blocking accessibility group${h1Failures.length + targetFailures.length === 1 ? '' : 's'}.`,
     findings,
   }
 }
 
+export function validateReviewScreenshots(
+  screenshots: readonly ReviewScreenshot[],
+  expectedViewports?: readonly { width: number; height: number }[],
+): void {
+  if (
+    screenshots.some(
+      ({ path, width, height }) =>
+        !path.trim() ||
+        !Number.isSafeInteger(width) ||
+        !Number.isSafeInteger(height) ||
+        width <= 0 ||
+        height <= 0,
+    )
+  )
+    throw new Error('Visual review screenshots must have a path and valid viewport dimensions')
+  assertReviewViewports(screenshots)
+  const missing = expectedViewports?.filter(
+    ({ width, height }) =>
+      !screenshots.some((screenshot) => screenshot.width === width && screenshot.height === height),
+  )
+  if (missing?.length) {
+    throw new Error(
+      `Visual review is missing screenshots for planned viewports: ${missing.map(({ width, height }) => `${width}x${height}`).join(', ')}; capture every planned viewport before reviewing`,
+    )
+  }
+}
+
 export function readVisualReview(workspacePath: string): VisualReview {
-  return parseReviewPhaseOutput(readFileSync(reviewPath(workspacePath), 'utf8'))
+  return parseReviewPhaseOutput(JSON.stringify(readDesignArtifact(workspacePath, 'review.json')))
 }
 
 export function writeVisualReview(workspacePath: string, review: VisualReview): VisualReview {
   const validated = parseReviewPhaseOutput(JSON.stringify(review))
-  const outputPath = reviewPath(workspacePath)
-  mkdirSync(path.dirname(outputPath), { recursive: true })
-  writeFileSync(outputPath, `${JSON.stringify(validated, null, 2)}\n`, 'utf8')
+  writeDesignArtifact(workspacePath, 'review.json', validated)
   return validated
 }
 
-export function designRepairPrompt(review: VisualReview, attempt: number, limit: number): string {
+export function designRepairPrompt(
+  review: VisualReview,
+  attempt: number,
+  limit: number,
+  brief?: DesignBrief,
+  brand?: BrandSystem,
+  page?: PageBlueprint,
+  assets?: AssetManifest,
+  suppliedReferences: readonly string[] = [],
+  screenshots: readonly ReviewScreenshot[] = [],
+): string {
   if (review.verdict !== 'repair') throw new Error('repair requires a review with findings')
-  return `You are running repair attempt ${attempt} of ${limit} in Personal Harness Design Mode.
+  const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
+    id: `user-reference-${index + 1}`,
+    file: path.basename(filePath),
+  }))
+  return `You are running repair attempt ${attempt} of ${limit} in TasteCode Design Mode.
 
-Fix only the validated visual findings below. Inspect the existing implementation, preserve the approved artifacts and unrelated user work, and prefer the smallest shared correction that resolves each root cause across viewports. Run relevant local checks. Do not start a preview server or expand the design direction.
+Fix only the validated visual findings below. Inspect the existing implementation and every attached reference image. The approved referenceDirectionId and artifacts remain immutable during repair: restore their composition instead of inventing a replacement motif. Preserve unrelated user work and prefer the smallest shared correction that resolves each root cause across viewports. Remove invented SVG filler and off-reference card-edge rails; preserve borders and rules visible in the reference. Run relevant local checks. Do not start a preview server or expand the design direction.
+
+${DESIGN_CONTENT_GUIDANCE}
+
+${DESIGN_MOTION_GUIDANCE}
 
 Return JSON only as the final response:
 {"status":"complete|failed","summary":"...","files":["relative/path"],"checks":["command — result"]}
 
-<visual-review>${JSON.stringify(review)}</visual-review>`
+<visual-review>${JSON.stringify(review)}</visual-review>
+${brief ? `<design-brief>${JSON.stringify(brief)}</design-brief>` : ''}
+${brand ? `<brand-system>${JSON.stringify(brand)}</brand-system>` : ''}
+${page ? `<page-blueprint>${JSON.stringify(page)}</page-blueprint>` : ''}
+${assets ? `<asset-manifest>${JSON.stringify(assets)}</asset-manifest>` : ''}
+<screenshots>${JSON.stringify(screenshots)}</screenshots>
+<supplied-reference-catalog>${JSON.stringify(suppliedReferenceCatalog)}</supplied-reference-catalog>`
 }
 
 export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
@@ -207,47 +328,20 @@ export function parseRepairPhaseOutput(text: string): RepairPhaseOutput {
   if (value.status !== 'complete' && value.status !== 'failed') {
     throw new Error('repair status must be complete or failed')
   }
+  // A failed repair that follows the Build failed shape still names its blocker.
+  const summary =
+    value.status === 'failed' && value.summary === undefined && typeof value.error === 'string'
+      ? value.error
+      : value.summary
   return {
     status: value.status,
-    summary: string(value.summary, 'repair summary'),
+    summary: string(summary, 'repair summary'),
     files: strings(value.files, 'repair files'),
     checks: strings(value.checks, 'repair checks'),
   }
 }
 
-function json(text: string): Record<string, unknown> {
+function json(text: string): BoundaryRecord {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
   return record(JSON.parse(fenced?.[1] ?? text), 'phase output')
-}
-
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
-function strings(value: unknown, field: string): string[] {
-  if (!Array.isArray(value) || !value.every((item) => typeof item === 'string' && item.trim())) {
-    throw new Error(`${field} must be a string array`)
-  }
-  return value
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
-}
-
-function reviewPath(workspacePath: string): string {
-  return path.join(workspacePath, '.taste', 'review.json')
 }

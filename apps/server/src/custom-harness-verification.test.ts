@@ -12,6 +12,47 @@ afterEach(() => {
 })
 
 describe('custom harness verification', () => {
+  it('runs the protocol check with the configured cwd and environment', async () => {
+    const launchDirectory = mkdtempSync(path.join(os.tmpdir(), 'harness-claude-mod-'))
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-claude-workspace-'))
+    roots.push(launchDirectory, workspace)
+    const cli = path.join(launchDirectory, 'cli.mjs')
+    writeFileSync(
+      cli,
+      [
+        'const contextMatches = process.cwd() === process.env.MOD_LAUNCH_DIR && process.env.HARNESS_WORKSPACE_PATH === process.env.EXPECTED_WORKSPACE',
+        'if (!contextMatches) process.exit(12)',
+        "if (process.argv.includes('--help')) process.stdout.write('--output-format <format> text, json or stream-json\\n')",
+      ].join('\n'),
+      'utf8',
+    )
+    const harness: CustomHarness = {
+      id: 'example-claude-mod',
+      displayName: 'Example Claude Mod',
+      provider: 'claude-code',
+      command: process.execPath,
+      args: [cli],
+      workingDirectory: launchDirectory,
+      environment: {
+        MOD_LAUNCH_DIR: realpathSync(launchDirectory),
+        EXPECTED_WORKSPACE: workspace,
+      },
+    }
+
+    const result = await verifyCustomHarness(harness, workspace)
+
+    expect(result).toMatchObject({
+      status: 'ready',
+      resolvedCommand: process.execPath,
+      checks: [
+        { label: 'Executable', status: 'passed' },
+        { label: 'Launch context', status: 'passed' },
+        { label: 'Claude Code stream JSON', status: 'passed' },
+      ],
+    })
+    expect(result.checks[2]?.detail).toContain('stream-json')
+  })
+
   it('completes a real ACP handshake with the configured cwd and environment', async () => {
     const launchDirectory = mkdtempSync(path.join(os.tmpdir(), 'harness-acp-mod-'))
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-acp-workspace-'))

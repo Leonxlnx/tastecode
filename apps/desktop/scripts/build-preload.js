@@ -19,5 +19,7 @@ await build({
   format: 'cjs',
   target: 'node22',
   external: ['electron'],
+  minifySyntax: true,
+  minifyWhitespace: true,
   logLevel: 'warning',
 })

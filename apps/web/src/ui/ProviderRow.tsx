@@ -1,8 +1,10 @@
-import { useId, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { ProviderStatus } from '@harness/contracts'
-import { CircleAlert, ExternalLink } from 'lucide-react'
+import { IconExternalLink as ExternalLink } from '@tabler/icons-react'
+import { RowIssue } from './RowIssue.js'
 import { providerMark } from '../model-catalog.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { Skeleton } from './Skeleton.js'
 
 export type ProviderIssue = { message: string; announce?: boolean | undefined }
 export type ProviderAction = {
@@ -15,16 +17,30 @@ export type ProviderAction = {
   controls?: string | undefined
 }
 
+/**
+ * How the provider is wired to an account. The row draws it as the line
+ * between the name and the status: solid when an account is attached, a
+ * dotted leader while the provider waits for one, nothing when the provider
+ * is not on this machine.
+ */
+export type ProviderLink = 'connected' | 'open' | 'none'
+
 export function ProviderRow(props: {
   provider: ProviderStatus
   status: ReactNode
+  link?: ProviderLink | undefined
   live?: boolean
   issue?: ProviderIssue | undefined
   primary?: ProviderAction | undefined
   secondary?: ProviderAction | undefined
 }) {
   return (
-    <div className="settings__row provider-row">
+    <div
+      className="settings__row provider-row"
+      data-link={props.link ?? 'open'}
+      data-live={props.live || undefined}
+      data-fault={props.issue?.announce || undefined}
+    >
       <div className="provider-row__mark" title={props.provider.version}>
         <ProviderIcon mark={providerMark(props.provider.id)} size={18} />
       </div>
@@ -36,16 +52,36 @@ export function ProviderRow(props: {
         role={props.live ? 'status' : undefined}
         aria-atomic={props.live || undefined}
       >
-        {props.status}
-      </div>
-      <div className="provider-row__issue">
-        {props.issue ? <ProviderRowIssue {...props.issue} /> : null}
+        {props.issue ? <RowIssue {...props.issue} label="Problem details" /> : null}
+        <span className="provider-row__status-text">{props.status}</span>
       </div>
       <div className="provider-row__secondary">
         <ProviderRowAction action={props.secondary} tone="secondary" />
       </div>
       <div className="provider-row__primary">
         <ProviderRowAction action={props.primary} tone="primary" />
+      </div>
+    </div>
+  )
+}
+
+// Fixed per position: a placeholder that reshuffles between renders jitters.
+const SKELETON_NAME_WIDTHS = [52, 88, 40] as const
+const SKELETON_STATUS_WIDTHS = [148, 136, 64] as const
+
+/** A provider row before the provider list has arrived, wired like one waiting for an account. */
+export function ProviderRowSkeleton(props: { index: number }) {
+  const at = props.index % SKELETON_NAME_WIDTHS.length
+  return (
+    <div className="settings__row provider-row provider-row--skeleton" data-link="open" aria-hidden>
+      <div className="provider-row__mark">
+        <Skeleton className="skeleton--block" width={16} height={16} />
+      </div>
+      <div className="provider-row__identity">
+        <Skeleton className="provider-row__skeleton-name" width={SKELETON_NAME_WIDTHS[at]} />
+      </div>
+      <div className="provider-row__status">
+        <Skeleton className="provider-row__skeleton-status" width={SKELETON_STATUS_WIDTHS[at]} />
       </div>
     </div>
   )
@@ -74,29 +110,5 @@ function ProviderRowAction(props: {
     >
       {action.label}
     </button>
-  )
-}
-
-function ProviderRowIssue(props: ProviderIssue) {
-  const tooltipId = useId()
-  return (
-    <span className="row-issue">
-      {props.announce ? (
-        <span className="visually-hidden" role="alert">
-          {props.message}
-        </span>
-      ) : null}
-      <button
-        type="button"
-        className="row-issue__dot"
-        aria-label="Problem details"
-        aria-describedby={tooltipId}
-      >
-        <CircleAlert size={14} aria-hidden />
-      </button>
-      <span id={tooltipId} role="tooltip" className="row-issue__bubble">
-        {props.message}
-      </span>
-    </span>
   )
 }

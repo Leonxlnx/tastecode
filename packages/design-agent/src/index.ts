@@ -1,4 +1,5 @@
 export {
+  parseDesignBrief,
   readDesignBrief,
   writeDesignBrief,
   type DesignBrief,
@@ -6,6 +7,14 @@ export {
 } from './brief.js'
 export { parseBrandSystem, readBrandSystem, writeBrandSystem, type BrandSystem } from './brand.js'
 export { designBrandPrompt, parseBrandPhaseOutput } from './brand-phase.js'
+export {
+  generateGradientSet,
+  gradientSetForBrand,
+  GRADIENT_PURPOSES,
+  type GradientPurpose,
+  type GradientRecipe,
+  type GradientSet,
+} from './gradients.js'
 export {
   auditPalette,
   generatePalette,
@@ -26,13 +35,27 @@ export {
 } from './palette.js'
 export {
   parsePageBlueprint,
+  PAGE_MOTION_PURPOSES,
+  PAGE_MOTION_TRIGGERS,
   readPageBlueprint,
   writePageBlueprint,
   type PageBlueprint,
   type PageLink,
+  type PageMotionPurpose,
   type PageNavigationDesign,
+  type PageMotionTrigger,
+  type PageSectionMotion,
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
+export {
+  lockPageReferenceDirections,
+  REFERENCE_DIRECTIONS,
+  referenceDirectionAttachmentPath,
+  referenceDirectionAttachments,
+  referenceDirectionsForPage,
+  selectReferenceDirectionDeck,
+  type ReferenceDirection,
+} from './reference-directions.js'
 export {
   assertPageCopy,
   lintPageCopy,
@@ -42,14 +65,23 @@ export {
 export {
   parseAssetManifest,
   readAssetManifest,
+  validateAssetManifestForPage,
+  validateResolvedDesignAssets,
   writeAssetManifest,
   type AssetKind,
   type AssetManifest,
+  type AssetRole,
   type AssetSourceKind,
   type AssetStatus,
   type DesignAsset,
 } from './assets.js'
 export { designAssetPrompt, parseAssetPhaseOutput } from './asset-phase.js'
+export {
+  snapshotDesignAssets,
+  snapshotDesignFiles,
+  validateDesignFileSnapshot,
+  type DesignFileSnapshot,
+} from './file-snapshot.js'
 export {
   DESIGN_PHASES,
   createDesignRunState,
@@ -63,19 +95,26 @@ export {
 export {
   designBuildCorrectionPrompt,
   designBuildPrompt,
+  designSourceQualityBaseline,
+  designSourceQualityCorrectionPrompt,
+  designWorkspaceFileBaseline,
   exactBuildFileBaseline,
   parseBuildPhaseOutput,
+  validateDesignSourceQuality,
   validateExactBuildFiles,
   type BuildPhaseOutput,
+  DesignSourceQualityError,
   ExactBuildFilesError,
 } from './build-phase.js'
 export {
+  croppedReviewScreenshots,
   designRepairPrompt,
   designReviewPrompt,
   enforceDomAuditFindings,
   parseRepairPhaseOutput,
   parseReviewPhaseOutput,
   readVisualReview,
+  validateReviewScreenshots,
   writeVisualReview,
   type RepairPhaseOutput,
   type ReviewScreenshot,
@@ -90,11 +129,19 @@ export {
 } from './preview.js'
 export {
   DESIGN_BRIEF_ATTACHMENT,
-  FINAL_BRIEFING_QUESTION,
   designBriefingContinuation,
   designBriefingPrompt,
   designPhaseCorrectionPrompt,
+  designTaskContinuation,
+  isDesignBriefAttachment,
   parseBriefingOutput,
   type BriefingOutput,
   type BriefingQuestion,
 } from './workflow.js'
+export {
+  loadReviewedReferences,
+  parseReferenceDeck,
+  selectReviewedReferences,
+} from './reference-library.js'
+export { selectTypographyCandidates, validateTypographySelection } from './typography.js'
+export type { TypographyCandidates } from './typography.js'

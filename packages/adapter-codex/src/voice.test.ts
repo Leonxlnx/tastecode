@@ -1,25 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
-  chatGptAccountIdFromToken,
-  CodexVoiceTranscriber,
+  OpenAiVoiceTranscriber,
+  OPENAI_TRANSCRIPTION_MODEL,
+  OPENAI_TRANSCRIPTION_URL,
   MAX_VOICE_BYTES,
   validateVoiceClip,
   VoiceTranscriptionError,
   type VoiceTranscriptionInput,
 } from './voice.js'
-
-describe('chatGptAccountIdFromToken', () => {
-  it('reads the account routing claim without accepting malformed tokens', () => {
-    const payload = Buffer.from(
-      JSON.stringify({
-        'https://api.openai.com/auth': { chatgpt_account_id: 'workspace-123' },
-      }),
-    ).toString('base64url')
-
-    expect(chatGptAccountIdFromToken(`header.${payload}.signature`)).toBe('workspace-123')
-    expect(chatGptAccountIdFromToken('not-a-jwt')).toBeUndefined()
-  })
-})
 
 describe('validateVoiceClip', () => {
   it('accepts a matching mono 24 kHz PCM WAV', () => {
@@ -52,89 +40,62 @@ describe('validateVoiceClip', () => {
   })
 })
 
-describe('CodexVoiceTranscriber', () => {
-  it('uses the Codex ChatGPT session to transcribe the validated WAV', async () => {
-    const calls: Array<{ method: string; params: unknown }> = []
-    const call = async <T>(method: string, params: unknown): Promise<T> => {
-      calls.push({ method, params })
-      return {
-        authMethod: 'chatgpt',
-        authToken: 'voice-session',
-      } as T
-    }
-    const requests: Array<{ audio: Buffer; token: string }> = []
-    const transcriber = new CodexVoiceTranscriber(call, async (audio, token) => {
-      requests.push({ audio, token })
+describe('OpenAiVoiceTranscriber', () => {
+  it('uses an explicit OpenAI API key to transcribe the validated WAV', async () => {
+    const requests: Array<{ audio: Buffer; apiKey: string }> = []
+    const transcriber = new OpenAiVoiceTranscriber(async (audio, apiKey) => {
+      requests.push({ audio, apiKey })
       return { status: 200, body: JSON.stringify({ text: '  hello from voice  ' }) }
     })
 
-    await expect(transcriber.transcribe(voiceInput(1_000))).resolves.toBe('hello from voice')
-    expect(calls).toEqual([
-      {
-        method: 'getAuthStatus',
-        params: { includeToken: true, refreshToken: false },
-      },
-    ])
+    await expect(transcriber.transcribe(voiceInput(1_000), 'openai-test-key')).resolves.toBe(
+      'hello from voice',
+    )
     expect(requests).toHaveLength(1)
     expect(requests[0]?.audio.toString('ascii', 0, 4)).toBe('RIFF')
-    expect(requests[0]?.token).toBe('voice-session')
+    expect(requests[0]?.apiKey).toBe('openai-test-key')
+    expect(OPENAI_TRANSCRIPTION_URL).toBe('https://api.openai.com/v1/audio/transcriptions')
+    expect(OPENAI_TRANSCRIPTION_MODEL).toBe('gpt-4o-mini-transcribe')
   })
 
-  it('refreshes an expired session once before surfacing an auth failure', async () => {
-    const refreshes: boolean[] = []
-    const tokens: string[] = []
-    const transcriber = new CodexVoiceTranscriber(
-      async <T>(_method: string, params: unknown) => {
-        const refresh = (params as { refreshToken: boolean }).refreshToken
-        refreshes.push(refresh)
-        return {
-          authMethod: 'chatgpt',
-          authToken: refresh ? 'fresh-session' : 'stale-session',
-        } as T
-      },
-      async (_audio, token) => {
-        tokens.push(token)
-        return token === 'stale-session'
-          ? { status: 401, body: '{}' }
-          : { status: 200, body: JSON.stringify({ transcript: 'refreshed voice' }) }
-      },
-    )
-
-    await expect(transcriber.transcribe(voiceInput(1_000))).resolves.toBe('refreshed voice')
-    expect(refreshes).toEqual([false, true])
-    expect(tokens).toEqual(['stale-session', 'fresh-session'])
-  })
-
-  it('gates non-ChatGPT auth without uploading audio', async () => {
+  it('rejects an empty or header-unsafe API key without uploading audio', async () => {
     let uploaded = false
-    const transcriber = new CodexVoiceTranscriber(
-      async <T>() => {
-        return { authMethod: 'apikey', authToken: null } as T
-      },
-      async () => {
-        uploaded = true
-        return { status: 200, body: '{}' }
-      },
-    )
+    const transcriber = new OpenAiVoiceTranscriber(async () => {
+      uploaded = true
+      return { status: 200, body: '{}' }
+    })
 
-    await expect(transcriber.transcribe(voiceInput(1_000))).rejects.toMatchObject({
+    await expect(transcriber.transcribe(voiceInput(1_000), '  ')).rejects.toMatchObject({
+      code: 'unsupported_auth',
+    } satisfies Partial<VoiceTranscriptionError>)
+    await expect(transcriber.transcribe(voiceInput(1_000), 'key\r\nunsafe')).rejects.toMatchObject({
       code: 'unsupported_auth',
     } satisfies Partial<VoiceTranscriptionError>)
     expect(uploaded).toBe(false)
   })
 
+  it('surfaces an OpenAI authentication failure without retrying', async () => {
+    let requests = 0
+    const transcriber = new OpenAiVoiceTranscriber(async () => {
+      requests += 1
+      return { status: 401, body: JSON.stringify({ error: { message: 'Invalid API key.' } }) }
+    })
+
+    await expect(
+      transcriber.transcribe(voiceInput(1_000), 'openai-test-key'),
+    ).rejects.toMatchObject({ code: 'unsupported_auth', message: 'Invalid API key.' })
+    expect(requests).toBe(1)
+  })
+
   it('aborts an in-flight transcription request', async () => {
     const controller = new AbortController()
-    const transcriber = new CodexVoiceTranscriber(
-      async <T>() => ({ authMethod: 'chatgpt', authToken: 'voice-session' }) as T,
-      async (_audio, _token, signal) => {
-        queueMicrotask(() => controller.abort())
-        return new Promise<never>((_resolve, reject) => {
-          signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
-        })
-      },
-    )
-    const pending = transcriber.transcribe(voiceInput(1_000), controller.signal)
+    const transcriber = new OpenAiVoiceTranscriber(async (_audio, _apiKey, signal) => {
+      queueMicrotask(() => controller.abort())
+      return new Promise<never>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+      })
+    })
+    const pending = transcriber.transcribe(voiceInput(1_000), 'openai-test-key', controller.signal)
 
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' })
   })

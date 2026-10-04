@@ -1,17 +1,19 @@
 import { bench, describe } from 'vitest'
 import type { DomainEvent, Item } from '@harness/contracts'
 import {
+  activeTurnActivityIndices,
   activeTurnIsSearching,
   emptyThread,
   reduce,
   reduceDeltas,
   reduceEventLog,
   threadItemAt,
+  threadItemById,
   type ItemDeltaEvent,
   type ThreadState,
 } from '../thread-store.js'
 import { makeFixtureThread } from './fixture.js'
-import { createThreadProjector, findTurns, presentTurns } from './turns.js'
+import { createThreadProjector, projectThreadItems } from './turns.js'
 
 const OPTIONS = { time: 1_200, warmupTime: 300 }
 const FAST_OPTIONS = { iterations: 1_000_000, time: 0, warmupIterations: 100_000, warmupTime: 0 }
@@ -46,6 +48,29 @@ const searchingTranscript: Item[] = [
     createdAt: 0,
   },
 ]
+const completedActivityTail: Item[] = [
+  ...Array.from({ length: 10_000 }, (_, index) => ({
+    id: `completed-tool-${index}`,
+    turnId: 'long-active-turn',
+    type: 'tool_call' as const,
+    status: 'completed' as const,
+    text: 'read file',
+    createdAt: index,
+  })),
+  {
+    id: 'streaming-answer',
+    turnId: 'long-active-turn',
+    type: 'message' as const,
+    role: 'assistant' as const,
+    status: 'started' as const,
+    text: 'Writing the answer',
+    createdAt: 10_000,
+  },
+]
+const completedActivityTailIndex = activeTurnActivityIndices(
+  completedActivityTail,
+  'long-active-turn',
+)
 const projectThread = createThreadProjector()
 projectThread(streamedFrames[0]!)
 let streamedFrame = 0
@@ -141,13 +166,75 @@ const activityFrames = new Map(
     return [count, { state, frame }] as const
   }),
 )
+const completionItems = [...makeFixtureThread(9_999), liveItem]
+const completionIndex = completionItems.length - 1
+const completionState: ThreadState = {
+  ...emptyThread,
+  items: completionItems,
+  liveItems: new Map([
+    [
+      completionIndex,
+      {
+        item: { ...liveItem, text: 'streamed answer' },
+        version: 1,
+        textUpdate: { kind: 'append', text: 'streamed answer' },
+      },
+    ],
+  ]),
+  itemVersion: 1,
+  running: true,
+  activeTurn: { id: liveItem.turnId, startedAt: 0 },
+}
+const completionEvent = {
+  type: 'item.completed',
+  item: { ...liveItem, status: 'completed', text: '' },
+} satisfies DomainEvent
+const structuralPrefix = makeFixtureThread(9_999)
+const structuralTurnId = structuralPrefix.at(-1)!.turnId
+const structuralTool: Item = {
+  id: 'structural-tail-tool',
+  turnId: structuralTurnId,
+  type: 'tool_call',
+  status: 'started',
+  text: 'Reading files',
+  createdAt: 0,
+}
+const structuralFrames = [
+  [...structuralPrefix, structuralTool],
+  [...structuralPrefix, { ...structuralTool, status: 'completed' as const }],
+]
+const projectStructuralTail = createThreadProjector()
+projectStructuralTail(structuralFrames[0]!)
+let structuralFrame = 0
+const timingTurnId = structuralFrames[0]!.at(-1)!.turnId
+const timingFrames = [
+  { [timingTurnId]: { startedAt: 0, completedAt: 1 } },
+  { [timingTurnId]: { startedAt: 0, completedAt: 2 } },
+]
+const projectStructuralTiming = createThreadProjector()
+projectStructuralTiming(structuralFrames[0]!, timingFrames[0])
+let timingFrame = 0
+const durableLookupState: ThreadState = { ...emptyThread, items: makeFixtureThread(10_000) }
+const durableLookupIds = durableLookupState.items
+  .filter((_, index) => index % 100 === 0)
+  .map((item) => item.id)
+threadItemById(durableLookupState, durableLookupIds[0]!)
+
+function legacyCompleteStreamedItem(state: ThreadState): ThreadState {
+  const settledItems = state.items.slice()
+  for (const [index, update] of state.liveItems) settledItems[index] = update.item
+  const index = settledItems.findIndex((item) => item.id === completionEvent.item.id)
+  const items = settledItems.slice()
+  const streamed = items[index]?.text
+  items[index] = { ...completionEvent.item, text: streamed }
+  return { ...state, items, liveItems: new Map() }
+}
 
 describe('long-thread hot paths', () => {
   bench(
-    'derives navigation and presentation for 1,000 items',
+    'derives navigation and presentation in one pass for 1,000 items',
     () => {
-      findTurns(transcript)
-      presentTurns(transcript)
+      projectThreadItems(transcript)
     },
     OPTIONS,
   )
@@ -166,6 +253,34 @@ describe('long-thread hot paths', () => {
     () => {
       if (!activeTurnIsSearching(searchingTranscript, 'active-turn')) {
         throw new Error('search state missing')
+      }
+    },
+    FAST_OPTIONS,
+  )
+
+  bench(
+    'scans 10,000 completed activity rows for active search',
+    () => {
+      if (activeTurnIsSearching(completedActivityTail, 'long-active-turn')) {
+        throw new Error('unexpected search state')
+      }
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'checks the indexed live activity rows in a 10,000-item turn',
+    () => {
+      if (
+        activeTurnIsSearching(
+          completedActivityTail,
+          'long-active-turn',
+          undefined,
+          0,
+          completedActivityTailIndex,
+        )
+      ) {
+        throw new Error('unexpected indexed search state')
       }
     },
     FAST_OPTIONS,
@@ -194,6 +309,99 @@ describe('long-thread hot paths', () => {
         deltas.length
       )
         throw new Error('invalid batch')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'finishes a streamed item with a double copy and linear lookup in 10,000 items',
+    () => {
+      const state = legacyCompleteStreamedItem(completionState)
+      if (state.items[completionIndex]?.text !== 'streamed answer') throw new Error('invalid item')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'finishes a streamed item with one copy and retained lookup in 10,000 items',
+    () => {
+      const state = reduce(completionState, completionEvent)
+      if (state.items[completionIndex]?.text !== 'streamed answer') throw new Error('invalid item')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'scans a 10,000-item thread for 100 pending submissions',
+    () => {
+      let found = 0
+      for (const id of durableLookupIds) {
+        if (durableLookupState.items.some((item) => item.id === id && item.turnId !== '')) {
+          found += 1
+        }
+      }
+      if (found !== durableLookupIds.length) throw new Error('invalid linear lookup')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'builds a 10,000-item durable set before reconciling 100 pending submissions',
+    () => {
+      const durable = new Set(
+        durableLookupState.items.filter((item) => item.turnId !== '').map((item) => item.id),
+      )
+      let found = 0
+      for (const id of durableLookupIds) if (durable.has(id)) found += 1
+      if (found !== durableLookupIds.length) throw new Error('invalid durable set')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'uses the retained item index for 100 pending submissions',
+    () => {
+      let found = 0
+      for (const id of durableLookupIds) {
+        if ((threadItemById(durableLookupState, id)?.turnId ?? '') !== '') found += 1
+      }
+      if (found !== durableLookupIds.length) throw new Error('invalid indexed lookup')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'rebuilds a fresh thread projection for a structural tail update in 10,000 items',
+    () => {
+      structuralFrame = structuralFrame === 0 ? 1 : 0
+      projectThreadItems(structuralFrames[structuralFrame]!)
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'reprojects only the retained tail turn in 10,000 items',
+    () => {
+      structuralFrame = structuralFrame === 0 ? 1 : 0
+      projectStructuralTail(structuralFrames[structuralFrame]!)
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'rebuilds a fresh thread projection for one timing update in 10,000 items',
+    () => {
+      timingFrame = timingFrame === 0 ? 1 : 0
+      projectThreadItems(structuralFrames[0]!, timingFrames[timingFrame])
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'rebuilds projected turn metadata for one timing update in 10,000 items',
+    () => {
+      timingFrame = timingFrame === 0 ? 1 : 0
+      projectStructuralTiming(structuralFrames[0]!, timingFrames[timingFrame])
     },
     OPTIONS,
   )

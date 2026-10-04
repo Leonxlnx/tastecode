@@ -1,4 +1,5 @@
 import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
+import { errorMessage } from './boundary.js'
 
 type Summary = ResultOf<'usage.summary'>
 type Target = { provider: ProviderId; threadId?: string | undefined }
@@ -12,8 +13,8 @@ type LoadSummary = (params: ParamsOf<'usage.summary'>) => Promise<Summary>
 
 const ERROR_MESSAGE_LIMIT = 300
 
-function messageOf(error: unknown): string {
-  const message = (error instanceof Error ? error.message : String(error)).trim()
+function messageOf(error: Parameters<typeof errorMessage>[0]): string {
+  const message = errorMessage(error, 'Plan limits could not be loaded.')
   return (message || 'Plan limits could not be loaded.').slice(0, ERROR_MESSAGE_LIMIT)
 }
 
@@ -116,7 +117,7 @@ export class UsageSummaryController {
           this.#setState({ status: 'ready', provider: target.provider, summary: next })
           this.#flushAfterRequest(revision)
         },
-        (error: unknown) => {
+        (error) => {
           if (!this.#isCurrent(request)) return
           this.#request = undefined
           this.#setState({

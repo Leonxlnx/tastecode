@@ -1,233 +1,142 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { readFile, readdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { claudeLimitSource, claudeLimits, mapClaudeUsage } from './limits.js'
+import { claudeLimitSource, mapClaudeUsage } from './limits.js'
+import type { ClaudeUsageQueryFactory } from './sdk-runtime.js'
 
-let configDir: string | undefined
-
-afterEach(async () => {
-  vi.unstubAllEnvs()
+afterEach(() => {
   vi.unstubAllGlobals()
-  if (configDir) await rm(configDir, { recursive: true, force: true })
-  configDir = undefined
 })
 
-async function credentials(body: unknown): Promise<string> {
-  configDir = await mkdtemp(join(tmpdir(), 'harness-claude-limits-'))
-  vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
-  const path = join(configDir, '.credentials.json')
-  await writeFile(path, typeof body === 'string' ? body : JSON.stringify(body), 'utf8')
-  return path
-}
-
-describe('mapClaudeUsage', () => {
-  it('maps the session and weekly windows with reset times', () => {
-    const rows = mapClaudeUsage({
-      five_hour: { utilization: 42.5, resets_at: '2026-08-11T10:00:00Z' },
-      seven_day: { utilization: '80', resets_at: '2026-08-14T00:00:00Z' },
-    })
-    expect(rows).toEqual([
-      { label: 'Session', usedPercent: 42.5, resetsAt: Date.parse('2026-08-11T10:00:00Z') },
-      { label: 'Weekly', usedPercent: 80, resetsAt: Date.parse('2026-08-14T00:00:00Z') },
-    ])
-  })
-
-  it('clamps runaway utilization and skips windows without a number', () => {
-    const rows = mapClaudeUsage({
-      five_hour: { utilization: 130 },
-      seven_day: { utilization: 'soon' },
-      seven_day_sonnet: { utilization: '   ' },
-    })
-    expect(rows).toEqual([{ label: 'Session', usedPercent: 100 }])
-  })
-
-  it('adds per-model weekly windows from the limits array without duplicating', () => {
-    const rows = mapClaudeUsage({
-      seven_day: { utilization: 10 },
-      limits: [
-        {
-          kind: 'weekly_scoped',
-          percent: 55,
-          resets_at: '2026-08-14T00:00:00Z',
-          scope: { model: { display_name: 'fable' } },
-        },
-        { kind: 'session', percent: 99 },
-        { kind: 'weekly_scoped', percent: 12, scope: { model: { display_name: 'fable' } } },
-        { kind: 'weekly_scoped', percent: 3, scope: { model: { display_name: ' ' } } },
-      ],
-    })
-    expect(rows).toEqual([
-      { label: 'Weekly', usedPercent: 10 },
-      { label: 'Fable weekly', usedPercent: 55, resetsAt: Date.parse('2026-08-14T00:00:00Z') },
-      { label: 'Model weekly', usedPercent: 3 },
-    ])
-  })
-
-  it('maps every recognized legacy weekly window, including valid zero usage', () => {
+describe('Claude Code subscription limits', () => {
+  it('maps every reported window and reset time', () => {
     expect(
       mapClaudeUsage({
-        seven_day_opus: { utilization: 0 },
-        seven_day_oauth_apps: { utilization: 25 },
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 42.5, resets_at: '2026-08-22T10:00:00Z' },
+          seven_day: { utilization: 80, resets_at: '2026-08-25T00:00:00Z' },
+          seven_day_sonnet: { utilization: 0, resets_at: null },
+          seven_day_opus: null,
+          seven_day_oauth_apps: { utilization: null, resets_at: null },
+          model_scoped: [
+            { display_name: 'fable', utilization: 55, resets_at: '2026-08-26T00:00:00Z' },
+          ],
+          extra_usage: { is_enabled: true, utilization: 12 },
+        },
       }),
-    ).toEqual([
-      { label: 'Opus weekly', usedPercent: 0 },
-      { label: 'OAuth apps weekly', usedPercent: 25 },
-    ])
-  })
-
-  it('returns nothing for junk bodies', () => {
-    expect(mapClaudeUsage(undefined)).toEqual([])
-    expect(mapClaudeUsage('nope')).toEqual([])
-    expect(mapClaudeUsage({})).toEqual([])
-  })
-
-  it('marks an absent credential unavailable without making a request', async () => {
-    configDir = await mkdtemp(join(tmpdir(), 'harness-claude-limits-'))
-    vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
-    const fetch = vi.fn()
-    vi.stubGlobal('fetch', fetch)
-
-    await expect(claudeLimitSource()).resolves.toEqual({ status: 'unavailable' })
-    expect(fetch).not.toHaveBeenCalled()
-  })
-
-  it('surfaces malformed or unreadable credentials without exposing their path', async () => {
-    await credentials('{not-json')
-    const fetch = vi.fn()
-    vi.stubGlobal('fetch', fetch)
-
-    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
-    expect(fetch).not.toHaveBeenCalled()
-
-    if (configDir) await rm(configDir, { recursive: true, force: true })
-    configDir = await mkdtemp(join(tmpdir(), 'harness-claude-limits-'))
-    vi.stubEnv('CLAUDE_CONFIG_DIR', configDir)
-    await mkdir(join(configDir, '.credentials.json'))
-    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be read.')
-  })
-
-  it('does not treat a present but invalid OAuth record as unconfigured', async () => {
-    await credentials({ claudeAiOauth: { accessToken: ' ' } })
-    vi.stubGlobal('fetch', vi.fn())
-
-    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
-  })
-
-  it('sanitizes invalid optional OAuth fields before attempting refresh', async () => {
-    await credentials({
-      claudeAiOauth: {
-        accessToken: 'test-access',
-        refreshToken: 42,
-        expiresAt: 0,
-      },
+    ).toEqual({
+      status: 'ready',
+      limits: [
+        { label: 'Session', usedPercent: 42.5, resetsAt: Date.parse('2026-08-22T10:00:00Z') },
+        { label: 'Weekly', usedPercent: 80, resetsAt: Date.parse('2026-08-25T00:00:00Z') },
+        { label: 'Sonnet weekly', usedPercent: 0 },
+        { label: 'Fable weekly', usedPercent: 55, resetsAt: Date.parse('2026-08-26T00:00:00Z') },
+        { label: 'Extra usage', usedPercent: 12 },
+      ],
     })
-    const fetch = vi.fn()
-    vi.stubGlobal('fetch', fetch)
-
-    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
-    expect(fetch).not.toHaveBeenCalled()
-
-    if (configDir) await rm(configDir, { recursive: true, force: true })
-    await credentials({ claudeAiOauth: { accessToken: 'test-access', expiresAt: 'soon' } })
-    await expect(claudeLimitSource()).rejects.toThrow('Claude credentials could not be parsed.')
-    expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('does not collapse a failed usage response into an empty result', async () => {
-    await credentials({
-      claudeAiOauth: {
-        accessToken: 'test-access',
-        expiresAt: Date.now() + 60_000,
-      },
+  it('clamps invalid percentages and deduplicates model windows', () => {
+    expect(
+      mapClaudeUsage({
+        rate_limits_available: true,
+        rate_limits: {
+          seven_day_sonnet: { utilization: 130, resets_at: null },
+          model_scoped: [
+            { display_name: 'Sonnet', utilization: 20, resets_at: null },
+            { display_name: ' ', utilization: 30, resets_at: null },
+          ],
+        },
+      }),
+    ).toEqual({
+      status: 'ready',
+      limits: [{ label: 'Sonnet weekly', usedPercent: 100 }],
     })
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 503 })))
-
-    await expect(claudeLimits()).rejects.toThrow('Claude usage request failed (HTTP 503)')
   })
 
-  it('rejects malformed successful responses but accepts known empty windows', async () => {
-    await credentials({
-      claudeAiOauth: {
-        accessToken: 'test-access',
-        expiresAt: Date.now() + 60_000,
-      },
+  it('keeps non-subscription sessions unavailable', () => {
+    expect(mapClaudeUsage({ rate_limits_available: false, rate_limits: null })).toEqual({
+      status: 'unavailable',
     })
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ new_shape: true }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: 'broken' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: {} }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ limits: {} }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ limits: ['broken'] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ five_hour: null }), { status: 200 }))
-    vi.stubGlobal('fetch', fetch)
-
-    for (let index = 0; index < 5; index += 1) {
-      await expect(claudeLimitSource()).rejects.toThrow('Claude usage response was invalid.')
-    }
-    await expect(claudeLimitSource()).resolves.toEqual({ status: 'ready', limits: [] })
+    expect(mapClaudeUsage({ rate_limits_available: true, rate_limits: null })).toEqual({
+      status: 'unavailable',
+    })
   })
 
-  it('sanitizes invalid refresh response fields', async () => {
-    await credentials({
-      claudeAiOauth: {
-        accessToken: 'old-access',
-        refreshToken: 'old-refresh',
-        expiresAt: 0,
-      },
-    })
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response('null', { status: 200 }))
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ access_token: 'new-access', refresh_token: 42 }), {
-          status: 200,
-        }),
-      )
-    vi.stubGlobal('fetch', fetch)
-
-    await expect(claudeLimitSource()).rejects.toThrow(
-      'Claude credential refresh response was invalid.',
+  it('rejects malformed experimental responses', () => {
+    expect(() => mapClaudeUsage({ rate_limits_available: true, rate_limits: 'changed' })).toThrow(
+      'Claude usage response was invalid.',
     )
-    await expect(claudeLimitSource()).rejects.toThrow(
-      'Claude credential refresh response was invalid.',
-    )
+    expect(() =>
+      mapClaudeUsage({
+        rate_limits_available: true,
+        rate_limits: { five_hour: { utilization: 20, resets_at: 'not-a-date' } },
+      }),
+    ).toThrow('Claude usage response was invalid.')
   })
 
-  it('merge-saves a rotated refresh token and clears stale expiry metadata', async () => {
-    const path = await credentials({
-      theme: 'dark',
-      claudeAiOauth: {
-        accessToken: 'old-access',
-        refreshToken: 'old-refresh',
-        expiresAt: 0,
-        accountUuid: 'account-1',
-      },
-    })
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            access_token: 'new-access',
-            refresh_token: 'rotated-refresh',
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ five_hour: { utilization: 25 } }), { status: 200 }),
-      )
-    vi.stubGlobal('fetch', fetch)
+  it('reads usage through a short-lived SDK query and closes it', async () => {
+    const close = vi.fn()
+    const usage = vi.fn().mockResolvedValue({
+      rate_limits_available: true,
+      rate_limits: { five_hour: { utilization: 25, resets_at: null } },
+    } as SDKControlGetUsageResponse)
+    const createQuery = vi.fn<ClaudeUsageQueryFactory>(() => ({
+      close,
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: usage,
+    }))
 
-    await expect(claudeLimits()).resolves.toEqual([{ label: 'Session', usedPercent: 25 }])
-    const saved = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    expect(saved['theme']).toBe('dark')
-    expect(saved['claudeAiOauth']).toEqual({
-      accessToken: 'new-access',
-      refreshToken: 'rotated-refresh',
-      accountUuid: 'account-1',
+    await expect(claudeLimitSource({ createQuery })).resolves.toEqual({
+      status: 'ready',
+      limits: [{ label: 'Session', usedPercent: 25 }],
     })
+    expect(usage).toHaveBeenCalledOnce()
+    expect(close).toHaveBeenCalledOnce()
+    const input = createQuery.mock.calls[0]?.[0]
+    expect(input?.options).toMatchObject({
+      pathToClaudeCodeExecutable: 'claude',
+      persistSession: false,
+      allowedTools: [],
+      mcpServers: {},
+      strictMcpConfig: true,
+      settingSources: [],
+    })
+    expect(input?.options.abortController?.signal.aborted).toBe(true)
+  })
+
+  it('closes a failed query and reports a stable error', async () => {
+    const close = vi.fn()
+    const createQuery = vi.fn<ClaudeUsageQueryFactory>(() => ({
+      close,
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi
+        .fn()
+        .mockRejectedValue(new Error('private detail')),
+    }))
+
+    await expect(claudeLimitSource({ createQuery })).rejects.toThrow('Claude usage request failed.')
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('keeps provider-owned credentials and private OAuth APIs out of production sources', async () => {
+    const sourceDir = dirname(fileURLToPath(import.meta.url))
+    const names = (await readdir(sourceDir)).filter(
+      (name) => name.endsWith('.ts') && !name.endsWith('.test.ts'),
+    )
+    const productionSource = (
+      await Promise.all(names.map((name) => readFile(join(sourceDir, name), 'utf8')))
+    ).join('\n')
+    const forbidden = [
+      '.creden' + 'tials.json',
+      '/api/oauth/' + 'usage',
+      '/v1/oauth/' + 'token',
+      'refresh_' + 'token',
+      'client_' + 'id',
+      'claude-code/' + '2.',
+    ]
+
+    for (const marker of forbidden) expect(productionSource).not.toContain(marker)
   })
 })

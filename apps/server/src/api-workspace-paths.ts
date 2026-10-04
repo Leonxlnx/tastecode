@@ -1,7 +1,32 @@
 import { existsSync, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-const SECRET_NAMES = new Set(['.npmrc', '.pypirc', 'credentials.json', 'id_ed25519', 'id_rsa'])
+const SECRET_NAMES = new Set([
+  '.npmrc',
+  '.pypirc',
+  '.netrc',
+  '_netrc',
+  '.boto',
+  '.git-credentials',
+  'credentials.json',
+  'credentials.tfrc.json',
+  'application_default_credentials.json',
+  '.credentials.json',
+  'auth.json',
+  'id_ed25519',
+  'id_rsa',
+  'id_ecdsa',
+  'id_dsa',
+  'id_ecdsa_sk',
+  'id_ed25519_sk',
+  '.aws',
+  '.ssh',
+  '.azure',
+  '.kube',
+  '.gnupg',
+  '.docker',
+  'gcloud',
+])
 
 export function existingWorkspacePath(
   workspace: string,
@@ -11,6 +36,8 @@ export function existingWorkspacePath(
   const target = contained(workspace, relativePath)
   const real = realpathSync(target)
   assertContained(realpathSync(workspace), real)
+  assertPublicWorkspaceFile(target)
+  assertPublicWorkspaceFile(real)
   const stats = statSync(real)
   if (directory ? !stats.isDirectory() : !stats.isFile()) {
     throw new Error(directory ? 'path must be a directory' : 'path must be a file')
@@ -21,7 +48,13 @@ export function existingWorkspacePath(
 export function writableWorkspacePath(workspace: string, relativePath: string): string {
   const target = contained(workspace, relativePath)
   const realWorkspace = realpathSync(workspace)
-  if (existsSync(target)) assertContained(realWorkspace, realpathSync(target))
+  assertPublicWorkspaceFile(target)
+  if (existsSync(target)) {
+    const real = realpathSync(target)
+    assertContained(realWorkspace, real)
+    assertPublicWorkspaceFile(real)
+    return real
+  }
   let ancestor = path.dirname(target)
   while (!existsSync(ancestor)) {
     const parent = path.dirname(ancestor)
@@ -31,8 +64,10 @@ export function writableWorkspacePath(workspace: string, relativePath: string): 
     if (parent === ancestor) throw new Error('workspace is unavailable')
     ancestor = parent
   }
-  assertContained(realWorkspace, realpathSync(ancestor))
-  return target
+  const real = path.resolve(realpathSync(ancestor), path.relative(ancestor, target))
+  assertContained(realWorkspace, real)
+  assertPublicWorkspaceFile(real)
+  return real
 }
 
 export function assertPublicWorkspaceFile(file: string): void {

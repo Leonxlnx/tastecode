@@ -1,0 +1,46 @@
+.rail__foot:has(.account-update) {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.account-update {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-update:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+}
+
+.account-update[data-state='error'] {
+  border-color: var(--error);
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+.account-update:focus-visible {
+  outline: 2px solid var(--attention);
+  outline-offset: 2px;
+}
+
+.account-update .spinner {
+  width: 16px;
+  height: 16px;
+  color: inherit;
+}
+
+.account-update:disabled {
+  opacity: 1;
+}

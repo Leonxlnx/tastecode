@@ -1,0 +1,22 @@
+{
+  "source": "b65a844f7ed6e1d6816d482a48508076fd7383fa",
+  "checkedAt": "2026-09-20T10:57:13.552Z",
+  "designAgent": {
+    "files": 21,
+    "passed": 147
+  },
+  "preview": {
+    "files": 2,
+    "passed": 49
+  },
+  "desktop": {
+    "files": 34,
+    "passed": 212
+  },
+  "updateAndDesignUI": {
+    "files": 4,
+    "passed": 43
+  },
+  "totalPassed": 451,
+  "scope": "Existing automated regression suites. No new live provider website generation was run."
+}

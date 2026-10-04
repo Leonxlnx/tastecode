@@ -1,0 +1,181 @@
+{
+  "finishedAt": "2026-09-09T11:25:42.566Z",
+  "source": {
+    "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+    "files": 1559
+  },
+  "checks": [
+    {
+      "check": "lint",
+      "startedAt": "2026-09-09T11:25:08.282Z",
+      "finishedAt": "2026-09-09T11:25:14.653Z",
+      "exitCode": 0,
+      "signal": null,
+      "startedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      },
+      "finishedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      }
+    },
+    {
+      "check": "typecheck",
+      "startedAt": "2026-09-09T11:20:16.419Z",
+      "finishedAt": "2026-09-09T11:20:22.722Z",
+      "exitCode": 0,
+      "signal": null,
+      "startedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      },
+      "finishedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      }
+    },
+    {
+      "check": "test",
+      "startedAt": "2026-09-09T11:20:35.435Z",
+      "finishedAt": "2026-09-09T11:21:04.599Z",
+      "exitCode": 0,
+      "signal": null,
+      "startedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      },
+      "finishedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      }
+    },
+    {
+      "check": "build",
+      "startedAt": "2026-09-09T11:21:11.235Z",
+      "finishedAt": "2026-09-09T11:21:16.962Z",
+      "exitCode": 0,
+      "signal": null,
+      "startedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      },
+      "finishedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      }
+    },
+    {
+      "check": "licenses:verify",
+      "startedAt": "2026-09-09T11:20:30.193Z",
+      "finishedAt": "2026-09-09T11:20:30.733Z",
+      "exitCode": 0,
+      "signal": null,
+      "startedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      },
+      "finishedSource": {
+        "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+        "files": 1559
+      }
+    }
+  ],
+  "tests": {
+    "passed": 2736,
+    "node": 47,
+    "packages": {
+      "packages/contracts": 49,
+      "packages/design-agent": 114,
+      "packages/proc": 43,
+      "packages/adapter-antigravity": 15,
+      "packages/adapter-acp": 37,
+      "packages/adapter-codex": 94,
+      "packages/adapter-api": 37,
+      "packages/adapter-cursor": 18,
+      "packages/adapter-claude-code": 77,
+      "packages/adapter-grok": 41,
+      "packages/adapter-pi": 2,
+      "packages/adapter-opencode": 15,
+      "apps/web": 1350,
+      "apps/server": 651,
+      "apps/desktop": 146
+    }
+  },
+  "packageBuild": {
+    "output": "/Users/blueemi/Developer/harness/.unlazy/pr-quality/package-final",
+    "exitCode": 0,
+    "source": {
+      "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+      "files": 1559
+    },
+    "finishedSource": {
+      "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+      "files": 1559
+    },
+    "finishedAt": "2026-09-09T11:21:50.640Z",
+    "unsigned": true,
+    "target": "macOS arm64 directory"
+  },
+  "packageProof": {
+    "passed": true,
+    "source": {
+      "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+      "files": 1559
+    },
+    "app": "/Users/blueemi/Developer/harness/.unlazy/pr-quality/package-final/mac-arm64/Taste Code.app",
+    "unsigned": true,
+    "nativePtyAndKeyring": true,
+    "referenceImages": 132,
+    "referenceNamesAndBytesMatch": true,
+    "finishedAt": "2026-09-09T11:23:21.300Z"
+  },
+  "server": {
+    "passed": true,
+    "proof": "Current built server over real WebSocket, isolated project data",
+    "addUpdateRemove": true,
+    "unsupportedRejectedBeforeSave": true,
+    "providerCapabilities": true,
+    "source": {
+      "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+      "files": 1559
+    },
+    "finishedSource": {
+      "sha256": "2fb0800137d2e5ca6f82e05856be864d5c5e67381395a7bc53f32cb847d48980",
+      "files": 1559
+    },
+    "finishedAt": "2026-09-09T11:21:50.058Z"
+  },
+  "claude": {
+    "status": "CLAUDE_MCP_RUNTIME_OK",
+    "sdk": "0.3.232",
+    "states": {
+      "sibling": "connected",
+      "local": "connected",
+      "remote": "connected"
+    },
+    "secretAbsentFromArgv": true,
+    "claudeEnvironmentHasNoProjectValues": true,
+    "httpCredentialScoped": true,
+    "stdioCredentialScoped": true,
+    "siblingCredentialsAbsent": true,
+    "bootstrapEndpointsClosed": true,
+    "credentialsAbsentFromFiles": true,
+    "inheritedReplacementSafe": true,
+    "savedHistoryResumed": true,
+    "localModelRequests": 2,
+    "allChildrenStopped": true,
+    "stoppedMcpProcesses": 4,
+    "command": "node scripts/verify-mcp-runtime.mjs",
+    "cwd": "/Users/blueemi/Developer/harness/packages/adapter-claude-code",
+    "independentReview": "PASS",
+    "independentSourceHash": "ef9d539cd93ada1491465f7b3b9cb8d82c85793635f434080189dd04f8e23aa1"
+  },
+  "limits": [
+    "Unsigned macOS arm64 directory package only",
+    "No Windows host proof",
+    "No signed installer, notarization, clean-machine, or updater run",
+    "Local model fixture does not establish generated-design visual quality",
+    "Local implementation; GitHub PRs have not been changed"
+  ]
+}

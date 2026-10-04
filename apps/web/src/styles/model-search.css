@@ -1,0 +1,71 @@
+.model-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-xl);
+  color: var(--text-3);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.model-search:focus-within {
+  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--text-2) 65%, var(--chrome-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.model-search input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  appearance: none;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-md);
+}
+
+.model-search input::placeholder {
+  color: var(--text-3);
+}
+
+.model-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.model-search > svg,
+.model-search > button {
+  flex: none;
+}
+
+.model-search > button {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.model-search > button:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.model-search > button:focus-visible {
+  outline: 1px solid var(--text-2);
+  outline-offset: 1px;
+}

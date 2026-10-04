@@ -1,116 +1,192 @@
-import type { AcpSessionUsageUpdate, AcpTurnTokenUsage } from './usage.js'
+import { z } from 'zod'
+import { AcpTurnTokenUsageSchema } from './usage.js'
 
 /**
  * The Agent Client Protocol, as agents actually speak it.
  *
- * Typed from frames captured off `gemini --experimental-acp` rather than from
- * the published schema alone, because the two disagree in small ways that
- * matter — most notably the update discriminator is `sessionUpdate`, not
- * `type`, and `tool_call` fields sit flat on the update rather than nested.
- *
- * Every field is optional. This is one shape for many independent
- * implementations, so treating anything as guaranteed is how a session dies on
- * an agent that is merely different rather than broken.
+ * These decoders follow captured frames from `gemini --experimental-acp`.
+ * Optional fields keep independent ACP implementations interoperable while
+ * every frame is still decoded before it reaches the adapter.
  */
 
 export const PROTOCOL_VERSION = 1
 
-export type ContentBlock = {
-  type?: string
-  text?: string
-  data?: string
-  mimeType?: string
-  uri?: string
+export const ContentBlockSchema = z.object({
+  type: z.string().optional(),
+  text: z.string().optional(),
+  data: z.string().optional(),
+  mimeType: z.string().optional(),
+  uri: z.string().optional(),
+})
+
+export const InitializeResultSchema = z.object({
+  protocolVersion: z.number().optional(),
+  agentInfo: z.object({ name: z.string().optional(), version: z.string().optional() }).optional(),
+  agentCapabilities: z
+    .object({
+      loadSession: z.boolean().optional(),
+      promptCapabilities: z
+        .object({
+          image: z.boolean().optional(),
+          audio: z.boolean().optional(),
+          embeddedContext: z.boolean().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  authMethods: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        name: z.string().optional(),
+        description: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
+})
+
+export const NewSessionResultSchema = z.object({
+  sessionId: z.string().optional(),
+  modes: z
+    .object({
+      currentModeId: z.string().optional(),
+      availableModes: z
+        .array(z.object({ id: z.string().optional(), name: z.string().optional() }))
+        .optional(),
+    })
+    .optional(),
+  configOptions: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        currentValue: z.string().optional(),
+        options: z
+          .array(
+            z.object({
+              value: z.string().optional(),
+              name: z.string().optional(),
+              description: z.string().nullable().optional(),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .optional(),
+})
+
+export const StopReasonSchema = z.enum([
+  'end_turn',
+  'max_tokens',
+  'max_turn_requests',
+  'refusal',
+  'cancelled',
+])
+
+export const PromptResultSchema = z.object({
+  stopReason: StopReasonSchema.optional(),
+  usage: AcpTurnTokenUsageSchema.nullable().optional(),
+})
+
+export const ToolKindSchema = z.enum([
+  'read',
+  'edit',
+  'delete',
+  'move',
+  'search',
+  'execute',
+  'think',
+  'fetch',
+  'other',
+])
+
+export const ToolCallStatusSchema = z.enum(['pending', 'in_progress', 'completed', 'failed'])
+
+export const ToolCallContentSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('content'), content: ContentBlockSchema.optional() }),
+  z.object({
+    type: z.literal('diff'),
+    path: z.string().optional(),
+    oldText: z.string().nullable().optional(),
+    newText: z.string().optional(),
+  }),
+  z.object({ type: z.literal('terminal'), terminalId: z.string().optional() }),
+])
+
+const ToolCallFields = {
+  toolCallId: z.string().optional(),
+  title: z.string().optional(),
+  kind: ToolKindSchema.optional(),
+  status: ToolCallStatusSchema.optional(),
+  content: z.array(ToolCallContentSchema).optional(),
+  locations: z
+    .array(z.object({ path: z.string().optional(), line: z.number().optional() }))
+    .optional(),
+  rawInput: z.record(z.string(), z.json()).optional(),
 }
 
-export type InitializeResult = {
-  protocolVersion?: number
-  agentInfo?: { name?: string; version?: string }
-  agentCapabilities?: {
-    loadSession?: boolean
-    promptCapabilities?: {
-      image?: boolean
-      audio?: boolean
-      embeddedContext?: boolean
-    }
-  }
-  authMethods?: Array<{ id?: string; name?: string; description?: string | null }>
-}
+export const ToolCallFieldsSchema = z.object(ToolCallFields)
 
-export type NewSessionResult = {
-  sessionId?: string
-  modes?: { currentModeId?: string; availableModes?: Array<{ id?: string; name?: string }> }
-  configOptions?: Array<{
-    id?: string
-    currentValue?: string
-    options?: Array<{ value?: string; name?: string; description?: string | null }>
-  }>
-}
+export const SessionUpdateSchema = z.object({
+  ...ToolCallFields,
+  sessionUpdate: z.string().optional(),
+  content: z.union([ContentBlockSchema, z.array(ToolCallContentSchema)]).optional(),
+  entries: z
+    .array(
+      z.object({
+        content: z.string().optional(),
+        status: z.string().optional(),
+        priority: z.string().optional(),
+      }),
+    )
+    .optional(),
+  availableCommands: z
+    .array(z.object({ name: z.string().optional(), description: z.string().optional() }))
+    .optional(),
+  currentModeId: z.string().optional(),
+  used: z.number().optional(),
+  size: z.number().optional(),
+  cost: z
+    .object({ amount: z.number().optional(), currency: z.string().optional() })
+    .nullable()
+    .optional(),
+})
 
-/** Why a turn ended. `cancelled` is a normal outcome, not an error. */
-export type StopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests' | 'refusal' | 'cancelled'
+export const SessionNotificationSchema = z.object({
+  sessionId: z.string().optional(),
+  update: SessionUpdateSchema.optional(),
+})
 
-export type PromptResult = {
-  stopReason?: StopReason
-  usage?: AcpTurnTokenUsage | null
-}
+export const PermissionOptionKindSchema = z.enum([
+  'allow_once',
+  'allow_always',
+  'reject_once',
+  'reject_always',
+])
 
-export type ToolKind =
-  'read' | 'edit' | 'delete' | 'move' | 'search' | 'execute' | 'think' | 'fetch' | 'other'
+export const RequestPermissionParamsSchema = z.object({
+  sessionId: z.string().optional(),
+  toolCall: ToolCallFieldsSchema.optional(),
+  options: z
+    .array(
+      z.object({
+        optionId: z.string().optional(),
+        name: z.string().optional(),
+        kind: PermissionOptionKindSchema.optional(),
+      }),
+    )
+    .optional(),
+})
 
-export type ToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
-
-/**
- * `type` is required here, unlike most of this file, because it is the
- * discriminant — an optional one cannot narrow the union, and every captured
- * frame carried it.
- */
-export type ToolCallContent =
-  | { type: 'content'; content?: ContentBlock }
-  | { type: 'diff'; path?: string; oldText?: string | null; newText?: string }
-  | { type: 'terminal'; terminalId?: string }
-
-export type ToolCallFields = {
-  toolCallId?: string
-  title?: string
-  kind?: ToolKind
-  status?: ToolCallStatus
-  content?: ToolCallContent[]
-  locations?: Array<{ path?: string; line?: number }>
-  rawInput?: Record<string, unknown>
-}
-
-/**
- * One `session/update` payload.
- *
- * Discriminated by `sessionUpdate`. The tool-call variants spread their fields
- * onto this object directly, which is why they are intersected rather than
- * nested.
- */
-export type SessionUpdate = Omit<ToolCallFields, 'content'> &
-  AcpSessionUsageUpdate & {
-    sessionUpdate?: string
-    /**
-     * Overloaded by the protocol: a single block on a text chunk, an array on a
-     * tool call. Intersecting the two would cancel out to `never`, so the
-     * tool-call field is omitted above and the union declared once here.
-     */
-    content?: ContentBlock | ToolCallContent[]
-    entries?: Array<{ content?: string; status?: string; priority?: string }>
-    availableCommands?: Array<{ name?: string; description?: string }>
-    currentModeId?: string
-  }
-
-export type SessionNotification = {
-  sessionId?: string
-  update?: SessionUpdate
-}
-
-/** An agent asking to do something. It blocks until we answer. */
-export type PermissionOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
-
-export type RequestPermissionParams = {
-  sessionId?: string
-  toolCall?: ToolCallFields
-  options?: Array<{ optionId?: string; name?: string; kind?: PermissionOptionKind }>
-}
+export type ContentBlock = z.infer<typeof ContentBlockSchema>
+export type InitializeResult = z.infer<typeof InitializeResultSchema>
+export type NewSessionResult = z.infer<typeof NewSessionResultSchema>
+export type StopReason = z.infer<typeof StopReasonSchema>
+export type PromptResult = z.infer<typeof PromptResultSchema>
+export type ToolKind = z.infer<typeof ToolKindSchema>
+export type ToolCallStatus = z.infer<typeof ToolCallStatusSchema>
+export type ToolCallContent = z.infer<typeof ToolCallContentSchema>
+export type ToolCallFields = z.infer<typeof ToolCallFieldsSchema>
+export type SessionUpdate = z.infer<typeof SessionUpdateSchema>
+export type SessionNotification = z.infer<typeof SessionNotificationSchema>
+export type PermissionOptionKind = z.infer<typeof PermissionOptionKindSchema>
+export type RequestPermissionParams = z.infer<typeof RequestPermissionParamsSchema>

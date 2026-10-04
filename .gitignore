@@ -8,10 +8,8 @@ dist-electron/
 out/
 build/
 release/
-*.tsbuildinfo
-
-# Rust (if/when we add native sidecars)
 target/
+*.tsbuildinfo
 
 # Environment & secrets — NEVER commit
 .env
@@ -54,3 +52,8 @@ test-results/
 
 # Local scratch — anything here is yours alone
 scratch/
+
+# Local verification ledgers
+.unlazy/
+/apps/desktop/performance-results/
+/apps/desktop/preview-results/

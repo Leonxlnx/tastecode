@@ -6,7 +6,7 @@ import path from 'node:path'
 export const MAX_ATTACHMENT_BYTES = 25 * 1_024 * 1_024
 
 const MAX_BASE64_LENGTH = Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4
-const DEFAULT_DIRECTORY = path.join(os.tmpdir(), 'Personal Harness', 'attachments')
+const DEFAULT_DIRECTORY = path.join(os.tmpdir(), 'TasteCode', 'attachments')
 
 export async function materializeAttachment(
   input: { name: string; data: string },
@@ -72,6 +72,7 @@ function safeFileName(name: string): string {
   const leaf = name.replaceAll('\\', '/').split('/').pop() ?? ''
   const cleaned = leaf
     .normalize('NFC')
+    // oxlint-disable-next-line no-control-regex -- File names must reject control bytes.
     .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]/g, '-')
     .replace(/^\.+/, '')
     .trim()

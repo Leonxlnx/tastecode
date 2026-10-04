@@ -1,7 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApprovalDecision, ApprovalMode, DomainEvent } from '@harness/contracts'
-import { ArrowUp, CircleAlert, Square } from 'lucide-react'
+import {
+  IconArrowUp as ArrowUp,
+  IconAlertCircle as CircleAlert,
+  IconSquare as Square,
+  IconX as X,
+} from '@tabler/icons-react'
 import { parseSideChatCommand } from '../../side-chat-command.js'
+import {
+  appendBackgroundThreadDelta,
+  appendThreadDelta,
+  shouldDrainBackgroundDeltas,
+  type PendingThreadDeltaBatch,
+} from '../../thread-delta-buffer.js'
 import {
   beginOptimisticTurn,
   emptyThread,
@@ -9,10 +20,12 @@ import {
   reduceDeltas,
   reduceEventLog,
   removeOptimisticMessage,
-  type ItemDeltaEvent,
   type ThreadState,
 } from '../../thread-store.js'
-import type { Transport } from '../../transport.js'
+import { ThreadFrameStore } from '../../thread-frame-store.js'
+import { IndeterminateRequestError, type Transport } from '../../transport.js'
+import { IconMorph } from '../IconMorph.js'
+import { SkeletonStatus, ThreadSkeleton } from '../Skeleton.js'
 import { Thread } from '../Thread.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 
@@ -33,6 +46,12 @@ export type SideChatStartOptions = {
 }
 
 type SequencedEvent = { event: DomainEvent; seq?: number | undefined }
+type Submission = {
+  text: string
+  attachments: string[]
+  clientSubmissionId: string
+  options: SideChatStartOptions
+}
 let submissionSequence = 0
 
 export function WorkspaceSideChat(props: {
@@ -45,6 +64,11 @@ export function WorkspaceSideChat(props: {
   promptRequest?: SideChatPromptRequest | undefined
 }) {
   const [draft, setDraft] = useState('')
+  const [draftAttachments, setDraftAttachments] = useState<string[]>([])
+  const [uncertainSubmission, setUncertainSubmission] = useState<Submission>()
+  const uncertainSubmissionRef = useRef<Submission | undefined>(undefined)
+  const [sending, setSending] = useState(false)
+  const sendingRef = useRef(false)
   const [sideThreadId, setSideThreadId] = useState<string>()
   const [thread, setThread] = useState<ThreadState>(emptyThread)
   const [starting, setStarting] = useState(false)
@@ -52,6 +76,10 @@ export function WorkspaceSideChat(props: {
   const [error, setError] = useState<string>()
   const textarea = useRef<HTMLTextAreaElement>(null)
   const threadRef = useRef(thread)
+  const activeRef = useRef(props.active)
+  const flushDeltasRef = useRef<(() => void) | undefined>(undefined)
+  const frameStoreRef = useRef<ThreadFrameStore | null>(null)
+  frameStoreRef.current ??= new ThreadFrameStore(emptyThread)
   const sideThreadIdRef = useRef(sideThreadId)
   const sideParentRef = useRef<string | undefined>(undefined)
   const startPromiseRef = useRef<Promise<string> | undefined>(undefined)
@@ -60,15 +88,28 @@ export function WorkspaceSideChat(props: {
   const loadingHistoryRef = useRef(false)
   const historyBufferRef = useRef<SequencedEvent[]>([])
   const promptRequestRef = useRef(0)
-  const reviews = useMemo(() => Object.values(thread.reviews), [thread.reviews])
-
-  threadRef.current = thread
+  activeRef.current = props.active
   sideThreadIdRef.current = sideThreadId
 
   const replaceThread = useCallback((next: ThreadState) => {
     threadRef.current = next
+    frameStoreRef.current?.publish(next)
     setThread(next)
   }, [])
+
+  const finishHistory = useCallback(
+    (base: ThreadState) => {
+      const buffered = historyBufferRef.current
+      historyBufferRef.current = []
+      loadingHistoryRef.current = false
+      const next = reduceEventLog(base, buffered, lastSeqRef.current)
+      for (const entry of buffered) {
+        if (entry.seq !== undefined) lastSeqRef.current = Math.max(lastSeqRef.current, entry.seq)
+      }
+      replaceThread(next)
+    },
+    [replaceThread],
+  )
 
   useEffect(() => {
     generationRef.current += 1
@@ -84,6 +125,11 @@ export function WorkspaceSideChat(props: {
     startPromiseRef.current = undefined
     lastSeqRef.current = 0
     historyBufferRef.current = []
+    loadingHistoryRef.current = false
+    sendingRef.current = false
+    setSending(false)
+    uncertainSubmissionRef.current = undefined
+    setUncertainSubmission(undefined)
     setSideThreadId(undefined)
     replaceThread(emptyThread)
     setStarting(false)
@@ -102,15 +148,21 @@ export function WorkspaceSideChat(props: {
 
   useEffect(() => {
     let frame: number | undefined
-    let pendingDeltas: ItemDeltaEvent[] = []
+    let pendingDeltas: PendingThreadDeltaBatch | undefined
 
     const flushDeltas = () => {
       if (frame !== undefined) cancelAnimationFrame(frame)
       frame = undefined
-      if (pendingDeltas.length === 0) return
-      const next = reduceDeltas(threadRef.current, pendingDeltas)
-      pendingDeltas = []
-      replaceThread(next)
+      if (!pendingDeltas || pendingDeltas.events.length === 0) return
+      const deltas = pendingDeltas.events
+      pendingDeltas = undefined
+      const current = threadRef.current
+      const next = reduceDeltas(current, deltas)
+      threadRef.current = next
+      frameStoreRef.current?.publish(next)
+      // A normal delta changes only the live overlay. An early delta can add
+      // the first row, which must mount the conversation container once.
+      if (next.items !== current.items) setThread(next)
     }
     const apply = ({ event, seq }: SequencedEvent) => {
       if (seq !== undefined) {
@@ -118,13 +170,18 @@ export function WorkspaceSideChat(props: {
         lastSeqRef.current = seq
       }
       if (event.type === 'item.delta') {
-        pendingDeltas.push(event)
-        frame ??= requestAnimationFrame(flushDeltas)
+        const active = activeRef.current
+        pendingDeltas = active
+          ? appendThreadDelta(pendingDeltas, event)
+          : appendBackgroundThreadDelta(pendingDeltas, event)
+        if (active) frame ??= requestAnimationFrame(flushDeltas)
+        else if (shouldDrainBackgroundDeltas(pendingDeltas)) flushDeltas()
         return
       }
       flushDeltas()
       replaceThread(reduce(threadRef.current, event))
     }
+    flushDeltasRef.current = flushDeltas
 
     const offEvents = props.transport.on('sideChat.event', ({ threadId, event, seq }) => {
       if (threadId !== sideThreadIdRef.current) return
@@ -140,25 +197,22 @@ export function WorkspaceSideChat(props: {
       loadingHistoryRef.current = true
       historyBufferRef.current = []
       const afterSeq = lastSeqRef.current
+      const generation = generationRef.current
       void props.transport
         .request('thread.history', { threadId: id, afterSeq })
         .then((history) => {
-          if (sideThreadIdRef.current !== id) return
+          if (generationRef.current !== generation || sideThreadIdRef.current !== id) return
           flushDeltas()
           let next = reduceEventLog(threadRef.current, history.events, afterSeq)
           for (const entry of history.events)
             lastSeqRef.current = Math.max(lastSeqRef.current, entry.seq)
-          next = reduceEventLog(next, historyBufferRef.current, lastSeqRef.current)
-          for (const entry of historyBufferRef.current) {
-            if (entry.seq !== undefined)
-              lastSeqRef.current = Math.max(lastSeqRef.current, entry.seq)
-          }
-          replaceThread(history.running ? next : { ...next, running: false, activeTurn: undefined })
+          if (!history.running) next = { ...next, running: false, activeTurn: undefined }
+          finishHistory(next)
         })
-        .catch(() => undefined)
-        .finally(() => {
-          loadingHistoryRef.current = false
-          historyBufferRef.current = []
+        .catch(() => {
+          if (generationRef.current !== generation || sideThreadIdRef.current !== id) return
+          flushDeltas()
+          finishHistory(threadRef.current)
         })
     }
     const offState = props.transport.onState((state) => {
@@ -168,17 +222,22 @@ export function WorkspaceSideChat(props: {
 
     return () => {
       if (frame !== undefined) cancelAnimationFrame(frame)
-      pendingDeltas = []
+      pendingDeltas = undefined
+      if (flushDeltasRef.current === flushDeltas) flushDeltasRef.current = undefined
       offEvents()
       offState()
       offGap()
     }
-  }, [props.transport, replaceThread])
+  }, [props.parentThreadId, props.transport, replaceThread, finishHistory])
+
+  useEffect(() => {
+    if (props.active) flushDeltasRef.current?.()
+  }, [props.active])
 
   const ensureSideThread = useCallback(async (): Promise<string> => {
+    if (startPromiseRef.current) return startPromiseRef.current
     const existing = sideThreadIdRef.current
     if (existing) return existing
-    if (startPromiseRef.current) return startPromiseRef.current
     const parentThreadId = props.parentThreadId
     if (!parentThreadId || parentThreadId.startsWith('pending:')) {
       throw new Error('Start the main chat before opening a side chat.')
@@ -199,79 +258,150 @@ export function WorkspaceSideChat(props: {
         loadingHistoryRef.current = true
         historyBufferRef.current = []
         const history = await props.transport.request('thread.history', { threadId })
-        if (sideThreadIdRef.current !== threadId) return threadId
+        if (generationRef.current !== generation || sideThreadIdRef.current !== threadId)
+          return threadId
         let next = reduceEventLog(emptyThread, history.events)
         for (const entry of history.events)
           lastSeqRef.current = Math.max(lastSeqRef.current, entry.seq)
-        next = reduceEventLog(next, historyBufferRef.current, lastSeqRef.current)
-        for (const entry of historyBufferRef.current) {
-          if (entry.seq !== undefined) lastSeqRef.current = Math.max(lastSeqRef.current, entry.seq)
-        }
-        replaceThread(history.running ? next : { ...next, running: false, activeTurn: undefined })
+        if (!history.running) next = { ...next, running: false, activeTurn: undefined }
+        finishHistory(next)
         return threadId
       })
+      .catch((reason: unknown) => {
+        if (generationRef.current === generation) {
+          finishHistory(threadRef.current)
+        }
+        throw reason
+      })
       .finally(() => {
-        loadingHistoryRef.current = false
-        historyBufferRef.current = []
         if (startPromiseRef.current === pending) startPromiseRef.current = undefined
-        if (generationRef.current === generation) setStarting(false)
+        if (generationRef.current === generation) {
+          setStarting(false)
+        }
       })
     startPromiseRef.current = pending
     return pending
-  }, [props.parentThreadId, props.startOptions, props.transport, replaceThread])
+  }, [props.parentThreadId, props.startOptions, props.transport, finishHistory])
 
   useEffect(() => {
     if (!props.active || !props.parentThreadId || props.parentThreadId.startsWith('pending:'))
       return
     // One frame avoids starting a provider during React Strict Mode's
     // mount-cleanup-mount probe; the probe cancels this frame before it runs.
+    const generation = generationRef.current
     const frame = requestAnimationFrame(() => {
-      void ensureSideThread().catch((reason) =>
-        setError(reason instanceof Error ? reason.message : String(reason)),
-      )
+      void ensureSideThread().catch((reason) => {
+        if (generationRef.current === generation)
+          setError(reason instanceof Error ? reason.message : String(reason))
+      })
     })
     return () => cancelAnimationFrame(frame)
   }, [ensureSideThread, props.active, props.parentThreadId])
 
+  const restoreDraft = useCallback((text: string, attachments: string[]) => {
+    setDraft((current) => (current ? `${current}\n${text}` : text))
+    setDraftAttachments((current) => [...new Set([...current, ...attachments])])
+  }, [])
+
   const sendPrompt = useCallback(
-    async (rawText: string, attachments: string[] = []) => {
+    async (rawText: string, attachments: string[] = [], fromDraft = false, retry?: Submission) => {
       const text = rawText.trim()
-      if (!text) return
-      if (threadRef.current.running) {
-        setDraft((current) => (current.trim() ? `${current.trimEnd()}\n${text}` : text))
+      if (!text && attachments.length === 0) return
+      if (
+        sendingRef.current ||
+        ((threadRef.current.running || uncertainSubmissionRef.current) && !retry)
+      ) {
+        if (!fromDraft) restoreDraft(rawText, attachments)
         setError('Temporary chat is still working. Your message is ready when it finishes.')
         return
       }
       if (parseSideChatCommand(text)) {
+        if (!fromDraft) restoreDraft(rawText, attachments)
         setError('You are already in a temporary chat. Nested temporary chats are not available.')
         return
       }
 
-      const clientSubmissionId = `side:${globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${submissionSequence++}`}`
+      const submission: Submission = retry ?? {
+        text: rawText,
+        attachments,
+        clientSubmissionId: `side:${globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${submissionSequence++}`}`,
+        options: props.startOptions,
+      }
+      const { clientSubmissionId, options } = submission
+      const generation = generationRef.current
+      const parent = props.parentThreadId
+      const isCurrent = () =>
+        generationRef.current === generation && sideParentRef.current === parent
+      sendingRef.current = true
+      setSending(true)
+      if (fromDraft) {
+        setDraft('')
+        setDraftAttachments([])
+      }
+      let optimisticTurnId: string | undefined
+      let submitted = false
       try {
         const threadId = await ensureSideThread()
-        const optimistic = beginOptimisticTurn(threadRef.current, text, clientSubmissionId)
-        replaceThread(optimistic)
+        if (!isCurrent()) return
+        if (!retry) {
+          const optimistic = beginOptimisticTurn(
+            threadRef.current,
+            text,
+            clientSubmissionId,
+            Date.now(),
+            attachments,
+          )
+          optimisticTurnId = optimistic.activeTurn?.id
+          replaceThread(optimistic)
+        }
+        submitted = true
         await props.transport.request('thread.sendTurn', {
           threadId,
           text,
           clientSubmissionId,
           ...(attachments.length > 0 ? { attachments } : {}),
-          ...(props.startOptions.model ? { model: props.startOptions.model } : {}),
-          ...(props.startOptions.effort ? { effort: props.startOptions.effort } : {}),
-          ...(props.startOptions.serviceTier
-            ? { serviceTier: props.startOptions.serviceTier }
-            : {}),
+          ...(options.model ? { model: options.model } : {}),
+          ...(options.effort ? { effort: options.effort } : {}),
+          ...(options.serviceTier ? { serviceTier: options.serviceTier } : {}),
         })
-        setError(undefined)
+        if (isCurrent()) {
+          uncertainSubmissionRef.current = undefined
+          setUncertainSubmission(undefined)
+          setError(undefined)
+        }
       } catch (reason) {
+        if (!isCurrent()) return
+        if ((submitted && reason instanceof IndeterminateRequestError) || retry) {
+          uncertainSubmissionRef.current = submission
+          setUncertainSubmission(submission)
+          setError(
+            'Delivery is unconfirmed. The message may already be running. Retry safely to confirm without sending it twice.',
+          )
+          return
+        }
         const next = removeOptimisticMessage(threadRef.current, clientSubmissionId)
-        replaceThread({ ...next, running: false, activeTurn: undefined })
-        setDraft((current) => current || text)
+        replaceThread(
+          next.activeTurn?.id === optimisticTurnId
+            ? { ...next, running: false, activeTurn: undefined }
+            : next,
+        )
+        restoreDraft(rawText, attachments)
         setError(reason instanceof Error ? reason.message : String(reason))
+      } finally {
+        if (isCurrent()) {
+          sendingRef.current = false
+          setSending(false)
+        }
       }
     },
-    [ensureSideThread, props.startOptions, props.transport, replaceThread],
+    [
+      ensureSideThread,
+      props.parentThreadId,
+      props.startOptions,
+      props.transport,
+      replaceThread,
+      restoreDraft,
+    ],
   )
 
   useEffect(() => {
@@ -279,7 +409,7 @@ export function WorkspaceSideChat(props: {
     if (!request || request.parentThreadId !== props.parentThreadId) return
     if (request.request <= promptRequestRef.current) return
     promptRequestRef.current = request.request
-    if (!request.text.trim()) {
+    if (!request.text.trim() && request.attachments.length === 0) {
       requestAnimationFrame(() => textarea.current?.focus())
       return
     }
@@ -287,37 +417,67 @@ export function WorkspaceSideChat(props: {
   }, [props.parentThreadId, props.promptRequest, sendPrompt])
 
   const submit = () => {
-    const text = draft.trim()
-    if (!text || thread.running || starting) return
-    setDraft('')
-    void sendPrompt(text)
+    if (
+      (!draft.trim() && draftAttachments.length === 0) ||
+      thread.running ||
+      starting ||
+      sending ||
+      uncertainSubmission
+    )
+      return
+    void sendPrompt(draft, draftAttachments, true)
   }
 
   const interrupt = () => {
     const threadId = sideThreadIdRef.current
     if (!threadId || stopping) return
     setStopping(true)
+    const generation = generationRef.current
     void props.transport
       .request('thread.interrupt', { threadId })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
-      .finally(() => setStopping(false))
+      .catch((reason) => {
+        if (generationRef.current === generation)
+          setError(reason instanceof Error ? reason.message : String(reason))
+      })
+      .finally(() => {
+        if (generationRef.current === generation) setStopping(false)
+      })
   }
 
-  const decide = (id: string, decision: ApprovalDecision) => {
-    const threadId = sideThreadIdRef.current
-    if (!threadId) return
-    void props.transport
-      .request('thread.respondToApproval', { threadId, approvalId: id, decision })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
-  }
+  const decide = useCallback(
+    (id: string, decision: ApprovalDecision) => {
+      const threadId = sideThreadIdRef.current
+      if (!threadId) return
+      const generation = generationRef.current
+      void props.transport
+        .request('thread.respondToApproval', { threadId, approvalId: id, decision })
+        .catch((reason) => {
+          if (generationRef.current === generation)
+            setError(reason instanceof Error ? reason.message : String(reason))
+        })
+    },
+    [props.transport],
+  )
 
-  const answer = (id: string, answers: Record<string, string[]>) => {
-    const threadId = sideThreadIdRef.current
-    if (!threadId) return
-    void props.transport
-      .request('thread.respondToUserInput', { threadId, requestId: id, answers })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)))
-  }
+  const answer = useCallback(
+    async (id: string, answers: Record<string, string[]>) => {
+      const threadId = sideThreadIdRef.current
+      if (!threadId) throw new Error('This temporary chat is no longer open.')
+      const generation = generationRef.current
+      try {
+        await props.transport.request('thread.respondToUserInput', {
+          threadId,
+          requestId: id,
+          answers,
+        })
+      } catch (reason) {
+        if (generationRef.current === generation)
+          setError(reason instanceof Error ? reason.message : String(reason))
+        throw reason
+      }
+    },
+    [props.transport],
+  )
 
   if (!props.parentThreadId) {
     return (
@@ -330,33 +490,56 @@ export function WorkspaceSideChat(props: {
   }
 
   const hasConversation = thread.items.length > 0 || thread.running
+  const loadingConversation = !hasConversation && starting && !error
 
   return (
     <div className="workspace-side-chat">
-      <div className="workspace-side-chat__conversation" aria-live="polite">
+      <div
+        className="workspace-side-chat__conversation"
+        aria-live="polite"
+        aria-busy={loadingConversation}
+      >
         {error ? (
           <div className="workspace-side-chat__error" role="alert">
             <CircleAlert size={13} aria-hidden />
             <span>{error}</span>
+            {uncertainSubmission ? (
+              <button
+                type="button"
+                disabled={sending}
+                onClick={() =>
+                  void sendPrompt(
+                    uncertainSubmission.text,
+                    uncertainSubmission.attachments,
+                    false,
+                    uncertainSubmission,
+                  )
+                }
+              >
+                Retry safely
+              </button>
+            ) : null}
           </div>
         ) : null}
         {hasConversation && props.active ? (
           <Thread
-            items={thread.items}
-            running={thread.running}
-            activeTurn={thread.activeTurn}
-            turnTiming={thread.turnTiming}
-            plan={thread.plan}
-            diff={thread.diff}
+            frameStore={frameStoreRef.current}
             threadId={sideThreadId}
-            transport={props.transport}
-            approvals={thread.approvals}
-            userInputs={thread.userInputs}
-            reviews={reviews}
             keyboardActive={false}
+            transport={props.transport}
             onDecide={decide}
             onAnswerUserInput={answer}
+            inlineUserInput
           />
+        ) : loadingConversation ? (
+          <SkeletonStatus
+            label="Starting temporary chat…"
+            className="workspace-side-chat__skeleton"
+          >
+            <div aria-hidden>
+              <ThreadSkeleton />
+            </div>
+          </SkeletonStatus>
         ) : !hasConversation && !starting ? (
           <WorkspaceEmptyState
             kind="chat"
@@ -366,6 +549,25 @@ export function WorkspaceSideChat(props: {
         ) : null}
       </div>
 
+      {draftAttachments.length > 0 ? (
+        <div className="chips" role="list" aria-label="Attached files">
+          {draftAttachments.map((path) => (
+            <span className="chip chip--file" role="listitem" key={path} title={path}>
+              <span className="chip__label">{path.split(/[\\/]/).at(-1)}</span>
+              <button
+                className="chip__x"
+                type="button"
+                aria-label={`Remove ${path}`}
+                onClick={() =>
+                  setDraftAttachments((current) => current.filter((value) => value !== path))
+                }
+              >
+                <X size={10} aria-hidden />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div className="workspace-side-chat__composer">
         <textarea
           ref={textarea}
@@ -383,14 +585,20 @@ export function WorkspaceSideChat(props: {
         <button
           type="button"
           aria-label={thread.running ? 'Stop temporary chat' : 'Send message'}
-          disabled={thread.running ? !sideThreadId || stopping : !draft.trim() || starting}
+          disabled={
+            thread.running
+              ? !sideThreadId || stopping
+              : (!draft.trim() && draftAttachments.length === 0) ||
+                starting ||
+                sending ||
+                Boolean(uncertainSubmission)
+          }
           onClick={thread.running ? interrupt : submit}
         >
-          {thread.running ? (
-            <Square size={12} fill="currentColor" aria-hidden />
-          ) : (
+          <IconMorph active={thread.running ? 1 : 0}>
             <ArrowUp size={15} aria-hidden />
-          )}
+            <Square size={12} fill="currentColor" aria-hidden />
+          </IconMorph>
         </button>
       </div>
     </div>

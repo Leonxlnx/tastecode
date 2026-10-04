@@ -1,17 +1,25 @@
 import type { DomainEvent, Item, Usage } from '@harness/contracts'
+import { JsonRpcValueSchema, type JsonRpcValue } from '@harness/proc'
 import type { Event, Part, ToolPart } from '@opencode-ai/sdk'
+import { z } from 'zod'
 
 /** OpenCode 2.0's `/api/event` stream. Its generated SDK is still changing,
  *  so this adapter follows the captured wire shape instead of importing a
  *  prerelease type that can drift independently of the installed binary. */
-export type OpenCodeV2Event = {
-  id?: string
-  created?: number
-  type: string
-  data: Record<string, unknown>
-}
+export const OpenCodeDataSchema = z.record(z.string(), JsonRpcValueSchema)
+export const OpenCodeV2EventSchema = z.object({
+  id: z.string().optional(),
+  created: z.number().optional(),
+  type: z.string(),
+  data: OpenCodeDataSchema,
+})
+export type OpenCodeV2Event = z.infer<typeof OpenCodeV2EventSchema>
 
-export type OpenCodeWireEvent = Event | OpenCodeV2Event
+export type OpenCodeLegacyLifecycleEvent =
+  | { type: 'session.status'; properties: { sessionID: string; status: { type: string } } }
+  | { type: 'session.idle'; properties: { sessionID: string } }
+
+export type OpenCodeWireEvent = Event | OpenCodeV2Event | OpenCodeLegacyLifecycleEvent
 
 export class OpenCodeEventMapper {
   readonly #turnId: string
@@ -19,7 +27,7 @@ export class OpenCodeEventMapper {
   readonly #open = new Map<string, Item>()
   readonly #text = new Map<string, string>()
   readonly #completed = new Set<string>()
-  readonly #v2Tools = new Map<string, { name: string; input?: Record<string, unknown> }>()
+  readonly #v2Tools = new Map<string, { name: string; input?: Record<string, JsonRpcValue> }>()
 
   constructor(turnId: string, model?: string) {
     this.#turnId = turnId
@@ -28,6 +36,7 @@ export class OpenCodeEventMapper {
 
   translate(event: OpenCodeWireEvent): DomainEvent[] {
     if ('data' in event) return this.#v2(event)
+    if (event.type === 'session.status' || event.type === 'session.idle') return []
     if (event.type === 'message.part.updated')
       return this.#part(event.properties.part, event.properties.delta)
     if (event.type === 'message.updated') {
@@ -79,12 +88,12 @@ export class OpenCodeEventMapper {
   }
 
   #v2Stream(
-    data: Record<string, unknown>,
+    data: Record<string, JsonRpcValue>,
     type: 'message' | 'reasoning',
     phase: 'started' | 'delta' | 'ended',
   ): DomainEvent[] {
     const messageId = string(data.assistantMessageID) || 'assistant'
-    const ordinal = typeof data.ordinal === 'number' ? data.ordinal : 0
+    const ordinal = number(data['ordinal'])
     const id = `${this.#turnId}-${messageId}-${type}-${ordinal}`
     const events: DomainEvent[] = []
     if (!this.#open.has(id)) {
@@ -126,7 +135,7 @@ export class OpenCodeEventMapper {
   }
 
   #v2Tool(
-    data: Record<string, unknown>,
+    data: Record<string, JsonRpcValue>,
     status: 'started' | 'completed' | 'failed',
   ): DomainEvent[] {
     const callId = string(data.id)
@@ -252,10 +261,14 @@ export class OpenCodeEventMapper {
           ...item,
           status: state.status === 'error' ? 'failed' : 'completed',
           ...(kind === 'tool_call'
-            ? { text: state.status === 'error' ? state.error : `${state.title}\n${state.output}` }
+            ? {
+                text: state.status === 'error' ? state.error : `${state.title}\n${state.output}`,
+              }
             : {}),
           ...('time' in state && state.time.end
-            ? { durationMs: state.time.end - state.time.start }
+            ? {
+                durationMs: state.time.end - state.time.start,
+              }
             : {}),
         },
       })
@@ -288,23 +301,23 @@ function usage(
   return { type: 'usage.updated', usage: value }
 }
 
-function v2Usage(data: Record<string, unknown>, model?: string): DomainEvent {
-  const tokens = record(data.tokens)
-  const cache = record(tokens.cache)
-  const input = number(tokens.input)
-  const output = number(tokens.output)
-  const reasoning = number(tokens.reasoning)
+function v2Usage(data: Record<string, JsonRpcValue>, model?: string): DomainEvent {
+  const tokens = record(data['tokens'])
+  const cache = record(tokens['cache'])
+  const input = number(tokens['input'])
+  const output = number(tokens['output'])
+  const reasoning = number(tokens['reasoning'])
   const normalizedOutput = output + reasoning
   return {
     type: 'usage.updated',
     usage: {
       ...(model ? { model } : {}),
       inputTokens: input,
-      cachedInputTokens: number(cache.read),
+      cachedInputTokens: number(cache['read']),
       outputTokens: normalizedOutput,
       reasoningTokens: reasoning,
-      totalTokens: input + number(cache.read) + number(cache.write) + normalizedOutput,
-      costUsd: number(data.cost),
+      totalTokens: input + number(cache['read']) + number(cache['write']) + normalizedOutput,
+      costUsd: number(data['cost']),
       inputIncludesCached: false,
     },
   }
@@ -321,22 +334,24 @@ function stateTitle(state: ToolPart['state']): string {
 }
 
 function string(value: unknown): string {
-  return typeof value === 'string' ? value : ''
+  const parsed = z.string().safeParse(value)
+  return parsed.success ? parsed.data : ''
 }
 
 function number(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+  const parsed = z.number().safeParse(value)
+  return parsed.success && Number.isFinite(parsed.data) ? parsed.data : 0
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
+function record(value: unknown): Record<string, JsonRpcValue> {
+  const parsed = OpenCodeDataSchema.safeParse(value)
+  return parsed.success ? parsed.data : {}
 }
 
 function contentText(value: unknown): string {
-  if (!Array.isArray(value)) return ''
-  return value
+  const parsed = z.array(OpenCodeDataSchema).safeParse(value)
+  if (!parsed.success) return ''
+  return parsed.data
     .map((entry) => {
       const item = record(entry)
       return string(item.text) || string(item.output)

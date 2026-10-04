@@ -45,6 +45,33 @@ describe('scroll mode', () => {
     expect(activeTurnAnchor(steered, 'turn-1')).toEqual({ id: 'submission-1', index: 0 })
   })
 
+  it('reads only the active tail of a long thread', () => {
+    let reads = 0
+    const items = new Proxy(
+      [
+        ...Array.from({ length: 10_000 }, (_, index) => ({
+          id: `history-${index}`,
+          turnId: `turn-${index}`,
+          type: 'message',
+          role: 'assistant',
+        })),
+        { id: 'active', turnId: 'active-turn', type: 'message', role: 'user' },
+      ],
+      {
+        get(target, property, receiver) {
+          if (typeof property === 'string' && /^\d+$/.test(property)) reads += 1
+          return Reflect.get(target, property, receiver)
+        },
+      },
+    )
+
+    expect(activeTurnAnchor(items, 'active-turn', 10_000)).toEqual({
+      id: 'active',
+      index: 10_000,
+    })
+    expect(reads).toBeLessThanOrEqual(3)
+  })
+
   it('releases the anchor once the turn is taller than the viewport', () => {
     expect(shouldReleaseAnchor(1200, 800)).toBe(true)
     expect(shouldReleaseAnchor(400, 800)).toBe(false)

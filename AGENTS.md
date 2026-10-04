@@ -10,13 +10,18 @@ For any coding agent working in this repo — Claude Code, Codex, Cursor, an ACP
 **Branch model (Leon and Bluedev, 2026-08-08):** `main` is the public beta for roughly the
 next four weeks and becomes the stable release at v1. `nightly` is the integration branch:
 every new change lands there first and nothing is hidden on it — it carries the full
-provider roster (Codex, Claude Code, Grok plus the parked Cursor, OpenCode, Antigravity,
-ACP and API-connection surfaces, all working). Work that the beta itself needs (fixes and
-polish for the three shipped plans) still goes to `main` by PR and reaches `nightly` on the
-next sync; everything else targets `nightly`. Keep `nightly` synchronized by merging `main`
-and resolving conflicts without rewriting published history. Do not un-park a provider on
-`main` without Leon saying so. `harness-rust` stays as an
-experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklist.
+provider roster (Codex, Claude Code, Grok plus Cursor, OpenCode, Antigravity, Pi, the ACP
+agents and API connections, all working). Since 2026-10-03 those other providers are absent
+from `main`'s code, not hidden: `main` ships only Codex, Claude Code and Grok (Grok's MCP
+mode still uses the ACP protocol client in `packages/adapter-acp`). Work that the beta itself
+needs (fixes and polish for the three shipped plans) still goes to `main` by PR and reaches
+`nightly` on the next sync; everything else targets `nightly`. Keep `nightly` synchronized
+by merging `main` and resolving conflicts without rewriting published history; a merge must
+never delete `nightly`'s provider code, so the first sync after the removal resolves those
+deletions in `nightly`'s favour. Do not bring another provider back to `main` without Leon
+saying so. The Rust + GPUI rewrite is preserved only on
+`archive/rust-rewrite-2026-08-15`; do not merge it back into `main` without Leon saying so.
+[docs/dashboard.html](./docs/dashboard.html) is the release checklist.
 
 ## Read first
 
@@ -34,12 +39,22 @@ experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklis
 - **Never commit a secret**, including in fixtures and examples.
 - **Never write a `.sh` script.** Node/TypeScript only — we are a Windows + macOS team.
 - **Never assume POSIX paths.** Use `node:path`.
-- **Never open a PR unless the user explicitly asks for one.**
+- **An explicitly assigned task authorizes its necessary branches, worktrees and PRs.**
+  Reuse an appropriate owned branch where possible; create or switch task-scoped branches
+  and worktrees and open or update PRs without separate or repeated approval. Stay within
+  the assigned scope and never repurpose another person's work.
+  Prior authorizations persist across turns and routine tool choices within that scope.
+- **Never include Rust-port or mobile-app branch changes in a PR unless the user
+  explicitly names that scope.** Broad requests such as “PR everything,” “ship all local
+  changes,” or “everything” do not authorize either branch; exclude them by default.
 - **Never push to `main`.** Branch, PR, merge. An agent may **merge its own PR without
   waiting** when the work is confidently finished: all four gates green locally, the flow
   exercised against the running app, and nothing in the PR touches `packages/contracts`,
   security, or another assignee's files. When any of that is in doubt, wait for the human
-  responsible for the work. Approval from the other human is always optional.
+  responsible for the work. Approval from the other human is always optional. Existing
+  user authorization for those merges remains valid; do not ask again. Authorization does
+  not waive verification gates or required review of contracts, security or another
+  assignee's changes.
 - **Never rebase a working branch, and never force-push one.** If its target branch advances
   or GitHub reports conflicts, merge the target into the working branch, resolve every
   conflict explicitly, rerun the affected checks, and push normally. For agents, this
@@ -47,9 +62,9 @@ experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklis
   the final PR merge method because it does not rewrite the published working branch.
 - **Never mix a refactor with a behavior change** in one commit.
 - **Build shared features for every provider.** Contracts, persistence, orchestration and UI
-  must still work when the user has only a direct API provider configured. A vendor CLI,
-  SDK or app-server may add capabilities, but must never become the foundation for shared
-  product behavior.
+  must still work when the user has only a direct API provider configured — checked on
+  `nightly`, where that provider lives. A vendor CLI, SDK or app-server may add
+  capabilities, but must never become the foundation for shared product behavior.
 - **Keep provider behavior checks inside adapters.** Shared code reads declared capabilities
   and degrades honestly when an engine lacks one; it never branches behavior on a provider name.
   Codex-backed voice dictation is the only approved exception.
@@ -93,10 +108,14 @@ experiment. [docs/dashboard.html](./docs/dashboard.html) is the release checklis
 
 ## Hosted CI
 
-- GitHub Actions are manual to preserve included minutes. **Never start a hosted CI run
-  unless Leon explicitly asks for it.**
+- GitHub Actions remain manual to preserve included minutes. Within explicitly assigned
+  work, agents may dispatch necessary verification runs without separate or repeated
+  approval. This does not authorize adding automatic or recurring CI triggers.
 - Platform-specific changes still need a local run on the affected OS before release.
 - Keep local binds on `127.0.0.1`.
+- If the agent shell exports `ELECTRON_RUN_AS_NODE`, unset it for `pnpm dev`; otherwise
+  Electron starts as Node and cannot import `BrowserWindow`. On macOS, reference-library
+  tests need `TMPDIR` set to its canonical `/private/var/...` path rather than `/var/...`.
 
 ## Traps in this repo
 
@@ -104,6 +123,11 @@ Each of these cost someone hours. They are not preferences.
 
 - **TypeScript is pinned to 5.9.3.** 7.x cannot resolve `@types/node` under pnpm. Do not
   "upgrade" it.
+- **`tsc -b` in a `packages/*` adapter restarts the running dev server.** The server
+  imports adapters from their `dist/`, and `tsx watch` restarts on any change there — which
+  kills every live provider session (running Codex/Claude threads included). While someone's
+  `pnpm dev` is up, typecheck adapters with `tsc --noEmit -p packages/<name>` and leave
+  `pnpm typecheck`/`pnpm build` for when no turn is running.
 - **Use `127.0.0.1`, never `localhost`.** On Windows `localhost` resolves to IPv6 first and
   Electron gets a blank window.
 - **Shiki runs the JavaScript regex engine, not WASM**, because our CSP blocks
@@ -112,7 +136,10 @@ Each of these cost someone hours. They are not preferences.
   as its own PR before anyone builds against it. Approval from the human responsible for
   the work is sufficient; review by the other human is optional.
 - **Windows CLI shims are `.cmd` files.** `spawn('claude')` fails with EINVAL; use
-  `spawnCli` from `@harness/proc`, which routes through `cmd.exe`.
+  `spawnCli` from `@harness/proc`. It resolves PATH and PATHEXT, starts native `.exe` files
+  directly, and routes `.cmd`/`.bat` shims through `cmd.exe` with every argument escaped
+  for cmd (a shim's `%*` is parsed twice). Never hand-build a `cmd.exe /c` line; `&` in an
+  unquoted URL splits it into two commands. Multiline text goes through stdin.
 - **Adapters are written against captured output**, not against published schemas. When a
   protocol and its documentation disagree, the wire wins — capture frames from the real
   binary before writing types.

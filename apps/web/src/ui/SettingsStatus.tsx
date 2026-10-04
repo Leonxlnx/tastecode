@@ -36,14 +36,6 @@ export function StateLabel(props: {
   )
 }
 
-export function CountBadge(props: { value: ReactNode; label: string }) {
-  return (
-    <span className="count-badge" aria-label={props.label}>
-      {props.value}
-    </span>
-  )
-}
-
 export function SettingsMeta(props: { children: ReactNode }) {
   return <span className="settings-meta">{props.children}</span>
 }

@@ -3,7 +3,9 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
-import { killTree, spawnCli } from '@harness/proc'
+import { captureCli, spawnCli } from '@harness/proc/cli'
+import { desktopPath } from '@harness/proc/desktop-path'
+import { z } from 'zod'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
 
@@ -71,40 +73,17 @@ export function runCustomHarness(
       reject(error)
       return
     }
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (result: { code: number | null; stdout: string } | Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
-    }
-    const timer = setTimeout(() => {
-      killTree(child)
-      finish(new Error(`${harness.displayName} did not answer within ${timeoutMs / 1_000}s`))
-    }, timeoutMs)
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      if (stdout.length < 1_000_000) stdout += chunk
-    })
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => {
-      if (stderr.length < 16_000) stderr += chunk
-    })
-    child.on('error', (error) => finish(actionableLaunchError(harness, error)))
-    child.on('exit', (code) => {
-      if (code === 0 || code === null) {
-        finish({ code, stdout })
-        return
-      }
-      const detail = stderr.trim() || stdout.trim()
-      finish(
-        new Error(
-          `${harness.displayName} exited with code ${code}${detail ? `: ${detail.slice(0, 500)}` : ''}`,
-        ),
-      )
-    })
+    void captureCli(child, timeoutMs).then((result) => {
+      if (result.code === 0) resolve(result)
+      else
+        reject(
+          new Error(
+            result.signal
+              ? `Custom harness was stopped by ${result.signal} before it finished. Check its configuration.`
+              : `Custom harness exited with code ${result.code}. Check its configuration.`,
+          ),
+        )
+    }, reject)
     child.stdin.on('error', () => undefined)
     child.stdin.end()
   })
@@ -117,7 +96,8 @@ export function customHarnessRun(harness: CustomHarness, fallbackWorkspacePath?:
 
 export function actionableLaunchError(harness: CustomHarness, cause: unknown): Error {
   const error = cause instanceof Error ? cause : new Error(String(cause))
-  const code = (error as NodeJS.ErrnoException).code
+  const parsed = z.object({ code: z.string().optional() }).safeParse(error)
+  const code = parsed.success ? parsed.data.code : undefined
   if (code === 'ENOENT') {
     return new Error(
       `${harness.displayName} executable was not found. Shell aliases and functions are unavailable; use an absolute path or an executable shim on PATH.`,
@@ -134,47 +114,37 @@ function launchEnvironment(
   workspacePath: string,
   adapterEnvironment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  const custom = harness.environment ?? {}
-  const merged = { ...process.env, ...custom, ...adapterEnvironment }
-  const suppliedPath = adapterEnvironment.PATH ?? custom.PATH ?? process.env.PATH ?? ''
   return {
-    ...merged,
-    PATH: augmentedPath(suppliedPath),
+    ...mergeLaunchEnvironment([process.env, harness.environment ?? {}, adapterEnvironment]),
     // A wrapper can boot from its own directory without losing the project it
     // should operate on. Native protocols also receive the workspace normally.
     HARNESS_WORKSPACE_PATH: workspacePath,
   }
 }
 
-function augmentedPath(current: string): string {
-  const home = os.homedir()
-  const conventional =
-    process.platform === 'win32'
-      ? [
-          process.env['APPDATA'] ? path.join(process.env['APPDATA'], 'npm') : undefined,
-          process.env['LOCALAPPDATA']
-            ? path.join(process.env['LOCALAPPDATA'], 'Microsoft', 'WindowsApps')
-            : undefined,
-          path.join(home, '.local', 'bin'),
-          path.join(home, 'bin'),
-        ]
-      : [
-          path.join(home, '.local', 'bin'),
-          path.join(home, 'bin'),
-          path.join(home, '.cargo', 'bin'),
-          '/opt/homebrew/bin',
-          '/usr/local/bin',
-        ]
-  const seen = new Set<string>()
-  const entries = [...current.split(path.delimiter), ...conventional]
-    .filter((entry): entry is string => Boolean(entry))
-    .filter((entry) => {
-      const key = process.platform === 'win32' ? entry.toLowerCase() : entry
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-  return entries.join(path.delimiter)
+/**
+ * Later layers win. Windows variable names are case-insensitive, so a `Path`
+ * in one layer replaces a `PATH` from an earlier one and only one spelling is
+ * emitted; on other platforms the case is part of the name.
+ */
+export function mergeLaunchEnvironment(
+  layers: NodeJS.ProcessEnv[],
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const sameName = (left: string, right: string) =>
+    platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+  const merged: NodeJS.ProcessEnv = {}
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer)) {
+      for (const existing of Object.keys(merged))
+        if (sameName(existing, key)) delete merged[existing]
+      merged[key] = value
+    }
+  }
+  const pathKey = Object.keys(merged).find((key) => sameName(key, 'PATH'))
+  const suppliedPath = pathKey === undefined ? '' : (merged[pathKey] ?? '')
+  if (pathKey !== undefined) delete merged[pathKey]
+  return { ...merged, PATH: desktopPath(suppliedPath, { env: merged, platform }) }
 }
 
 function resolveExecutable(command: string, cwd: string, environment: NodeJS.ProcessEnv): string {
@@ -189,12 +159,13 @@ function resolveExecutable(command: string, cwd: string, environment: NodeJS.Pro
   for (const directory of (environment.PATH ?? '').split(path.delimiter)) {
     if (!directory) continue
     for (const extension of extensions) {
-      const candidate = path.join(stripQuotes(directory), `${command}${extension}`)
+      // Relative entries belong to the launch directory, which is where the child runs.
+      const candidate = path.resolve(cwd, stripQuotes(directory), `${command}${extension}`)
       if (isExecutable(candidate)) return candidate
     }
   }
   throw new Error(
-    `Executable "${command}" was not found in Harness's PATH. Shell aliases and functions are unavailable; use an absolute path or an executable shim.`,
+    `Executable "${command}" was not found in TasteCode's PATH. Shell aliases and functions are unavailable; use an absolute path or an executable shim.`,
   )
 }
 

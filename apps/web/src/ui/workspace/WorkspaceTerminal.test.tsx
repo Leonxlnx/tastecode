@@ -1,13 +1,20 @@
 // @vitest-environment happy-dom
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Transport } from '../../transport.js'
+import { TestTransport } from '../../test-transport.js'
+import { WorkspaceTerminal } from './WorkspaceTerminal.js'
 
 vi.mock('../TerminalPane.js', () => ({
-  TerminalPane: (props: { threadId?: string; projectPath?: string; onClose?: () => void }) => (
+  TerminalPane: (props: {
+    terminalKey?: string
+    threadId?: string
+    projectPath?: string
+    onClose?: () => void
+  }) => (
     <button
       type="button"
       data-testid="terminal-pane"
+      data-terminal-key={props.terminalKey}
       data-thread-id={props.threadId}
       data-project-path={props.projectPath}
       onClick={props.onClose}
@@ -17,8 +24,6 @@ vi.mock('../TerminalPane.js', () => ({
   ),
 }))
 
-import { WorkspaceTerminal } from './WorkspaceTerminal.js'
-
 afterEach(cleanup)
 
 describe('WorkspaceTerminal', () => {
@@ -26,7 +31,8 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        terminalKey="terminal-1"
+        transport={new TestTransport()}
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={vi.fn()}
@@ -36,6 +42,7 @@ describe('WorkspaceTerminal', () => {
     expect(screen.getByTestId('terminal-pane').getAttribute('data-project-path')).toBe(
       '/workspace/current-project',
     )
+    expect(screen.getByTestId('terminal-pane').getAttribute('data-terminal-key')).toBe('terminal-1')
     expect(screen.queryByText('Start a chat first')).toBeNull()
   })
 
@@ -43,7 +50,8 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        terminalKey="terminal-2"
+        transport={new TestTransport()}
         threadId="thread-1"
         projectPath="/workspace/current-project"
         theme="dark"
@@ -61,7 +69,8 @@ describe('WorkspaceTerminal', () => {
     render(
       <WorkspaceTerminal
         active
-        transport={{} as Transport}
+        terminalKey="terminal-3"
+        transport={new TestTransport()}
         projectPath="/workspace/current-project"
         theme="dark"
         onClose={onClose}

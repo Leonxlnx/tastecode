@@ -1,0 +1,37 @@
+{
+  "checkedAt": "2026-09-20T11:01:08.018Z",
+  "tag": "v0.1.0-beta.9",
+  "anonymous": true,
+  "assets": [
+    {
+      "name": "TasteCode-0.1.0-beta.9-win-x64.exe",
+      "status": 200,
+      "size": 509798704,
+      "digest": "sha256:b522617b6b5ef8e50968bc03b608dc74b6d198bf1df439cd68131c9eb89afd9e",
+      "publicBytesVerified": true
+    },
+    {
+      "name": "TasteCode-0.1.0-beta.9-mac-arm64.dmg",
+      "status": 200,
+      "size": 533903409,
+      "digest": "sha256:7fd3ea84839dfc2b6a9b2d8349d53cab71f5c38133b5ff5cc0e13da92d27fcc9",
+      "publicBytesVerified": true
+    }
+  ],
+  "windowsNativeUpdater": {
+    "checkedAt": "2026-09-20T11:07:53.914Z",
+    "metadataAndTransport": "live anonymous GitHub release API and asset URL",
+    "simulatedCurrentVersion": "0.1.0-beta.7",
+    "state": {
+      "status": "ready",
+      "currentVersion": "0.1.0-beta.7",
+      "version": "0.1.0-beta.9"
+    },
+    "hashes": {
+      "sha256": "b522617b6b5ef8e50968bc03b608dc74b6d198bf1df439cd68131c9eb89afd9e",
+      "sha512": "EclN6Nd+DyFhsE/hvcbss2lxBs+W12psxVvBp2Fdq6jmjxZZ6eyjQ79mZPLoc3+MIz2bP5TIhHD0Niy0PcvsIA==",
+      "size": 509798704
+    },
+    "installed": false
+  }
+}

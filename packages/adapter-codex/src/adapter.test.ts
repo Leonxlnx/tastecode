@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import type { AccountUpdatedNotification } from './generated/v2/AccountUpdatedNotification'
+import type { ConfigWarningNotification } from './generated/v2/ConfigWarningNotification'
 import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprovalReviewAction'
 import type { ItemGuardianApprovalReviewCompletedNotification } from './generated/v2/ItemGuardianApprovalReviewCompletedNotification'
 import type { ItemGuardianApprovalReviewStartedNotification } from './generated/v2/ItemGuardianApprovalReviewStartedNotification'
@@ -89,6 +91,21 @@ const capturedThreadStatus = {
   status: { type: 'idle' },
 } satisfies ThreadStatusChangedNotification
 
+/** Sanitized startup frames captured from Codex 0.157.0 on macOS. */
+const capturedConfigWarning = {
+  summary:
+    'Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (/Users/captured/.codex/config.toml): `features.retired_flag` is ignored.',
+  details: null,
+} satisfies ConfigWarningNotification
+
+const capturedConfigWarningStderr =
+  '\u001b[2m2026-09-26T08:26:12.741168Z\u001b[0m \u001b[31mERROR\u001b[0m \u001b[2mcodex_app_server\u001b[0m\u001b[2m:\u001b[0m Codex is ignoring 1 unrecognized configuration setting. Check for typos or deprecated settings.\n  user (/Users/captured/.codex/config.toml): `features.retired_flag` is ignored.\n'
+
+const capturedAccountUpdated = {
+  authMode: 'chatgpt',
+  planType: 'pro',
+} satisfies AccountUpdatedNotification
+
 const capturedWarning = {
   threadId: 'captured-thread',
   message:
@@ -135,6 +152,16 @@ describe('Codex notifications', () => {
     expect(isIgnorableCodexNotification('thread/status/changed')).toBe(true)
   })
 
+  it('leaves config warnings to the stderr line Codex already writes', () => {
+    expect(capturedConfigWarningStderr).toContain(capturedConfigWarning.summary)
+    expect(isIgnorableCodexNotification('configWarning')).toBe(true)
+  })
+
+  it('silences the captured account update that account/read already answers', () => {
+    expect(capturedAccountUpdated.authMode).toBe('chatgpt')
+    expect(isIgnorableCodexNotification('account/updated')).toBe(true)
+  })
+
   it('preserves the captured Codex warning text', () => {
     expect(formatCodexWarning(capturedWarning)).toBe(`Codex warning: ${capturedWarning.message}`)
   })
@@ -156,6 +183,11 @@ describe('Codex auto-review', () => {
       approvalPolicy: 'on-request',
       sandbox: 'workspace-write',
       approvalsReviewer: 'auto_review',
+    })
+    expect(CODEX_APPROVAL.full).toEqual({
+      approvalPolicy: 'never',
+      sandbox: 'danger-full-access',
+      approvalsReviewer: 'user',
     })
     expect(mapAutoApprovalReview(capturedStarted)).toEqual({
       id: 'captured-review',
@@ -287,15 +319,18 @@ describe('Codex permission approval', () => {
 
   it('shows the exact requested access separately from the provider reason', () => {
     expect(
-      mapApprovalRequest('permissions', {
-        threadId: 'thread-1',
-        turnId: 'turn-1',
-        itemId: 'permission-1',
-        environmentId: null,
-        startedAtMs: 1,
-        cwd: 'D:\\repo',
-        reason: 'Read the supplied reference and fetch its font.',
-        permissions: requested,
+      mapApprovalRequest({
+        kind: 'permissions',
+        params: {
+          threadId: 'thread-1',
+          turnId: 'turn-1',
+          itemId: 'permission-1',
+          environmentId: null,
+          startedAtMs: 1,
+          cwd: 'D:\\repo',
+          reason: 'Read the supplied reference and fetch its font.',
+          permissions: requested,
+        },
       }),
     ).toMatchObject({
       id: 'permission-1',

@@ -1,9 +1,14 @@
 import { EventEmitter, once } from 'node:events'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
-import type { spawnCli } from '@harness/proc'
+import {
+  JsonRpcValueSchema,
+  MAX_PROTOCOL_FRAME_BYTES,
+  type JsonRpcValue,
+  type spawnCli,
+} from '@harness/proc'
 import type { Event } from '@opencode-ai/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -12,7 +17,10 @@ import {
   openCodeMcpConfig,
   openCodeReasoningEfforts,
 } from './adapter.js'
+import type { OpenCodeV2Event, OpenCodeWireEvent } from './events.js'
 
+// SAFETY: This immutable fixture is a direct capture of the SDK event stream and
+// every entry is exercised by the mapper before its fields are used in assertions.
 const CAPTURED = JSON.parse(
   readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8'),
 ) as Event[]
@@ -26,6 +34,182 @@ afterEach(async () => {
 })
 
 describe('OpenCode adapter', () => {
+  it('does not reuse a turn identity when a fresh instance resumes', async () => {
+    const mock = await serveOpenCodeV2()
+    const first = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const resumed = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const thread = await first.startThread('/repo')
+      const previous = await first.sendTurn(thread.id, 'One')
+      first.dispose()
+      await resumed.resumeThread(thread.id, '/repo')
+      expect(await resumed.sendTurn(thread.id, 'Two')).not.toBe(previous)
+    } finally {
+      first.dispose()
+      resumed.dispose()
+    }
+  })
+
+  it.each(['v1', 'v2'] as const)(
+    'fails the active turn when a %s SSE event exceeds the bound',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      try {
+        const thread = await adapter.startThread('/repo')
+        const events: DomainEvent[] = []
+        adapter.on('event', (event) => events.push(event))
+        await adapter.sendTurn(thread.id, 'Work')
+        const oversize = 'x'.repeat(MAX_PROTOCOL_FRAME_BYTES)
+        if (protocol === 'v1') {
+          // SAFETY: Unknown vendor events are valid SSE JSON and the framing
+          // limit must reject them before any domain payload is interpreted.
+          mock.broadcast({ type: 'oversized', properties: { value: oversize } } as never)
+        } else {
+          mock.broadcast({ type: 'oversized', data: { value: oversize } } as never)
+        }
+        await expect
+          .poll(() =>
+            events.some((event) => event.type === 'turn.completed' && event.status === 'failed'),
+          )
+          .toBe(true)
+        await expect(adapter.sendTurn(thread.id, 'Retry')).rejects.toThrow()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it.each(['v1', 'v2'] as const)(
+    'reports %s stream EOF after the terminal event so the owner can resume the next turn',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const first = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const resumed = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const events: DomainEvent[] = []
+      first.on('event', (event) => events.push(event))
+      const disconnected = vi.fn(() => events.slice())
+      const unsubscribe = first.onDisconnected(disconnected)
+      try {
+        const thread = await first.startThread('C:\\repo')
+        const failedTurn = await first.sendTurn(thread.id, 'First turn')
+        mock.endStreams()
+        await expect.poll(() => disconnected.mock.calls.length).toBe(1)
+        expect(disconnected.mock.results[0]!.value).toEqual(events)
+        expect(events.at(-1)).toEqual({
+          type: 'turn.completed',
+          turnId: failedTurn,
+          status: 'failed',
+        })
+        await expect(first.sendTurn(thread.id, 'Next turn')).rejects.toThrow(
+          'OpenCode event stream disconnected',
+        )
+
+        // The owner drops this runtime on disconnect and resumes its saved session.
+        await first.dispose()
+        await resumed.resumeThread(thread.id, 'C:\\repo')
+        const nextTurn = await resumed.sendTurn(thread.id, 'Next turn')
+        expect(nextTurn).not.toBe(failedTurn)
+        await expect
+          .poll(() =>
+            mock.requests.filter((request) => /\/prompt(?:_async)?(?:\?|$)/.test(request.url)),
+          )
+          .toHaveLength(2)
+        expect(disconnected).toHaveBeenCalledOnce()
+        unsubscribe()
+        expect(first.listenerCount('disconnected')).toBe(0)
+      } finally {
+        unsubscribe()
+        await first.dispose()
+        await resumed.dispose()
+      }
+    },
+  )
+
+  it.each(['v1', 'v2'] as const)(
+    'does not report deliberate %s stream replacement or disposal as disconnect',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const disconnected = vi.fn()
+      adapter.onDisconnected(disconnected)
+      try {
+        const thread = await adapter.startThread('C:\\repo')
+        await adapter.resumeThread(thread.id, 'C:\\repo')
+        await adapter.dispose()
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(disconnected).not.toHaveBeenCalled()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it.each(['start', 'resume'] as const)(
+    'rejects v1 %s when its event stream ends while the session response is pending',
+    async (operation) => {
+      let releaseSession!: () => void
+      const sessionResponse = new Promise<void>((resolve) => {
+        releaseSession = resolve
+      })
+      const mock = await serveOpenCode(() => sessionResponse)
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const logs: string[] = []
+      adapter.on('log', (line) => logs.push(line))
+      try {
+        const opening =
+          operation === 'start'
+            ? adapter.startThread('C:\\repo')
+            : adapter.resumeThread('opencode-session-1', 'C:\\repo')
+        const result = opening.then(
+          () => undefined,
+          (error: unknown) => error,
+        )
+        await mock.waitFor(operation === 'start' ? '/session' : '/session/session-1')
+        mock.endStreams()
+        await expect.poll(() => logs).toContain('OpenCode event stream disconnected')
+        releaseSession()
+        await expect(result).resolves.toEqual(new Error('OpenCode event stream disconnected'))
+      } finally {
+        releaseSession()
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it.each(['v1', 'v2'] as const)(
+    'replays a %s disconnect that happens before the owner attaches its listener',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const logs: string[] = []
+      adapter.on('log', (line) => logs.push(line))
+      try {
+        const thread = await adapter.startThread('C:\\repo')
+        mock.endStreams()
+        await expect.poll(() => logs).toContain('OpenCode event stream disconnected')
+        const disconnected = vi.fn()
+        const unsubscribe = adapter.onDisconnected(disconnected)
+        expect(disconnected).toHaveBeenCalledOnce()
+        await new Promise((resolve) => setImmediate(resolve))
+        expect(disconnected).toHaveBeenCalledOnce()
+        unsubscribe()
+
+        await adapter.dispose()
+        const nextDisconnected = vi.fn()
+        adapter.onDisconnected(nextDisconnected)
+        expect(nextDisconnected).not.toHaveBeenCalled()
+        await adapter.resumeThread(thread.id, 'C:\\repo')
+        expect(nextDisconnected).not.toHaveBeenCalled()
+        mock.endStreams()
+        await expect.poll(() => nextDisconnected.mock.calls.length).toBe(1)
+        expect(disconnected).toHaveBeenCalledOnce()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
   it('starts and streams a captured native session through the generated SDK', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
@@ -106,8 +290,11 @@ describe('OpenCode adapter', () => {
     const busy = {
       type: 'session.status',
       properties: { sessionID: 'session-1', status: { type: 'busy' } },
-    } as unknown as Event
-    const idle = { type: 'session.idle', properties: { sessionID: 'session-1' } } as Event
+    } satisfies OpenCodeWireEvent
+    const idle = {
+      type: 'session.idle',
+      properties: { sessionID: 'session-1' },
+    } satisfies OpenCodeWireEvent
 
     await adapter.sendTurn(thread.id, 'First prompt')
     mock.broadcast(busy)
@@ -116,13 +303,13 @@ describe('OpenCode adapter', () => {
     // synchronously-started turn and must not finish it as empty/successful.
     mock.broadcast(idle)
     mock.broadcast(idle)
-    await expect(followUp).resolves.toContain('-turn-2')
+    expect(await followUp).not.toBe(completions[0])
     expect(completions).toHaveLength(1)
 
     mock.broadcast(busy)
     mock.broadcast(idle)
     await expect.poll(() => completions).toHaveLength(2)
-    expect(completions[1]).toContain('-turn-2')
+    expect(completions[1]).not.toBe(completions[0])
     adapter.dispose()
   })
 
@@ -168,35 +355,73 @@ describe('OpenCode adapter', () => {
     adapter.dispose()
   })
 
-  it('auto-approves permissions after setApproval flips the live mode to full', async () => {
-    const mock = await serveOpenCode()
-    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
-    const thread = await adapter.resumeThread('opencode-session-1', 'C:\\repo')
-    const requested: string[] = []
-    adapter.on('event', (event) => {
-      if (event.type === 'approval.requested') requested.push(event.request.id)
-    })
+  it.each(['v1', 'v2'] as const)(
+    'keeps %s Full auto-approvals one-shot so narrowing to Ask takes effect',
+    async (protocol) => {
+      const mock = protocol === 'v1' ? await serveOpenCode() : await serveOpenCodeV2()
+      const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+      const session = protocol === 'v1' ? 'session-1' : 'session-v2'
+      const replyBody = (response: string) =>
+        protocol === 'v1' ? { response } : { reply: response }
+      const replyPath = (id: string) =>
+        protocol === 'v1'
+          ? `/session/${session}/permissions/${id}`
+          : `/api/session/${session}/permission/${id}/reply`
+      const requestPermission = (id: string) => {
+        if ('releaseHeldPermissionReply' in mock) {
+          mock.broadcast(permissionAsked(id))
+        } else {
+          mock.broadcast({
+            type: 'permission.updated',
+            properties: {
+              id,
+              type: 'bash',
+              sessionID: session,
+              messageID: 'message-1',
+              title: 'pnpm test',
+              metadata: {},
+              time: { created: 200 },
+            },
+          })
+        }
+      }
+      const requested: string[] = []
+      const resolved: string[] = []
+      adapter.on('event', (event) => {
+        if (event.type === 'approval.requested') requested.push(event.request.id)
+        if (event.type === 'approval.resolved') resolved.push(event.id)
+      })
+      try {
+        const thread = await adapter.resumeThread(`opencode-${session}`, 'C:\\repo')
+        adapter.setApproval('full')
+        await adapter.sendTurn(thread.id, 'Run a command')
+        requestPermission('permission-full')
+        expect((await mock.waitFor(replyPath('permission-full'))).body).toEqual(replyBody('once'))
+        await expect.poll(() => resolved).toEqual(['permission-full'])
+        expect(requested).toEqual([])
 
-    adapter.setApproval('full')
-    await adapter.sendTurn(thread.id, 'Run a command')
-    mock.broadcast({
-      type: 'permission.updated',
-      properties: {
-        id: 'permission-1',
-        type: 'bash',
-        sessionID: 'session-1',
-        messageID: 'message-1',
-        title: 'npm test',
-        metadata: {},
-        time: { created: 200 },
-      },
-    })
-    const permission = await mock.waitFor('/session/session-1/permissions/permission-1')
+        adapter.setApproval('ask')
+        requestPermission('permission-ask')
+        await expect.poll(() => requested).toEqual(['permission-ask'])
+        expect(mock.requests.some((request) => request.url === replyPath('permission-ask'))).toBe(
+          false,
+        )
+        adapter.respondToApproval('permission-ask', 'approve')
+        expect((await mock.waitFor(replyPath('permission-ask'))).body).toEqual(replyBody('once'))
 
-    expect(permission.body).toEqual({ response: 'always' })
-    expect(requested).toEqual([])
-    adapter.dispose()
-  })
+        requestPermission('permission-explicit-session')
+        await expect
+          .poll(() => requested)
+          .toEqual(['permission-ask', 'permission-explicit-session'])
+        adapter.respondToApproval('permission-explicit-session', 'approve-session')
+        expect((await mock.waitFor(replyPath('permission-explicit-session'))).body).toEqual(
+          replyBody('always'),
+        )
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
 
   it('keeps a permission retryable when the reply request fails', async () => {
     const mock = await serveOpenCodeV2(1)
@@ -484,12 +709,19 @@ function fakeChild() {
   return child
 }
 
-type RequestRecord = { method: string; url: string; body: unknown }
+type RequestRecord = { method: string; url: string; body: JsonRpcValue | undefined }
 
-async function serveOpenCode(): Promise<{
+function serverPort(server: Server): number {
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('missing test port')
+  return address.port
+}
+
+async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promise<{
   baseUrl: string
   requests: RequestRecord[]
-  broadcast(event: Event): void
+  broadcast(event: OpenCodeWireEvent): void
+  endStreams(): void
   waitFor(url: string): Promise<RequestRecord>
 }> {
   const requests: RequestRecord[] = []
@@ -499,7 +731,7 @@ async function serveOpenCode(): Promise<{
     id: 'session-1',
     projectID: 'project-1',
     directory: 'C:\\repo',
-    title: 'Harness session',
+    title: 'TasteCode session',
     version: '1.18.11',
     time: { created: 100, updated: 100 },
   }
@@ -546,14 +778,18 @@ async function serveOpenCode(): Promise<{
         connected: ['provider-1'],
       })
     }
-    if (request.method === 'GET' && request.url?.startsWith('/session/session-1'))
+    if (request.method === 'GET' && request.url?.startsWith('/session/session-1')) {
+      await beforeSessionResponse?.()
       return json(response, session)
+    }
     if (
       request.method === 'POST' &&
       request.url &&
       new URL(request.url, 'http://mock').pathname === '/session'
-    )
+    ) {
+      await beforeSessionResponse?.()
       return json(response, session)
+    }
     if (request.url?.includes('/prompt_async')) {
       response.writeHead(204)
       return response.end()
@@ -563,13 +799,15 @@ async function serveOpenCode(): Promise<{
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('mock server did not bind')
+  const port = serverPort(server)
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://127.0.0.1:${port}`,
     requests,
     broadcast(event) {
       for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`)
+    },
+    endStreams() {
+      for (const response of streams) response.end()
     },
     waitFor(url) {
       const request = requests.find((entry) => entry.url.startsWith(url))
@@ -586,7 +824,8 @@ async function serveOpenCodeV2(
 ): Promise<{
   baseUrl: string
   requests: RequestRecord[]
-  broadcast(event: unknown): void
+  broadcast(event: OpenCodeV2Event): void
+  endStreams(): void
   waitFor(url: string): Promise<RequestRecord>
   releaseHeldPermissionReply(): Promise<void>
 }> {
@@ -596,7 +835,7 @@ async function serveOpenCodeV2(
   let heldPermissionReply: ServerResponse | undefined
   const session = {
     id: 'session-v2',
-    title: 'Harness v2 session',
+    title: 'TasteCode v2 session',
     time: { created: 100 },
   }
   const server = createServer(async (request, response) => {
@@ -691,13 +930,15 @@ async function serveOpenCodeV2(
   servers.push(server)
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('mock server did not bind')
+  const port = serverPort(server)
   return {
-    baseUrl: `http://127.0.0.1:${address.port}`,
+    baseUrl: `http://127.0.0.1:${port}`,
     requests,
     broadcast(event) {
       for (const response of streams) response.write(`data: ${JSON.stringify(event)}\n\n`)
+    },
+    endStreams() {
+      for (const response of streams) response.end()
     },
     waitFor(url) {
       const request = requests.find((entry) => entry.url.startsWith(url))
@@ -715,7 +956,7 @@ async function serveOpenCodeV2(
   }
 }
 
-function permissionAsked(id: string): unknown {
+function permissionAsked(id: string): OpenCodeV2Event {
   return {
     type: 'permission.asked',
     data: { id, sessionID: 'session-v2', action: 'bash', resources: ['pnpm test'] },
@@ -726,13 +967,13 @@ function isPermissionReply(request: RequestRecord): boolean {
   return request.method === 'POST' && request.url.includes('/permission/')
 }
 
-async function requestBody(request: IncomingMessage): Promise<unknown> {
+async function requestBody(request: IncomingMessage): Promise<JsonRpcValue | undefined> {
   let body = ''
   for await (const chunk of request) body += chunk
-  return body ? JSON.parse(body) : undefined
+  return body ? JsonRpcValueSchema.parse(JSON.parse(body)) : undefined
 }
 
-function json(response: ServerResponse, value: unknown): void {
+function json(response: ServerResponse, value: JsonRpcValue): void {
   response.writeHead(200, { 'content-type': 'application/json' })
   response.end(JSON.stringify(value))
 }

@@ -1,17 +1,64 @@
 import { randomUUID } from 'node:crypto'
-import { spawn, type IPty } from 'node-pty'
+import { createRequire } from 'node:module'
+import type { IPty, spawn as NodePtySpawn } from 'node-pty'
+import { applyDesktopPath } from '@harness/proc/desktop-path'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
-type SpawnPty = typeof spawn
+const RETAINED_OUTPUT_SIZE = 200_000
+const RETAINED_EXIT_LIMIT = 64
+const RETAINED_EXIT_TTL_MS = 60 * 60 * 1000
+export type TerminalStatus = {
+  status: 'running' | 'exited' | 'unknown'
+  output: string
+  outputOffset: number
+  exitCode: number | null
+}
+type SpawnPty = typeof NodePtySpawn
+
+const require = createRequire(import.meta.url)
+let loadedSpawn: SpawnPty | undefined
+
+/** Keep the native PTY binding out of idle startup; terminals are optional. */
+const spawnPty: SpawnPty = (file, args, options) => {
+  loadedSpawn ??= (require('node-pty') as { spawn: SpawnPty }).spawn
+  return loadedSpawn(file, args, options)
+}
 
 type TerminalEntry = {
+  key: string
   threadId: string
   process: IPty
   output: { dispose(): void }
   outputBuffer: TerminalOutputBuffer
   exited: Promise<void>
+}
+
+/** One short output clock for every active terminal owned by a manager. */
+export class TerminalOutputScheduler {
+  #pending = new Set<TerminalOutputBuffer>()
+  #timer: ReturnType<typeof setTimeout> | undefined
+
+  constructor(private readonly delayMs = DEFAULT_OUTPUT_BATCH_DELAY_MS) {}
+
+  schedule(buffer: TerminalOutputBuffer): void {
+    this.#pending.add(buffer)
+    this.#timer ??= setTimeout(() => this.#flushWindow(), this.delayMs)
+  }
+
+  cancel(buffer: TerminalOutputBuffer): void {
+    if (!this.#pending.delete(buffer) || this.#pending.size > 0) return
+    if (this.#timer !== undefined) clearTimeout(this.#timer)
+    this.#timer = undefined
+  }
+
+  #flushWindow(): void {
+    this.#timer = undefined
+    const pending = this.#pending
+    this.#pending = new Set()
+    for (const buffer of pending) buffer.flush()
+  }
 }
 
 /**
@@ -23,7 +70,8 @@ type TerminalEntry = {
  * latency bounded.
  */
 export class TerminalOutputBuffer {
-  #chunks: string[] = []
+  #firstChunk = ''
+  #chunks: string[] | undefined
   #length = 0
   #timer: ReturnType<typeof setTimeout> | undefined
   #disposed = false
@@ -32,33 +80,43 @@ export class TerminalOutputBuffer {
     private readonly emit: (data: string) => void,
     private readonly delayMs = DEFAULT_OUTPUT_BATCH_DELAY_MS,
     private readonly maximumSize = DEFAULT_OUTPUT_BATCH_SIZE,
+    private readonly scheduler?: TerminalOutputScheduler,
   ) {}
 
   push(data: string): void {
     if (this.#disposed || data.length === 0) return
-    this.#chunks.push(data)
+    const isFirstChunk = this.#length === 0
+    if (isFirstChunk) this.#firstChunk = data
+    else (this.#chunks ??= [this.#firstChunk]).push(data)
     this.#length += data.length
     if (this.#length >= this.maximumSize) {
       this.flush()
       return
     }
-    this.#timer ??= setTimeout(() => this.flush(), this.delayMs)
+    if (isFirstChunk) {
+      if (this.scheduler) this.scheduler.schedule(this)
+      else this.#timer ??= setTimeout(() => this.flush(), this.delayMs)
+    }
   }
 
   flush(): void {
+    this.scheduler?.cancel(this)
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = undefined
     if (this.#length === 0 || this.#disposed) return
-    const data = this.#chunks.join('')
-    this.#chunks = []
+    const data = this.#chunks === undefined ? this.#firstChunk : this.#chunks.join('')
+    this.#firstChunk = ''
+    this.#chunks = undefined
     this.#length = 0
     this.emit(data)
   }
 
   dispose(): void {
+    this.scheduler?.cancel(this)
     if (this.#timer) clearTimeout(this.#timer)
     this.#timer = undefined
-    this.#chunks = []
+    this.#firstChunk = ''
+    this.#chunks = undefined
     this.#length = 0
     this.#disposed = true
   }
@@ -71,26 +129,29 @@ export class TerminalManager {
   #closingByThread = new Map<string, Set<Promise<void>>>()
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
-  #onOutput: (terminalId: string, data: string) => void
+  #onOutput: (terminalId: string, data: string, outputOffset: number) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
   #closeTimeoutMs: number
+  readonly #outputScheduler = new TerminalOutputScheduler()
+  #status = new Map<string, TerminalStatus & { finishedAt?: number }>()
 
   constructor(
     handlers: {
-      onOutput: (terminalId: string, data: string) => void
+      onOutput: (terminalId: string, data: string, outputOffset: number) => void
       onExit: (terminalId: string, exitCode: number | null) => void
     },
     options: { spawnPty?: SpawnPty; closeTimeoutMs?: number } = {},
   ) {
     this.#onOutput = handlers.onOutput
     this.#onExit = handlers.onExit
-    this.#spawnPty = options.spawnPty ?? spawn
+    this.#spawnPty = options.spawnPty ?? spawnPty
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
-  open(threadId: string, cwd: string, columns: number, rows: number): string {
-    return this.#spawn(threadId, [], cwd, columns, rows)
+  open(threadId: string, cwd: string, columns: number, rows: number, terminalKey?: string): string {
+    const key = terminalKey ? JSON.stringify([threadId, terminalKey]) : threadId
+    return this.#spawn(key, [], cwd, columns, rows, threadId)
   }
 
   /**
@@ -106,9 +167,16 @@ export class TerminalManager {
     return this.#spawn(key, args, cwd, columns, rows)
   }
 
-  #spawn(key: string, args: string[], cwd: string, columns: number, rows: number): string {
+  #spawn(
+    key: string,
+    args: string[],
+    cwd: string,
+    columns: number,
+    rows: number,
+    threadId = key,
+  ): string {
     if (this.#closingAll) throw new Error('terminal manager is closing')
-    if (this.#closingThreads.has(key)) throw new Error(`terminal is closing: ${key}`)
+    if (this.#closingThreads.has(threadId)) throw new Error(`terminal is closing: ${key}`)
 
     const currentId = this.#byThread.get(key)
     if (currentId) {
@@ -117,6 +185,7 @@ export class TerminalManager {
     }
 
     const terminalId = randomUUID()
+    this.#pruneStatuses()
     const process = this.#spawnPty(platformShell(), args, {
       name: 'xterm-256color',
       cols: columns,
@@ -124,13 +193,32 @@ export class TerminalManager {
       cwd,
       env: terminalEnvironment(),
     })
-    const outputBuffer = new TerminalOutputBuffer((data) => this.#onOutput(terminalId, data))
+    const status: TerminalStatus = {
+      status: 'running',
+      output: '',
+      outputOffset: 0,
+      exitCode: null,
+    }
+    this.#status.set(terminalId, status)
+    const outputBuffer = new TerminalOutputBuffer(
+      (data) => {
+        const offset = status.outputOffset + status.output.length
+        const next = status.output + data
+        const removed = Math.max(0, next.length - RETAINED_OUTPUT_SIZE)
+        status.outputOffset += removed
+        status.output = next.slice(removed)
+        this.#onOutput(terminalId, data, offset)
+      },
+      DEFAULT_OUTPUT_BATCH_DELAY_MS,
+      DEFAULT_OUTPUT_BATCH_SIZE,
+      this.#outputScheduler,
+    )
     const output = process.onData((data) => outputBuffer.push(data))
     let resolveExited: () => void = () => {}
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve
     })
-    const entry = { threadId: key, process, output, outputBuffer, exited }
+    const entry = { key, threadId, process, output, outputBuffer, exited }
     this.#byId.set(terminalId, entry)
     this.#byThread.set(key, terminalId)
 
@@ -144,7 +232,11 @@ export class TerminalManager {
         this.#byThread.delete(key)
       }
       resolveExited()
-      this.#onExit(terminalId, Number.isInteger(exitCode) ? exitCode : null)
+      status.status = 'exited'
+      status.exitCode = Number.isInteger(exitCode) ? exitCode : null
+      this.#status.set(terminalId, { ...status, finishedAt: Date.now() })
+      this.#pruneStatuses()
+      this.#onExit(terminalId, status.exitCode)
     })
 
     return terminalId
@@ -152,6 +244,34 @@ export class TerminalManager {
 
   write(terminalId: string, data: string): void {
     this.#get(terminalId).process.write(data)
+  }
+
+  status(terminalId: string): TerminalStatus {
+    // Include native output queued for the next short broadcast window.
+    this.#byId.get(terminalId)?.outputBuffer.flush()
+    this.#pruneStatuses()
+    const status = this.#status.get(terminalId)
+    return status
+      ? {
+          status: status.status,
+          output: status.output,
+          outputOffset: status.outputOffset,
+          exitCode: status.exitCode,
+        }
+      : { status: 'unknown', output: '', outputOffset: 0, exitCode: null }
+  }
+
+  #pruneStatuses(): void {
+    const now = Date.now()
+    const finished: string[] = []
+    for (const [id, entry] of this.#status) {
+      if (entry.finishedAt === undefined) continue
+      if (now - entry.finishedAt > RETAINED_EXIT_TTL_MS) this.#status.delete(id)
+      else finished.push(id)
+    }
+    for (const id of finished.slice(0, Math.max(0, finished.length - RETAINED_EXIT_LIMIT))) {
+      this.#status.delete(id)
+    }
   }
 
   resize(terminalId: string, columns: number, rows: number): void {
@@ -170,8 +290,8 @@ export class TerminalManager {
     this.#byId.delete(terminalId)
     // Only unmap the key if it still points at this terminal — closing a
     // stale id must not orphan a newer pty spawned under the same key.
-    if (this.#byThread.get(entry.threadId) === terminalId) {
-      this.#byThread.delete(entry.threadId)
+    if (this.#byThread.get(entry.key) === terminalId) {
+      this.#byThread.delete(entry.key)
     }
     // node-pty flushes buffered output after kill(); the client tore this
     // pane down, so those late chunks must not be broadcast for its id.
@@ -211,15 +331,21 @@ export class TerminalManager {
 
   async #drainThread(threadId: string): Promise<void> {
     const waits = new Set(this.#closingByThread.get(threadId) ?? [])
-    const terminalId = this.#byThread.get(threadId)
-    if (terminalId) waits.add(this.close(terminalId))
+    for (const [terminalId, entry] of this.#byId) {
+      if (entry.threadId !== threadId) continue
+      try {
+        waits.add(this.close(terminalId))
+      } catch (error) {
+        waits.add(Promise.reject(error))
+      }
+    }
     await settleAll(waits, `terminal shutdown failed for ${threadId}`)
   }
 
   async #drainAll(): Promise<void> {
     const waits = new Set<Promise<void>>(this.#closingById.values())
     for (const closingThread of this.#closingThreads.values()) waits.add(closingThread)
-    for (const terminalId of [...this.#byId.keys()]) {
+    for (const terminalId of this.#byId.keys()) {
       try {
         waits.add(this.close(terminalId))
       } catch (error) {
@@ -275,10 +401,12 @@ export function platformShell(
 export function terminalEnvironment(
   environment: NodeJS.ProcessEnv = globalThis.process.env,
 ): NodeJS.ProcessEnv {
-  return {
+  const env = {
     ...environment,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'Harness',
+    TERM_PROGRAM: 'TasteCode',
   }
+  applyDesktopPath(env)
+  return env
 }

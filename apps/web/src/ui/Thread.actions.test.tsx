@@ -1,14 +1,33 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { Item } from '@harness/contracts'
-import { Thread, isRepeatedDesignRow, workLabel } from './Thread.js'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ApprovalRequest, Item } from '@harness/contracts'
+import { StrictMode } from 'react'
+import { ThreadFrameStore } from '../thread-frame-store.js'
+import { emptyThread } from '../thread-store.js'
+import {
+  createRepeatedDesignRowProjector,
+  Thread,
+  isRepeatedDesignRow,
+  workLabel,
+} from './Thread.js'
 
-const { writeClipboardText } = vi.hoisted(() => ({
-  writeClipboardText: vi.fn(async () => undefined),
+const { resizeItem, knownViewedImagePreview, previewViewedImage, revealPath, writeClipboardText } =
+  vi.hoisted(() => ({
+    resizeItem: vi.fn((_index: number, _size: number): void => undefined),
+    knownViewedImagePreview: vi.fn((_reference: string): unknown => undefined),
+    previewViewedImage: vi.fn(async (): Promise<unknown> => undefined),
+    revealPath: vi.fn(async () => undefined),
+    writeClipboardText: vi.fn(async () => undefined),
+  }))
+
+vi.mock('../bridge.js', () => ({
+  canPreviewViewedImages: true,
+  knownViewedImagePreview,
+  previewViewedImage,
+  revealPath,
+  writeClipboardText,
 }))
-
-vi.mock('../bridge.js', () => ({ writeClipboardText }))
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -20,13 +39,22 @@ vi.mock('@tanstack/react-virtual', () => ({
       })),
     getTotalSize: () => count * 72,
     measureElement: () => undefined,
+    indexFromElement: (node: Element) => Number(node.getAttribute('data-index')),
+    resizeItem,
     measurementsCache: [],
     getOffsetForIndex: () => [0],
     scrollToIndex: () => undefined,
   }),
 }))
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  resizeItem.mockClear()
+  knownViewedImagePreview.mockReset()
+  previewViewedImage.mockReset()
+  previewViewedImage.mockResolvedValue(undefined)
+  revealPath.mockReset()
+})
 
 function turnItem(id: string, createdAt: number, fields: Partial<Item>): Item {
   return {
@@ -42,19 +70,185 @@ function turnItem(id: string, createdAt: number, fields: Partial<Item>): Item {
 function renderCompleted(items: Item[]) {
   return render(
     <Thread
-      items={items}
-      running={false}
-      activeTurn={undefined}
-      plan={[]}
-      diff={undefined}
-      approvals={[]}
-      userInputs={[]}
-      reviews={[]}
+      frameStore={new ThreadFrameStore({ ...emptyThread, items })}
       onDecide={() => undefined}
       onAnswerUserInput={() => undefined}
     />,
   )
 }
+
+describe('approval queue', () => {
+  it('keeps the design fallback note muted beside the normal answer', () => {
+    const view = renderCompleted([
+      turnItem('design-not-applicable-test', 1, {
+        role: 'assistant',
+        phase: 'commentary',
+        text: 'Design mode was turned off because this request is not a website design task.',
+      }),
+      turnItem('answer', 2, {
+        turnId: 'turn-2',
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Here is the answer.',
+      }),
+    ])
+    expect(view.container.querySelector('.reply--notice')?.textContent).toContain(
+      'Design mode was turned off',
+    )
+    expect(view.container.querySelector('.reply--notice .response-actions')).toBeNull()
+    expect(
+      view.container
+        .querySelector('.reply--notice')
+        ?.closest('.thread__row')
+        ?.classList.contains('is-compact-to-next'),
+    ).toBe(true)
+    expect(
+      view.getByText('Here is the answer.').closest('.reply')?.classList.contains('reply--notice'),
+    ).toBe(false)
+  })
+
+  it('keeps normal spacing before a user message after a design fallback', () => {
+    const view = renderCompleted([
+      turnItem('design-not-applicable-test', 1, {
+        role: 'assistant',
+        text: 'Design mode was turned off.',
+      }),
+      turnItem('next-prompt', 2, {
+        turnId: 'turn-2',
+        role: 'user',
+        text: 'A separate request.',
+      }),
+    ])
+    expect(
+      view.container
+        .querySelector('.reply--notice')
+        ?.closest('.thread__row')
+        ?.classList.contains('is-compact-to-next'),
+    ).toBe(false)
+  })
+
+  it('animates a new call in a reused stack, but not output updates or replay', () => {
+    const animate = vi.fn(() => ({ cancel: vi.fn() }))
+    const original = HTMLElement.prototype.animate
+    HTMLElement.prototype.animate = animate as unknown as typeof original
+    try {
+      const first = turnItem('command-1', 2, { type: 'command', command: 'pwd' })
+      const store = new ThreadFrameStore({
+        ...emptyThread,
+        items: [turnItem('prompt-1', 1, { role: 'user', text: 'Check files' }), first],
+        running: true,
+        activeTurn: { id: 'turn-1', startedAt: 1 },
+      })
+      render(
+        <Thread
+          frameStore={store}
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+      expect(animate).not.toHaveBeenCalled()
+      const second = turnItem('command-2', 3, {
+        type: 'command',
+        command: 'ls',
+        status: 'started',
+      })
+      act(() =>
+        store.publish({ ...store.getSnapshot(), items: [...store.getSnapshot().items, second] }),
+      )
+      expect(animate).toHaveBeenCalledTimes(1)
+      act(() =>
+        store.publish({
+          ...store.getSnapshot(),
+          items: [...store.getSnapshot().items.slice(0, -1), { ...second, text: 'file.txt' }],
+        }),
+      )
+      expect(animate).toHaveBeenCalledTimes(1)
+    } finally {
+      HTMLElement.prototype.animate = original
+    }
+  })
+
+  it.each(['in_progress', 'approved', 'denied', 'timed_out', 'aborted'] as const)(
+    'keeps automatic %s reviews out of chat while manual requests remain usable',
+    (status) => {
+      const onDecide = vi.fn()
+      render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              reviews: {
+                'review-1': {
+                  id: 'review-1',
+                  turnId: 'turn-1',
+                  status,
+                  description: 'Automatic command review',
+                  rationale: 'Automatic review rationale',
+                  riskLevel: 'low',
+                  startedAt: 10,
+                },
+              },
+              approvals: [
+                { id: 'approval-1', kind: 'command', command: 'pnpm test', createdAt: 10 },
+              ],
+            })
+          }
+          onDecide={onDecide}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      expect(screen.queryByText('Automatic command review')).toBeNull()
+      expect(screen.queryByText('Automatic review rationale')).toBeNull()
+      expect(screen.queryByRole('status', { name: /Automatic review:/ })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Allow once' }))
+      expect(onDecide).toHaveBeenCalledWith('approval-1', 'approve')
+    },
+  )
+
+  it('shows pending requests one at a time in request order', () => {
+    const first: ApprovalRequest = {
+      id: 'approval-1',
+      kind: 'command',
+      command: 'pnpm test',
+      createdAt: 1,
+    }
+    const second: ApprovalRequest = {
+      id: 'approval-2',
+      kind: 'command',
+      command: 'pnpm build',
+      createdAt: 2,
+    }
+    const onDecide = vi.fn()
+    const view = (approvals: ApprovalRequest[]) => (
+      <Thread
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 0 },
+            approvals,
+          })
+        }
+        onDecide={onDecide}
+        onAnswerUserInput={() => undefined}
+      />
+    )
+
+    const rendered = render(view([first, second]))
+
+    expect(screen.getByText('pnpm test')).toBeTruthy()
+    expect(screen.queryByText('pnpm build')).toBeNull()
+    expect(screen.getAllByText('Run this command?')).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Allow once' }))
+    expect(onDecide).toHaveBeenCalledWith('approval-1', 'approve')
+
+    rendered.rerender(view([second]))
+    expect(screen.queryByText('pnpm test')).toBeNull()
+    expect(screen.getByText('pnpm build')).toBeTruthy()
+  })
+})
 
 describe('design activity rows', () => {
   const marker = (id: string, text: string): Item => ({
@@ -69,25 +263,28 @@ describe('design activity rows', () => {
   it('renders the design phase label instead of the internal slug', () => {
     render(
       <Thread
-        items={[marker('m1', 'design:brief')]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items: [marker('m1', 'design:brief')] })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
     )
-    expect(screen.getByText('Preparing questions')).toBeTruthy()
+    expect(screen.getByText('Understanding the request')).toBeTruthy()
     expect(screen.queryByText('design:brief')).toBeNull()
   })
 
-  it('keeps a design turn to its phase story, without raw provider activity', () => {
+  it('shows Design progress, provider commands, and errors alongside the phase label', () => {
     const items: Item[] = [
       { ...marker('m1', 'design:build'), status: 'started' },
+      {
+        id: 'progress-1',
+        turnId: 'turn-m1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        status: 'completed',
+        text: 'I am checking the existing styles before updating the page.',
+        createdAt: 1,
+      },
       {
         id: 'cmd-1',
         turnId: 'turn-m1',
@@ -108,26 +305,57 @@ describe('design activity rows', () => {
     ]
     render(
       <Thread
-        items={items}
-        running={true}
-        activeTurn={{ id: 'turn-m1', startedAt: 1 }}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items,
+            running: true,
+            activeTurn: { id: 'turn-m1', startedAt: 1 },
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
     )
-    expect(screen.queryByText(/Get-ChildItem/)).toBeNull()
+    expect(
+      screen.getByText('I am checking the existing styles before updating the page.'),
+    ).toBeTruthy()
+    expect(screen.getByText(/Get-ChildItem/)).toBeTruthy()
     expect(screen.queryByText('Thinking')).toBeNull()
-    expect(screen.queryByText('Exit code 1')).toBeNull()
+    expect(screen.getByText('Exit code 1')).toBeTruthy()
     // The rail names the phase even while a tool runs inside the turn.
     expect(workLabel(items, 'turn-m1', false)).toBe('Building the website')
   })
 
-  it('collapses a repeated phase across suppressed design activity', () => {
+  it('batches provider work between Design notes and phases', () => {
+    const work = (id: string, createdAt: number, fields: Partial<Item>): Item =>
+      ({ id, turnId: 'turn-m1', status: 'completed', createdAt, ...fields }) as Item
+    renderCompleted([
+      marker('m1', 'design:repair'),
+      work('cmd-1', 2, { type: 'command', command: 'cat src/motion.js' }),
+      work('cmd-2', 3, { type: 'command', command: 'pnpm test', exitCode: 1 }),
+      work('tool-1', 4, { type: 'tool_call', text: 'read_file src/app.js' }),
+      work('note-1', 5, { type: 'message', role: 'assistant', text: 'One check failed.' }),
+      work('cmd-3', 6, { type: 'command', command: 'pnpm test' }),
+      work('cmd-4', 7, { type: 'command', command: 'pnpm build' }),
+      { ...marker('m2', 'design:review'), turnId: 'turn-m1', createdAt: 8 },
+      work('cmd-5', 9, { type: 'command', command: 'pnpm preview' }),
+    ])
+
+    expect(screen.getByText('Refining the website')).toBeTruthy()
+    expect(screen.getByText('One check failed.')).toBeTruthy()
+    expect(screen.getByText('Reviewing the design')).toBeTruthy()
+    expect(
+      screen.getByRole('button', { name: 'Ran 2 commands and read 1 file · 1 failed' }),
+    ).toBeTruthy()
+    const second = screen.getByRole('button', { name: 'Ran 2 commands' })
+    expect(screen.getByRole('button', { name: 'Ran pnpm preview' })).toBeTruthy()
+    expect(screen.queryByText('Ran pnpm build')).toBeNull()
+    fireEvent.click(second)
+    expect(screen.getByText('Ran pnpm build')).toBeTruthy()
+  })
+
+  it('collapses a repeated phase while keeping provider activity visible', () => {
     renderCompleted([
       marker('m1', 'design:page'),
       {
@@ -153,8 +381,9 @@ describe('design activity rows', () => {
 
     expect(screen.getAllByText('Planning the page')).toHaveLength(2)
     expect(screen.getByText('Building the website')).toBeTruthy()
-    expect(screen.queryByText('pnpm build')).toBeNull()
-    expect(screen.queryByText('Planning the implementation')).toBeNull()
+    expect(screen.getByText(/pnpm build/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Thought' }))
+    expect(screen.getByText('Planning the implementation')).toBeTruthy()
   })
 
   it('collapses phase markers repeated by retried provider turns', () => {
@@ -171,6 +400,55 @@ describe('design activity rows', () => {
       ),
     ).toBe(false)
   })
+
+  it('reuses repeated-design results while a transcript only streams text', () => {
+    const first = marker('m1', 'design:build')
+    const second = marker('m2', 'design:build')
+    const lookup = createRepeatedDesignRowProjector()([first, second])
+
+    expect(lookup(second, 1)).toBe(true)
+    expect(lookup(second, 1)).toBe(true)
+  })
+
+  it('retains prefix results and invalidates a replaced tail row', () => {
+    const first = marker('m1', 'design:build')
+    const repeated = marker('m2', 'design:build')
+    const project = createRepeatedDesignRowProjector()
+    const initial = [first, repeated]
+
+    expect(project(initial)(repeated, 1)).toBe(true)
+    expect(project([...initial, turnItem('answer', 2, {})])(repeated, 1)).toBe(true)
+
+    const changed = marker('m2', 'design:review')
+    expect(project([first, changed])(changed, 1)).toBe(false)
+  })
+})
+
+describe('provider activity labels', () => {
+  it('uses a completed label for saved context-compaction rows', () => {
+    renderCompleted([
+      turnItem('compact', 1, {
+        type: 'unknown',
+        text: '[contextCompaction]',
+      }),
+    ])
+
+    expect(screen.getByText('Compacted context window')).toBeTruthy()
+    expect(screen.queryByText('unknown')).toBeNull()
+  })
+
+  it('mounts standalone activity details only when opened', () => {
+    const { container } = renderCompleted([
+      turnItem('unknown', 1, {
+        type: 'unknown',
+        text: 'provider event detail',
+      }),
+    ])
+
+    expect(container.querySelector('.aux__out')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Agent activity' }))
+    expect(container.querySelector('.aux__out')?.textContent).toBe('provider event detail')
+  })
 })
 
 describe('empty thread', () => {
@@ -183,15 +461,8 @@ describe('empty thread', () => {
 
     rendered.rerender(
       <Thread
-        items={[]}
+        frameStore={new ThreadFrameStore(emptyThread)}
         loading
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -202,18 +473,75 @@ describe('empty thread', () => {
 })
 
 describe('completed activity disclosure', () => {
-  it('collapses a settled turn that ended without an assistant answer', () => {
+  it('groups consecutive commands within commentary and keeps output behind two reveals', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt', 1, { role: 'user', text: 'Check this' }),
+      turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Checking files.' }),
+      ...Array.from({ length: 8 }, (_, index) =>
+        turnItem(`cmd-${index}`, index + 3, {
+          type: 'command',
+          command: `check-${index}`,
+          text: `output-${index}`,
+        }),
+      ),
+      turnItem('update', 11, { role: 'assistant', phase: 'commentary', text: 'Now test.' }),
+      turnItem('test-1', 12, { type: 'command', command: 'test-one' }),
+      turnItem('test-2', 13, { type: 'command', command: 'test-two', exitCode: 1 }),
+      turnItem('answer', 14, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByText('Checking files.')).toBeTruthy()
+    expect(screen.getByText('Now test.')).toBeTruthy()
+    const commands = screen.getByRole('button', { name: 'Ran 8 commands' })
+    expect(screen.getByRole('button', { name: 'Ran 2 commands · 1 failed' })).toBeTruthy()
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(0)
+    fireEvent.click(commands)
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(8)
+    expect(screen.queryByText('output-0')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran check-0' }))
+    expect(screen.getByText('output-0')).toBeTruthy()
+
+    const reveal = commands.parentElement?.querySelector('.activity__reveal')
+    fireEvent.click(commands)
+    expect(reveal?.getAttribute('data-open')).toBe('closing')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'opacity' }),
+      )
+    }
+    expect(reveal?.getAttribute('data-open')).toBe('closing')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
+      )
+    }
+    expect(reveal?.getAttribute('data-open')).toBe('false')
+    expect(container.querySelectorAll('.aux--command')).toHaveLength(0)
+  })
+
+  it('hides empty reasoning placeholders and keeps real thoughts behind a reveal', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Build a website' }),
-      ...Array.from({ length: 4 }, (_, index) =>
-        turnItem(`reasoning-${index}`, 1_001 + index * 1_000, { type: 'reasoning' }),
-      ),
+      turnItem('reasoning-empty', 1_001, { type: 'reasoning' }),
+      turnItem('reasoning-summary', 2_001, {
+        type: 'reasoning',
+        text: 'Planning manual multi-package checks',
+        durationMs: 12_000,
+      }),
     ]
 
     renderCompleted(items)
 
-    expect(screen.getByRole('button', { name: 'Worked for 4s' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Thinking' })).toBeNull()
+    expect(screen.queryByText('Thinking')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    const thought = screen.getByRole('button', { name: 'Thought for 12s' })
+    const reveal = thought.parentElement?.querySelector('.aux__reveal')
+    expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    fireEvent.click(thought)
+    expect(reveal?.getAttribute('aria-hidden')).toBe('false')
+    expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
   })
 
   it('keeps the content mounted while toggling the animated reveal state', () => {
@@ -256,35 +584,384 @@ describe('completed activity disclosure', () => {
     ]
     const { container } = render(
       <Thread
-        items={items}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
     )
 
-    const disclosure = screen.getByRole('button', {
-      name: 'Worked for 2s · ran a command',
-    })
+    const disclosure = screen.getByRole('button', { name: 'Worked for 3s' })
     const reveal = container.querySelector('.activity__reveal')
     expect(disclosure.getAttribute('aria-expanded')).toBe('false')
     expect(reveal?.getAttribute('data-open')).toBe('false')
     expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('.activity__body')).toBeNull()
 
     fireEvent.click(disclosure)
 
     expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-    expect(reveal?.getAttribute('data-open')).toBe('true')
+    expect(reveal?.getAttribute('data-open')).toBe('opening')
     expect(reveal?.getAttribute('aria-hidden')).toBe('false')
+    expect(container.querySelector('.activity__body')).toBeTruthy()
+
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
+      )
+    }
+
+    expect(reveal?.getAttribute('data-open')).toBe('true')
+
+    fireEvent.click(disclosure)
+
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
+    expect(reveal?.getAttribute('data-open')).toBe('closing')
+    expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('.activity__body')).toBeTruthy()
+
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
+      )
+    }
+
+    expect(reveal?.getAttribute('data-open')).toBe('false')
+    expect(container.querySelector('.activity__body')).toBeNull()
   })
 
-  it('preserves narration and activity in exact chronological groups', () => {
+  it('keeps 300 large tool outputs out of the collapsed DOM and releases opened details', () => {
+    const items: Item[] = [turnItem('prompt', 1, { role: 'user', text: 'Inspect the fixture' })]
+    for (let index = 0; index < 300; index++) {
+      items.push(
+        turnItem(`large-tool-${index}`, index + 2, {
+          type: 'tool_call',
+          text: `fixture.tool\n{"index":${index}}\nlarge-output-${index}:` + 'x'.repeat(128 * 1024),
+        }),
+      )
+    }
+    items.push(
+      turnItem('answer', 1000, {
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Fixture complete.',
+      }),
+    )
+    const { container } = renderCompleted(items)
+    // Count the activity itself: this file's virtualizer mock intentionally
+    // mounts one wrapper for every transcript index, including grouped items.
+    const activity = container.querySelector('.activity')!
+    const collapsedNodes = activity.querySelectorAll('*').length
+    expect(collapsedNodes).toBeLessThan(200)
+    expect(container.textContent!.length).toBeLessThan(2000)
+    expect(container.querySelector('.activity__body')).toBeNull()
+    expect(previewViewedImage).not.toHaveBeenCalled()
+
+    const disclosure = screen.getByRole('button', { name: /Worked for/ })
+    disclosure.focus()
+    fireEvent.click(disclosure)
+    const reveal = container.querySelector('.activity__reveal')!
+    expect(container.querySelectorAll('.tool-detail__output')).toHaveLength(0)
+    const rows = container.querySelectorAll<HTMLButtonElement>('.activity__body .aux__row')
+    expect(rows).toHaveLength(300)
+    fireEvent.click(rows[0]!)
+    expect(container.querySelectorAll('.tool-detail__output')).toHaveLength(1)
+    expect(container.querySelector('.tool-detail__output')?.textContent).toContain(
+      'large-output-0:',
+    )
+    fireEvent.click(disclosure)
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
+    expect(reveal.getAttribute('aria-hidden')).toBe('true')
+    fireEvent(
+      reveal,
+      Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
+    )
+    expect(container.querySelector('.activity__body')).toBeNull()
+    expect(activity.querySelectorAll('*').length).toBeLessThanOrEqual(collapsedNodes)
+    expect(container.textContent!.length).toBeLessThan(2000)
+    expect(document.activeElement).toBe(disclosure)
+  })
+
+  it('names the tool and what it acted on, and opens arguments and output apart', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Check the page' }),
+      turnItem('tool-1', 2, {
+        type: 'tool_call',
+        text: 'cua_repl.js\n{"code":"await page.screenshot({ path: \'home.png\' })"}\nSaved home.png',
+      }),
+      turnItem('tool-2', 3, {
+        type: 'tool_call',
+        text: 'web search\n{"query":"vite hmr css"}',
+      }),
+      turnItem('tool-3', 4, {
+        type: 'tool_call',
+        status: 'failed',
+        text: 'github.search_issues\n{"query":"is:open"}\nrate limited',
+      }),
+      turnItem('answer-1', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    // Labels wrap the tool name in <code>, so match on each row's whole text.
+    const labels = [...container.querySelectorAll('.activity__body .aux__label')].map(
+      (node) => node.textContent,
+    )
+    expect(labels).toEqual([
+      "Used cua_repl.js · await page.screenshot({ path: 'home.png' })",
+      'Searched the web for “vite hmr css”',
+      'Failed github.search_issues · is:open',
+    ])
+    expect(container.querySelector('code.activity__tool')?.textContent).toBe('cua_repl.js')
+    // Each call keeps its arguments and output behind its own reveal.
+    expect(container.querySelector('.tool-detail__args')).toBeNull()
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.activity__body .aux__row')!)
+
+    const args = container.querySelector('.tool-detail__args')
+    expect(args?.textContent).toBe("codeawait page.screenshot({ path: 'home.png' })")
+    expect(container.querySelector('.tool-detail__output')?.textContent).toBe('Saved home.png')
+    expect(screen.queryByText(/"code"/)).toBeNull()
+  })
+
+  it('shows a patch as its diff and counts the files it touched', () => {
+    const diff = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1,1 +1,1 @@',
+      '-old',
+      '+new',
+      'diff --git a/src/b.ts b/src/b.ts',
+      '--- /dev/null',
+      '+++ b/src/b.ts',
+      '@@ -0,0 +1,2 @@',
+      '+one',
+      '+two',
+    ].join('\n')
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Edit it' }),
+      turnItem('files-1', 2, {
+        type: 'file_change',
+        path: 'src/a.ts',
+        text: diff,
+        linesAdded: 3,
+        linesRemoved: 1,
+      }),
+      turnItem('answer-1', 3, { role: 'assistant', phase: 'final_answer', text: 'Edited.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    const row = screen.getByRole('button', { name: /Edited 2 files/ })
+    expect(row.querySelector('.aux__stat')?.textContent).toBe('+3−1')
+    fireEvent.click(row)
+    expect(container.querySelectorAll('.change-detail__files li')).toHaveLength(2)
+    expect(container.querySelectorAll('.dline--add')).toHaveLength(3)
+    expect(container.querySelectorAll('.dline--del')).toHaveLength(1)
+    expect(container.querySelector('.dline--meta')).toBeNull()
+  })
+
+  it('names a command without the login shell that wrapped it', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Look' }),
+      turnItem('command-1', 2, { type: 'command', command: "/bin/zsh -lc 'cat src/motion.js'" }),
+      turnItem('command-2', 3, { type: 'command', command: 'bash -c "pnpm test"', exitCode: 1 }),
+      turnItem('answer-1', 4, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByText('Ran cat src/motion.js')).toBeTruthy()
+    expect(screen.getByText('Command failed: pnpm test')).toBeTruthy()
+  })
+
+  it('counts generated images as generated, not viewed', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Make photos' }),
+      turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Making them.' }),
+      turnItem('image-1', 3, { type: 'tool_call', text: 'imageGeneration' }),
+      turnItem('image-2', 4, { type: 'tool_call', text: 'imageGeneration' }),
+      turnItem('answer-1', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByRole('button', { name: 'Generated 2 images' })).toBeTruthy()
+  })
+
+  it('keeps every line of a command output, including the first', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'List it' }),
+      turnItem('command-1', 2, {
+        type: 'command',
+        command: 'ls -la',
+        text: 'total 0\ndrwxr-xr-x .',
+      }),
+      turnItem('answer-1', 3, { role: 'assistant', phase: 'final_answer', text: 'Listed.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ran ls -la' }))
+    expect(container.querySelector('.aux__out')?.textContent).toBe('total 0\ndrwxr-xr-x .')
+  })
+
+  it('says the model is thinking between tool calls even without a summary', () => {
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+      items: [
+        turnItem('prompt-1', 1, { role: 'user', text: 'Check it' }),
+        turnItem('tool-1', 2, { type: 'tool_call', text: 'cua_repl.js\n{"code":"page.title()"}' }),
+        turnItem('reasoning-1', 3, { type: 'reasoning', status: 'started' }),
+      ],
+    })
+    const { container } = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+
+    expect(container.querySelector('.activity__label')?.textContent).toBe('Thinking')
+
+    act(() =>
+      store.publish({
+        ...store.getSnapshot(),
+        items: [
+          ...store.getSnapshot().items.slice(0, -1),
+          turnItem('reasoning-1', 3, { type: 'reasoning', status: 'completed' }),
+          turnItem('tool-2', 4, {
+            type: 'tool_call',
+            status: 'started',
+            text: 'cua_repl.js\n{"code":"page.click(\'a\')"}',
+          }),
+        ],
+      }),
+    )
+    expect(container.querySelector('.activity__label')?.textContent).toBe(
+      "Using cua_repl.js · page.click('a')",
+    )
+  })
+
+  it('keeps unphased narration between live tool calls until the turn ends', () => {
+    const prompt = turnItem('prompt', 1, { role: 'user', text: 'Build it' })
+    const first = turnItem('command-1', 2, { type: 'command', command: 'ls' })
+    const update = turnItem('update', 3, { role: 'assistant', text: 'Reading the blueprint.' })
+    const second = turnItem('command-2', 4, {
+      type: 'command',
+      status: 'started',
+      command: 'cat blueprint.md',
+    })
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+      items: [prompt, first, update, second],
+    })
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    const visibleRows = () =>
+      [...view.container.querySelectorAll('.thread__row:not(.is-suppressed)')].map((row) =>
+        row.getAttribute('data-index'),
+      )
+    expect(visibleRows()).toEqual(['0', '1', '2', '3'])
+
+    act(() =>
+      store.publish({
+        ...store.getSnapshot(),
+        items: [prompt, first, update, { ...second, status: 'completed' }],
+      }),
+    )
+    expect(visibleRows()).toEqual(['0', '1', '2', '3'])
+
+    act(() => store.publish({ ...store.getSnapshot(), running: false, activeTurn: undefined }))
+    expect(visibleRows()).toEqual(['0', '1', '2'])
+    expect(screen.getByRole('button', { name: /Worked for/ })).toBeTruthy()
+  })
+
+  it('re-measures the virtual row in the commit that moves details in or out of flow', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+      turnItem('command-1', 2, { type: 'command', command: 'pnpm test' }),
+      turnItem('answer-1', 3, { role: 'assistant', phase: 'final_answer', text: 'Fixed.' }),
+    ])
+    const disclosure = screen.getByRole('button', { name: 'Worked for 1s' })
+    const row = disclosure.closest<HTMLElement>('.thread__row')
+    expect(row?.getAttribute('data-index')).toBe('1')
+    const measured = vi.spyOn(row!, 'getBoundingClientRect').mockReturnValue({
+      height: 96.4,
+    } as DOMRect)
+
+    expect(resizeItem).not.toHaveBeenCalled()
+    fireEvent.click(disclosure)
+    expect(resizeItem).toHaveBeenCalledTimes(1)
+    expect(resizeItem).toHaveBeenCalledWith(1, 96)
+
+    const reveal = container.querySelector('.activity__reveal')
+    if (reveal) {
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
+      )
+    }
+    // Settling into the open state changes nothing the virtualizer must know.
+    expect(resizeItem).toHaveBeenCalledTimes(1)
+
+    measured.mockReturnValue({ height: 30 } as DOMRect)
+    fireEvent.click(disclosure)
+    expect(resizeItem).toHaveBeenCalledTimes(2)
+    expect(resizeItem).toHaveBeenLastCalledWith(1, 30)
+  })
+
+  it('keeps a reopened command group open when its old close timer expires', () => {
+    vi.useFakeTimers()
+    try {
+      renderCompleted([
+        turnItem('prompt', 1, { role: 'user', text: 'Check it' }),
+        turnItem('intro', 2, { role: 'assistant', phase: 'commentary', text: 'Checking.' }),
+        turnItem('one', 3, { type: 'command', command: 'one' }),
+        turnItem('two', 4, { type: 'command', command: 'two' }),
+        turnItem('answer', 5, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+      ])
+      fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+      const group = screen.getByRole('button', { name: 'Ran 2 commands' })
+      fireEvent.click(group)
+      fireEvent.click(group)
+      fireEvent.click(group)
+      act(() => vi.advanceTimersByTime(200))
+      expect(group.getAttribute('aria-expanded')).toBe('true')
+      expect(screen.getByRole('button', { name: 'Ran one' })).toBeTruthy()
+      fireEvent.click(group)
+      act(() => vi.advanceTimersByTime(200))
+      expect(screen.queryByRole('button', { name: 'Ran one' })).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('closes immediately when reduced motion is enabled', () => {
+    const matchMedia = vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query) =>
+        ({
+          matches: query === '(prefers-reduced-motion: reduce)',
+        }) as MediaQueryList,
+    )
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
+      turnItem('command-1', 2, { type: 'command', command: 'pnpm test' }),
+      turnItem('answer-1', 3, {
+        role: 'assistant',
+        phase: 'final_answer',
+        text: 'Fixed.',
+      }),
+    ])
+    const disclosure = screen.getByRole('button', { name: 'Worked for 1s' })
+    const reveal = container.querySelector('.activity__reveal')
+
+    fireEvent.click(disclosure)
+    fireEvent.click(disclosure)
+
+    expect(reveal?.getAttribute('data-open')).toBe('false')
+    matchMedia.mockRestore()
+  })
+
+  it('folds interim narration into the completed work disclosure', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
       turnItem('update-1', 2, {
@@ -311,16 +988,31 @@ describe('completed activity disclosure', () => {
     ]
     renderCompleted(items)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s · ran a command' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    const disclosure = screen.getByRole('button', { name: 'Worked for 1s' })
+    const reveal = disclosure.parentElement?.querySelector('.activity__reveal')
+    expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByText('I found the cause.')).toBeNull()
+    expect(screen.queryByText('The focused test passes.')).toBeNull()
+    expect(screen.getByText('Fixed.').closest('.activity__reveal')).toBeNull()
+    fireEvent.click(disclosure)
 
     const firstNarration = screen.getByText('I found the cause.')
-    const command = screen.getByText(/pnpm test/)
+    const command = screen.getByText('Ran pnpm test')
     const secondNarration = screen.getByText('The focused test passes.')
-    const file = screen.getByText('Edited files')
+    const file = screen.getByText('Edited src/chat.ts')
     const answer = screen.getByText('Fixed.')
+    expect(reveal?.getAttribute('aria-hidden')).toBe('false')
+    expect(firstNarration.closest('.activity__reveal')).toBe(reveal)
+    expect(secondNarration.closest('.activity__reveal')).toBe(reveal)
+    expect(screen.queryByText(/12 passed/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran pnpm test' }))
     expect(screen.getByText(/12 passed/)).toBeTruthy()
-    expect(screen.getByText(/src\/chat\.ts\s+2 lines added/)).toBeTruthy()
+    expect(screen.queryByText('2 lines added')).toBeNull()
+    const fileDisclosure = screen.getByRole('button', { name: 'Edited src/chat.ts' })
+    expect(fileDisclosure.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(fileDisclosure)
+    expect(fileDisclosure.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByText('2 lines added')).toBeTruthy()
     expect(
       firstNarration.compareDocumentPosition(command) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0)
@@ -333,13 +1025,93 @@ describe('completed activity disclosure', () => {
     expect(file.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
   })
 
+  it('folds persisted unphased Grok text bursts while keeping the last text visible', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Continue' }),
+      turnItem('update-1', 1_001, {
+        role: 'assistant',
+        text: 'I will inspect the recent work.',
+      }),
+      turnItem('update-2', 2_001, {
+        role: 'assistant',
+        text: 'The focused tests pass.',
+      }),
+      turnItem('answer-1', 3_001, {
+        role: 'assistant',
+        text: 'Done.',
+      }),
+    ])
+
+    const disclosure = screen.getByRole('button', { name: 'Worked for 3s' })
+    const reveal = disclosure.parentElement?.querySelector('.activity__reveal')
+    expect(reveal?.getAttribute('aria-hidden')).toBe('true')
+    expect(screen.queryByText('I will inspect the recent work.')).toBeNull()
+    expect(screen.queryByText('The focused tests pass.')).toBeNull()
+    expect(screen.getByText('Done.').closest('.activity__reveal')).toBeNull()
+
+    fireEvent.click(disclosure)
+
+    expect(screen.getByText('I will inspect the recent work.').closest('.activity__reveal')).toBe(
+      reveal,
+    )
+    expect(screen.getByText('The focused tests pass.').closest('.activity__reveal')).toBe(reveal)
+    expect(screen.getByText('Done.').closest('.activity__reveal')).toBeNull()
+  })
+
+  it('closes an expanded work batch when the turn finishes and can reveal it again', () => {
+    const prompt = turnItem('prompt', 1, { role: 'user', text: 'Check it' })
+    const command = turnItem('command', 2, {
+      type: 'command',
+      status: 'started',
+      command: 'pnpm test',
+    })
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+      items: [prompt, command],
+    })
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    fireEvent.click(view.container.querySelector<HTMLButtonElement>('.activity__summary')!)
+    expect(view.container.querySelector('.activity__body')).toBeTruthy()
+
+    act(() =>
+      store.publish({
+        ...emptyThread,
+        items: [
+          prompt,
+          { ...command, status: 'completed' },
+          turnItem('thought', 3, { type: 'reasoning', text: 'The checks passed.' }),
+          turnItem('answer', 4, {
+            role: 'assistant',
+            phase: 'final_answer',
+            text: 'All done.',
+          }),
+        ],
+      }),
+    )
+
+    const summary = screen.getByRole('button', { name: /Worked for/ })
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(view.container.querySelector('.activity__body')).toBeNull()
+    expect(screen.getByText('All done.')).toBeTruthy()
+    fireEvent.click(summary)
+    expect(screen.getByRole('button', { name: 'Ran pnpm test' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Thought' }))
+    expect(screen.getByText('The checks passed.')).toBeTruthy()
+    fireEvent.click(summary)
+    expect(summary.getAttribute('aria-expanded')).toBe('false')
+    expect(screen.getByText('All done.')).toBeTruthy()
+  })
+
   it('keeps every completed activity kind accessible after replay', () => {
     const items: Item[] = [
       turnItem('prompt-1', 1, { role: 'user', text: 'Build it' }),
       turnItem('reasoning-1', 2, { type: 'reasoning', text: 'Inspecting state' }),
       turnItem('command-1', 3, { type: 'command', command: 'pnpm test' }),
       turnItem('tool-1', 4, { type: 'tool_call', text: 'Searched 4 files' }),
-      turnItem('design-1', 5, { type: 'tool_call', text: 'design:build' }),
       turnItem('answer-1', 6, {
         role: 'assistant',
         phase: 'final_answer',
@@ -348,12 +1120,127 @@ describe('completed activity disclosure', () => {
     ]
     renderCompleted(items.map((entry) => ({ ...entry })))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s · ran a command' }))
-    expect(screen.getByText('Thinking')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull()
+    expect(screen.getByText('Built.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    const thought = screen.getByRole('button', { name: 'Thought' })
+    expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    )
+    fireEvent.click(thought)
+    expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
+      'false',
+    )
     expect(screen.getByText('Inspecting state')).toBeTruthy()
-    expect(screen.getByText(/pnpm test/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command and searched once' }))
+    expect(screen.getByText('Ran pnpm test')).toBeTruthy()
     expect(screen.getByText('Searched 4 files')).toBeTruthy()
-    expect(screen.getByText('Building the website')).toBeTruthy()
+  })
+
+  it('stacks tool categories and keeps each command available on expand', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Check it' }),
+      turnItem('reasoning-1', 2, {
+        type: 'reasoning',
+        text: 'Planning manual multi-package checks',
+      }),
+      turnItem('read-1', 3, { type: 'tool_call', text: 'read files' }),
+      turnItem('command-1', 4, { type: 'command', command: 'git status --short' }),
+      turnItem('command-2', 5, { type: 'command', command: 'pnpm test' }),
+      turnItem('answer-1', 6, { role: 'assistant', text: 'Done.' }),
+    ])
+
+    expect(screen.queryByRole('button', { name: 'Thought' })).toBeNull()
+    expect(screen.queryByText('Ran git status --short')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    const thought = screen.getByRole('button', { name: 'Thought' })
+    expect(thought).toBeTruthy()
+    expect(thought.parentElement?.querySelector('.aux__reveal')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    )
+    expect(screen.queryByText('Planning manual multi-package checks')).toBeNull()
+    expect(screen.queryByText('Ran git status --short')).toBeNull()
+
+    fireEvent.click(thought)
+    expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Read 1 file and ran 2 commands' }))
+    const firstCommand = screen.getByText('Ran git status --short')
+    expect(firstCommand.closest('.activity__reveal')?.getAttribute('aria-hidden')).toBe('false')
+    expect(screen.getByText('Ran pnpm test')).toBeTruthy()
+  })
+
+  it('shows a human tool headline instead of dumped JSON payloads', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Look it up' }),
+      turnItem('grep-1', 2, {
+        type: 'tool_call',
+        text: 'grep [ { "type": "content", "content": { "type": "text", "text": "found 29 matches" } } ]\n{ "type": "GrepSearch", "stdout": [60, 119, 140] }',
+      }),
+      turnItem('read-1', 3, {
+        type: 'tool_call',
+        text: 'Searched thoughtLabel\nfound 12 matches',
+      }),
+      turnItem('grep-empty', 4, {
+        type: 'tool_call',
+        text: 'grep [ { "type": "content", "content": { "type": "text", "text": "" } } ]\n{ "type": "GrepSearch", "stdout": [60, 119] }',
+      }),
+      turnItem('answer-1', 5, { role: 'assistant', text: 'Done.' }),
+    ])
+
+    const stack = screen.getByRole('button', { name: 'Worked for 1s' })
+    expect(stack.textContent).not.toMatch(/"type": "content"/)
+    fireEvent.click(stack)
+    for (const row of document.querySelectorAll<HTMLButtonElement>('.activity__body .aux__row')) {
+      if (!row.disabled) fireEvent.click(row)
+    }
+    expect(screen.queryByText(/"type": "content"/)).toBeNull()
+    expect(screen.queryByText(/"type": "GrepSearch"/)).toBeNull()
+    expect(screen.getByText('found 29 matches')).toBeTruthy()
+    expect(screen.getByText('Searched thoughtLabel')).toBeTruthy()
+    expect(screen.getByText('found 12 matches')).toBeTruthy()
+  })
+
+  it('hides empty structured output from persisted shell tool rows', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Check it' }),
+      turnItem('command-1', 2, {
+        type: 'command',
+        command: 'git status --short',
+        text: 'Bash [ { "type": "content", "content": { "type": "text", "text": "" } } ]\n{ "type": "Bash", "output": [], "exit_code": 0 }',
+      }),
+      turnItem('answer-1', 3, { role: 'assistant', text: 'Clean.' }),
+    ])
+
+    const stack = screen.getByRole('button', { name: 'Worked for 1s' })
+    fireEvent.click(stack)
+    expect(screen.queryByText(/"type": "content"/)).toBeNull()
+    expect(screen.queryByText(/"type": "Bash"/)).toBeNull()
+  })
+
+  it('stacks all tool calls across empty reasoning placeholders', () => {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Check it' }),
+      turnItem('reasoning-1', 2, { type: 'reasoning' }),
+      turnItem('files-1', 3, {
+        type: 'file_change',
+        path: 'src/chat.ts',
+        text: '2 files changed',
+      }),
+      turnItem('reasoning-2', 4, { type: 'reasoning', text: '  ' }),
+      turnItem('command-1', 5, { type: 'command', command: 'git status --short' }),
+      turnItem('reasoning-3', 6, { type: 'reasoning' }),
+      turnItem('read-1', 7, { type: 'tool_call', text: 'read files' }),
+      turnItem('answer-1', 8, { role: 'assistant', text: 'Done.' }),
+    ])
+
+    expect(container.querySelectorAll('.activity')).toHaveLength(1)
+    expect(screen.queryByText('Thinking')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+
+    expect(screen.getByText('Edited src/chat.ts')).toBeTruthy()
+    expect(screen.getByText('Ran git status --short')).toBeTruthy()
+    expect(screen.getByText('read files')).toBeTruthy()
   })
 
   it('renders sequential image inspections clearly after replay', () => {
@@ -376,11 +1263,223 @@ describe('completed activity disclosure', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
     expect(screen.getAllByText('Viewed image')).toHaveLength(2)
     expect(screen.getByText('Could not view image')).toBeTruthy()
+    expect(screen.queryByText('desktop.png')).toBeNull()
+    for (const row of container.querySelectorAll<HTMLButtonElement>('.activity__body .aux__row')) {
+      fireEvent.click(row)
+    }
     expect(screen.getByText('desktop.png')).toBeTruthy()
     expect(screen.getByText('mobile.png')).toBeTruthy()
     expect(screen.getByText('broken.png')).toBeTruthy()
     expect(screen.queryByText('[imageView]')).toBeNull()
-    expect(container.querySelectorAll('.lucide-images')).toHaveLength(3)
+    expect(
+      container.querySelectorAll('.activity__body .aux__glyph .tabler-icon-library-photo'),
+    ).toHaveLength(3)
+  })
+
+  it('shows sent image attachments above the user message', async () => {
+    const path = '/tmp/TasteCode/pasted-files/uuid-reference.png'
+    previewViewedImage.mockResolvedValueOnce({
+      path,
+      name: 'uuid-reference.png',
+      mediaType: 'image',
+      previewUrl: 'tastecode-attachment://preview/full',
+      thumbnailUrl: 'tastecode-attachment://preview/thumb?thumbnail=1',
+    })
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, {
+        role: 'user',
+        text: 'Use this reference',
+        attachments: [path, '/work/notes.txt'],
+      }),
+    ])
+
+    const image = await screen.findByRole('img', { name: 'Preview of uuid-reference.png' })
+    const attachments = container.querySelector('.said__attachments')
+    const text = screen.getByText('Use this reference')
+    if (!attachments) throw new Error('sent attachment preview was not rendered')
+    expect(previewViewedImage).toHaveBeenCalledWith(path)
+    expect(attachments.contains(image)).toBe(true)
+    expect(
+      attachments.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(container.querySelectorAll('.viewed-image-preview--message')).toHaveLength(1)
+  })
+
+  it('finishes a sent image preview after the Strict Mode effect replay', async () => {
+    const path = '/tmp/TasteCode/pasted-files/strict-reference.png'
+    previewViewedImage.mockResolvedValue({
+      path,
+      name: 'strict-reference.png',
+      mediaType: 'image',
+      previewUrl: 'tastecode-attachment://preview/strict',
+    })
+
+    render(
+      <StrictMode>
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [
+                turnItem('prompt-1', 1, {
+                  role: 'user',
+                  text: 'Strict preview',
+                  attachments: [path],
+                }),
+              ],
+            })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />
+      </StrictMode>,
+    )
+
+    expect(await screen.findByRole('img', { name: 'Preview of strict-reference.png' })).toBeTruthy()
+    expect(previewViewedImage).toHaveBeenCalled()
+  })
+
+  it('finishes a missing sent image preview with an unavailable state', async () => {
+    const path = '/tmp/TasteCode/pasted-files/missing-reference.png'
+    previewViewedImage.mockResolvedValueOnce(undefined)
+
+    renderCompleted([
+      turnItem('prompt-1', 1, {
+        role: 'user',
+        text: 'Missing preview',
+        attachments: [path],
+      }),
+    ])
+
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for missing-reference.png' }),
+    ).toBeTruthy()
+    expect(screen.getByText('missing-reference.png')).toBeTruthy()
+  })
+
+  it('finishes a rejected sent image preview after showing its loading state', async () => {
+    const path = '/tmp/TasteCode/pasted-files/rejected-reference.png'
+    let rejectPreview!: () => void
+    previewViewedImage.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectPreview = () => reject(new Error('preview failed'))
+      }),
+    )
+
+    renderCompleted([
+      turnItem('prompt-1', 1, {
+        role: 'user',
+        text: 'Rejected preview',
+        attachments: [path],
+      }),
+    ])
+
+    expect(screen.getByRole('status', { name: 'Loading preview of rejected-reference.png' }))
+    await act(async () => rejectPreview())
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for rejected-reference.png' }),
+    ).toBeTruthy()
+  })
+
+  it('shows a safe image preview when completed work is revealed', async () => {
+    previewViewedImage.mockResolvedValueOnce({
+      path: '/tmp/TasteCode/pasted-files/uuid-layout.png',
+      name: 'uuid-layout.png',
+      mediaType: 'image',
+      previewUrl: 'tastecode-attachment://preview/full',
+      thumbnailUrl: 'tastecode-attachment://preview/thumb?thumbnail=1',
+    })
+    render(
+      <Thread
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              turnItem('prompt-1', 1, { role: 'user', text: 'Review it' }),
+              turnItem('image-1', 2, {
+                type: 'tool_call',
+                text: 'image view\nuuid-layout.png',
+              }),
+              turnItem('answer-1', 3, { role: 'assistant', text: 'Reviewed.' }),
+            ],
+          })
+        }
+        projectPath="/work/site"
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Viewed image' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('img', { name: 'Preview of uuid-layout.png' })).toBeTruthy(),
+    )
+    expect(previewViewedImage).toHaveBeenCalledWith('uuid-layout.png')
+    expect(screen.getByRole('button', { name: 'Open preview of uuid-layout.png' })).toBeTruthy()
+  })
+
+  const layoutPreview = {
+    path: '/tmp/TasteCode/pasted-files/uuid-layout.png',
+    name: 'uuid-layout.png',
+    mediaType: 'image',
+    previewUrl: 'tastecode-attachment://preview/full',
+  }
+
+  function revealImageView() {
+    const { container } = renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Review it' }),
+      turnItem('image-1', 2, { type: 'tool_call', text: 'image view\nuuid-layout.png' }),
+      turnItem('answer-1', 3, { role: 'assistant', text: 'Reviewed.' }),
+    ])
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Viewed image' }))
+    return container
+  }
+
+  it('reveals a loading image in the frame the image will fill', async () => {
+    // The reveal is measured in the commit that opens it. A short text box
+    // swapped for the image a frame later resized it mid-wipe.
+    let resolvePreview!: (preview: unknown) => void
+    previewViewedImage.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePreview = resolve
+      }),
+    )
+    const container = revealImageView()
+
+    const loading = screen.getByRole('status', { name: 'Loading preview of uuid-layout.png' })
+    expect(loading.classList.contains('viewed-image-preview')).toBe(true)
+    expect(loading.querySelector('.viewed-image-preview__placeholder')).toBeTruthy()
+    expect(loading.querySelector('.viewed-image-preview__name')?.textContent).toBe(
+      'uuid-layout.png',
+    )
+    expect(container.querySelector('.aux__reveal .aux__out')).toBeNull()
+
+    await act(async () => resolvePreview(layoutPreview))
+
+    expect(screen.getByRole('img', { name: 'Preview of uuid-layout.png' })).toBeTruthy()
+  })
+
+  it('keeps the image frame when a revealed preview is unavailable', async () => {
+    const container = revealImageView()
+
+    expect(
+      await screen.findByRole('status', { name: 'Preview unavailable for uuid-layout.png' }),
+    ).toBeTruthy()
+    expect(screen.getByText('Preview unavailable')).toBeTruthy()
+    expect(container.querySelector('.aux__reveal .aux__out')).toBeNull()
+  })
+
+  it('shows an image previewed earlier in the first frame of its reveal', () => {
+    knownViewedImagePreview.mockReturnValue(layoutPreview)
+    previewViewedImage.mockReturnValue(new Promise(() => undefined))
+
+    revealImageView()
+
+    expect(screen.getByRole('img', { name: 'Preview of uuid-layout.png' })).toBeTruthy()
+    expect(screen.queryByRole('status', { name: /uuid-layout\.png/ })).toBeNull()
   })
 
   it('does not claim an interrupted image inspection completed', () => {
@@ -407,48 +1506,39 @@ describe('completed activity disclosure', () => {
     const failedImage = { ...startedImage, status: 'failed' as const }
     const view = (image: Item) => (
       <Thread
-        items={[image]}
-        running
-        activeTurn={{ id: 'turn-1', startedAt: 1 }}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [image],
+            running: true,
+            activeTurn: { id: 'turn-1', startedAt: 1 },
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />
     )
 
     const rendered = render(view(startedImage))
-    const rail = rendered.container.querySelector('.activity--working')
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Viewing image',
-    )
-    expect(rendered.container.querySelector('[data-index="0"]')?.className).toContain(
+    const stack = rendered.container.querySelector('.activity')
+    expect(screen.getByRole('button', { name: 'Viewing image' })).toBeTruthy()
+    expect(rendered.container.querySelector('[data-index="0"]')?.className).not.toContain(
       'is-suppressed',
     )
-    expect(screen.queryByRole('button', { name: 'Viewing image' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Image inspection interrupted' })).toBeNull()
     expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
 
     rendered.rerender(view(completedImage))
-    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
     expect(rendered.container.querySelector('[data-index="0"]')?.className).not.toContain(
       'is-suppressed',
     )
     expect(screen.getByRole('button', { name: 'Viewed image' })).toBeTruthy()
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Working',
-    )
     expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
 
     rendered.rerender(view(failedImage))
-    expect(rendered.container.querySelector('.activity--working')).toBe(rail)
+    expect(rendered.container.querySelector('.activity')).toBe(stack)
     expect(screen.getByRole('button', { name: 'Could not view image' })).toBeTruthy()
-    expect(rendered.container.querySelector('.activity__working-label')?.textContent).toBe(
-      'Working',
-    )
     expect(rendered.container.querySelectorAll('.aux--live')).toHaveLength(0)
 
     rendered.unmount()
@@ -459,6 +1549,27 @@ describe('completed activity disclosure', () => {
     ])
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
     expect(screen.getByText('Viewed image')).toBeTruthy()
+  })
+
+  it('names context compaction while running and after replay', () => {
+    const startedCompaction = turnItem('compaction-1', 2, {
+      type: 'tool_call',
+      status: 'started',
+      text: 'context compaction',
+    })
+
+    expect(workLabel([startedCompaction], 'turn-1', false)).toBe('Compacting context window…')
+
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Continue' }),
+      { ...startedCompaction, status: 'completed' },
+      turnItem('answer-1', 3, { role: 'assistant', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
+    expect(screen.getAllByText('Compacted context window')).toHaveLength(1)
+    expect(screen.queryByText('context compaction')).toBeNull()
+    expect(screen.queryByText('[contextCompaction]')).toBeNull()
   })
 
   it('does not repeat identical file path and output details', () => {
@@ -473,7 +1584,11 @@ describe('completed activity disclosure', () => {
     ])
 
     fireEvent.click(screen.getByRole('button', { name: 'Worked for 1s' }))
-    expect(screen.getAllByText('src/chat.ts')).toHaveLength(1)
+    expect(screen.getByText('Edited src/chat.ts')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Edited src/chat.ts' })).toHaveProperty(
+      'disabled',
+      true,
+    )
   })
 
   it('shows response actions only on the explicit final answer', () => {
@@ -494,26 +1609,58 @@ describe('completed activity disclosure', () => {
     expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
   })
 
+  it('keeps one copy action at the end of persisted Design history', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Design a site' }),
+      turnItem('design-activity-1', 2, { type: 'tool_call', text: 'design:brief' }),
+      turnItem('design-note-first', 3, {
+        role: 'assistant',
+        text: 'I have a few questions before designing.',
+      }),
+      turnItem('design-activity-2', 4, {
+        turnId: 'turn-2',
+        type: 'tool_call',
+        text: 'design:brand',
+      }),
+      turnItem('design-note-second', 5, {
+        turnId: 'turn-2',
+        role: 'assistant',
+        text: 'Brief locked in. Starting the design.',
+      }),
+      turnItem('design-complete-old', 6, {
+        turnId: 'turn-3',
+        role: 'assistant',
+        text: 'Website built. Preview ready.',
+      }),
+    ])
+
+    expect(screen.getAllByRole('button', { name: 'Copy response' })).toHaveLength(1)
+    expect(
+      screen
+        .getByText('Website built. Preview ready.')
+        .closest('.reply')
+        ?.querySelector('[aria-label="Copy response"]'),
+    ).toBeTruthy()
+  })
+
   it('puts the turn revert beside the completed response', () => {
     const onRevertCheckpoint = vi.fn()
-    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 0 }
+    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 1 }
     render(
       <Thread
-        items={[
-          turnItem('prompt-1', 1, { role: 'user', text: 'Fix it' }),
-          turnItem('answer-1', 2, {
-            role: 'assistant',
-            phase: 'final_answer',
-            text: 'Fixed.',
-          }),
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              turnItem('local:prompt-1', 1, { role: 'user', text: 'Fix it' }),
+              turnItem('answer-1', 2, {
+                role: 'assistant',
+                phase: 'final_answer',
+                text: 'Fixed.',
+              }),
+            ],
+          })
+        }
         checkpoints={[checkpoint]}
         onRevertCheckpoint={onRevertCheckpoint}
         onDecide={() => undefined}
@@ -525,30 +1672,63 @@ describe('completed activity disclosure', () => {
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
+  it('hides work when stopping and keeps checkpoints hidden until the turn ends', () => {
+    const checkpoint = { id: 9, seq: 1, label: 'Fix it', createdAt: 1 }
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      items: [
+        turnItem('local:prompt-1', 1, { role: 'user', text: 'Fix it' }),
+        turnItem('answer-1', 2, { role: 'assistant', text: 'Fixed.' }),
+      ],
+      running: true,
+      activeTurn: { id: 'turn-2', startedAt: 3 },
+    })
+    const props = {
+      frameStore: store,
+      checkpoints: [checkpoint],
+      onRevertCheckpoint: vi.fn(),
+      onDecide: () => undefined,
+      onAnswerUserInput: () => undefined,
+    }
+    const view = render(<Thread {...props} />)
+    expect(view.container.querySelector('.activity--working')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+
+    view.rerender(<Thread {...props} stopping />)
+
+    expect(view.container.querySelector('.activity--working')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+
+    act(() => store.publish({ ...store.getSnapshot(), running: false, activeTurn: undefined }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Revert to before response' }))
+    expect(props.onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
+  })
+
   it('keeps completed response actions visible while a later turn is running', () => {
     render(
       <Thread
-        items={[
-          turnItem('prompt-1', 1, { role: 'user', text: 'Start designing' }),
-          turnItem('answer-1', 2, {
-            role: 'assistant',
-            phase: 'final_answer',
-            text: 'Got it, thanks.',
-          }),
-          turnItem('work-2', 3, {
-            turnId: 'turn-2',
-            type: 'tool_call',
-            status: 'started',
-            text: 'design:brief',
-          }),
-        ]}
-        running
-        activeTurn={{ id: 'turn-2', startedAt: 3 }}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              turnItem('prompt-1', 1, { role: 'user', text: 'Start designing' }),
+              turnItem('answer-1', 2, {
+                role: 'assistant',
+                phase: 'final_answer',
+                text: 'Got it, thanks.',
+              }),
+              turnItem('work-2', 3, {
+                turnId: 'turn-2',
+                type: 'tool_call',
+                status: 'started',
+                text: 'design:brief',
+              }),
+            ],
+            running: true,
+            activeTurn: { id: 'turn-2', startedAt: 3 },
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -582,37 +1762,48 @@ describe('collapsed row disclosure', () => {
     ]
     const { container } = render(
       <Thread
-        items={items}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
     )
 
-    const disclosure = screen.getByRole('button', { name: 'Ran a command' })
+    // A lone call is its own row rather than a batch of one.
+    const command = screen.getByRole('button', { name: 'Ran pnpm test' })
     const reveal = container.querySelector('.aux__reveal')
-    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.activity__reveal')).toBeNull()
+    expect(command.getAttribute('aria-expanded')).toBe('false')
     expect(reveal?.getAttribute('data-open')).toBe('false')
-    expect(reveal?.getAttribute('aria-hidden')).toBe('true')
     expect(reveal?.hasAttribute('inert')).toBe(true)
-    expect(container.querySelector('.aux__out')?.textContent).toBe('pnpm test\n1 failed, 12 passed')
+    expect(screen.queryByText('1 failed, 12 passed')).toBeNull()
 
-    fireEvent.click(disclosure)
+    fireEvent.click(command)
 
-    expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-    expect(reveal?.getAttribute('data-open')).toBe('true')
-    expect(reveal?.getAttribute('aria-hidden')).toBe('false')
+    expect(command.getAttribute('aria-expanded')).toBe('true')
+    expect(reveal?.getAttribute('data-open')).toBe('opening')
     expect(reveal?.hasAttribute('inert')).toBe(false)
+    expect(screen.getByText('1 failed, 12 passed')).toBeTruthy()
   })
 })
 
 describe('thread error surface', () => {
+  it('keeps errors out of the transcript when the composer shows them', () => {
+    const items: Item[] = [
+      turnItem('error-1', 1, { type: 'error', text: 'Request failed' }),
+      turnItem('answer-1', 2, { role: 'assistant', text: 'Existing reply' }),
+    ]
+    render(
+      <Thread
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
+        errorsInComposer
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+    expect(screen.queryByText('Request failed')).toBeNull()
+    expect(screen.getByText('Existing reply')).toBeTruthy()
+  })
+
   it('states the failure as text instead of a collapsible tool row', () => {
     const items: Item[] = [
       {
@@ -620,20 +1811,13 @@ describe('thread error surface', () => {
         turnId: 'turn-1',
         type: 'error',
         status: 'completed',
-        text: 'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+        text: 'Turn interrupted: TasteCode restarted. Send a new message to continue.',
         createdAt: 1,
       },
     ]
     const { container } = render(
       <Thread
-        items={items}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={new ThreadFrameStore({ ...emptyThread, items })}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -642,7 +1826,7 @@ describe('thread error surface', () => {
     // A thread-level failure is a statement: the alert and the reason, not an
     // operational row with a disclosure affordance.
     expect(container.querySelector('.turn-error__text')?.textContent).toBe(
-      'Turn interrupted: Personal Harness restarted. Send a new message to continue.',
+      'Turn interrupted: TasteCode restarted. Send a new message to continue.',
     )
     expect(screen.queryByRole('button')).toBeNull()
     expect(container.querySelector('.aux')).toBeNull()
@@ -653,55 +1837,57 @@ describe('thread message actions', () => {
   it('copies the user prompt through the platform bridge', async () => {
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'Keep my exact prompt',
-            createdAt: 1,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Keep my exact prompt',
+                createdAt: 1,
+              },
+            ],
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Copy prompt' }))
+    const copyButton = screen.getByRole('button', { name: 'Copy prompt' })
+    const layers = copyButton.querySelectorAll('.icon-morph__layer')
+    expect(layers).toHaveLength(3)
+    expect(layers[0]?.hasAttribute('data-active')).toBe(true)
+
+    fireEvent.click(copyButton)
     await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith('Keep my exact prompt'))
+    await waitFor(() => expect(layers[1]?.hasAttribute('data-active')).toBe(true))
   })
 
   it('shows visible accessible feedback when copying fails', async () => {
     writeClipboardText.mockRejectedValueOnce(new Error('Invalid clipboard text'))
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'A prompt too large for the clipboard bridge',
-            createdAt: 1,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'A prompt too large for the clipboard bridge',
+                createdAt: 1,
+              },
+            ],
+          })
+        }
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
       />,
@@ -719,24 +1905,22 @@ describe('thread message actions', () => {
     const onEditMessage = vi.fn()
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'Revise this prompt',
-            createdAt: 1,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Revise this prompt',
+                createdAt: 1,
+              },
+            ],
+          })
+        }
         onEditMessage={onEditMessage}
         onDecide={() => undefined}
         onAnswerUserInput={() => undefined}
@@ -753,28 +1937,26 @@ describe('thread message actions', () => {
       id: 7,
       seq: 1,
       label: 'Undo this turn',
-      createdAt: 50,
+      createdAt: 150,
     }
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-1',
-            turnId: 'turn-1',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: 'Undo this turn',
-            createdAt: 100,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'local:prompt-1',
+                turnId: 'turn-1',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: 'Undo this turn',
+                createdAt: 100,
+              },
+            ],
+          })
+        }
         checkpoints={[checkpoint]}
         onRevertCheckpoint={onRevertCheckpoint}
         onDecide={() => undefined}
@@ -793,28 +1975,26 @@ describe('thread message actions', () => {
       id: 8,
       seq: 2,
       label: prompt.trim().slice(0, 60),
-      createdAt: 50,
+      createdAt: 150,
     }
     render(
       <Thread
-        items={[
-          {
-            id: 'prompt-2',
-            turnId: 'turn-2',
-            type: 'message',
-            role: 'user',
-            status: 'completed',
-            text: prompt,
-            createdAt: 100,
-          },
-        ]}
-        running={false}
-        activeTurn={undefined}
-        plan={[]}
-        diff={undefined}
-        approvals={[]}
-        userInputs={[]}
-        reviews={[]}
+        frameStore={
+          new ThreadFrameStore({
+            ...emptyThread,
+            items: [
+              {
+                id: 'local:prompt-2',
+                turnId: 'turn-2',
+                type: 'message',
+                role: 'user',
+                status: 'completed',
+                text: prompt,
+                createdAt: 100,
+              },
+            ],
+          })
+        }
         checkpoints={[checkpoint]}
         onRevertCheckpoint={onRevertCheckpoint}
         onDecide={() => undefined}

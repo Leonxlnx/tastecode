@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import {
+  constants,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import {
   McpServerConfigSchema,
@@ -16,21 +18,31 @@ import {
   type McpServerConfig,
   type ProviderId,
 } from '@harness/contracts'
+import { configFile } from './product-paths.js'
 
 type ConfigFile = {
   version: 1
   projects: Record<string, Partial<Record<ProviderId, Record<string, McpServerConfig>>>>
+  /**
+   * Provider blocks this build does not ship (nightly has more providers).
+   * They are never listed or launched here, only written back unchanged.
+   */
+  unsupported: Record<string, Record<string, unknown>>
 }
 
-const EMPTY_CONFIG: ConfigFile = { version: 1, projects: {} }
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
+type ParsedConfig = { config: ConfigFile; skipped: boolean }
+type CachedConfig = {
+  config: ConfigFile
+  stamp: string | undefined
+  checkedAt: number
 }
+
+const EMPTY_CONFIG: ConfigFile = { version: 1, projects: {}, unsupported: {} }
+const CACHE_RECHECK_MS = 100
+const PROJECT_PATH_CACHE_LIMIT = 256
 
 function defaultLocation(): string {
-  const root = process.env['HARNESS_CONFIG_DIR'] ?? path.join(os.homedir(), '.personalharness')
-  return path.join(root, 'mcp.json')
+  return configFile('mcp.json')
 }
 
 function canonicalProjectPath(projectPath: string): string {
@@ -39,9 +51,36 @@ function canonicalProjectPath(projectPath: string): string {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
-function parseConfig(raw: string): { config: ConfigFile; skipped: boolean } {
+function configFileStamp(location: string): string {
+  const stats = statSync(location, { bigint: true, throwIfNoEntry: false })
+  if (!stats) return 'missing'
+  return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested)
+  return Object.freeze(value)
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** Server IDs are user-chosen, so `__proto__` must stay an ordinary own key. */
+function setOwn<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  })
+}
+
+function parseConfig(raw: string): ParsedConfig {
+  // Walked by hand rather than with record schemas, which drop a `__proto__` key.
   const value: unknown = JSON.parse(raw)
-  if (!isObject(value) || value['version'] !== 1 || !isObject(value['projects'])) {
+  if (!isObject(value) || value.version !== 1 || !isObject(value.projects)) {
     throw new Error('invalid MCP config: expected a version 1 project map')
   }
   let skipped = false
@@ -51,7 +90,8 @@ function parseConfig(raw: string): { config: ConfigFile; skipped: boolean } {
   // the file from inside the app. Invalid entries are skipped and logged;
   // the next write persists the sanitised shape.
   const projects: ConfigFile['projects'] = {}
-  for (const [projectPath, providersValue] of Object.entries(value['projects'])) {
+  const unsupported: ConfigFile['unsupported'] = {}
+  for (const [projectPath, providersValue] of Object.entries(value.projects)) {
     if (!isObject(providersValue)) {
       skipped = true
       console.warn(`[mcp-config] skipping invalid project entry "${projectPath}"`)
@@ -60,7 +100,13 @@ function parseConfig(raw: string): { config: ConfigFile; skipped: boolean } {
     const providers: ConfigFile['projects'][string] = {}
     for (const [providerName, serversValue] of Object.entries(providersValue)) {
       const provider = ProviderIdSchema.safeParse(providerName)
-      if (!provider.success || !isObject(serversValue)) {
+      if (!provider.success) {
+        const kept = unsupported[projectPath] ?? {}
+        setOwn(kept, providerName, serversValue)
+        setOwn(unsupported, projectPath, kept)
+        continue
+      }
+      if (!isObject(serversValue)) {
         skipped = true
         console.warn(
           `[mcp-config] skipping invalid provider "${providerName}" for "${projectPath}"`,
@@ -75,44 +121,69 @@ function parseConfig(raw: string): { config: ConfigFile; skipped: boolean } {
           console.warn(`[mcp-config] skipping invalid server "${serverId}" for "${projectPath}"`)
           continue
         }
-        servers[serverId] = server.data
+        setOwn(servers, serverId, server.data)
       }
       providers[provider.data] = servers
     }
-    projects[projectPath] = providers
+    setOwn(projects, projectPath, providers)
   }
-  return { config: { version: 1, projects }, skipped }
+  return { config: { version: 1, projects, unsupported }, skipped }
+}
+
+function serializeConfig(file: ConfigFile): string {
+  const projects: Record<string, Record<string, unknown>> = {}
+  for (const projectPath of new Set([
+    ...Object.keys(file.unsupported),
+    ...Object.keys(file.projects),
+  ])) {
+    const providers: Record<string, unknown> = {}
+    for (const source of [file.unsupported[projectPath], file.projects[projectPath]]) {
+      for (const [provider, servers] of Object.entries(source ?? {}))
+        setOwn(providers, provider, servers)
+    }
+    setOwn(projects, projectPath, providers)
+  }
+  return `${JSON.stringify({ version: 1, projects }, null, 2)}\n`
 }
 
 /** Human-readable project MCP definitions. Secret values never enter this file. */
 export class McpConfigStore {
-  constructor(private readonly location = defaultLocation()) {}
+  #cachedConfig: CachedConfig | undefined
+  #canonicalProjectPaths = new Map<string, { path: string; checkedAt: number }>()
+
+  constructor(
+    private readonly location = defaultLocation(),
+    private readonly now: () => number = () => performance.now(),
+  ) {}
 
   list(provider: ProviderId, projectPath: string): McpServerConfig[] {
-    return Object.values(this.#read().projects[canonicalProjectPath(projectPath)]?.[provider] ?? {})
+    return Object.values(this.#read().projects[this.#projectPath(projectPath)]?.[provider] ?? {})
   }
 
   add(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
-    const file = this.#read()
+    const file = structuredClone(this.#read(true))
     const servers = this.#servers(file, provider, projectPath)
-    if (servers[server.id]) throw new Error(`project MCP server "${server.id}" already exists`)
-    servers[server.id] = server
+    if (Object.hasOwn(servers, server.id))
+      throw new Error(`project MCP server "${server.id}" already exists`)
+    setOwn(servers, server.id, structuredClone(server))
     this.#write(file)
   }
 
   update(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
-    const file = this.#read()
+    const file = structuredClone(this.#read(true))
     const servers = this.#servers(file, provider, projectPath)
-    if (!servers[server.id]) throw new Error(`project MCP server "${server.id}" does not exist`)
-    servers[server.id] = server
+    if (!Object.hasOwn(servers, server.id))
+      throw new Error(`project MCP server "${server.id}" does not exist`)
+    setOwn(servers, server.id, structuredClone(server))
     this.#write(file)
   }
 
   remove(provider: ProviderId, projectPath: string, serverId: string): void {
-    const file = this.#read()
-    const projectKey = canonicalProjectPath(projectPath)
+    const file = structuredClone(this.#read(true))
+    const projectKey = this.#projectPath(projectPath, true)
     const servers = file.projects[projectKey]?.[provider]
-    if (!servers?.[serverId]) throw new Error(`project MCP server "${serverId}" does not exist`)
+    if (!servers || !Object.hasOwn(servers, serverId))
+      throw new Error(`project MCP server "${serverId}" does not exist`)
     delete servers[serverId]
     if (Object.keys(servers).length === 0) delete file.projects[projectKey]?.[provider]
     if (Object.keys(file.projects[projectKey] ?? {}).length === 0) delete file.projects[projectKey]
@@ -124,42 +195,105 @@ export class McpConfigStore {
     provider: ProviderId,
     projectPath: string,
   ): Record<string, McpServerConfig> {
-    const projectKey = canonicalProjectPath(projectPath)
-    const project = (file.projects[projectKey] ??= {})
+    const projectKey = this.#projectPath(projectPath, true)
+    if (!Object.hasOwn(file.projects, projectKey)) setOwn(file.projects, projectKey, {})
+    const project = file.projects[projectKey]!
     return (project[provider] ??= {})
   }
 
   /** Set when the last read skipped entries; the original must be kept. */
   #readLossy = false
 
-  #read(): ConfigFile {
-    if (!existsSync(this.location)) return structuredClone(EMPTY_CONFIG)
+  #read(force = false): ConfigFile {
+    const checkedAt = this.now()
+    if (
+      !force &&
+      this.#cachedConfig &&
+      checkedAt >= this.#cachedConfig.checkedAt &&
+      checkedAt - this.#cachedConfig.checkedAt < CACHE_RECHECK_MS
+    ) {
+      return this.#cachedConfig.config
+    }
+    const stamp = configFileStamp(this.location)
+    if (this.#cachedConfig?.stamp === stamp) {
+      this.#cachedConfig.checkedAt = checkedAt
+      return this.#cachedConfig.config
+    }
+    if (stamp === 'missing') {
+      this.#readLossy = false
+      return this.#cache(structuredClone(EMPTY_CONFIG), stamp, checkedAt)
+    }
     const raw = readFileSync(this.location, 'utf8')
     const parsed = parseConfig(raw)
     this.#readLossy = parsed.skipped
-    return parsed.config
+    return this.#cache(parsed.config, stamp, checkedAt)
   }
 
   #write(file: ConfigFile): void {
     mkdirSync(path.dirname(this.location), { recursive: true })
-    // A hand-edited file with entries we could not parse is not ours to
-    // destroy — park the original next to the sanitised rewrite.
-    if (this.#readLossy && existsSync(this.location)) {
-      renameSync(this.location, `${this.location}.invalid-${Date.now()}.bak`)
-      this.#readLossy = false
-    }
     const temporary = `${this.location}.${randomUUID()}.tmp`
     try {
-      writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, {
+      writeFileSync(temporary, serializeConfig(file), {
         encoding: 'utf8',
         mode: 0o600,
       })
+      // A hand-edited file with entries we could not parse is not ours to
+      // destroy: copy the original aside, and leave it active until the
+      // complete replacement is atomically in place.
+      if (this.#readLossy && existsSync(this.location)) {
+        copyFileSync(
+          this.location,
+          `${this.location}.invalid-${Date.now()}-${randomUUID().slice(0, 8)}.bak`,
+          constants.COPYFILE_EXCL,
+        )
+      }
       renameSync(temporary, this.location)
+      this.#readLossy = false
+      let stamp: string | undefined
+      try {
+        stamp = configFileStamp(this.location)
+      } catch {
+        // The write succeeded. A later read can establish the signature.
+      }
+      this.#cache(file, stamp, this.now())
     } catch (error) {
       // A failed atomic write (disk full, AV holding the handle) must not
       // leave a stray .tmp behind on every retry.
-      rmSync(temporary, { force: true })
+      try {
+        rmSync(temporary, { force: true })
+      } catch {
+        // Report the write failure, not the cleanup one.
+      }
       throw error
     }
+  }
+
+  #cache(config: ConfigFile, stamp: string | undefined, checkedAt: number): ConfigFile {
+    const frozen = deepFreeze(config)
+    this.#cachedConfig = { config: frozen, stamp, checkedAt }
+    return frozen
+  }
+
+  #projectPath(projectPath: string, force = false): string {
+    const checkedAt = this.now()
+    const cached = this.#canonicalProjectPaths.get(projectPath)
+    if (
+      !force &&
+      cached &&
+      checkedAt >= cached.checkedAt &&
+      checkedAt - cached.checkedAt < CACHE_RECHECK_MS
+    ) {
+      return cached.path
+    }
+    const resolved = canonicalProjectPath(projectPath)
+    if (
+      !this.#canonicalProjectPaths.has(projectPath) &&
+      this.#canonicalProjectPaths.size >= PROJECT_PATH_CACHE_LIMIT
+    ) {
+      const oldest = this.#canonicalProjectPaths.keys().next().value
+      if (oldest !== undefined) this.#canonicalProjectPaths.delete(oldest)
+    }
+    this.#canonicalProjectPaths.set(projectPath, { path: resolved, checkedAt })
+    return resolved
   }
 }

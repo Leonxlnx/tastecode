@@ -1,10 +1,17 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs'
+import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parsePreviewPlan } from '@harness/design-agent'
 import {
   assertRunsWorkspaceCode,
@@ -17,32 +24,58 @@ import {
 const workspaces: string[] = []
 const previews: RunningPreview[] = []
 
+function serverPort(server: Server): number {
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('missing test port')
+  return address.port
+}
+
 afterEach(async () => {
   await Promise.all(previews.splice(0).map((preview) => preview.stop()))
   for (const workspace of workspaces.splice(0)) {
-    rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    await rm(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
 
 describe('design preview runner', () => {
-  it('refuses an occupied port before starting workspace code', async () => {
+  it('stops a preview process when its startup is cancelled', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-cancel-'))
+    workspaces.push(workspace)
+    const marker = path.join(workspace, 'started.txt')
+    writeFileSync(
+      path.join(workspace, 'preview.mjs'),
+      `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'started'); setInterval(() => {}, 1000);`,
+    )
+    const controller = new AbortController()
+    const starting = startDesignPreview(
+      workspace,
+      plan(await freePort()),
+      30_000,
+      controller.signal,
+    )
+    const stopped = expect(starting).rejects.toThrow('cancelled')
+    await vi.waitFor(() => expect(existsSync(marker)).toBe(true))
+    controller.abort(new Error('cancelled'))
+    await stopped
+  })
+
+  it('never accepts another site when workspace code ignores the assigned port', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     const marker = path.join(workspace, 'spawned.txt')
     const occupied = createServer((_request, response) => response.end('unrelated preview'))
     await listen(occupied)
-    const address = occupied.address()
-    if (!address || typeof address === 'string') throw new Error('missing test port')
+    const port = serverPort(occupied)
     writeFileSync(
       path.join(workspace, 'preview.mjs'),
-      `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${address.port}, '127.0.0.1')\n`,
+      `import { createServer } from 'node:http'\nimport { writeFileSync } from 'node:fs'\nwriteFileSync(${JSON.stringify(marker)}, 'started')\ncreateServer((_request, response) => response.end('expected preview')).listen(${port}, '127.0.0.1')\n`,
     )
     const plan = parsePreviewPlan({
       version: 1,
       command: 'node',
       args: ['preview.mjs'],
       cwd: '.',
-      url: `http://127.0.0.1:${address.port}`,
+      url: `http://127.0.0.1:${port}`,
       viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
     })
 
@@ -57,9 +90,91 @@ describe('design preview runner', () => {
       await close(occupied)
     }
     expect(failure).toBeInstanceOf(Error)
-    expect((failure as Error).message).toContain(`preview port ${address.port} is already in use`)
-    expect(existsSync(marker)).toBe(false)
+    if (!(failure instanceof Error)) throw new Error('expected preview failure')
+    expect(failure.message).toContain('preview exited before it was ready')
+    expect(existsSync(marker)).toBe(true)
   })
+
+  it('moves an occupied command preview to a free port without touching the other site', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const occupied = createServer((_request, response) => response.end('unrelated preview'))
+    await listen(occupied)
+    const port = serverPort(occupied)
+    mkdirSync(path.join(workspace, 'dist'))
+    writeFileSync(
+      path.join(workspace, 'preview.mjs'),
+      `if (process.argv[2] !== 'dist' || process.argv[4] !== process.env.PORT) throw new Error('wrong script arguments')\n${previewServerSource(port, 'expected preview')}`,
+    )
+    const requested = {
+      ...plan(port),
+      args: ['preview.mjs', 'dist', '--port', String(port)],
+      url: `http://127.0.0.1:${port}/site/?view=desktop`,
+    }
+    try {
+      const preview = await startDesignPreview(workspace, requested, 5_000)
+      previews.push(preview)
+      expect(new URL(preview.url).port).not.toBe(String(port))
+      expect(new URL(preview.url).pathname).toBe('/site/')
+      expect(new URL(preview.url).search).toBe('?view=desktop')
+      await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+        'expected preview',
+      )
+      await preview.stop()
+      previews.pop()
+      await expect(fetch(requested.url).then((response) => response.text())).resolves.toBe(
+        'unrelated preview',
+      )
+    } finally {
+      await close(occupied)
+    }
+  })
+
+  it.each(['--port', '-p', '--port='])(
+    'rewrites the %s option forwarded through npm',
+    async (option) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+      workspaces.push(workspace)
+      const occupied = createServer((_request, response) => response.end('unrelated preview'))
+      await listen(occupied)
+      const port = serverPort(occupied)
+      writeFileSync(
+        path.join(workspace, 'package.json'),
+        JSON.stringify({ scripts: { dev: 'node preview.mjs' } }),
+      )
+      writeFileSync(
+        path.join(workspace, 'preview.mjs'),
+        `import { createServer } from 'node:http'
+const port = process.argv[2].includes('=') ? process.argv[2].split('=')[1] : process.argv[3]
+if (port !== process.env.PORT) throw new Error('port argument and environment disagree')
+createServer((_request, response) => response.end('expected preview')).listen(Number(port), '127.0.0.1')
+`,
+      )
+      const requested = parsePreviewPlan({
+        ...plan(port),
+        command: 'npm',
+        args: [
+          'run',
+          'dev',
+          '--',
+          ...(option.endsWith('=') ? [`${option}${port}`] : [option, String(port)]),
+        ],
+      })
+      try {
+        const preview = await startDesignPreview(workspace, requested, 10_000)
+        previews.push(preview)
+        expect(new URL(preview.url).port).not.toBe(String(port))
+        await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+          'expected preview',
+        )
+        await expect(fetch(requested.url).then((response) => response.text())).resolves.toBe(
+          'unrelated preview',
+        )
+      } finally {
+        await close(occupied)
+      }
+    },
+  )
 
   it('starts the expected workspace preview, waits for HTTP, and stops it', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
@@ -84,21 +199,14 @@ describe('design preview runner', () => {
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
 
-  it('serves an exact-file static project with a Harness-owned response', async () => {
+  it('serves an exact-file static project with a TasteCode-owned response', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     const port = await freePort()
     writeFileSync(path.join(workspace, 'index.html'), '<link rel="stylesheet" href="styles.css">')
     writeFileSync(path.join(workspace, 'styles.css'), 'body { color: tomato; }')
     writeFileSync(path.join(workspace, 'app.js'), 'document.body.dataset.ready = "true"')
-    const staticPlan = parsePreviewPlan({
-      version: 1,
-      kind: 'static',
-      entry: 'index.html',
-      cwd: '.',
-      url: `http://127.0.0.1:${port}/site/`,
-      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
-    })
+    const staticPlan = staticPreviewPlan(port, '/site/')
 
     const preview = await startDesignPreview(workspace, staticPlan)
     previews.push(preview)
@@ -115,7 +223,165 @@ describe('design preview runner', () => {
     )
   })
 
-  it('does not accept a concurrent preview serving the same port', async () => {
+  it('rejects a static preview whose local image is outside the selected root', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), '<img src="assets/hero.png" alt="">')
+    mkdirSync(path.join(workspace, 'public', 'assets'), { recursive: true })
+    writeFileSync(path.join(workspace, 'public', 'assets', 'hero.png'), 'image')
+    const staticPlan = staticPreviewPlan(port)
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: assets/hero.png',
+    )
+  })
+
+  it('ignores markup that does not load a page resource', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      [
+        '<link rel="canonical" href="missing-canonical.html">',
+        '<!-- <img src="missing-comment.png"> -->',
+        '<img data-src="missing-lazy.png" alt="">',
+      ].join('\n'),
+    )
+    const staticPlan = staticPreviewPlan(port)
+
+    const preview = await startDesignPreview(workspace, staticPlan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
+  })
+
+  it('gives concurrent static previews distinct ports without replacing either site', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    writeFileSync(path.join(workspace, 'index.html'), 'Static site')
+    const staticPlan = staticPreviewPlan(await freePort())
+    const first = await startDesignPreview(workspace, staticPlan)
+    previews.push(first)
+    const second = await startDesignPreview(workspace, staticPlan)
+    previews.push(second)
+    expect(second.url).not.toBe(first.url)
+    for (const preview of [first, second])
+      await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
+        'Static site',
+      )
+  })
+
+  it('can retry a corrected static preview on the same port', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), '<img src="assets/hero.png" alt="">')
+    const staticPlan = staticPreviewPlan(port)
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: assets/hero.png',
+    )
+    mkdirSync(path.join(workspace, 'assets'))
+    writeFileSync(path.join(workspace, 'assets', 'hero.png'), 'image')
+
+    const preview = await startDesignPreview(workspace, staticPlan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
+  })
+
+  it('checks each resource attribute parsed from valid HTML', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      '<video poster=missing-poster.png src="present.png"></video>',
+    )
+    writeFileSync(path.join(workspace, 'present.png'), 'video')
+    const staticPlan = staticPreviewPlan(port)
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: missing-poster.png',
+    )
+  })
+
+  it('rejects a missing responsive image candidate', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      '<picture><source srcset="missing.webp 1x"><img src="present.png" alt=""></picture>',
+    )
+    writeFileSync(path.join(workspace, 'present.png'), 'image')
+    const staticPlan = staticPreviewPlan(port)
+
+    await expect(startDesignPreview(workspace, staticPlan)).rejects.toThrow(
+      'static preview resource is unavailable: missing.webp',
+    )
+  })
+
+  it('accepts deeply nested static markup without overflowing the stack', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      `${'<div>'.repeat(5_000)}content${'</div>'.repeat(5_000)}`,
+    )
+    const staticPlan = staticPreviewPlan(port)
+
+    const preview = await startDesignPreview(workspace, staticPlan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.status)).resolves.toBe(200)
+  })
+
+  it.each([
+    '<img srcset="present.png, missing.png 2x">',
+    '<img srcset="present.png, missing.png">',
+    '<source srcset="data:image/png;base64,aGVsbG8= 1x, missing.png 2x">',
+    '<link rel="preload" as="image" href="missing.png">',
+    '<link rel="preload" as="image" href="present.png" imagesrcset="present.png 1x, missing.png 2x">',
+    '<svg><image href="missing.png" /></svg>',
+    '<svg><image xlink:href="missing.png" /></svg>',
+    '<base href="./assets/"><img src="missing.png">',
+  ])('rejects each missing markup resource: %s', async (html) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-markup-'))
+    workspaces.push(workspace)
+    writeFileSync(path.join(workspace, 'index.html'), html)
+    writeFileSync(path.join(workspace, 'present.png'), 'image')
+    const port = await freePort()
+    await expect(startDesignPreview(workspace, staticPreviewPlan(port))).rejects.toThrow(
+      'static preview resource is unavailable: missing.png',
+    )
+    const reservation = createServer()
+    await listen(reservation, port)
+    await close(reservation)
+  })
+
+  it('accepts valid mixed responsive candidates and ignores inactive template markup', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-markup-'))
+    workspaces.push(workspace)
+    writeFileSync(
+      path.join(workspace, 'index.html'),
+      [
+        '<base href="http://[invalid"><base href="/ignored/">',
+        '<img srcset="present.png, second.png 2x">',
+        '<img src="https://example.com/external.png">',
+        '<svg><image xlink:href="missing-overridden.png" href="present.png" /></svg>',
+        '<svg><image href="present.png" xlink:href="missing-overridden.png" /></svg>',
+        '<template><img src="not-yet-used.png"></template>',
+      ].join('\n'),
+    )
+    for (const file of ['present.png', 'second.png'])
+      writeFileSync(path.join(workspace, file), 'image')
+    const preview = await startDesignPreview(workspace, staticPreviewPlan(await freePort()))
+    previews.push(preview)
+    expect((await fetch(preview.url)).status).toBe(200)
+  })
+
+  it('gives concurrent command previews distinct ports and serves the correct workspace', async () => {
     const port = await freePort()
     const firstWorkspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-first-'))
     const secondWorkspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-second-'))
@@ -138,13 +404,15 @@ describe('design preview runner', () => {
         attempt.status === 'fulfilled',
     )
     const rejected = attempts.filter((attempt) => attempt.status === 'rejected')
-    expect(running).toHaveLength(1)
-    expect(rejected).toHaveLength(1)
-    previews.push(running[0].value)
-    const expected = attempts[0].status === 'fulfilled' ? 'first workspace' : 'second workspace'
-    await expect(fetch(running[0].value.url).then((response) => response.text())).resolves.toBe(
-      expected,
-    )
+    previews.push(...running.map(({ value }) => value))
+    expect(rejected).toHaveLength(0)
+    expect(running).toHaveLength(2)
+    expect(running[0].value.url).not.toBe(running[1].value.url)
+    for (const [index, preview] of running.entries()) {
+      await expect(fetch(preview.value.url).then((response) => response.text())).resolves.toBe(
+        index === 0 ? 'first workspace' : 'second workspace',
+      )
+    }
   })
 
   it('rejects a child that exits after another response passes readiness', async () => {
@@ -164,13 +432,14 @@ describe('design preview runner', () => {
   it('turns a child spawn error into a readiness failure', async () => {
     const child = Object.assign(new EventEmitter(), {
       exitCode: null,
-    }) as ChildProcessWithoutNullStreams
+    })
     const childFailure = watchPreviewChild(child)
     const waiting = waitForPreview(child, 'http://127.0.0.1:1', 5_000, () => '', childFailure)
 
-    child.emit('error', new Error('spawn bun ENOENT'))
+    child.emit('error', Object.assign(new Error('spawn bun ENOENT'), { code: 'ENOENT' }))
 
     await expect(waiting).rejects.toThrow('preview failed to start: spawn bun ENOENT')
+    await expect(waiting).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('reports a child that exits before opening its port', async () => {
@@ -221,6 +490,48 @@ describe('design preview runner', () => {
     previews.pop()
     await expect(fetch(preview.url, { signal: AbortSignal.timeout(500) })).rejects.toThrow()
   })
+
+  it('keeps a static preview off the port a command preview is still starting on', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), 'Static site')
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'command', 400))
+
+    const command = startDesignPreview(workspace, plan(port), 5_000)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const staticPreview = await startDesignPreview(workspace, staticPreviewPlan(port))
+    previews.push(staticPreview)
+    const commandPreview = await command
+    previews.push(commandPreview)
+
+    expect(new URL(staticPreview.url).port).not.toBe(new URL(commandPreview.url).port)
+    await expect(fetch(commandPreview.url).then((response) => response.text())).resolves.toBe(
+      'command',
+    )
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a stop while an escaped process still holds the preview port',
+    async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+      workspaces.push(workspace)
+      const port = await freePort()
+      const pidFile = path.join(workspace, 'escaped.pid')
+      writeFileSync(path.join(workspace, 'child.mjs'), previewServerSource(port, 'escaped'))
+      writeFileSync(
+        path.join(workspace, 'preview.mjs'),
+        `import { spawn } from 'node:child_process'\nimport { writeFileSync } from 'node:fs'\nconst child = spawn(process.execPath, ['child.mjs'], { detached: true, stdio: 'ignore' })\nwriteFileSync(${JSON.stringify(pidFile)}, String(child.pid))\nsetInterval(() => {}, 60_000)\n`,
+      )
+
+      const preview = await startDesignPreview(workspace, plan(port), 5_000)
+      try {
+        await expect(preview.stop()).rejects.toThrow('is still in use')
+      } finally {
+        process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL')
+      }
+    },
+  )
 
   it('rejects command arguments that could escape through a Windows shim', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
@@ -275,9 +586,27 @@ describe('design preview runner', () => {
     await expect(
       startDesignPreview(workspace, plan('node', ['local.mjs', '../outside.mjs'])),
     ).rejects.toThrow()
+    expect(() =>
+      assertRunsWorkspaceCode(workspace, workspace, {
+        ...plan('node', []),
+        kind: 'command',
+        command: 'node',
+        args: ['local.mjs', '--root=../outside'],
+      }),
+    ).toThrow()
     await expect(
       startDesignPreview(workspace, plan('node', ['--import=../outside.mjs', 'local.mjs'])),
     ).rejects.toThrow()
+    for (const args of [['--eval', 'local.mjs'], ['--require', 'local.mjs'], ['-']]) {
+      expect(() =>
+        assertRunsWorkspaceCode(workspace, workspace, {
+          ...plan('node', args),
+          kind: 'command',
+          command: 'node',
+          args,
+        }),
+      ).toThrow('must start with a workspace script')
+    }
   })
 
   it.each([
@@ -357,22 +686,75 @@ describe('design preview runner', () => {
       viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
     })
 
-    const preview = await startDesignPreview(workspace, plan, 5_000)
+    const preview = await startDesignPreview(workspace, plan)
     previews.push(preview)
     await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe(
       'local script',
     )
+  }, 45_000)
+
+  it('runs the validated script when a package-manager option comes before run', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'dev script'))
+    writeFileSync(
+      path.join(workspace, 'package.json'),
+      JSON.stringify({ scripts: { dev: 'node preview.mjs', run: 'node missing.mjs' } }),
+    )
+    const plan = parsePreviewPlan({
+      version: 1,
+      command: 'pnpm',
+      args: ['--silent', 'run', 'dev'],
+      cwd: '.',
+      url: `http://127.0.0.1:${port}`,
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    const preview = await startDesignPreview(workspace, plan)
+    previews.push(preview)
+    await expect(fetch(preview.url).then((response) => response.text())).resolves.toBe('dev script')
+  }, 45_000)
+
+  it('serves a static preview whose base path is URL-encoded', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    writeFileSync(path.join(workspace, 'index.html'), '<link rel="stylesheet" href="styles.css">')
+    writeFileSync(path.join(workspace, 'styles.css'), 'body {}')
+
+    const preview = await startDesignPreview(
+      workspace,
+      staticPreviewPlan(await freePort(), '/my%20site/caf%C3%A9/'),
+    )
+    previews.push(preview)
+
+    await expect(
+      fetch(new URL('styles.css', preview.url)).then((value) => value.text()),
+    ).resolves.toBe('body {}')
+    await expect(
+      fetch(new URL('..%2Fstyles.css', preview.url)).then((value) => value.status),
+    ).resolves.toBe(404)
   })
 })
+
+function staticPreviewPlan(port: number, pathname = '/') {
+  return parsePreviewPlan({
+    version: 1,
+    kind: 'static',
+    entry: 'index.html',
+    cwd: '.',
+    url: `http://127.0.0.1:${port}${pathname}`,
+    viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+  })
+}
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer()
     server.on('error', reject)
     server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') return reject(new Error('missing test port'))
-      server.close((error) => (error ? reject(error) : resolve(address.port)))
+      const port = serverPort(server)
+      server.close((error) => (error ? reject(error) : resolve(port)))
     })
   })
 }
@@ -412,6 +794,6 @@ const server = createServer((_request, response) => {
   response.end(${JSON.stringify(body)})
   ${exitAfterResponse ? "response.on('finish', () => process.exit(0))" : ''}
 })
-setTimeout(() => server.listen(${port}, '127.0.0.1'), ${delayMs})
+setTimeout(() => server.listen(Number(process.env.PORT) || ${port}, '127.0.0.1'), ${delayMs})
 `
 }

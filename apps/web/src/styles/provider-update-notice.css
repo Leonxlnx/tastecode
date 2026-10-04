@@ -1,0 +1,400 @@
+/*
+ * Provider update notice, loaded with the first release it has to show.
+ *
+ * Each release is one line of text, "Codex 0.160.0 → 0.161.0", with its
+ * action at the edge. The installed version is a row of odometer wheels: at
+ * rest it reads what is on this machine, while the update runs its wheels
+ * keep catching on the next number, and once the new version is confirmed
+ * they turn over to it. The numbers carry the state; the words beside them
+ * only confirm it.
+ *
+ * Numbers use the interface face with tabular figures rather than a
+ * monospace: every digit still has one width for the wheels, and the line
+ * reads as part of the app instead of a terminal.
+ */
+
+.notice--provider-update {
+  display: block;
+  width: min(312px, calc(100vw - 36px));
+  max-height: min(520px, calc(100dvh - 36px));
+  overflow-y: auto;
+  padding: 6px 8px 8px 12px;
+  background: var(--menu-bg);
+  border-color: var(--menu-line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text-2);
+}
+
+/* Output needs room to be read. */
+.notice--provider-update:has(.update-slip__terminal) {
+  width: min(440px, calc(100vw - 36px));
+}
+
+.update-slip {
+  --reel-line: 18px;
+}
+
+.update-slip__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  margin-bottom: 2px;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: var(--reel-line);
+}
+
+.update-slip__head > button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+}
+
+.update-slip__item {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr) max-content;
+  grid-template-areas:
+    'name versions action'
+    'note note note'
+    'terminal terminal terminal';
+  align-items: center;
+  column-gap: 8px;
+  min-height: 32px;
+  transition:
+    opacity var(--dur-slow) var(--ease-out),
+    translate var(--dur-slow) var(--ease-out);
+  transition-delay: calc(60ms + var(--row, 0) * 50ms);
+}
+
+@starting-style {
+  .update-slip__item {
+    opacity: 0;
+    translate: 0 3px;
+  }
+}
+
+.update-slip__name {
+  grid-area: name;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-slip__name > svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.update-slip__versions {
+  --reel-line: 20px;
+  grid-area: versions;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--reel-line);
+  white-space: pre;
+}
+
+.update-slip__arrow {
+  margin-inline: 5px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  transition: color var(--dur-slow) var(--ease-out);
+}
+
+.version-target {
+  color: var(--text-3);
+}
+
+.version-target [data-changed] {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.update-slip__action {
+  grid-area: action;
+  display: flex;
+  align-items: center;
+}
+
+/* A quiet tinted slab: a button by its shape, without an outline that would
+   outweigh the line it belongs to. */
+.update-slip__button {
+  min-height: 24px;
+  padding: 2px 9px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+}
+
+.update-slip__button:hover {
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+.update-slip__button:active {
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+}
+
+.update-slip__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  padding-right: 4px;
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  text-decoration: none;
+}
+
+.update-slip__link:hover {
+  color: var(--text);
+}
+
+.update-slip__state {
+  padding-right: 4px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.update-slip__item[data-phase='succeeded'] .update-slip__state {
+  color: var(--text-2);
+}
+
+/* The new version has been taken up by the wheels. */
+.update-slip__item[data-phase='succeeded'] :is(.update-slip__arrow, .version-target) {
+  opacity: 0;
+  translate: -6px 0;
+  transition:
+    opacity var(--dur-slow) var(--ease-out),
+    translate var(--dur-slow) var(--ease-out);
+}
+
+.update-slip__item[data-phase='failed'] .update-slip__arrow {
+  color: var(--error);
+}
+
+/* Notes start under the name, past the mark. */
+.update-slip__note {
+  grid-area: note;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: -4px 0 6px 21px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+}
+
+.update-slip__note [role='alert'] {
+  color: var(--error);
+  overflow-wrap: anywhere;
+}
+
+.update-slip__note button {
+  margin: -2px -5px;
+  padding: 2px 5px;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.update-slip__terminal {
+  grid-area: terminal;
+  height: 150px;
+  margin: 0 0 8px 21px;
+  overflow: hidden;
+  background: var(--menu-bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+}
+
+.update-slip__terminal .install-terminal {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 8px;
+  overflow: hidden;
+  background: var(--menu-bg);
+  border: 0;
+  border-radius: 0;
+}
+
+.update-slip__terminal .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  background-clip: padding-box;
+  opacity: 0.45;
+}
+
+.update-slip__terminal .xterm .xterm-scrollable-element > .scrollbar > .slider:hover,
+.update-slip__terminal .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
+  opacity: 0.75;
+}
+
+/* ---------- the reel ---------- */
+
+/* Sized by the line it sits in: `--reel-line` is that line's height. */
+.version-reel {
+  --reel-gap: calc(var(--reel-line) * 0.3);
+  --reel-step: calc(var(--reel-line) + var(--reel-gap));
+  --reel-pos: 0;
+  display: inline-flex;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--reel-line);
+  white-space: pre;
+  transition: color var(--dur-slow) var(--ease-out);
+}
+
+/* The count in the heading runs on the same wheels, set in the heading's type. */
+.update-slip__head .version-reel[data-turn] {
+  color: inherit;
+  vertical-align: top;
+}
+
+/* Live wheels sit forward of the settled type around them. */
+.version-reel[data-turn='turning'] .version-reel__wheel {
+  color: var(--text-2);
+}
+
+.version-reel[data-turn='turned'] {
+  --reel-pos: 1;
+  color: var(--text-3);
+  transition-delay: 240ms;
+}
+
+.update-slip__item [data-turn='turned'] :is([data-changed], .version-reel__wheel) {
+  color: var(--text-2);
+}
+
+/* The window bleeds past the line so a passing digit fades out over the
+   edge of the drum instead of being cut by it. The gap between digits keeps
+   the next one fully out of sight at rest. */
+.version-reel__wheel {
+  display: inline-block;
+  width: 1ch;
+  height: calc(var(--reel-line) + 2 * var(--reel-gap));
+  margin-block: calc(-1 * var(--reel-gap));
+  padding-block: var(--reel-gap);
+  box-sizing: border-box;
+  overflow: hidden;
+  mask-image: linear-gradient(
+    transparent,
+    #000 var(--reel-gap),
+    #000 calc(100% - var(--reel-gap)),
+    transparent
+  );
+  transition: width 520ms var(--ease-out) calc(var(--order) * 60ms);
+}
+
+/* A digit that only exists on one side opens or closes its own column. */
+.version-reel__wheel[data-enter],
+.version-reel[data-turn='turned'] .version-reel__wheel[data-leave] {
+  width: 0;
+}
+
+.version-reel[data-turn='turned'] .version-reel__wheel[data-enter] {
+  width: 1ch;
+}
+
+.version-reel__strip {
+  display: flex;
+  flex-direction: column;
+  gap: var(--reel-gap);
+  translate: 0 calc(var(--reel-pos) * var(--reel-step) * -1);
+  transition:
+    translate 440ms var(--ease-out) calc(var(--order) * 60ms),
+    transform 320ms var(--ease-out);
+}
+
+.version-reel__strip > span {
+  height: var(--reel-line);
+  text-align: center;
+}
+
+/* While the installer works the wheels keep catching on the next number,
+   the catch rippling right to left the way a carry runs. */
+.version-reel[data-turn='turning'] .version-reel__strip {
+  animation: version-reel-catch 1.7s calc(320ms + var(--order) * 110ms) infinite;
+}
+
+/* A reel that mounts already turned, like a count that just changed, still
+   makes its one turn. */
+@starting-style {
+  .version-reel[data-turn='turned'] .version-reel__strip {
+    translate: 0 0;
+  }
+}
+
+/* The final turn lands with a little mechanical give. */
+.version-reel[data-turn='turned'] .version-reel__strip {
+  transition:
+    translate 680ms cubic-bezier(0.3, 1.5, 0.5, 1) calc(var(--order) * 90ms),
+    transform 320ms var(--ease-out);
+}
+
+@keyframes version-reel-catch {
+  0%,
+  100% {
+    transform: none;
+    animation-timing-function: var(--ease-out);
+  }
+
+  9% {
+    transform: translateY(calc(var(--reel-step) * -0.3));
+    animation-timing-function: var(--ease-in-out);
+  }
+
+  21% {
+    transform: translateY(calc(var(--reel-step) * 0.05));
+    animation-timing-function: var(--ease-out);
+  }
+
+  30% {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-slip__item,
+  .version-reel__wheel,
+  .version-reel__strip,
+  .version-reel[data-turn] .version-reel__strip {
+    transition: none;
+    animation: none;
+  }
+
+  @starting-style {
+    .update-slip__item {
+      opacity: 1;
+      translate: none;
+    }
+  }
+}

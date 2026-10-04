@@ -24,7 +24,11 @@ function reasoningModel(reasoningEfforts: string[], defaultReasoningEffort?: str
   return {
     ...model,
     reasoningEfforts,
-    ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+    ...(defaultReasoningEffort
+      ? {
+          defaultReasoningEffort,
+        }
+      : {}),
   }
 }
 
@@ -157,23 +161,41 @@ describe('model catalog', () => {
   })
 
   it.each([
-    ['gpt-5.6-sol', true],
-    ['gpt-5.6-terra', true],
-    ['gpt-5.6-luna', true],
-    ['gpt-5.3-codex-spark', true],
+    ['gpt-6-astra', true],
+    ['gpt-6-sol', false],
+    ['gpt-6-luna', true],
+    ['gpt-6.1-sol', true],
+    ['gpt-daybreak-blue-latest', true],
+    ['gpt-5.6-sol', false],
+    ['gpt-5.6-terra', false],
+    ['gpt-5.6-luna', false],
+    ['gpt-5.3-codex-spark', false],
+    ['gpt-5.2', false],
     ['gpt-5.5', false],
     ['gpt-5.4', false],
     ['gpt-5.4-mini', false],
     ['fable', true],
+    ['claude-fable-5', false],
+    ['claude-fable-5-1', true],
+    ['claude-fable-5-1[1m]', true],
     ['opus', true],
+    ['claude-opus-5', false],
+    ['claude-opus-5-5', true],
     ['sonnet', true],
-    ['claude-opus-4-8', true],
+    ['claude-sonnet-5', false],
+    ['claude-sonnet-5-5', true],
+    ['claude-opus-4-8', false],
     ['haiku', false],
+    ['claude-haiku-4-5', false],
+    ['CLAUDE-HAIKU-4-5[1m]', false],
+    ['claude-opus-4-5', false],
     ['claude-opus-4-7', false],
     ['claude-opus-4-6', false],
     ['claude-sonnet-4-6', false],
     ['grok-4.5', true],
     ['grok-4.6', true],
+    ['grok-4.7', true],
+    ['grok-4.7-build-fast', false],
     ['provider-model-added-tomorrow', true],
   ])('defaults %s visibility to %s', (id, visible) => {
     expect(modelVisibleByDefault({ ...model, id })).toBe(visible)

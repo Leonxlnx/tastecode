@@ -1,8 +1,14 @@
 import type { DiffDecision, DiffFile, DiffHunk, DiffLine, SessionDiff } from '@harness/contracts'
 import { createHash } from 'node:crypto'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
+import { captureCli, spawnCli } from '@harness/proc/cli'
+import { realpathSync } from 'node:fs'
+import { realpath } from 'node:fs/promises'
+import path from 'node:path'
 import { promisify } from 'node:util'
-import { takeSnapshot } from './checkpoint.js'
+import { z } from 'zod'
+import { snapshotBase, takeSnapshot } from './checkpoint.js'
+import { canonicalCheckoutRoot } from './checkout-access.js'
 import type { Store } from './store.js'
 
 const run = promisify(execFile)
@@ -48,7 +54,7 @@ export async function reviewDiffHunk(
   const hunk = file?.hunks.find((entry) => entry.value.id === hunkId)
   if (!file || !hunk) throw new Error('diff hunk not found')
 
-  if (decision === 'reject') await applyReverse(repoPath, hunk.patch)
+  if (decision === 'reject') await reverseUnifiedDiff(repoPath, hunk.patch)
   store.setDiffDecision(threadId, hunkTarget(hunkId), decision)
   return readSessionDiff(repoPath, threadId, store)
 }
@@ -65,7 +71,7 @@ export async function reviewDiffFile(
   const file = diff.files.find((entry) => entry.value.path === filePath)
   if (!file) throw new Error('diff file not found')
 
-  if (decision === 'reject') await applyReverse(repoPath, file.patch)
+  if (decision === 'reject') await reverseUnifiedDiff(repoPath, file.patch)
   store.setDiffDecision(threadId, fileTarget(file.targetId), decision)
   return readSessionDiff(repoPath, threadId, store)
 }
@@ -86,9 +92,16 @@ async function parseDiff(
   threadId: string,
   store: DecisionReader,
 ): Promise<ParsedDiff> {
+  const root = canonicalCheckoutRoot(repoPath)
+  const scope = path.relative(root, realpathSync(repoPath)) || '.'
+  // Before the first commit, changes are shown against the empty tree.
+  const snapshotFrom = await snapshotBase(root)
+  const base = snapshotFrom.head ?? snapshotFrom.tree
   const snapshot = await takeSnapshot(repoPath)
-  const version = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
-  const files = await changedFiles(repoPath, snapshot.commit)
+  repoPath = root
+  const tree = (await git(repoPath, ['rev-parse', `${snapshot.commit}^{tree}`])).trim()
+  const version = digest(`${base}\0${tree}`)
+  const files = await changedFiles(repoPath, base, snapshot.commit, scope)
   // Bounded fan-out: a formatter sweep can touch thousands of files, and one
   // git process per file all at once hits Windows process-creation limits.
   const parsed: ParsedFile[] = []
@@ -111,10 +124,10 @@ async function parseDiff(
       '--dst-prefix=b/',
       '--find-renames',
       '--unified=3',
-      'HEAD',
+      base,
       snapshot.commit,
       '--',
-      ...paths,
+      ...paths.map((file) => `:(top,literal)${file}`),
     ])
     const hunks = parseHunks(file.path, patch, file.status === 'renamed')
     const targetId = digest(`file\0${file.path}\0${patch}`)
@@ -141,7 +154,9 @@ async function parseDiff(
 
 async function changedFiles(
   repoPath: string,
+  base: string,
   commit: string,
+  scope = '.',
 ): Promise<
   Array<{
     path: string
@@ -150,7 +165,16 @@ async function changedFiles(
   }>
 > {
   const fields = (
-    await git(repoPath, ['diff', '--name-status', '-z', '--find-renames', 'HEAD', commit])
+    await git(repoPath, [
+      'diff',
+      '--name-status',
+      '-z',
+      '--find-renames',
+      base,
+      commit,
+      '--',
+      ...(scope === '.' ? [] : [`:(top,literal)${scope}`]),
+    ])
   )
     .split('\0')
     .filter(Boolean)
@@ -233,27 +257,95 @@ function parseHunks(filePath: string, patch: string, renamed: boolean): ParsedHu
   })
 }
 
-async function applyReverse(repoPath: string, patch: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      'git',
-      ['apply', '--reverse', '--binary', '--recount', '--whitespace=nowarn', '-'],
-      { cwd: repoPath, windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
-    )
-    let stderr = ''
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => (stderr += chunk))
-    child.once('error', reject)
-    // stdin is a Socket; an unhandled EPIPE/ENOENT on it is an uncaught
-    // exception that takes the whole server down. The child's error/close
-    // path already reports the failure.
-    child.stdin.on('error', () => {})
-    child.once('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(stderr.trim() || 'could not apply diff decision'))
+/** Reverse one provider or Git-generated patch without touching unrelated work. */
+export async function reverseUnifiedDiff(repoPath: string, patch: string): Promise<void> {
+  const roots = new Set([gitPath(path.resolve(repoPath)), gitPath(await realpath(repoPath))])
+  let insideContent = false
+  const relative = patch
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('diff --git ')) {
+        insideContent = false
+        return relativePatchPath(line, roots)
+      }
+      if (line.startsWith('@@ ') || line === 'GIT binary patch') insideContent = true
+      if (insideContent) return line
+      if (
+        line.startsWith('--- ') ||
+        line.startsWith('+++ ') ||
+        line.startsWith('rename from ') ||
+        line.startsWith('rename to ') ||
+        line.startsWith('copy from ') ||
+        line.startsWith('copy to ') ||
+        line.startsWith('Binary files ')
+      ) {
+        return relativePatchPath(line, roots)
+      }
+      return line
     })
-    child.stdin.end(patch)
-  })
+    .join('\n')
+
+  const child = spawnCli(
+    'git',
+    ['apply', '--reverse', '--binary', '--recount', '--whitespace=nowarn', '-'],
+    { cwd: repoPath },
+  )
+  const captured = captureCli(child, 30_000)
+  child.stdin.on('error', () => undefined)
+  child.stdin.end(relative)
+  const result = await captured
+  if (result.code !== 0)
+    throw new Error('Could not apply diff decision. Check the working tree and retry.')
+}
+
+function gitPath(value: string): string {
+  const normalized = value.replaceAll('\\', '/')
+  return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized
+}
+
+function relativePatchPath(line: string, roots: ReadonlySet<string>): string {
+  const relative = (value: string): string => {
+    const quoted = value.startsWith('"')
+    const start = quoted ? '"' : ''
+    for (const root of roots) {
+      if (root === '/' || /^[A-Za-z]:$/.test(root)) continue
+      const spellings = quoted
+        ? [quoteGitPathContent(root), quoteGitPathContent(root, false)]
+        : [root]
+      for (const spelling of spellings) {
+        for (const prefix of ['a/', 'b/', '']) {
+          const absolute = `${start}${prefix}${spelling}/`
+          if (value.startsWith(absolute)) return `${start}${prefix}${value.slice(absolute.length)}`
+        }
+      }
+    }
+    return value
+  }
+  const diff = /^diff --git ("(?:\\.|[^"\\])*"|a\/.*?) ("(?:\\.|[^"\\])*"|b\/.*)$/.exec(line)
+  if (diff) return `diff --git ${relative(diff[1]!)} ${relative(diff[2]!)}`
+  const binary = /^Binary files (.+) and (.+) differ$/.exec(line)
+  if (binary) return `Binary files ${relative(binary[1]!)} and ${relative(binary[2]!)} differ`
+  const header = /^(--- |\+\+\+ |rename from |rename to |copy from |copy to )(.*)$/.exec(line)
+  if (header) return `${header[1]}${relative(header[2]!)}`
+  return line
+}
+
+function quoteGitPathContent(value: string, quoteUnicode = true): string {
+  const codes = new Map([
+    ['\\', '\\\\'],
+    ['"', '\\"'],
+    ['\t', '\\t'],
+    ['\n', '\\n'],
+    ['\r', '\\r'],
+    ['\b', '\\b'],
+    ['\f', '\\f'],
+    ['\v', '\\v'],
+  ])
+  const escaped = value.replace(/[\\"\t\n\r\b\f\v]/g, (character) => codes.get(character)!)
+  if (!quoteUnicode) return escaped
+  return escaped.replace(/[^\x20-\x7e]/gu, (character) =>
+    [...Buffer.from(character)].map((byte) => `\\${byte.toString(8).padStart(3, '0')}`).join(''),
+  )
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
@@ -268,7 +360,8 @@ async function git(cwd: string, args: string[]): Promise<string> {
     })
     return stdout
   } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr
+    const parsed = z.object({ stderr: z.string().optional() }).safeParse(error)
+    const stderr = parsed.success ? parsed.data.stderr : undefined
     throw new Error(stderr?.trim() || (error instanceof Error ? error.message : String(error)))
   }
 }
