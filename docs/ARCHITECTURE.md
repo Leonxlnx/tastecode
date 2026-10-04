@@ -458,7 +458,9 @@ text, so transcripts stay identical. This maintenance command is the only path t
 event rows without removing their task. See [History maintenance](./HISTORY.md).
 
 Checkpoint and undo commits have database-scoped Git refs. Worktree cleanup combines all
-retained commits by Git common directory before removing unused refs. Restore and branch
+retained commits by Git common directory before removing unused refs. Its identity is the
+filesystem-native canonical path, so Windows long paths and 8.3 aliases share one retained-commit
+set. Resolution errors propagate and separate repositories remain distinct. Restore and branch
 switch guards instead use the canonical checkout directory: separate worktrees can work
 independently, while tasks sharing a checkout cannot restore files during another turn or
 while its process is still stopping. An isolated start receives its base ref directly.
@@ -562,16 +564,18 @@ manual.
 
 ---
 
-## Dashboard design references (pending)
+## Dashboard design references (nightly integration)
 
-Pending source work as of 2026-10-04, tested at `0ccdb67d86eeaba313130b0429684faabb74f06d`;
-not merged or released. The public-beta baseline remains `main` at `6ac40ec1`.
-[PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393) is ready for review and targets
-`codex/nightly-dashboard-base` and depends on
-[PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392), preserving the full nightly provider
-roster and usage history. The integrated source includes the Windows cleanup corrections in
-[PR #1394](https://github.com/Leonxlnx/tastecode/pull/1394) and standalone API connection contract
-in [PR #1395](https://github.com/Leonxlnx/tastecode/pull/1395).
+Nightly dashboard support is implemented in
+[PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), targeting `nightly` after
+[PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392) merged at `17aa22a3`.
+The integrated source includes main through `3e67df35`, retaining the complete nightly provider
+roster and usage history. Windows cleanup
+[PR #1394](https://github.com/Leonxlnx/tastecode/pull/1394), task authorization
+[PR #1403](https://github.com/Leonxlnx/tastecode/pull/1403), and checkpoint identity
+[PR #1404](https://github.com/Leonxlnx/tastecode/pull/1404) are merged on main; the API connection
+contract in [PR #1395](https://github.com/Leonxlnx/tastecode/pull/1395) is merged on nightly.
+This feature is not a public-beta release.
 The asset import is complete: a separate dashboard catalog and provenance record contain
 200 reviewed generated desktop/mobile pairs, stored as 400 WebPs. The existing 172 website
 references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
@@ -597,19 +601,24 @@ sessions reject before inference or persisted Design state; ordinary coding rema
 Direct API sessions currently declare `images: false`, so visual Design is unsupported there.
 The workflow never substitutes an unannounced text-only build for the requested image copying.
 
-All four local gates passed on Windows at the tested source: lint, typecheck, build and tests
-(4,432 passed, 18 skipped, zero failed; 4,369 Vitest and 63 root tests, including 232 design-agent
-tests). Thirty-six focused cases cover nine provider IDs: 18 synthetic-vision website/dashboard
-flows and 18 capability-rejection/ordinary-follow-up cases.
+Fresh [Windows verification](https://github.com/Leonxlnx/tastecode/actions/runs/37228489532)
+passed lint, typecheck, the full test command and build at exact feature source
+`edc92ea9c82c40b1c7e0b6f12aa329b2fa05f79e`: 4,445 passed, 18 existing skips, zero failures.
+Desktop tests ran: 368 passed and 10 existing skips, included in that total. No deadlines were
+overridden. Follow-up integration changes only documentation and recorded screenshots.
+Historical local verification at `0ccdb67d` passed all four gates with 4,432 passed and 18 skips.
+Thirty-six focused cases cover nine provider IDs: 18 synthetic-vision website/dashboard flows
+and 18 capability-rejection/ordinary-follow-up cases.
 
-The isolated browser smoke exercised the real direct-API runtime against a synthetic endpoint
-at the same source, with 14 matching fingerprints. Two unsupported Design attempts made zero
-API POSTs and persisted zero Design runs. Ordinary follow-ups retained context and model across
-four synthetic completed turns (72 synthetic tokens); the idle queue was empty, no JavaScript
-exceptions occurred, and owned processes were stopped afterward. This proves capability
-degradation and ordinary API operation, not live vision generation. Live vision-model,
-packaged Electron, macOS and real-keyring acceptance remain unverified; human contracts/security
-review remains pending. Synthetic flows and a separate external demo do not replace these checks.
+The isolated browser smoke passed at `a02c6ab3490e55003aa2a95f977b8ccca690bea9`, exercising the
+direct-API runtime against a synthetic endpoint. Two unsupported Design attempts made no
+additional inference requests and persisted no Design runs. Ordinary follow-ups retained both
+API identities, models, messages and tool context across an owned server restart. Four completed
+synthetic turns used six fake API requests and 72 synthetic tokens. All 14 source/build
+fingerprints stayed stable during the run; the queue was empty, no browser exceptions occurred,
+and owned processes were stopped. This proves capability rejection and ordinary API recovery.
+Live image-capable dashboard generation, packaged Electron, macOS and real-keyring acceptance
+remain unverified. Synthetic flows and a separate external demo do not replace these checks.
 
 _Rejected:_ composing dashboards from marketing sections, treating generation retries as new
 layout votes, or requiring static screenshots in place of working native charts and controls.
@@ -634,7 +643,8 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-10-04 | Imported 200 dashboard pairs; four local gates and API/browser smoke pass at 0ccdb67d. Unreleased; live vision and packaged-app checks remain pending.                         |
+| 2026-10-04 | Added nightly dashboard references and image-capability preflight; Windows gates passed. Live-vision and packaged acceptance remain separate.                                  |
+| 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
 | 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |

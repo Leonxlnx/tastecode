@@ -290,7 +290,7 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-10-04 nightly synchronization · main 86d13b61</span>
+        <span class="meta">2026-10-04 nightly integration · main 3e67df35</span>
       </div>
     </div>
 
@@ -298,18 +298,40 @@
       <section id="scope">
         <p>
           Nightly synchronization retains the complete provider roster and usage history while
-          integrating main through 86d13b61. OpenCode shares concurrent starts, rejects interrupted
+          integrating main through 3e67df35. OpenCode shares concurrent starts, rejects interrupted
           session opening, recovers disconnected streams, and grants automatic permissions for one
           request only. ACP prompt rejection settles pending work and approvals. New API chats
           preserve their model, connection, and complete tool context across restart; older API
           chats without saved context cannot resume. Standalone Pi works without a custom harness.
-          Final local verification of this updated synchronization is in progress.
+        </p>
+        <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
-          has human approval and awaits merge after verification. The Windows cleanup corrections in
-          <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> have landed on
-          main; the standalone API connection contract in
-          <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a> has landed on
-          nightly. Packaged Windows/macOS verification remains pending.
+          merged into nightly at 17aa22a3. Dashboard support targets nightly through
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>; this is not a
+          public release. Windows cleanup
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394">#1394</a>, task authorization
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1403">#1403</a> and checkpoint
+          identity <a href="https://github.com/Leonxlnx/tastecode/pull/1404">#1404</a> are merged on
+          main. The standalone API connection contract
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1395">#1395</a> is merged on nightly.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
+            >Windows CI run 37228489532</a
+          >
+          passed lint, typecheck, the full test command and build for feature candidate edc92ea9:
+          4,445 tests passed, 18 existing skips, zero failures. Desktop tests ran with 368 passed
+          and 10 existing skips, included in that total; the real Windows alias regression passed.
+          No deadlines were overridden. Product source, tests, configuration, dependencies and
+          bundled images match that tested candidate; follow-up changes are documentation and
+          recorded screenshots only. Parent 67c7383c separately passed 4,395 tests in the same run.
+          Packaged Windows and macOS verification remains pending.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1404">Checkpoint identity (#1404)</a>:
+          Windows long paths and 8.3 aliases share one Git common-directory identity, preserving
+          linked worktrees' combined checkpoint refs during history cleanup. Resolution errors
+          propagate and separate repositories remain distinct.
         </p>
         <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1394"
@@ -1164,32 +1186,34 @@
               <li>
                 <i class="tick">●</i>
                 <span
-                  >Dashboard design support, unreleased
+                  >Dashboard design support, nightly integration
                   <span class="d"
-                    >unreleased; ready for review in
+                    >nightly integration in
                     <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
-                    targets codex/nightly-dashboard-base and depends on
-                    <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>: 200
-                    reviewed generated desktop/mobile dashboard pairs (400 WebPs) are imported in a
-                    separate catalog with provenance. Uniform group-first selection supplies one
-                    complete app shell. Plans use operate_monitor and functional filters, sorting,
-                    tabs, navigation, drawers and charts, including keyboard access, focus
-                    restoration and reduced motion. Native charts and visibly identified demo values
-                    avoid website-only validation blockers. Image capability is checked before
-                    inference; unsupported sessions, including direct API sessions with images:
-                    false, retain ordinary coding. The 172 shipped website references and 316 WebPs
-                    are unchanged; the combined bundle has 372 references, 344 paired, and 716
-                    WebPs. Default-bundle selection, saved-deck, attachment and hash checks passed
-                    for all 200 dashboard groups and 400 distinct WebPs. The catalog is deeply
-                    JSON-equal to the private import after formatting; the other 401 files are
-                    byte-identical. Prior-source verification passed all four local gates at
-                    0ccdb67d: lint, typecheck, build, and 4,432 tests passed, 18 skipped, zero
-                    failed. Thirty-six focused cases across nine provider IDs cover 18
-                    synthetic-vision flows and 18 capability rejections/ordinary follow-ups. The
-                    isolated browser/API smoke passed: two unsupported Design attempts made zero API
-                    POSTs or persisted Design runs; ordinary follow-ups retained context and model,
-                    with no JavaScript exceptions or queued work left. Live vision-model, packaged
-                    Electron, macOS and real-keyring acceptance remain unverified</span
+                    after merged
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>; not
+                    released on public beta. The 200 reviewed generated desktop/mobile dashboard
+                    pairs (400 WebPs) are imported in a separate catalog with provenance. Uniform
+                    group-first selection supplies one complete app shell. Plans use operate_monitor
+                    and functional filters, sorting, tabs, navigation, drawers and charts, including
+                    keyboard access, focus restoration and reduced motion. Native charts and visibly
+                    identified demo values avoid website-only validation blockers. Image capability
+                    is checked before inference; unsupported sessions, including direct API sessions
+                    with images: false, retain ordinary coding. The 172 shipped website references
+                    and 316 WebPs are unchanged; the combined bundle has 372 references, 344 paired,
+                    and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks
+                    passed for all 200 dashboard groups and 400 distinct WebPs. The catalog is
+                    deeply JSON-equal to the private import after formatting; the other 401 files
+                    are byte-identical. Fresh Windows CI at edc92ea9 passed all four gates with
+                    4,445 tests passed, 18 existing skips and zero failures. Historical local gates
+                    at 0ccdb67d passed with 4,432 tests and 18 skips. Thirty-six focused cases
+                    across nine provider IDs cover 18 synthetic-vision flows and 18 capability
+                    rejections/ordinary follow-ups. The isolated browser/API smoke at a02c6ab3 used
+                    a synthetic endpoint: two unsupported Design attempts added no inference
+                    requests or persisted Design runs; ordinary follow-ups retained both API
+                    identities, models and tool context across an owned restart, with no browser
+                    exceptions or queued work left. Live image-capable dashboard generation,
+                    packaged Electron, macOS and real-keyring acceptance remain unverified</span
                   >
                 </span>
               </li>
