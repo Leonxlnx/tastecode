@@ -8,7 +8,17 @@ import { z } from 'zod'
  * engine-specific may leak past an adapter.
  */
 
-export const ProviderIdSchema = z.enum(['codex', 'claude-code', 'grok'])
+export const ProviderIdSchema = z.enum([
+  'codex',
+  'claude-code',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+  'acp',
+  'api',
+])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 /**
@@ -72,14 +82,26 @@ export const TurnSchema = z.object({
 })
 export type Turn = z.infer<typeof TurnSchema>
 
-export const ThreadSchema = z.object({
-  id: z.string(),
-  provider: ProviderIdSchema,
-  /** Absolute path to the workspace this thread operates on. */
-  workspacePath: z.string(),
-  title: z.string().optional(),
-  createdAt: z.number(),
-})
+export const ThreadSchema = z
+  .object({
+    id: z.string(),
+    provider: ProviderIdSchema,
+    /** Selects a server-owned model connection for the Harness API runtime. */
+    connectionId: z.string().min(1).optional(),
+    /** Absolute path to the workspace this thread operates on. */
+    workspacePath: z.string(),
+    title: z.string().optional(),
+    createdAt: z.number(),
+  })
+  .superRefine((thread, context) => {
+    if ((thread.provider === 'api') !== Boolean(thread.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api threads',
+      })
+    }
+  })
 export type Thread = z.infer<typeof ThreadSchema>
 
 /**
@@ -290,15 +312,33 @@ export type Model = z.infer<typeof ModelSchema>
 /**
  * The small model TasteCode uses for short product-owned writing such as thread
  * titles and commit-message drafts. Source identity stays explicit because
- * model ids are not globally unique across custom harnesses.
+ * model ids are not globally unique and API connections have their own bill.
  */
-export const BackgroundModelTargetSchema = z.object({
-  provider: ProviderIdSchema,
-  agent: z.string().min(1).optional(),
-  model: z.string().min(1),
-  effort: z.string().min(1).optional(),
-  serviceTier: z.string().min(1).optional(),
-})
+export const BackgroundModelTargetSchema = z
+  .object({
+    provider: ProviderIdSchema,
+    connectionId: z.string().min(1).optional(),
+    agent: z.string().min(1).optional(),
+    model: z.string().min(1),
+    effort: z.string().min(1).optional(),
+    serviceTier: z.string().min(1).optional(),
+  })
+  .superRefine((target, context) => {
+    if ((target.provider === 'api') !== Boolean(target.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api background models',
+      })
+    }
+    if (target.provider === 'api' && target.agent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agent'],
+        message: 'api background models cannot select an agent',
+      })
+    }
+  })
 export type BackgroundModelTarget = z.infer<typeof BackgroundModelTargetSchema>
 
 export const BackgroundModelPreferenceSchema = z.discriminatedUnion('mode', [
@@ -311,6 +351,7 @@ export const BackgroundModelSourceSchema = z.object({
   id: z.string().min(1),
   displayName: z.string().min(1),
   provider: ProviderIdSchema,
+  connectionId: z.string().min(1).optional(),
   agent: z.string().min(1).optional(),
   models: z.array(ModelSchema),
 })
@@ -383,7 +424,16 @@ export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
 export const CustomHarnessSchema = z.object({
   id: z.string().trim().min(1).max(128),
   displayName: z.string().trim().min(1).max(80),
-  provider: z.enum(['codex', 'claude-code', 'grok']),
+  provider: z.enum([
+    'codex',
+    'claude-code',
+    'grok',
+    'cursor',
+    'opencode',
+    'antigravity',
+    'pi',
+    'acp',
+  ]),
   command: z
     .string()
     .trim()

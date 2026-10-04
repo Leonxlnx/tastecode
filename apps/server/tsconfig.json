@@ -10,9 +10,14 @@
     { "path": "../../packages/contracts" },
     { "path": "../../packages/design-agent" },
     { "path": "../../packages/adapter-acp" },
+    { "path": "../../packages/adapter-api" },
     { "path": "../../packages/proc" },
     { "path": "../../packages/adapter-codex" },
+    { "path": "../../packages/adapter-cursor" },
+    { "path": "../../packages/adapter-opencode" },
     { "path": "../../packages/adapter-claude-code" },
-    { "path": "../../packages/adapter-grok" }
+    { "path": "../../packages/adapter-antigravity" },
+    { "path": "../../packages/adapter-grok" },
+    { "path": "../../packages/adapter-pi" }
   ]
 }

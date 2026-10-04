@@ -19,6 +19,7 @@ function system(overrides: Partial<SystemProbe> = {}): SystemProbe {
     isInstalled: async () => false,
     version: async () => undefined,
     auth: async () => 'unknown',
+    acpAgents: async () => [],
     ...overrides,
   }
 }
@@ -47,7 +48,7 @@ describe('detectProviders', () => {
     const second = detectProviders(sharedSystem)
     expect(first).toBe(second)
     await Promise.resolve()
-    expect(installedChecks).toBe(3)
+    expect(installedChecks).toBe(7)
 
     release()
     await Promise.all([first, second])
@@ -65,11 +66,11 @@ describe('detectProviders', () => {
     const prewarmed = prewarmProviders(sharedSystem)
     expect(prewarmProviders(sharedSystem)).toBe(prewarmed)
     await prewarmed
-    expect(installedChecks).toBe(3)
+    expect(installedChecks).toBe(7)
 
     expect(detectProviders(sharedSystem)).toBe(prewarmed)
     await detectProviders(sharedSystem)
-    expect(installedChecks).toBe(6)
+    expect(installedChecks).toBe(14)
   })
 
   it('refreshes a prewarmed scan that waited too long for its first reader', async () => {
@@ -87,7 +88,7 @@ describe('detectProviders', () => {
     vi.setSystemTime(30_001)
     await detectProviders(sharedSystem)
 
-    expect(installedChecks).toBe(6)
+    expect(installedChecks).toBe(14)
   })
 
   it('reports an installed provider with the version it gave us', async () => {
@@ -126,6 +127,20 @@ describe('detectProviders', () => {
       'https://code.claude.com/docs/en/getting-started',
     )
     expect(find(providers, 'grok').setup?.installUrl).toBe('https://x.ai/cli')
+    expect(find(providers, 'cursor').setup?.installUrl).toBe(
+      'https://docs.cursor.com/en/cli/installation',
+    )
+    expect(find(providers, 'opencode').setup?.installUrl).toBe('https://opencode.ai/en/docs')
+  })
+
+  it('reports when the installed Cursor wire version is unsupported', async () => {
+    const providers = await detectProviders(
+      system({ isInstalled: async () => true, version: async () => '2025.12.1' }),
+    )
+
+    const cursor = find(providers, 'cursor')
+    expect(cursor.installed).toBe(true)
+    expect(cursor.problem).toContain('supports 2026.07')
   })
 
   it('omits the version when the binary would not say', async () => {
@@ -160,7 +175,31 @@ describe('detectProviders', () => {
   it('reports every provider we know about, installed or not', async () => {
     const providers = await detectProviders(system())
 
-    expect(providers.map((entry) => entry.id).sort()).toEqual(['claude-code', 'codex', 'grok'])
+    expect(providers.map((entry) => entry.id).sort()).toEqual([
+      'acp',
+      'antigravity',
+      'claude-code',
+      'codex',
+      'cursor',
+      'grok',
+      'opencode',
+      'pi',
+    ])
+  })
+
+  it('reports every installed ACP agent through the aggregate row', async () => {
+    const providers = await detectProviders(
+      system({
+        acpAgents: async () => [
+          { name: 'Kimi CLI', installed: true },
+          { name: 'Qwen Code', installed: true },
+        ],
+      }),
+    )
+
+    const acp = find(providers, 'acp')
+    expect(acp.installed).toBe(true)
+    expect(acp.version).toBe('Kimi CLI, Qwen Code')
   })
 })
 
@@ -178,6 +217,18 @@ describe('install command resolution', () => {
     )
   })
 
+  it('resolves nightly CLI and ACP installs from trusted tables', async () => {
+    await expect(installCommandFor('acp', 'kimi')).resolves.toBe(
+      'npm install -g @moonshot-ai/kimi-code',
+    )
+    await expect(installCommandFor('opencode')).resolves.toBe('npm install -g opencode-ai')
+    await expect(installCommandFor('acp', 'gemini')).resolves.toBe(
+      'npm install -g @google/gemini-cli',
+    )
+    await expect(installCommandFor('acp', 'nonexistent')).rejects.toThrow(/unknown install target/)
+    await expect(installCommandFor('acp')).rejects.toThrow(/unknown install target/)
+  })
+
   it('refuses targets it cannot script instead of guessing', async () => {
     // Grok ships its own installer; there is no command worth running blind.
     await expect(installCommandFor('grok')).rejects.toThrow(/no scripted install/)
@@ -192,9 +243,17 @@ describe('sign-in launch command resolution', () => {
     await expect(launchCommandFor('codex')).resolves.toBe('codex login')
     await expect(launchCommandFor('claude-code')).resolves.toBe('claude auth login')
     await expect(launchCommandFor('grok')).resolves.toBe('grok login')
+    await expect(launchCommandFor('opencode')).resolves.toBe('opencode auth login')
+    await expect(launchCommandFor('pi')).resolves.toBe('pi')
+    await expect(launchCommandFor('acp', 'gemini')).resolves.toBe('gemini')
+    await expect(launchCommandFor('acp', 'kimi')).resolves.toBe('kimi')
+    await expect(launchCommandFor('acp', 'qwen')).resolves.toBe('qwen')
   })
 
   it('refuses unknown launch targets', async () => {
+    await expect(launchCommandFor('acp', 'nonexistent')).rejects.toThrow(/unknown launch target/)
+    await expect(launchCommandFor('acp')).rejects.toThrow(/unknown launch target/)
+    await expect(launchCommandFor('cursor')).rejects.toThrow(/signs in through the app/)
     await expect(launchCommandFor('unlisted-cli' as never)).rejects.toThrow(/unknown launch target/)
   })
 })

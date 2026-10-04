@@ -7,6 +7,7 @@ import type {
   ApprovalMode,
   Capabilities,
   DomainEvent,
+  Model,
   ProviderId,
   Thread,
 } from '@harness/contracts'
@@ -18,6 +19,7 @@ import {
   type ParsedJsonRpcRequestOptions,
   type ServerRequestHandler,
 } from '@harness/proc'
+import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { Streamer } from './events.js'
 import type { AcpMcpServer } from './mcp.js'
@@ -38,9 +40,8 @@ import {
 /**
  * Client for the Agent Client Protocol.
  *
- * On main this is not a provider: Grok runs over it when a project has MCP
- * servers, because Grok's ACP mode accepts MCP servers per session. The ACP
- * agent roster (Gemini, Kimi, Qwen) lives on the nightly branch only.
+ * The registered agents and Grok's MCP mode share this client. Agent-specific
+ * launch commands and model discovery stay in the registry in agents.ts.
  *
  * Verified against gemini-cli in `--experimental-acp` mode; the fixtures in
  * the tests are those captured frames.
@@ -79,7 +80,7 @@ export type AcpLaunchOptions = {
   /** The settings `argsFor` launches with first. */
   settings?: AcpTurnSettings
   spawn?: typeof spawnCli
-  provider: ProviderId
+  provider?: ProviderId
   mcpServers?: AcpMcpServer[]
   /** Added to the inherited environment, for engines tuned through it. */
   env?: Record<string, string> | undefined
@@ -105,19 +106,10 @@ export interface AcpRpc {
 
 export { prepareAcpMcpServers, type AcpMcpServer } from './mcp.js'
 
-type AcpLaunchSpec = {
-  id: string
-  name: string
-  /** Executable, resolved on PATH. May be an npm shim on Windows. */
-  command: string
-  args: string[]
-  /** Wire version captured while verifying this agent. */
-  supportedVersion?: string
-  /** CLI flag used to select a model before the ACP handshake. */
-  modelArg?: string
-  /** ACP config option used to select a model after creating a session. */
-  modelConfigId?: string
-}
+type AcpLaunchSpec = Pick<
+  AcpAgentSpec,
+  'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
+>
 
 const IMAGE_MIME_TYPES = new Map([
   ['.gif', 'image/gif'],
@@ -182,20 +174,26 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
 
-  constructor(agentId: string, launch: AcpLaunchOptions) {
+  constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
-    this.#spawn = launch.spawn ?? spawnCli
-    this.#provider = launch.provider
-    this.#mcpServers = launch.mcpServers ?? []
-    this.#env = launch.env
-    this.#argsFor = launch.argsFor
-    this.#settings = { ...launch.settings }
-    this.#spec = {
-      id: agentId,
-      name: launch.name,
-      command: launch.command,
-      args: launch.args ?? [],
+    this.#spawn = launch?.spawn ?? spawnCli
+    this.#provider = launch?.provider ?? 'acp'
+    this.#mcpServers = launch?.mcpServers ?? []
+    this.#env = launch?.env
+    this.#argsFor = launch?.argsFor
+    this.#settings = { ...launch?.settings }
+    if (launch) {
+      this.#spec = {
+        id: agentId,
+        name: launch.name,
+        command: launch.command,
+        args: launch.args ?? [],
+      }
+      return
     }
+    const spec = findAgentSpec(agentId)
+    if (!spec) throw new Error(`unknown ACP agent "${agentId}"`)
+    this.#spec = spec
   }
 
   /** Whether the connected agent can reload this session after its process ends. */
@@ -335,7 +333,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
       .catch((cause) => {
         if (this.#streamer !== streamer) return
-        this.#clearTurn()
+        this.#clearTurn('failed')
         this.emit('event', {
           type: 'thread.error',
           threadId,
@@ -383,17 +381,14 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return () => this.off('disconnected', listener)
   }
 
-  #clearTurn(): void {
-    const streamer = this.#streamer
-    this.#streamer = undefined
+  async listModels(): Promise<Model[]> {
+    return discoverAgentModels(this.#spec.id)
+  }
+
+  #clearTurn(toolStatus: 'completed' | 'failed' = 'failed'): void {
+    this.#finishStreamer(toolStatus)
     this.#activeTurn = undefined
-    for (const event of streamer?.finish() ?? []) this.emit('event', event)
-    for (const [id, respond] of this.#pendingApprovals) {
-      respond({ outcome: { outcome: 'cancelled' } })
-      this.emit('event', { type: 'approval.resolved', id })
-    }
-    this.#pendingApprovals.clear()
-    this.#optionsById.clear()
+    this.#cancelPendingApprovals()
   }
 
   /** Complete the ACP initialize handshake without creating a paid session. */
@@ -673,11 +668,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
   #finishTurn(threadId: string, turnId: string, result: PromptResult, streamer?: Streamer): void {
     const stopReason = result.stopReason
+    const status =
+      stopReason === 'cancelled' ? 'interrupted' : stopReason === 'refusal' ? 'failed' : 'completed'
     // Finish the streamer this turn owns, never whichever one is current —
     // a late completion must not close the next turn's open items.
     const owned = streamer ?? this.#streamer
     if (owned !== this.#streamer) return
-    this.#clearTurn()
+    this.#clearTurn(status === 'completed' ? 'completed' : 'failed')
     const usage = acpTurnUsage(result.usage, this.#model)
     if (usage) this.emit('event', { type: 'usage.updated', usage })
 
@@ -699,16 +696,27 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       this.emit('log', `turn ended: ${stopReason}`)
     }
 
-    this.emit('event', {
-      type: 'turn.completed',
-      turnId,
-      status:
-        stopReason === 'cancelled'
-          ? 'interrupted'
-          : stopReason === 'refusal'
-            ? 'failed'
-            : 'completed',
-    })
+    this.emit('event', { type: 'turn.completed', turnId, status })
+  }
+
+  #finishStreamer(toolStatus: 'completed' | 'failed', streamer?: Streamer): void {
+    // Finish the streamer this turn owns, never whichever one is current —
+    // a late completion must not close the next turn's open items.
+    const owned = streamer ?? this.#streamer
+    if (owned === this.#streamer) this.#streamer = undefined
+    for (const event of owned?.finish(toolStatus) ?? []) this.emit('event', event)
+  }
+
+  #cancelPendingApprovals(): void {
+    // Anything still waiting is now unanswerable — the turn it belonged to is
+    // over. The agent is still blocked on its request, so it must hear
+    // "cancelled", not silence; the UI must hear "resolved".
+    for (const [id, respond] of this.#pendingApprovals) {
+      respond({ outcome: { outcome: 'cancelled' } })
+      this.emit('event', { type: 'approval.resolved', id })
+    }
+    this.#pendingApprovals.clear()
+    this.#optionsById.clear()
   }
 }
 

@@ -3,7 +3,19 @@ export {
   parseAcpThreadId,
   type AcpLaunchOptions,
   type AcpStartOptions,
+  type AcpTurnSettings,
 } from './adapter.js'
+export {
+  ACP_AGENTS,
+  LISTED_AGENTS,
+  acpAccount,
+  acpSignOut,
+  detectAgents,
+  discoverAgentModels,
+  findAgentSpec,
+  parseKimiModels,
+  type AcpAgentSpec,
+} from './agents.js'
 export { prepareAcpMcpServers, validateAcpMcpServer, type AcpMcpServer } from './mcp.js'
 export { optionFor, type PermissionOption } from './approvals.js'
 export { Streamer } from './events.js'

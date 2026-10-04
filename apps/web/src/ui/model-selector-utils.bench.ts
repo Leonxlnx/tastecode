@@ -7,10 +7,10 @@ const models = Array.from(
   { length: 10_000 },
   (_, index) =>
     ({
-      key: `codex:harness-${index % 500}:model-${index}`,
+      key: `codex:connection-${index % 500}:model-${index}`,
       provider: 'codex',
-      agent: { id: `harness-${index % 500}`, name: `Harness ${index % 500}` },
-      sourceName: `Harness ${index % 500}`,
+      connectionId: `connection-${index % 500}`,
+      sourceName: `Connection ${index % 500}`,
       mark: 'openai',
       model: {
         id: `model-${index}`,

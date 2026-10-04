@@ -637,6 +637,8 @@ function renderProviders(
       provider="codex"
       account={account}
       providerStatuses={statuses}
+      acpAgents={[]}
+      modelConnections={[]}
       transport={transport}
       onConnectionsChanged={() => {}}
       onAccountChange={() => {}}
@@ -1269,7 +1271,111 @@ describe('model settings', () => {
 })
 
 describe('provider settings', () => {
-  it('keeps custom harness controls out of the public beta', () => {
+  it('offers MCP settings for the returned nightly providers and follows their declared capabilities', async () => {
+    const transport = new TestTransport((method) => {
+      if (method === 'mcp.list')
+        return {
+          capabilities: {
+            inventory: true,
+            add: true,
+            update: true,
+            remove: true,
+            reload: false,
+            startOAuth: false,
+            cancelOAuth: false,
+          },
+          servers: [],
+        }
+      if (method === 'providers.watch') return { expiresInMs: 30_000 }
+      throw new Error('Unexpected ' + method)
+    })
+    renderSettings({
+      transport,
+      overrides: {
+        provider: 'opencode',
+        providerName: 'OpenCode',
+        projectPath: '/test-project',
+        providerStatuses: [installedProvider('opencode', 'OpenCode')],
+        initialSection: 'mcp',
+      },
+    })
+    await waitFor(() =>
+      expect(transport.requests).toContainEqual({
+        method: 'mcp.list',
+        params: { provider: 'opencode', projectPath: '/test-project' },
+      }),
+    )
+    expect(await screen.findByRole('button', { name: 'Add server' })).toBeTruthy()
+  })
+
+  it('connects an API-only account without installing a CLI and keeps its key out of metadata', async () => {
+    const onConnectionsChanged = vi.fn()
+    const transport = new TestTransport((method, params) => {
+      if (method === 'connections.upsert')
+        return {
+          connection: { ...methods[method].params.parse(params), credentialConfigured: false },
+        }
+      if (method === 'connections.setCredential') return { credentialConfigured: true }
+      throw new Error('Unexpected ' + method)
+    })
+    render(
+      <ProviderSettings
+        provider="api"
+        account={undefined}
+        providerStatuses={[]}
+        transport={transport}
+        onConnectionsChanged={onConnectionsChanged}
+        onAccountChange={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Connect another plan or API' }))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research API' } })
+    fireEvent.change(screen.getByLabelText('Default model'), {
+      target: { value: 'research-model' },
+    })
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'fixture-credential' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalledTimes(1))
+    const metadata = transport.requests.find(({ method }) => method === 'connections.upsert')
+    if (!metadata) throw new Error('Connection metadata was not sent')
+    expect(metadata.params).toMatchObject({
+      displayName: 'Research API',
+      defaultModel: 'research-model',
+      enabled: true,
+    })
+    expect(JSON.stringify(metadata)).not.toContain('fixture-credential')
+    expect(
+      transport.requests.find(({ method }) => method === 'connections.setCredential')?.params,
+    ).toEqual({
+      connectionId: methods['connections.upsert'].params.parse(metadata.params).id,
+      apiKey: 'fixture-credential',
+    })
+    expect(
+      transport.requests.some(
+        ({ method }) => method === 'providers.install' || method === 'auth.status',
+      ),
+    ).toBe(false)
+    expect(screen.queryByLabelText('API key')).toBeNull()
+  })
+
+  it('renders every nightly CLI provider returned by the server', async () => {
+    const providers: Array<[ProviderId, string]> = [
+      ['cursor', 'Cursor'],
+      ['opencode', 'OpenCode'],
+      ['antigravity', 'Antigravity'],
+      ['pi', 'Pi'],
+    ]
+    renderProviders(
+      providers.map(([id, name]) => installedProvider(id, name)),
+      () => ({ signedIn: true }),
+    )
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(providers.length),
+    )
+    for (const [, name] of providers) expect(providerRow(name)).toBeTruthy()
+  })
+
+  it('keeps custom harness controls separate from provider settings', () => {
     renderProviders([], () => {
       throw new Error('unexpected request')
     })
@@ -1322,7 +1428,7 @@ describe('provider settings', () => {
     const transport = new TestTransport(async (method, params) => {
       if (method === 'auth.status') {
         const request = methods[method].params.parse(params)
-        return accountFor(request.provider)
+        return request.provider === 'acp' ? { signedIn: true } : accountFor(request.provider)
       }
       if (method === 'auth.startLogin') {
         return { loginId: 'login-1', authUrl: 'https://auth.example.test/' }
@@ -1358,6 +1464,40 @@ describe('provider settings', () => {
             setup: { installUrl: 'https://example.test/grok', login: 'provider' },
           },
         ]}
+        acpAgents={[
+          {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            installed: false,
+            verified: true,
+            setup: {
+              installUrl: 'https://example.test/gemini',
+              installCommand: 'npm install -g @google/gemini-cli',
+              login: 'provider',
+            },
+          },
+          {
+            id: 'qwen',
+            name: 'Qwen Code',
+            installed: false,
+            verified: false,
+            setup: {
+              installUrl: 'https://example.test/qwen',
+              installCommand: 'npm install -g @qwen-code/qwen-code',
+              login: 'provider',
+            },
+          },
+          {
+            id: 'kimi',
+            name: 'Kimi CLI',
+            installed: true,
+            verified: true,
+            setup: {
+              installUrl: 'https://example.test/kimi',
+              login: 'provider',
+            },
+          },
+        ]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1382,7 +1522,7 @@ describe('provider settings', () => {
       />,
     )
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(2))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(3))
     expect(screen.getAllByText('Codex')).toHaveLength(1)
 
     const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')
@@ -1416,8 +1556,11 @@ describe('provider settings', () => {
     expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
-    // API connections do not exist on main.
-    expect(screen.queryByRole('button', { name: 'Connect another plan or API' })).toBeNull()
+    // Every configured ACP agent and API connection is available on nightly.
+    expect(screen.getByText('Gemini CLI')).toBeTruthy()
+    expect(screen.getByText('Qwen Code')).toBeTruthy()
+    expect(screen.getByText('Kimi CLI')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Connect another plan or API' })).toBeTruthy()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
@@ -1609,6 +1752,19 @@ describe('provider settings', () => {
             },
           },
         ]}
+        acpAgents={[
+          {
+            id: 'kimi',
+            name: 'Kimi CLI',
+            installed: true,
+            verified: true,
+            setup: {
+              installUrl: 'https://example.test/kimi',
+              login: 'provider',
+            },
+            problem: 'Vendor ended individual sign-in.',
+          },
+        ]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1633,7 +1789,7 @@ describe('provider settings', () => {
       />,
     )
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy())
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign in' })).toHaveLength(2))
     const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
     if (!grokRow) throw new Error('Grok row missing')
     fireEvent.click(within(grokRow).getByRole('button', { name: 'Sign in' }))
@@ -1676,6 +1832,9 @@ describe('provider settings', () => {
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
 
+    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
+    if (!kimiRow) throw new Error('Kimi row missing')
+    expect(within(kimiRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
     expect(open).toHaveBeenCalledTimes(1)
     expect(onConnectionsChanged).not.toHaveBeenCalled()
   })
@@ -1989,8 +2148,8 @@ describe('provider defaults', () => {
     const { rerender } = renderRoster({ providerStatuses: [], providersLoading: true })
     const loading = screen.getByText('Loading providers…').closest('[role="status"]')!
     expect(loading.getAttribute('aria-busy')).toBe('true')
-    expect(loading.querySelectorAll('.provider-row--skeleton')).toHaveLength(3)
-    expect(loading.querySelectorAll('.provider-tune')).toHaveLength(3)
+    expect(loading.querySelectorAll('.provider-row--skeleton')).toHaveLength(7)
+    expect(loading.querySelectorAll('.provider-tune')).toHaveLength(7)
 
     rerender({ providerStatuses: [codex], providersLoading: false })
     expect(screen.queryByText('Loading providers…')).toBeNull()

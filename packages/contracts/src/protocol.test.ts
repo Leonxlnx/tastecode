@@ -19,6 +19,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  UsageHistoryResultSchema,
   type ProviderLimit,
   type ProviderLimitSource,
 } from './protocol.js'
@@ -59,11 +60,11 @@ describe('audit recovery contracts', () => {
     expect(channels['preview.captureCancelled'].parse({ requestId })).toEqual({ requestId })
     expect(
       methods['providers.watch'].params.parse({
-        provider: 'grok',
+        provider: 'api',
         projectPath: '/repo',
         targets: ['mcp', 'skills'],
       }),
-    ).toMatchObject({ provider: 'grok' })
+    ).toMatchObject({ provider: 'api' })
     expect(
       methods['providers.watch'].params.safeParse({
         provider: 'codex',
@@ -236,6 +237,64 @@ describe('protocol envelopes', () => {
     expect(RequestSchema.parse({ id: '1', method: 'system.info', params: {} })).toBeTruthy()
   })
 
+  it('keeps usage estimates paired with their pricing coverage', () => {
+    const totals = {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      cacheWriteInputTokens: 10,
+      outputTokens: 20,
+      reasoningTokens: 5,
+      processedTokens: 330,
+      estimatedCostUsd: 0.01,
+      cacheSavingsUsd: 0.02,
+      providerReportedCostUsd: 0,
+      providerReportedTokens: 0,
+      pricedTokens: 300,
+      unpricedTokens: 30,
+    }
+    const result = {
+      range: '30d' as const,
+      startDate: '2026-07-10',
+      endDate: '2026-08-08',
+      generatedAt: 1,
+      sessionCount: 1,
+      activeDays: 1,
+      totals,
+      providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
+      models: [
+        {
+          provider: 'codex' as const,
+          model: 'gpt-5.6-sol',
+          sessionCount: 1,
+          pricing: 'exact' as const,
+          totals,
+        },
+      ],
+      daily: [
+        {
+          date: '2026-08-08',
+          sessionCount: 1,
+          totals,
+          providers: [{ provider: 'codex' as const, tokens: 330, estimatedCostUsd: 0.01 }],
+        },
+      ],
+      sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
+      scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
+      warnings: [],
+    }
+
+    expect(UsageHistoryResultSchema.parse(result)).toEqual(result)
+  })
+
+  it('keeps local usage history separate from earned provider reset credits', () => {
+    const history = { range: '30d', refresh: true }
+    expect(methods['usage.history'].params.parse(history)).toEqual(history)
+    expect(methods['usage.history'].params.safeParse({ range: 'forever' }).success).toBe(false)
+    expect(methods['usage.resetHistory'].result.parse({ started: true })).toEqual({ started: true })
+    expect(methods['usage.resetHistory'].result.safeParse({ outcome: 'reset' }).success).toBe(false)
+    expect(methods['usage.consumeReset'].result.safeParse({ started: true }).success).toBe(false)
+  })
+
   it('requires a sequence on every push so clients can detect gaps', () => {
     expect(() => PushSchema.parse({ channel: 'server.welcome', data: {} })).toThrow()
   })
@@ -376,41 +435,35 @@ describe('protocol envelopes', () => {
       }),
     ).toThrow()
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
-    expect(methods['models.list'].params.parse({ provider: 'codex', agent: 'codex-fork' })).toEqual(
-      {
-        provider: 'codex',
-        agent: 'codex-fork',
-      },
-    )
+    expect(methods['models.list'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
     expect(
       methods['harnesses.upsert'].params.parse({
-        id: 'codex-fork',
-        displayName: 'Codex Fork',
-        provider: 'codex',
-        command: '/Applications/Codex forks/codex-fork',
-        args: ['--profile', 'value with spaces'],
-        workingDirectory: '~/Developer/codex-fork',
-        environment: { CODEX_HOME: '/Users/me/.codex-fork' },
+        id: 'deepseek-pi',
+        displayName: 'DeepSeek Pi',
+        provider: 'pi',
+        command: '/Applications/Pi forks/deepseek-pi',
+        args: ['--openrouter', 'value with spaces'],
+        workingDirectory: '~/Developer/pi-deepseek',
+        environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
       }),
     ).toMatchObject({
-      provider: 'codex',
-      args: ['--profile', 'value with spaces'],
-      workingDirectory: '~/Developer/codex-fork',
-      environment: { CODEX_HOME: '/Users/me/.codex-fork' },
+      provider: 'pi',
+      args: ['--openrouter', 'value with spaces'],
+      workingDirectory: '~/Developer/pi-deepseek',
+      environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
     })
     expect(
       methods['harnesses.verify'].result.parse({
         verification: {
           status: 'ready',
-          summary: 'Codex Fork is compatible',
+          summary: 'DeepSeek Pi is compatible',
           checkedAt: 1,
-          resolvedCommand: '/Users/me/.local/bin/codex-fork',
+          resolvedCommand: '/Users/me/.local/bin/deepseek-pi',
           checks: [
-            {
-              label: 'Codex app-server',
-              status: 'passed',
-              detail: 'Initialize handshake completed.',
-            },
+            { label: 'Pi RPC', status: 'passed', detail: 'Initialize handshake completed.' },
           ],
         },
       }),
@@ -419,22 +472,20 @@ describe('protocol envelopes', () => {
       methods['harnesses.upsert'].params.parse({
         id: 'bad',
         displayName: 'Bad',
-        provider: 'unlisted-cli',
+        provider: 'api',
         command: 'bad',
         args: [],
       }),
     ).toThrow()
-    expect(() => methods['models.list'].params.parse({ provider: 'codex', agent: '' })).toThrow()
-    expect(methods['auth.status'].params.parse({ provider: 'codex', agent: 'codex-fork' })).toEqual(
-      {
-        provider: 'codex',
-        agent: 'codex-fork',
-      },
-    )
+    expect(() => methods['models.list'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(methods['auth.status'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
     expect(methods['auth.startLogin'].result.parse({ loginId: 'cli-login' })).toEqual({
       loginId: 'cli-login',
     })
-    expect(() => methods['auth.status'].params.parse({ provider: 'codex', agent: '' })).toThrow()
+    expect(() => methods['auth.status'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     expect(() => methods['auth.startLogin'].result.parse({ loginId: '' })).toThrow()
     const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
     expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({
@@ -663,8 +714,8 @@ describe('protocol envelopes', () => {
       status: 'ready',
       limits: [],
     })
-    expect(parse([], { provider: 'codex', status: 'unavailable' }).limitSource).toEqual({
-      provider: 'codex',
+    expect(parse([], { provider: 'api', status: 'unavailable' }).limitSource).toEqual({
+      provider: 'api',
       status: 'unavailable',
     })
 
@@ -1212,8 +1263,8 @@ describe('protocol envelopes', () => {
       methods['providers.list'].result.parse({
         providers: [
           {
-            id: 'grok',
-            displayName: 'Grok',
+            id: 'opencode',
+            displayName: 'OpenCode',
             installed: false,
             auth: 'unknown',
             setup,
@@ -1221,23 +1272,48 @@ describe('protocol envelopes', () => {
         ],
       }).providers[0]?.setup,
     ).toEqual(setup)
+    expect(
+      methods['acp.agents'].result.parse({
+        agents: [
+          {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            installed: false,
+            verified: true,
+            setup,
+          },
+        ],
+      }).agents[0]?.setup,
+    ).toEqual(setup)
+    // A vendor breaking a login path is the agent's story to tell; the field
+    // is optional so healthy agents carry nothing.
+    expect(
+      methods['acp.agents'].result.parse({
+        agents: [
+          {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            installed: true,
+            verified: true,
+            setup,
+            problem: 'Google ended individual sign-in.',
+          },
+        ],
+      }).agents[0]?.problem,
+    ).toBe('Google ended individual sign-in.')
   })
 
   it('names an install target without carrying any command text', () => {
-    const valid = { provider: 'codex', columns: 80, rows: 24 }
+    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
     expect(methods['providers.install'].params.parse(valid)).toEqual(valid)
     expect(
-      methods['providers.install'].params.parse({ provider: 'grok', columns: 80, rows: 24 }),
-    ).toEqual({ provider: 'grok', columns: 80, rows: 24 })
+      methods['providers.install'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
     expect(methods['providers.install'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
       valid,
     )
     expect(() =>
-      methods['providers.install'].params.parse({
-        provider: 'unlisted-cli',
-        columns: 80,
-        rows: 24,
-      }),
+      methods['providers.install'].params.parse({ provider: 'acp', agent: '' }),
     ).toThrow()
     expect(methods['providers.install'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
@@ -1260,17 +1336,15 @@ describe('protocol envelopes', () => {
   })
 
   it('names a launch target without carrying any command text', () => {
-    const valid = { provider: 'codex', columns: 80, rows: 24 }
+    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
     expect(methods['providers.launch'].params.parse(valid)).toEqual(valid)
     expect(
-      methods['providers.launch'].params.parse({ provider: 'grok', columns: 80, rows: 24 }),
-    ).toEqual({ provider: 'grok', columns: 80, rows: 24 })
+      methods['providers.launch'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
     expect(methods['providers.launch'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
       valid,
     )
-    expect(() =>
-      methods['providers.launch'].params.parse({ provider: 'unlisted-cli', columns: 80, rows: 24 }),
-    ).toThrow()
+    expect(() => methods['providers.launch'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     expect(methods['providers.launch'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
     })
@@ -1387,9 +1461,9 @@ describe('protocol envelopes', () => {
     const target = {
       mode: 'manual' as const,
       target: {
-        provider: 'claude-code' as const,
-        agent: 'claude-fork',
-        model: 'haiku',
+        provider: 'api' as const,
+        connectionId: 'openrouter',
+        model: 'anthropic/claude-haiku-4.5',
         effort: 'low',
       },
     }
@@ -1408,7 +1482,7 @@ describe('protocol envelopes', () => {
     expect(() =>
       methods['backgroundModel.updateSettings'].params.parse({
         mode: 'manual',
-        target: { provider: 'unlisted-cli', model: 'missing-provider' },
+        target: { provider: 'api', model: 'missing-connection' },
       }),
     ).toThrow()
     expect(
@@ -1444,9 +1518,9 @@ describe('protocol envelopes', () => {
         preference: { mode: 'automatic' },
         sources: [],
         resolved: {
-          provider: 'unlisted-cli',
-          model: 'missing-provider',
-          sourceName: 'Unlisted',
+          provider: 'api',
+          model: 'missing-connection',
+          sourceName: 'API',
           automatic: true,
         },
       }),

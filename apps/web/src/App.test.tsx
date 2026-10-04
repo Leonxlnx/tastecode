@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import {
   methods,
   type DomainEvent,
+  type ModelConnection,
   type ParamsOf,
   type QueuedTurn,
   type ResultOf,
@@ -513,6 +514,8 @@ beforeEach(() => {
         })
       case 'usage.consumeReset':
         return Promise.resolve({ outcome: 'reset' })
+      case 'usage.history':
+        return Promise.resolve(profileHistoryResult())
       case 'pullRequests.list':
         return Promise.resolve({
           account: { available: true, authenticated: true, login: 'Blueemi' },
@@ -620,6 +623,83 @@ function cachedCodexChoice(): ModelChoice {
       defaultReasoningEffort: 'low',
       serviceTiers: [],
     },
+  }
+}
+
+function profileHistoryResult() {
+  const totals = {
+    uncachedInputTokens: 20,
+    cachedInputTokens: 80,
+    cacheWriteInputTokens: 0,
+    outputTokens: 10,
+    reasoningTokens: 0,
+    processedTokens: 110,
+    estimatedCostUsd: 0,
+    cacheSavingsUsd: 0,
+    providerReportedCostUsd: 0,
+    providerReportedTokens: 0,
+    pricedTokens: 0,
+    unpricedTokens: 110,
+  }
+  return {
+    range: 'all' as const,
+    startDate: '2026-08-09',
+    endDate: '2026-08-09',
+    generatedAt: 1,
+    sessionCount: 1,
+    activeDays: 1,
+    totals,
+    providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
+    models: [
+      {
+        provider: 'codex' as const,
+        model: 'gpt-5.6-sol',
+        sessionCount: 1,
+        pricing: 'unpriced' as const,
+        totals,
+      },
+    ],
+    daily: [
+      {
+        date: '2026-08-09',
+        sessionCount: 1,
+        totals,
+        providers: [{ provider: 'codex' as const, tokens: 110, estimatedCostUsd: 0 }],
+      },
+    ],
+    sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
+    scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
+    warnings: [],
+  }
+}
+
+function connectionChoice(connectionId: string): ModelChoice {
+  return {
+    key: `api:${connectionId}:deepseek-v4-flash`,
+    provider: 'api',
+    sourceName: 'NaN',
+    mark: 'custom',
+    connectionId,
+    model: {
+      id: 'deepseek-v4-flash',
+      displayName: 'deepseek-v4-flash',
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    },
+  }
+}
+
+function modelConnection(overrides: Partial<ModelConnection> = {}): ModelConnection {
+  return {
+    id: 'nan-1',
+    displayName: 'NaN',
+    preset: 'custom',
+    transport: 'openai-compatible',
+    baseUrl: 'https://api.example.com/v1',
+    enabled: true,
+    credentialConfigured: true,
+    ...overrides,
   }
 }
 
@@ -909,6 +989,8 @@ describe('web client', () => {
       resolveSendAvailability({
         catalog: 'ready',
         activeProvider: 'codex',
+        serverBoundSession: false,
+        connections: [],
         providerStatuses: providers,
         accountCheck: { provider: 'codex', state: 'ready', account: { signedIn } },
       }),
@@ -1844,6 +1926,71 @@ describe('web client', () => {
     )
   })
 
+  it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'harnesses.list') {
+        return Promise.resolve({
+          harnesses: [
+            {
+              id: 'deepseek-pi',
+              displayName: 'DeepSeek Pi',
+              provider: 'pi',
+              command: 'deepseek-pi',
+              args: [],
+            },
+          ],
+        })
+      }
+      if (
+        method === 'models.list' &&
+        methods['models.list'].params.parse(params).agent === 'deepseek-pi'
+      ) {
+        return Promise.resolve({
+          models: [
+            {
+              id: 'openrouter/deepseek-v3.2',
+              displayName: 'DeepSeek V3.2',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              defaultReasoningEffort: 'high',
+              serviceTiers: [],
+            },
+          ],
+        })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'pi',
+        agent: 'deepseek-pi',
+      }),
+    )
+    expect(
+      (await screen.findByRole('button', { name: 'Model and reasoning' })).textContent,
+    ).toContain('DeepSeek V3.2')
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use my Pi fork' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({
+          provider: 'pi',
+          agent: 'deepseek-pi',
+          model: 'openrouter/deepseek-v3.2',
+          effort: 'high',
+        }),
+      ),
+    )
+  })
+
   it('opens the pull-request workspace from the sidebar', async () => {
     // Resolve the lazy feature chunk before the click; the assertion is about
     // App routing, while PullRequestsView owns its own loading tests.
@@ -2283,9 +2430,38 @@ describe('web client', () => {
     })
   })
 
-  it('discovers models for every installed provider', async () => {
-    const installedProviders = ['codex', 'claude-code', 'grok'] as const
-    serverProviders = installedProviders.map((id) => ({
+  it('fetches models for each installed ACP agent', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'acp.agents') {
+        return Promise.resolve({
+          agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', {
+        provider: 'acp',
+        agent: 'kimi',
+      })
+    })
+  })
+
+  it('discovers models for every installed nightly provider', async () => {
+    const installedDirectProviders = [
+      'codex',
+      'claude-code',
+      'grok',
+      'cursor',
+      'opencode',
+      'antigravity',
+      'pi',
+    ] as const
+    serverProviders = installedDirectProviders.map((id) => ({
       ...serverProviders[0]!,
       id,
       displayName: id,
@@ -2318,7 +2494,324 @@ describe('web client', () => {
       const input = methods['models.list'].params.parse(params)
       return input.agent === undefined ? [input.provider] : []
     })
-    expect(directProviders).toEqual(['codex', 'claude-code', 'grok'])
+    expect(directProviders).toEqual([...installedDirectProviders])
+  })
+
+  it('starts an API-only chat through its selected connection without a vendor CLI', async () => {
+    serverProviders = []
+    localStorage.setItem('harness.provider', 'api')
+    localStorage.setItem('harness.model', 'api:nan-1:deepseek-v4-flash')
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list')
+        return Promise.resolve({ connections: [modelConnection()] })
+      if (method === 'connections.models')
+        return Promise.resolve({ models: [connectionChoice('nan-1').model] })
+      if (method === 'thread.start') {
+        const source = methods['thread.start'].params.parse(params)
+        return Promise.resolve(request(method, params)).then((result) => {
+          const { threadId } = methods['thread.start'].result.parse(result)
+          serverProjects = serverProjects.map((project) => ({
+            ...project,
+            sessions: project.sessions.map((session) =>
+              session.id === threadId
+                ? { ...session, provider: source.provider, connectionId: source.connectionId }
+                : session,
+            ),
+          }))
+          return result
+        })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        'deepseek v4 flash',
+      ),
+    )
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use this connection' } })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({
+          provider: 'api',
+          connectionId: 'nan-1',
+          model: 'deepseek-v4-flash',
+        }),
+      ),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'models.list',
+      expect.objectContaining({ provider: 'api' }),
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', { provider: 'api' })
+  })
+
+  it.each(['loaded', 'pending', 'thread preference', 'source preference'] as const)(
+    'restores a saved API chat using its own default model (%s)',
+    async (scenario) => {
+      serverProviders = []
+      serverProjects = [
+        {
+          ...serverProjects[0]!,
+          sessions: [
+            {
+              id: 'api-one',
+              title: 'First connection',
+              provider: 'api',
+              connectionId: 'one',
+              createdAt: 0,
+              running: false,
+            },
+            {
+              id: 'api-two',
+              title: 'Second connection',
+              provider: 'api',
+              connectionId: 'two',
+              createdAt: 0,
+              running: false,
+            },
+          ],
+        },
+      ]
+      const preferred = { modelKey: 'api:two:model-a' }
+      if (scenario === 'thread preference')
+        localStorage.setItem('harness.modelByThread:api-two', JSON.stringify(preferred))
+      if (scenario === 'source preference')
+        localStorage.setItem('harness.modelBySource', JSON.stringify({ 'api:two': preferred }))
+      let releaseModels!: () => void
+      const modelsReady =
+        scenario === 'pending'
+          ? new Promise<void>((resolve) => {
+              releaseModels = resolve
+            })
+          : Promise.resolve()
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'connections.list')
+          return Promise.resolve({
+            connections: [
+              modelConnection({ id: 'one', displayName: 'First API', defaultModel: 'model-a' }),
+              modelConnection({ id: 'two', displayName: 'Second API', defaultModel: 'model-b' }),
+            ],
+          })
+        if (method === 'connections.models') {
+          const { connectionId } = methods['connections.models'].params.parse(params)
+          return modelsReady.then(() => ({
+            models: [
+              {
+                ...connectionChoice(connectionId).model,
+                id: 'model-a',
+                displayName: 'Model A',
+                isDefault: connectionId === 'one',
+              },
+              {
+                ...connectionChoice(connectionId).model,
+                id: 'model-b',
+                displayName: 'Model B',
+                isDefault: connectionId === 'two',
+              },
+            ],
+          }))
+        }
+        return request(method, params)
+      })
+      render(<App />)
+      if (scenario !== 'pending')
+        await waitFor(() =>
+          expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('api:two:model-b'),
+        )
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Second connection, API connection' }),
+      )
+      if (scenario === 'pending') {
+        await waitFor(() =>
+          expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'api-two' }),
+        )
+        await act(async () => releaseModels())
+      }
+      const expected = scenario.includes('preference') ? 'Model A' : 'Model B'
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+          expected,
+        ),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'First connection, API connection' }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+          'Model A',
+        ),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Second connection, API connection' }))
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+          expected,
+        ),
+      )
+      const composer = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: 'Continue on the second connection' } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.sendTurn',
+          expect.objectContaining({
+            threadId: 'api-two',
+            model: scenario.includes('preference') ? 'model-a' : 'model-b',
+          }),
+        ),
+      )
+    },
+  )
+
+  it('publishes the model catalog without waiting for the connection store', async () => {
+    const request = transport.request.getMockImplementation()!
+    const pendingConnections = new Promise<never>(() => {})
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') return pendingConnections
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
+    })
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-6.1-sol')
+    })
+  })
+
+  it('reports a refused connection list instead of silently dropping its models', async () => {
+    // A build with the connection surface cached this choice. The server then
+    // refuses the stored config — the failure an installed build produced when it
+    // met a preset its schema did not know.
+    const connectionChoice: ModelChoice = {
+      key: 'api:nan-1:deepseek-v4-flash',
+      provider: 'api',
+      sourceName: 'NaN',
+      mark: 'custom',
+      connectionId: 'nan-1',
+      model: {
+        id: 'deepseek-v4-flash',
+        displayName: 'deepseek-v4-flash',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice(), connectionChoice]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') {
+        return Promise.reject(
+          new Error('invalid provider config: expected a version 1 connection list'),
+        )
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    // Silence here left the connection's models on screen with no way to tell why
+    // they stopped working, so the failure has to reach the composer, with the
+    // reason and a way to try again.
+    const notice = await screen.findByRole('alert')
+    expect(notice.textContent).toContain('Could not load API connections.')
+    expect(notice.textContent).toContain('expected a version 1 connection list')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy()
+  })
+
+  it('stays quiet when a connection list fails and no connection model was ever offered', async () => {
+    // A server too old to know the method refuses it the same way a broken
+    // connection list does. Nobody who never had a connection model needs to
+    // hear about it, so the composer stays clear.
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') {
+        return Promise.reject(new Error('Method not found'))
+      }
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-6.1-sol')
+    })
+    expect(screen.queryByText(/Could not load API connections/)).toBeNull()
+  })
+
+  it('drops a cached connection model once the connection list settles without it', async () => {
+    // The cache still holds a model paid for by a connection the user has since
+    // removed. Once the list settles, the rebuilt catalog must not keep offering
+    // it — a lingering entry is a picker choice that can never answer a turn.
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice(), connectionChoice('gone-1')]),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') return Promise.resolve({ connections: [] })
+      if (method === 'models.list') {
+        return Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      const cached = localStorage.getItem('harness.modelCatalog.v1') ?? ''
+      expect(cached).toContain('gpt-6.1-sol')
+      expect(cached).not.toContain('api:gone-1')
+    })
+    expect(screen.queryByText(/Could not load API connections/)).toBeNull()
+  })
+
+  it('reuses startup ACP detection when Settings opens', async () => {
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('providers.list', {})
+    })
+    expect(transport.request).toHaveBeenCalledWith('acp.agents', {})
+
+    openSettings()
+
+    await waitFor(() => {
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'acp.agents'),
+      ).toHaveLength(1)
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Back to app' }))
+    openSettings()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(transport.request.mock.calls.filter(([method]) => method === 'acp.agents')).toHaveLength(
+      1,
+    )
   })
 
   it('does not invent Automatic choices for empty agent model catalogs', async () => {
@@ -2346,8 +2839,15 @@ describe('web client', () => {
               capabilities,
             },
             {
-              id: 'grok',
-              displayName: 'Grok',
+              id: 'cursor',
+              displayName: 'Cursor',
+              installed: true,
+              auth: 'authenticated',
+              capabilities,
+            },
+            {
+              id: 'opencode',
+              displayName: 'OpenCode',
               installed: true,
               auth: 'authenticated',
               capabilities,
@@ -2381,7 +2881,8 @@ describe('web client', () => {
     expect(
       await screen.findByRole('button', { name: 'Use Fable through Claude Code' }),
     ).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Use Automatic through Grok' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Use Automatic through Cursor' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Use Automatic through OpenCode' })).toBeNull()
   })
 
   it('updates attachment availability when the selected source changes', async () => {
@@ -2455,9 +2956,45 @@ describe('web client', () => {
     expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
   })
 
-  it('checks voice only for the fallback provider once the provider catalog settles', async () => {
+  it('checks desktop voice once without waiting for an unrelated connection catalog', async () => {
+    desktopShell.enabled = true
+    let resolveConnections!: (value: { connections: [] }) => void
+    const connections = new Promise<{ connections: [] }>((resolve) => {
+      resolveConnections = resolve
+    })
+    let resolveAccount!: (value: { signedIn: true }) => void
+    const account = new Promise<{ signedIn: true }>((resolve) => {
+      resolveAccount = resolve
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'connections.list') return connections
+      if (method === 'auth.status') return account
+      if (method === 'voice.status') return Promise.resolve({ available: true })
+      return request(method, params)
+    })
+
+    render(<App />)
+    await act(async () => resolveAccount({ signedIn: true }))
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'voice.status'),
+    ).toHaveLength(1)
+
+    await act(async () => resolveConnections({ connections: [] }))
+    await waitFor(() => {
+      expect(
+        transport.request.mock.calls.filter(([method]) => method === 'voice.status'),
+      ).toHaveLength(1)
+    })
+  })
+
+  it('keeps the selected nightly provider when checking voice after discovery', async () => {
     desktopShell.enabled = true
     localStorage.setItem('harness.provider', 'cursor')
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'cursor', displayName: 'Cursor' },
+    ]
     let resolveProviders!: (value: { providers: ServerProvider[] }) => void
     const providers = new Promise<{ providers: ServerProvider[] }>((resolve) => {
       resolveProviders = resolve
@@ -2470,7 +3007,7 @@ describe('web client', () => {
     })
 
     render(<App />)
-    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('connections.list', {}))
     expect(transport.request).not.toHaveBeenCalledWith('voice.status', expect.anything())
 
     await act(async () => resolveProviders({ providers: contractValidServerProviders() }))
@@ -2478,9 +3015,9 @@ describe('web client', () => {
       expect(
         transport.request.mock.calls.filter(([method]) => method === 'voice.status'),
       ).toHaveLength(1)
-      expect(transport.request).toHaveBeenCalledWith('voice.status', { provider: 'codex' })
+      expect(transport.request).toHaveBeenCalledWith('voice.status', { provider: 'cursor' })
     })
-    expect(transport.request).not.toHaveBeenCalledWith('voice.status', { provider: 'cursor' })
+    expect(transport.request).not.toHaveBeenCalledWith('voice.status', { provider: 'codex' })
   })
 })
 describe('new chats', () => {
@@ -3136,23 +3673,33 @@ describe('new chats', () => {
     },
   )
 
-  it('preserves a nightly-only custom model without blocking a catalogless source', async () => {
-    const parked = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
+  it('offers a stored custom model from an enabled nightly provider', async () => {
+    const stored = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
+    serverProviders = [
+      ...serverProviders,
+      {
+        ...serverProviders[0]!,
+        id: 'cursor',
+        displayName: 'Cursor',
+      },
+    ]
     localStorage.setItem('harness.provider', 'cursor')
     localStorage.setItem('harness.model', 'custom:cursor:cursor-large')
-    localStorage.setItem('harness.customModels.v1', parked)
+    localStorage.setItem('harness.customModels.v1', stored)
     render(<App />)
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
     const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
     fireEvent.change(composer, { target: { value: 'Use the provider default' } })
     await waitFor(() => expect(sendButton.disabled).toBe(false))
-    expect(screen.queryByText('Cursor Large')).toBeNull()
-    expect(localStorage.getItem('harness.customModels.v1')).toBe(parked)
+    expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+      'Cursor Large',
+    )
+    expect(localStorage.getItem('harness.customModels.v1')).toBe(stored)
     fireEvent.keyDown(composer, { key: 'Enter' })
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith(
         'thread.start',
-        expect.objectContaining({ provider: 'codex' }),
+        expect.objectContaining({ provider: 'cursor', model: 'cursor-large' }),
       ),
     )
   })
@@ -4850,6 +5397,7 @@ describe('new chats', () => {
       'page',
     )
     expect(await screen.findByRole('heading', { name: 'Profile' })).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('usage.history', { range: 'all' })
   })
 
   it('persists inbox mode and bounded inactivity settings on the server', async () => {
@@ -8870,16 +9418,78 @@ describe('reopening a session', () => {
     })
   })
 
-  it('preserves exact memory of an unavailable source without offering it', async () => {
+  it('keeps a server-bound API session active while provider discovery is pending', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          {
+            id: 'api-thread',
+            title: 'API thread',
+            provider: 'api',
+            createdAt: 0,
+            running: false,
+          },
+        ],
+      },
+    ]
+    let releaseModels!: () => void
+    const modelsGate = new Promise<void>((resolve) => {
+      releaseModels = resolve
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'providers.list') {
+        return modelsGate.then(() => ({ providers: serverProviders }))
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'API thread, API connection' }))
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.provider')).toBe('api')
+      expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+    })
+
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Use the session provider' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    await waitFor(() => {
+      const optimistic = screen.getByText('Use the session provider').getAttribute('data-item-id')
+      expect(optimistic).toMatch(/^local:/)
+      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
+        threadId: 'api-thread',
+        text: 'Use the session provider',
+        clientSubmissionId: optimistic,
+      })
+    })
+    await act(async () => {
+      releaseModels()
+      await modelsGate
+    })
+  })
+
+  it('restores the exact ACP model and effort for its session and new chats', async () => {
+    serverProviders = [
+      ...serverProviders,
+      { ...serverProviders[0]!, id: 'acp', displayName: 'ACP agent' },
+    ]
     serverProjects = [
       {
         ...serverProjects[0]!,
         sessions: [
           {
-            id: 'grok-thread',
-            title: 'Grok thread',
-            provider: 'grok',
-            agent: 'work-grok',
+            id: 'acp-thread',
+            title: 'ACP thread',
+            provider: 'acp',
+            agent: 'kimi',
             createdAt: 0,
             running: false,
           },
@@ -8888,28 +9498,58 @@ describe('reopening a session', () => {
     ]
     localStorage.setItem(
       'harness.modelBySource',
-      JSON.stringify({
-        'grok:work-grok': { modelKey: 'grok:work-grok:model-x', effort: 'high' },
-      }),
+      JSON.stringify({ 'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' } }),
     )
-
-    render(<App />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Grok thread, Grok' }))
-    await screen.findByText('Provider unavailable')
-    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
-    expect(JSON.parse(localStorage.getItem('harness.modelBySource') ?? '{}')).toMatchObject({
-      'grok:work-grok': { modelKey: 'grok:work-grok:model-x', effort: 'high' },
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'acp.agents')
+        return Promise.resolve({
+          agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
+        })
+      if (method === 'models.list' && methods['models.list'].params.parse(params).agent === 'kimi')
+        return Promise.resolve({
+          models: [
+            {
+              id: 'model-x',
+              displayName: 'Model X',
+              isDefault: true,
+              reasoningEfforts: ['low', 'high'],
+              serviceTiers: [],
+            },
+          ],
+        })
+      return request(method, params)
     })
-
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'ACP thread, Kimi CLI' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        'Model X',
+      ),
+    )
+    expect(JSON.parse(localStorage.getItem('harness.modelBySource') ?? '{}')).toMatchObject({
+      'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
+    })
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     const composer = screen.getByPlaceholderText('Do anything')
-    const sendButton = screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
-    fireEvent.change(composer, { target: { value: 'Start on the beta source' } })
-    await waitFor(() => expect(sendButton.disabled).toBe(false))
+    fireEvent.change(composer, { target: { value: 'Start with Kimi' } })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
     fireEvent.keyDown(composer, { key: 'Enter' })
-    const betaStart = expect.objectContaining({ provider: 'codex' })
-    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('thread.start', betaStart))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({
+          provider: 'acp',
+          agent: 'kimi',
+          model: 'model-x',
+          effort: 'high',
+        }),
+      ),
+    )
   })
 
   it('does not display a fallback from another provider after hiding the session source', async () => {
@@ -9573,5 +10213,49 @@ describe('connection recovery regressions', () => {
       approvalId: 'approval-1',
       decision: 'approve',
     })
+  })
+})
+
+describe('send availability for a connection-backed model', () => {
+  // An API connection has no vendor CLI, so no provider status describes it.
+  // Each state the user can fix in Settings must say setup-required rather than
+  // unavailable, whose only action cannot change the outcome.
+  const resolve = (connections: ModelConnection[]) =>
+    resolveSendAvailability({
+      catalog: 'ready',
+      serverBoundSession: false,
+      selectedChoice: connectionChoice('nan-1'),
+      connections,
+      providerStatuses: [],
+      accountCheck: { provider: 'codex', state: 'ready' },
+    })
+
+  it('is ready when its connection is enabled and has a credential', () => {
+    expect(resolve([modelConnection()])).toBe('ready')
+  })
+
+  it('does not bypass a disabled known connection for an existing session', () => {
+    expect(
+      resolveSendAvailability({
+        catalog: 'ready',
+        serverBoundSession: true,
+        selectedChoice: connectionChoice('nan-1'),
+        connections: [modelConnection({ enabled: false })],
+        providerStatuses: [],
+        accountCheck: { provider: 'api', state: 'ready' },
+      }),
+    ).toBe('setup-required')
+  })
+
+  it('needs setup when its connection is disabled', () => {
+    expect(resolve([modelConnection({ enabled: false })])).toBe('setup-required')
+  })
+
+  it('needs setup when its connection has no credential', () => {
+    expect(resolve([modelConnection({ credentialConfigured: false })])).toBe('setup-required')
+  })
+
+  it('needs setup when its connection is no longer listed', () => {
+    expect(resolve([modelConnection({ id: 'other-1' })])).toBe('setup-required')
   })
 })

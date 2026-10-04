@@ -6,7 +6,22 @@ const CACHE_VERSION = 2
 const MAX_CACHE_CHARACTERS = 2_000_000
 const MAX_CACHED_MODELS = 2_000
 export const MODEL_CATALOG_CACHE_FRESH_MS = 5 * 60_000
-const PROVIDER_MARKS = new Set<ProviderMark>(['openai', 'anthropic', 'grok'])
+const PROVIDER_MARKS = new Set<ProviderMark>([
+  'openai',
+  'anthropic',
+  'grok',
+  'cursor',
+  'opencode',
+  'openrouter',
+  'kimi',
+  'gemini',
+  'qwen',
+  'zai',
+  'antigravity',
+  'pi',
+  'acp',
+  'custom',
+])
 
 export type ModelCatalogCache = {
   models: ModelChoice[]
@@ -33,7 +48,13 @@ export function serializeModelCatalogCache(
   const validatedSources = [
     ...new Set(
       options.validatedSources ??
-        models.map((choice) => sourceKey({ provider: choice.provider, agentId: choice.agent?.id })),
+        models.map((choice) =>
+          sourceKey({
+            provider: choice.provider,
+            connectionId: choice.connectionId,
+            agentId: choice.agent?.id,
+          }),
+        ),
     ),
   ].map((source) => ({ source, validatedAt }))
   return JSON.stringify({ version: CACHE_VERSION, validatedSources, models })
@@ -61,18 +82,31 @@ export function parseModelCatalogCache(raw: string | null): ModelCatalogCache | 
   for (const rawCandidate of value['models']) {
     const candidate = parseCachedModelChoice(rawCandidate)
     if (!candidate) return undefined
+    const connectionId = candidate.connectionId
     const agent = candidate.agent
+    const connectionContractValid =
+      candidate.provider === 'api' ? Boolean(connectionId) && !agent : !connectionId
+    const sourceContractValid =
+      candidate.provider === 'acp' || candidate.provider === 'pi' ? Boolean(agent) : true
+    if (!connectionContractValid || !sourceContractValid) {
+      return undefined
+    }
 
     const choice: ModelChoice = {
       key: candidate.key,
       provider: candidate.provider,
       sourceName: candidate.sourceName,
       mark: candidate.mark,
+      ...(connectionId ? { connectionId } : {}),
       ...(agent ? { agent } : {}),
       model: candidate.model,
     }
     const expectedKey = modelChoiceKey(
-      sourceKey({ provider: choice.provider, agentId: choice.agent?.id }),
+      sourceKey({
+        provider: choice.provider,
+        connectionId: choice.connectionId,
+        agentId: choice.agent?.id,
+      }),
       choice.model.id,
     )
     if (choice.key !== expectedKey) return undefined
@@ -84,7 +118,13 @@ export function parseModelCatalogCache(raw: string | null): ModelCatalogCache | 
     const rawSources = value['validatedSources']
     if (!Array.isArray(rawSources) || rawSources.length > MAX_CACHED_MODELS) return undefined
     const modelSources = new Set(
-      choices.map((choice) => sourceKey({ provider: choice.provider, agentId: choice.agent?.id })),
+      choices.map((choice) =>
+        sourceKey({
+          provider: choice.provider,
+          connectionId: choice.connectionId,
+          agentId: choice.agent?.id,
+        }),
+      ),
     )
     for (const rawSource of rawSources) {
       if (!isRecord(rawSource)) return undefined
@@ -125,7 +165,11 @@ export function freshModelCatalogChoices(
     cache?.models.filter((choice) =>
       isModelCatalogSourceFresh(
         cache,
-        sourceKey({ provider: choice.provider, agentId: choice.agent?.id }),
+        sourceKey({
+          provider: choice.provider,
+          connectionId: choice.connectionId,
+          agentId: choice.agent?.id,
+        }),
         now,
       ),
     ) ?? []
@@ -138,6 +182,7 @@ function parseCachedModelChoice(value: unknown): ModelChoice | undefined {
   const provider = parseProviderId(value['provider'])
   const sourceName = value['sourceName']
   const mark = value['mark']
+  const connectionId = value['connectionId']
   const rawAgent = value['agent']
   const model = parseModel(value['model'])
   if (
@@ -145,8 +190,7 @@ function parseCachedModelChoice(value: unknown): ModelChoice | undefined {
     !provider ||
     !isNonemptyString(sourceName) ||
     !isProviderMark(mark) ||
-    // API connections left main; a cached one makes the whole snapshot stale.
-    value['connectionId'] !== undefined ||
+    (connectionId !== undefined && !isNonemptyString(connectionId)) ||
     !model
   ) {
     return undefined
@@ -169,6 +213,7 @@ function parseCachedModelChoice(value: unknown): ModelChoice | undefined {
     provider,
     sourceName,
     mark,
+    ...(connectionId === undefined ? {} : { connectionId }),
     ...(agent ? { agent } : {}),
     model,
   }
@@ -229,7 +274,17 @@ function parseModel(value: unknown): Model | undefined {
 }
 
 function parseProviderId(value: unknown): ProviderId | undefined {
-  if (value === 'codex' || value === 'claude-code' || value === 'grok') {
+  if (
+    value === 'codex' ||
+    value === 'claude-code' ||
+    value === 'grok' ||
+    value === 'cursor' ||
+    value === 'opencode' ||
+    value === 'antigravity' ||
+    value === 'pi' ||
+    value === 'acp' ||
+    value === 'api'
+  ) {
     return value
   }
   return undefined

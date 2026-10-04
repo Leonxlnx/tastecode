@@ -1,8 +1,13 @@
 import type { Model, ProviderId } from '@harness/contracts'
 import type { ProviderMark } from './provider-presentation.js'
-import { providerPresentation } from './provider-presentation.js'
+import { providerPresentation, sourcePresentation } from './provider-presentation.js'
 
-export { providerDisplayName, providerMark } from './provider-presentation.js'
+export {
+  agentMark,
+  connectionMark,
+  providerDisplayName,
+  providerMark,
+} from './provider-presentation.js'
 export type { ProviderMark } from './provider-presentation.js'
 
 export type ModelChoice = {
@@ -10,6 +15,7 @@ export type ModelChoice = {
   provider: ProviderId
   sourceName: string
   mark: ProviderMark
+  connectionId?: string | undefined
   agent?: { id: string; name: string } | undefined
   model: Model
 }
@@ -139,7 +145,12 @@ export function resolveReasoningEffort(input: {
   return defaultReasoningEffort(input.nextModel)
 }
 
-export function sourceKey(input: { provider: ProviderId; agentId?: string | undefined }): string {
+export function sourceKey(input: {
+  provider: ProviderId
+  connectionId?: string | undefined
+  agentId?: string | undefined
+}): string {
+  if (input.connectionId) return `api:${input.connectionId}`
   if (input.agentId) return `${input.provider}:${input.agentId}`
   return input.provider
 }
@@ -174,8 +185,12 @@ export function customModelKey(input: CustomModelInput): string {
   return modelChoiceKey(customModelSource(input.provider), input.modelId)
 }
 
-export function customModelChoice(input: CustomModelInput): ModelChoice {
-  const presentation = providerPresentation(input.provider)
+export function customModelChoice(
+  input: CustomModelInput,
+  sourceName = providerPresentation(input.provider).label,
+  mark = providerPresentation(input.provider).mark,
+): ModelChoice {
+  const presentation = sourcePresentation({ provider: input.provider, sourceName, mark })
   return {
     provider: input.provider,
     sourceName: presentation.label,
@@ -206,8 +221,12 @@ export function choicesFor(
   // discovery remains canonical even if a transport reports another label.
   const presentation = input.agent
     ? { label: input.sourceName.trim(), mark: input.mark }
-    : providerPresentation(input.provider)
-  const source = sourceKey({ provider: input.provider, agentId: input.agent?.id })
+    : sourcePresentation(input)
+  const source = sourceKey({
+    provider: input.provider,
+    connectionId: input.connectionId,
+    agentId: input.agent?.id,
+  })
   return (models.length > 0 ? models : fallback ? [automaticModel()] : []).map((model) => ({
     ...input,
     sourceName: presentation.label,

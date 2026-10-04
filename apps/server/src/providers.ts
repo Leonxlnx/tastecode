@@ -1,3 +1,7 @@
+import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
+import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
+import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
+import { PI_CAPABILITIES } from '@harness/adapter-pi'
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
 import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
@@ -80,12 +84,54 @@ const PROBES: Probe[] = [
     // Device flow in the CLI's own terminal, same shape as `kimi login`.
     loginCommand: 'grok login',
   },
+  {
+    id: 'cursor',
+    displayName: 'Cursor',
+    command: 'cursor-agent',
+    capabilities: CURSOR_CAPABILITIES,
+    supportedVersion: CURSOR_SUPPORTED_VERSION,
+    setup: {
+      installUrl: 'https://docs.cursor.com/en/cli/installation',
+      login: 'app',
+    },
+  },
+  {
+    id: 'opencode',
+    displayName: 'OpenCode',
+    command: 'opencode',
+    capabilities: OPENCODE_CAPABILITIES,
+    setup: {
+      installUrl: 'https://opencode.ai/en/docs',
+      installCommand: 'npm install -g opencode-ai',
+      login: 'provider',
+    },
+    loginCommand: 'opencode auth login',
+  },
+  {
+    id: 'antigravity',
+    displayName: 'Antigravity',
+    command: 'agy',
+    capabilities: ANTIGRAVITY_CAPABILITIES,
+    setup: {
+      installUrl: 'https://antigravity.google/docs/cli',
+      login: 'provider',
+    },
+    // First interactive run signs in with the user's Google account; there is
+    // no separate login subcommand as of agy 1.1.10.
+    loginCommand: 'agy',
+  },
+  {
+    id: 'pi',
+    displayName: 'Pi',
+    command: 'pi',
+    capabilities: PI_CAPABILITIES,
+    setup: {
+      installUrl: 'https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent',
+      login: 'provider',
+    },
+    loginCommand: 'pi',
+  },
 ]
-
-/**
- * main ships exactly three subscription plans: Codex, Claude Code and Grok.
- * Every other provider lives on the nightly branch only — see AGENTS.md.
- */
 
 /**
  * The machine, as far as this file is concerned.
@@ -98,11 +144,13 @@ export type SystemProbe = {
   isInstalled(command: string): Promise<boolean>
   version(command: string): Promise<string | undefined>
   auth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']>
+  acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
 }
 
 const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
+  acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
   auth: (provider) =>
     provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
 }
@@ -116,25 +164,52 @@ export function providerUpdateSources() {
 }
 
 /**
- * The install command for a provider, from the table above and nowhere else.
- * The renderer names a target; it never sends command text — that is what
- * keeps `providers.install` from being a remote shell.
+ * The install command for a provider or ACP agent, from the tables above and
+ * nowhere else. The renderer names a target; it never sends command text —
+ * that is what keeps `providers.install` from being a remote shell.
  */
-export async function installCommandFor(provider: ProviderStatus['id']): Promise<string> {
-  const entry = PROBES.find((candidate) => candidate.id === provider)
-  if (!entry) throw new Error(`unknown install target: ${provider}`)
-  if (!entry.setup.installCommand) {
-    throw new Error(`${entry.displayName} has no scripted install; use its setup page`)
+export async function installCommandFor(
+  provider: ProviderStatus['id'],
+  agent?: string,
+): Promise<string> {
+  const target =
+    provider === 'acp'
+      ? await (async () => {
+          const { findAgentSpec } = await import('@harness/adapter-acp/agents')
+          const spec = agent ? findAgentSpec(agent) : undefined
+          return spec ? { name: spec.name, setup: spec.setup } : undefined
+        })()
+      : (() => {
+          const entry = PROBES.find((candidate) => candidate.id === provider)
+          return entry ? { name: entry.displayName, setup: entry.setup } : undefined
+        })()
+  if (!target) throw new Error(`unknown install target: ${agent ?? provider}`)
+  if (!target.setup.installCommand) {
+    throw new Error(`${target.name} has no scripted install; use its setup page`)
   }
-  return entry.setup.installCommand
+  return target.setup.installCommand
 }
 
 /**
  * The interactive sign-in command for a provider whose login lives in its own
  * CLI (`setup.login === 'provider'`). Same boundary as `installCommandFor`:
- * the renderer names a target and the command comes from this table only.
+ * the renderer names a target and the command comes from these tables only.
+ * ACP agents sign in inside their ordinary interactive CLI, so the launch is
+ * the bare binary; direct providers name an explicit login command.
  */
-export async function launchCommandFor(provider: ProviderStatus['id']): Promise<string> {
+export async function launchCommandFor(
+  provider: ProviderStatus['id'],
+  agent?: string,
+): Promise<string> {
+  if (provider === 'acp') {
+    const { findAgentSpec } = await import('@harness/adapter-acp/agents')
+    const spec = agent ? findAgentSpec(agent) : undefined
+    if (!spec) throw new Error(`unknown launch target: ${agent ?? provider}`)
+    if (spec.setup.login !== 'provider') {
+      throw new Error(`${spec.name} signs in through the app, not its own CLI`)
+    }
+    return spec.command
+  }
   const entry = PROBES.find((candidate) => candidate.id === provider)
   if (!entry) throw new Error(`unknown launch target: ${provider}`)
   if (entry.setup.login !== 'provider' || !entry.loginCommand) {
@@ -185,7 +260,10 @@ function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
-  const detection = Promise.all(PROBES.map((entry) => probe(entry, system)))
+  const detection = Promise.all([
+    Promise.all(PROBES.map((entry) => probe(entry, system))),
+    acpStatus(system),
+  ]).then(([direct, acp]) => [...direct, acp])
   providerDetections.set(system, detection)
   const clear = () => {
     if (providerDetections.get(system) === detection) providerDetections.delete(system)
@@ -233,5 +311,24 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
           problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
         }
       : {}),
+  }
+}
+
+/**
+ * ACP is one integration over many agents, so "installed" means at least one
+ * of them is present, and the names of those go in the version field — there is
+ * no single binary whose version would mean anything here.
+ */
+async function acpStatus(system: SystemProbe): Promise<ProviderStatus> {
+  const agents = await system.acpAgents()
+  const present = agents.filter((agent) => agent.installed)
+
+  return {
+    id: 'acp',
+    displayName: 'ACP agents',
+    installed: present.length > 0,
+    auth: 'unknown',
+    ...(present.length > 0 ? { version: present.map((agent) => agent.name).join(', ') } : {}),
+    ...(present.length === 0 ? { problem: 'No ACP agent found on PATH' } : {}),
   }
 }

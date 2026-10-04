@@ -33,6 +33,9 @@ import type {
   BackgroundModelSource,
   BackgroundModelTarget,
   DataOf,
+  ModelConnection,
+  ModelConnectionPreset,
+  ModelTransport,
   ProviderId,
   ProviderStatus,
   ResultOf,
@@ -40,6 +43,9 @@ import type {
 } from '@harness/contracts'
 import { z } from 'zod'
 import {
+  IconChartBar as BarChart3,
+  IconChevronDown as ChevronDown,
+  IconKey as KeyRound,
   IconArrowLeft as ArrowLeft,
   IconUserCircle as CircleUserRound,
   IconBlocks as Blocks,
@@ -56,7 +62,7 @@ import {
   IconRotate as RotateCcw,
   IconUser as UserRound,
 } from '@tabler/icons-react'
-import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
+import { connectionMark, isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
 import {
   pinnableModels,
   pinnedModelChoice,
@@ -123,6 +129,8 @@ import {
   writeAppHaptics,
 } from '../haptics.js'
 import { AppSelect } from './AppSelect.js'
+import { Menu, MenuItem } from './Menu.js'
+import { ProviderIcon } from './ProviderIcon.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
@@ -132,6 +140,7 @@ import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
+import { UsageSettings } from './UsageSettings.js'
 import {
   DEFAULT_KEYBINDINGS,
   type KeybindingId,
@@ -156,6 +165,7 @@ export type SettingsSection =
   | 'mcp'
   | 'skills'
   | 'workflows'
+  | 'usage'
   | 'appearance'
   | 'keybinds'
   | 'data'
@@ -232,12 +242,6 @@ const BACKDROP_OPTIONS = [
   { value: 'plum', label: 'Plum' },
 ] as const satisfies ReadonlyArray<{ value: BackdropPreference; label: string }>
 
-const MCP_PROVIDER_OPTIONS = [
-  { provider: 'codex', providerName: 'Codex' },
-  { provider: 'claude-code', providerName: 'Claude Code' },
-  { provider: 'grok', providerName: 'Grok' },
-] satisfies Array<{ provider: ProviderId; providerName: string }>
-
 const FOCUSABLE_SELECTOR =
   'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
@@ -259,6 +263,8 @@ function SettingsComponent(props: {
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
+  acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+  modelConnections?: ModelConnection[] | undefined
   /** The provider list has not arrived yet. */
   providersLoading?: boolean | undefined
   models: ModelChoice[]
@@ -412,6 +418,12 @@ function SettingsComponent(props: {
             onClick={() => setSection('skills')}
           />
           <SettingsNavItem
+            active={section === 'usage'}
+            icon={<BarChart3 size={15} aria-hidden />}
+            label="Usage"
+            onClick={() => setSection('usage')}
+          />
+          <SettingsNavItem
             active={section === 'data'}
             icon={<Database size={15} aria-hidden />}
             label="Data & privacy"
@@ -436,10 +448,11 @@ function SettingsComponent(props: {
 
       <main className="settings__main">
         <div
-          className={`settings__content${section === 'profile' ? ' settings__content--profile' : ''}`}
+          className={`settings__content${section === 'profile' ? ' settings__content--profile' : ''}${section === 'usage' ? ' settings__content--usage' : ''}`}
         >
           {section === 'profile' ? (
             <ProfileSettings
+              transport={props.transport}
               account={props.account}
               accountLoading={props.accountLoading}
               providerName={props.providerName}
@@ -449,9 +462,18 @@ function SettingsComponent(props: {
           ) : null}
           {section === 'providers' ? <ProviderSettings {...props} /> : null}
           {section === 'models' ? <ModelSettings {...props} /> : null}
-          {section === 'mcp' ? <McpSettings {...props} providers={MCP_PROVIDER_OPTIONS} /> : null}
+          {section === 'mcp' ? (
+            <McpSettings
+              {...props}
+              providers={props.providerStatuses.map(({ id, displayName }) => ({
+                provider: id,
+                providerName: displayName,
+              }))}
+            />
+          ) : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <GeneralSettings {...props} /> : null}
+          {section === 'usage' ? <UsageSettings transport={props.transport} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'keybinds' ? (
             <KeybindSettings
@@ -473,6 +495,7 @@ function SettingsComponent(props: {
                   Force onboarding
                 </button>
               </SettingsRow>
+              <UsageHistoryReset transport={props.transport} />
               <AppUpdateSimulationRow />
               <ProviderUpdateSimulationRow transport={props.transport} />
               <SettingsRow
@@ -584,11 +607,60 @@ function SettingsNavItem(props: {
   )
 }
 
+const CONNECTION_PRESETS = {
+  openai: {
+    label: 'OpenAI API',
+    transport: 'openai-responses',
+    baseUrl: 'https://api.openai.com/v1',
+    placeholder: 'gpt-5.6',
+  },
+  anthropic: {
+    label: 'Anthropic API',
+    transport: 'anthropic-messages',
+    baseUrl: 'https://api.anthropic.com/v1',
+    placeholder: 'claude-sonnet-4-6',
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    transport: 'openai-compatible',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    placeholder: 'anthropic/claude-sonnet-4.6',
+  },
+  kimi: {
+    label: 'Kimi API',
+    transport: 'openai-compatible',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    placeholder: 'kimi-k2.5',
+  },
+  zai: {
+    label: 'Z.ai API',
+    transport: 'openai-compatible',
+    baseUrl: 'https://api.z.ai/api/paas/v4',
+    placeholder: 'glm-5',
+  },
+  custom: {
+    label: 'Custom endpoint',
+    transport: 'openai-compatible',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    placeholder: 'model-id',
+  },
+} satisfies Record<
+  ModelConnectionPreset,
+  { label: string; transport: ModelTransport; baseUrl: string; placeholder: string }
+>
+
 type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
-// main ships exactly the three subscription plans the server lists (Codex,
-// Claude Code, Grok). Every other provider lives on nightly — see AGENTS.md.
-const PROVIDER_ROSTER: readonly ProviderId[] = ['codex', 'claude-code', 'grok']
+// Nightly exposes every installed CLI; ACP agents and API connections have their own rows.
+const PROVIDER_ROSTER: readonly ProviderId[] = [
+  'codex',
+  'claude-code',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+]
 
 /** What a new chat on each provider starts with. The app shell owns it. */
 export type ProviderDefaultsControls = {
@@ -602,6 +674,8 @@ export function ProviderSettings(props: {
   provider: ProviderId
   account: Account | undefined
   providerStatuses: ProviderStatus[]
+  acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+  modelConnections?: ModelConnection[] | undefined
   providersLoading?: boolean | undefined
   projectPath?: string | undefined
   transport: Transport
@@ -624,6 +698,17 @@ export function ProviderSettings(props: {
     loginId?: string
   }
 
+  const [agentAccounts, setAgentAccounts] = useState<Record<string, Account>>({})
+  const [agentAccountErrors, setAgentAccountErrors] = useState<Record<string, string>>({})
+  const [agentBusy, setAgentBusy] = useState<string>()
+  const [addingConnection, setAddingConnection] = useState(false)
+  const [connectionPreset, setConnectionPreset] = useState<ModelConnectionPreset>('openai')
+  const [connectionName, setConnectionName] = useState(CONNECTION_PRESETS.openai.label)
+  const [connectionBaseUrl, setConnectionBaseUrl] = useState(CONNECTION_PRESETS.openai.baseUrl)
+  const [connectionDefaultModel, setConnectionDefaultModel] = useState('')
+  const [connectionApiKey, setConnectionApiKey] = useState('')
+  const [connectionError, setConnectionError] = useState<string>()
+  const [connectionSaving, setConnectionSaving] = useState(false)
   const [authStates, setAuthStates] = useState<ProviderMap<AuthReadState>>(() =>
     props.account ? { [props.provider]: { phase: 'ready', account: props.account } } : {},
   )
@@ -711,7 +796,7 @@ export function ProviderSettings(props: {
   )
 
   const authProviderIds = props.providerStatuses
-    .filter((status) => status.installed)
+    .filter((status) => status.installed && status.id !== 'acp' && status.id !== 'api')
     .map((status) => status.id)
   const authProviderKey = authProviderIds.join('|')
 
@@ -762,6 +847,35 @@ export function ProviderSettings(props: {
     setAuthErrors({})
   }, [props.transport])
 
+  const refreshAgentAccount = useCallback(
+    async (agentId: string) => {
+      try {
+        const account = await props.transport.request('auth.status', {
+          provider: 'acp',
+          agent: agentId,
+        })
+        setAgentAccounts((current) => ({ ...current, [agentId]: account }))
+        setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
+      } catch (cause) {
+        setAgentAccountErrors((current) => ({
+          ...current,
+          [agentId]: cause instanceof Error ? cause.message : String(cause),
+        }))
+      }
+    },
+    [props.transport],
+  )
+
+  const installedAgentKey = (props.acpAgents ?? [])
+    .filter((agent) => agent.installed)
+    .map((agent) => agent.id)
+    .join('|')
+  useEffect(() => {
+    for (const agentId of installedAgentKey.split('|')) {
+      if (agentId) void refreshAgentAccount(agentId)
+    }
+  }, [installedAgentKey, refreshAgentAccount])
+
   const signIn = async (provider: ProviderId) => {
     const operation = beginOperation(provider, 'sign-in')
     try {
@@ -810,6 +924,58 @@ export function ProviderSettings(props: {
         ...current,
         [provider]: cause instanceof Error ? cause.message : String(cause),
       }))
+    }
+  }
+
+  const signOutAgent = async (agentId: string) => {
+    setAgentBusy(agentId)
+    setAgentAccountErrors((current) => ({ ...current, [agentId]: '' }))
+    try {
+      await props.transport.request('auth.signOut', { provider: 'acp', agent: agentId })
+      setAgentAccounts((current) => ({ ...current, [agentId]: { signedIn: false } }))
+    } catch (cause) {
+      setAgentAccountErrors((current) => ({
+        ...current,
+        [agentId]: cause instanceof Error ? cause.message : String(cause),
+      }))
+    } finally {
+      setAgentBusy((current) => (current === agentId ? undefined : current))
+    }
+  }
+
+  const chooseConnectionPreset = (preset: ModelConnectionPreset) => {
+    const config = CONNECTION_PRESETS[preset]
+    setConnectionPreset(preset)
+    setConnectionName(config.label)
+    setConnectionBaseUrl(config.baseUrl)
+    setConnectionDefaultModel('')
+  }
+
+  const addConnection = async () => {
+    setConnectionSaving(true)
+    setConnectionError(undefined)
+    try {
+      const id = `${connectionPreset}-${crypto.randomUUID()}`
+      await props.transport.request('connections.upsert', {
+        id,
+        displayName: connectionName.trim(),
+        preset: connectionPreset,
+        transport: CONNECTION_PRESETS[connectionPreset].transport,
+        baseUrl: connectionBaseUrl.trim(),
+        ...(connectionDefaultModel.trim() ? { defaultModel: connectionDefaultModel.trim() } : {}),
+        enabled: true,
+      })
+      await props.transport.request('connections.setCredential', {
+        connectionId: id,
+        apiKey: connectionApiKey.trim(),
+      })
+      setAddingConnection(false)
+      setConnectionApiKey('')
+      props.onConnectionsChanged()
+    } catch (cause) {
+      setConnectionError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setConnectionSaving(false)
     }
   }
 
@@ -915,6 +1081,69 @@ export function ProviderSettings(props: {
   }
 
   const byId = (id: ProviderId) => props.providerStatuses.filter((status) => status.id === id)
+  const knownAgentIds = new Set(['gemini', 'kimi', 'qwen'])
+  const agents = [
+    ...(props.acpAgents ?? []).filter((agent) => knownAgentIds.has(agent.id)),
+    ...(props.acpAgents ?? []).filter((agent) => !knownAgentIds.has(agent.id)),
+  ]
+
+  const renderAgentRow = (agent: ResultOf<'acp.agents'>['agents'][number]) => {
+    const provider: ProviderStatus = {
+      id: 'acp',
+      displayName: agent.name,
+      installed: agent.installed,
+      auth: 'unknown',
+      setup: agent.setup,
+      ...(agent.problem ? { problem: agent.problem } : {}),
+    }
+    if (!agent.installed) {
+      return (
+        <InstallableRow
+          key={agent.id}
+          provider={provider}
+          target={{ provider: 'acp', agent: agent.id }}
+          transport={props.transport}
+          onInstalled={props.onConnectionsChanged}
+          onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
+        />
+      )
+    }
+    const account = agentAccounts[agent.id]
+    const accountError = agentAccountErrors[agent.id]
+    if (!account && !accountError) {
+      return <ProviderRow key={agent.id} provider={provider} status="Checking account…" live />
+    }
+    if (!account?.signedIn) {
+      return (
+        <CliSignInRow
+          key={agent.id}
+          provider={{
+            ...provider,
+            ...(accountError ? { problem: accountError } : {}),
+          }}
+          target={{ provider: 'acp', agent: agent.id }}
+          transport={props.transport}
+          onSignedIn={() => void refreshAgentAccount(agent.id)}
+          onOpenExpandedTerminal={props.onProviderLoginTerminalOpen}
+        />
+      )
+    }
+    return (
+      <ProviderRow
+        key={agent.id}
+        provider={provider}
+        status="Signed in"
+        issue={accountError ? { message: accountError, announce: true } : undefined}
+        secondary={{
+          label: agentBusy === agent.id ? 'Signing out…' : 'Sign out',
+          disabled: agentBusy === agent.id,
+          danger: true,
+          onClick: () => void signOutAgent(agent.id),
+        }}
+      />
+    )
+  }
+
   const signedIn = (status: ProviderStatus) => {
     const authState = authStates[status.id]
     if (authState) return authState.phase === 'ready' && authState.account.signedIn
@@ -975,6 +1204,139 @@ export function ProviderSettings(props: {
         </SkeletonStatus>
       ) : (
         PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
+      )}
+      {agents.map(renderAgentRow)}
+      <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
+      {(props.modelConnections ?? []).map((connection) => (
+        <SettingsRow key={connection.id} title={connection.displayName}>
+          <div className="provider-settings__actions">
+            <StateLabel
+              state={connection.credentialConfigured ? 'ready' : 'setup-needed'}
+              detail={
+                connection.credentialConfigured
+                  ? CONNECTION_PRESETS[connection.preset].label
+                  : 'Key missing'
+              }
+            />
+            <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
+            <button
+              className="settings__action is-danger"
+              type="button"
+              onClick={() => {
+                void props.transport
+                  .request('connections.remove', { connectionId: connection.id })
+                  .then(props.onConnectionsChanged)
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        </SettingsRow>
+      ))}
+      {addingConnection ? (
+        <div className="provider-form">
+          <div className="provider-form__field">
+            <span>Provider</span>
+            <Menu
+              align="left"
+              drop="down"
+              label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
+              panelLabel="API provider"
+              panelClassName="provider-form__menu"
+              triggerClassName="provider-form__select"
+              trigger={(open) => (
+                <>
+                  <span className="provider-form__select-value">
+                    <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
+                    {CONNECTION_PRESETS[connectionPreset].label}
+                  </span>
+                  <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
+                </>
+              )}
+            >
+              {(close) =>
+                Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
+                  <MenuItem
+                    key={value}
+                    title={config.label}
+                    icon={
+                      <ProviderIcon
+                        mark={connectionMark(value as ModelConnectionPreset)}
+                        size={16}
+                      />
+                    }
+                    active={value === connectionPreset}
+                    onClick={() => {
+                      chooseConnectionPreset(value as ModelConnectionPreset)
+                      close()
+                    }}
+                  />
+                ))
+              }
+            </Menu>
+          </div>
+          <label>
+            <span>Name</span>
+            <input
+              value={connectionName}
+              onChange={(event) => setConnectionName(event.target.value)}
+            />
+          </label>
+          <label className="provider-form__wide">
+            <span>Base URL</span>
+            <input
+              value={connectionBaseUrl}
+              onChange={(event) => setConnectionBaseUrl(event.target.value)}
+              spellCheck={false}
+            />
+          </label>
+          <label>
+            <span>Default model</span>
+            <input
+              value={connectionDefaultModel}
+              onChange={(event) => setConnectionDefaultModel(event.target.value)}
+              placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
+              spellCheck={false}
+            />
+          </label>
+          <label className="provider-form__wide">
+            <span>API key</span>
+            <input
+              type="password"
+              value={connectionApiKey}
+              onChange={(event) => setConnectionApiKey(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          {connectionError ? <p className="provider-form__error">{connectionError}</p> : null}
+          <div className="provider-form__actions">
+            <button className="ghost" type="button" onClick={() => setAddingConnection(false)}>
+              Cancel
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={
+                connectionSaving ||
+                !connectionName.trim() ||
+                !connectionBaseUrl.trim() ||
+                !connectionApiKey.trim()
+              }
+              onClick={() => void addConnection()}
+            >
+              {connectionSaving ? 'Connecting…' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          className="settings__action"
+          type="button"
+          onClick={() => setAddingConnection(true)}
+        >
+          <KeyRound size={15} aria-hidden />
+          Connect another plan or API
+        </button>
       )}
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>
@@ -1201,6 +1563,9 @@ function BackgroundModelSettings(props: { transport: Transport }) {
                   mode: 'manual',
                   target: {
                     provider: choice.source.provider,
+                    ...(choice.source.connectionId
+                      ? { connectionId: choice.source.connectionId }
+                      : {}),
                     ...(choice.source.agent
                       ? {
                           agent: choice.source.agent,
@@ -1278,7 +1643,10 @@ function isBackgroundModelSettingsState(
 
 function findBackgroundModel(sources: BackgroundModelSource[], target: BackgroundModelTarget) {
   const source = sources.find(
-    (candidate) => candidate.provider === target.provider && candidate.agent === target.agent,
+    (candidate) =>
+      candidate.provider === target.provider &&
+      candidate.connectionId === target.connectionId &&
+      candidate.agent === target.agent,
   )
   const model = source?.models.find((candidate) => candidate.id === target.model)
   return source && model ? { source, model } : undefined
@@ -1902,6 +2270,53 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
       </div>
     </div>,
     document.body,
+  )
+}
+
+export function DebugSettings(props: { transport: Transport }) {
+  return (
+    <SettingsPanel title="Debug">
+      <UsageHistoryReset transport={props.transport} />
+    </SettingsPanel>
+  )
+}
+
+function UsageHistoryReset(props: { transport: Transport }) {
+  const [state, setState] = useState<'idle' | 'resetting' | 'started' | 'error'>('idle')
+  const [error, setError] = useState<string>()
+
+  const resetUsage = async () => {
+    setState('resetting')
+    setError(undefined)
+    try {
+      await props.transport.request('usage.resetHistory', {})
+      setState('started')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+      setState('error')
+    }
+  }
+
+  return (
+    <SettingsRow
+      title="Usage history index"
+      note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
+      className="settings__row--roomy"
+    >
+      {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
+      {state === 'error' && error ? (
+        <RowIssue message={error} tip="Restart the app, then try the reset again." />
+      ) : null}
+      <button
+        className="settings__action"
+        type="button"
+        disabled={state === 'resetting'}
+        onClick={() => void resetUsage()}
+      >
+        <RotateCcw size={13} aria-hidden />
+        <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
+      </button>
+    </SettingsRow>
   )
 }
 

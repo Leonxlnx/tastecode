@@ -225,7 +225,9 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-04 base main 6ac40ec1 · dashboard support pending</span>
+        <span class="meta"
+          >2026-10-04 main 6ac40ec1 · nightly and dashboard integration pending</span
+        >
       </div>
     </div>
 
@@ -460,7 +462,21 @@
                 >Own MCP servers, credentials, and retry-safe approval flow
                 <span class="d"
                   >approval replies remain visible until OpenCode confirms them; failed auto and
-                  manual replies cannot strand an inert permission card</span
+                  manual replies cannot strand an inert permission card; automatic Full access
+                  approvals apply once, while persistent grants require an explicit user
+                  choice</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Disconnected streams release the runtime for a fresh resume
+                <span class="d"
+                  >a stream that ends during session opening rejects the start; late disconnect
+                  listeners still receive the failure, so the next attempt cannot retain a dead
+                  runtime</span
                 ></span
               ></label
             >
@@ -557,6 +573,21 @@
           </li>
         </ul>
 
+        <h3>Pi (RPC) <span class="pill-parked">nightly only</span></h3>
+        <ul class="check">
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Native Pi discovery, model listing, streaming, steering, and interrupt
+                <span class="d"
+                  >starts the installed pi command without requiring a custom harness; optional
+                  custom commands retain launch validation and bounded startup</span
+                ></span
+              ></label
+            >
+          </li>
+        </ul>
+
         <h3>Kimi CLI (over ACP) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
@@ -614,6 +645,19 @@
             <label
               ><input type="checkbox" /><span
                 >Custom endpoints require HTTPS unless loopback</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >New chats retain their connection, selected model, and full tool context across
+                restart
+                <span class="d"
+                  >state is saved at turn boundaries, included in history exports, and excludes
+                  configured credentials; legacy chats without saved provider context report that
+                  they cannot resume rather than silently starting an empty conversation</span
+                ></span
               ></label
             >
           </li>
@@ -1026,12 +1070,15 @@
         demo values avoid website-only blockers; asserted product claims still require evidence.
         Image capability is checked before inference; direct API sessions currently declare images:
         false and cannot run visual Design, while ordinary coding remains available. This work is
-        not merged. The 172 shipped website references and 316 WebPs above are unchanged.
-        Default-bundle selection, saved-deck, attachment and hash checks passed for all 200
-        dashboard groups. The design-agent package passed 232 tests and its build; earlier lint,
-        typecheck and full build passed. Thirteen unchanged Windows/environment full-suite failures
-        remain. Twelve focused orchestration checks passed; final nightly integration and
-        interactive native-app acceptance remain pending.
+        unreleased, with its PR pending against codex/nightly-dashboard-base and dependent on
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>. The 172 shipped
+        website references and 316 WebPs above are unchanged; the combined bundle has 372 references
+        and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks passed for
+        all 200 dashboard groups. The design-agent package passed 232 tests and its build; earlier
+        lint, typecheck and full build passed. The earlier feature-only full-suite run had thirteen
+        unchanged Windows/environment failures; the prerequisite run separately had four. Twelve
+        focused orchestration checks passed; final combined gates and interactive native-app
+        acceptance remain pending.
       </p>
 
       <section id="thread">
@@ -1421,12 +1468,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Per-session and per-day usage summaries
+                >Persistent per-session and per-day usage accounting
                 <span class="d"
                   >provider-neutral server-owned totals feed the live session and today summaries;
-                  money only appears when the provider reports real cost; the account footer shows
-                  the highest reported limit percentage used, with the provider and window on
-                  hover</span
+                  malformed or parser-stale generated caches trigger a cold rebuild; failed
+                  background scans back off, while Profile and Usage polling recovers from transient
+                  request failures; money only appears when the provider reports real cost; the
+                  account footer shows the highest reported limit percentage used, with provider and
+                  window on hover</span
                 ></span
               ></label
             >
@@ -2179,10 +2228,10 @@
       </p>
 
       <footer>
-        Companion to docs/dashboard.html. Pending notes are separate from the implemented checklist.
-        See
-        <a href="./verification/pr-quality-2026-09-09.md">verification and release limits</a>. Ticks
-        live in your browser's local storage, nothing is sent anywhere.
+        Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
+        alongside the main source snapshot named above. Pending notes are separate from the
+        implemented checklist; final combined verification remains pending. Ticks live in your
+        browser's local storage, nothing is sent anywhere.
       </footer>
     </div>
 

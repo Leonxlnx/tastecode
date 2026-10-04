@@ -306,6 +306,9 @@ function harness(
         thread: {
           id: `thread-${sessions.length}`,
           provider,
+          ...(provider === 'api'
+            ? { connectionId: options.connectionId ?? 'test-connection' }
+            : {}),
           workspacePath,
           createdAt: Date.now(),
         },
@@ -1293,6 +1296,12 @@ describe('provider-neutral Side chat', () => {
         effort: 'high',
         approval: 'auto',
       })
+      if (provider === 'api') {
+        expect(startedOptions[1]?.connectionId).toBe(parent.connectionId)
+        expect(side.connectionId).toBe(parent.connectionId)
+        expect(store.thread(parent.id)?.connectionId).toBe(parent.connectionId)
+        expect(store.thread(side.id)?.connectionId).toBe(parent.connectionId)
+      }
       expect(startedOptions[1]?.instructions).toContain('temporary Side chat')
       expect(startedOptions[1]?.instructions).toContain('Explain this failure.')
 
@@ -1314,7 +1323,7 @@ describe('provider-neutral Side chat', () => {
 
   it('reuses the compact replay snapshot for a long parent boundary', async () => {
     const { orchestrator, store } = harness()
-    const parent = await orchestrator.startThread('claude-code', process.cwd())
+    const parent = await orchestrator.startThread('api', process.cwd())
     store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
     for (let index = 0; index < 100; index += 1) {
       store.append(parent.id, {
@@ -1604,7 +1613,7 @@ describe('durable turn timing', () => {
     const optimistic = beginOptimisticTurn(emptyThread, 'Do the work.')
     const { orchestrator, sessions, store } = harness()
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-replay')
       await orchestrator.sendTurn(thread.id, 'Do the work.')
@@ -1641,7 +1650,7 @@ describe('durable turn timing', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const { orchestrator, sessions, store } = harness()
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-sync')
       session.eventDuringSend = {
@@ -1661,7 +1670,7 @@ describe('durable turn timing', () => {
     }
   })
 
-  it.each(['codex', 'claude-code'] as const)(
+  it.each(['codex', 'api'] as const)(
     'records server-owned lifecycle boundaries for %s turns',
     async (provider) => {
       const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
@@ -2156,6 +2165,7 @@ describe('durable user submissions', () => {
     ['codex', true],
     ['claude-code', false],
     ['grok', false],
+    ['api', false],
   ] as const)('owns exact repeated user messages for %s', async (provider, emitsUserEcho) => {
     const { orchestrator, sessions, store } = harness()
     try {
@@ -2204,7 +2214,7 @@ describe('durable user submissions', () => {
     let release = () => {}
     let submitting = Promise.resolve<unknown>(undefined)
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.turnIds.push('turn-in-flight')
       session.eventDuringSend = turnStarted(thread.id, 'turn-in-flight')
@@ -2293,7 +2303,7 @@ describe('durable user submissions', () => {
   it('releases rejected identities but rejects a durable reuse', async () => {
     const { orchestrator, sessions } = harness()
     try {
-      const thread = await orchestrator.startThread('claude-code', '/repo')
+      const thread = await orchestrator.startThread('api', '/repo')
       const session = sessions[0]!
       session.sendError = new Error('provider rejected')
       await expect(
@@ -2479,7 +2489,7 @@ describe('provider-neutral design briefing', () => {
         path.join(workspace, 'comparison-mobile.html'),
         `<img src="data:image/png;base64,${'A'.repeat(2_100_000)}">`,
       )
-      const thread = await orchestrator.startThread('claude-code', workspace)
+      const thread = await orchestrator.startThread('api', workspace)
       await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
       expect(sessions[0]?.sent).toHaveLength(1)
       expect(store.designRun(thread.id)).toMatchObject({

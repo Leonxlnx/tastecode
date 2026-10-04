@@ -64,6 +64,7 @@
       "!node_modules/@harness/*/dist/**/*.d.ts",
       "!node_modules/@harness/*/dist/**/*.bench.js",
       "!node_modules/@harness/adapter-codex/dist/generated{,/**/*}",
+      "!node_modules/@harness/adapter-api/dist/test-server.js",
       "!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}",
       "!node_modules/@anthropic-ai/claude-agent-sdk/{bridge.mjs,browser-sdk.js}",
       "!node_modules/zod/src{,/**/*}",

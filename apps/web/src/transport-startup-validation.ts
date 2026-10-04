@@ -34,6 +34,12 @@ const isProviderId = enumValidator<ProviderId>({
   codex: true,
   'claude-code': true,
   grok: true,
+  cursor: true,
+  opencode: true,
+  antigravity: true,
+  pi: true,
+  acp: true,
+  api: true,
 })
 const isInboxStatus = enumValidator<ThreadInboxStatus>({
   starting: true,
@@ -130,6 +136,7 @@ const isSession = objectValidator<Project['sessions'][number]>({
   title: isString,
   provider: isProviderId,
   agent: optional(isString),
+  connectionId: optional(isString),
   createdAt: isFiniteNumber,
   running: isBoolean,
   pinned: optional(isBoolean),

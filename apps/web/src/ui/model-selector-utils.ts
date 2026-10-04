@@ -70,7 +70,11 @@ export function getEffortProgressFromPointer(input: {
 }
 
 export function modelSourceKey(entry: ModelChoice): string {
-  return sourceKey({ provider: entry.provider, agentId: entry.agent?.id })
+  return sourceKey({
+    provider: entry.provider,
+    connectionId: entry.connectionId,
+    agentId: entry.agent?.id,
+  })
 }
 
 export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {

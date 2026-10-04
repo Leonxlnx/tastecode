@@ -90,8 +90,10 @@ export type StoredThread = {
   id: string
   projectPath: string
   provider: ProviderId
-  /** Custom harness id, when the thread runs one instead of the provider CLI. */
+  /** ACP agent or custom harness id, when one owns the session. */
   agent?: string | undefined
+  /** Non-secret connection identity for direct API sessions. */
+  connectionId?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
   title: string
@@ -120,6 +122,8 @@ export type StoredSidebarThread = {
   projectPath: string
   provider: ProviderId
   agent?: string | undefined
+  /** Non-secret connection identity for direct API sessions. */
+  connectionId?: string | undefined
   title: string
   pinned: boolean
   createdAt: number
@@ -140,6 +144,13 @@ export type StoredCheckpoint = {
   commit: string
   label: string
   createdAt: number
+}
+
+export type StoredUsageEvent = {
+  threadId: string
+  provider: ProviderId
+  at: number
+  usage: Usage
 }
 
 export type StoredQueuedTurn = {
@@ -288,6 +299,7 @@ CREATE TABLE IF NOT EXISTS threads (
   project_path TEXT NOT NULL,
   provider     TEXT NOT NULL,
   agent        TEXT,
+  connection_id TEXT,
   provider_session_id TEXT,
   title        TEXT NOT NULL,
   pinned       INTEGER NOT NULL DEFAULT 0,
@@ -444,6 +456,11 @@ CREATE TABLE IF NOT EXISTS thread_replay_snapshots (
   payload   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS thread_runtime_state (
+  thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  payload   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
   name TEXT PRIMARY KEY
 );
@@ -517,6 +534,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
+  { table: 'threads', column: 'connection_id', definition: 'TEXT' },
 ]
 
 type SqliteInteger = number | bigint
@@ -535,6 +553,7 @@ type ThreadRow = {
   project_path: string
   provider: string
   agent: string | null
+  connection_id: string | null
   provider_session_id: string | null
   title: string
   pinned: SqliteInteger
@@ -559,6 +578,7 @@ type SidebarThreadRow = Pick<
   | 'project_path'
   | 'provider'
   | 'agent'
+  | 'connection_id'
   | 'title'
   | 'pinned'
   | 'created_at'
@@ -1006,10 +1026,10 @@ export class Store {
     this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
     this.#insertThread = this.#db.prepare(
       `INSERT INTO threads
-        (id, project_path, provider, agent, provider_session_id, title, created_at,
+        (id, project_path, provider, agent, connection_id, provider_session_id, title, created_at,
           worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1019,7 +1039,7 @@ export class Store {
       `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     this.#listSidebarThreads = this.#db.prepare(
-      `SELECT id, project_path, provider, agent, title, pinned, created_at, closed_at,
+      `SELECT id, project_path, provider, agent, connection_id, title, pinned, created_at, closed_at,
               worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
               keep_active, woke_at, unread
        FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
@@ -1336,6 +1356,7 @@ export class Store {
       stored.projectPath,
       stored.provider,
       stored.agent ?? null,
+      stored.connectionId ?? null,
       stored.providerSessionId ?? null,
       stored.title,
       stored.createdAt,
@@ -1867,6 +1888,20 @@ export class Store {
     return this.#sidebarSettingsCache
   }
 
+  threadRuntimeState(threadId: string): unknown {
+    const row = sqliteRow<{ payload: string }>(
+      this.#db.prepare('SELECT payload FROM thread_runtime_state WHERE thread_id = ?'),
+      threadId,
+    )
+    return row ? JSON.parse(row.payload) : undefined
+  }
+
+  saveThreadRuntimeState(threadId: string, state: unknown): void {
+    this.#db
+      .prepare('INSERT OR REPLACE INTO thread_runtime_state (thread_id, payload) VALUES (?, ?)')
+      .run(threadId, serializeJson(state))
+  }
+
   threadApproval(threadId: string): ApprovalMode | undefined {
     const row = this.#db
       .prepare('SELECT mode FROM thread_approvals WHERE thread_id = ?')
@@ -2194,6 +2229,7 @@ export class Store {
         'events',
         'provider_history',
         'provider_history_events',
+        'thread_runtime_state',
         'checkpoints',
         'restore_undos',
         'diff_decisions',
@@ -3225,6 +3261,31 @@ export class Store {
     }
   }
 
+  /** Read indexed usage rows rather than scanning every streamed event. */
+  usageEvents(): StoredUsageEvent[] {
+    const rows = sqliteRows<{
+      thread_id: string
+      at: SqliteInteger
+      payload: string
+      provider: string
+    }>(
+      this.#db.prepare(
+        `SELECT u.thread_id, u.at, u.payload, t.provider
+         FROM usage_events u JOIN threads t ON t.id = u.thread_id
+         ORDER BY u.thread_id, u.event_seq`,
+      ),
+    )
+    const events: StoredUsageEvent[] = []
+    for (const row of rows) {
+      const provider = toProviderId(row.provider)
+      if (!provider) continue
+      const event = parseDomainEvent(row.payload, `usage history for thread ${row.thread_id}`)
+      if (event?.type !== 'usage.updated') continue
+      events.push({ threadId: row.thread_id, provider, at: Number(row.at), usage: event.usage })
+    }
+    return events
+  }
+
   usageSummary(threadId: string, since: number): UsageSummary {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
@@ -4208,6 +4269,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     projectPath: row.project_path,
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
+    ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
     title: row.title,
     pinned: row.pinned === 1,
     createdAt: Number(row.created_at),
@@ -4229,6 +4291,7 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     projectPath: row.project_path,
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
+    ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
     pinned: row.pinned === 1,

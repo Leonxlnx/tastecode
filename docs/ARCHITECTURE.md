@@ -565,6 +565,9 @@ manual.
 ## Dashboard design references (pending)
 
 Pending source work as of 2026-10-04, based on `main` at `6ac40ec1`; not merged or released.
+The dashboard PR targets `codex/nightly-dashboard-base` and depends on
+[PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392), preserving the full nightly provider
+roster and usage history.
 The asset import is complete: a separate dashboard catalog and provenance record contain
 200 reviewed generated desktop/mobile pairs, stored as 400 WebPs. The existing 172 website
 references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
@@ -590,8 +593,9 @@ The workflow never substitutes an unannounced text-only build for the requested 
 
 The design-agent package passed 232 tests and its build; earlier local lint, typecheck and full
 build passed. Twelve focused orchestration checks passed: six capability-preflight cases and
-six synthetic-vision website/dashboard flows. The full test run has 13 unchanged Windows or
-environment failures, so the four gates are not all green. Final nightly integration and
+six synthetic-vision website/dashboard flows. The earlier feature-only full test run had 13
+unchanged Windows or environment failures; the prerequisite run separately had four.
+Final combined gates and
 interactive native-app acceptance remain pending; synthetic flows and a separate external
 demo do not prove native-app acceptance.
 

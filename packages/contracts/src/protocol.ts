@@ -1,5 +1,10 @@
 import { z } from 'zod'
 import {
+  ModelConnectionListSchema,
+  ModelConnectionModelsSchema,
+  ModelConnectionSchema,
+} from './connections.js'
+import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
@@ -11,6 +16,7 @@ import {
   ModelSchema,
   ProviderContextSettingsSchema,
   ProviderIdSchema,
+  ProviderSetupSchema,
   ProviderStatusSchema,
   ProviderUpdateSchema,
   UsageSchema,
@@ -29,7 +35,7 @@ import {
 
 /**
  * The wire protocol between the desktop renderer, web client, and local core
- * and the local core server.
+ * server.
  *
  * Two shapes only:
  *   request/response — client asks, server answers
@@ -489,6 +495,85 @@ export const SessionDiffSchema = z.object({
 })
 export type SessionDiff = z.infer<typeof SessionDiffSchema>
 
+export const UsageHistoryRangeSchema = z.enum(['7d', '30d', '90d', '365d', 'all'])
+export type UsageHistoryRange = z.infer<typeof UsageHistoryRangeSchema>
+
+export const UsageHistoryTotalsSchema = z.object({
+  uncachedInputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
+  cacheWriteInputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
+  processedTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+  cacheSavingsUsd: z.number().nonnegative(),
+  providerReportedCostUsd: z.number().nonnegative(),
+  providerReportedTokens: z.number().int().nonnegative(),
+  pricedTokens: z.number().int().nonnegative(),
+  unpricedTokens: z.number().int().nonnegative(),
+})
+export type UsageHistoryTotals = z.infer<typeof UsageHistoryTotalsSchema>
+
+export const UsageHistoryProviderSchema = z.object({
+  provider: ProviderIdSchema,
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryProvider = z.infer<typeof UsageHistoryProviderSchema>
+
+export const UsageHistoryModelSchema = z.object({
+  provider: ProviderIdSchema,
+  model: z.string().min(1),
+  sessionCount: z.number().int().nonnegative(),
+  pricing: z.enum(['exact', 'family', 'unpriced']),
+  totals: UsageHistoryTotalsSchema,
+})
+export type UsageHistoryModel = z.infer<typeof UsageHistoryModelSchema>
+
+export const UsageHistoryDaySchema = z.object({
+  date: z.string().date(),
+  sessionCount: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      tokens: z.number().int().nonnegative(),
+      estimatedCostUsd: z.number().nonnegative(),
+    }),
+  ),
+})
+export type UsageHistoryDay = z.infer<typeof UsageHistoryDaySchema>
+
+export const UsageHistoryScanSchema = z.object({
+  status: z.enum(['idle', 'scanning']),
+  filesProcessed: z.number().int().nonnegative(),
+  filesTotal: z.number().int().nonnegative(),
+})
+export type UsageHistoryScan = z.infer<typeof UsageHistoryScanSchema>
+
+export const UsageHistoryResultSchema = z.object({
+  range: UsageHistoryRangeSchema,
+  startDate: z.string().date(),
+  endDate: z.string().date(),
+  generatedAt: z.number().int().nonnegative(),
+  sessionCount: z.number().int().nonnegative(),
+  activeDays: z.number().int().nonnegative(),
+  totals: UsageHistoryTotalsSchema,
+  providers: z.array(UsageHistoryProviderSchema),
+  models: z.array(UsageHistoryModelSchema),
+  daily: z.array(UsageHistoryDaySchema),
+  sources: z.array(
+    z.object({
+      provider: ProviderIdSchema,
+      available: z.boolean(),
+      sessionCount: z.number().int().nonnegative(),
+    }),
+  ),
+  scan: UsageHistoryScanSchema,
+  warnings: z.array(z.string()),
+})
+export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
+
 export const ProviderLimitSchema = z.object({
   label: z.string().min(1).max(120),
   usedPercent: z.number().min(0).max(100),
@@ -663,6 +748,7 @@ export const methods = {
   'providers.install': {
     params: z.object({
       provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
@@ -680,9 +766,34 @@ export const methods = {
   'providers.launch': {
     params: z.object({
       provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
+  },
+  'connections.list': {
+    params: z.object({}),
+    result: ModelConnectionListSchema,
+  },
+  'connections.upsert': {
+    params: ModelConnectionSchema.omit({
+      credentialConfigured: true,
+      capabilities: true,
+      problem: true,
+    }),
+    result: z.object({ connection: ModelConnectionSchema }),
+  },
+  'connections.setCredential': {
+    params: z.object({ connectionId: z.string().min(1), apiKey: z.string().min(1) }),
+    result: z.object({ credentialConfigured: z.literal(true) }),
+  },
+  'connections.remove': {
+    params: z.object({ connectionId: z.string().min(1) }),
+    result: z.object({}),
+  },
+  'connections.models': {
+    params: z.object({ connectionId: z.string().min(1) }),
+    result: ModelConnectionModelsSchema,
   },
   'mcp.list': {
     params: z.object({ provider: ProviderIdSchema, projectPath: z.string().min(1) }),
@@ -1021,6 +1132,32 @@ export const methods = {
     result: z.object({}),
   },
   /**
+   * Agents reachable over ACP, and whether each one is actually on this
+   * machine. The list is the server's to answer because only it can look.
+   */
+  'acp.agents': {
+    params: z.object({}),
+    result: z.object({
+      agents: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          installed: z.boolean(),
+          /** True when we captured and read this agent's frames ourselves. */
+          verified: z.boolean(),
+          install: z.string().optional(),
+          setup: ProviderSetupSchema,
+          /**
+           * Why sign-in or use is impaired right now, in language we can show
+           * the user directly — e.g. a vendor discontinuing a login path.
+           * Mirrors `ProviderStatus.problem`.
+           */
+          problem: z.string().optional(),
+        }),
+      ),
+    }),
+  },
+  /**
    * Projects and sessions the server knows about. These replace what the
    * renderer used to keep in localStorage, where a reload could destroy it.
    */
@@ -1039,6 +1176,8 @@ export const methods = {
               title: z.string(),
               provider: ProviderIdSchema,
               agent: z.string().optional(),
+              /** Server-owned API connection used when restoring this chat. */
+              connectionId: z.string().min(1).optional(),
               createdAt: z.number(),
               /** True while the agent is actively working on a turn. */
               running: z.boolean(),
@@ -1256,6 +1395,23 @@ export const methods = {
     result: UsageSummaryResultSchema,
   },
   /**
+   * Local, model-attributed usage history. Dollar values are API-equivalent
+   * estimates, and pricing coverage is returned with the estimate so clients
+   * can show when a model could not be priced.
+   */
+  'usage.history': {
+    params: z.object({
+      range: UsageHistoryRangeSchema,
+      refresh: z.boolean().optional(),
+    }),
+    result: UsageHistoryResultSchema,
+  },
+  /** Clears the generated local usage index and starts a cold background scan. */
+  'usage.resetHistory': {
+    params: z.object({}),
+    result: z.object({ started: z.literal(true) }),
+  },
+  /**
    * Spend one earned rate-limit reset. The provider must have declared a
    * `consume-reset` limit row. Callers generate a UUID and reuse it when
    * retrying the same attempt.
@@ -1287,24 +1443,40 @@ export const methods = {
     result: z.object({}),
   },
   'thread.start': {
-    params: z.object({
-      provider: ProviderIdSchema,
-      /** Custom harness to launch instead of the provider's own CLI. */
-      agent: z.string().optional(),
-      workspacePath: z.string(),
-      model: z.string().optional(),
-      serviceTier: z.string().optional(),
-      effort: z.string().optional(),
-      approval: ApprovalModeSchema.optional(),
-      /**
-       * Give this session a private git worktree instead of the project folder
-       * itself. Two agents in one directory overwrite each other, and the
-       * second to write wins silently.
-       */
-      isolate: z.boolean().optional(),
-      /** Local branch used atomically for a shared or isolated checkout. */
-      baseRef: z.string().min(1).max(1024).optional(),
-    }),
+    params: z
+      .object({
+        provider: ProviderIdSchema,
+        /**
+         * Which ACP agent to launch, when `provider` is `acp`. ACP is one
+         * integration serving many agents, so the provider alone does not say
+         * which binary to spawn.
+         */
+        agent: z.string().optional(),
+        /** Server-owned model connection selected when `provider` is `api`. */
+        connectionId: z.string().min(1).optional(),
+        workspacePath: z.string(),
+        model: z.string().optional(),
+        serviceTier: z.string().optional(),
+        effort: z.string().optional(),
+        approval: ApprovalModeSchema.optional(),
+        /**
+         * Give this session a private git worktree instead of the project folder
+         * itself. Two agents in one directory overwrite each other, and the
+         * second to write wins silently.
+         */
+        isolate: z.boolean().optional(),
+        /** Local branch used atomically for a shared or isolated checkout. */
+        baseRef: z.string().min(1).max(1024).optional(),
+      })
+      .superRefine((request, context) => {
+        if ((request.provider === 'api') !== Boolean(request.connectionId)) {
+          context.addIssue({
+            code: 'custom',
+            path: ['connectionId'],
+            message: 'connectionId is required only for api sessions',
+          })
+        }
+      }),
     result: z.object({ threadId: z.string() }),
   },
   /**

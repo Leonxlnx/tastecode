@@ -30,6 +30,7 @@ vi.mock('@harness/proc', async (importOriginal) => ({
 
 class FakeAcpRpc implements AcpRpc {
   #onServerRequest: ServerRequestHandler = (_method, _params, respond) => respond(null)
+  #onNotification: (method: string, params: JsonRpcValue | undefined) => void = () => {}
   #resolvePrompt: ((result: JsonRpcValue) => void) | undefined
   #rejectPrompt: ((error: Error) => void) | undefined
   failTransport: ((error: Error) => void) | undefined
@@ -37,7 +38,13 @@ class FakeAcpRpc implements AcpRpc {
   methods: string[] = []
 
   onStderr(): void {}
-  onNotification(): void {}
+  onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void {
+    this.#onNotification = handler
+  }
+
+  emitNotification(method: string, params: JsonRpcValue): void {
+    this.#onNotification(method, params)
+  }
 
   onServerRequest(handler: ServerRequestHandler): void {
     this.#onServerRequest = handler
@@ -110,8 +117,8 @@ class FakeAcpRpc implements AcpRpc {
     resolve(result)
   }
 
-  rejectPrompt(): void {
-    this.#rejectPrompt?.(new Error('prompt failed'))
+  rejectPrompt(error = new Error('prompt failed')): void {
+    this.#rejectPrompt?.(error)
   }
 }
 
@@ -215,6 +222,51 @@ describe('ACP approval lifecycle', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'turn.completed', turnId, status: 'completed' }),
     )
+  })
+
+  it('settles text, tool and approval exactly once when the prompt request rejects', async () => {
+    const { events, turnId } = await startedAdapter('ask')
+    const update = (value: JsonRpcValue) =>
+      activeRpc().emitNotification('session/update', { sessionId: 'sess-1', update: value })
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'partial' } })
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' answer' } })
+    update({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-run',
+      status: 'in_progress',
+      title: 'pnpm test',
+      kind: 'execute',
+    })
+    const answered = activeRpc().requestPermission('execute')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const settledFrom = events.length
+
+    activeRpc().rejectPrompt(new Error('Internal error: MCP server exited'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    // A frame that arrives after the turn ended must not reopen it.
+    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'late' } })
+
+    // The agent, still blocked on its permission request, hears "cancelled".
+    await expect(answered).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(events).toContainEqual({
+      type: 'item.completed',
+      item: expect.objectContaining({ type: 'message', text: 'partial answer' }),
+    })
+    // Every open item and approval is terminal before the turn is, each once,
+    // then the reason, then the turn itself — and nothing after it.
+    expect(events.slice(settledFrom)).toEqual([
+      {
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'tc-run', status: 'failed', command: 'pnpm test' }),
+      },
+      { type: 'approval.resolved', id: expect.any(String) },
+      {
+        type: 'thread.error',
+        threadId: 'acp-grok-sess-1',
+        message: 'Internal error: MCP server exited',
+      },
+      { type: 'turn.completed', turnId, status: 'failed' },
+    ])
   })
 
   it('auto mode only waves through reads — mutations stay questions', async () => {

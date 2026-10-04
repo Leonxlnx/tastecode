@@ -1,6 +1,20 @@
-import type { ProviderId } from '@harness/contracts'
+import type { ModelConnectionPreset, ProviderId } from '@harness/contracts'
 
-export type ProviderMark = 'openai' | 'anthropic' | 'grok'
+export type ProviderMark =
+  | 'openai'
+  | 'anthropic'
+  | 'grok'
+  | 'cursor'
+  | 'opencode'
+  | 'openrouter'
+  | 'kimi'
+  | 'gemini'
+  | 'qwen'
+  | 'zai'
+  | 'antigravity'
+  | 'pi'
+  | 'acp'
+  | 'custom'
 
 export type ProviderPresentation = {
   label: string
@@ -11,7 +25,19 @@ const PROVIDERS = {
   codex: { label: 'Codex', mark: 'openai' },
   'claude-code': { label: 'Claude Code', mark: 'anthropic' },
   grok: { label: 'Grok', mark: 'grok' },
+  cursor: { label: 'Cursor', mark: 'cursor' },
+  opencode: { label: 'OpenCode', mark: 'opencode' },
+  antigravity: { label: 'Antigravity', mark: 'antigravity' },
+  pi: { label: 'Pi', mark: 'pi' },
+  acp: { label: 'ACP', mark: 'acp' },
+  api: { label: 'API connection', mark: 'custom' },
 } as const satisfies Record<ProviderId, ProviderPresentation>
+
+const ACP_AGENTS = {
+  gemini: { label: 'Gemini CLI', mark: 'gemini' },
+  kimi: { label: 'Kimi CLI', mark: 'kimi' },
+  qwen: { label: 'Qwen Code', mark: 'qwen' },
+} satisfies Record<string, ProviderPresentation>
 
 export function providerPresentation(provider: ProviderId): ProviderPresentation {
   return PROVIDERS[provider]
@@ -23,4 +49,47 @@ export function providerDisplayName(provider: ProviderId): string {
 
 export function providerMark(provider: ProviderId): ProviderMark {
   return providerPresentation(provider).mark
+}
+
+export function sourcePresentation(input: {
+  provider: ProviderId
+  sourceName?: string | undefined
+  mark?: ProviderMark | undefined
+}): ProviderPresentation {
+  const fallback = providerPresentation(input.provider)
+  const sourceCanOverride = input.provider === 'acp' || input.provider === 'api'
+  return {
+    label: (sourceCanOverride ? input.sourceName?.trim() : undefined) || fallback.label,
+    mark: sourceCanOverride ? (input.mark ?? fallback.mark) : fallback.mark,
+  }
+}
+
+export function connectionMark(preset: ModelConnectionPreset): ProviderMark {
+  if (preset === 'openai') return 'openai'
+  if (preset === 'anthropic') return 'anthropic'
+  return preset
+}
+
+export function agentMark(agentId: string): ProviderMark {
+  if (agentId === 'gemini' || agentId === 'kimi' || agentId === 'qwen') return agentId
+  return 'acp'
+}
+
+export function agentPresentation(
+  agentId: string,
+  sourceName?: string | undefined,
+): ProviderPresentation {
+  const known: ProviderPresentation | undefined = ACP_AGENTS[agentId as keyof typeof ACP_AGENTS]
+  return sourcePresentation({
+    provider: 'acp',
+    sourceName: sourceName?.trim() || known?.label || agentId,
+    mark: known?.mark ?? agentMark(agentId),
+  })
+}
+
+export function sessionSourcePresentation(
+  provider: ProviderId,
+  agentId?: string | undefined,
+): ProviderPresentation {
+  return provider === 'acp' && agentId ? agentPresentation(agentId) : providerPresentation(provider)
 }

@@ -34,6 +34,9 @@ const unsupported: ProviderControlCapabilities = {
 }
 
 export const PROVIDER_CAPABILITIES = {
+  acp: { ...unsupported, resume: true, nativeModels: true, account: true, signOut: true },
+  antigravity: { ...unsupported, nativeModels: true },
+  api: { ...unsupported, resume: true },
   'claude-code': {
     ...unsupported,
     resume: true,
@@ -59,6 +62,14 @@ export const PROVIDER_CAPABILITIES = {
     usageLimits: true,
     rateLimitReset: true,
   },
+  cursor: {
+    ...unsupported,
+    resume: true,
+    nativeModels: true,
+    account: true,
+    login: true,
+    signOut: true,
+  },
   grok: {
     ...unsupported,
     resume: true,
@@ -68,4 +79,6 @@ export const PROVIDER_CAPABILITIES = {
     signOut: true,
     usageLimits: true,
   },
+  opencode: { ...unsupported, resume: true, managedMcp: true, nativeModels: true },
+  pi: { ...unsupported, nativeModels: true },
 } as const satisfies Readonly<Record<ProviderId, ProviderControlCapabilities>>

@@ -16,10 +16,12 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
+  ModelConnection,
   ProviderId,
   ProviderStatus,
   PullRequestListItem,
   QueuedTurn,
+  ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
 import {
@@ -118,6 +120,8 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { UsageLimitsController } from './usage-limits-state.js'
 import {
+  agentMark,
+  connectionMark,
   choicesFor,
   customModelChoice,
   customModelKey,
@@ -196,10 +200,23 @@ import {
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
-const PROVIDER_IDS = ['codex', 'claude-code', 'grok'] as const satisfies readonly ProviderId[]
+const PROVIDER_IDS = [
+  'codex',
+  'claude-code',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+  'acp',
+  'api',
+] as const satisfies readonly ProviderId[]
 const PROVIDER_ID_SET = new Set<ProviderId>(PROVIDER_IDS)
-/** Which custom harness source was chosen. The key names predate custom
- *  harnesses; renaming them would forget every stored choice. */
+/** Engines a custom model can be attached to — ACP agents and API
+ *  connections carry their own roster concepts and stay out of this list. */
+const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api' && id !== 'pi')
+const DIRECT_PROVIDER_ID_SET = new Set<ProviderId>(DIRECT_PROVIDER_IDS)
+/** Which named agent or custom harness source was chosen. */
 const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
@@ -363,13 +380,27 @@ function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
 
 export function resolveSendAvailability(input: {
   catalog: CatalogAvailability
+  serverBoundSession: boolean
   activeProvider?: ProviderId | undefined
   selectedChoice?: ModelChoice | undefined
+  connections: ModelConnection[]
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
+  if (input.serverBoundSession && !input.selectedChoice) return 'ready'
   if (input.catalog === 'loading') return 'loading'
   if (input.catalog === 'failed') return 'unavailable'
+
+  // An API connection has no vendor CLI behind it, so no provider status
+  // describes it. Its own credential is the readiness signal. A connection that
+  // is disabled, keyless, or absent from the list is something the user can fix
+  // in Settings, so it reports setup-required: reporting it unavailable showed a
+  // dead end whose button could not change the outcome.
+  const connectionId = input.selectedChoice?.connectionId
+  if (connectionId) {
+    const connection = input.connections.find((entry) => entry.id === connectionId)
+    return connection?.enabled && connection.credentialConfigured ? 'ready' : 'setup-required'
+  }
 
   const provider = input.activeProvider ?? input.selectedChoice?.provider
   if (!provider) {
@@ -380,7 +411,7 @@ export function resolveSendAvailability(input: {
       : 'unavailable'
   }
 
-  if (input.selectedChoice?.agent) return 'ready'
+  if (input.selectedChoice?.agent && input.selectedChoice.provider !== 'acp') return 'ready'
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
   if (!status) return 'unavailable'
@@ -409,7 +440,11 @@ function readCustomModels(): CustomModel[] {
       if (!isRecord(entry)) continue
       const provider = entry['provider']
       const storedModelId = entry['modelId']
-      if (!isProviderId(provider) || typeof storedModelId !== 'string') {
+      if (
+        !isProviderId(provider) ||
+        !DIRECT_PROVIDER_ID_SET.has(provider) ||
+        typeof storedModelId !== 'string'
+      ) {
         continue
       }
       const modelId = storedModelId.trim()
@@ -432,13 +467,19 @@ function readCustomModels(): CustomModel[] {
  *  choice, so the same model can never appear twice. */
 function mergeCustomModels(catalog: ModelChoice[], custom: CustomModel[]): ModelChoice[] {
   if (custom.length === 0) return catalog
-  const customChoices = custom.map((entry) => customModelChoice(entry))
+  const customChoices = custom.map((entry) =>
+    customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
+  )
   const customKeys = new Set(customChoices.map((choice) => choice.key))
   return [...catalog.filter((choice) => !customKeys.has(choice.key)), ...customChoices]
 }
 
 function modelSource(choice: ModelChoice): string {
-  return sourceKey({ provider: choice.provider, agentId: choice.agent?.id })
+  return sourceKey({
+    provider: choice.provider,
+    connectionId: choice.connectionId,
+    agentId: choice.agent?.id,
+  })
 }
 
 export function App() {
@@ -500,7 +541,8 @@ export function App() {
   )
   const sourceAgentRef = useRef(sourceAgent)
   sourceAgentRef.current = sourceAgent
-  // The custom harness's own name, so the composer can show what the user called it.
+  // Kept so the sidebar can say "Gemini CLI" rather than "acp". The name lives
+  // in the adapter package, which the renderer deliberately cannot import.
   const [sourceAgentName, setSourceAgentName] = useState<string | undefined>(
     () => readSetting(AGENT_NAME_KEY) ?? undefined,
   )
@@ -620,6 +662,8 @@ export function App() {
       }
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
+  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
+  const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
   const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
@@ -866,7 +910,7 @@ export function App() {
   )
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
   const providerSignInState = useSyncExternalStore(subscribeInstalls, () =>
-    installState(loginKey({ provider })),
+    installState(loginKey({ provider, ...(sourceAgent ? { agent: sourceAgent } : {}) })),
   )
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
@@ -876,6 +920,10 @@ export function App() {
   )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
+  /** Latched: the user has, or had, models that a connection pays for. Used to
+   *  decide whether a failed connection list is worth reporting, so a server
+   *  that has no connections at all stays quiet. */
+  const hadConnectionModelsRef = useRef(false)
   const modelsRef = useRef(models)
   modelsRef.current = models
   const visibleModels = useMemo(
@@ -889,20 +937,23 @@ export function App() {
   // (including effects that write settings) a new dependency each frame.
   const implicitChoice = useMemo(
     () =>
-      choicesFor(
-        {
-          provider,
-          sourceName: providerName(provider, sourceAgentName),
-          mark: providerMark(provider),
-          ...(sourceAgent
-            ? {
-                agent: { id: sourceAgent, name: sourceAgentName ?? sourceAgent },
-              }
-            : {}),
-        },
-        [],
-        true,
-      )[0],
+      provider !== 'api' && (provider !== 'pi' || sourceAgent)
+        ? choicesFor(
+            {
+              provider,
+              sourceName: providerName(provider, sourceAgentName),
+              mark:
+                provider === 'acp' && sourceAgent ? agentMark(sourceAgent) : providerMark(provider),
+              ...(sourceAgent
+                ? {
+                    agent: { id: sourceAgent, name: sourceAgentName ?? sourceAgent },
+                  }
+                : {}),
+            },
+            [],
+            true,
+          )[0]
+        : undefined,
     [provider, sourceAgent, sourceAgentName],
   )
   const activeSession = useMemo(
@@ -913,6 +964,7 @@ export function App() {
     return activeSession
       ? sourceKey({
           provider: activeSession.provider,
+          connectionId: activeSession.connectionId,
           agentId: activeSession.agent,
         })
       : undefined
@@ -932,7 +984,11 @@ export function App() {
         : false,
     [activeModelSource, models],
   )
-  const preferredModelSource = activeModelSource ?? sourceKey({ provider, agentId: sourceAgent })
+  const preferredModelSource =
+    activeModelSource ??
+    (storedModelChoice
+      ? modelSource(storedModelChoice)
+      : sourceKey({ provider, agentId: sourceAgent }))
   const preferredModelKey = useMemo(
     () => readSourceSelections()[preferredModelSource]?.modelKey,
     [preferredModelSource, selectableModels],
@@ -949,14 +1005,22 @@ export function App() {
   const selectedModelChoice =
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels.find((choice) => choice.key === preferredModelKey) ??
+    selectableModels.find(
+      (choice) => modelSource(choice) === preferredModelSource && choice.model.isDefault,
+    ) ??
     selectableModels.find((choice) => modelSource(choice) === preferredModelSource) ??
     (preferredSourcePending ? selectableImplicitChoice : undefined) ??
+    selectableModels.find((choice) => choice.model.isDefault) ??
     selectableModels[0] ??
     selectableImplicitChoice
   const sendAvailability = resolveSendAvailability({
     catalog: catalogAvailability,
+    serverBoundSession: Boolean(
+      activeSession && activeSession.provider === provider && !implicitChoice,
+    ),
     activeProvider: activeSession?.provider,
     selectedChoice: selectedModelChoice,
+    connections: modelConnections,
     providerStatuses,
     accountCheck,
   })
@@ -985,12 +1049,14 @@ export function App() {
         selectedModelChoice
           ? {
               provider: selectedModelChoice.provider,
+              connectionId: selectedModelChoice.connectionId,
               agentId: selectedModelChoice.agent?.id,
             }
           : { provider, agentId: sourceAgent },
         providerStatuses,
+        modelConnections,
       ),
-    [selectedModelChoice, provider, sourceAgent, providerStatuses],
+    [selectedModelChoice, provider, sourceAgent, providerStatuses, modelConnections],
   )
   const autoReviewSupported = useMemo(
     () =>
@@ -1671,13 +1737,30 @@ export function App() {
   }, [transport, acceptSidebarSettings])
 
   // Build one catalog from every connected source. Model ids are not globally
-  // unique, so each choice keeps the provider or custom harness that runs it.
+  // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
+    // Latched before the rebuild below drops any choice whose connection is no
+    // longer resolvable. A failed list is only worth reporting to someone who
+    // has such a model; a build with no connections stays quiet, which is what
+    // keeps this safe against a server too old to know the method.
+    if (catalogModelsRef.current.some((choice) => choice.connectionId !== undefined)) {
+      hadConnectionModelsRef.current = true
+    }
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
+      let connectionsError: unknown
+      const connectionsCatalog = transport.request('connections.list', {}).catch((cause) => {
+        connectionsError = cause
+        return { connections: [] }
+      })
+      void connectionsCatalog.then((result) => {
+        if (cancelled) return
+        setModelConnections(result?.connections ?? [])
+      })
+      const agentsCatalog = transport.request('acp.agents', {}).catch(() => ({ agents: [] }))
       const harnessesCatalog = transport
         .request('harnesses.list', {})
         .catch(() => ({ harnesses: [] }))
@@ -1755,7 +1838,7 @@ export function App() {
       }
       const directPromise = Promise.all(
         providers
-          .filter((entry) => entry.installed)
+          .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
           .map(async (entry) => {
             const preserveCatalog = () => {
               const source = sourceKey({ provider: entry.id })
@@ -1795,6 +1878,130 @@ export function App() {
             }
           }),
       )
+      const acpPromise = agentsCatalog.then(async (result) => {
+        if (cancelled) return []
+        const agents = result?.agents ?? []
+        setAcpAgents(agents)
+        setPendingModelSources(
+          (current) =>
+            new Set([
+              ...current,
+              ...agents
+                .filter((agent) => agent.installed)
+                .map((agent) => sourceKey({ provider: 'acp', agentId: agent.id })),
+            ]),
+        )
+        return Promise.all(
+          agents
+            .filter((agent) => agent.installed)
+            .map(async (agent) => {
+              const source = sourceKey({ provider: 'acp', agentId: agent.id })
+              const preserveCatalog = () =>
+                settleSource(source, {
+                  source,
+                  discovered: false,
+                  models: catalogModelsRef.current.filter(
+                    (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+                  ),
+                })
+              try {
+                const result = await transport.request('models.list', {
+                  provider: 'acp',
+                  agent: agent.id,
+                })
+                const models = choicesFor(
+                  {
+                    provider: 'acp',
+                    sourceName: agent.name,
+                    mark: agentMark(agent.id),
+                    agent: { id: agent.id, name: agent.name },
+                  },
+                  result.models,
+                  false,
+                )
+                return models.length
+                  ? settleSource(source, { source, discovered: true, models })
+                  : preserveCatalog()
+              } catch (cause) {
+                discoveryErrors[source] = {
+                  id: 'models:' + source + ':' + catalogRequest,
+                  message:
+                    'Could not load ' +
+                    agent.name +
+                    ' models. ' +
+                    (cause instanceof Error ? cause.message : String(cause)),
+                }
+                return preserveCatalog()
+              }
+            }),
+        )
+      })
+      const apiPromise = connectionsCatalog.then(async (result) => {
+        if (cancelled) return []
+        const connections = (result?.connections ?? []).filter(
+          (connection) => connection.enabled && connection.credentialConfigured,
+        )
+        setPendingModelSources(
+          (current) =>
+            new Set([
+              ...current,
+              ...connections.map((connection) =>
+                sourceKey({ provider: 'api', connectionId: connection.id }),
+              ),
+            ]),
+        )
+        return Promise.all(
+          connections.map(async (connection) => {
+            const source = sourceKey({ provider: 'api', connectionId: connection.id })
+            try {
+              const result = await transport.request('connections.models', {
+                connectionId: connection.id,
+              })
+              const fallbackModels =
+                result.models.length > 0
+                  ? result.models
+                  : connection.defaultModel
+                    ? [
+                        {
+                          id: connection.defaultModel,
+                          displayName: connection.defaultModel,
+                          isDefault: true,
+                          reasoningEfforts: [],
+                          serviceTiers: [],
+                        },
+                      ]
+                    : []
+              const models = choicesFor(
+                {
+                  provider: 'api',
+                  connectionId: connection.id,
+                  sourceName: connection.displayName,
+                  mark: connectionMark(connection.preset),
+                },
+                fallbackModels,
+                false,
+              )
+              return settleSource(source, { source, discovered: true, models })
+            } catch (cause) {
+              discoveryErrors[source] = {
+                id: 'models:' + source + ':' + catalogRequest,
+                message:
+                  'Could not load ' +
+                  connection.displayName +
+                  ' models. ' +
+                  (cause instanceof Error ? cause.message : String(cause)),
+              }
+              return settleSource(source, {
+                source,
+                discovered: false,
+                models: catalogModelsRef.current.filter(
+                  (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+                ),
+              })
+            }
+          }),
+        )
+      })
       const harnessesResult = await harnessesCatalog
       if (cancelled) return
       const harnesses = harnessesResult?.harnesses ?? []
@@ -1841,34 +2048,56 @@ export function App() {
           }
         }),
       )
-      const [direct, customSources] = await Promise.all([directPromise, customSourcesPromise])
+      const [direct, acp, api, customSources] = await Promise.all([
+        directPromise,
+        acpPromise,
+        apiPromise,
+        customSourcesPromise,
+      ])
       if (cancelled) return
       setPendingModelSources(new Set())
-      const directCatalog = direct.flatMap((entry) => entry.models)
-      const catalog = [...directCatalog, ...customSources.flatMap((entry) => entry.models)]
-      const directCatalogReady = direct.length > 0 && direct.every((entry) => entry.discovered)
+      const discoveries = [...direct, ...acp, ...api, ...customSources]
+      const catalog = discoveries.flatMap((entry) => entry.models)
+      const catalogReady = discoveries.length > 0 && discoveries.every((entry) => entry.discovered)
+      if (validatedSources.size > 0) {
+        writeSetting(
+          MODEL_CATALOG_KEY,
+          serializeModelCatalogCache(catalog, {
+            validatedSources: validatedSources.keys(),
+            validatedAt: Math.min(...validatedSources.values()),
+          }),
+        )
+      }
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
+      // A failed connections.list is otherwise invisible: the models it paid for
+      // simply stop being offered, and none of them can answer a turn, so
+      // silence reads as a working connection.
+      if (connectionsError !== undefined && hadConnectionModelsRef.current) {
+        setCatalogError({
+          id: `connections:${catalogRequest}`,
+          message: `Could not load API connections. ${
+            connectionsError instanceof Error ? connectionsError.message : String(connectionsError)
+          }`,
+        })
+      }
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       let hidden = hiddenModelsRef.current
       let hiddenChanged = false
-      if (!modelVisibilityInitialized.current && directCatalogReady && directCatalog.length > 0) {
+      if (!modelVisibilityInitialized.current && catalogReady && catalog.length > 0) {
         hidden = new Set(
-          directCatalog
+          catalog
             .filter((choice) => !modelVisibleByDefault(choice.model))
             .map((choice) => choice.key),
         )
         modelVisibilityInitialized.current = true
         hiddenChanged = true
       }
-      if (
-        directCatalogReady &&
-        readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION
-      ) {
+      if (catalogReady && readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION) {
         const migrated = new Set(hidden)
-        for (const choice of directCatalog) {
+        for (const choice of catalog) {
           if (modelVisibleByDefault(choice.model)) migrated.delete(choice.key)
           else migrated.add(choice.key)
         }
@@ -1880,14 +2109,20 @@ export function App() {
         hiddenModelsRef.current = hidden
         setHiddenModels(hidden)
       }
-      const customPool = customModelsRef.current.map((entry) => customModelChoice(entry))
+      const customPool = customModelsRef.current.map((entry) =>
+        customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
+      )
       const all = [...catalog, ...customPool]
       const visible = all.filter((choice) => !hidden.has(choice.key))
       const currentSession = activeIdRef.current
         ? findSession(projectsRef.current, activeIdRef.current)?.session
         : undefined
       const currentSource = currentSession
-        ? sourceKey({ provider: currentSession.provider, agentId: currentSession.agent })
+        ? sourceKey({
+            provider: currentSession.provider,
+            connectionId: currentSession.connectionId,
+            agentId: currentSession.agent,
+          })
         : undefined
       const storedSetup = readStoredModelChoice(customModelsRef.current)
       const preferredSource = currentSource ?? (storedSetup ? modelSource(storedSetup) : undefined)
@@ -1943,7 +2178,7 @@ export function App() {
         writeSetting(AGENT_KEY, selected.agent.id)
         writeSetting(AGENT_NAME_KEY, selected.agent.name)
       } else {
-        // A stale harness id under the stock provider is the same boot split
+        // A stale agent id under a non-ACP provider is the same boot split
         // this block exists to prevent.
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
@@ -2063,7 +2298,7 @@ export function App() {
     let cancelled = false
     const revision = ++accountRequestRevision.current
     setAccount(undefined)
-    if (selectedModelChoice?.agent) {
+    if (selectedModelChoice?.connectionId || (selectedModelChoice?.agent && provider !== 'acp')) {
       setAccountCheck({ provider, state: 'ready', account: { signedIn: true } })
       return () => {
         cancelled = true
@@ -2071,7 +2306,12 @@ export function App() {
     }
     setAccountCheck({ provider, state: 'loading' })
     void transport
-      .request('auth.status', { provider })
+      .request('auth.status', {
+        provider,
+        ...(provider === 'acp' && (selectedModelChoice?.agent?.id ?? sourceAgent)
+          ? { agent: selectedModelChoice?.agent?.id ?? sourceAgent }
+          : {}),
+      })
       .then((nextAccount) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
@@ -2092,7 +2332,14 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, provider, selectedModelChoice?.agent, authStatusRequest])
+  }, [
+    transport,
+    provider,
+    sourceAgent,
+    selectedModelChoice?.agent,
+    selectedModelChoice?.connectionId,
+    authStatusRequest,
+  ])
 
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
@@ -2509,6 +2756,7 @@ export function App() {
     }
     const source = sourceKey({
       provider: selectedModelChoice.provider,
+      connectionId: selectedModelChoice.connectionId,
       agentId: selectedModelChoice.agent?.id,
     })
     const selections = readSourceSelections()
@@ -2547,7 +2795,7 @@ export function App() {
         writeSetting(AGENT_KEY, selected.agent.id)
         writeSetting(AGENT_NAME_KEY, selected.agent.name)
       } else {
-        // A stale harness id under the stock provider is the same boot split
+        // A stale agent id under a non-ACP provider is the same boot split
         // this block exists to prevent.
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
@@ -2560,6 +2808,7 @@ export function App() {
         readSourceSelections()[
           sourceKey({
             provider: selected.provider,
+            connectionId: selected.connectionId,
             agentId: selected.agent?.id,
           })
         ]
@@ -2792,6 +3041,11 @@ export function App() {
           ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
           ...(choice.agent ? { agent: choice.agent.id } : {}),
+          ...(choice.connectionId
+            ? {
+                connectionId: choice.connectionId,
+              }
+            : {}),
           ...(choice.model.id ? { model: choice.model.id } : {}),
           ...(selectedServiceTier
             ? {
@@ -2850,6 +3104,7 @@ export function App() {
                             id: threadId,
                             title: canonicalTitle,
                             provider: choice.provider,
+                            ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                             ...(choice.agent
                               ? {
                                   agent: choice.agent.id,
@@ -3089,6 +3344,7 @@ export function App() {
                       id: provisionalId,
                       title: titleFrom(titlePrompt),
                       provider: choice.provider,
+                      ...(choice.connectionId ? { connectionId: choice.connectionId } : {}),
                       ...(choice.agent
                         ? {
                             agent: choice.agent.id,
@@ -3249,10 +3505,12 @@ export function App() {
         (selectedModelChoice &&
           sourceKey({
             provider: selectedModelChoice.provider,
+            connectionId: selectedModelChoice.connectionId,
             agentId: selectedModelChoice.agent?.id,
           }) ===
             sourceKey({
               provider: existingSession.provider,
+              connectionId: existingSession.connectionId,
               agentId: existingSession.agent,
             }))
           ? selectedModelChoice
@@ -3568,11 +3826,13 @@ export function App() {
       if (found?.session.provider) {
         const source = sourceKey({
           provider: found.session.provider,
+          connectionId: found.session.connectionId,
           agentId: found.session.agent,
         })
         const matchesSource = (choice: ModelChoice) =>
           sourceKey({
             provider: choice.provider,
+            connectionId: choice.connectionId,
             agentId: choice.agent?.id,
           }) === source
         const rememberedModelKey = readSourceSelections()[source]?.modelKey
@@ -3586,6 +3846,7 @@ export function App() {
           visibleModels.find(
             (choice) => choice.key === rememberedModelKey && matchesSource(choice),
           ) ??
+          visibleModels.find((choice) => matchesSource(choice) && choice.model.isDefault) ??
           visibleModels.find(matchesSource)
         if (matchingChoice) {
           commitModelChoice(
@@ -5264,6 +5525,8 @@ export function App() {
               profileIdentity={profileIdentity}
               onProfileIdentityChange={updateProfileIdentity}
               providerStatuses={providerStatuses}
+              acpAgents={acpAgents}
+              modelConnections={modelConnections}
               providersLoading={catalogAvailability === 'loading'}
               models={models}
               modelsLoading={catalogAvailability === 'loading'}
@@ -5521,6 +5784,9 @@ function Empty(props: {
 
 function providerName(id: ProviderId, sourceName?: string): string {
   if (sourceName) return sourceName
+  // ACP is how we talk to the agent, not who the agent is. Showing "ACP" would
+  // name our plumbing instead of the thing the user chose.
+  if (id === 'acp') return 'ACP agent'
   return providerDisplayName(id)
 }
 
@@ -5768,16 +6034,31 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
   if (storedKey.startsWith('custom:')) {
     const custom = customModels.find((entry) => customModelKey(entry) === storedKey)
     if (!custom) return undefined
-    return customModelChoice(custom)
+    return customModelChoice(
+      custom,
+      providerDisplayName(custom.provider),
+      providerMark(custom.provider),
+    )
   }
-  const storedAgentId = readSetting(AGENT_KEY) ?? undefined
+  const storedAgentId = provider !== 'api' ? (readSetting(AGENT_KEY) ?? undefined) : undefined
   const agentId =
-    storedAgentId && storedKey.startsWith(`${provider}:${storedAgentId}:`)
+    provider === 'acp' || provider === 'pi'
       ? storedAgentId
-      : undefined
+      : storedAgentId && storedKey.startsWith(`${provider}:${storedAgentId}:`)
+        ? storedAgentId
+        : undefined
+  if ((provider === 'acp' || provider === 'pi') && !agentId) return undefined
   const agentName = agentId ? (readSetting(AGENT_NAME_KEY) ?? agentId) : undefined
-  const expectedSource = sourceKey({ provider, agentId })
+  const separator = storedKey.lastIndexOf(':')
+  const storedSource = separator > 0 ? storedKey.slice(0, separator) : undefined
+  const connectionId =
+    provider === 'api' && storedSource?.startsWith('api:')
+      ? storedSource.slice('api:'.length)
+      : undefined
+  if (provider === 'api' && !connectionId) return undefined
+  const expectedSource = sourceKey({ provider, connectionId, agentId })
   const canonical = storedKey.startsWith(`${expectedSource}:`)
+  if (provider === 'api' && !canonical) return undefined
 
   let modelId: string
   if (canonical) {
@@ -5800,8 +6081,9 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
   return {
     key,
     provider,
-    sourceName: providerName(provider, agentName),
-    mark: providerMark(provider),
+    sourceName: provider === 'api' ? 'API connection' : providerName(provider, agentName),
+    mark: provider === 'acp' && agentId ? agentMark(agentId) : providerMark(provider),
+    ...(connectionId ? { connectionId } : {}),
     ...(agent ? { agent } : {}),
     model: {
       id: modelId,

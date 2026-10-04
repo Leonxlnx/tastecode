@@ -38,9 +38,10 @@ const PROJECTS = [
         createdAt: 43,
       },
       {
-        id: 'claude-thread',
-        title: 'Claude roadmap',
-        provider: 'claude-code' as const,
+        id: 'gemini-thread',
+        title: 'Gemini roadmap',
+        provider: 'acp' as const,
+        agent: 'gemini',
         createdAt: 42,
       },
     ],
@@ -315,15 +316,10 @@ describe('cross-session search', () => {
     expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
   })
 
-  it('shows title and content matches with their source product name', async () => {
+  it('shows ACP title and content matches with their source product name', async () => {
     const transport = new TestTransport(async () => ({
       results: [
-        {
-          ...RESULT,
-          threadId: 'claude-thread',
-          threadTitle: 'Claude roadmap',
-          provider: 'claude-code',
-        },
+        { ...RESULT, threadId: 'gemini-thread', threadTitle: 'Gemini roadmap', provider: 'acp' },
       ],
       nextCursor: null,
     }))
@@ -336,15 +332,15 @@ describe('cross-session search', () => {
       />,
     )
 
-    fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'roadmap' } })
+    fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'gemini' } })
     await waitFor(() => {
-      expect(screen.getAllByRole('option', { name: /Claude roadmap.*Claude Code/ })).toHaveLength(2)
+      expect(screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toHaveLength(2)
     })
-    for (const option of screen.getAllByRole('option', { name: /Claude roadmap.*Claude Code/ })) {
+    for (const option of screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })) {
       const identity = option.querySelector('.source-identity')
-      expect(identity?.getAttribute('title')).toBe('Claude Code')
+      expect(identity?.getAttribute('title')).toBe('Gemini CLI')
       expect(identity?.querySelector('svg')?.getAttribute('width')).toBe('11')
-      expect(identity?.querySelector('path')?.getAttribute('d')).toContain('M17.3041 3.541')
+      expect(identity?.querySelector('path')?.getAttribute('d')).toContain('M11.04 19.32')
     }
   })
 

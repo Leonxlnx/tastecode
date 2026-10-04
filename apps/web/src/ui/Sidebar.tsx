@@ -57,7 +57,7 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
-import { providerPresentation } from '../provider-presentation.js'
+import { sessionSourcePresentation } from '../provider-presentation.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
@@ -128,6 +128,7 @@ export type Session = {
   title: string
   provider: ProviderId
   agent?: string | undefined
+  connectionId?: string | undefined
   createdAt: number
   /** Client-observed start of the current status, used for elapsed/relative labels. */
   statusSince?: number | undefined
@@ -1743,7 +1744,7 @@ function SessionRow(props: {
         <span className="sess__title">{props.session.title}</span>
         <SourceIdentity
           className="sess__source"
-          presentation={providerPresentation(props.session.provider)}
+          presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
           density="compact"
         />
         <SessionStatus status={props.session.status} />
@@ -1885,7 +1886,7 @@ function SessionStatus(props: { status: Session['status'] }) {
 }
 
 function sessionLabel(session: Session): string {
-  const source = providerPresentation(session.provider).label
+  const source = sessionSourcePresentation(session.provider, session.agent).label
   const unread = session.unread ? ', unread' : ''
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {

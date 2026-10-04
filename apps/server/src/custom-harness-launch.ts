@@ -89,6 +89,11 @@ export function runCustomHarness(
   })
 }
 
+export function customHarnessRun(harness: CustomHarness, fallbackWorkspacePath?: string) {
+  return (_defaultCommand: string, args: string[], timeoutMs = 5_000) =>
+    runCustomHarness(harness, fallbackWorkspacePath, args, timeoutMs)
+}
+
 export function actionableLaunchError(harness: CustomHarness, cause: unknown): Error {
   const error = cause instanceof Error ? cause : new Error(String(cause))
   const parsed = z.object({ code: z.string().optional() }).safeParse(error)

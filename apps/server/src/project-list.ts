@@ -215,6 +215,7 @@ function projectSession(
     title: thread.title,
     provider: thread.provider,
     ...(thread.agent === undefined ? {} : { agent: thread.agent }),
+    ...(thread.connectionId === undefined ? {} : { connectionId: thread.connectionId }),
     createdAt: thread.createdAt,
     running,
   }

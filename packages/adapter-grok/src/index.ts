@@ -14,6 +14,7 @@ export {
   parseGrokModels,
   signOutGrok,
 } from './adapter.js'
+export { readGrokUsageHistory } from './usage-history.js'
 export { grokAccount, parseGrokSubscription } from './account.js'
 export { grokLimitSource, grokLimits, mapGrokBilling, type GrokLimitSource } from './limits.js'
 export { createGrokHistorySource, type GrokHistoryOptions } from './history.js'
