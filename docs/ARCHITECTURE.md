@@ -566,7 +566,7 @@ manual.
 
 Pending source work as of 2026-10-04, tested at `0ccdb67d86eeaba313130b0429684faabb74f06d`;
 not merged or released. The public-beta baseline remains `main` at `6ac40ec1`.
-Draft [PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393) targets
+[PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393) is ready for review and targets
 `codex/nightly-dashboard-base` and depends on
 [PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392), preserving the full nightly provider
 roster and usage history. The integrated source includes the Windows cleanup corrections in
