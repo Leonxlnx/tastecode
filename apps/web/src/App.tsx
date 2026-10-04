@@ -227,6 +227,8 @@ const SERVICE_TIER_KEY = 'harness.serviceTier'
 const APPROVAL_KEY = 'harness.approval'
 const APPROVAL_BY_PROVIDER_KEY = 'harness.approvalByProvider'
 const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
+/** Debug settings stay unlocked across restarts until the shortcut locks them. */
+const DEBUG_SETTINGS_KEY = 'harness.debugSettings'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 const BOTTOM_TERMINAL_MOTION_MS = 260
 const RAIL_WIDTH_KEY = 'harness.rail.width'
@@ -527,7 +529,13 @@ export function App() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => readSetting(ONBOARDING_KEY) === 'done',
   )
-  const [debugSettingsVisible, setDebugSettingsVisible] = useState(false)
+  const [debugSettingsVisible, setDebugSettingsVisible] = useState(
+    () => readSetting(DEBUG_SETTINGS_KEY) === 'on',
+  )
+  useEffect(() => {
+    if (debugSettingsVisible) writeSetting(DEBUG_SETTINGS_KEY, 'on')
+    else removeSetting(DEBUG_SETTINGS_KEY)
+  }, [debugSettingsVisible])
   const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
