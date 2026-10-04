@@ -361,134 +361,142 @@
   outline: none;
 }
 
+/* Each preview is a TasteCode window in miniature, painted in that mode's own
+   background and accent. The chosen one is ringed a step outside its edge. */
 .theme-preview {
-  --theme-preview-bg: #fdfdfd;
-  --theme-preview-panel: #fafafa;
-  --theme-preview-line: #dcdce0;
-  --theme-preview-copy: #eeeeef;
-  --theme-preview-divider: #ebebed;
-  --theme-preview-stroke: color-mix(in oklab, var(--text) 16%, transparent);
-  --theme-preview-stroke-width: 1px;
-
   position: relative;
   display: block;
   width: 100%;
-  aspect-ratio: 1.45;
+  aspect-ratio: 1.5;
   overflow: hidden;
-  background: var(--theme-preview-bg);
-  border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
+  outline: 1.5px solid transparent;
+  outline-offset: 3px;
+  transition: outline-color var(--dur-fast) var(--ease-out);
 }
 
 .theme-preview::after {
   content: '';
   position: absolute;
-  z-index: 3;
+  z-index: 1;
   inset: 0;
   pointer-events: none;
-  border: var(--theme-preview-stroke-width) solid var(--theme-preview-stroke);
   border-radius: inherit;
-  transition: border-color var(--dur-fast) var(--ease-out);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 14%, transparent);
 }
 
 .theme-option:not(.is-selected):hover .theme-preview {
-  --theme-preview-stroke: color-mix(in oklab, var(--text) 32%, transparent);
+  outline-color: color-mix(in srgb, var(--text) 24%, transparent);
 }
 
 .theme-option.is-selected .theme-preview {
-  --theme-preview-stroke: var(--text);
-  --theme-preview-stroke-width: 2px;
+  outline-color: var(--text);
 }
 
 .theme-option input:focus-visible + .theme-preview {
-  --theme-preview-stroke: var(--text);
-  --theme-preview-stroke-width: 2px;
+  outline: 2px solid var(--text-2);
 }
 
-.theme-preview--dark {
-  --theme-preview-bg: #3a3a3c;
-  --theme-preview-panel: #171717;
-  --theme-preview-line: #777779;
-  --theme-preview-copy: #4e4e50;
-  --theme-preview-divider: #29292b;
+.theme-window {
+  --window-line: color-mix(in srgb, var(--window-ink) 20%, var(--window-paper));
+  --window-soft: color-mix(in srgb, var(--window-ink) 7%, var(--window-paper));
+
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: 30% 1fr;
+  background: var(--window-paper);
+  transition: background-color var(--dur-slow) var(--ease-out);
 }
 
-.theme-preview--system {
-  --theme-preview-bg: linear-gradient(90deg, #fdfdfd 0 50%, #3a3a3c 50%);
-  --theme-preview-panel: linear-gradient(90deg, #ffffff 0 50%, #171717 50%);
-  --theme-preview-line: linear-gradient(90deg, #dcdce0 0 50%, #777779 50%);
-  --theme-preview-copy: linear-gradient(90deg, #eeeeef 0 50%, #4e4e50 50%);
-  --theme-preview-divider: linear-gradient(90deg, #ebebed 0 50%, #29292b 50%);
+.theme-preview--system .theme-window[data-mode='dark'] {
+  clip-path: inset(0 0 0 50%);
 }
 
-.theme-preview__header,
-.theme-preview__subhead,
-.theme-preview__row-title,
-.theme-preview__row-copy {
-  position: relative;
-  z-index: 1;
+.theme-window i,
+.theme-window b {
   display: block;
   border-radius: var(--r-pill);
 }
 
-.theme-preview__header {
-  width: 44%;
-  height: 6px;
-  margin: 16% auto 6%;
-  background: var(--theme-preview-line);
+.theme-window__rail {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 16px 10px;
+  background: color-mix(in srgb, var(--window-ink) 3%, var(--window-paper));
+  box-shadow: inset -1px 0 color-mix(in srgb, var(--window-ink) 8%, var(--window-paper));
 }
 
-.theme-preview__subhead {
-  width: 68%;
-  height: 4px;
-  margin: 0 auto;
-  background: var(--theme-preview-copy);
-}
-
-.theme-preview__panel {
-  position: absolute;
-  right: 9%;
-  bottom: -8%;
-  left: 9%;
-  height: 64%;
-  overflow: hidden;
-  background: var(--theme-preview-panel);
-  border-radius: var(--r-md) var(--r-md) 0 0;
-}
-
-.theme-preview__row {
-  position: relative;
-  display: block;
-  height: 50%;
-  padding: 10% 8%;
-}
-
-.theme-preview__row + .theme-preview__row::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 1px;
-  background: var(--theme-preview-divider);
-}
-
-.theme-preview__row-title {
-  width: 42%;
-  height: 6px;
-  background: var(--theme-preview-line);
-}
-
-.theme-preview__row-copy {
-  width: 66%;
+.theme-window__rail i {
+  width: 78%;
   height: 3px;
-  margin-top: 8%;
-  background: var(--theme-preview-copy);
+  background: var(--window-line);
+}
+
+.theme-window__rail i:nth-child(3) {
+  width: 56%;
+}
+
+.theme-window__rail i:nth-child(4) {
+  width: 66%;
+}
+
+.theme-window__rail i[data-active] {
+  background: color-mix(in srgb, var(--window-ink) 46%, var(--window-paper));
+}
+
+.theme-window__chat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 14px 0;
+}
+
+.theme-window__chat i {
+  width: 88%;
+  height: 3px;
+  background: var(--window-line);
+}
+
+.theme-window__chat i:nth-child(4) {
+  width: 64%;
+}
+
+.theme-window__chat i[data-you] {
+  align-self: flex-end;
+  width: 42%;
+  height: 9px;
+  margin-bottom: 4px;
+  border-radius: var(--r-xs);
+  background: var(--window-soft);
+}
+
+.theme-window__prompt {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+  height: 18px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--window-ink) 3%, var(--window-paper));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--window-ink) 12%, var(--window-paper));
+}
+
+.theme-window__prompt b {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 10px;
+  height: 10px;
+  background: var(--window-accent);
+  translate: 0 -50%;
 }
 
 .theme-option__label {
   display: block;
-  margin-top: 8px;
+  margin-top: 10px;
   overflow: hidden;
   font-size: var(--t-md);
   text-align: center;
@@ -500,226 +508,188 @@
   color: var(--text);
 }
 
-.appearance-theme .settings__group-title {
-  margin-bottom: 14px;
+/* Appearance reads like the provider roster: open rows with a dotted leader
+   from each name to its value, which lights while the row is hovered, and no
+   card or fill behind anything. Name and value share one size and baseline;
+   only ink tells them apart. */
+.appearance-section + .appearance-section {
+  margin-top: 40px;
 }
 
-.appearance-code-preview {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 18px;
-  overflow: hidden;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+.appearance-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.appearance-code-preview__pane {
-  min-width: 0;
-  overflow: hidden;
-  padding: 6px 0;
-}
-
-.appearance-code-preview__pane + .appearance-code-preview__pane {
-  border-left: 1px solid var(--chrome-border);
-}
-
-.appearance-code-preview__line {
-  display: grid;
-  grid-template-columns: 36px minmax(max-content, 1fr);
-  align-items: center;
-  min-height: 23px;
-  padding-right: 12px;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-
-.appearance-code-preview__line[data-change='removed'] {
-  background: color-mix(in srgb, var(--error) 16%, transparent);
-  box-shadow: inset 3px 0 var(--error);
-}
-
-.appearance-code-preview__line[data-change='added'] {
-  background: color-mix(in srgb, var(--success) 16%, transparent);
-  box-shadow: inset 3px 0 var(--success);
-}
-
-.appearance-code-preview__line code {
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--font-mono);
-  font-size: var(--t-sm);
-  text-overflow: ellipsis;
-}
-
-.appearance-code-preview__number {
-  padding-right: 10px;
+.appearance-section__heading {
+  margin: 0 0 6px;
   color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
-  text-align: right;
-  user-select: none;
-}
-
-.appearance-code-preview__keyword,
-.appearance-code-preview__number-value {
-  color: var(--effort);
-}
-
-.appearance-code-preview__string {
-  color: var(--success);
-}
-
-/* Styled like the floating menus (.menu): the raised menu surface, flyout
-   shadow, 3px frame, a quiet group label and item-density rows instead of the
-   headed, hairline-separated settings card. */
-.appearance-editor {
-  margin-top: 16px;
-  overflow: hidden;
-  padding: 0;
-  background: var(--bg-rail);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  box-shadow: none;
-}
-
-.appearance-editor__heading {
-  margin: 0;
-  padding: 10px 12px;
-  line-height: 1.4;
-  color: var(--text-2);
   font-size: var(--t-sm);
   font-weight: 500;
+  letter-spacing: -0.003em;
 }
 
-/* Specificity: .settings__row is defined later in this file, so these
-   overrides go through the .appearance-editor scope to win. */
-.appearance-editor .settings__row {
-  min-height: 48px;
-  gap: 16px;
-  padding: 6px 12px;
+.appearance-section > .appearance-section__heading {
+  margin-bottom: 18px;
+}
+
+.appearance-section__reset {
+  padding: 0;
+  background: none;
   border: 0;
-  border-radius: 0;
-}
-
-.appearance-editor__heading + .settings__row,
-.appearance-editor .settings__row + .settings__row {
-  border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
-}
-
-.appearance-editor .settings__row {
-  transition: none;
-}
-
-.appearance-editor .settings__row:hover,
-.appearance-editor .settings__row:focus-within {
-  background: transparent;
-}
-
-.settings .appearance-editor .app-select__trigger,
-.settings .appearance-editor .app-select__trigger:hover,
-.settings .appearance-editor .app-select.is-open .app-select__trigger {
-  --control-pressed: var(--bg-rail);
-
-  background: var(--bg-rail);
-  border-color: var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text-2);
-  box-shadow: none;
-  transition: none;
-}
-
-.settings .appearance-editor .app-select__trigger:focus-visible {
-  border-color: var(--text-2);
-}
-
-.appearance-editor .settings__row-title {
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
   font-size: var(--t-sm);
-  font-weight: 400;
-  line-height: 1.4;
 }
 
-.appearance-editor .settings__row-note {
-  margin-top: 2px;
+.appearance-section__reset:hover {
   color: var(--text-2);
-  line-height: 1.4;
 }
 
-.appearance-editor__row .settings__row-control {
-  width: min(208px, 52%);
-  justify-content: flex-end;
+.appearance-section__reset:focus-visible {
+  border-radius: var(--r-xs);
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
 }
 
-.appearance-control {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-}
+.appearance-row {
+  --appearance-leader: color-mix(in srgb, var(--text-3) 55%, transparent);
 
-.appearance-control__select {
-  width: min(152px, 100%);
-  max-width: none;
-}
-
-.appearance-control__type,
-.appearance-choice__swatch {
-  width: 22px;
-  height: 22px;
-  flex: none;
-  border-radius: var(--r-md);
-}
-
-.appearance-control__type {
   display: grid;
-  place-items: center;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
+  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
+  align-items: baseline;
+  padding-block: 11px;
+  font-size: 14px;
+  letter-spacing: -0.009em;
+  line-height: 1.35;
+  transition: --appearance-leader var(--dur-fast) var(--ease-out);
+}
+
+.appearance-row:is(:hover, :focus-within) {
+  --appearance-leader: var(--text-2);
+}
+
+@property --appearance-leader {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+.appearance-row__name {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-weight: 400;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.appearance-row:is(:hover, :focus-within) .appearance-row__name {
   color: var(--text);
-  font-family: var(--font-ui);
+}
+
+.appearance-row__note {
+  grid-column: 1 / -1;
+  max-width: 52ch;
+  margin: 3px 0 0;
+  color: var(--text-3);
   font-size: var(--t-sm);
+  letter-spacing: -0.003em;
+  line-height: 1.4;
 }
 
-.appearance-choice__swatch {
-  background: linear-gradient(135deg, var(--swatch-a), var(--swatch-b));
-  border: 1px solid color-mix(in srgb, var(--swatch-a) 48%, var(--line-strong));
+/* The provider roster's open wire, used as a leader: dots on the baseline. */
+.appearance-row__leader {
+  height: 5px;
+  margin-inline: 14px;
+  background: radial-gradient(circle, var(--appearance-leader) 0.9px, transparent 1.35px) left
+    center / 8px 100% repeat-x;
 }
 
-.appearance-choice__swatch[data-accent-preview='neutral'] {
-  --swatch-a: #71717a;
-  --swatch-b: #d4d4d8;
+.appearance-row__value {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+  color: var(--text);
 }
 
-.appearance-choice__swatch[data-accent-preview='ocean'] {
-  --swatch-a: #2d7fbd;
-  --swatch-b: #79c8dd;
+.appearance-row__value:has(> .switch) {
+  align-self: center;
 }
 
-.appearance-choice__swatch[data-accent-preview='forest'] {
-  --swatch-a: #397a56;
-  --swatch-b: #94c879;
+/* A smaller switch than the app default: here it is one value among many. */
+.appearance-row .switch {
+  width: 30px;
+  height: 18px;
 }
 
-.appearance-choice__swatch[data-accent-preview='sunset'] {
-  --swatch-a: #8b63bd;
-  --swatch-b: #e58c76;
+.appearance-row .switch__thumb {
+  width: 12px;
+  height: 12px;
 }
 
-.appearance-choice__swatch[data-accent-preview='amber'] {
-  --swatch-a: #9a6823;
-  --swatch-b: #e2b568;
+.appearance-row .switch.is-on .switch__thumb {
+  transform: translateX(12px);
 }
 
-.appearance-choice__swatch[data-accent-preview='rose'] {
-  --swatch-a: #9a4b6a;
-  --swatch-b: #e59aad;
+/* A select here is its value and a chevron: no box, no fill, open or not. */
+.settings .appearance-select {
+  max-width: 240px;
 }
 
-.appearance-choice__swatch[data-accent-preview='lavender'] {
-  --swatch-a: #6658a6;
-  --swatch-b: #c49ad8;
+.settings .appearance-select .app-select__trigger {
+  --control-pressed: transparent;
+
+  gap: 6px;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-xs);
+  box-shadow: none;
+  color: var(--text);
+  font-size: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+.settings .appearance-select .app-select__trigger:hover,
+.settings .appearance-select.is-open .app-select__trigger {
+  color: var(--text);
+  text-decoration: underline 1px var(--text-3);
+  text-underline-offset: 5px;
+}
+
+.settings .appearance-select .app-select__trigger:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.settings .appearance-select .app-select__chevron {
+  color: var(--text-3);
+  transition: rotate var(--dur-slow) var(--ease-out);
+}
+
+.settings .appearance-select.is-open .app-select__chevron {
+  rotate: 180deg;
+}
+
+/* Typing into the font picker happens on the row itself: the field sits where
+   the value stood, flush right, and the leader runs up to whatever is typed. */
+.settings .appearance-select .app-select__query {
+  width: calc(100% - 20px);
+  padding: 0;
+  caret-color: var(--text);
+  text-align: right;
+}
+
+.settings .appearance-select.is-searching .app-select__value {
+  min-width: 24px;
+  padding-right: 2px;
 }
 
 .settings__row {
@@ -2192,40 +2162,19 @@
 }
 
 /* The settings rail can leave a narrow content pane while the window is still
-   wider than the viewport breakpoints below. Compact appearance controls from
-   their actual usable width so a resized rail or minimum-width desktop window
-   cannot squeeze four labeled swatches into one row. */
+   wider than the viewport breakpoints below. Compact appearance from its actual
+   usable width: two theme previews to a row, and rows drop their leaders. */
 @container settings-content (max-width: 560px) {
   .theme-picker {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .appearance-code-preview {
-    grid-template-columns: 1fr;
+  .appearance-row {
+    grid-template-columns: minmax(0, 1fr) max-content;
   }
 
-  .appearance-code-preview__pane + .appearance-code-preview__pane {
-    border-top: 1px solid var(--chrome-border);
-    border-left: 0;
-  }
-
-  .appearance-editor .settings__row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 8px;
-    padding-block: 8px;
-  }
-
-  .appearance-editor__row .settings__row-control,
-  .appearance-control,
-  .appearance-editor__row .appearance-color {
-    width: 100%;
-  }
-
-  .appearance-control__select {
-    width: auto;
-    max-width: none;
-    flex: 1;
+  .appearance-row__leader {
+    display: none;
   }
 }
 
@@ -2346,71 +2295,6 @@
   .model-visibility__model .settings__row-control {
     align-self: auto;
   }
-
-  .appearance-editor__row .settings__row-control,
-  .appearance-control,
-  .appearance-editor__row .appearance-color {
-    width: 100%;
-  }
-
-  .appearance-control__select {
-    width: auto;
-    max-width: none;
-    flex: 1;
-  }
-}
-
-/* Glass strength is a material choice, not an accent palette. Keep each
-   sample one tone so it cannot be mistaken for a color gradient. */
-.appearance-choice__swatch[data-glass-preview] {
-  background: var(--glass-preview-pane, var(--bg-rail-tint));
-  border-color: var(--line-strong);
-}
-
-.appearance-choice__swatch[data-glass-preview='0'] {
-  --glass-preview-pane: var(--bg-rail-tint);
-}
-
-.appearance-choice__swatch[data-glass-preview='20'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 80%, var(--surface-3));
-}
-
-.appearance-choice__swatch[data-glass-preview='35'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 62%, var(--surface-3));
-}
-
-.appearance-choice__swatch[data-glass-preview='50'] {
-  --glass-preview-pane: color-mix(in srgb, var(--bg-rail-tint) 45%, var(--surface-3));
-}
-
-.appearance-choice__swatch[data-backdrop-preview='default'] {
-  --swatch-a: #1a1a1a;
-  --swatch-b: #444444;
-}
-
-.appearance-choice__swatch[data-backdrop-preview='slate'] {
-  --swatch-a: #12151a;
-  --swatch-b: #3a4353;
-}
-
-.appearance-choice__swatch[data-backdrop-preview='mocha'] {
-  --swatch-a: #161312;
-  --swatch-b: #55453d;
-}
-
-.appearance-choice__swatch[data-backdrop-preview='forest'] {
-  --swatch-a: #121713;
-  --swatch-b: #3c5242;
-}
-
-.appearance-choice__swatch[data-backdrop-preview='midnight'] {
-  --swatch-a: #0e1119;
-  --swatch-b: #2c3a5e;
-}
-
-.appearance-choice__swatch[data-backdrop-preview='plum'] {
-  --swatch-a: #161217;
-  --swatch-b: #4d3a52;
 }
 
 .install-terminal {
